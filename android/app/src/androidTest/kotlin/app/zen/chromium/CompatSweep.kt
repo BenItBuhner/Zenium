@@ -7430,6 +7430,96 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ejjladinnckdgjemekebdpeokbikhfci", "Petra Aptos Wallet", "petra", core = domMarker("Petra's Aptos provider injected into the page world", "wallet.html?petra", PETRA_PROVIDER, settleMs = 30_000)),
         Row("iibninhmiggehlcdolcilmhacighjamp", "Magical: Text Expander & Autofill", "magical", core = accountGate("Magical", Regex("getmagical\\.com", RegexOption.IGNORE_CASE), injects = "[id*=\"magical\" i], [class*=\"magical\" i], magical-root, magical-fab", gate = "a Magical account (its panel and templates sign in through getmagical.com)")),
         Row("mjdbhokoopacimoekfgkcoogikbfgngb", "Trancy - AI Translator & Dual Subtitles", "trancy", core = accountGate("Trancy", Regex("trancy\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"trancy-\"], [id*=\"trancy\"]", gate = "a Trancy account (its AI translation and dual subtitles run through trancy.com)")),
+        // --- compat round 22 (ranks 541-570 by installs; `.github/scripts/ext-compat/next30-round19.json`) ---
+        // Each core rule read off the unpacked bundle: Control Panel for Twitter's popup
+        // (`browser_action.html`) is its settings form – `options.js` reads `storage.local` and
+        // `applyConfig()` puts `mobile` / `desktop` (the UA decides) and the feature classes on
+        // the body, `disabled` when its `enabled` checkbox is off (default on); Open in VLC's click
+        // runs `extract.player` in the tab through `scripting.executeScript` and hands the address
+        // to VLC over `runtime.connectNative('com.add0n.node')`, opening `/data/helper/index.html`
+        // when the port disconnects; QR Code Reader's popup `.btn-tab` runs
+        // `tabs.captureVisibleTab({format: "png"})`, scans the image (`QrScanner.scanImage`) and
+        // lists the text in `.list-result .item .text`; Dragon Web Extension's worker is
+        // `connectNative("com.nuance.dgnria")` for its content scripts on every page; Cat
+        // Gatekeeper's popup reads its limits (`#usageLimit` 10 minutes, `#breakTime` 5) and the
+        // `#snsList` of watched sites from `storage.local` (its 40 MB are the cat clips its
+        // content script plays in a shadow root at the limit); Silk's options page seeds its
+        // attester list into `#attesters` and its mode into `#serviceWorkerMode` (the Privacy Pass
+        // token itself answers a `WWW-Authenticate: PrivateToken` challenge from an origin behind
+        // Cloudflare's attester); Animalese Typing's content script hears `keydown` on the
+        // document (capture) and sends `{type: 'type', key, keycode, input_type}` to its worker,
+        // which opens its offscreen document `audio.html` (`runtime.getContexts` then
+        // `offscreen.createDocument({reasons: ['AUDIO_PLAYBACK']})`) and plays the syllable there;
+        // Data Scraper's popup (`/dist/index.html#/popup`) signs in at dataminer.io; Urban
+        // Browser Guard's popup is Urban VPN's safe-browsing verdict for the tab; Remove YouTube
+        // Shorts' content script sends `/shorts/<id>` to `/watch?v=<id>` every second and hides
+        // the shelves; PerfectPixel's click injects `content.js` and `styles/content.css` into the
+        // tab, which draw its `.perfectpixel-panel`; AAdvantage eShopping's popup activates the
+        // store through an AAdvantage sign-in; Instapaper's click has its content script POST the
+        // page to instapaper.com/bookmarklet/post_v6 with the account's cookies (signed out it
+        // sends the tab to instapaper.com/hello2); Twitch VOD Downloader's scripts run on twitch.tv
+        // and kick.com and sign in through `identity.launchWebAuthFlow` at streamrecorder.io; Joko's
+        // click has its content script (`<all_urls>`, a shadow root, `joko-` classes) open its
+        // panel, which signs in at app.joko.com; Pie Shopping's popup `popover.html` asks for a Pie
+        // account; Audio Downloader Prime's worker hears `webRequest.onHeadersReceived`
+        // (`responseHeaders`, `extraHeaders`) and keeps every response whose content-type,
+        // request type or URL extension says audio and whose size passes 307,200 bytes, and its
+        // popup lists them in `#audio-list-table`; RocketReach's action opens its side panel
+        // (`ui/sidepanel/index.html`, `sidePanel.setPanelBehavior`), which signs in at
+        // rocketreach.co; ePub Reader's click opens `data/UI/index.html` (its library with the
+        // `#dropzone` and `#file-input` for an .epub; `minimum_chrome_version` 138 under the store
+        // floor); BuiltWith's popup (no background) reads the active tab's URL and asks
+        // builtwith.com/mobile.aspx for its profile into `#data`; Split Screen's popup draws its
+        // preset cards (buttons in a `display: grid` row) and a card has the worker arrange the
+        // window through `windows.create` / `update` and `system.display.getInfo`; Similar Sites'
+        // click sends `togglePopup` to its content script, which mounts
+        // `iframe#similarsites-outer-content` with `panel/panel.html?domain=<host>` inside;
+        // Backpack's MAIN-world scripts define `window.backpack` (`.solana`, `.ethereum`) and
+        // `window.ethereum` (`isBackpack`) on every page; Jungle Scout's click asks
+        // members.junglescout.com to sign in and its scripts read Amazon's listings; WebRTC
+        // Network Limiter (no background) is one options page of four radios over
+        // `privacy.network.webRTCIPHandlingPolicy`, read back on load and set on a click;
+        // GoFullPage BETA is GoFullPage's shape (the popup's `captureVisibleTab` stitch into
+        // `capture.html`, its store the FileSystem API with IndexedDB beside it); Gmail reverse
+        // conversation is one content script on mail.google.com (no background, no action);
+        // Wayback Machine's first click opens `welcome.html` (its terms; `#accept-btn` sets
+        // `agreement` and `action.setPopup('index.html')`) and the popup then shows "Save Page
+        // Now" (`#spn-btn`) for the tab's address with archive.org's count; File Converter's
+        // action opens its side panel `popup.html` (`sidePanel.setPanelBehavior`), the upload box
+        // `#main-upload-box` with `#online-convert-upload` and the tools list behind a sign-in;
+        // Screen Recorder's click opens `data/interface/index.html`, whose recorder asks
+        // `desktopCapture.chooseDesktopMedia` (the shape of rank 213's Screen Recorder).
+        Row("kpmjjdhbcfebfjgdnpjagcndoelnidfj", "Control Panel for Twitter", "control-panel-for-twitter", core = popupMarker("Control Panel for Twitter", CONTROL_PANEL_FORM, settleMs = 25_000)),
+        Row("ihpiinojhnfhpdmmacgmpoonphhimkaj", "Open in VLC media player", "open-in-vlc", core = serviceBacked("Open in VLC media player", "its click runs `extract.player` in the tab and hands the address to VLC through `runtime.connectNative('com.add0n.node')`, a desktop host; without it the port disconnects and it opens its `/data/helper/index.html` installer page", native = true)),
+        Row("gmloihcgbhbonllenincdakeijmikcne", "QR Code Reader for Google Chrome", "qr-code-reader", core = popupTapMarker("QR Code Reader", "qr.html?qrreader", ".btn-tab", QR_READER_RESULT, settleMs = 30_000)),
+        Row("ddaloccgjfibfpkalenodgehlhkgoahe", "Dragon Web Extension", "dragon-web-extension-ddal", core = serviceBacked("Dragon Web Extension", "its dictation is Dragon's desktop host over `runtime.connectNative('com.nuance.dgnria')`; the content scripts on every page relay to it", native = true)),
+        Row("ajhmfdgkijocedmfjonnpjfojldioehi", "Silk - Privacy Pass Client", "silk-privacy-pass", core = ownPage("Silk - Privacy Pass Client", "options/index.html", SILK_OPTIONS, gate = "a Privacy Pass challenge (a `WWW-Authenticate: PrivateToken` header from an origin behind Cloudflare's attester at pp-attester-turnstile.research.cloudflare.com), which no fixture of the sweep's issues")),
+        Row("djbgadolfboockbofalipohdncimebic", "Animalese Typing", "animalese-typing", core = ::animaleseTyping),
+        Row("almalgbpmcfpdaopimbdchdliminoign", "Urban Browser Guard", "urban-browser-guard", core = siteVerdict("Urban Browser Guard")),
+        Row("mgngbgbhliflggkamjnpdmegbkidiapm", "Remove YouTube Shorts", "remove-youtube-shorts", core = shortsRedirect("Remove YouTube Shorts", "https://www.youtube.com/shorts/zV4uBH9S1KI")),
+        Row("dkaagdgjmgdmbnecmcefdhjekcoceebi", "PerfectPixel by WellDoneCode", "perfectpixel", core = actionMarker("PerfectPixel", "page-a.html?perfectpixel", PERFECTPIXEL_PANEL)),
+        Row("ldjkgaaoikpmhmkelcgkgacicjfbofhh", "Instapaper", "instapaper", core = accountGate("Instapaper", Regex("instapaper\\.com", RegexOption.IGNORE_CASE), gate = "an Instapaper account (its save POSTs the page to instapaper.com/bookmarklet/post_v6 with the account's cookies; signed out its content script sends the tab to instapaper.com/hello2)")),
+        Row("gaabmdjigfcnkgeommfpnoinpdmpfhaj", "Twitch VOD Downloader", "twitch-vod-downloader", core = liveAttached("Twitch VOD Downloader", "https://www.twitch.tv/", gate = "a Twitch VOD page and the streamrecorder.io service its scripts sign into (`identity.launchWebAuthFlow`)")),
+        Row("nfadicbbecgbdbgbibgflooojfbolpgk", "Pie Shopping: AI Cash Back and Coupons", "pie-shopping", account = true, core = popupLogin("Pie Shopping")),
+        Row("flainkeonkoanoijnkojmiiihnfdhipd", "Audio Downloader Prime", "audio-downloader-prime", core = mediaPopup("Audio Downloader Prime", "audio.html?adp", "/\\.(mp3|m4a|aac|wav|ogg)\\b|kbps|adp-captured/i", probe = true, listener = "onHeadersReceived with responseHeaders and extraHeaders over *://*/* (an audio content-type, an audio request type or an audio extension in the URL; content-length over 307,200 bytes or none); the fixture's tone is Web Audio, so its clip.mp4's audio track is what it can list")),
+        Row("oiecklaabeielolbliiddlbokpfnmhba", "RocketReach Chrome Extension", "rocketreach", core = accountGate("RocketReach", Regex("rocketreach\\.co", RegexOption.IGNORE_CASE), page = "ui/sidepanel/index.html", gate = "a RocketReach account (its side panel signs in at rocketreach.co) and a LinkedIn or company page for its lookups")),
+        Row("fnplkbhndemgbopkkpmpnfklkhphpneg", "ePub Reader for Google Chrome", "epub-reader-fnpl", core = actionPage("ePub Reader", Regex("data/UI/index\\.html"), EPUB_LIBRARY, listOf("page-a.html?epub"))),
+        Row("dapjbgnjinbpoindlpdmhochffioedbn", "BuiltWith Technology Profiler", "builtwith", core = popupMarker("BuiltWith", BUILTWITH_PROFILE, settleMs = 30_000, notMeasurable = Regex("captcha|robot|verify you|too many|rate limit|blocked|unusual traffic", RegexOption.IGNORE_CASE), gate = "BuiltWith's lookup service (builtwith.com/mobile.aspx answering for the tab's address)")),
+        Row("dnollkdkikklpdganoecjcmmlddbennb", "Split Screen for Google Chrome", "split-screen", core = windowLayout("Split Screen", "#root div[style*=\"grid\"] > button")),
+        Row("necpbmbhhdiplmfhmjicabdeighkndkn", "Similar Sites - Discover Related Websites", "similar-sites", core = actionMarker("Similar Sites", "page-a.html?similarsites", SIMILAR_SITES_PANEL, settleMs = 30_000)),
+        Row("bckjlihkmgolmgkchbpiponapgjenaoa", "Jungle Scout", "jungle-scout", core = accountGate("Jungle Scout", Regex("junglescout\\.com", RegexOption.IGNORE_CASE), gate = "a Jungle Scout account (its click asks members.junglescout.com to sign in) and an Amazon listing for its scripts")),
+        Row("npeicpdbkakmehahjeeohfdhnlpdklia", "WebRTC Network Limiter", "webrtc-network-limiter", core = ownPage("WebRTC Network Limiter", "options.html", WEBRTC_LIMITER_OPTIONS, gate = "a WebRTC IP handling policy the engine takes: the phone stores and publishes `privacy.network.webRTCIPHandlingPolicy` and the WebView has no policy API to hand it to (the standing WebView blocker)")),
+        Row("kehafhfdnkhdgbnpeofmhmbibmpnjaof", "GoFullPage BETA - Full Page Screen Capture", "gofullpage-beta", core = ::fullPageCapture),
+        Row("kfgepjmmgamniaefbjlbacahkjjnjoaa", "Gmail reverse conversation", "gmail-reverse-conversation", core = liveAttached("Gmail reverse conversation", "https://mail.google.com/", gate = "a Gmail session (its one content script reorders a conversation's messages on mail.google.com; signed out the site sends the tab to accounts.google.com)")),
+        Row("fpnmgdkabkmnadcjpehmlllkndpkmiak", "Wayback Machine", "wayback-machine", core = ::waybackMachine),
+        Row("dicgkflojhbopmagcacdklcpdfdcnhko", "File Converter - By Online-Convert.com", "file-converter", core = panelMarker("File Converter", "page-a.html?fileconverter", FILE_CONVERTER_PANEL, settleMs = 30_000)),
+        Row("dhopldobnfjeckokfjimfcdagmlhjdce", "Screen Recorder", "screen-recorder-dhop", core = ::desktopCaptureLimit),
+        // The five largest bundles last (Cat Gatekeeper 40.2 MB, Backpack 26.4, AAdvantage eShopping 12.9, Joko 9.9, Data Scraper 7.1), as rounds 19 to 21 ordered their own.
+        Row("elbikiflgfhjdjmficnigpeegjbhdidh", "Cat Gatekeeper", "cat-gatekeeper", core = popupMarker("Cat Gatekeeper", CAT_GATEKEEPER_POPUP, settleMs = 25_000)),
+        Row("aflkmfhebedbjioipglgcbcmnbpgliof", "Backpack", "backpack", core = domMarker("Backpack's providers injected into the page world", "wallet.html?backpack", BACKPACK_PROVIDER, settleMs = 30_000)),
+        Row("dcdiajifnnbipfljbggcbbheipfdmgpo", "American Airlines AAdvantage eShopping", "aadvantage-eshopping", account = true, core = popupLogin("AAdvantage eShopping")),
+        Row("jigflhhckdjdefdjmodlkomnmdonfbbn", "Joko: Cash back & automatic coupons", "joko", core = accountGate("Joko", Regex("joko\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"joko-\"], [id*=\"joko\" i]", gate = "a Joko account (its panel signs in at app.joko.com/auth/sign-in) and a merchant page for its coupons")),
+        Row("nndknepjnldbdbepjfgmncbggmopgden", "Data Scraper - Easy Web Scraping", "data-scraper", account = true, core = popupLogin("Data Miner")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -7464,6 +7554,186 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 22 (ranks 541-570 by installs) --------------------------
+
+    /**
+     * A control in the row's popup and the reading it leaves IN THE POPUP (QR Code Reader's
+     * `.btn-tab`, which has the popup take `tabs.captureVisibleTab` of the tab under it, scan the
+     * image and list the code's text): the fixture settles, the popup opens over it, the control
+     * (`control`, a CSS selector; waited for as [popupSwitch] waits) is tapped at its centre, and
+     * `expr` (a `JSON.stringify` of `{pass, …}`) is polled in the live popup. A tap the control
+     * did not take is followed by a script click (recorded as such) and the poll once more. `F`
+     * with the popup's text and console when no control was found or the reading never passed;
+     * the popup gone before the reading (a control that navigates it) is `F` on that line.
+     */
+    private fun popupTapMarker(label: String, page: String, control: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture(page, factor, 2_500)
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var hit = JSONObject()
+        var how = "none"
+        var found = JSONObject()
+        if (popup != null) {
+            hit = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", control))).takeIf { it.has("x") } } ?: JSONObject()
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (hit.has("x")) {
+                val point = screenPoint(popup, hit)
+                if (point != null && onScreen("$label: the control")) {
+                    tap(point.first, point.second)
+                    how = "tap"
+                }
+            }
+            val live = { popupView()?.takeIf { it.context == "popup" } }
+            if (how == "tap") live()?.let { found = pollExpr(it, expr, scaled(settleMs, factor)) }
+            if (!found.optBoolean("pass") && hit.has("x")) {
+                live()?.let { view ->
+                    extra.put("scriptClick", tabEval(view, "(function(){var e=document.querySelector(${JSONObject.quote(control)});if(!e)return 'gone';e.click();return 'clicked'})()"))
+                    how = "script"
+                    found = pollExpr(view, expr, scaled(settleMs / 2, factor))
+                }
+            }
+            live()?.let { view ->
+                found.put("console", JSONArray(consoleOf(view).takeLast(10)))
+                extra.put("popupAfter", json(tabEval(view, DEEP_TEXT)).optString("text").take(200))
+            } ?: extra.put("popupGone", true)
+        }
+        found.put("how", how)
+        extra.put("control", hit).put("selector", control).put("popup", found)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-tap-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val pressed = if (how == "tap") "tapped" else "clicked by script"
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: the popup's `$control` ($pressed) left its reading in the popup: ${found.toString().take(220)}", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            !hit.has("x") -> Grade("F", "$label: no `$control` control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
+            extra.optBoolean("popupGone") -> Grade("F", "$label: the popup was gone before the reading after `$control` was $pressed", extra)
+            else -> Grade("F", "$label: `$control` was $pressed and the popup shows no reading within ${scaled(settleMs, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Animalese Typing: its content script (every page, `document_start`) hears `keydown` on the
+     * document in the capture phase and sends `{type: 'type', key, keycode, input_type}` to its
+     * worker, which opens its offscreen document (`runtime.getContexts` for
+     * `OFFSCREEN_DOCUMENT`, else `offscreen.createDocument({url: 'audio.html', reasons:
+     * ['AUDIO_PLAYBACK']})`) and has it play the syllable through an `AudioContext`. The editor
+     * fixture opens, its textarea takes a run of synthetic `keydown`s from the page world (the
+     * isolated world's capture listener sees the same DOM events, as Go Back With Backspace's
+     * row reads them), and the worker's offscreen contexts are polled through the awakened
+     * background view; the offscreen view itself, when the runtime has it open, is read for its
+     * `audioCtx` state. `P` on an `audio.html` context up after the keys (the chain from the
+     * page's keys through the worker to the offscreen document); `F` with the worker's console
+     * when none opened within the wait, or the worker never answered.
+     */
+    private fun animaleseTyping(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("editor.html?animalese", factor, 2_500)
+        val since = StepEvidence(row)
+        val bg = awakeBackground(row.id, factor)
+        val contextsBefore = bg?.let { offscreenContexts(it, factor) } ?: JSONObject().put("error", "no background view")
+        extra.put("offscreenBefore", contextsBefore)
+        val typed = json(tabEval(view, ANIMALESE_KEYS))
+        extra.put("typed", typed)
+        var contexts = JSONObject()
+        val opened = poll(scaled(30_000, factor), 1_500) {
+            val live = backgroundView(row.id) ?: return@poll null
+            contexts = offscreenContexts(live, factor)
+            contexts.takeIf { it.optInt("count") > 0 }
+        }
+        extra.put("offscreenAfter", contexts)
+        var offscreen: ExtensionWebView? = null
+        instrumentation.runOnMainSync { offscreen = host.extensions.offscreenView(row.id) }
+        offscreen?.let { off ->
+            SystemClock.sleep(scaled(1_500, factor))
+            extra.put("offscreenPage", json(tabEval(off, "JSON.stringify({url:location.pathname,audioCtx:typeof audioCtx==='object'&&audioCtx?audioCtx.state:typeof audioCtx,ready:document.readyState})")))
+            extra.put("offscreenConsole", JSONArray(consoleOf(off).takeLast(8)))
+        }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-typing")
+        val note = "keys ${typed.optInt("sent")} sent; offscreen contexts before ${contextsBefore.optInt("count")} -> after ${contexts.optInt("count")} (${contexts.optJSONArray("urls")?.toString()?.take(120)}); offscreen page ${extra.optJSONObject("offscreenPage")?.toString()?.take(120) ?: "no view"}"
+        return when {
+            bg == null -> Grade("F", "Animalese Typing: no background view to read its offscreen contexts through: $note", extra)
+            opened != null && contexts.optJSONArray("urls")?.toString()?.contains("audio.html") == true -> Grade("P", "Animalese Typing: the keys on the fixture reached its worker, which opened its offscreen audio.html to play them: $note", extra)
+            opened != null -> Grade("PARTIAL", "Animalese Typing: an offscreen document opened after the keys but not audio.html: $note", extra)
+            else -> Grade("F", "Animalese Typing: no offscreen document within ${scaled(30_000, factor) / 1000} s of the keys: $note", extra)
+        }
+    }
+
+    /** The worker's offscreen contexts (`runtime.getContexts({contextTypes: ['OFFSCREEN_DOCUMENT']})`), read through its view: `{count, urls}` or `{error}`. */
+    private fun offscreenContexts(bg: ExtensionWebView, factor: Double): JSONObject {
+        val slot = "__zenOffscreen${System.nanoTime() % 100000}"
+        val script = "(function(){window.$slot={done:false};try{chrome.runtime.getContexts({contextTypes:['OFFSCREEN_DOCUMENT']}).then(function(c){window.$slot={done:true,count:c.length,urls:c.map(function(x){return String(x.documentUrl||'').replace(/^chrome-extension:\\/\\/[a-p]{32}/,'')})}},function(e){window.$slot={done:true,error:String(e&&e.message||e)}})}catch(e){window.$slot={done:true,error:String(e&&e.message||e)}}return 'asked'})()"
+        return runCatching { probe(bg, script, slot, scaled(6_000, factor)) }.getOrElse { JSONObject().put("error", it.message ?: "probe failed") }
+    }
+
+    /**
+     * Wayback Machine: its action has no default popup – the first click (`agreement` unset)
+     * opens `welcome.html` in a tab, whose `#accept-btn` sets `agreement`, `action.setPopup
+     * ('index.html')` and closes the tab; the popup then reads the tab's address and shows
+     * "Save Page Now" (`#spn-btn`) with archive.org's count of captures (`#wayback-count-msg`),
+     * or "URL not supported" for an address on its excluded list (localhost, 127.0.0.1 – the
+     * fixture's 10.0.2.2 is not on it). The fixture settles, the action is clicked, the welcome
+     * page waited for and accepted from a script, the action clicked again and the popup polled
+     * for the button. `P` on the popup's button enabled for the fixture's address; `PARTIAL`
+     * when the popup came up saying the address is not supported (its check, read); `F` when
+     * the welcome page never opened, the second click opened no popup, or the popup showed
+     * neither.
+     */
+    private fun waybackMachine(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (fixtureTab, _) = fixture("page-a.html?wayback", factor, 2_000)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val welcome = poll(scaled(20_000, factor), 500) { openedPage(before, row, Regex("welcome\\.html")) }
+        extra.put("welcome", welcome?.value ?: JSONObject.NULL)
+        var accepted = "no welcome page"
+        if (welcome != null) {
+            val view = waitForView(welcome.key)
+            accepted = poll(scaled(15_000, factor), 500) {
+                tabEval(view, "(function(){var b=document.getElementById('accept-btn');if(!b)return null;b.click();return 'clicked'})()").takeIf { it == "clicked" }
+            } ?: "no #accept-btn within the wait"
+            // Its click sets `agreement`, `setPopup` and removes its own tab; the popup is set
+            // when the action carries one.
+            poll(scaled(10_000, factor), 500) { extensionAction(row.id)?.optString("popup")?.takeIf { it.contains("index.html") } }
+            extra.put("actionAfterAccept", extensionAction(row.id) ?: JSONObject.NULL)
+            if (tabUrls().containsKey(welcome.key)) closeTab(welcome.key)
+        }
+        extra.put("accepted", accepted)
+        runCatching { coreCall("extension.closePopup", "null") }
+        showTab(fixtureTab)
+        SystemClock.sleep(scaled(1_000, factor))
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(popup, WAYBACK_POPUP, scaled(30_000, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+        }
+        extra.put("popup", found)
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-wayback")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val note = "welcome ${if (welcome == null) "never opened" else "opened and $accepted"}; popup ${if (popup == null) "absent" else found.toString().take(200)}"
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Wayback Machine: the terms accepted, its popup offers Save Page Now for the fixture's address: $note", extra)
+            found.optBoolean("notSupported") -> Grade("PARTIAL", "Wayback Machine: its popup came up but calls the fixture's address not supported: $note", extra)
+            welcome == null -> Grade("F", "Wayback Machine: the first click opened no welcome.html within ${scaled(20_000, factor) / 1000} s: $note", extra)
+            popup == null -> Grade("F", "Wayback Machine: the click after the terms opened no popup: $note", extra)
+            else -> Grade("F", "Wayback Machine: its popup rendered without Save Page Now: $note", extra)
+        }
+    }
 
     // --- the core checks of compat round 21 (ranks 511-540 by installs) --------------------------
 
@@ -13956,6 +14226,103 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** Petra's Aptos provider in the page world: `window.aptos` (and its `window.petra` alias) with `connect` and `signAndSubmitTransaction` functions. */
         private const val PETRA_PROVIDER =
             "(function(){var p=window.aptos||window.petra||null;return JSON.stringify({pass:!!p&&typeof p.connect==='function',aptos:typeof window.aptos,petra:typeof window.petra,connect:typeof (p&&p.connect),sign:typeof (p&&p.signAndSubmitTransaction),network:typeof (p&&p.network),keys:p?Object.keys(p).slice(0,8):[]})})()"
+
+        // --- the expressions of compat round 22 (ranks 541-570) ---------------------------------
+
+        /**
+         * Control Panel for Twitter's popup (`browser_action.html`, its settings form): `options.js`
+         * reads `storage.local` and `applyConfig()` marks the body `mobile` or `desktop` (the UA
+         * decides) with the feature classes, `disabled` when its `enabled` checkbox is off (the
+         * default is on). The pass: the form with its checkboxes (over 20), `enabled` checked
+         * and the body classed by the config (`mobile` or `desktop`, not `disabled`).
+         */
+        private const val CONTROL_PANEL_FORM =
+            "(function(){var boxes=document.querySelectorAll('input[type=checkbox]');var en=document.querySelector('input[name=enabled]');var cls=document.body?document.body.className:'';var classed=/\\b(mobile|desktop)\\b/.test(cls);var disabled=/\\bdisabled\\b/.test(cls);" +
+                "return JSON.stringify({pass:boxes.length>20&&!!en&&en.checked&&classed&&!disabled,checkboxes:boxes.length,enabled:en?en.checked:null,bodyClass:cls.slice(0,120),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * QR Code Reader's popup after `.btn-tab`: `tabs.captureVisibleTab` answered (the
+         * `.img-preview` carries the capture as its background), the scan listed the code's text
+         * in `.list-result .item .text` – the fixture's address, `zenium.invalid/qr-fixture`.
+         */
+        private const val QR_READER_RESULT =
+            "(function(){var items=Array.prototype.slice.call(document.querySelectorAll('.list-result .item .text')).map(function(e){return (e.innerText||e.textContent||'').trim()});var prev=document.querySelector('.img-preview');var cap=prev?String(prev.style.backgroundImage||''):'';" +
+                "return JSON.stringify({pass:items.some(function(t){return /zenium\\.invalid\\/qr-fixture/.test(t)}),items:items.slice(0,4),captured:/^url\\(/.test(cap),captureBytes:cap.length,previewShown:!!prev&&!prev.classList.contains('d-none'),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /** Silk's options page: `#attesters` seeded with Cloudflare's Privacy Pass attester and `#serviceWorkerMode` reading `production` (its `index.mjs` writes the defaults to `storage.local` and fills the form from them). */
+        private const val SILK_OPTIONS =
+            "(function(){var a=document.getElementById('attesters');var m=document.getElementById('serviceWorkerMode');var av=a?(a.value||a.textContent||''):'';var mv=m?(m.value||''):'';" +
+                "return JSON.stringify({pass:/pp-attester-turnstile\\.research\\.cloudflare\\.com/.test(av)&&mv==='production',attesters:av.replace(/\\s+/g,' ').slice(0,120),mode:mv,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /** PerfectPixel after the action click: its `content.js` and `styles/content.css` injected into the tab draw `.perfectpixel-panel` (with its layer controls) into the page. */
+        private const val PERFECTPIXEL_PANEL =
+            "(function(){var p=document.querySelector('.perfectpixel-panel, .perfectpixel-panel-container');var r=p?p.getBoundingClientRect():null;var ctl=document.querySelectorAll('[class*=\"perfectpixel\"]').length;" +
+                "return JSON.stringify({pass:!!p&&r.width>0&&r.height>0,shown:!!p,w:r?Math.round(r.width):0,h:r?Math.round(r.height):0,nodes:ctl,text:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,80):''})})()"
+
+        /** ePub Reader's library (`data/UI/index.html`): the dashboard view with its `#dropzone` and `#file-input` (accept `.epub`) or the shelf, `#library-empty` showing while nothing is loaded. */
+        private const val EPUB_LIBRARY =
+            "(function(){function shown(id){var e=document.getElementById(id);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}var input=document.getElementById('file-input');" +
+                "return JSON.stringify({pass:(shown('dropzone')||shown('btn-upload-trigger')||shown('library-shelf-grid'))&&!!input,dashboard:shown('dashboard-view'),dropzone:shown('dropzone'),upload:shown('btn-upload-trigger'),empty:shown('library-empty'),accept:input?input.getAttribute('accept'):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * BuiltWith's popup: `tabs.query` gave it the active tab's address and its XHR to
+         * builtwith.com/mobile.aspx answered – the `#logo` placeholder removed and `#data` filled
+         * with the profile (or the service's word for the address; a CAPTCHA (`#capA`) is its
+         * gate, recorded).
+         */
+        private const val BUILTWITH_PROFILE =
+            "(function(){var d=document.getElementById('data');var t=d?(d.innerText||'').replace(/\\s+/g,' ').trim():'';var logo=!!document.getElementById('logo');var cap=!!document.getElementById('capA');" +
+                "return JSON.stringify({pass:!logo&&t.length>20&&!cap,answered:!logo,chars:t.length,captcha:cap,text:t.slice(0,120)})})()"
+
+        /** Similar Sites after the action click: its content script mounted `iframe#similarsites-outer-content` (class `SS-…`) over the page, the panel `panel/panel.html?domain=<host>` loading inside it. */
+        private const val SIMILAR_SITES_PANEL =
+            "(function(){var f=document.getElementById('similarsites-outer-content');var r=f?f.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:!!f&&r.width>50&&r.height>50,frame:!!f,cls:f?String(f.className).slice(0,30):null,w:r?Math.round(r.width):0,h:r?Math.round(r.height):0,src:f?String(f.src||'').slice(0,60):null})})()"
+
+        /**
+         * WebRTC Network Limiter's options page: `privacy.network.webRTCIPHandlingPolicy.get`
+         * answered on load and `restoreRadios` checked the policy's radio (one of the four
+         * `ip_policy_selection` radios checked; `#not_supported` hidden). The pass is the read-back
+         * radio – the policy's effect is the standing WebView blocker, the row's `gate`.
+         */
+        private const val WEBRTC_LIMITER_OPTIONS =
+            "(function(){var radios=Array.prototype.slice.call(document.getElementsByName('ip_policy_selection'));var checked=radios.filter(function(r){return r.checked}).map(function(r){return r.id});var ns=document.getElementById('not_supported');var nsShown=ns?ns.getBoundingClientRect().height>0:false;" +
+                "return JSON.stringify({pass:radios.length===4&&checked.length===1,radios:radios.length,checked:checked,notSupportedShown:nsShown,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /** File Converter's side panel (`popup.html`): its upload box (`#main-upload-box` with the `#online-convert-upload` file input) or its tools list drawn, with text. */
+        private const val FILE_CONVERTER_PANEL =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:(shown('#main-upload-box')||shown('#conversion-tools-wrapper')||shown('#oauth-sign-in'))&&text.length>10,upload:shown('#main-upload-box'),fileInput:!!document.getElementById('online-convert-upload'),tools:shown('#conversion-tools-wrapper'),signIn:shown('#oauth-sign-in'),text:text.slice(0,120)})})()"
+
+        /** Cat Gatekeeper's popup: its limits read from `storage.local` (`#usageLimit` a number of minutes, `#breakTime`), the `#snsList` of watched sites with entries, `#appVersion` filled from the manifest. */
+        private const val CAT_GATEKEEPER_POPUP =
+            "(function(){var u=document.getElementById('usageLimit');var b=document.getElementById('breakTime');var list=document.getElementById('snsList');var v=document.getElementById('appVersion');var uv=u?parseInt(u.value,10):NaN;var bv=b?parseInt(b.value,10):NaN;var n=list?list.children.length:0;var vt=v?(v.textContent||'').trim():'';" +
+                "return JSON.stringify({pass:!isNaN(uv)&&uv>0&&!isNaN(bv)&&n>0&&/\\d/.test(vt),usageLimit:isNaN(uv)?null:uv,breakTime:isNaN(bv)?null:bv,sites:n,version:vt.slice(0,30),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Backpack's providers in the page world: `window.backpack` (its Solana provider under
+         * `.solana` with `connect`, the early script's placeholder replaced by `injected.js`'s)
+         * and `window.ethereum` flagged `isBackpack`; the Wallet Standard registration the
+         * fixture recorded is read beside them.
+         */
+        private const val BACKPACK_PROVIDER =
+            "(function(){var b=window.backpack||null;var sol=b&&b.solana?b.solana:null;var eth=window.ethereum||null;var solOk=!!sol&&typeof sol.connect==='function'&&!sol.isPlaceholder;var ethOk=!!eth&&eth.isBackpack===true;" +
+                "return JSON.stringify({pass:solOk||ethOk,backpack:typeof b,solana:!!sol,solanaConnect:typeof (sol&&sol.connect),placeholder:!!(sol&&sol.isPlaceholder),ethereum:!!eth,isBackpack:!!(eth&&eth.isBackpack),standard:window.__wallet?window.__wallet.standard:null,keys:b?Object.keys(b).slice(0,8):[]})})()"
+
+        /** Animalese Typing's keys: the editor fixture's textarea focused and a run of `keydown`s dispatched on it (bubbling to the document, where the content script's capture listener hears them), each with a printable `key`. */
+        private const val ANIMALESE_KEYS =
+            "(function(){var t=document.getElementById('editor')||document.querySelector('textarea, input[type=text]')||document.body;try{t.focus()}catch(e){}var keys=['h','e','l','l','o','Enter','w','o','r','l','d'];var n=0;keys.forEach(function(k){try{t.dispatchEvent(new KeyboardEvent('keydown',{key:k,code:k.length===1?'Key'+k.toUpperCase():k,keyCode:k.length===1?k.toUpperCase().charCodeAt(0):13,bubbles:true,cancelable:true}));n++}catch(e){}});" +
+                "return JSON.stringify({sent:n,target:t.tagName,id:t.id||null})})()"
+
+        /**
+         * Wayback Machine's popup (`index.html`) over the fixture: `#spn-btn` ("Save Page Now")
+         * drawn and enabled (not `flip-inside`, its disabled face) for the tab's address, the
+         * capture count (`#wayback-count-msg`) or last-saved line read beside it; the
+         * `#url-not-supported-msg` shown is its own refusal of the address (`notSupported`).
+         */
+        private const val WAYBACK_POPUP =
+            "(function(){var b=document.getElementById('spn-btn');var r=b?b.getBoundingClientRect():null;var shown=!!b&&r.width>0&&r.height>0;var flipped=!!b&&b.classList.contains('flip-inside');var ns=document.getElementById('url-not-supported-msg');var nsShown=!!ns&&ns.getBoundingClientRect().height>0&&(ns.textContent||'').trim().length>0;var count=document.getElementById('wayback-count-msg');var last=document.getElementById('last-saved-msg');" +
+                "return JSON.stringify({pass:shown&&!flipped&&!nsShown,button:shown,flipped:flipped,notSupported:nsShown,count:count?(count.textContent||'').trim().slice(0,60):null,lastSaved:last?(last.textContent||'').trim().slice(0,60):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
 
         /**
          * SAML-tracer's trace window: its toolbar buttons (`#button-clear`, `#button-pause`,

@@ -2203,6 +2203,9 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /** The extension's offscreen document's view (`chrome.offscreen`), when one is open (instrumentation reads its state). */
+    fun offscreenView(id: String): ExtensionWebView? = offscreens[id]
+
     /** How many times the extension's background has been started here (instrumentation; see [backgroundStarts]). */
     fun backgroundStarts(id: String): Int = backgroundStarts[id] ?: 0
 
