@@ -6,6 +6,7 @@ import {
   type PageCaptureResult,
   type PageViewport
 } from '@shared/capture'
+import { folderNameOf as sharedFolderNameOf } from '@shared/paths'
 import type { Rect, UIState } from '@shared/types'
 
 vi.mock('@renderer/lib/api', () => ({
@@ -578,21 +579,18 @@ describe('a saved file’s name', () => {
     expect(fileNameOf('Screenshot.png')).toBe('Screenshot.png')
   })
 
-  it('names the folder the file sits in, on either separator – what the save toast reports (§9.33)', () => {
+  it('names the folder the file sits in through the one shared reading – the share hub’s and the PDF viewer’s too – so the phone’s public collection is "Downloads" to the card as to them', () => {
+    // The card's `folderNameOf` is `src/shared/paths.ts`'s own (its cases are tested there): one
+    // function for every toast that reports a save (the lead's ruling on #632).
+    expect(folderNameOf).toBe(sharedFolderNameOf)
     expect(folderNameOf('/home/b/Downloads/Screenshot 2026-09-23 at 14.05.09.png')).toBe(
       'Downloads'
     )
-    expect(folderNameOf('C:\\Users\\b\\Downloads\\Screenshot.png')).toBe('Downloads')
-    // The folder the user chose instead of Downloads, by its own name.
     expect(folderNameOf('/home/b/Pictures/Captures/Screenshot.png')).toBe('Captures')
-    expect(folderNameOf('D:\\captures\\Screenshot.png')).toBe('captures')
-  })
-
-  it('has no folder to name for a file at a root or a bare name', () => {
-    expect(folderNameOf('/Screenshot.png')).toBe('')
+    expect(folderNameOf('/storage/emulated/0/Download/Screenshot 2026-09-23 at 14.05.09.png')).toBe(
+      'Downloads'
+    )
     expect(folderNameOf('Screenshot.png')).toBe('')
-    // A drive's root is the drive.
-    expect(folderNameOf('C:\\Screenshot.png')).toBe('C:')
   })
 })
 

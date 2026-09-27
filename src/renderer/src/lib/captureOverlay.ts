@@ -195,14 +195,10 @@ export function fileNameOf(path: string): string {
 /**
  * The folder a saved file sits in, by its own name – "Downloads", or the name of the folder
  * the user chose instead (§9.33: a toast that reports a save names the destination, which is
- * what its Show in folder acts on, not the file). A file at a root has no folder to name.
+ * what its Show in folder acts on, not the file). The one shared reading (`src/shared/paths.ts`,
+ * the share hub's too): Android's public collection, the directory `Download`, is "Downloads".
  */
-export function folderNameOf(path: string): string {
-  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  if (at <= 0) return ''
-  const parent = path.slice(0, at)
-  return fileNameOf(parent) || parent
-}
+export { folderNameOf } from '@shared/paths'
 
 export interface Point {
   x: number
