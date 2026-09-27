@@ -7,7 +7,7 @@ import type { SiteInfoSnapshot } from '@shared/siteInfo'
 
 /*
  * The site-information popover's two confirmations – "Delete site data?" one level in from the
- * overview, "Clear cookies?" one in from the cookies level (components/siteControls/
+ * overview, "Delete cookies?" one in from the cookies level (components/siteControls/
  * SiteInfoPopover.tsx `ConfirmLevel`) – wear the confirmation primitive's keyboard (§9.22 as
  * amended on #392; `useConfirmKeyboard`, W4-14): the level holds its container as it comes, no
  * verb preselected (not Cancel, which `Level`'s first-control rule would arm); Tab enters at
@@ -242,7 +242,7 @@ describe('the site-information popover’s confirmations', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 
-  it('Cancel’s button goes back the same way; "Clear cookies?" returns to the cookies level’s "Clear cookies"', async () => {
+  it('Cancel’s button goes back the same way; "Delete cookies?" returns to the cookies level’s "Delete cookies"', async () => {
     await open()
     click(buttonNamed('Delete site data'))
     await settle()
@@ -258,15 +258,15 @@ describe('the site-information popover’s confirmations', () => {
     click(cookiesRow)
     await settle()
     expect(popover()!.dataset.level).toBe('cookies')
-    click(buttonNamed('Clear cookies'))
+    click(buttonNamed('Delete cookies'))
     await settle()
     const d = level('clear-cookies')!
     expect(document.activeElement).toBe(d)
-    expect(d.querySelector('.zen-v2-title-block-title, h2')!.textContent).toBe('Clear cookies?')
+    expect(d.querySelector('.zen-v2-title-block-title, h2')!.textContent).toBe('Delete cookies?')
     pressEscape()
     await settle()
     expect(popover()!.dataset.level).toBe('cookies')
-    expect(document.activeElement).toBe(buttonNamed('Clear cookies'))
+    expect(document.activeElement).toBe(buttonNamed('Delete cookies'))
   })
 
   it('the verb’s own press confirms – site.clearCookies runs – and the level returns nothing of its own; while the deed is at work Cancel is disabled and Escape is inert', async () => {
@@ -282,7 +282,7 @@ describe('the site-information popover’s confirmations', () => {
     ].find((el) => el.textContent?.startsWith('Cookies and site data'))!
     click(cookiesRow)
     await settle()
-    click(buttonNamed('Clear cookies'))
+    click(buttonNamed('Delete cookies'))
     await settle()
     const d = level('clear-cookies')!
     const [cancel, verb] = [...d.querySelectorAll<HTMLButtonElement>('button')]
@@ -341,7 +341,7 @@ describe('the site-information popover’s confirmations', () => {
       expect(landings).toHaveLength(1)
       expect(landings[0]).toBe(document.activeElement)
 
-      const cookiesOpener = buttonNamed('Clear cookies')
+      const cookiesOpener = buttonNamed('Delete cookies')
       act(() => cookiesOpener.focus())
       landings.length = 0
       clickOnly(cookiesOpener)
@@ -356,7 +356,7 @@ describe('the site-information popover’s confirmations', () => {
       clickOnly(cancel)
       await settle()
       expect(popover()!.dataset.level).toBe('cookies')
-      const cookiesBack = buttonNamed('Clear cookies')
+      const cookiesBack = buttonNamed('Delete cookies')
       expect(document.activeElement).toBe(cookiesBack)
       expect(landings).toEqual([cookiesBack])
     } finally {
