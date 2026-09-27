@@ -166,7 +166,8 @@ describe('page script: the PDF viewer relay', () => {
     fit: 'width',
     title: null,
     find: null,
-    outline: []
+    outline: [],
+    form: { fields: 0, modified: false }
   }
 
   function post(data: unknown): void {
