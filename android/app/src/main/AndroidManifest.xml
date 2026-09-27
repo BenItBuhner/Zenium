@@ -508,6 +508,22 @@
                 android:resource="@xml/appwidget_quick_actions" />
         </receiver>
 
+        <!-- The Home-screen game widget (GameWidgetProvider; WID-04 / ERR-03): a one-cell face – Roll's
+             runner on its ground line – that opens the offline game on zen://game through the landing
+             extra (Landing.kt). Exported for the system's APPWIDGET_UPDATE alone; a receiver, so
+             nothing of it runs at the app's boot. -->
+        <receiver
+            android:name=".GameWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_game_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/appwidget_game" />
+        </receiver>
+
         <!-- "Close all private tabs" on the private session's notification (PrivateSession.kt); in the
              manifest so a press on a card that outlived the process still takes the card down. -->
         <receiver

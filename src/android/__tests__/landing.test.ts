@@ -5,7 +5,7 @@ import {
   type Platform as PlatformOs,
   type Tab
 } from '@shared/types'
-import { BLANK_URL } from '@shared/url'
+import { BLANK_URL, GAME_URL } from '@shared/url'
 import { Browser } from '@core/browser'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -144,11 +144,12 @@ afterEach(() => {
 })
 
 describe('the landing words', () => {
-  it("are Landing.kt's five, read as they come and canonicalised", () => {
-    expect(LANDING_STATES).toEqual(['search', 'voice', 'private', 'scan', 'newTab'])
+  it("are Landing.kt's six, read as they come and canonicalised", () => {
+    expect(LANDING_STATES).toEqual(['search', 'voice', 'private', 'scan', 'newTab', 'game'])
     for (const state of LANDING_STATES) expect(parseLanding(state)).toBe(state)
     expect(parseLanding(' Search ')).toBe('search')
     expect(parseLanding('NEWTAB')).toBe('newTab')
+    expect(parseLanding('Game')).toBe('game')
   })
 
   it('reject anything else', () => {
@@ -162,6 +163,7 @@ describe('the landing words', () => {
     expect(surfaceOf('scan')).toBe('scan')
     expect(surfaceOf('newTab')).toBeNull()
     expect(surfaceOf('private')).toBeNull()
+    expect(surfaceOf('game')).toBeNull()
   })
 })
 
@@ -206,6 +208,22 @@ describe('landing from a widget or a shortcut', () => {
     expect(tab.url).toBe(BLANK_URL)
     // The launcher's 'New tab' beside 'New private tab' (GN-26): a regular tab, never the private container's.
     expect(tab.containerId).not.toBe(PRIVATE_CONTAINER_ID)
+    expect(activeTabId(browser, win)).toBe(tab.id)
+    expect(calls).toEqual([])
+  })
+
+  it("game (WID-04): a new tab on zen://game, Roll's own page, active in this turn, nothing over it", () => {
+    const { browser, win } = running()
+    const { over, calls } = recorder()
+    const before = Object.keys(browser.state.model.tabs).length
+
+    const tab = landFromIntent('game', browser, win, over, now)!
+
+    expect(Object.keys(browser.state.model.tabs).length).toBe(before + 1)
+    expect(tab.url).toBe(GAME_URL)
+    expect(tab.containerId).not.toBe(PRIVATE_CONTAINER_ID)
+    // The widget's tab is one the launcher sent (#117): back at its root returns to the launcher.
+    expect(tab.fromIntent).toBe(true)
     expect(activeTabId(browser, win)).toBe(tab.id)
     expect(calls).toEqual([])
   })

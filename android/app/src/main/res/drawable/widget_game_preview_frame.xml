@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The picker's hairline round the game widget's preview (res/layout/widget_game_preview.xml; WID-04):
+     1 dp at the card's radius, drawn over the preview alone, so the card reads against a picker sheet
+     of the same surface colour – the quick actions widget's frame (widget_quick_actions_preview_frame.xml)
+     at this card's radius, in the v2 border by day and by night. The widget as placed wears none of it. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/widget_quick_actions_hairline" />
+    <corners android:radius="@dimen/widget_game_radius" />
+    <padding
+        android:left="1dp"
+        android:top="1dp"
+        android:right="1dp"
+        android:bottom="1dp" />
+</shape>

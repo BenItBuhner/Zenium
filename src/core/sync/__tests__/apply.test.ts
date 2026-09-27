@@ -13,6 +13,7 @@ import { createFolder, createSpace } from '../../../core/model'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../../../core/platform'
 import { applyRemote } from '../apply'
 import {
+  DEVICE_LOCAL_SETTINGS,
   SETTINGS_RECORD_ID,
   SITE_DATA_RECORD_ID,
   collectLocal,
@@ -545,6 +546,80 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
     expect(b.state.settings.colorScheme).toBe('dark')
     expect(b.state.settings.reader).toEqual(mine)
     expect(sent(b).reader).toEqual(mine)
+  })
+})
+
+/**
+ * Roll's best score (ERR-03, §9.17 (i)): a synced setting like Chrome's `net.easter_egg_high_score`
+ * – in the settings record by default, read at apply as a whole number in the meter's range – with
+ * one rule of its own: the number only rises. A peer's lower value wins its round and lands as the
+ * record says, and this device's higher one is written back a macrotask later as an edit of its
+ * own (`GameService.raiseAfterApply`), so every device converges on the highest.
+ */
+describe("applyRemote: the settings record and Roll's best score (ERR-03)", () => {
+  const sent = (b: Browser): Record<string, unknown> =>
+    collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: []
+      },
+      defaultScope()
+    ).get(SETTINGS_RECORD_ID)?.data as Record<string, unknown>
+
+  const settled = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
+
+  it('travels in the settings record by default: not device-local, 0 on a fresh profile, a run’s best once set', () => {
+    expect(DEVICE_LOCAL_SETTINGS).not.toContain('gameBestScore')
+    expect('gameBestScore' in withoutDeviceLocalSettings(DEFAULT_SETTINGS)).toBe(true)
+    const b = browser()
+    expect(sent(b).gameBestScore).toBe(0)
+    expect(b.game.raise(420)).toBe(true)
+    expect(sent(b).gameBestScore).toBe(420)
+  })
+
+  it("a peer's higher best lands and is what this device sends from then on", async () => {
+    const b = browser()
+    b.game.raise(100)
+    applyRemote(b, [{ ...settingsRecord({ gameBestScore: 900 }), keys: { gameBestScore: 900 } }])
+    expect(b.state.settings.gameBestScore).toBe(900)
+    expect(b.game.best()).toBe(900)
+    await settled()
+    expect(b.state.settings.gameBestScore).toBe(900)
+    expect(sent(b).gameBestScore).toBe(900)
+  })
+
+  it("a peer's lower best lands as the record says, and this device's higher one is written back a macrotask later", async () => {
+    const b = browser()
+    b.game.raise(500)
+    applyRemote(b, [{ ...settingsRecord({ gameBestScore: 300 }), keys: { gameBestScore: 300 } }])
+    // The round's outcome first: the winner's value, as the record holds it.
+    expect(b.state.settings.gameBestScore).toBe(300)
+    await settled()
+    // Then this device's edit: the higher number, to travel next round.
+    expect(b.state.settings.gameBestScore).toBe(500)
+    expect(sent(b).gameBestScore).toBe(500)
+  })
+
+  it('a garbage value lands as 0 or the bound, a fraction whole; a record without the key leaves this device’s alone', async () => {
+    const b = browser()
+    b.game.raise(50)
+    applyRemote(b, [settingsRecord({ gameBestScore: '900' })])
+    expect(b.state.settings.gameBestScore).toBe(0)
+    await settled()
+    // This device's 50 was higher than the landed 0: raised back.
+    expect(b.state.settings.gameBestScore).toBe(50)
+    applyRemote(b, [settingsRecord({ gameBestScore: 1e9 })])
+    expect(b.state.settings.gameBestScore).toBe(99999)
+    applyRemote(b, [settingsRecord({ gameBestScore: 77.7 })])
+    expect(b.state.settings.gameBestScore).toBe(77)
+    await settled()
+    expect(b.state.settings.gameBestScore).toBe(99999)
+    applyRemote(b, [{ ...settingsRecord({ colorScheme: 'dark' }), keys: { colorScheme: 900 } }])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.gameBestScore).toBe(99999)
   })
 })
 

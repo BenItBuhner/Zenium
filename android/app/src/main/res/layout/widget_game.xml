@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The game widget's face (GameWidgetProvider; WID-04 / ERR-03): one cell, the card filling what the
+     launcher gives it – the quick actions widget's surface role, the extra-small card's 16 dp radius
+     (the system's widget radius on Android 12+) – with Roll's glyph at its centre, a 32 dp box: the
+     mark rolling on its ground line (ic_widget_roll.xml). The whole card is the button: the face
+     carries the click (the provider wires it to the game landing, Landing.kt) and the press's ripple
+     in the button role (widget_game_button.xml); its accessible name says what a tap does. The root
+     is @android:id/background under clipToOutline, so a launcher on Android 12+ finds the view it
+     clips to the system's widget radius. Colours are the v2 tokens' (values/colors.xml) and the
+     system's Material You roles on Android 12+ (res/color-v31/widget_quick_actions_*.xml). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_game_card"
+    android:clipToOutline="true">
+
+    <ImageButton
+        android:id="@+id/widget_game_face"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/widget_game_button"
+        android:contentDescription="@string/widget_game_face"
+        android:scaleType="center"
+        android:src="@drawable/ic_widget_roll" />
+</FrameLayout>

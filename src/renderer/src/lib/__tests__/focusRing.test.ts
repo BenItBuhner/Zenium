@@ -52,11 +52,14 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
     // The chords (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B) are the desktop main process's; the
     // mark never appears in a phone's document, and the coarse-pointer suppressor must not learn
     // to hide a keyboard-made ring, so those forms stand as they are: the phone pill's, the
-    // phone zoom slider's, the phone group strip's chip (PhoneShell's alone).
+    // phone zoom slider's, the phone group strip's chip (PhoneShell's alone) – and the same
+    // suppressor on Roll's region (`.zen-game`, the served documents' stage: its runtime cancels
+    // the press and focuses the region itself, so `:focus-visible` rang under a finger; #607).
     const PHONES_OWN = [
       ":root[data-input='keyboard'] .zen-phone-pill:has(button:focus-visible)",
       '.zen-phone-pill button:focus-visible',
       ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible, :root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible",
+      ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible",
       ":root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible",
       ":root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible::before",
       '.zen-group-chip:focus-visible',
@@ -201,6 +204,9 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
       // as the dialog root draws none – its `:root[data-pointer='coarse']` form is the weight
       // of the v2 ring rule's coarse form, which its plain form could not beat on a phone.
       ".zen-v2-menu:focus-visible, :root[data-pointer='coarse'] .zen-v2-menu:focus-visible, .zen-v2-menu[data-keyboard-focus]:focus, :root[data-pointer='coarse'] .zen-v2-menu[data-keyboard-focus]:focus",
+      // Roll's region (#607): the same suppressor on the served documents' stage, whose runtime
+      // cancels the press and focuses the region itself – `:focus-visible` rang under a finger.
+      ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible",
       ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible, :root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible"
     ])
     expect(css).not.toMatch(/:root\[data-pointer='coarse'\] button:focus-visible/)
