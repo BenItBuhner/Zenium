@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's bar in the small form below Android 12 (WID-02): Chrome's pill inset
+     3.5 dp by 4.5 dp in its 48 dp row, radius 20, under the system's ripple
+     (quick_action_search_widget_small_search_bar_background.xml:8-30); the panel fill under the v2
+     hairline. On Android 12+ the fill alone (res/drawable-v31/widget_quick_actions_small_bar.xml). -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="@dimen/widget_quick_actions_small_bar_inset_horizontal"
+    android:insetTop="@dimen/widget_quick_actions_small_bar_inset_vertical"
+    android:insetRight="@dimen/widget_quick_actions_small_bar_inset_horizontal"
+    android:insetBottom="@dimen/widget_quick_actions_small_bar_inset_vertical">
+    <ripple android:color="?android:attr/colorControlHighlight">
+        <item android:id="@android:id/mask">
+            <shape android:shape="rectangle">
+                <solid android:color="@android:color/white" />
+                <corners android:radius="@dimen/widget_quick_actions_small_bar_radius" />
+            </shape>
+        </item>
+        <item>
+            <shape android:shape="rectangle">
+                <solid android:color="@color/widget_quick_actions_bar" />
+                <stroke
+                    android:width="1dp"
+                    android:color="@color/widget_quick_actions_hairline" />
+                <corners android:radius="@dimen/widget_quick_actions_small_bar_radius" />
+            </shape>
+        </item>
+    </ripple>
+</inset>

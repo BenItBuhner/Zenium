@@ -491,6 +491,23 @@
                 android:resource="@xml/appwidget_search" />
         </receiver>
 
+        <!-- The Home-screen quick actions widget (QuickActionsWidgetProvider; WID-02): the omnibox pill
+             with the mic, the private mask and the QR scanner in one freely resized widget, as Chrome's
+             quick action search widget; each part lands through the landing extra (Landing.kt).
+             Exported for the system's APPWIDGET_UPDATE alone; a receiver, so nothing of it runs at
+             the app's boot – the launcher wakes it on placement, on a resize and after an update. -->
+        <receiver
+            android:name=".QuickActionsWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_quick_actions_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/appwidget_quick_actions" />
+        </receiver>
+
         <!-- "Close all private tabs" on the private session's notification (PrivateSession.kt); in the
              manifest so a press on a card that outlived the process still takes the card down. -->
         <receiver

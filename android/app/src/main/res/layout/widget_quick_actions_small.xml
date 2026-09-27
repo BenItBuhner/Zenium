@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's small form (QuickActionsWidgetProvider; WID-02), for a face from 72 dp
+     to under 155 dp tall, and the picker's initial layout: Chrome's
+     quick_action_search_widget_small_layout.xml (Chrome 152, :8-93) with Zenium's face – a 72 dp
+     card the launcher's cells centre, the omnibox pill (48 dp, inset to 39 by its drawable; the
+     mark, the short hint at 16 sp) taking the width the row leaves, then the mic, the private mask
+     and the scanner as 48 dp buttons, each a disc round its glyph – Chrome's row order, Voice,
+     Incognito, Lens, Dino (quick_action_search_widget_small_layout.xml:65/72/79/86), less the Dino.
+     The root is
+     @android:id/background under clipToOutline for the launcher's clip on Android 12+. The
+     provider hides the buttons the width cannot hold and wires every part to its landing
+     (Landing.kt); see widget_quick_actions_xsmall.xml for the colours. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/widget_quick_actions_small_height"
+    android:layout_gravity="center"
+    android:background="@drawable/widget_quick_actions_card"
+    android:baselineAligned="false"
+    android:clipToOutline="true"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="@dimen/widget_quick_actions_small_margin">
+
+    <LinearLayout
+        android:id="@+id/widget_quick_actions_bar"
+        android:layout_width="0dp"
+        android:layout_height="@dimen/widget_quick_actions_small_bar_height"
+        android:layout_marginHorizontal="@dimen/widget_quick_actions_small_button_margin"
+        android:layout_weight="1"
+        android:background="@drawable/widget_quick_actions_small_bar"
+        android:clickable="true"
+        android:contentDescription="@string/widget_search_hint"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/widget_quick_actions_mark"
+            android:layout_width="@dimen/widget_quick_actions_small_mark"
+            android:layout_height="@dimen/widget_quick_actions_small_mark"
+            android:layout_marginStart="@dimen/widget_quick_actions_small_mark_margin"
+            android:layout_marginEnd="@dimen/widget_quick_actions_small_mark_margin_text"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_widget_mark" />
+
+        <TextView
+            android:id="@+id/widget_quick_actions_hint"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="@dimen/widget_quick_actions_small_mark_margin"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif"
+            android:gravity="center_vertical"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:text="@string/widget_quick_actions_hint_short"
+            android:textAlignment="viewStart"
+            android:textColor="@color/widget_search_hint"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_quick_actions_row_small"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/widget_quick_actions_voice"
+            android:layout_width="@dimen/widget_quick_actions_small_button"
+            android:layout_height="@dimen/widget_quick_actions_small_button"
+            android:layout_marginHorizontal="@dimen/widget_quick_actions_small_button_margin"
+            android:background="@drawable/widget_quick_actions_small_button"
+            android:contentDescription="@string/widget_search_mic"
+            android:padding="@dimen/widget_quick_actions_small_button_padding"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_mic" />
+
+        <ImageButton
+            android:id="@+id/widget_quick_actions_private"
+            android:layout_width="@dimen/widget_quick_actions_small_button"
+            android:layout_height="@dimen/widget_quick_actions_small_button"
+            android:layout_marginHorizontal="@dimen/widget_quick_actions_small_button_margin"
+            android:background="@drawable/widget_quick_actions_small_button"
+            android:contentDescription="@string/widget_search_private"
+            android:padding="@dimen/widget_quick_actions_small_button_padding"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_mask" />
+
+        <ImageButton
+            android:id="@+id/widget_quick_actions_scan"
+            android:layout_width="@dimen/widget_quick_actions_small_button"
+            android:layout_height="@dimen/widget_quick_actions_small_button"
+            android:layout_marginHorizontal="@dimen/widget_quick_actions_small_button_margin"
+            android:background="@drawable/widget_quick_actions_small_button"
+            android:contentDescription="@string/widget_quick_actions_scan"
+            android:padding="@dimen/widget_quick_actions_small_button_padding"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_scan" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The widget picker's preview of the quick actions widget on Android 12+ (previewLayout in
+     res/xml/appwidget_quick_actions.xml; WID-02): the small form at the widget's floor width and
+     its own 72 dp, under the picker's hairline (the v2 border by day and by night,
+     widget_quick_actions_preview_frame.xml), as Chrome's
+     quick_action_search_widget_small_preview_layout.xml:7-14 frames it. Older pickers draw the
+     vector under previewImage instead. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="@dimen/widget_quick_actions_width"
+    android:layout_height="@dimen/widget_quick_actions_small_height"
+    android:foreground="@drawable/widget_quick_actions_preview_frame"
+    tools:ignore="UselessParent">
+
+    <include layout="@layout/widget_quick_actions_small" />
+</FrameLayout>

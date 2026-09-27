@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's floor from 280 dp of shortest side – every phone (WID-02): Chrome's
+     260 dp (chrome/browser/ui/android/quickactionsearchwidget/java/res/values-sw280dp/dimens.xml:9).
+     At 260 dp the small and extra-small rows keep the mic and the mask and give the scanner up, the
+     medium column keeps all three – the set Chrome's rows show at 260 dp (QuickActionsWidgetProvider). -->
+<resources>
+    <dimen name="widget_quick_actions_width">260dp</dimen>
+</resources>

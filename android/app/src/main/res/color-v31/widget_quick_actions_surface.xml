@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's card in Material You's colours on Android 12+ (WID-02): Chrome's
+     colorSurface (chrome/android/java/res/color/widget_bg.xml:8), which MDC 1.12.0 resolves for
+     dynamic colour to the neutral variant palette at tone 98 (values-v31/tokens.xml:90 →
+     color-v31/m3_ref_palette_dynamic_neutral_variant98.xml:18) – system_neutral2_600 re-lit to
+     L* 98. Opaque, as Chrome's card is: its quick action layouts carry no alpha (the 0.9 is the
+     search widget's alone, search_widget_template.xml:19). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@android:color/system_neutral2_600"
+        android:lStar="98" />
+</selector>

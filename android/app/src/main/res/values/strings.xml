@@ -142,4 +142,15 @@
     <string name="page_dialog_ok">OK</string>
     <string name="page_dialog_leave">Leave</string>
     <string name="page_dialog_reload">Reload</string>
+
+    <!-- The Home-screen quick actions widget (QuickActionsWidgetProvider, res/layout/widget_quick_actions_*.xml;
+         WID-02): Chrome's quick action search widget's words in Zenium's – the picker's name and description
+         (Chrome's "Chromium quick action search", "Search using keyboard, voice, Incognito, or camera"), the
+         short hint the small and extra-small bars carry (Chrome's search_widget_default "Search"; the medium bar
+         carries the omnibox's own, widget_search_hint), and the scanner's accessible name in Chrome's Lens slot.
+         The mic's and the mask's names are the search widget's (widget_search_mic, widget_search_private). -->
+    <string name="widget_quick_actions_label">Zenium quick actions</string>
+    <string name="widget_quick_actions_description">Search or enter an address, search with your voice, open a new private tab, or scan a QR code</string>
+    <string name="widget_quick_actions_hint_short">Search</string>
+    <string name="widget_quick_actions_scan">Scan a QR code</string>
 </resources>

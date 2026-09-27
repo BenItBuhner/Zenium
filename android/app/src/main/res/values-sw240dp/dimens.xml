@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's floor from 240 dp of shortest side (WID-02): Chrome's 220 dp
+     (chrome/browser/ui/android/quickactionsearchwidget/java/res/values-sw240dp/dimens.xml:9). -->
+<resources>
+    <dimen name="widget_quick_actions_width">220dp</dimen>
+</resources>

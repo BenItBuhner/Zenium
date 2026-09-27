@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's card on Android 12+ (WID-02): the system's colorSurface alone
+     (res/color-v31/widget_quick_actions_surface.xml and its pairs), no hairline – Chrome's card is
+     one filled shape (quick_action_search_widget_background.xml:8-12), and the lead's ruling for
+     the search widget's dynamic face holds here – at the system's widget radius
+     (values-v31/dimens.xml). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_quick_actions_surface" />
+    <corners android:radius="@dimen/widget_quick_actions_radius" />
+</shape>

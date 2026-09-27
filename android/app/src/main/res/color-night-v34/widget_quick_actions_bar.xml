@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's dark bar on Android 14+ (WID-02; see res/color-v34/widget_quick_actions_bar.xml):
+     the platform's dark colorSurfaceContainerHigh (values-v34/tokens.xml:50). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@android:color/system_surface_container_high_dark" />
+</selector>
