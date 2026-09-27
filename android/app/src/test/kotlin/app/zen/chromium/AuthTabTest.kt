@@ -269,20 +269,26 @@ class AuthTabTest {
     fun theDeviceReadsSigningInfoFromApi28OnlyAndTheLegacySignaturesBefore() {
         // Build.VERSION_CODES.P: the field `signingInfo` exists from there; minSdk is 26.
         assertEquals(28, AuthTab.SIGNING_INFO_SDK)
-        // The verifier's branch (the repo's pattern, Updates.signerSha256): the API 28 read under
-        // the SDK_INT guard, the legacy GET_SIGNATURES read in its else – unguarded, the https form
-        // answered RESULT_VERIFICATION_FAILED on every Android 8.0 / 8.1 device (a NoSuchFieldError
-        // swallowed into the verdict).
-        val verifier = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/AuthTabVerifier.kt").readText()
+        // The one device-side read, shared by the Auth Tab's and the Trusted Web Activity's
+        // verifiers (DigitalAssetLinks.signingFingerprints; the repo's pattern, Updates.signerSha256):
+        // the API 28 read under the SDK_INT guard, the legacy GET_SIGNATURES read in its else –
+        // unguarded, the https form answered RESULT_VERIFICATION_FAILED on every Android 8.0 / 8.1
+        // device (a NoSuchFieldError swallowed into the verdict).
+        val source = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/DigitalAssetLinks.kt").readText()
         val guarded = Regex(
             """if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.P\) \{([\s\S]*?)\} else \{([\s\S]*?)\n\s*\}"""
-        ).find(verifier)
+        ).find(source)
         assertNotNull("the signers are read under an SDK_INT guard", guarded)
         val (modern, legacy) = guarded!!.destructured
         assertTrue(modern.contains("GET_SIGNING_CERTIFICATES") && modern.contains(".signingInfo"))
         assertTrue(legacy.contains("GET_SIGNATURES") && legacy.contains(".signatures"))
-        assertFalse("no read of signingInfo outside the guard", verifier.replace(modern, "").contains(".signingInfo"))
-        assertEquals("one guard, one read", 1, Regex("""\.signingInfo\b""").findAll(verifier).count())
+        assertFalse("no read of signingInfo outside the guard", source.replace(modern, "").contains(".signingInfo"))
+        assertEquals("one guard, one read", 1, Regex("""\.signingInfo\b""").findAll(source).count())
+        // Neither verifier reads the signers itself.
+        for (name in listOf("AuthTabVerifier.kt", "TwaVerifier.kt")) {
+            val verifier = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/$name").readText()
+            assertFalse("$name reads the signers through DigitalAssetLinks", verifier.contains(".signingInfo") || verifier.contains("GET_SIGNATURES"))
+        }
     }
 
     // --- the session's wire numbers ---------------------------------------------------------------------

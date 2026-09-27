@@ -8,8 +8,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.Executors
 
 /**
@@ -113,55 +111,19 @@ class AuthTabVerifier(
         }
     }
 
-    /** The host's `assetlinks.json`, fetched once, against the caller's package and signing certificates. */
-    private fun verifiedByStatement(pkg: String, host: String): Boolean {
-        val fingerprints = signingFingerprints(pkg)
-        if (fingerprints.isEmpty()) return false
-        val connection = URL(AuthTab.assetLinksUrl(host)).openConnection() as HttpURLConnection
-        connection.connectTimeout = FETCH_TIMEOUT_MS
-        connection.readTimeout = FETCH_TIMEOUT_MS
-        connection.instanceFollowRedirects = false
-        connection.setRequestProperty("Accept", "application/json")
-        try {
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) return false
-            val text = connection.inputStream.use { stream -> stream.readBytes().take(MAX_STATEMENT_BYTES).toByteArray() }
-            return AuthTab.statementGrants(String(text, Charsets.UTF_8), pkg, fingerprints)
-        } finally {
-            connection.disconnect()
-        }
-    }
-
     /**
-     * The SHA-256 fingerprints of the package's signing certificates, as the statement spells
-     * them, from the shape the device has (the repo's pattern, `Updates.signerSha256`): API 28's
-     * `signingInfo`, or before it – Android 8.0 / 8.1, minSdk 26 – the legacy `signatures`, the
-     * only field those levels carry ([AuthTab.SIGNING_INFO_SDK]).
+     * The host's `assetlinks.json`, fetched once ([DigitalAssetLinks.fetchStatements]), against
+     * the caller's package and signing certificates.
      */
-    private fun signingFingerprints(pkg: String): List<String> {
-        val pm = context.packageManager
-        val certificates = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val signing = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo
-                AuthTab.signerCertificates(
-                    multipleSigners = signing?.hasMultipleSigners() == true,
-                    apkContentsSigners = signing?.apkContentsSigners?.map { it.toByteArray() },
-                    certificateHistory = signing?.signingCertificateHistory?.map { it.toByteArray() }
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures?.map { it.toByteArray() }.orEmpty()
-            }
-        } catch (e: PackageManager.NameNotFoundException) {
-            return emptyList()
-        }
-        return AuthTab.fingerprintsOf(certificates)
+    private fun verifiedByStatement(pkg: String, host: String): Boolean {
+        val fingerprints = DigitalAssetLinks.signingFingerprints(context, pkg)
+        if (fingerprints.isEmpty()) return false
+        val text = DigitalAssetLinks.fetchStatements(AuthTab.assetLinksUrl(host)) ?: return false
+        return AuthTab.statementGrants(text, pkg, fingerprints)
     }
 
     companion object {
         private const val TAG = "ZenAuthTab"
-        private const val FETCH_TIMEOUT_MS = 8_000
-        /** A statement file past this is not the caller's few lines. */
-        private const val MAX_STATEMENT_BYTES = 256 * 1024
         private val lookups = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-auth-tab-verify") }
     }
 }
