@@ -42,11 +42,16 @@ object CustomTabIntents {
     /**
      * The same intent aimed at [CustomTabActivity]. Launch flags are dropped: started without
      * `NEW_TASK` from an activity in the caller's task the custom tab joins that task, as Chrome's
-     * does, so closing it lands back in the caller.
+     * does, so closing it lands back in the caller. `FORWARD_RESULT` goes on, as Chrome's
+     * `LaunchIntentDispatcher` puts it: a caller that started the trampoline for a result – an
+     * Auth Tab's (CCT-13) – hears the custom tab's `setResult` as the trampoline's. The caller's
+     * package is what the trampoline saw, never the intent's own claim: a spoofed extra is dropped.
      */
     fun toCustomTabActivity(context: Context, intent: Intent, callerPackage: String? = null): Intent {
         val forwarded = Intent(intent).setClass(context, CustomTabActivity::class.java)
-        forwarded.flags = intent.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        forwarded.flags = (intent.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) or
+            Intent.FLAG_ACTIVITY_FORWARD_RESULT
+        forwarded.removeExtra(EXTRA_CALLER_PACKAGE)
         if (callerPackage != null) forwarded.putExtra(EXTRA_CALLER_PACKAGE, callerPackage)
         return forwarded
     }

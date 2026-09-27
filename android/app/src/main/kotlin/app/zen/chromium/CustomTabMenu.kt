@@ -72,9 +72,17 @@ object CustomTabMenu {
      * `callerTitles` in intent order (blank ones are skipped, at most [CustomTabConfig.MAX_MENU_ITEMS]
      * kept); [desktopSite] is the check row's state; [addToHomeScreen] is whether the launcher pins
      * shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`) – without it the row is out,
-     * as Chrome's is, rather than a row whose tap does nothing.
+     * as Chrome's is, rather than a row whose tap does nothing; [openInBrowser] is the way out into
+     * the browser, which an Auth Tab has not (CCT-13: Chrome disallows Open in Chrome for its
+     * `AUTH_TAB` type, and the sign-in's page must not leave the tab that returns its result).
      */
-    fun groups(callerTitles: List<String>, share: Boolean, desktopSite: Boolean = false, addToHomeScreen: Boolean = true): List<List<Item>> {
+    fun groups(
+        callerTitles: List<String>,
+        share: Boolean,
+        desktopSite: Boolean = false,
+        addToHomeScreen: Boolean = true,
+        openInBrowser: Boolean = true
+    ): List<List<Item>> {
         val groups = ArrayList<List<Item>>()
         val caller = callerTitles.withIndex()
             .filter { it.value.isNotBlank() }
@@ -88,7 +96,7 @@ object CustomTabMenu {
         if (addToHomeScreen) page.add(Item.AddToHomeScreen)
         page.add(Item.DesktopSite(desktopSite))
         groups.add(page)
-        groups.add(listOf(Item.OpenInZenium))
+        if (openInBrowser) groups.add(listOf(Item.OpenInZenium))
         return groups
     }
 
