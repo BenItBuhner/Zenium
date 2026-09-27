@@ -47,7 +47,7 @@ import org.junit.runner.RunWith
  * (one `OK` or `FAIL` per claim; a claim that does not hold fails the run at the end). The seeded
  * profile is the tab-group drivers' (`tab-groups-demo-state.json`), the pages the driver's own
  * loopback server's. Driven by `android-bookmarks-sort-view-demo.yml` and by the nightly sweep's
- * phone-d shard (`.github/nightly-drivers/bookmarks-sort-view.json`). See [GroupsDemoBase].
+ * phone-b shard (`.github/nightly-drivers/bookmarks-sort-view.json`). See [GroupsDemoBase].
  */
 @RunWith(AndroidJUnit4::class)
 class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "bookmarks-sort-view-demo") {
