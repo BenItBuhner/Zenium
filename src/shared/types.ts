@@ -3147,8 +3147,9 @@ export interface Settings {
   /**
    * The phone's bookmarks panel (HB-13, `shared/bookmarkRows.ts`): how a folder's rows and
    * search results are ordered (Chrome's `BookmarkRowSortOrder`, `manual` by default) and
-   * whether a row is an image tile or the favicon (Chrome's `BookmarkRowDisplayPref`,
-   * `visual` by default). Device-local, as Chrome keeps both in SharedPreferences.
+   * whether a row is an image tile or the favicon (Chrome's `BookmarkRowDisplayPref`; Chrome's
+   * default is Visual, Zenium seeds `compact` – the lead's stated deviation, recorded on the
+   * HB-13 row). Device-local, as Chrome keeps both in SharedPreferences.
    */
   bookmarkRowSortOrder: BookmarkRowSortOrder
   bookmarkRowDisplay: BookmarkRowDisplay

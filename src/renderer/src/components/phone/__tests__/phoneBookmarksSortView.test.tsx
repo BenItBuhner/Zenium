@@ -38,6 +38,7 @@ const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, pickMenuItem, uiStore } = await import('@renderer/lib/ui')
 const { announcerStore, resetAnnouncer } = await import('@renderer/lib/announce')
 const { rememberThumbnail, thumbnailStore } = await import('@renderer/lib/thumbnails')
+const { FlipTracker } = await import('@renderer/lib/motion/flip')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -425,7 +426,7 @@ describe('the views (BookmarkRowDisplayPref)', () => {
     expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:mark', 'tile:mark'])
   })
 
-  it('the compact view – the default – is the plain favicon row with the row’s 20 glyph, no tile; the switch is a cut (a new FLIP epoch) and back again', async () => {
+  it('the compact view – the default – is the plain favicon row with the row’s 20 glyph, no tile; a view switch is a cut (a new FLIP epoch: the tracker takes a fresh baseline), a re-sort inside a view a glide, and the switch back a cut again', async () => {
     await show()
     await tap('Mobile bookmarks')
     expect(document.querySelector('.zen-phone-list')?.getAttribute('data-display')).toBe('compact')
@@ -434,8 +435,24 @@ describe('the views (BookmarkRowDisplayPref)', () => {
     expect(rowByTitle('Work').querySelector('.zen-list-lead svg')?.classList.contains('h-5')).toBe(
       true
     )
+    // `useFlip` commits after every render; `animate` is false on the one render that sees a new
+    // epoch (`display|folder|query`) – a fresh baseline, nothing glides – and true otherwise.
+    const commit = vi.spyOn(FlipTracker.prototype, 'commit')
+    const cuts = (): number => commit.mock.calls.filter(([, , animate]) => !animate).length
     await push(stateOf({ bookmarkRowDisplay: 'visual' }))
     expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:mark', 'tile:mark'])
+    expect(commit.mock.calls.length).toBeGreaterThan(0)
+    expect(cuts()).toBe(1)
+    commit.mockClear()
+    await push(stateOf({ bookmarkRowDisplay: 'visual', bookmarkRowSortOrder: 'a-z' }))
+    expect(titles()).toEqual(['arts', 'Work', 'apple', 'Mango', 'Zebra'])
+    expect(commit.mock.calls.length).toBeGreaterThan(0)
+    expect(cuts()).toBe(0)
+    commit.mockClear()
+    await push(stateOf({ bookmarkRowDisplay: 'compact', bookmarkRowSortOrder: 'a-z' }))
+    expect(leads()).toEqual(['lead', 'lead', 'lead', 'lead', 'lead'])
+    expect(rows().some((r) => r.hasAttribute('data-picture'))).toBe(false)
+    expect(cuts()).toBe(1)
   })
 
   it('while rows are picked the checkbox leads and the tile stays beside it, never under it (9.6)', async () => {

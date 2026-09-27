@@ -117,7 +117,7 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
         if (!openSortView("A")) return
         val rows = textsOf(SHEET_ITEM)
         finding("  rows as found (${rows.size}): $rows")
-        check("A: the sheet is titled 'Sort and view options' (Chrome's `sort_and_view_options`)", textOf(SHEET_TITLE) == MENU_TITLE, "title '${textOf(SHEET_TITLE)}'")
+        check("A: the sheet is titled 'Sort and view options' (Chrome's `normal_options_submenu`, `IDS_SORT_SUBMENU`)", textOf(SHEET_TITLE) == MENU_TITLE, "title '${textOf(SHEET_TITLE)}'")
         check("A: eight radio rows in Title Case – the six orders, then Visual View · Compact View", rows == ORDER_ROWS + VIEW_ROWS, "rows $rows")
         check("A: every row is a menuitemradio", jsNumber("document.querySelectorAll('$SHEET_ITEM[role=\"menuitemradio\"]').length").toInt() == rows.size, "radios ${jsNumber("document.querySelectorAll('$SHEET_ITEM[role=\"menuitemradio\"]').length")}")
         val checked = checkedRows()

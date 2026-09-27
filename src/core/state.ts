@@ -876,7 +876,8 @@ export class BrowserState {
       this.settings.energySaver = DEFAULT_SETTINGS.energySaver
     }
     // The phone's bookmark rows (HB-13): a profile from before the keys, or a value that is
-    // none of Chrome's, reads Chrome's defaults (manual order, the visual row).
+    // none of Chrome's, reads the defaults – manual order, and the compact row (Chrome's default
+    // is Visual; Compact is the lead's stated deviation, `shared/bookmarkRows.ts`).
     this.settings.bookmarkRowSortOrder = sanitizeBookmarkRowSortOrder(
       data.settings?.bookmarkRowSortOrder
     )

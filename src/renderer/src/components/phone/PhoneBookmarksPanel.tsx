@@ -425,7 +425,11 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
       <div
         ref={(el) => {
           listRef.current = el
-          return attachList(el)
+          const detach = attachList(el)
+          return () => {
+            listRef.current = null
+            if (typeof detach === 'function') detach()
+          }
         }}
         className="zen-phone-list min-h-0 flex-1 overflow-y-auto pb-2"
         data-display={display}
