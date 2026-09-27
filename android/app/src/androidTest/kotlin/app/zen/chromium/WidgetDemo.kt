@@ -1544,7 +1544,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         gameTabJs(GAME_BOT_JS)
         var word = JSONObject()
         val reached = awaitTrue(150_000) {
-            word = runCatching { JSONObject(gameTabJs("JSON.stringify(window.__zenBot||{})") ?: "{}") }.getOrDefault(JSONObject())
+            // The object itself: `evaluateJavascript` hands an object back as its JSON literal, a
+            // string back JSON-quoted (`"{\"a\":1}"`), which is not an object for [JSONObject] –
+            // the first run's stringified word fell to `{}` every poll and `done` was never read.
+            word = runCatching { JSONObject(gameTabJs("window.__zenBot||{}") ?: "{}") }.getOrDefault(JSONObject())
             word.optBoolean("done")
         }
         finding("Roll's auto-player: $word")
@@ -1555,7 +1558,13 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         shot("21-game-night")
     }
 
-    /** The overview's grid with Roll's tab in it: its card's favicon slot wears the picture. */
+    /**
+     * The overview's grid with Roll's tab in it: its card's favicon slot wears the picture. The grid
+     * is waited for ON SCREEN the way the overview drivers wait ([FirstTapDemo], [ThumbsDemo]: the
+     * header's Spaces button in the tree, then the emulator's seconds for its software GPU to paint
+     * and settle the grid) – the first run shot 1.5 s after the tap, when the store already said
+     * open and the chrome already held the card's glyph, and the still showed the page.
+     */
     private fun theGlyphInTheOverview() {
         val tabs = tabsButton(6_000)
         val point = tabs?.let { touchPoint(it) }
@@ -1563,8 +1572,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         point ?: return
         Finger().tap(point.x, point.y)
         val open = awaitTrue(8_000) { overviewOpen() }
-        expect("the Tabs button opens the overview", open)
-        SystemClock.sleep(1_500)
+        expect("the Tabs button opens the overview (the stage store's phase leaves `closed`)", open)
+        val onScreen = waitFor("Spaces", 8_000) != null
+        expect("the overview's grid is on screen (the header's Spaces button in the tree)", onScreen)
+        SystemClock.sleep(3_500)
         val glyphs = chromeJs(ROLL_GLYPHS_JS).toIntOrNull() ?: -1
         expect("the overview draws Roll's picture in the game tab's card ($glyphs `lucide-roll` glyphs in the chrome)", glyphs > 0)
         shot("22-game-glyph-overview")
@@ -1574,8 +1585,9 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         SystemClock.sleep(600)
     }
 
+    /** The stage store's overview phase is not `closed`; false with no store to ask, never a hollow yes. */
     private fun overviewOpen(): Boolean =
-        chromeJs("((((window.__zenStores||{}).stage||{get:function(){return {}}}).get()||{}).overview||{}).phase!=='closed'") == "true"
+        chromeJs("(function(){var s=(window.__zenStores||{}).stage;if(!s||!s.get)return false;var o=(s.get()||{}).overview;return !!o&&o.phase!=='closed'})()") == "true"
 
     /** Roll's region on screen: the tree's node by its label, else the document's canvas box under the shown tab's view. */
     private fun gameStageBounds(): Rect? {
