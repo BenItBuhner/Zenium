@@ -133,8 +133,10 @@ class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
     fun apply(frame: HistoryNavBubbleFrame?) {
         disc.apply(frame)
         if (tap.take(frame?.armed)) {
-            Log.d(TAG, "history threshold: KEYBOARD_TAP (${frame?.edge})")
-            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            // The platform's answer is logged with the pin: false when the view is detached or
+            // view-level haptics are off, so a device that never buzzes reads as such in the run.
+            val performed = performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            Log.d(TAG, "history threshold: KEYBOARD_TAP (${frame?.edge}) performed=$performed")
         }
         if (frame == null) {
             visibility = GONE
@@ -335,9 +337,10 @@ class HistoryNavBubbleView(context: Context) : View(context) {
     private val pill = RectF()
     private var edge = HistoryNavClassifier.Edge.LEFT
     private var sizePx = 0
-    /** The caption as last drawn: its text, its measured advance beyond the disc, and how far out it is. */
+    /** The caption as last drawn: its text, its geometry (measured once per text, not per frame), and how far out it is. */
     private var captionText: String? = null
     private var captionAdvance = 0f
+    private var captionTextX = 0f
     private var caption = 0f
     /** An opacity fade under reduced motion is running on the view's animator. */
     private var fading = false
@@ -417,9 +420,10 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         }
         if (frame.captionText != captionText || relayout) {
             captionText = frame.captionText
-            captionAdvance = captionText?.let {
-                captionGeometry(sizePx, text.measureText(it), density).advance
-            } ?: 0f
+            // The text is measured here, once per text (and per disc size), not on each drawn frame.
+            val geometry = captionText?.let { captionGeometry(sizePx, text.measureText(it), density) }
+            captionAdvance = geometry?.advance ?: 0f
+            captionTextX = geometry?.textX ?: 0f
             relayout = true
         }
         if (relayout) {
@@ -544,12 +548,11 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         canvas.drawPath(glyph, ink)
         val caption = captionText
         if (caption != null && this.caption > 0f) {
-            val geometry = captionGeometry(sizePx, text.measureText(caption), density)
             // Revealed as the pill opens over it: nothing of it past the pill's end padding.
             canvas.save()
             canvas.clipRect(0f, 0f, pillWidth - CAPTION_END_DP * density, height.toFloat())
             val baseline = height / 2f - (text.ascent() + text.descent()) / 2f
-            canvas.drawText(caption, geometry.textX, baseline, text)
+            canvas.drawText(caption, captionTextX, baseline, text)
             canvas.restore()
         }
     }

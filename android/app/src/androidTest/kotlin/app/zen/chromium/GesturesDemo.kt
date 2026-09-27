@@ -414,6 +414,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("the pill runs out beyond the disc (${"%.0f".format(caption.pillWidthPx)} px against the ${"%.0f".format(BUBBLE_SIZE_DP * density)} px disc)", caption.pillWidthPx > BUBBLE_SIZE_DP * density * 1.5f)
         val tapsHeld = thresholdTaps()
         claim("the threshold tapped once (KEYBOARD_TAP lines in the logcat: $tapsBefore -> $tapsHeld)", tapsHeld - tapsBefore == 1)
+        finding("(the tap as the layer logged it, the platform's answer with it: ${lastThresholdTap()})")
         // G3 on the pill: one ink per pill – the caption's text is the arrow's colour, both at the
         // accent with the finger held past the threshold; the pill's fill and hairline are not.
         val tint = nativeTint()
@@ -670,6 +671,12 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
      */
     private fun thresholdTaps(): Int =
         shellCommand("logcat -d -s ZenPull:D").lineSequence().count { it.contains("history threshold: KEYBOARD_TAP") }
+
+    /** The layer's last tap line, the platform's answer to the pin in it (`performed=false`: detached, or view-level haptics off). */
+    private fun lastThresholdTap(): String =
+        shellCommand("logcat -d -s ZenPull:D").lineSequence()
+            .lastOrNull { it.contains("history threshold: KEYBOARD_TAP") }
+            ?.substringAfter("): ")?.trim() ?: "none"
 
     /** The last few `ZenPull` history lines (`history start / release / not started …`), for a failed drag's finding. */
     private fun pullLog(): String =

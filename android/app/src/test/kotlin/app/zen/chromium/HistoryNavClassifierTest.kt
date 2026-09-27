@@ -11,6 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class HistoryNavClassifierTest {
     private val slop = 8f
@@ -460,5 +461,25 @@ class HistoryNavClassifierTest {
         assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_DEEP_PRESS))
         assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_PINCH))
         assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, 4))
+    }
+
+    /**
+     * The back drag's eligibility, held in the source between nightlies (the device pin is
+     * `GesturesDemo.edgeDragCloseTab`): `TabWebView.historyNavEligible` answers a LEFT-edge drag
+     * true whatever the history – Chrome's `NavigationHandler.isNavigationEnabled(forward)` is
+     * `!forward || canGoForward()` (152.0.7977.89, l.388–392), the back with no page to go to
+     * closing the tab or leaving at the release (`lib/back.ts` `dragBack`) – while a RIGHT-edge
+     * drag still asks for a forward entry. The `when` is read from the file, the repo's idiom for
+     * a WebView branch no JVM test can reach (`TabWebView` needs the platform).
+     */
+    @Test
+    fun theBackDragIsEligibleAtTheHistorysFirstPage() {
+        val sources = listOf("src/main/kotlin/app/zen/chromium", "app/src/main/kotlin/app/zen/chromium").map(::File).first { it.isDirectory }
+        val eligible = File(sources, "TabWebView.kt").readText()
+            .substringAfter("fun historyNavEligible(")
+            .substringBefore("\n    }\n")
+        assertTrue("a back drag is eligible whatever the history", "HistoryNavClassifier.Edge.LEFT -> true" in eligible)
+        assertTrue("a forward drag still needs a forward entry", "HistoryNavClassifier.Edge.RIGHT -> canGoForward()" in eligible)
+        assertFalse("the history's depth is no part of the back drag's answer", "canGoBack()" in eligible)
     }
 }
