@@ -48,8 +48,8 @@ class AuthTabVerifier(
     }
 
     /** True when the navigation is the caller's redirect: it is not loaded, the caller gets it. */
-    override fun claim(url: String): Boolean {
-        val match = AuthTab.match(redirect, url) ?: return false
+    override fun claim(url: String, mainFrame: Boolean): Boolean {
+        val match = AuthTab.claimed(redirect, url, mainFrame) ?: return false
         if (answered) return true
         when (match) {
             AuthTab.Match.SCHEME -> answer(match, url)
@@ -69,8 +69,6 @@ class AuthTabVerifier(
         destroyed = true
         main.removeCallbacks(timeout)
     }
-
-    val isVerified: Boolean get() = verification == AuthTab.Verification.VERIFIED
 
     private fun answer(match: AuthTab.Match, url: String) {
         if (answered || destroyed) return
@@ -133,16 +131,30 @@ class AuthTabVerifier(
         }
     }
 
-    /** The SHA-256 fingerprints of the package's signing certificates, as the statement spells them. */
+    /**
+     * The SHA-256 fingerprints of the package's signing certificates, as the statement spells
+     * them, from the shape the device has (the repo's pattern, `Updates.signerSha256`): API 28's
+     * `signingInfo`, or before it – Android 8.0 / 8.1, minSdk 26 – the legacy `signatures`, the
+     * only field those levels carry ([AuthTab.SIGNING_INFO_SDK]).
+     */
     private fun signingFingerprints(pkg: String): List<String> {
-        val info = try {
-            context.packageManager.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
+        val pm = context.packageManager
+        val certificates = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val signing = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo
+                AuthTab.signerCertificates(
+                    multipleSigners = signing?.hasMultipleSigners() == true,
+                    apkContentsSigners = signing?.apkContentsSigners?.map { it.toByteArray() },
+                    certificateHistory = signing?.signingCertificateHistory?.map { it.toByteArray() }
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures?.map { it.toByteArray() }.orEmpty()
+            }
         } catch (e: PackageManager.NameNotFoundException) {
             return emptyList()
         }
-        val signing = info.signingInfo ?: return emptyList()
-        val signers = if (signing.hasMultipleSigners()) signing.apkContentsSigners else signing.signingCertificateHistory
-        return signers.orEmpty().map { AuthTab.fingerprintOf(it.toByteArray()) }
+        return AuthTab.fingerprintsOf(certificates)
     }
 
     companion object {

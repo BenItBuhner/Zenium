@@ -60,22 +60,22 @@ object AuthTab {
     /**
      * The redirect the intent's extras describe, or null when the intent is not an Auth Tab's
      * (`EXTRA_LAUNCH_AUTH_TAB` unset) or names no usable redirect. The custom scheme is kept as
-     * a scheme (letters, digits, `+-.`; never one of the browser's own); the host and path go
-     * through a URL parse as Chrome's do (`new GURL("https://" + host + path)`), lower-casing the
-     * host. A path without its leading slash gets one (Chrome folds it into the host, where it
-     * can never match).
+     * a scheme (letters, digits, `+-.`; never one of the browser's own). The host and path go
+     * through one URL parse exactly as Chrome's do – `new GURL("https://" + host + path)`, then
+     * its host (lower-cased, a trailing dot kept) and its path (`/` when empty) – so a path sent
+     * without its leading slash folds into the host as it does there: `example.com` + `cb` names
+     * the host `example.comcb` and the path `/`, and the caller's `https://example.com/cb` never
+     * matches, in Chrome or here. Both extras must be present for the https form (androidx's
+     * builder sends both); a host with userinfo, or one the parse refuses, names no https form.
      */
     fun redirect(launch: Boolean, scheme: String?, host: String?, path: String?): Redirect? {
         if (!launch) return null
         val customScheme = scheme?.trim()?.lowercase(Locale.ROOT)?.takeIf { isSchemeName(it) && it !in NEVER_A_REDIRECT_SCHEME }
         var httpsHost: String? = null
         var httpsPath: String? = null
-        val trimmedHost = host?.trim()
-        if (!trimmedHost.isNullOrEmpty()) {
-            val rawPath = path?.trim().orEmpty()
-            val slashed = if (rawPath.isEmpty()) "/" else if (rawPath.startsWith("/")) rawPath else "/$rawPath"
-            val parsed = runCatching { URI("https://$trimmedHost$slashed").normalize() }.getOrNull()
-            val parsedHost = parsed?.host?.lowercase(Locale.ROOT)?.removeSuffix(".")
+        if (!host.isNullOrEmpty() && path != null) {
+            val parsed = runCatching { URI("https://$host$path").normalize() }.getOrNull()
+            val parsedHost = parsed?.host?.lowercase(Locale.ROOT)
             if (parsed != null && !parsedHost.isNullOrEmpty() && parsed.userInfo == null) {
                 httpsHost = parsedHost
                 httpsPath = parsed.rawPath.ifEmpty { "/" }
@@ -86,14 +86,25 @@ object AuthTab {
     }
 
     /**
-     * Whether a main-frame navigation to [url] is the caller's redirect, so it is handed back
-     * instead of loaded (Chrome's `AuthTabVerifier.isCustomScheme` / `isRedirectUrl`): the custom
-     * scheme equal; or `https`, the host equal (the authority's real host, so the userinfo trick
-     * `https://host@evil/` reads as evil's page) and the path exactly equal – not a prefix, as
-     * Chrome compares it – with any query and fragment. Null when it is not the redirect; else
-     * which form matched. The authority and path are cut out by hand rather than through
-     * `java.net.URI`, which refuses characters a canonical URL's query may carry (`|`, `{`, `[`
-     * – an identity provider's `state`), and a refused parse would load the redirect as a page.
+     * The intercept's decision for one navigation, the whole of it ([Return.claim]): a subframe's
+     * navigation is never the redirect, whatever its URL – it takes its own path, as any
+     * subframe's does (Chrome may return a gestured subframe's custom-scheme navigation; Zenium is
+     * tighter and takes the main frame alone) – and a main frame's is [match]. Null when the
+     * navigation is not the redirect.
+     */
+    fun claimed(redirect: Redirect, url: String, mainFrame: Boolean): Match? =
+        if (mainFrame) match(redirect, url) else null
+
+    /**
+     * Whether a navigation to [url] is the caller's redirect, so it is handed back instead of
+     * loaded (Chrome's `AuthTabVerifier.isCustomScheme` / `isRedirectUrl`): the custom scheme
+     * equal; or `https`, the host equal (the authority's real host, so the userinfo trick
+     * `https://host@evil/` reads as evil's page; a trailing dot counts, as GURL keeps it) and the
+     * path exactly equal – not a prefix, as Chrome compares it – with any query and fragment.
+     * Null when it is not the redirect; else which form matched. The authority and path are cut
+     * out by hand rather than through `java.net.URI`, which refuses characters a canonical URL's
+     * query may carry (`|`, `{`, `[` – an identity provider's `state`), and a refused parse would
+     * load the redirect as a page.
      */
     fun match(redirect: Redirect, url: String): Match? {
         val colon = url.indexOf(':')
@@ -107,7 +118,7 @@ object AuthTab {
         // The real host: past any userinfo, before the port.
         val hostPort = rest.substring(0, authorityEnd).substringAfterLast('@')
         val host = (if (hostPort.startsWith("[")) hostPort.substringBefore(']') + "]" else hostPort.substringBefore(':'))
-            .lowercase(Locale.ROOT).removeSuffix(".")
+            .lowercase(Locale.ROOT)
         if (host.isEmpty() || host != redirect.host) return null
         val rawPath = rest.substring(authorityEnd).takeWhile { it != '?' && it != '#' }.ifEmpty { "/" }
         return if (foldPath(rawPath) == redirect.path) Match.HTTPS else null
@@ -170,6 +181,27 @@ object AuthTab {
         return digest.joinToString(":") { "%02X".format(it) }
     }
 
+    /**
+     * `Build.VERSION_CODES.P`: from API 28 Android reports a package's signers through
+     * `PackageInfo.signingInfo`; Android 8.0 / 8.1 – this app's minSdk is 26 – have only the
+     * legacy `signatures`, and reading the newer field there is a `NoSuchFieldError` that would
+     * fail every https verification. [AuthTabVerifier] reads the shape the device has.
+     */
+    const val SIGNING_INFO_SDK = 28
+
+    /**
+     * The certificates a statement may name, out of API 28's `SigningInfo` handed over as plain
+     * lists: every signer of the APK's contents when it has several, else the one signer's
+     * lineage (`signingCertificateHistory`: a rotated key's earlier certificate still grants) –
+     * the recipe `SigningInfo` documents and Android's own app-links verifier follows. Nothing
+     * from nothing.
+     */
+    fun signerCertificates(multipleSigners: Boolean, apkContentsSigners: List<ByteArray>?, certificateHistory: List<ByteArray>?): List<ByteArray> =
+        (if (multipleSigners) apkContentsSigners else certificateHistory).orEmpty()
+
+    /** The fingerprints of [certificates], as the statement spells them – from either shape's list. */
+    fun fingerprintsOf(certificates: List<ByteArray>): List<String> = certificates.map(::fingerprintOf)
+
     /** Where the caller's statements live: `https://<host>/.well-known/assetlinks.json`. */
     fun assetLinksUrl(host: String): String = "https://$host/.well-known/assetlinks.json"
 
@@ -183,6 +215,7 @@ object AuthTab {
      * thing ([PageHost.authTab]), one null read per navigation.
      */
     fun interface Return {
-        fun claim(url: String): Boolean
+        /** True when the navigation is the caller's redirect ([claimed]: the main frame's alone): it must not load. */
+        fun claim(url: String, mainFrame: Boolean): Boolean
     }
 }

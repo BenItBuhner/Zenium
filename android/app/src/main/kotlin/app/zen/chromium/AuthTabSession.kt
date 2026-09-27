@@ -17,12 +17,14 @@ import androidx.core.content.IntentCompat
  *
  * On the wire by hand: the 1.9.0 library that generates these two AIDL transactions asks for
  * compileSdk 36 and AGP 8.9.1, which this build does not have, so the provider speaks them
- * itself. The layouts are the library's binary contract – AIDL numbers a method by its place in
- * the declaration and only appends – as fixed as the extras' strings: the service's
- * `newAuthTabSession(IAuthTabCallback, Bundle)` is [TRANSACTION_NEW_AUTH_TAB_SESSION] (the
- * callback binder, then a typed bundle: a 1 and the bundle, or a 0; the reply a no-exception
- * header and a boolean int), and the callback's `onNavigationEvent(int, Bundle)` is
- * [TRANSACTION_ON_NAVIGATION_EVENT], one-way (the event, then the typed bundle).
+ * itself. The layouts are the library's binary contract, as fixed as the extras' strings: the
+ * browser library's AIDL pins every transaction id explicitly (`ICustomTabsService`'s run 2…16,
+ * then 18 – 17 is a gap, not a slot to close), so a later release can only add ids, never move
+ * these. The service's `newAuthTabSession(IAuthTabCallback, Bundle)` is
+ * [TRANSACTION_NEW_AUTH_TAB_SESSION] (the callback binder, then a typed bundle: a 1 and the
+ * bundle, or a 0; the reply a no-exception header and a boolean int), and the callback's
+ * `onNavigationEvent(int, Bundle)` is [TRANSACTION_ON_NAVIGATION_EVENT], one-way (the event,
+ * then the typed bundle). `AuthTabTest` pins both numbers against the compiled 1.9.0 stubs.
  */
 class AuthTabSession(val callback: IBinder?, val id: PendingIntent?) {
     /** `AuthTabCallback.onNavigationEvent`: the same `CustomTabsCallback.NAVIGATION_*` codes a custom tab's session hears. */

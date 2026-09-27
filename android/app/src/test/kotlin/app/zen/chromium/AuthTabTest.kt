@@ -2,11 +2,18 @@ package app.zen.chromium
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
-/** The Auth Tab's pure decisions (CCT-13), against Chrome's `AuthTabIntentDataProvider` / `AuthTabVerifier`. */
+/**
+ * The Auth Tab's pure decisions (CCT-13), against Chrome's `AuthTabIntentDataProvider` /
+ * `AuthTabVerifier`; and, read off the repository as text, the two device-side lines the JVM
+ * cannot run – the verifier's SDK_INT guard on the signers' shape and the intercept's frame flag
+ * (declared as this task's inputs in `build.gradle.kts`, `testOptions.unitTests.all`).
+ */
 class AuthTabTest {
     // --- the intent reader ---------------------------------------------------------------------------
 
@@ -44,19 +51,41 @@ class AuthTabTest {
     }
 
     @Test
-    fun anHttpsRedirectWithoutAPathIsTheRoot() {
+    fun anHttpsRedirectWithAnEmptyPathIsTheRoot() {
         // Chrome's GURL("https://" + host + path) gives "/" for an empty path.
-        val redirect = AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = null)!!
-        assertEquals("/", redirect.path)
-        // A path sent without its slash still names the path, not a longer host.
-        assertEquals("/cb", AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = "cb")!!.path)
-        assertEquals("example.com", AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = "cb")!!.host)
+        assertEquals("/", AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = "")!!.path)
+        // Without the path extra there is no https form (androidx's builder always sends both;
+        // Chrome's concatenation of a null makes a host nothing navigates to).
+        assertNull(AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = null))
+    }
+
+    @Test
+    fun aPathWithoutItsSlashFoldsIntoTheHostAsChromesDoes() {
+        // Chrome: new GURL("https://" + "example.com" + "cb") – the host is example.comcb, the path
+        // "/". The caller's https://example.com/cb never matches, there or here; what does match is
+        // exactly what matches in Chrome.
+        val folded = AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = "cb")!!
+        assertEquals("example.comcb", folded.host)
+        assertEquals("/", folded.path)
+        assertNull(AuthTab.match(folded, "https://example.com/cb"))
+        assertNull(AuthTab.match(folded, "https://example.com/cb?code=1"))
+        assertEquals(AuthTab.Match.HTTPS, AuthTab.match(folded, "https://example.comcb/?code=1"))
+    }
+
+    @Test
+    fun theHostIsTakenAsChromesGurlTakesIt() {
+        // A trailing dot is kept (GURL keeps it), so the dotted and the undotted name are two hosts.
+        assertEquals("login.example.com.", AuthTab.redirect(launch = true, scheme = null, host = "login.example.com.", path = "/cb")!!.host)
+        // What the parse refuses names no https form (Chrome's GURL is invalid there, its host empty).
+        assertNull(AuthTab.redirect(launch = true, scheme = null, host = " example.com", path = "/cb"))
+        assertNull(AuthTab.redirect(launch = true, scheme = null, host = "example.com", path = " /cb"))
     }
 
     @Test
     fun aHostThatSmugglesUserinfoOrNothingIsRefused() {
         assertNull(AuthTab.redirect(launch = true, scheme = null, host = "good@evil.com", path = "/cb"))
         assertNull(AuthTab.redirect(launch = true, scheme = null, host = "  ", path = "/cb"))
+        assertNull(AuthTab.redirect(launch = true, scheme = null, host = "", path = "/cb"))
         // A custom scheme beside a broken host still stands on its own.
         val redirect = AuthTab.redirect(launch = true, scheme = "myapp", host = "not a host", path = "/cb")!!
         assertEquals("myapp", redirect.scheme)
@@ -109,6 +138,23 @@ class AuthTabTest {
         assertNull(AuthTab.match(https, "https://xn--login.example.com/oauth/callback"))
         assertNull(AuthTab.match(https, "http://login.example.com/oauth/callback"))
         assertNull(AuthTab.match(https, "zeniumtest://login.example.com/oauth/callback"))
+        // The dotted name is another host, as Chrome's GURL has it (the dot is kept, the compare exact).
+        assertNull(AuthTab.match(https, "https://login.example.com./oauth/callback"))
+    }
+
+    @Test
+    fun aSubframesNavigationIsNeverTheRedirect() {
+        // The intercept's whole decision: a subframe navigating to the redirect – either form – is
+        // not claimed, so the tab neither finishes nor answers the caller; the main frame's is.
+        assertNull(AuthTab.claimed(scheme, "zeniumtest://done?code=1", mainFrame = false))
+        assertNull(AuthTab.claimed(https, "https://login.example.com/oauth/callback?code=1", mainFrame = false))
+        assertEquals(AuthTab.Match.SCHEME, AuthTab.claimed(scheme, "zeniumtest://done?code=1", mainFrame = true))
+        assertEquals(AuthTab.Match.HTTPS, AuthTab.claimed(https, "https://login.example.com/oauth/callback?code=1", mainFrame = true))
+        assertNull(AuthTab.claimed(https, "https://login.example.com/other", mainFrame = true))
+        // The host hands the frame with the URL: the one call site passes WebView's own flag.
+        val tabWebView = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/TabWebView.kt").readText()
+        assertTrue(tabWebView.contains("auth.claim(url.toString(), request.isForMainFrame)"))
+        assertEquals(1, Regex("""\.claim\(url""").findAll(tabWebView).count())
     }
 
     @Test
@@ -196,5 +242,67 @@ class AuthTabTest {
             AuthTab.fingerprintOf(ByteArray(0))
         )
         assertEquals("https://login.example.com/.well-known/assetlinks.json", AuthTab.assetLinksUrl("login.example.com"))
+    }
+
+    // --- the caller's signers, from the shape the device has ---------------------------------------------
+
+    private val certA = byteArrayOf(1, 2, 3)
+    private val certB = byteArrayOf(4, 5, 6)
+    private val certOld = byteArrayOf(7, 8, 9)
+
+    @Test
+    fun theSigningCertificatesComeFromEitherShape() {
+        // API 28's SigningInfo: several signers → the APK's contents' signers; one → its lineage,
+        // the rotated key's earlier certificate included.
+        assertEquals(listOf(certA, certB), AuthTab.signerCertificates(multipleSigners = true, apkContentsSigners = listOf(certA, certB), certificateHistory = listOf(certA)))
+        assertEquals(listOf(certOld, certA), AuthTab.signerCertificates(multipleSigners = false, apkContentsSigners = listOf(certA), certificateHistory = listOf(certOld, certA)))
+        assertEquals(emptyList<ByteArray>(), AuthTab.signerCertificates(multipleSigners = false, apkContentsSigners = null, certificateHistory = null))
+        assertEquals(emptyList<ByteArray>(), AuthTab.signerCertificates(multipleSigners = true, apkContentsSigners = null, certificateHistory = listOf(certA)))
+        // The fingerprints of either shape's list – the legacy `signatures` hand their list straight in.
+        val fingerprints = AuthTab.fingerprintsOf(listOf(ByteArray(0), certA))
+        assertEquals(listOf(AuthTab.fingerprintOf(ByteArray(0)), AuthTab.fingerprintOf(certA)), fingerprints)
+        assertTrue(fingerprints[0].startsWith("E3:B0:C4:42"))
+        assertEquals(emptyList<String>(), AuthTab.fingerprintsOf(emptyList()))
+    }
+
+    @Test
+    fun theDeviceReadsSigningInfoFromApi28OnlyAndTheLegacySignaturesBefore() {
+        // Build.VERSION_CODES.P: the field `signingInfo` exists from there; minSdk is 26.
+        assertEquals(28, AuthTab.SIGNING_INFO_SDK)
+        // The verifier's branch (the repo's pattern, Updates.signerSha256): the API 28 read under
+        // the SDK_INT guard, the legacy GET_SIGNATURES read in its else – unguarded, the https form
+        // answered RESULT_VERIFICATION_FAILED on every Android 8.0 / 8.1 device (a NoSuchFieldError
+        // swallowed into the verdict).
+        val verifier = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/AuthTabVerifier.kt").readText()
+        val guarded = Regex(
+            """if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.P\) \{([\s\S]*?)\} else \{([\s\S]*?)\n\s*\}"""
+        ).find(verifier)
+        assertNotNull("the signers are read under an SDK_INT guard", guarded)
+        val (modern, legacy) = guarded!!.destructured
+        assertTrue(modern.contains("GET_SIGNING_CERTIFICATES") && modern.contains(".signingInfo"))
+        assertTrue(legacy.contains("GET_SIGNATURES") && legacy.contains(".signatures"))
+        assertFalse("no read of signingInfo outside the guard", verifier.replace(modern, "").contains(".signingInfo"))
+        assertEquals("one guard, one read", 1, Regex("""\.signingInfo\b""").findAll(verifier).count())
+    }
+
+    // --- the session's wire numbers ---------------------------------------------------------------------
+
+    @Test
+    fun theAidlTransactionIdsAreTheCompiledLibrarys() {
+        // androidx.browser 1.9.0's stubs, read with javap: ICustomTabsService.Stub.TRANSACTION_newAuthTabSession
+        // = 18 (the ids are pinned in the AIDL – 17 is a gap), IAuthTabCallback.Stub.TRANSACTION_onNavigationEvent = 2.
+        assertEquals(18, AuthTabSession.TRANSACTION_NEW_AUTH_TAB_SESSION)
+        assertEquals(2, AuthTabSession.TRANSACTION_ON_NAVIGATION_EVENT)
+        assertEquals("android.support.customtabs.ICustomTabsService", AuthTabSession.SERVICE_DESCRIPTOR)
+        assertEquals("android.support.customtabs.IAuthTabCallback", AuthTabSession.CALLBACK_DESCRIPTOR)
+    }
+
+    private fun repoRoot(): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            if (File(dir, "package.json").isFile && File(dir, "android").isDirectory) return dir
+            dir = dir.parentFile
+        }
+        error("not inside the repository")
     }
 }

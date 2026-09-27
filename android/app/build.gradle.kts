@@ -222,7 +222,7 @@ android {
             // WebAppDisclosureTest, ScreenClassTest, LockVeilTest, PrivateBrowsingTest, BackupRulesTest,
             // LocalDocumentsTest, ExternalProtocolsTest, StartupSplashTest, WebAppSplashTest,
             // PageDialogsTest, PrivateLockTest, NotificationsTest, SyncPeerTest, IndexDifferentialTest,
-            // BlockingTest, SearchWidgetFaceTest) read these off the repository as TEXT – the core's and the chrome's
+            // BlockingTest, SearchWidgetFaceTest, AuthTabTest) read these off the repository as TEXT – the core's and the chrome's
             // TypeScript, the sync core's fixture, the bundled filter lists, this module's Kotlin,
             // manifest and resources – none of which is on the task's classpath in a form that changes
             // with them (a KDoc, a manifest attribute, a resource value). Undeclared, a change to one of
