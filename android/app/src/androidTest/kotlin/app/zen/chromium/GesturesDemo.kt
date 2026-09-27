@@ -321,6 +321,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         f.up()
         val navigated = awaitTrue(8_000) { activeUrl() == url("second") }
         claim("the release past the threshold went back to the second stop (now at ${activeUrl()})", navigated)
+        // A refused drag names its cause at the lift (`history not started: …`), the drag's only trace.
+        if (!navigated) finding("(the drag's ZenPull lines: ${pullLog()})")
         claim("the bubble left after the navigation", awaitTrue(4_000) { bubblePhase() == "" })
         awaitLoaded(url("second"))
         settle()
@@ -401,6 +403,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         f.up()
         val closed = awaitTrue(8_000) { activeCoreTab()?.optString("id") == TAB }
         claim("the release closed the tab back to its opener (active ${activeCoreTab()?.optString("id")}, at ${activeUrl()})", closed && activeUrl() == opener)
+        if (!closed) finding("(the drag's ZenPull lines: ${pullLog()})")
         claim("the child tab is gone", coreState().getJSONObject("tabs").optJSONObject(childId) == null)
         claim("the bubble left with the tab", awaitTrue(4_000) { bubblePhase() == "" })
         claim("no further tap came with the release (taps ${thresholdTaps()})", thresholdTaps() - tapsBefore == 1)
@@ -644,6 +647,13 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
      */
     private fun thresholdTaps(): Int =
         shellCommand("logcat -d -s ZenPull:D").lineSequence().count { it.contains("history threshold: KEYBOARD_TAP") }
+
+    /** The last few `ZenPull` history lines (`history start / release / not started …`), for a failed drag's finding. */
+    private fun pullLog(): String =
+        shellCommand("logcat -d -s ZenPull:D").lineSequence()
+            .filter { it.contains("history ") }
+            .map { it.substringAfter("): ").trim() }
+            .toList().takeLast(4).joinToString(" | ").ifEmpty { "none" }
 
     /**
      * What the host's disc (HistoryNavBubbleView) shows: up at all (its layer up with it), how far
