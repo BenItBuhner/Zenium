@@ -128,16 +128,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * UI an action click drew into the page that accessibility reads and no selector finds
-     * (`accountGate`'s watch, round 15): the labels new to the page's tree since the click.
+     * (`accountGate`'s watch, round 15): the labels new to the page's tree since the click –
+     * or, `own`, the labels in the tree carrying the extension's own words whether its content
+     * script drew them before the click or after it (Magical's toggle, round 21 – R22-8).
      */
-    private class InjectedSeen(var labels: List<String>)
+    private class InjectedSeen(var labels: List<String>, val own: Boolean = false)
 
     /** The labels [now] shows that [base] did not (both `seenInView` readings). */
     private fun newLabels(base: JSONObject, now: JSONObject): List<String> {
-        fun labels(seen: JSONObject) = seen.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
-        val had = labels(base).toSet()
-        return labels(now).filter { it !in had }
+        val had = labelsOf(base).toSet()
+        return labelsOf(now).filter { it !in had }
     }
+
+    /** The labels of a [seenInView] reading. */
+    private fun labelsOf(seen: JSONObject): List<String> = seen.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
 
     /** One row of the table: the store id, the name, a slug for the screenshots, the store when not the Chrome Web Store, and the core check. */
     private inner class Row(
@@ -2072,9 +2076,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * with text on the page, `F` blank. A row whose click
      * does nothing and whose page shows nothing is `F`, with the bridge trace. The click lands
      * on the fixture tab, or on `site` (Klarna enables its action per tab on its merchant hosts
-     * alone, so its click is read on one of them, as the desktop's round 6 read it).
+     * alone, so its click is read on one of them, as the desktop's round 6 read it). A row whose
+     * content script draws its UI into the page BEFORE the click (Magical's "Toggle Magical"
+     * control, round 21: 32 nodes with it before, 33 after – the delta read empty and the row
+     * F, R22-8) names its own words in `ownLabels`: labels in the tree carrying them are its UI
+     * irrespective of the click, read after the delta and the selector found nothing.
      */
-    private fun accountGate(label: String, opens: Regex, page: String? = null, injects: String? = null, gate: String = "an account", gateLog: Regex? = null, site: String? = null): (Row, JSONObject) -> Grade = gate@{ row, entry ->
+    private fun accountGate(label: String, opens: Regex, page: String? = null, injects: String? = null, gate: String = "an account", gateLog: Regex? = null, site: String? = null, ownLabels: Regex? = null): (Row, JSONObject) -> Grade = gate@{ row, entry ->
         val popup = entry.optJSONObject("popup")?.optString("verdict")
         val opened = entry.optJSONArray("popupOpened")
         val extra = JSONObject()
@@ -2128,6 +2136,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         }
                         ?: injects?.let { selector -> json(tabEval(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(selector)))).takeIf { it.optBoolean("pass") } }
                         ?: seenBefore?.let { base -> newLabels(base, seenInView(view)).takeIf { it.size >= 2 }?.let { InjectedSeen(it) } }
+                        // The extension's own words in the tree, drawn before the click or after it
+                        // (R22-8): its UI whichever way the delta reads.
+                        ?: ownLabels?.let { own -> labelsOf(seenInView(view)).filter { own.containsMatchIn(it) }.takeIf { it.isNotEmpty() }?.let { InjectedSeen(it, own = true) } }
                         // A new tab the click opened whose site took it elsewhere before a poll read
                         // it (Vimeo Record on WebView 156, round 15: its `tabs.create` of
                         // vimeo.com/record/start-recording, which the site sends a phone's UA on to
@@ -2152,11 +2163,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 val popupHit = hit as? PopupHit
                 val panelHit = hit as? PanelHit
                 if (injectedSeen != null) {
-                    // The tree settled: every label new since the baseline, and the node counts.
+                    // The tree settled: every label new since the baseline (or, `own`, every label
+                    // carrying the extension's words), and the node counts.
                     SystemClock.sleep(scaled(2_000, factor))
                     val seen = seenInView(view)
-                    injectedSeen.labels = newLabels(seenBefore!!, seen)
-                    extra.put("injectedSeen", JSONObject().put("labels", JSONArray(injectedSeen.labels)).put("nodesBefore", seenBefore.optInt("nodes")).put("nodesAfter", seen.optInt("nodes")))
+                    injectedSeen.labels = if (injectedSeen.own) labelsOf(seen).filter { ownLabels!!.containsMatchIn(it) } else newLabels(seenBefore!!, seen)
+                    extra.put("injectedSeen", JSONObject().put("labels", JSONArray(injectedSeen.labels)).put("own", injectedSeen.own).put("nodesBefore", seenBefore?.optInt("nodes") ?: JSONObject.NULL).put("nodesAfter", seen.optInt("nodes")))
                     snap("${entry.optString("slug")}-injected")
                 }
                 if (popupHit != null) {
@@ -2255,6 +2267,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     }
                     injected != null ->
                         Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need $gate (not measurable here)", extra)
+                    injectedSeen != null && injectedSeen.own ->
+                        Grade("n/m", "$label: its UI is in the page, read by accessibility (${injectedSeen.labels.size} label(s) carrying its own words: \"${injectedSeen.labels.joinToString(" / ").take(80)}\"; drawn by its content script before the click or after it, no element of it in the document – a closed shadow root); the tools need $gate (not measurable here)", extra)
                     injectedSeen != null ->
                         Grade("n/m", "$label: the action click drew its UI into the page, read by accessibility (${injectedSeen.labels.size} labels new to the tree: \"${injectedSeen.labels.joinToString(" ").take(80)}\"; no element of it in the document – a closed shadow root); the tools need $gate (not measurable here)", extra)
                     popupHit != null ->
@@ -7451,7 +7465,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dgjbaljgolmlcmmklmmeafecikidmjpi", "Adblock Ad Blocker Pro", "adblock-ad-blocker-pro", core = ::adBlocker),
         Row("jiihcciniecimeajcniapbngjjbonjan", "Vidyard - Screen Recorder & Screen Capture", "vidyard", core = accountGate("Vidyard", Regex("vidyard\\.com", RegexOption.IGNORE_CASE), gate = "a Vidyard account (its recorder signs in at auth.vidyard.com; its content scripts run on Gmail, LinkedIn, Salesforce, Eloqua and Gong) and a tab capture the WebView has not")),
         Row("ejjladinnckdgjemekebdpeokbikhfci", "Petra Aptos Wallet", "petra", core = domMarker("Petra's Aptos provider injected into the page world", "wallet.html?petra", PETRA_PROVIDER, settleMs = 30_000)),
-        Row("iibninhmiggehlcdolcilmhacighjamp", "Magical: Text Expander & Autofill", "magical", core = accountGate("Magical", Regex("getmagical\\.com", RegexOption.IGNORE_CASE), injects = "[id*=\"magical\" i], [class*=\"magical\" i], magical-root, magical-fab", gate = "a Magical account (its panel and templates sign in through getmagical.com)")),
+        Row("iibninhmiggehlcdolcilmhacighjamp", "Magical: Text Expander & Autofill", "magical", core = accountGate("Magical", Regex("getmagical\\.com", RegexOption.IGNORE_CASE), injects = "[id*=\"magical\" i], [class*=\"magical\" i], magical-root, magical-fab", gate = "a Magical account (its panel and templates sign in through getmagical.com)", ownLabels = Regex("magical", RegexOption.IGNORE_CASE))),
         Row("mjdbhokoopacimoekfgkcoogikbfgngb", "Trancy - AI Translator & Dual Subtitles", "trancy", core = accountGate("Trancy", Regex("trancy\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"trancy-\"], [id*=\"trancy\"]", gate = "a Trancy account (its AI translation and dual subtitles run through trancy.com)")),
         // --- compat round 22 (ranks 541-570 by installs; `.github/scripts/ext-compat/next30-round19.json`) ---
         // Each core rule read off the unpacked bundle: Control Panel for Twitter's popup
@@ -7811,10 +7825,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * steps `tabs.setZoom` up on the tab. The fixture opens and its layout width is read; the
      * action is clicked once (the popup set, recorded), the popup is opened and `#plus` tapped
      * twice; the page is polled for a narrower layout viewport (the phone's page zoom lays the
-     * page out from the viewport meta, `pageScript.ts`'s controller) and the worker is asked
-     * `tabs.getZoom` for the tab. `P` when the zoom read back is above 1 and the layout
-     * followed; `PARTIAL` when the value changed and the layout did not (or the reverse); `F`
-     * when the popup never came or nothing moved. The zoom is reset with `#minus` taps at the end.
+     * page out from the viewport meta, `pageScript.ts`'s controller), a changed body CSS zoom or
+     * a changed heading width (the extension's default `zoomweb` path sets
+     * `document.body.style.zoom` through `scripting.executeScript` and never touches
+     * `tabs.setZoom` – round 21 read its 120 % body as F, R22-5), and the worker is asked
+     * `tabs.getZoom` for the tab. `P` when the zoom read back (the tab's or the body's) is above
+     * 1 and the layout followed; `PARTIAL` when the value changed and the layout did not (or
+     * the reverse); `F` when the popup never came or nothing moved. The zoom is reset with
+     * `#minus` taps at the end.
      */
     private fun zoomPopup(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -7846,7 +7864,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
         }
         extra.put("taps", taps)
-        val after = pollExpr(view, ZOOM_LAYOUT.replace("pass:false", "pass:Math.abs(document.documentElement.clientWidth-${before.optInt("width", 0)})>4"), scaled(12_000, factor))
+        // The page laid out again when the layout viewport moved (the phone's page zoom), the
+        // body's computed CSS zoom changed or the heading's drawn width did (an extension zooming
+        // the body itself: Zoom for Google Chrome's `zoomweb` default sets `document.body.style.zoom`
+        // by `scripting.executeScript` and never calls `tabs.setZoom`, R22-5).
+        val beforeBodyZoom = before.optString("bodyZoom", "1")
+        val after = pollExpr(
+            view,
+            ZOOM_LAYOUT.replace(
+                "pass:false",
+                "pass:Math.abs(document.documentElement.clientWidth-${before.optInt("width", 0)})>4||bz!==${JSONObject.quote(beforeBodyZoom)}||Math.abs(hw-${before.optDouble("headingWidth", 0.0)})>4"
+            ),
+            scaled(12_000, factor)
+        )
         extra.put("after", after)
         val zoom = backgroundView(row.id)?.let { bg ->
             probe(bg, "(function(){window.__zenZoomProbe={done:false};try{chrome.tabs.query({active:true,currentWindow:true},function(tabs){var t=tabs&&tabs[0];if(!t){window.__zenZoomProbe={done:true,error:'no active tab'};return}chrome.tabs.getZoom(t.id,function(z){window.__zenZoomProbe={done:true,tabId:t.id,zoom:z,lastError:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})})}catch(e){window.__zenZoomProbe={done:true,error:String(e&&e.message||e)}}})()", "__zenZoomProbe", scaled(8_000, factor))
@@ -7865,12 +7895,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         runCatching { coreCall("extension.closePopup", "null") }
         val value = zoom.optDouble("zoom", 1.0)
+        val bodyZoom = after.optString("bodyZoom", "1").toDoubleOrNull() ?: 1.0
+        val bodyZoomed = after.optString("bodyZoom", "1") != beforeBodyZoom && bodyZoom > 1.01
+        val zoomed = value > 1.01 || bodyZoomed
         val laidOut = after.optBoolean("pass")
-        val note = "popup ${if (popup == null) "never rendered (action popup after the first click: ${extra.opt("popupAfterFirstClick")})" else "up (\"${extra.optString("popupText").take(60)}\")"}; tabs.getZoom ${zoom.toString().take(120)}; layout width ${before.optInt("width")} -> ${after.optInt("width")} (viewport \"${after.optString("viewport").take(60)}\")"
+        val how = when {
+            value > 1.01 && bodyZoomed -> "tabs.setZoom $value and the body's CSS zoom $bodyZoom"
+            bodyZoomed -> "the body's CSS zoom ($beforeBodyZoom -> ${after.optString("bodyZoom")}, no tabs.setZoom: getZoom $value)"
+            else -> "tabs.setZoom $value"
+        }
+        val note = "popup ${if (popup == null) "never rendered (action popup after the first click: ${extra.opt("popupAfterFirstClick")})" else "up (\"${extra.optString("popupText").take(60)}\")"}; tabs.getZoom ${zoom.toString().take(120)}; layout width ${before.optInt("width")} -> ${after.optInt("width")} (viewport \"${after.optString("viewport").take(60)}\"), body zoom $beforeBodyZoom -> ${after.optString("bodyZoom")}, heading ${before.optDouble("headingWidth", 0.0)} -> ${after.optDouble("headingWidth", 0.0)} px"
         when {
             popup == null -> Grade("F", "$label: $note", extra)
-            value > 1.01 && laidOut -> Grade("P", "$label: two #plus taps zoomed the tab to $value and the page laid out narrower: $note", extra)
-            value > 1.01 || laidOut -> Grade("PARTIAL", "$label: ${if (value > 1.01) "tabs.setZoom took ($value) but the page did not lay out again" else "the page laid out again but tabs.getZoom still reads $value"}: $note", extra)
+            zoomed && laidOut -> Grade("P", "$label: two #plus taps zoomed the tab by $how and the page laid out again: $note", extra)
+            zoomed || laidOut -> Grade("PARTIAL", "$label: ${if (zoomed) "the zoom took ($how) but the page did not lay out again" else "the page laid out again but tabs.getZoom still reads $value and the body's zoom ${after.optString("bodyZoom")}"}: $note", extra)
             else -> Grade("F", "$label: two #plus taps changed nothing: $note", extra)
         }
     }
@@ -7879,8 +7917,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * A row whose action opens the side panel (Bookmark Sidebar's `sidePanel.setPanelBehavior
      * ({openPanelOnActionClick: true})`, `html/sidepanel.html`) or a popup, and whose core is
      * what that surface draws: the fixture settles, the action is clicked, the sheet or the
-     * popup is waited for and `expr` polled in it. `F` when no surface rendered or the
-     * expression never passed (the surface's text and console recorded).
+     * popup is waited for and `expr` polled in it. The wait records what its last poll saw
+     * (`lastPoll`: no popup view, another context, or the view with its document reading
+     * empty) and logs it when no surface came – round 21's Bookmark Sidebar had its sheet drawn
+     * (the still, its `onPageStarted`, its storage calls) while the poll never yielded and the
+     * artifacts could not say which of the two it was (R22-6). A sheet whose document reads
+     * empty behind a shadow root stands on the accessibility tree's labels inside its bounds
+     * ([seenInView], as the popup stage reads a closed shadow root): `P` with those labels when
+     * three or more show. `F` when no surface rendered or the expression never passed (the
+     * surface's text and console recorded).
      */
     private fun panelMarker(label: String, page: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -7888,22 +7933,48 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         fixture(page, factor, 2_000)
         val since = StepEvidence(row)
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val surface = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { (it.context == "popup" || it.context == "sidePanel") && rendered(it) } }
+        var lastPoll = "no poll"
+        var surface = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) {
+            val view = popupView()
+            when {
+                view == null -> { lastPoll = "popupView() null"; null }
+                view.context != "popup" && view.context != "sidePanel" -> { lastPoll = "context ${view.context}"; null }
+                rendered(view) -> view
+                else -> { lastPoll = "context ${view.context}, rendered false (its document reads empty)"; null }
+            }
+        }
+        extra.put("lastPoll", lastPoll)
+        var seen: JSONObject? = null
+        if (surface == null) {
+            val view = popupView()?.takeIf { it.context == "popup" || it.context == "sidePanel" }
+            if (view != null) {
+                seen = seenInView(view)
+                extra.put("seen", seen)
+                if (shownDespiteEmptyDom(seen)) surface = view
+            }
+            Log.w(TAG, "PANEL ${row.name}: the poll last saw $lastPoll after ${scaled(POPUP_TIMEOUT_MS, factor) / 1000} s; the tree ${seen?.toString()?.take(200) ?: "read no popup or side panel view"}")
+        }
         var found = JSONObject()
         if (surface != null) {
             found = pollExpr(surface, expr, scaled(settleMs, factor))
             found.put("console", JSONArray(consoleOf(surface).takeLast(10)))
             extra.put("surface", surface.context).put("surfaceText", json(tabEval(surface, DEEP_TEXT)).optString("text").take(200))
+            if (!found.optBoolean("pass") && seen == null) {
+                seen = seenInView(surface)
+                extra.put("seen", seen)
+            }
         }
         extra.put("panel", found)
         since.record(extra, "atEnd")
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-panel")
         runCatching { coreCall("extension.closePopup", "null") }
+        val treeLabels = seen?.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
         when {
             found.optBoolean("pass") -> Grade("P", "$label: its ${extra.optString("surface")} ${found.toString().take(240)}", extra)
+            surface != null && seen != null && shownDespiteEmptyDom(seen) -> Grade("P", "$label: its ${extra.optString("surface")} shows ${treeLabels.size} labelled node(s) the accessibility tree reads (\"${treeLabels.joinToString(" / ").take(160)}\") while its document reads ${found.optInt("els")} element(s) – a closed shadow root; the poll last saw $lastPoll", extra)
             surface != null -> Grade("F", "$label: its ${extra.optString("surface")} rendered without the reading: ${found.toString().take(240)}", extra)
-            else -> Grade("F", "$label: the action click opened no popup or side panel within ${scaled(POPUP_TIMEOUT_MS, factor) / 1000} s", extra)
+            else -> Grade("F", "$label: the action click opened no popup or side panel within ${scaled(POPUP_TIMEOUT_MS, factor) / 1000} s (the poll last saw $lastPoll)", extra)
         }
     }
 
@@ -8191,7 +8262,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * runtime's or the extension's own race –, the order leg's inversions, the legs' medians per
      * context, the cross-source receipt skews, the page's events around the finger taps. A frame
      * call issued before `windowStartWall` (the trace window's start on the wall clock) has no
-     * host line to pair with and is left out, counted in `preWindowCalls`.
+     * host line to pair with and is left out, counted in `preWindowCalls`. A commit whose writer
+     * recorded no read is counted in `blindWrites` and asked no stale-write question (R22-4).
      */
     private fun orderAnalysis(popupLog: JSONObject, csLog: JSONObject, workerLog: JSONObject, trace: List<String>, offset: Long, windowStartWall: Long = 0L): JSONObject {
         val out = JSONObject()
@@ -8321,6 +8393,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var lostTouched = 0
         var lostEvaluated = 0
         var unattributed = 0
+        var blindWrites = 0
         var historyGaps = 0
         val instances = JSONArray()
         for (j in changes.indices) {
@@ -8334,6 +8407,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 continue
             }
             val read = rec.optJSONObject("read")
+            // A writer that recorded no read has no stale-write question: the order leg's writes
+            // before round 22 recorded none (round 21 booked its twenty `set({seq})`s as stale
+            // against a `read null` that "reflected" the empty store, twenty false inversions
+            // after receipt per run – R22-4), and a read-modify-write whose get errored wrote
+            // nothing. Counted apart; the order leg's own `stale` reading judges its writes.
+            if (read == null) {
+                blindWrites++
+                continue
+            }
             if (sameState(read, ov)) continue
             staleWrites++
             val lost = differing(read, ov).filter { it != "popAt" && it != "csAt" }
@@ -8386,7 +8468,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 )
             }
         }
-        out.put("commits", changes.size).put("historyGaps", historyGaps).put("unattributedCommits", unattributed)
+        out.put("commits", changes.size).put("historyGaps", historyGaps).put("unattributedCommits", unattributed).put("blindWrites", blindWrites)
             .put("staleWrites", staleWrites).put("postReceiptInversions", postReceiptInversions).put("ackedBeforeIssueStale", ackedBeforeIssueStale)
             .put("races", races).put("racesGetBeforeSetIssued", racesGetBeforeSetIssued).put("racesInFlight", racesInFlight)
             .put("lostScale", lostScale).put("lostTouched", lostTouched).put("lostEvaluated", lostEvaluated).put("staleInstances", instances)
@@ -8429,7 +8511,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         out.put(
             "summary",
             "commits ${changes.size} (${taps.size} taps, ${order.size} order, ${burst.size} popup bursts; script ${rmw.count { it.optString("tag") == "tick" }} ticks + ${rmw.count { it.optString("tag") == "burst" }} bursts), " +
-                "stale writes $staleWrites: $postReceiptInversions inversion(s) after receipt, $ackedBeforeIssueStale stale after an acknowledged set, $races the extension's own race ($racesGetBeforeSetIssued with the get ahead of the set's issue, $racesInFlight with the set in flight); " +
+                "stale writes $staleWrites: $postReceiptInversions inversion(s) after receipt, $ackedBeforeIssueStale stale after an acknowledged set, $races the extension's own race ($racesGetBeforeSetIssued with the get ahead of the set's issue, $racesInFlight with the set in flight); writes without a recorded read $blindWrites; " +
                 "scale lost $lostScale time(s) (touched $lostTouched, evaluated $lostEvaluated), final scale $finalScale of $expectedScale; " +
                 "order leg $orderAnswered/${order.size} answered, $orderStale stale, $orderErrors error(s); " +
                 "cross-source receipt inversions $hostInversions (max skew $maxSkew ms); " +
@@ -12604,8 +12686,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);done(rec)})})}catch(e){rec.err='threw: '+String(e&&e.message||e);done(rec)}}\n" +
                 "function tap(touched){if(P.busy)return 'busy';P.busy=true;rmw(P.taps,function(cur){return {scale:Math.round(((typeof cur.scale==='number'?cur.scale:1)+0.25)*100)/100}},{touched:!!touched},function(rec){P.busy=false;P.scale=rec.wrote?rec.wrote.scale:null;status('scale '+P.scale+(rec.err?' err '+rec.err:''))});return 'started'}\n" +
                 "function burst(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('burst done');return}i++;(function(k){rmw(P.burst,function(){return {p:k}},{},step)})(i)})();return 'started'}\n" +
-                "function order(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('order done');return}i++;var seq=i;var rec={seq:seq,tCall:Date.now(),tGet:0,tGetReply:0,tSet:0,tSetReply:0,tSend:0,tResp:0,resp:null,stale:null,err:null};P.order.push(rec);\n" +
-                "try{rec.tGet=Date.now();chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();var cur=(r&&r[KEY])||{};var next={};var k;for(k in cur)next[k]=cur[k];rec.tSet=Date.now();next.seq=seq;next.popAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "function order(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('order done');return}i++;var seq=i;var rec={seq:seq,tCall:Date.now(),tGet:0,tGetReply:0,read:null,tSet:0,tSetReply:0,tSend:0,tResp:0,resp:null,stale:null,err:null};P.order.push(rec);\n" +
+                "try{rec.tGet=Date.now();chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();var cur=(r&&r[KEY])||{};rec.read=pick(cur);var next={};var k;for(k in cur)next[k]=cur[k];rec.tSet=Date.now();next.seq=seq;next.popAt=rec.tSet;var w={};w[KEY]=next;\n" +
                 "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message)});\n" +
                 "if(P.tabId===null){rec.err='no tabId';setTimeout(step,40);return}rec.tSend=Date.now();\n" +
                 "chrome.tabs.sendMessage(P.tabId,{type:'read',seq:seq},function(resp){rec.tResp=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message)}else{rec.resp=resp||null;rec.stale=!!(resp&&resp.saw&&resp.saw.seq!==seq)}setTimeout(step,40)})})}catch(e){rec.err='threw: '+String(e&&e.message||e);setTimeout(step,40)}})();return 'started'}\n" +
@@ -14326,9 +14408,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){function textOf(d){try{return (d.body?d.body.innerText:'').replace(/\\s+/g,' ').trim()}catch(e){return ''}}var text=textOf(document);var frames=document.querySelectorAll('iframe');for(var i=0;i<frames.length;i++){try{var d=frames[i].contentDocument;if(d)text+=' '+textOf(d)}catch(e){}}var title=/tramway that outlived its river/i.test(text)||/tramway/i.test(document.title);var words=/embankment|preservation society|gasworks/i.test(text);" +
                 "return JSON.stringify({pass:title&&words&&text.length>300,title:document.title.slice(0,80),chars:text.length,frames:frames.length,text:text.slice(0,120)})})()"
 
-        /** The fixture's layout under the phone's page zoom: the layout viewport's width and the viewport meta the page script wrote (`pass` set by the caller). */
+        /**
+         * The fixture's layout under a zoom: the layout viewport's width and the viewport meta the
+         * page script wrote (the phone's page zoom), the body's computed CSS `zoom` (`bz`) and the
+         * first heading's or paragraph's drawn width (`hw`) – an extension zooming by
+         * `document.body.style.zoom` from an injected function (Zoom for Google Chrome's
+         * `zoomweb` path, R22-5) moves those two and not the viewport. `pass` is set by the caller
+         * over `bz` and `hw`.
+         */
         private const val ZOOM_LAYOUT =
-            "(function(){var m=document.querySelector('meta[name=viewport]');return JSON.stringify({pass:false,width:document.documentElement.clientWidth,inner:window.innerWidth,dpr:window.devicePixelRatio,scale:window.visualViewport?window.visualViewport.scale:null,viewport:m?m.getAttribute('content'):null})})()"
+            "(function(){var m=document.querySelector('meta[name=viewport]');var b=document.body;var bz=b?String(getComputedStyle(b).zoom||b.style.zoom||'1'):'1';var h=document.querySelector('h1,h2,p');var hw=h?Math.round(h.getBoundingClientRect().width*100)/100:0;" +
+                "return JSON.stringify({pass:false,width:document.documentElement.clientWidth,inner:window.innerWidth,dpr:window.devicePixelRatio,scale:window.visualViewport?window.visualViewport.scale:null,viewport:m?m.getAttribute('content'):null,bodyZoom:bz,headingWidth:hw})})()"
 
         /** chrome lock's options page: the password form (`#new`, `#old`, `#save`) drawn – a fresh install offers the new password. */
         private const val CHROME_LOCK_FORM =
