@@ -2473,6 +2473,40 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
   })
 
+  it('gives every capture the page’s turn, staged or not: one begun in front, still in flight when the page goes onto the stage, holds the frame subscription of the next until it answers', async () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const fakes = frameFakes(view)
+    let answer: (image: Electron.NativeImage) => void = () => undefined
+    fakes.capturePage.mockImplementation(
+      () =>
+        new Promise<Electron.NativeImage>((resolve) => {
+          answer = resolve
+        })
+    )
+    const first = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+    // The user switches tabs while the copy is in flight: the page goes onto the stage, and the
+    // next capture is a frame's – begun only once the first has answered.
+    view.setAgentDriven(true)
+    view.setVisible(false)
+    expect(staged()!.children).toEqual([view.view])
+    const second = view.capture({ mode: 'viewport', format: 'jpeg' })
+    await settled()
+    expect(fakes.log).toEqual([])
+    answer(frame(1000, 740))
+    expect(await first).toMatchObject({ width: 1000, height: 740 })
+    await settled()
+    expect(fakes.log).toEqual(['begin'])
+    fakes.frames[0]!(frame(1000, 740))
+    expect(await second).toMatchObject({ width: 1000, height: 740 })
+    expect(fakes.log).toEqual(['begin', 'end'])
+    expect(fakes.capturePage).toHaveBeenCalledTimes(1)
+  })
+
   it('shows a staged renderer as painting before asking for its frame, with the throttling as it stands, once more when it paints nothing, and answers null when it still paints nothing', async () => {
     vi.useFakeTimers()
     try {

@@ -2678,16 +2678,23 @@ export class ElectronTabView implements TabView {
    * on, with or without `stayHidden`, and after every later update. A frame changes nothing
    * about the page. The same patch would have a page hidden while its throttling is off – the
    * user looked at the agent's tab and switched away – read `visible` on the stage until it
-   * navigates; the hide puts the throttling on for its moment (`setVisible`). Its captures take
-   * turns (`stagedTurn`): one frame subscription per page.
+   * navigates; the hide puts the throttling on for its moment (`setVisible`). Captures take
+   * turns (`onTurn`), staged or not: one frame subscription per page. A capture begun in front
+   * can end on the stage – a tab switch during the DevTools paint of a full page, which then
+   * fails and falls through to the frame – and a second subscription begun meanwhile would
+   * replace the first's in the engine, its frame never coming; on the turn, the second waits.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     if (this.wc.isDestroyed()) return null
-    if (!this.staged) return this.paint(options)
-    const turn = this.stagedTurn.then(
-      () => this.paint(options),
-      () => this.paint(options)
-    )
+    return this.onTurn(() => this.paint(options))
+  }
+
+  /**
+   * `work` on the page's capture turn (`stagedTurn`): after the last capture or stand-in
+   * picture has answered, whichever way, and before the next. A turn never rejects the chain.
+   */
+  private onTurn<T>(work: () => Promise<T>): Promise<T> {
+    const turn = this.stagedTurn.then(work, work)
     this.stagedTurn = turn.catch(() => undefined)
     return turn
   }
@@ -2752,16 +2759,18 @@ export class ElectronTabView implements TabView {
 
   /**
    * One frame of a staged page's renderer, as `capturePage` paints: the whole widget in device
-   * pixels, from the engine's frame subscription (the viz video capturer asks the renderer for
-   * its current frame at once, so a page that changes nothing still answers). The widget is
-   * shown as painting first (`setBackgroundThrottling` with the setting as it stands: Electron
-   * gives a hidden widget `WasShown` on the call, the page's own state untouched – the un-hide
-   * the session's prepare does, which a navigation since undoes; a hidden widget answers no
-   * frame, and un-hidden it answers within a frame or two rather than after a wait). A renderer
-   * that still shows nothing for `STAGED_FRAME_FIRST_MS` – a navigation committed after the
-   * un-hide – is shown as painting once more and waited for `STAGED_FRAME_RETRY_MS`; null when
-   * it still shows nothing, or the view left the stage meanwhile. The subscription is ended off
-   * its own callback.
+   * pixels – within a pixel at a fractional scale, where the frame's size is rounded and the
+   * copy's ceiled (1250 × 916 against 1250 × 917 at 1.25; `visibleAreaClip` floors, so no crop
+   * exceeds the bitmap) – from the engine's frame subscription (the viz video capturer asks the
+   * renderer for its current frame at once, so a page that changes nothing still answers). The
+   * widget is shown as painting first (`setBackgroundThrottling` with the setting as it stands:
+   * Electron gives a hidden widget `WasShown` on the call, the page's own state untouched – the
+   * un-hide the session's prepare does, which a navigation since undoes; a hidden widget answers
+   * no frame, and un-hidden it answers within a frame or two rather than after a wait). A
+   * renderer that still shows nothing for `STAGED_FRAME_FIRST_MS` – a navigation committed after
+   * the un-hide – is shown as painting once more and waited for `STAGED_FRAME_RETRY_MS`; null
+   * when it still shows nothing, or the view left the stage meanwhile. The subscription is ended
+   * off its own callback.
    */
   private stagedFrame(): Promise<Electron.NativeImage | null> {
     const wc = this.wc
