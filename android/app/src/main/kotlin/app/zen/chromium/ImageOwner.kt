@@ -25,7 +25,7 @@ import java.security.MessageDigest
  * sub-frame's proxy is registered from its `hello` ([registerFrame]); the main document's is the
  * tab's `replyProxy`, handed to [start] and broadcast last (§5 rule 1). A gone frame's proxy
  * drops what is posted to it without a word (`JsReplyProxy.postMessage`:
- * `if (mNativeJsReplyProxy == 0) return`), so nothing is pruned on failure: the set is cleared
+ * `if (mNativeJsReplyProxy == 0) return`), so nothing is pruned on failure: the registry is cleared
  * with the view ([destroy]) and capped at [OWNER_MAX_FRAMES], the oldest dropped first.
  *
  * The main document's boundary is the MAIN FRAME's hello, not `onPageStarted`
