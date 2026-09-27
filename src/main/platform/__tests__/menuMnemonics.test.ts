@@ -185,6 +185,37 @@ describe('the mnemonic letters', () => {
     ])
   })
 
+  it("key the horizontal layout's tab rows as their vertical twins (W8-10): New Tab to the Right's N, the closes by Left and Right, as Above and Below", () => {
+    // Chrome's grd has no `&` for IDS_TAB_CXMENU_NEWTABTORIGHT / CLOSETABSTOLEFT / CLOSETABSTORIGHT
+    // (#588's rows); unkeyed, the rule gave them Ri&ght, &Close and &Tabs.
+    for (const [label, letter] of [
+      ['New Tab to the Right', 'N'],
+      ['Close Tabs to the Left', 'L'],
+      ['Close Tabs to the Right', 'R']
+    ] as const) {
+      expect(tableEntry(label)).toEqual({ letter, source: 'zenium' })
+    }
+    expect(marked(['New Tab to the Right', 'Reload Tab', 'Rename Tab…'])).toEqual([
+      '&New Tab to the Right',
+      '&Reload Tab',
+      'Rename &Tab…'
+    ])
+    expect(marked(['New Tab Below', 'Reload Tab', 'Rename Tab…'])).toEqual([
+      '&New Tab Below',
+      '&Reload Tab',
+      'Rename &Tab…'
+    ])
+    // Close Multiple Tabs ▸ in either orientation: the distinguishing word's initial, O for Other.
+    expect(marked(['Close Tabs to the Left', 'Close Tabs to the Right', 'Close Other Tabs'])).toEqual(
+      ['Close Tabs to the &Left', 'Close Tabs to the &Right', 'Close &Other Tabs']
+    )
+    expect(marked(['Close Tabs Above', 'Close Tabs Below', 'Close Other Tabs'])).toEqual([
+      'Close Tabs &Above',
+      'Close Tabs &Below',
+      'Close &Other Tabs'
+    ])
+  })
+
   it('are unique within a level, case-insensitively, and a row whose every letter is taken goes without', () => {
     expect(marked(['Ab', 'aB', 'ab', 'AB', 'ba'])).toEqual(['&Ab', 'a&B', 'ab', 'AB', 'ba'])
     expect(chooseMnemonics(['x', 'X'])).toEqual([0, undefined])
@@ -381,6 +412,15 @@ const OPENINGS: Opening[] = [
       secondTab(h, 'https://third.example/')
       h.browser.createFolder(h.win.activeSpaceId, 'Trip', '📁', h.win, { rename: false })
       h.browser.tabs.togglePin(h.tabId, h.win)
+      h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    }
+  },
+  {
+    name: 'tab: one of several under the horizontal layout – New Tab to the Right, Close Tabs to the Left / to the Right (#588, W8-10)',
+    open: (h) => {
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+      secondTab(h)
+      secondTab(h, 'https://third.example/')
       h.browser.menus.showTabContextMenu(h.tabId, h.win)
     }
   },
@@ -731,6 +771,22 @@ describe('every native menu the core builds, marked for Windows and Linux', () =
         }
       })
     })
+  })
+
+  it('the horizontal layout’s tab menu carries the keyed letters (W8-10): &New Tab to the Right, and Close Tabs to the &Left / &Right under Close Multiple Tabs ▸', () => {
+    const h = pageHarness(DESKTOP, {})
+    h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+    secondTab(h)
+    secondTab(h, 'https://third.example/')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    const out = withMnemonics(h.shown(), 'linux')
+    expect(out.map((item) => item.label)).toContain('&New Tab to the Right')
+    const closes = out.find((item) => parseMnemonic(item.label ?? '').text === 'Close Multiple Tabs')
+    expect(closes?.submenu?.map((item) => item.label)).toEqual([
+      'Close Tabs to the &Left',
+      'Close Tabs to the &Right',
+      'Close &Other Tabs'
+    ])
   })
 
   it('the phone gets no markers: its host draws the labels as text, and the core’s descriptors carry none', () => {
