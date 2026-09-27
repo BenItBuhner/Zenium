@@ -17,7 +17,7 @@ import {
 } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { hint } from '@renderer/lib/shortcuts'
-import { closeZoomBubble, resetZoomFromBubble, type UiState } from '@renderer/lib/ui'
+import { closeZoomBubble, type UiState } from '@renderer/lib/ui'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { focusAnchor, wrapTab } from '../bookmarks/popover'
 import { WheelZoom, bubbleTimeout, defaultZoomFor } from './bubble'
@@ -32,9 +32,10 @@ const WIDTH = POPOVER_WIDTH.list
  * Ctrl+wheel, the menu) and says where the zoom stands, with a step either way and Reset. Left
  * alone it goes after 1.5 s – 5 s once one of its buttons was used – and waits while the
  * pointer rests on it; opened from the pill's zoom chip it stays until Escape, a click outside
- * or the chip itself puts it away. Escape hands the keyboard back to the chip (§9.22). Its Reset
- * ends it with the chip: at the default zoom the chip goes (§9.29), and the bubble does not stand
- * on over nothing to hang from (§9.20) – `resetZoomFromBubble`.
+ * or the chip itself puts it away. Escape hands the keyboard back to the chip (§9.22). A change
+ * that takes the page back to its default zoom – its own Reset, Ctrl+0, a step or the wheel
+ * landing there – ends it with the chip: at the default the chip goes (§9.29), and the bubble
+ * does not stand on over nothing to hang from (§9.20); `showZoomBubble` reads the chip's rule.
  *
  * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
  * end-aligned with the chip, through the chrome layer, and registered for the layer's light
@@ -125,7 +126,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
   const factor = bubble.factor
   const defaultZoom = tab ? defaultZoomFor(tab.url, pageControls, state.pageEnvironment) : 1
   const atDefault = Math.abs(factor - defaultZoom) < 0.005
-  const step = (delta: number): void => {
+  const step = (delta: number | null): void => {
     setClicked(true)
     run('tab.setZoom', { tabId: bubble.tabId, delta })
   }
@@ -188,7 +189,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
             className="zen-button ml-auto"
             data-tooltip={hint(`Back to ${formatZoom(defaultZoom)}`, state, 'zoom.reset')}
             disabled={atDefault}
-            onClick={() => resetZoomFromBubble(bubble.tabId)}
+            onClick={() => step(null)}
           >
             Reset
           </button>
