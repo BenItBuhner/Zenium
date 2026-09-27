@@ -127,6 +127,7 @@ import {
 } from './model'
 import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './searchChoice'
 import { sanitizeResourceSettings } from './resources/switches'
+import { freshPerformanceDefaults } from './resources/energySaver'
 import { sanitizeAgentSettings } from './agent/settings'
 import { migrateStartupSettings } from './startup'
 import {
@@ -718,6 +719,14 @@ export class BrowserState {
       // profile from before the list; the defaults name English for a host without locales.
       this.settings.languages = defaultLanguages(this.systemLocales)
       this.languagesDefaulted = true
+      // A fresh desktop profile takes Chrome's Performance defaults (W8-2; pr-584 §D (2)(3)):
+      // Memory Saver at Balanced, 4 hours; Energy Saver at the 20 % threshold where the host
+      // reads a battery level, on-battery on Windows, where it cannot. Here and not in
+      // `DEFAULT_SETTINGS`: an existing profile keeps what it had – `applyPersisted` reads its
+      // timer as stored (the shipped 20 minutes, "Custom – 20 minutes" on the page) and gives
+      // one from before the mode's key the on-battery its budgets ran on – and the phone reads
+      // `DEFAULT_SETTINGS` unchanged (`freshPerformanceDefaults` is null there).
+      Object.assign(this.settings, freshPerformanceDefaults(this.platform))
     }
     this.ensureValid()
     // The blobs' folder hears which ids the session refers to; the documents of the others go at

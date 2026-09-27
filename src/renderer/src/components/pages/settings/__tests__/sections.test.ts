@@ -6369,7 +6369,9 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(tier.label).toBe('Memory Saver options')
     expect(tier.radios).toBe(true)
     expect(tier.disabled).toBe(false)
-    // The default timer is off Chrome's ladder: shown where it falls, shortest last, and picked.
+    // An existing profile's timer – the shipped 20 minutes – is off Chrome's ladder: shown
+    // where it falls, shortest last, and picked (the migration affordance, pr-584 §D (3)); a
+    // fresh desktop profile starts on Balanced (`freshPerformanceDefaults`, the core's).
     expect(tier.options.map((o) => [o.value, o.label])).toEqual([
       ['360', 'Moderate'],
       ['240', 'Balanced (recommended)'],
@@ -6487,7 +6489,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     ])
   })
 
-  it('binds Energy Saver’s switch to energySaver – on lands on Zenium’s default, unplugged; off is off – in the user’s words (N3)', () => {
+  it('binds Energy Saver’s switch to energySaver – on lands on the host’s fresh-profile default, the 20% threshold where the level reads and unplugged on Windows; off is off – in the user’s words (N3)', () => {
     const { model, patches } = perf(DESKTOP_STATE())
     const on = row(model, 'energy-saver')
     if (on.kind !== 'switch') throw new Error('not a switch')
@@ -6502,12 +6504,21 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     on.onChange(false)
     expect(patches.at(-1)).toEqual({ energySaver: 'off' })
 
-    const off = perf(DESKTOP_STATE({ energySaver: 'off' }))
-    const offSwitch = row(off.model, 'energy-saver')
-    if (offSwitch.kind !== 'switch') throw new Error('not a switch')
-    expect(offSwitch.checked).toBe(false)
-    offSwitch.onChange(true)
-    expect(off.patches.at(-1)).toEqual({ energySaver: 'on-battery' })
+    // Turning on lands on Chrome's default condition (kEnabledBelowThreshold) where the host
+    // reads a battery level – Linux's sysfs, macOS's pmset – and on unplugged on Windows, where
+    // it cannot yet (`defaultEnergySaverMode`), never on the mode it had before off.
+    for (const [platform, lands] of [
+      ['linux', 'low-battery'],
+      ['darwin', 'low-battery'],
+      ['win32', 'on-battery']
+    ] as const) {
+      const off = perf(DESKTOP_STATE({ energySaver: 'off' }, { platform }))
+      const offSwitch = row(off.model, 'energy-saver')
+      if (offSwitch.kind !== 'switch') throw new Error('not a switch')
+      expect(offSwitch.checked).toBe(false)
+      offSwitch.onChange(true)
+      expect(off.patches.at(-1), platform).toEqual({ energySaver: lands })
+    }
   })
 
   it('offers Chrome’s two conditions as a radio in Chrome’s order – the 20% threshold, then unplugged – dependent on the switch', () => {
@@ -6524,11 +6535,19 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     mode.onChange('on-battery')
     expect(patches).toEqual([{ energySaver: 'on-battery' }])
 
-    const off = row(perf(DESKTOP_STATE({ energySaver: 'off' })).model, 'energy-saver-mode')
-    if (off.kind !== 'value') throw new Error('not a choice')
-    expect(off.disabled).toBe(true)
-    // Off, the row shows the choice the switch would land on.
-    expect(off.value).toBe('on-battery')
+    // Off, the row shows the choice the switch would land on – the host's default.
+    for (const [platform, lands] of [
+      ['linux', 'low-battery'],
+      ['win32', 'on-battery']
+    ] as const) {
+      const off = row(
+        perf(DESKTOP_STATE({ energySaver: 'off' }, { platform })).model,
+        'energy-saver-mode'
+      )
+      if (off.kind !== 'value') throw new Error('not a choice')
+      expect(off.disabled).toBe(true)
+      expect(off.value, platform).toBe(lands)
+    }
   })
 
   it('hides the Energy Saver group on a desktop the host knows to have no battery (Chrome’s showBatterySettings_) and shows it where the host cannot tell', () => {

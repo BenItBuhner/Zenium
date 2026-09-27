@@ -43,6 +43,7 @@ import type {
   WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, ENERGY_SAVER_LOW_BATTERY_PERCENT } from '@shared/types'
+import { defaultEnergySaverMode } from '@core/resources/energySaver'
 import {
   CONTAINER_COLORS,
   CONTAINER_ICONS,
@@ -2005,10 +2006,11 @@ export const MEMORY_SAVER_TIERS: ReadonlyArray<{
 
 /**
  * The tier radio's options for a stored timeout: Chrome's three, longest first, and a stored
- * value off them – the shipped 20 minutes, a timer set in the field this row replaced, the
- * phone ladder's 30 seconds – listed in its place among them (the phone ladder's rule for an
+ * value off them – an existing profile's shipped 20 minutes (a fresh desktop profile starts on
+ * Balanced, `freshPerformanceDefaults`), a timer set in the field this row replaced, the phone
+ * ladder's 30 seconds – listed in its place among them (the phone ladder's rule for an
  * off-ladder value), so the row never shows a choice the browser is not making and never
- * rewrites a timer the user did not touch.
+ * rewrites a timer the user did not touch: the migration is the affordance (pr-584 §D (3)).
  */
 export function memorySaverTierOptions(minutes: number): RowOption[] {
   const tiers: RowOption[] = MEMORY_SAVER_TIERS.map((tier) => ({
@@ -2124,6 +2126,10 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
     set({ unloadExcludedDomains: [...s.unloadExcludedDomains, host] })
   }
   const saverOff = s.energySaver === 'off'
+  // The condition the switch lands on, and the off row shows in waiting: the host's fresh-
+  // profile default (`defaultEnergySaverMode` – the 20 % threshold where the level reads,
+  // unplugged on Windows), as Chrome's toggle lands on kEnabledBelowThreshold.
+  const saverDefault = defaultEnergySaverMode(state.platform)
   const energySaver: RowGroup = {
     id: 'energy-saver',
     heading: 'Energy Saver',
@@ -2144,16 +2150,15 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
           'Zenium conserves battery power by limiting background activity – background tabs are slowed and unloaded sooner while it is on.',
         keywords: energyKeywords,
         checked: !saverOff,
-        onChange: (v) => set({ energySaver: v ? 'on-battery' : 'off' })
+        onChange: (v) => set({ energySaver: v ? saverDefault : 'off' })
       },
       {
         ...choice<EnergySaverMode>({
           id: 'energy-saver-mode',
           label: 'Energy Saver options',
           keywords: energyKeywords,
-          // Off, the row shows Chrome's default condition unchecked-in-waiting: the switch
-          // turning on lands on `on-battery`, Zenium's default, so that is the one shown.
-          value: saverOff ? 'on-battery' : s.energySaver,
+          // Off, the row shows the condition the switch lands on, unchecked-in-waiting.
+          value: saverOff ? saverDefault : s.energySaver,
           disabled: saverOff,
           options: energySaverOptions(state.platform, snap.system.batteryPercent),
           onChange: (v) => set({ energySaver: v })

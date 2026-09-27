@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { ENERGY_SAVER_LOW_BATTERY_PERCENT } from '../../../shared/types'
-import { batteryPercentFrom, energySaverActive } from '../energySaver'
+import {
+  MEMORY_SAVER_DEFAULT_MINUTES,
+  batteryPercentFrom,
+  defaultEnergySaverMode,
+  energySaverActive,
+  freshPerformanceDefaults
+} from '../energySaver'
 
 /*
  * Energy Saver's rule (W8-2): Chrome's `BatterySaverModeManager::UpdateBatterySaverModeState`
@@ -86,5 +92,26 @@ describe('batteryPercentFrom', () => {
     expect(batteryPercentFrom('101')).toBeNull()
     expect(batteryPercentFrom(Number.NaN)).toBeNull()
     expect(batteryPercentFrom(Number.POSITIVE_INFINITY)).toBeNull()
+  })
+})
+
+describe('a fresh desktop profile’s Performance defaults (pr-584 §D (2)(3))', () => {
+  it('starts Energy Saver on Chrome’s kEnabledBelowThreshold where the host reads a battery level, and on unplugged on Windows, where it cannot yet', () => {
+    expect(defaultEnergySaverMode('linux')).toBe('low-battery')
+    expect(defaultEnergySaverMode('darwin')).toBe('low-battery')
+    expect(defaultEnergySaverMode('win32')).toBe('on-battery')
+  })
+
+  it('gives a desktop host Balanced (Chrome’s kMedium, 4 hours) with that mode, and the phone nothing – its defaults are the shipped ones', () => {
+    expect(MEMORY_SAVER_DEFAULT_MINUTES).toBe(240)
+    expect(freshPerformanceDefaults('linux')).toEqual({
+      unloadTimeoutMinutes: 240,
+      energySaver: 'low-battery'
+    })
+    expect(freshPerformanceDefaults('win32')).toEqual({
+      unloadTimeoutMinutes: 240,
+      energySaver: 'on-battery'
+    })
+    expect(freshPerformanceDefaults('android')).toBeNull()
   })
 })

@@ -267,6 +267,11 @@ export const DEFAULT_SETTINGS: Settings = {
   pinnedResetOnStartup: false,
   thirdPartyOnPinned: 'new-tab',
   unloadEnabled: true,
+  // The phone's and every existing profile's: 20 minutes, listed in place on Edge's ladder and
+  // on the desktop's tier radio ("Custom – 20 minutes"). A FRESH desktop profile starts on
+  // Chrome's defaults instead – Balanced (240) and, for the mode below, the 20 % threshold
+  // where the host reads a level, on-battery on Windows – written by `BrowserState.load`'s
+  // no-file branch (`core/resources/energySaver.ts`, `freshPerformanceDefaults`), not here.
   unloadTimeoutMinutes: 20,
   unloadExcludedDomains: [],
   energySaver: 'on-battery',
