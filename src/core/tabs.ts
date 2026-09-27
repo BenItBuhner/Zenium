@@ -224,6 +224,11 @@ export class TabManager {
    */
   private readonly settledCovers = new WeakSet<TabView>()
   /**
+   * Covers taken down (`uncover`) and standing still, over the page shown again beneath them,
+   * until the page's word that it has drawn a frame destroys them (`coverLeaving`).
+   */
+  private readonly leavingCovers = new Map<string, TabView>()
+  /**
    * Tabs whose current load is an https:// upgrade – of typed input without a scheme, or of an
    * http:// navigation HTTPS-only mode's rule upgraded – keyed to the plaintext URL to fall back
    * to (or to ask about) when the secure load fails.
@@ -378,14 +383,25 @@ export class TabManager {
   }
 
   /**
-   * The live views of `tabId` its window lays out together, bottom to top: the page, and the
-   * reader's cover standing over it (`cover`). Beneath a cover the page is listed only until
-   * the cover's first frame (`pageAwaitingCover`): hidden on the cover's word, it is the cover's
-   * alone from then on and not the layout's. The window places, shows and hides them as one
-   * (`ZenWindow.applyLayout`) – no ground between them, none left standing at the tab's place
-   * once the tab is switched away from – and one that joins the window on top of the rest (a
-   * page an agent held on the stage) has the rest raised over it again in this order. One view,
-   * the page, on a host without a cover (the phone).
+   * The reader's cover taken down over `tabId` (`uncover`) while it still stands: over the
+   * page shown again beneath it, until the page's word that it has drawn a frame – or the
+   * ceiling – destroys it. Undefined once it is gone, and after an `immediate` exit.
+   */
+  coverLeaving(tabId: string): TabView | undefined {
+    const cover = this.leavingCovers.get(tabId)
+    return cover && !cover.isDestroyed() ? cover : undefined
+  }
+
+  /**
+   * The live views of `tabId` its window lays out together, bottom to top: the page, the
+   * reader's cover taken down but standing over the page until the page's word
+   * (`coverLeaving`), the cover standing over the page (`cover`). Beneath a standing cover the
+   * page is listed only until that cover's first frame (`pageAwaitingCover`): hidden on the
+   * cover's word, it is the cover's alone from then on and not the layout's. The window places,
+   * shows and hides them as one (`ZenWindow.applyLayout`) – no ground between them, none left
+   * standing at the tab's place once the tab is switched away from – and one that joins the
+   * window on top of the rest (a page an agent held on the stage) has the rest raised over it
+   * again in this order. One view, the page, on a host without a cover (the phone).
    */
   viewsOf(tabId: string): TabView[] {
     const out: TabView[] = []
@@ -393,6 +409,8 @@ export class TabManager {
     const standing = cover && !cover.isDestroyed() ? cover : undefined
     const page = standing ? this.pageAwaitingCover(tabId) : this.pageView(tabId)
     if (page) out.push(page)
+    const leaving = this.coverLeaving(tabId)
+    if (leaving) out.push(leaving)
     if (standing) out.push(standing)
     return out
   }
@@ -868,6 +886,7 @@ export class TabManager {
       if (page && !opts.immediate) this.browser.readAloud.onPageReady(tabId)
     }
     const finish = (): void => {
+      if (this.leavingCovers.get(tabId) === cover) this.leavingCovers.delete(tabId)
       if (!cover.isDestroyed()) cover.destroy()
       // The keyboard to the page – unless the reader was entered again within the frame and a
       // new cover stands over it: the keyboard is that cover's (`onCoverReady`).
@@ -884,8 +903,11 @@ export class TabManager {
       )
         page.focus()
     }
+    // The page is shown by the relayout; the cover stands over it until the page has a frame –
+    // laid out with the page meanwhile (`viewsOf`): placed and hidden with it, and raised over
+    // it again should the page join the window on top (a page an agent held on the stage).
+    if (page && !opts.immediate) this.leavingCovers.set(tabId, cover)
     if (win && opts.relayout !== false) win.relayout()
-    // The page is shown by the relayout; the cover stands over it until the page has a frame.
     if (opts.immediate || !page) finish()
     else this.afterFrame(page, finish)
     this.browser.state.commit()

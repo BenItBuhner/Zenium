@@ -511,10 +511,10 @@ export class ZenWindow {
     /**
      * Place the tab's views at `rect` and show them, bottom to top (`TabManager.viewsOf`: the
      * page, and the reader's cover over it while the two are laid out together – before the
-     * cover's first frame). A view shown from elsewhere joins the window on top (a page an
-     * agent held on its stage): the ones over it in the tab's order are raised over it again;
-     * `raise` orders them all over the rest. True when the view the layout owns
-     * (`viewsOwnedBy`) was hidden until now.
+     * cover's first frame, and after the cover is taken down until the page's). A view shown
+     * from elsewhere joins the window on top (a page an agent held on its stage): the ones over
+     * it in the tab's order are raised over it again; `raise` orders them all over the rest.
+     * True when the view the layout owns (`viewsOwnedBy`) was hidden until now.
      */
     const place = (
       tabId: string,
@@ -539,9 +539,9 @@ export class ZenWindow {
       return shownNow
     }
     /**
-     * Hide the tab's views. The page beneath a cover goes with the cover: shown still before
-     * the cover's first frame, it would otherwise stand at the tab's place – over whatever this
-     * report shows there, where it is the younger view – until the cover's handshake ends.
+     * Hide the tab's views. The page beneath a cover goes with the cover, the cover taken down
+     * with the page: left shown, either would stand at the tab's place – over whatever this
+     * report shows there, where it is the younger view – until its handshake ends.
      */
     const hide = (tabId: string): void => {
       for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setVisible(false)

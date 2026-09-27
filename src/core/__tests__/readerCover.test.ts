@@ -632,11 +632,12 @@ describe('the paint handshake and its failure ceiling', () => {
 
 /**
  * The window lays a tab's views out as one (`TabManager.viewsOf`, `ZenWindow.applyLayout`):
- * the page beneath a cover that has yet to draw its first frame goes where the cover goes – so
- * that a tab switched away from inside the handshake's window leaves nothing of its own
- * standing at its place, over whatever the layout shows there (a younger view draws over an
- * older one), until the ceiling; and a view that joins the window on top of the rest (a page an
- * agent held on the stage) has the rest raised over it again.
+ * the page beneath a cover that has yet to draw its first frame goes where the cover goes, and
+ * the cover taken down goes where the page does until the page's word – so that a tab switched
+ * away from inside either handshake's window leaves nothing of its own standing at its place,
+ * over whatever the layout shows there (a younger view draws over an older one), until the
+ * ceiling; and a view that joins the window on top of the rest (a page an agent held on the
+ * stage) has the rest raised over it again.
  */
 describe('the layout and the handshake’s window', () => {
   /** The tab's views as the layout gets them (`viewsOf`), bottom to top, by name. */
@@ -718,18 +719,74 @@ describe('the layout and the handshake’s window', () => {
     expect(s.page.visible).toBe(false)
   })
 
-  it('a cover gone leaves the page alone to lay out; a tab without a cover, and every tab on the phone, is one view', () => {
+  it('at the exit the cover taken down is laid out with the page until the page’s word: raised over the page shown beneath it, so a page that joins the window on top (held on an agent’s stage) never comes up over the cover', async () => {
+    const s = scene()
+    const cover = enterReader(s)
+    await drawn(cover)
+    s.page.calls.length = 0
+    cover.calls.length = 0
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
+    expect(s.browser.tabs.coverLeaving(s.tabId)).toBe(cover.view)
+    expect(laidOut(s, cover)).toEqual(['page', 'cover'])
+    // The page placed and shown; the cover, placed the same, raised over it, still shown.
+    expect(placed(s.page)).toEqual([
+      `setBounds(${JSON.stringify(RECT)})`,
+      'setVisible(true)',
+      'frameDrawn()'
+    ])
+    expect(placed(cover)).toEqual(['bringToFront()', `setBounds(${JSON.stringify(RECT)})`])
+    expect(cover.visible).toBe(true)
+    // The page's word: the cover goes, and is nobody's to lay out.
+    await drawn(s.page)
+    expect(cover.destroyed).toBe(true)
+    expect(s.browser.tabs.coverLeaving(s.tabId)).toBeUndefined()
+    expect(laidOut(s, cover)).toEqual(['page'])
+  })
+
+  it('a tab switched away from inside the exit’s window takes the departing cover down with the page; back before the page’s word, both show, the cover over the page, and the word ends it', async () => {
+    const s = scene()
+    const other = secondTab(s)
+    const cover = enterReader(s)
+    await drawn(cover)
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(cover.visible).toBe(true)
+    expect(s.page.visible).toBe(true)
+    // Away: nothing of the tab stands at its place.
+    showTab(s, other.id)
+    expect(cover.visible).toBe(false)
+    expect(s.page.visible).toBe(false)
+    expect(other.page.visible).toBe(true)
+    // Back: the page beneath, the cover over it.
+    s.page.calls.length = 0
+    cover.calls.length = 0
+    showTab(s, s.tabId)
+    expect(s.page.visible).toBe(true)
+    expect(cover.visible).toBe(true)
+    expect(placed(cover)).toEqual([
+      'bringToFront()',
+      `setBounds(${JSON.stringify(RECT)})`,
+      'setVisible(true)'
+    ])
+    await drawn(s.page)
+    expect(cover.destroyed).toBe(true)
+    expect(s.page.visible).toBe(true)
+  })
+
+  it('an immediate exit leaves no cover to lay out; a tab without a cover, and every tab on the phone, is one view', () => {
     const s = scene()
     expect(laidOut(s)).toEqual(['page'])
     const cover = enterReader(s)
     cover.events.onCrashed('crashed')
     expect(cover.destroyed).toBe(true)
+    expect(s.browser.tabs.coverLeaving(s.tabId)).toBeUndefined()
     expect(laidOut(s, cover)).toEqual(['page'])
     expect(s.browser.tabs.viewsOf('nope')).toEqual([])
     const phone = scene(false)
     phone.browser.reader.open(phone.tabId, ARTICLE)
     expect(laidOut(phone)).toEqual(['page'])
     expect(phone.browser.tabs.pageAwaitingCover(phone.tabId)).toBeUndefined()
+    expect(phone.browser.tabs.coverLeaving(phone.tabId)).toBeUndefined()
   })
 })
 
