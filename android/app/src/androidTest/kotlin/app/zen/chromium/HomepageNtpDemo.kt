@@ -31,10 +31,12 @@ import kotlin.math.abs
  *     Use current page; a finger on Use current page writes the page Settings was opened from
  *     (the site the demo starts on); a finger on the Address row opens the §9.12 URL sheet,
  *     the address typed on the keyboard and a finger on Save writes it (`settings.homepage`).
- *  2. NTP-30's Home actions: Home is a button wherever it lives (the #348 design gate) – the app
- *     menu's icon-row glyph after Forward (§9.13) and the bar's optional Home item each load the
- *     homepage on the active tab (`tab.home`); the menu carries no Home text row; with the
- *     homepage Off the glyph and the item leave the menu and the bar, and come back with it.
+ *  2. NTP-30's Home actions: Home is a button wherever it lives (the #348 design gate), and in
+ *     one place at a time (`phoneIconRow`, primitives pass 5) – the app menu's icon-row glyph
+ *     after Forward (§9.13) while the bar does not hold Home, the bar's optional item while it
+ *     does, the glyph leaving the row for it; each loads the homepage on the active tab
+ *     (`tab.home`); the menu carries no Home text row; with the homepage Off the glyph and the
+ *     item leave the menu and the bar, and come back with it.
  *  3. NTP-29 the new tab page for the bottom bar: with `phoneBarPosition` bottom (the default)
  *     the page from the bar's plus has its field low, within thumb reach, the shortcuts above it
  *     and the gear in the top corner; a finger on the field morphs it into the omnibox above the
@@ -304,28 +306,54 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         step("2. Home: the app menu's icon-row glyph and the bar's item load the homepage; both leave while the homepage is Off") {
             ensureActive(demoTabId)
             expect("the demo tab is on the first site before Home (${describeActive()})", activeUrl() == sites[0].url, "home-start")
-            // The menu's Home glyph, under a finger. The glyph is aimed at through the DOM: the
-            // bar's Home item under the sheet carries the same accessible name.
+            // Home is a button in one place at a time (`phoneIconRow`, primitives pass 5): the
+            // bar's item while the layout holds it, the icon row's glyph otherwise – so the bar's
+            // Home comes off for the glyph's scene and goes back on for the bar's. The glyph is
+            // aimed at through the DOM: the bar's Home item carries the same accessible name.
+            setBarHome(false)
+            SystemClock.sleep(800)
             tapMenuButton()
             if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) error("the menu never opened")
             SystemClock.sleep(1_200)
             val glyph = awaitChrome("!!($MENU_HOME_JS)", 6_000)
             val glyphs = menuGlyphs()
             val textRow = chromeValue("String(!!(${menuItemJs("Home")}))") == "true"
-            finding("  the icon row's glyphs: [$glyphs]; menu rows: ${menuRows()}")
-            expect("the app menu's icon row carries the Home glyph after Forward with a homepage set (§9.13)", glyph && glyphs.startsWith("forward,home"), "menu-home-glyph")
+            finding("  Home off the bar – the icon row's glyphs: [$glyphs]; menu rows: ${menuRows()}")
+            expect("the app menu's icon row carries the Home glyph after Forward with a homepage set and the bar without Home (§9.13)", glyph && glyphs.startsWith("forward,home"), "menu-home-glyph")
             expect("the menu has no Home text row: Home is a button wherever it lives", !textRow, "menu-home-no-row")
             still("menu-home")
-            val homed = touchDom("the menu's Home glyph", MENU_HOME_JS) && awaitLoaded(homepageSite.url, 10_000)
+            val homed = glyph && touchDom("the menu's Home glyph", MENU_HOME_JS) && awaitLoaded(homepageSite.url, 10_000)
             if (!homed && activeUrl() != homepageSite.url) touchFault("a finger on the menu's Home glyph did not load the homepage")
             expect("a finger on the menu's Home loads the homepage (${describeActive()})", homed && activeUrl() == homepageSite.url, "menu-home")
+            // A pick dismisses the menu; a glyph that was not there leaves it up, and it goes
+            // before the next scene, so a failed claim here cannot land the bar's touch on a menu
+            // row (the nightly's runs 36115440783 / 36230480324 opened Extensions that way, run
+            // 36309622959 Passwords).
+            if (!awaitSurface(up = false, timeoutMs = 3_000)) {
+                back()
+                awaitSurface(up = false, timeoutMs = 5_000)
+            }
             SystemClock.sleep(1_000)
             still("menu-home-loaded")
 
-            // The bar's Home item: from another page, back to the homepage.
+            // The bar's Home item: the layout holds Home again, so the glyph leaves the icon row
+            // and the bar's item stands; from another page, a finger on it goes back to the homepage.
+            setBarHome(true)
+            SystemClock.sleep(800)
             visit(sites[2])
             val item = awaitChrome("!!document.querySelector('$BAR_HOME')", 6_000)
             expect("the bar carries its Home item (the layout's optional item) with a homepage set", item, "bar-home-item")
+            tapMenuButton()
+            val menuUpAgain = waitFor(MENU_HANDLE_LABEL, 6_000) != null
+            SystemClock.sleep(1_200)
+            val glyphLeft = menuUpAgain && chromeValue("String(!!($MENU_HOME_JS))") == "false"
+            finding("  Home on the bar – the icon row's glyphs: [${menuGlyphs()}]")
+            expect("with the bar holding Home the icon row's glyph leaves: Home is a button in one place (§9.13)", glyphLeft, "bar-home-glyph-left")
+            if (menuUpAgain) {
+                back()
+                awaitSurface(up = false, timeoutMs = 5_000)
+                SystemClock.sleep(600)
+            }
             val barHomed = touchControlExpecting("Home", "document.querySelector('$BAR_HOME')", "the tab loads the homepage from the bar", timeoutMs = 10_000) {
                 activeUrl() == homepageSite.url
             }
@@ -483,27 +511,30 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val atlasRemoved = touchTapLabelExpecting("Remove", "the pin is gone from the list", timeoutMs = 8_000) {
                 pinTitles().none { it == atlas.caption }
             }
-            val atlasGone = waitForGone(atlas.caption, 6_000)
+            // The toast's 8 s clock runs from here: the card is read and its Undo touched through
+            // the DOM first (the tree trails the screen by seconds on the emulator), the tree's
+            // word on the tile taken after.
             val toastUp = awaitToastSeen(REMOVED_TOAST, 6_000)
             val toastAction = chromeValue("((document.querySelector('$TOAST_ACTION')||{}).textContent||'').trim()")
             val toastActions = chromeValue("String(document.querySelectorAll('$TOAST button').length)")
-            finding("  ${atlas.caption} removed from slot $atlasSlot: pins ${pinTitles()}; toast '$REMOVED_TOAST' ${verdict(toastUp)}, its action '$toastAction' ($toastActions button(s))")
-            expect("a finger on Remove takes the ${atlas.caption} tile off the page ($atlasGone) and raises the chrome's toast '$REMOVED_TOAST' with Undo alone (NTP-07)", atlasRemoved && atlasGone && toastUp && toastAction == UNDO_LABEL && toastActions == "1", "tile-removed-toast")
+            val atlasDrawn = drawnTitles()
+            finding("  ${atlas.caption} removed from slot $atlasSlot: pins ${pinTitles()}; drawn $atlasDrawn; toast '$REMOVED_TOAST' ${verdict(toastUp)}, its action '$toastAction' ($toastActions button(s))")
+            expect("a finger on Remove takes the ${atlas.caption} tile off the page (drawn $atlasDrawn) and raises the chrome's toast '$REMOVED_TOAST' with Undo alone (NTP-07)", atlasRemoved && atlasDrawn.none { it == atlas.caption } && toastUp && toastAction == UNDO_LABEL && toastActions == "1", "tile-removed-toast")
             // The card's entry spring at rest before the finger lands (TabCloseDemo's lesson: a
             // touch on a card still carrying `data-moving` reads as a hold and never takes).
             awaitChrome("document.querySelector('$TOAST')&&!document.querySelector('$TOAST').hasAttribute('data-moving')", 2_000)
             SystemClock.sleep(400)
             still("tile-removed-toast")
-            val undone = touchTapLabelExpecting(UNDO_LABEL, "the pin is back on the list at slot $atlasSlot", timeoutMs = 8_000) {
+            val undone = touchSoonExpecting(UNDO_LABEL, "document.querySelector('$TOAST_ACTION')", "the pin is back on the list at slot $atlasSlot", timeoutMs = 6_000) {
                 pinTitles().indexOf(atlas.caption) == atlasSlot
             }
             if (!undone && pinTitles().none { it == atlas.caption }) {
                 // The state reached another way so the recording goes on; the touch fault fails the run.
                 coreInvoke("newtab.undoRemove", JSONObject().put("url", atlas.url).toString())
             }
-            val atlasBack = awaitTile(atlas.caption, 6_000) != null
             val toastDown = awaitChrome("!document.querySelector('$TOAST')", 5_000)
-            finding("  Undo touched: pins ${pinTitles()}; the ${atlas.caption} tile back ${verdict(atlasBack)}; the toast down ${verdict(toastDown)}")
+            val atlasBack = awaitTile(atlas.caption, 8_000) != null
+            finding("  Undo touched: pins ${pinTitles()}; drawn ${drawnTitles()}; the ${atlas.caption} tile back ${verdict(atlasBack)}; the toast down ${verdict(toastDown)}")
             expect("a finger on the toast's Undo puts the ${atlas.caption} shortcut back at slot $atlasSlot (pins ${pinTitles()}) with its tile on the page, and the toast goes at once", undone && atlasBack && toastDown && pinTitles().indexOf(atlas.caption) == atlasSlot, "tile-undone")
             SystemClock.sleep(600)
             still("tile-undone")
@@ -523,14 +554,13 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val removed = touchTapLabelExpecting("Remove", "the pin is gone from the list", timeoutMs = 8_000) {
                 pinTitles().none { it == ledger.caption }
             }
-            val gone = waitForGone(ledger.caption, 6_000)
-            expect("a finger on Remove takes the ${ledger.caption} tile off the page ($gone) and the pinned list (${pinTitles()})", removed && gone, "tile-removed")
             val secondToast = awaitToastSeen(REMOVED_TOAST, 6_000)
             awaitChrome("document.querySelector('$TOAST')&&!document.querySelector('$TOAST').hasAttribute('data-moving')", 2_000)
             SystemClock.sleep(400)
             still("tile-removed")
             val toastBox = domBox("document.querySelector('$TOAST')")
             val swipeAt = toastBox?.let { touchPoint(it) }
+            var swipedOff = false
             if (secondToast && toastBox != null && swipeAt != null) {
                 // From the card's text, a fling to the right (`TOAST_DIRS` lets it go either way).
                 val startX = toastBox.left + toastBox.width() * 0.25f
@@ -539,8 +569,12 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
                     moveBy(toastBox.width() * 0.6f, 0f, 160)
                     up()
                 }
-                val swipedOff = awaitChrome("!document.querySelector('$TOAST')", 4_000)
+                swipedOff = awaitChrome("!document.querySelector('$TOAST')", 4_000)
                 finding("  the ${ledger.caption} toast swiped from ${startX.toInt()},${swipeAt.y.toInt()} by ${(toastBox.width() * 0.6f).toInt()} px: gone ${verdict(swipedOff)}; pins ${pinTitles()}")
+            }
+            val gone = waitForGone(ledger.caption, 6_000)
+            expect("a finger on Remove takes the ${ledger.caption} tile off the page ($gone) and the pinned list (${pinTitles()})", removed && gone, "tile-removed")
+            if (secondToast && toastBox != null && swipeAt != null) {
                 expect("a swipe sends the '$REMOVED_TOAST' toast off (#72) and the ${ledger.caption} removal stands", swipedOff && pinTitles().none { it == ledger.caption }, "tile-removed-toast-swiped")
             } else {
                 expect("the ${ledger.caption} removal's toast '$REMOVED_TOAST' is up to be swiped (seen $secondToast, box $toastBox)", false, "tile-removed-toast-swiped")
@@ -797,9 +831,35 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         coreInvoke("settings.update", JSONObject().put("phoneBarPosition", position).toString())
     }
 
+    /** The bar's optional Home item on or off its layout (`phoneBar`; [patchState] seeds it on). */
+    private fun setBarHome(on: Boolean) {
+        val left = JSONArray(if (on) listOf("back", "home") else listOf("back"))
+        val layout = JSONObject().put("left", left).put("right", JSONArray(listOf("new-tab", "tabs", "menu")))
+        coreInvoke("settings.update", JSONObject().put("phoneBar", layout).toString())
+    }
+
     private fun pins(): JSONArray = coreState().optJSONArray("newTabShortcuts") ?: JSONArray()
 
     private fun pinTitles(): List<String> = pins().let { list -> (0 until list.length()).map { list.getJSONObject(it).optString("title") } }
+
+    /** The tiles as the page draws them, in order ([TILE_ORDER_JS]) – the DOM's word, ahead of the tree's. */
+    private fun drawnTitles(): List<String> = chromeValue(TILE_ORDER_JS).split(',').filter { it.isNotEmpty() }
+
+    /**
+     * [touchControlExpecting] for a control on a clock (the toast's Undo inside §9.33's 8 s): the
+     * tree gets `treeMs` to list it, else the finger lands on the DOM's box, and `took` is then
+     * awaited as there – a touch that went in and did not take is a [touchFault].
+     */
+    private fun touchSoonExpecting(label: String, domJs: String, effect: String, treeMs: Long = 1_500, timeoutMs: Long = 6_000, took: () -> Boolean): Boolean {
+        if (!touchControl(label, domJs, treeMs = treeMs)) return false
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) return true
+            SystemClock.sleep(150)
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
 
     private fun summarise(topSites: String): String = runCatching {
         val list = JSONArray(topSites)
