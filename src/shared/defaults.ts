@@ -278,6 +278,7 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadTimeoutMinutes: 20,
   unloadExcludedDomains: [],
   energySaver: 'on-battery',
+  hoverCardMemoryUsage: true,
   inactiveTabsArchiveDays: 21,
   inactiveTabsAutoClose: true,
   mutedHosts: [],

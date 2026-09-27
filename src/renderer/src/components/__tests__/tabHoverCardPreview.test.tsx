@@ -295,3 +295,51 @@ describe('the page preview in the hover card (tabs-19)', () => {
     expect(picture).toContain('height: 100%')
   })
 })
+
+describe('the memory line in the hover card (settings-29, W8-10)', () => {
+  const withMemory = (
+    state: UIState,
+    usage: Array<{ tabId: string; memoryMb: number }>,
+    hoverCardMemoryUsage = true
+  ): UIState =>
+    ({
+      ...state,
+      settings: { ...state.settings, hoverCardMemoryUsage },
+      resources: { tabs: usage.map((u) => ({ ...u, cpuPercent: 0, processes: 1 })) }
+    }) as unknown as UIState
+  const metaLines = (): string[] =>
+    [...card()!.querySelectorAll('.zen-tab-hover-card-meta > .zen-tab-hover-card-host')].map(
+      (el) => el.textContent ?? ''
+    )
+
+  it('ends the card’s meta with "Memory usage: 123 MB" from the governor’s snapshot while the setting is on – the host first, as Chrome’s footer row stands last', () => {
+    const state = withMemory(fixture([tab('a'), tab('b')], 'a'), [{ tabId: 'b', memoryMb: 123.4 }])
+    browserStore.set({ state })
+    render(<TabHoverCard state={state} />)
+    showCard('b')
+    expect(metaLines()).toEqual(['b.example', 'Memory usage: 123 MB'])
+    // A tab the governor has not measured has no line.
+    showCard('a')
+    expect(metaLines()).toEqual(['a.example'])
+  })
+
+  it('drops the line with the setting off, keeps "High memory usage" past Chrome’s threshold, and lets a sleeping tab’s "Memory saved" stand in for it', () => {
+    const state = withMemory(
+      fixture([tab('a'), tab('b'), tab('c', { discarded: true, sleepSavedMb: 240 })], 'a'),
+      [
+        { tabId: 'a', memoryMb: 123 },
+        { tabId: 'b', memoryMb: 1228.8 },
+        { tabId: 'c', memoryMb: 1228.8 }
+      ],
+      false
+    )
+    browserStore.set({ state })
+    render(<TabHoverCard state={state} />)
+    showCard('a')
+    expect(metaLines()).toEqual(['a.example'])
+    showCard('b')
+    expect(metaLines()).toEqual(['b.example', 'High memory usage: 1.2 GB'])
+    showCard('c')
+    expect(metaLines()).toEqual(['c.example', 'Sleeping – click to wake', 'Memory saved: 240 MB'])
+  })
+})

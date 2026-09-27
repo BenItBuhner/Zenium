@@ -362,6 +362,11 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   older peers keep trading the keys among themselves, as `sidebarExpandOnHover`'s did. The
  *   keep-active hosts (`unloadExcludedDomains`) stay synced: Chrome syncs its exceptions list
  *   (`performance_tuning.tab_discarding.exceptions`, `syncer::PREFERENCES`).
+ * - `hoverCardMemoryUsage`: whether the tab hover card says the page's memory (settings-29,
+ *   W8-10) – Chrome registers `browser.hovercard.memory_usage_enabled` in local state
+ *   (`RegisterLocalState` in `browser_ui_prefs.cc`), never synced; the card is the desktop's
+ *   alone, so the phone holds the key inert. Same mechanics as the three above: no migration,
+ *   an older peer's copy stripped at apply and never winning.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -370,7 +375,8 @@ export const DEVICE_LOCAL_SETTINGS = [
   'useSystemAccent',
   'energySaver',
   'unloadEnabled',
-  'unloadTimeoutMinutes'
+  'unloadTimeoutMinutes',
+  'hoverCardMemoryUsage'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

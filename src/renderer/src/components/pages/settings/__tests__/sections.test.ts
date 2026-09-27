@@ -6297,12 +6297,13 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     return { ...c, model }
   }
 
-  it('draws Chrome’s three groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
+  it('draws Chrome’s groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), the tab hover card’s row (W8-10), Energy Saver', () => {
     const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }))
     expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
       ['memory-saver', 'Memory Saver'],
       ['keep-active', 'Always keep these sites active'],
       ['keep-active-add', null],
+      ['hover-card', 'Tab hover card'],
       ['energy-saver', 'Energy Saver']
     ])
     expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
@@ -6312,6 +6313,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       ['action', 'keep-active:mail.example.com:remove'],
       ['action', 'keep-active-add'],
       ['action', 'keep-active-current'],
+      ['switch', 'hover-card-memory'],
       ['switch', 'energy-saver'],
       ['value', 'energy-saver-mode'],
       ['value', 'energy-saver-factor']
@@ -6351,6 +6353,43 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       expect(allRows(model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
       expect(patches).toEqual([])
     }
+  })
+
+  it('seats the tab hover card’s memory switch on the desktop (settings-29, W8-10): Chrome’s "Show tab memory usage" under its "Tab hover card" heading, on by default, bound to hoverCardMemoryUsage; the tablet has none', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const group = model.groups.find((g) => g.id === 'hover-card')!
+    expect(group.heading).toBe('Tab hover card')
+    expect(group.layouts).toEqual(['desktop'])
+    expect(group.rows.map((r) => r.id)).toEqual(['hover-card-memory'])
+    const memory = row(model, 'hover-card-memory')
+    if (memory.kind !== 'switch') throw new Error('not a switch')
+    expect(memory.label).toBe('Show tab memory usage')
+    expect(memory.description).toBe(
+      'The card that appears when you rest the pointer on a tab says how much memory its page is using.'
+    )
+    // Chrome's default: browser.hovercard.memory_usage_enabled registers true in local state.
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(true)
+    expect(memory.checked).toBe(true)
+    expect(memory.disabled).toBeFalsy()
+    memory.onChange(false)
+    expect(patches).toEqual([{ hoverCardMemoryUsage: false }])
+    expect(
+      row(perf(DESKTOP_STATE({ hoverCardMemoryUsage: false })).model, 'hover-card-memory')
+    ).toMatchObject({ checked: false })
+    // Independent of Memory Saver: the switch stands whatever the mode.
+    const saverOff = row(perf(DESKTOP_STATE({ unloadEnabled: false })).model, 'hover-card-memory')
+    if (saverOff.kind !== 'switch') throw new Error('not a switch')
+    expect(saverOff.checked).toBe(true)
+    expect(saverOff.disabled).toBeFalsy()
+    // Found from Chrome's words and the card's.
+    for (const query of ['hover card', 'memory usage', 'preview card']) {
+      expect(
+        searchRows([model], query).map((r) => r.row.id),
+        query
+      ).toContain('hover-card-memory')
+    }
+    // The tablet chrome mounts no hover card: no row there.
+    expect(findRow(perf(DESKTOP_STATE(), 'tablet').model.groups, 'hover-card-memory')).toBeNull()
   })
 
   it('binds Memory Saver’s switch to unloadEnabled with Chrome’s three facts in two sentences that hold the row’s two lines (N1), Zenium named', () => {
@@ -6583,7 +6622,8 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(none.model.groups.map((g) => g.id)).toEqual([
       'memory-saver',
       'keep-active',
-      'keep-active-add'
+      'keep-active-add',
+      'hover-card'
     ])
     expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
     // The mode itself is left as it was: nothing is written for a group not drawn.

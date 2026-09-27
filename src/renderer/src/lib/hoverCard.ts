@@ -431,3 +431,39 @@ export function hoverCardHost(url: string): string {
   if (/^file:\/\//i.test(url)) return 'File on this computer'
   return getHost(url).toLowerCase() || url.replace(/[?#].*$/, '')
 }
+
+/**
+ * Chrome's `TabResourceUsage::kHighMemoryUsageThreshold`, 800 MiB: past it the card says "High
+ * memory usage" whether the setting is on or off.
+ */
+export const HOVER_CARD_HIGH_MEMORY_MB = 800
+
+/**
+ * A memory figure as Chrome's `ui::FormatBytes` writes it, in the card's line: the unit that
+ * keeps the amount under 1024 (megabytes to a gigabyte, then gigabytes), one decimal while the
+ * amount is under 100 – "45.3 MB", "123 MB", "1.2 GB".
+ */
+export function formatHoverCardMemory(mb: number): string {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
+  return mb < 100 ? `${mb.toFixed(1)} MB` : `${Math.round(mb)} MB`
+}
+
+/**
+ * The card's memory line (settings-29; Chrome's `FadePerformanceFooterRow`): "Memory usage:
+ * 123 MB" for a tab with a measured usage while Settings › Performance's Show tab memory usage
+ * is on – the governor's last sample (`ResourceSnapshot.tabs`, working set, refreshed every few
+ * seconds), so a tab the governor has not measured yet has no line – and "High memory usage:
+ * 1.2 GB" past Chrome's threshold whatever the setting says. Never for a sleeping tab: its card
+ * says what the page gave back instead (`tabStateLines`' "Memory saved"), as Chrome's discard
+ * footer stands in for the memory row. Null where there is nothing to say.
+ */
+export function hoverCardMemoryLine(state: UIState | null, tabId: string): string | null {
+  const tab = state?.tabs[tabId]
+  if (!state || !tab || tab.discarded) return null
+  const usage = state.resources?.tabs.find((t) => t.tabId === tabId)
+  if (!usage || !Number.isFinite(usage.memoryMb) || usage.memoryMb <= 0) return null
+  if (usage.memoryMb > HOVER_CARD_HIGH_MEMORY_MB)
+    return `High memory usage: ${formatHoverCardMemory(usage.memoryMb)}`
+  if (state.settings.hoverCardMemoryUsage === false) return null
+  return `Memory usage: ${formatHoverCardMemory(usage.memoryMb)}`
+}

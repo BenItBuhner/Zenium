@@ -2452,6 +2452,28 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
         }
       ]
     },
+    {
+      // The tab hover card's memory line (settings-29, W8-10; Chrome's "Show tab memory usage",
+      // `browser.hovercard.memory_usage_enabled`, on by default). Chrome seats the switch in
+      // Appearance under "Tab hover preview card" and its Performance page only links there;
+      // the matrix seats the row here, with Chrome's words under Chrome's heading in §9.20's
+      // name for the card. The desktop's alone, as the card is (the tablet chrome mounts none).
+      id: 'hover-card',
+      heading: 'Tab hover card',
+      layouts: ['desktop'],
+      rows: [
+        {
+          kind: 'switch',
+          id: 'hover-card-memory',
+          label: 'Show tab memory usage',
+          description:
+            'The card that appears when you rest the pointer on a tab says how much memory its page is using.',
+          keywords: ['hover card', 'tab hover', 'preview card', 'memory usage', 'memory'],
+          checked: s.hoverCardMemoryUsage,
+          onChange: (v) => set({ hoverCardMemoryUsage: v })
+        }
+      ]
+    },
     ...(noBattery ? [] : [energySaver])
   ]
 }

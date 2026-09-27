@@ -206,9 +206,9 @@ describe('the mnemonic letters', () => {
       'Rename &Tab…'
     ])
     // Close Multiple Tabs ▸ in either orientation: the distinguishing word's initial, O for Other.
-    expect(marked(['Close Tabs to the Left', 'Close Tabs to the Right', 'Close Other Tabs'])).toEqual(
-      ['Close Tabs to the &Left', 'Close Tabs to the &Right', 'Close &Other Tabs']
-    )
+    expect(
+      marked(['Close Tabs to the Left', 'Close Tabs to the Right', 'Close Other Tabs'])
+    ).toEqual(['Close Tabs to the &Left', 'Close Tabs to the &Right', 'Close &Other Tabs'])
     expect(marked(['Close Tabs Above', 'Close Tabs Below', 'Close Other Tabs'])).toEqual([
       'Close Tabs &Above',
       'Close Tabs &Below',
@@ -781,7 +781,9 @@ describe('every native menu the core builds, marked for Windows and Linux', () =
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const out = withMnemonics(h.shown(), 'linux')
     expect(out.map((item) => item.label)).toContain('&New Tab to the Right')
-    const closes = out.find((item) => parseMnemonic(item.label ?? '').text === 'Close Multiple Tabs')
+    const closes = out.find(
+      (item) => parseMnemonic(item.label ?? '').text === 'Close Multiple Tabs'
+    )
     expect(closes?.submenu?.map((item) => item.label)).toEqual([
       'Close Tabs to the &Left',
       'Close Tabs to the &Right',

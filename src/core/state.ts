@@ -858,6 +858,9 @@ export class BrowserState {
     }
     // Energy Saver's mode (W8-2): a profile from before the key reads the default; a value that
     // is none of the three (a hand-edited profile) reads it too, as the bookmarks bar's does.
+    // The hover card's memory line (settings-29, W8-10): off only when the profile says so, as
+    // Chrome's local-state pref defaults on; an older profile, or anything but a boolean, reads on.
+    this.settings.hoverCardMemoryUsage = data.settings?.hoverCardMemoryUsage !== false
     if (!ENERGY_SAVER_MODES.includes(this.settings.energySaver)) {
       this.settings.energySaver = DEFAULT_SETTINGS.energySaver
     }

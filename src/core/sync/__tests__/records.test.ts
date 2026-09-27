@@ -241,6 +241,9 @@ describe('collectLocal', () => {
     src.settings.energySaver = 'off'
     src.settings.unloadEnabled = false
     src.settings.unloadTimeoutMinutes = 240
+    // …and turned the hover card's memory line off (W8-10): Chrome's
+    // browser.hovercard.memory_usage_enabled is local state too.
+    src.settings.hoverCardMemoryUsage = false
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(DEVICE_LOCAL_SETTINGS).toEqual([
       'onboardingDone',
@@ -249,7 +252,8 @@ describe('collectLocal', () => {
       'useSystemAccent',
       'energySaver',
       'unloadEnabled',
-      'unloadTimeoutMinutes'
+      'unloadTimeoutMinutes',
+      'hoverCardMemoryUsage'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
@@ -258,6 +262,7 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('energySaver')
     expect(data).not.toHaveProperty('unloadEnabled')
     expect(data).not.toHaveProperty('unloadTimeoutMinutes')
+    expect(data).not.toHaveProperty('hoverCardMemoryUsage')
     // The keep-active hosts travel, as Chrome syncs tab_discarding.exceptions.
     expect(data).toHaveProperty('unloadExcludedDomains')
     // The Home pin syncs with the rest of the pins, as Chrome's `show_home_button` does.

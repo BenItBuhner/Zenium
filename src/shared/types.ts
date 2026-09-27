@@ -2993,6 +2993,18 @@ export interface Settings {
    */
   energySaver: EnergySaverMode
   /**
+   * Whether the tab hover card says how much memory the page is using (settings-29; Chrome's
+   * `browser.hovercard.memory_usage_enabled`, "Show tab memory usage"): the card's last line,
+   * "Memory usage: 123 MB", read from the governor's snapshot (`ResourceSnapshot.tabs`). On by
+   * default, as Chrome's is. Off, a page past Chrome's high-usage threshold still gets its line
+   * ("High memory usage: 1.2 GB" – `TabResourceUsage::kHighMemoryUsageThresholdBytes`, 800 MiB),
+   * as Chrome's does; a sleeping tab's card says what it gave back instead (`sleepSavedMb`).
+   * Chrome registers the pref in local state, never synced – device-local here too
+   * (`DEVICE_LOCAL_SETTINGS`). The desktop's alone: the tablet chrome mounts no card. Absent in
+   * profiles from before it existed (read as true).
+   */
+  hoverCardMemoryUsage: boolean
+  /**
    * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
    * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
    * keeps one (`InactiveTabsService`). Chrome's ladder: 0 (Never), 7, 14 or 21, 21 by default

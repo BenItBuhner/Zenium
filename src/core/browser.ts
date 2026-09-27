@@ -4470,6 +4470,7 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
     s.useSystemAccent = s.useSystemAccent === true
+    s.hoverCardMemoryUsage = s.hoverCardMemoryUsage !== false
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
