@@ -1,4 +1,5 @@
 import type { UIState } from '@shared/types'
+import { folderNameOf } from '@shared/paths'
 import { pdfPageDownloadId } from '@shared/pdfPage'
 import {
   PDF_MAX_ZOOM,
@@ -9,7 +10,6 @@ import {
   type PdfViewerReport
 } from '@shared/pdfViewerProtocol'
 import { cmd, run } from './api'
-import { folderNameOf } from './captureOverlay'
 import { createStore } from './store'
 import { browserStore, pushToast } from './ui'
 
@@ -207,9 +207,10 @@ export const PDF_PRINT_REFUSED = 'This PDF cannot be printed.'
 /**
  * What the toast says once the copy is written: the destination, as the capture card's Save and
  * the share hub's name theirs (§9.33) – the folder the path landed in by its own name, through
- * the shared `folderNameOf`, which names Android's public collection "Downloads" as its Files
- * app does; "Downloads" too where the path names no folder (a `content:` address from a host
- * that could not read the row's path, which is no path).
+ * the one shared `folderNameOf` (`src/shared/paths.ts`, the hub's and the card's too), which
+ * names Android's public collection "Downloads" as its Files app does; "Downloads" too where the
+ * path names no folder (a `content:` address from a host that could not read the row's path,
+ * which is no path).
  */
 export function pdfSavedMessage(path: string): string {
   const folder = /^[a-z][a-z0-9+.-]+:/i.test(path) ? '' : folderNameOf(path)

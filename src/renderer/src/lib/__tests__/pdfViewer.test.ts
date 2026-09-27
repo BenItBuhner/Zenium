@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UIState } from '@shared/types'
+import { folderNameOf } from '@shared/paths'
 import type { PdfViewerReport } from '@shared/pdfViewerProtocol'
-import { folderNameOf } from '../captureOverlay'
 import { browserStore, uiStore } from '../ui'
 import {
   canZoomIn,
