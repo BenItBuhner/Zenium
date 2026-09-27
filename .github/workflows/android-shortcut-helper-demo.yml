@@ -1,0 +1,77 @@
+name: Android shortcut helper demo
+
+# Records the KEYBOARD-SHORTCUT HELPER (TABLET-20, #591) and the chrome:// ADDRESSES Chrome
+# Android serves (SET-66) on a hardware-accelerated emulator of the pixel_tablet profile laid out
+# at 1280 x 800 dp at one px per dp (`wm size 1280x800`, `wm density 160`, as the tablet layout
+# demo; the runner's AVD carries `hw.keyboard=yes`), and uploads the video, the stills and the
+# driver's findings. The helper: the system opens its keyboard-shortcut dialog on META + /
+# (`PhoneWindowManager` routes the chord to `toggleKeyboardShortcutsMenu` on Android 14 and 15; a
+# Meta press on its own is the launcher's all-apps) and fills it from the browser's
+# `onProvideKeyboardShortcuts`; on this large screen it is Android 14's `KeyboardShortcutListSearch`
+# sheet, the browser's groups under its "Current app" button. The driver sends the chord as `adb
+# shell input keycombination KEYCODE_META_LEFT KEYCODE_SLASH` does, puts a finger on "Current app",
+# reads the listing off SystemUI's accessibility tree and claims the browser's groups in Chrome's
+# order, every row of `ShortcutHelper.groups` under its group, Chrome's words on Chrome's rows
+# ("Open a new tab" with Ctrl + T), no desktop-only row, and META + / closing it again – once in
+# each colour scheme. The addresses, at `wm size 1280x590` (the phone chrome): `chrome://version`
+# typed into the URL field lands the tab on `zen://version`, the About Version document with
+# Chrome's rows read off its DOM; `chrome://flags` stays as typed and the tab stays; `chrome://settings`
+# opens the Settings tab. The driver judges every step from the core's state, the chrome's and the
+# page's DOM and the system dialog's tree, and fails the run when a claim does not hold; see
+# ShortcutHelperDemo.kt. Dispatch-only, like the tablet layout demo (#273's recipe: a push of this
+# file on its branch registers the workflow and is the run while the PR is open; the branch-scoped
+# push trigger goes before the PR is ready). The build, the emulator and its caches live in
+# android-emulator-demo.yml; this file picks the driver, the profile and the display. The nightly
+# sweep runs the driver on its tablet shard (.github/nightly-drivers/shortcut-helper.json).
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-shortcuts-helper-chrome-aliases-9271
+    paths:
+      - .github/workflows/android-shortcut-helper-demo.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-shortcut-helper-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Shortcut helper demo (light, then dark; the addresses)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the helper's large-screen sheet is the one a 600 dp+ short side gets.
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShortcutHelperDemo
+        DEMO_DIR=shortcut-helper-demo
+        DEMO_OUT=artifacts/android-shortcut-helper-demo
+        DEMO_VIDEO=android-shortcut-helper-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-shortcut-helper-demo
+      artifact-path: artifacts/android-shortcut-helper-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Shortcut helper demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShortcutHelperDemo
+        DEMO_DIR=shortcut-helper-demo
+        DEMO_OUT=artifacts/android-shortcut-helper-demo
+        DEMO_VIDEO=android-shortcut-helper-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-shortcut-helper-demo-second-boot
+      artifact-path: artifacts/android-shortcut-helper-demo/

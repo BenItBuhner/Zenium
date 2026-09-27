@@ -2,8 +2,8 @@ import type { FormFactor, KeyBinding, Shortcut, ShortcutAction, ShortcutGroup } 
 
 /**
  * One row of the shortcut table as Android's keyboard-shortcut helper needs it: the system dialog
- * a Meta long-press opens (`Activity.onProvideKeyboardShortcuts`) lists a label and a chord per
- * row, grouped; Kotlin puts the rows in Chrome's groups from the action. Only the primary chord
+ * Meta + / opens (`Activity.onProvideKeyboardShortcuts`) lists a label and a chord per row,
+ * grouped; Kotlin puts the rows in Chrome's groups from the action. Only the primary chord
  * crosses – Chrome's helper lists primaries alone and keeps the alternates for routing, which the
  * flat `bindings` list beside this one already carries.
  */

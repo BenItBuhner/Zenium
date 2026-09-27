@@ -9,7 +9,7 @@ import org.json.JSONObject
  * Physical keyboard support (DeX, tablets with keyboards). The core owns the shortcut table and
  * mirrors every binding here so page WebViews can decide synchronously whether a key press belongs
  * to the browser (consumed) or to the page. The table's rows come with the bindings, for the
- * keyboard-shortcut helper ([ShortcutHelper]; a Meta long-press) to list what routes.
+ * keyboard-shortcut helper ([ShortcutHelper]; the system's Meta + /) to list what routes.
  */
 class Keys {
     private var bindings: Set<ShortcutHelper.Chord> = emptySet()

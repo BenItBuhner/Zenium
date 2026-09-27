@@ -494,8 +494,8 @@ class MainActivity : BrowserActivity() {
     }
 
     /**
-     * The keyboard-shortcut helper a Meta long-press opens, on any device with a keyboard (Chrome's
-     * `ChromeTabbedActivity.onProvideKeyboardShortcuts` has no tablet gate; TABLET-20): the core's
+     * The keyboard-shortcut helper the system opens on Meta + /, on any device with a keyboard
+     * (Chrome's `ChromeTabbedActivity.onProvideKeyboardShortcuts` has no tablet gate; TABLET-20): the core's
      * shortcut table – the rows `Keys` routes – in Chrome's groups (`ShortcutHelper`). The listing
      * follows the chrome's layout (`largeScreen()`: tablet rows on a tablet, phone rows on a phone).
      */

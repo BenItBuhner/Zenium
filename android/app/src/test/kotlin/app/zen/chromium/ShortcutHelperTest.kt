@@ -133,7 +133,7 @@ class ShortcutHelperTest {
         // A `layouts: ['desktop']` entry of the core's table (Name Window…, Screenshot…, Task
         // Manager; #588's Report an issue…, Alt+Shift+I) travels with its layouts
         // (`helperShortcuts`) and the helper lists it on the desktop's layout alone: the tablet's
-        // and the phone's Meta long-press never show it, whatever its group and however bound.
+        // and the phone's helper never show it, whatever its group and however bound.
         val reportIssue = row("help.reportIssue", "windowAndTabManagement", "Report an issue…", chord("i", alt = true, shift = true), layouts = listOf("desktop"))
         val rows = table + reportIssue
         for (layout in listOf("tablet", "phone")) {

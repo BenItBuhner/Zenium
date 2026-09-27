@@ -5,8 +5,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The keyboard-shortcut helper: the system dialog a Meta long-press opens
- * (`Activity.onProvideKeyboardShortcuts`) lists the browser's shortcuts by group, as Chrome's does
+ * The keyboard-shortcut helper: the system dialog Meta + / opens (`PhoneWindowManager` routes the
+ * chord to `StatusBarManagerInternal.toggleKeyboardShortcutsMenu` on Android 14 and 15; a Meta
+ * press on its own is the launcher's all-apps) and fills from `Activity.onProvideKeyboardShortcuts`
+ * lists the browser's shortcuts by group, as Chrome's does
  * (`KeyboardShortcuts.createShortcutGroup`, Chrome 152 – any device with a keyboard, no tablet
  * gate). The rows are the core's shortcut table, the one [Keys] routes, sent with the bindings over
  * `keys.setShortcuts`; this object puts them in Chrome's groups, in Chrome's order, under Chrome's

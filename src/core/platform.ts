@@ -1143,7 +1143,7 @@ export interface TabViewHost {
   /**
    * Shortcut table changed – hosts that pre-filter native key events refresh their copy.
    * `table` is the table the bindings were flattened from (action, group, label, layouts), for a
-   * host whose system lists the shortcuts natively (Android's Meta long-press helper).
+   * host whose system lists the shortcuts natively (Android's keyboard-shortcut helper, Meta + /).
    */
   setShortcuts?(bindings: KeyBinding[], table: readonly Shortcut[]): void
   /** Page controls changed – hosts that decide per navigation refresh their copy of the rules. */
