@@ -8290,6 +8290,34 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
         formFactor
       ).toBeNull()
   })
+
+  it('"Show the mini menu when text is selected" (CT-39; Edge’s Appearance › Context menus row) closes the Appearance group on desktop hosts with the popup surface, on by default with an absent value reading as on, and is absent without the capability and off the phone and the tablet', () => {
+    // The fixture's host has no popup surface: no row, and the search has none either.
+    expect(appearanceIds(look().model)).not.toContain('show-selection-menu')
+    const host = (settings: Partial<Settings> = {}): UIState =>
+      state({ capabilities: { ...ANDROID, selectionMenu: true } }, settings)
+    const on = look(host())
+    expect(appearanceIds(on.model).at(-1)).toBe('show-selection-menu')
+    const menu = row(on.model, 'show-selection-menu')
+    expect(menu).toMatchObject({
+      kind: 'switch',
+      label: 'Show the mini menu when text is selected',
+      checked: true,
+      layouts: ['desktop']
+    })
+    expect(menu.description).toBeUndefined()
+    if (menu.kind !== 'switch') throw new Error('not a switch')
+    menu.onChange(false)
+    expect(on.patches).toEqual([{ showSelectionMenu: false }])
+    expect(
+      row(look(host({ showSelectionMenu: false })).model, 'show-selection-menu')
+    ).toMatchObject({ checked: false })
+    for (const formFactor of ['phone', 'tablet'] as const)
+      expect(
+        findRow(look(host(), formFactor).model.groups, 'show-selection-menu'),
+        formFactor
+      ).toBeNull()
+  })
 })
 
 /* ---- W7-6: the Privacy and security hub cards, Reset settings ---- */
