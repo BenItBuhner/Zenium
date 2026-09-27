@@ -366,11 +366,14 @@ describe('the engine on a WebDAV server', () => {
     dav.setPassword('alice', 'rotated')
     a.browser.bookmarks.create({ title: 'X', url: 'https://x.example/' })
     await a.engine.syncNow()
+    // Which request meets the 401 first is the poll's business – a round already past its
+    // PROPFIND when the password turned is refused on its PUT; the kind and the stop are what
+    // the engine promises, not the method in the log line.
     expect(a.engine.status()).toMatchObject({
       enabled: true,
       transport: 'webdav',
       authRefused: true,
-      lastError: 'WebDAV PROPFIND answered 401',
+      lastError: expect.stringMatching(/^WebDAV (PROPFIND|PUT) answered 401$/),
       lastErrorKind: 'auth'
     })
     expect(a.engine.status().lastError).not.toContain('app-pass')
