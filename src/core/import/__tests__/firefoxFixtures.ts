@@ -100,9 +100,28 @@ function buf(bytes: Uint8Array): Buffer {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
 }
 
-function wrapPbes2(plain: Uint8Array, globalSalt: Uint8Array, password: Buffer): Uint8Array {
-  const entrySalt = randomBytes(16)
-  const iterations = 10000
+/** Ways a fixture may depart from what NSS writes, to exercise the reader's refusals. */
+export interface FixtureDeviations {
+  /** The PBES2 iteration count written and used (NSS: 10 000; 1 for the empty password). */
+  iterations?: number
+  /** The legacy PBE's iteration count as written (NSS: 1; the derivation stays the count-1 one). */
+  legacyIterations?: number
+  /** The PBKDF2 PRF OID as written (NSS: hmacWithSHA256; the key is derived with SHA-256 anyway). */
+  prf?: string
+  /** Drop the ciphertext's last byte: no longer whole blocks. */
+  clipCipherText?: boolean
+}
+
+function wrapPbes2(
+  plain: Uint8Array,
+  globalSalt: Uint8Array,
+  password: Buffer,
+  deviate: FixtureDeviations
+): Uint8Array {
+  // NSS's shape: a 32-byte entry salt, and the PRF's AlgorithmIdentifier with no parameters
+  // (`SEQUENCE { OID hmacWithSHA256 }` – no NULL), as `openssl asn1parse` shows on a real store.
+  const entrySalt = randomBytes(32)
+  const iterations = deviate.iterations ?? 10000
   const keyLength = 32
   const ivInner = randomBytes(14)
   const iv = Buffer.concat([Buffer.from([0x04, 0x0e]), ivInner])
@@ -119,13 +138,13 @@ function wrapPbes2(plain: Uint8Array, globalSalt: Uint8Array, password: Buffer):
           derOctet(entrySalt),
           derInt(iterations),
           derInt(keyLength),
-          derSeq(derOid(OID_HMAC_SHA256), derNull())
+          derSeq(derOid(deviate.prf ?? OID_HMAC_SHA256))
         )
       ),
       derSeq(derOid(OID_AES256_CBC), derOctet(ivInner))
     )
   )
-  return derSeq(algId, derOctet(ct))
+  return derSeq(algId, derOctet(deviate.clipCipherText ? ct.subarray(0, ct.length - 1) : ct))
 }
 
 function legacyKeyIv(
@@ -148,13 +167,21 @@ function legacyKeyIv(
   return { key: k.subarray(0, 24), iv: k.subarray(k.length - 8) }
 }
 
-function wrapLegacy3des(plain: Uint8Array, globalSalt: Uint8Array, password: Buffer): Uint8Array {
+function wrapLegacy3des(
+  plain: Uint8Array,
+  globalSalt: Uint8Array,
+  password: Buffer,
+  deviate: FixtureDeviations
+): Uint8Array {
   const entrySalt = randomBytes(20)
   const { key, iv } = legacyKeyIv(globalSalt, password, entrySalt)
   const cipher = createCipheriv('des-ede3-cbc', key, iv)
   const ct = Buffer.concat([cipher.update(buf(plain)), cipher.final()])
-  const algId = derSeq(derOid(OID_PBE_SHA1_3DES), derSeq(derOctet(entrySalt), derInt(1)))
-  return derSeq(algId, derOctet(ct))
+  const algId = derSeq(
+    derOid(OID_PBE_SHA1_3DES),
+    derSeq(derOctet(entrySalt), derInt(deviate.legacyIterations ?? 1))
+  )
+  return derSeq(algId, derOctet(deviate.clipCipherText ? ct.subarray(0, ct.length - 1) : ct))
 }
 
 function sealLogin(masterKey: Uint8Array, text: string, keyId = MASTER_KEY_ID): string {
@@ -169,11 +196,13 @@ function sealLogin(masterKey: Uint8Array, text: string, keyId = MASTER_KEY_ID): 
 // A whole vault: key4.db builder + a sealer that uses its master key
 // ---------------------------------------------------------------------------
 
-export interface FirefoxVaultOptions {
+export interface FirefoxVaultOptions extends FixtureDeviations {
   password?: string
   algo?: 'pbes2' | '3des'
   globalSalt?: Uint8Array
   masterKey?: Uint8Array
+  /** The verifier's plaintext as sealed (NSS: exactly `password-check`). */
+  passwordCheck?: string
 }
 
 export interface FirefoxVault {
@@ -192,8 +221,13 @@ export function firefoxVault(options: FirefoxVaultOptions = {}): FirefoxVault {
   const globalSalt = options.globalSalt ?? DEFAULT_GLOBAL_SALT
   const masterKey = options.masterKey ?? new Uint8Array(randomBytes(24))
   const wrap = (options.algo ?? 'pbes2') === '3des' ? wrapLegacy3des : wrapPbes2
-  const item2 = wrap(new TextEncoder().encode(PASSWORD_CHECK), globalSalt, password)
-  const a11 = wrap(masterKey, globalSalt, password)
+  const item2 = wrap(
+    new TextEncoder().encode(options.passwordCheck ?? PASSWORD_CHECK),
+    globalSalt,
+    password,
+    options
+  )
+  const a11 = wrap(masterKey, globalSalt, password, options)
   const key4: SqlBuilder = (db) => {
     db.exec(
       `CREATE TABLE metaData (id TEXT PRIMARY KEY, item1 BLOB, item2 BLOB);

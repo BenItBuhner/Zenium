@@ -32,6 +32,7 @@ import type { ImportedLogin, ImportedLogins } from './types'
 
 const OID_PBES2 = '1.2.840.113549.1.5.13'
 const OID_PBKDF2 = '1.2.840.113549.1.5.12'
+const OID_HMAC_SHA256 = '1.2.840.113549.2.9'
 const OID_AES256_CBC = '2.16.840.1.101.3.4.1.42'
 const OID_DES_EDE3_CBC = '1.2.840.113549.3.7'
 const OID_PBE_SHA1_3DES = '1.2.840.113549.1.12.5.1.3'
@@ -43,6 +44,17 @@ const PASSWORD_CHECK = 'password-check'
 /** 3DES block size, and the length of the 3DES key NSS wraps. */
 const DES_BLOCK = 8
 const DES3_KEY_BYTES = 24
+const AES_BLOCK = 16
+/**
+ * The most PBKDF2 rounds a store may ask for. NSS writes 10 000 (1 for the empty password); the
+ * derivation runs on the caller's thread, so a corrupt or absurd count is refused, not run.
+ */
+const MAX_PBKDF2_ITERATIONS = 1_000_000
+/** The one iteration count NSS's legacy 3DES wrapping was ever written with. */
+const LEGACY_ITERATIONS = 1
+
+/** A `key4.db` whose sealed values are not what NSS writes: unwrapped bytes that are no key. */
+const KEY_STORE_MALFORMED = 'Firefox’s key store is malformed.'
 
 const MIN_PLAUSIBLE_MS = Date.UTC(1990, 0, 1)
 
@@ -92,16 +104,19 @@ export const PRIMARY_PASSWORD_NEEDED =
 export function deriveFirefoxKey(db: ImportDatabase, primaryPassword: string): FirefoxMasterKey {
   const c = nodeCrypto()
   const meta = readPasswordMeta(db)
+  // NSS compares the unwrapped verifier with `password-check` whole. A pad that does not strip,
+  // or any other plaintext, is the password not opening the store.
   const check = pbeDecrypt(c, meta.item2, meta.globalSalt, primaryPassword)
-  if (!startsWithAscii(check, PASSWORD_CHECK))
+  if (!check || !bytesEqual(check, utf8(PASSWORD_CHECK)))
     throw new FirefoxLoginsError(
       'wrong-password',
       primaryPassword === '' ? PRIMARY_PASSWORD_NEEDED : WRONG_PRIMARY_PASSWORD
     )
   const wrapped = readMasterKeyBlob(db)
+  // The password is known right by now: what will not unwrap to a 3DES key is the store's fault.
   const cleartext = pbeDecrypt(c, wrapped, meta.globalSalt, primaryPassword)
-  if (cleartext.length < DES3_KEY_BYTES)
-    throw new FirefoxLoginsError('corrupt', 'Firefox’s key store is malformed.')
+  if (!cleartext || cleartext.length < DES3_KEY_BYTES)
+    throw new FirefoxLoginsError('corrupt', KEY_STORE_MALFORMED)
   return { key: cleartext.slice(0, DES3_KEY_BYTES) }
 }
 
@@ -202,12 +217,19 @@ function readMasterKeyBlob(db: ImportDatabase): Uint8Array {
 // The PBE that wraps the master key and the password-check
 // ---------------------------------------------------------------------------
 
+/**
+ * Unwrap one sealed `key4.db` value (`SEQUENCE { AlgorithmIdentifier, OCTET STRING }`) with the
+ * primary password and strip its PKCS#7 pad. Returns null when the pad does not strip – with the
+ * verifier that is a wrong password, with the key it is corruption; the caller knows which. A
+ * shape NSS does not write is `unsupported`; a ciphertext that is not whole blocks is `corrupt`
+ * whatever the password.
+ */
 function pbeDecrypt(
   c: NodeCrypto,
   blob: Uint8Array,
   globalSalt: Uint8Array,
   password: string
-): Uint8Array {
+): Uint8Array | null {
   const outer = decode(blob)
   sequenceOf(outer)
   const algId = childAt(outer, 0)
@@ -226,7 +248,7 @@ function pbes2Decrypt(
   cipherText: Uint8Array,
   globalSalt: Uint8Array,
   password: Uint8Array
-): Uint8Array {
+): Uint8Array | null {
   const params = childAt(algId, 1)
   sequenceOf(params)
   const kdf = childAt(params, 0)
@@ -238,8 +260,14 @@ function pbes2Decrypt(
   const entrySalt = octetsOf(childAt(kdfParams, 0))
   const iterations = intOf(childAt(kdfParams, 1))
   const keyLength = intOf(childAt(kdfParams, 2))
-  if (iterations < 1 || keyLength !== 32)
+  if (iterations < 1 || iterations > MAX_PBKDF2_ITERATIONS || keyLength !== 32)
     throw new FirefoxLoginsError('unsupported', 'key4.db has unexpected PBKDF2 parameters.')
+  // PKCS#5 lets the PRF be left out (HMAC-SHA1 then); NSS always names HMAC-SHA256, the one
+  // derivation this reader has. Anything else would derive a wrong key and read as a wrong
+  // password, so it is refused as what it is.
+  const prf = kdfParams.children.length > 3 ? childAt(kdfParams, 3) : null
+  if (!prf || oidOf(childAt(prf, 0)) !== OID_HMAC_SHA256)
+    throw new FirefoxLoginsError('unsupported', 'key4.db uses an unknown key-derivation function.')
   const enc = childAt(params, 1)
   sequenceOf(enc)
   if (oidOf(childAt(enc, 0)) !== OID_AES256_CBC)
@@ -247,7 +275,7 @@ function pbes2Decrypt(
   const iv = aesIv(octetsOf(childAt(enc, 1)))
   const prehash = new Uint8Array(c.createHash('sha1').update(globalSalt).update(password).digest())
   const key = new Uint8Array(c.pbkdf2Sync(prehash, entrySalt, iterations, keyLength, 'sha256'))
-  return cbcDecrypt(c, 'aes-256-cbc', key, iv, cipherText)
+  return pkcs7Strip(keyStoreDecrypt(c, 'aes-256-cbc', key, iv, cipherText, AES_BLOCK), AES_BLOCK)
 }
 
 function legacy3desDecrypt(
@@ -256,12 +284,38 @@ function legacy3desDecrypt(
   cipherText: Uint8Array,
   globalSalt: Uint8Array,
   password: Uint8Array
-): Uint8Array {
+): Uint8Array | null {
   const params = childAt(algId, 1)
   sequenceOf(params)
   const entrySalt = octetsOf(childAt(params, 0))
+  // The derivation below is the count-1 one NSS wrote; another count is a derivation this reader
+  // does not have, not a wrong password.
+  if (intOf(childAt(params, 1)) !== LEGACY_ITERATIONS)
+    throw new FirefoxLoginsError('unsupported', 'key4.db uses an unknown key-derivation function.')
   const { key, iv } = legacyKeyIv(c, globalSalt, password, entrySalt)
-  return cbcDecrypt(c, 'des-ede3-cbc', key, iv, cipherText)
+  return pkcs7Strip(keyStoreDecrypt(c, 'des-ede3-cbc', key, iv, cipherText, DES_BLOCK), DES_BLOCK)
+}
+
+/**
+ * CBC-decrypt a `key4.db` value. A ciphertext that is not whole blocks (or that the cipher
+ * refuses for any other reason) is the store's corruption, reported as such rather than as the
+ * cipher's own words.
+ */
+function keyStoreDecrypt(
+  c: NodeCrypto,
+  algorithm: 'aes-256-cbc' | 'des-ede3-cbc',
+  key: Uint8Array,
+  iv: Uint8Array,
+  cipherText: Uint8Array,
+  block: number
+): Uint8Array {
+  if (cipherText.length === 0 || cipherText.length % block !== 0)
+    throw new FirefoxLoginsError('corrupt', KEY_STORE_MALFORMED)
+  try {
+    return cbcDecrypt(c, algorithm, key, iv, cipherText)
+  } catch {
+    throw new FirefoxLoginsError('corrupt', KEY_STORE_MALFORMED)
+  }
 }
 
 /**
@@ -370,12 +424,6 @@ function pkcs7Strip(data: Uint8Array, block: number): Uint8Array | null {
   if (pad < 1 || pad > block || pad > data.length) return null
   for (let i = data.length - pad; i < data.length; i++) if (data[i] !== pad) return null
   return data.subarray(0, data.length - pad)
-}
-
-function startsWithAscii(bytes: Uint8Array, prefix: string): boolean {
-  if (bytes.length < prefix.length) return false
-  for (let i = 0; i < prefix.length; i++) if (bytes[i] !== prefix.charCodeAt(i)) return false
-  return true
 }
 
 function epochMs(value: unknown, now: number): number | undefined {

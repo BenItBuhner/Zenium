@@ -179,9 +179,66 @@ describe('firefoxLogins: key4.db + logins.json', () => {
   })
 
   it('says the key store is malformed when the unwrapped key is too short', () => {
-    const vault = firefoxVault({ masterKey: new Uint8Array(8) })
+    for (const short of [8, 16]) {
+      // 16 bytes pad to a whole AES block of 32: the length is judged after the pad is stripped.
+      const vault = firefoxVault({ masterKey: new Uint8Array(short) })
+      const db = memoryDatabase(vault.key4)
+      expect(() => deriveFirefoxKey(db, '')).toThrowError('Firefox’s key store is malformed.')
+      db.close()
+    }
+  })
+
+  it('compares the whole unpadded verifier, as NSS does', () => {
+    const vault = firefoxVault({ passwordCheck: 'password-checkXYZ' })
     const db = memoryDatabase(vault.key4)
-    expect(() => deriveFirefoxKey(db, '')).toThrowError('Firefox’s key store is malformed.')
+    expect(() => deriveFirefoxKey(db, '')).toThrowError(PRIMARY_PASSWORD_NEEDED)
+    db.close()
+  })
+
+  it('reports a ciphertext that is not whole blocks as the store malformed, in its own words', () => {
+    for (const algo of ['pbes2', '3des'] as const) {
+      const vault = firefoxVault({ algo, clipCipherText: true })
+      const db = memoryDatabase(vault.key4)
+      let caught: unknown
+      try {
+        deriveFirefoxKey(db, '')
+      } catch (error) {
+        caught = error
+      }
+      db.close()
+      expect(caught).toBeInstanceOf(FirefoxLoginsError)
+      expect((caught as FirefoxLoginsError).kind).toBe('corrupt')
+      expect((caught as Error).message).toBe('Firefox’s key store is malformed.')
+    }
+  })
+
+  it('refuses a derivation it does not have as unsupported, not as a wrong password', () => {
+    const cases = [
+      // hmacWithSHA1 as the PBKDF2 PRF: PKCS#5 allows it, NSS never writes it.
+      { options: { prf: '1.2.840.113549.2.7' }, kind: 'unsupported' },
+      // The legacy PBE with a count other than the one NSS wrote.
+      { options: { algo: '3des' as const, legacyIterations: 2 }, kind: 'unsupported' },
+      // More PBKDF2 rounds than any NSS store asks for: refused before the derivation runs.
+      { options: { iterations: 1_000_001 }, kind: 'unsupported' }
+    ]
+    for (const { options, kind } of cases) {
+      const vault = firefoxVault(options)
+      const db = memoryDatabase(vault.key4)
+      let caught: unknown
+      try {
+        deriveFirefoxKey(db, '')
+      } catch (error) {
+        caught = error
+      }
+      db.close()
+      expect(caught).toBeInstanceOf(FirefoxLoginsError)
+      expect((caught as FirefoxLoginsError).kind).toBe(kind)
+      expect((caught as Error).message).toMatch(/^key4\.db (uses an unknown|has unexpected)/)
+    }
+    // The count NSS writes for the empty password opens as any other.
+    const one = firefoxVault({ iterations: 1 })
+    const db = memoryDatabase(one.key4)
+    expect(deriveFirefoxKey(db, '').key).toEqual(one.masterKey)
     db.close()
   })
 })
