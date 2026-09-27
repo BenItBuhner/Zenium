@@ -27,8 +27,35 @@
  * The index is a superset filter: every rule it visits is still put through the full condition
  * test, and a rule that may match is never left out. A rule under several suffixes or tokens is
  * visited more than once; the engine deduplicates.
+ *
+ * The index files ROW NUMBERS: {@link RowIndex} is built over an {@link IndexSource} – the
+ * engine's struct-of-arrays {@link RuleTable} (`ruleTable.ts`) answers for its rows by index –
+ * and its buckets hold integers, one or a small array per key. {@link RuleIndex} is the same
+ * index over an array of rule objects (`IndexedRule`), for callers that hold those.
  */
-import type { ResourceType } from './rules'
+import { RESOURCE_TYPES, type ResourceType } from './rules'
+
+// -------------------------------------------------------------------------------------------
+// Resource type masks
+// -------------------------------------------------------------------------------------------
+
+const TYPE_BIT = new Map<string, number>()
+RESOURCE_TYPES.forEach((type, index) => TYPE_BIT.set(type, 1 << index))
+/** The bit of a type name the engine does not know: a list naming one is never met by a request. */
+const UNKNOWN_TYPE_BIT = 1 << 15
+
+/** The bit of a request's type; 0 for a type the engine does not know. */
+export function typeBit(type: ResourceType | string): number {
+  return TYPE_BIT.get(type) ?? 0
+}
+
+/** A `resourceTypes` list as a mask; 0 for no list (every type). A non-empty list is never 0. */
+export function typeMask(types: Iterable<string> | undefined): number {
+  if (!types) return 0
+  let mask = 0
+  for (const type of types) mask |= TYPE_BIT.get(type) ?? UNKNOWN_TYPE_BIT
+  return mask
+}
 
 // -------------------------------------------------------------------------------------------
 // Tokens
@@ -352,7 +379,45 @@ export function hasDomainOf(suffixes: readonly string[], domains: ReadonlySet<st
 // The index
 // -------------------------------------------------------------------------------------------
 
-/** What the index reads of a compiled rule. */
+/** `UrlSelector.kind` as a code, for sources that keep it in a byte column. */
+export const SELECTOR = { every: 0, hostname: 1, tokens: 2 } as const
+
+/**
+ * A `requestDomains`-only rule whose list runs past this many domains is not filed under each
+ * of them: it stands in a sidecar the lookup tests with the request host's suffixes (one
+ * membership test per label), as the Kotlin index does (`RuleIndex.BIG_LIST`). uBlock Origin
+ * Lite folds whole hosts files – a hundred thousand domains – into one such rule.
+ */
+export const BIG_LIST = 8_192
+
+/**
+ * What the index reads of the rules it files, by row number. The engine's {@link RuleTable}
+ * is one; {@link RuleIndex} adapts an array of {@link IndexedRule} objects.
+ */
+export interface IndexSource {
+  /** Rows. */
+  readonly size: number
+  /** `allowAllRequests`: kept apart, matched against the document as well as the request. */
+  isAllowAll(row: number): boolean
+  /** `SELECTOR` code of how the row selects URLs. */
+  selectorKind(row: number): number
+  /** The `||host^` selector's host; only read for `SELECTOR.hostname` rows. */
+  hostnameOf(row: number): string
+  /** Token hashes of a `SELECTOR.tokens` row (non-empty for those). */
+  tokensOf(row: number): ArrayLike<number>
+  /** `resourceTypes` as a mask ({@link typeMask}); 0 for every type. */
+  typeMaskOf(row: number): number
+  /** Lowercase `requestDomains`, or null for none. */
+  requestDomainsOf(row: number): Iterable<string> | null
+  /** How many `requestDomains` the row has (0 for none). */
+  requestDomainCount(row: number): number
+  /** Lowercase `initiatorDomains`, or null for none. */
+  initiatorDomainsOf(row: number): Iterable<string> | null
+  /** Whether one of the host's suffixes is in the row's `requestDomains` (the sidecar's test). */
+  requestDomainsHasAny(row: number, suffixes: readonly string[]): boolean
+}
+
+/** What the index reads of a compiled rule object (the object-array form of {@link IndexSource}). */
 export interface IndexedRule {
   /** `allowAllRequests`: kept apart, matched against the document as well as the request. */
   readonly allowAll: boolean
@@ -365,6 +430,8 @@ export interface IndexedRule {
 /** The request facts a lookup walks the buckets with. */
 export interface IndexLookup {
   readonly type: ResourceType
+  /** `typeBit(type)`, when the caller has it at hand (the engine's facts do). */
+  readonly typeBit?: number
   /** `hostSuffixes` of the request host. */
   readonly hostSuffixes: readonly string[]
   /** `hostSuffixes` of the initiator host; empty when the request has none. */
@@ -373,56 +440,59 @@ export interface IndexLookup {
   tokens(): readonly number[]
 }
 
-interface TypeGroup<R> {
-  types: ReadonlySet<ResourceType> | null
-  rules: R[]
+/** Rows with nothing to index them by, one group per distinct `resourceTypes` mask. */
+interface WildcardGroup {
+  /** 0 for rules of every type. */
+  mask: number
+  rows: number[]
 }
 
-/** hostname → one rule, or the rules under it (most hostnames carry one). */
-type HostMap<R> = Map<string, R | R[]>
+/** key → one row, or the rows under it (most keys carry one). */
+type Buckets<K> = Map<K, number | number[]>
 
-function addUnder<R>(map: HostMap<R>, key: string, rule: R): void {
+function addUnder<K>(map: Buckets<K>, key: K, row: number): void {
   const existing = map.get(key)
-  if (existing === undefined) map.set(key, rule)
-  else if (Array.isArray(existing)) existing.push(rule)
-  else map.set(key, [existing, rule])
+  if (existing === undefined) map.set(key, row)
+  else if (typeof existing === 'number') map.set(key, [existing, row])
+  else existing.push(row)
 }
 
-function visitUnder<R>(map: HostMap<R>, key: string, visit: (rule: R) => void): void {
+function visitUnder<K>(map: Buckets<K>, key: K, visit: (row: number) => void): void {
   const hit = map.get(key)
   if (hit === undefined) return
-  if (Array.isArray(hit)) for (const rule of hit) visit(rule)
-  else visit(hit)
+  if (typeof hit === 'number') visit(hit)
+  else for (let i = 0; i < hit.length; i++) visit(hit[i]!)
 }
 
 /**
- * Builds a {@link RuleIndex} a few rules at a time, so a large set (an extension's static
+ * Builds a {@link RowIndex} a few rows at a time, so a large set (an extension's static
  * ruleset) is indexed between decisions instead of ahead of them: the engine calls {@link step}
- * with a budget in rules until it answers true, then swaps {@link result} in. Two passes: every
- * rule is classified (hostname, domains, token candidate, wildcard) while the token histogram
- * is counted, then each token candidate goes under its rarest token.
+ * with a budget in rows until it answers true, then swaps {@link result} in. Two passes: every
+ * row is classified (hostname, domains, token candidate, wildcard) while the token histogram is
+ * counted, then each token candidate goes under its rarest token.
  */
-export class RuleIndexBuilder<R extends IndexedRule> {
+export class RowIndexBuilder {
   private cursor = 0
   private phase: 'classify' | 'bucket' | 'done' = 'classify'
-  private readonly hosts: HostMap<R> = new Map()
-  private readonly initiators: HostMap<R> = new Map()
-  private readonly buckets = new Map<number, R[]>()
-  private readonly allowAll: R[] = []
-  private readonly tokenCandidates: R[] = []
-  private readonly loose: R[] = []
+  private readonly hosts: Buckets<string> = new Map()
+  private readonly initiators: Buckets<string> = new Map()
+  private readonly buckets: Buckets<number> = new Map()
+  private readonly allowAll: number[] = []
+  private readonly bigHosts: number[] = []
+  private readonly tokenCandidates: number[] = []
+  private readonly loose: number[] = []
   private readonly histogram = new Map<number, number>()
-  private built: RuleIndex<R> | null = null
+  private built: RowIndex | null = null
 
-  constructor(private readonly rules: readonly R[]) {}
+  constructor(private readonly source: IndexSource) {}
 
-  /** Advances the build by up to `work` rules; true once the index is complete. */
+  /** Advances the build by up to `work` rows; true once the index is complete. */
   step(work: number): boolean {
     let budget = work
     while (budget > 0) {
       if (this.phase === 'classify') {
-        if (this.cursor < this.rules.length) {
-          this.classify(this.rules[this.cursor++])
+        if (this.cursor < this.source.size) {
+          this.classify(this.cursor++)
           budget--
         } else {
           this.phase = 'bucket'
@@ -430,7 +500,7 @@ export class RuleIndexBuilder<R extends IndexedRule> {
         }
       } else if (this.phase === 'bucket') {
         if (this.cursor < this.tokenCandidates.length) {
-          this.bucket(this.tokenCandidates[this.cursor++])
+          this.bucket(this.tokenCandidates[this.cursor++]!)
           budget--
         } else {
           this.finish()
@@ -444,103 +514,128 @@ export class RuleIndexBuilder<R extends IndexedRule> {
   }
 
   /** The index, once {@link step} has answered true. */
-  get result(): RuleIndex<R> | null {
+  get result(): RowIndex | null {
     return this.built
   }
 
-  private classify(rule: R): void {
-    if (rule.allowAll) {
-      this.allowAll.push(rule)
+  private classify(row: number): void {
+    const source = this.source
+    if (source.isAllowAll(row)) {
+      this.allowAll.push(row)
       return
     }
-    const selector = rule.selector
-    if (selector.kind === 'hostname') addUnder(this.hosts, selector.hostname, rule)
-    else if (selector.kind === 'tokens' && selector.tokens.length > 0) {
-      this.tokenCandidates.push(rule)
-      for (const t of selector.tokens) this.histogram.set(t, (this.histogram.get(t) ?? 0) + 1)
-    } else this.byDomainsOrLoose(rule)
+    switch (source.selectorKind(row)) {
+      case SELECTOR.hostname:
+        addUnder(this.hosts, source.hostnameOf(row), row)
+        return
+      case SELECTOR.tokens: {
+        const tokens = source.tokensOf(row)
+        if (tokens.length > 0) {
+          this.tokenCandidates.push(row)
+          for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i]!
+            this.histogram.set(t, (this.histogram.get(t) ?? 0) + 1)
+          }
+          return
+        }
+        this.byDomainsOrLoose(row)
+        return
+      }
+      default:
+        this.byDomainsOrLoose(row)
+    }
   }
 
-  /** The rule goes under the rarest of its tokens in this set. */
-  private bucket(rule: R): void {
-    if (rule.selector.kind !== 'tokens') return
-    const tokens = rule.selector.tokens
-    let best = tokens[0]
+  /** The row goes under the rarest of its tokens in this set. */
+  private bucket(row: number): void {
+    const tokens = this.source.tokensOf(row)
+    let best = tokens[0]!
     let bestCount = this.histogram.get(best) ?? 0
-    for (const t of tokens) {
+    for (let i = 1; i < tokens.length; i++) {
+      const t = tokens[i]!
       const count = this.histogram.get(t) ?? 0
       if (count < bestCount) {
         best = t
         bestCount = count
       }
     }
-    const bucket = this.buckets.get(best)
-    if (bucket) bucket.push(rule)
-    else this.buckets.set(best, [rule])
+    addUnder(this.buckets, best, row)
   }
 
   /**
-   * A rule without a usable URL token: under each of its request domains, else under each of
-   * its initiator domains (a rule that names the sites it applies on can only meet requests of
-   * their documents), else in the wildcard list.
+   * A row without a usable URL token: under each of its request domains (or in the sidecar when
+   * the list is over {@link BIG_LIST}), else under each of its initiator domains (a rule that
+   * names the sites it applies on can only meet requests of their documents), else in the
+   * wildcard list.
    */
-  private byDomainsOrLoose(rule: R): void {
-    if (rule.requestDomains)
-      for (const domain of rule.requestDomains) addUnder(this.hosts, domain, rule)
-    else if (rule.initiatorDomains)
-      for (const site of rule.initiatorDomains) addUnder(this.initiators, site, rule)
-    else this.loose.push(rule)
+  private byDomainsOrLoose(row: number): void {
+    const source = this.source
+    const domains = source.requestDomainsOf(row)
+    if (domains) {
+      if (source.requestDomainCount(row) > BIG_LIST) this.bigHosts.push(row)
+      else for (const domain of domains) addUnder(this.hosts, domain, row)
+      return
+    }
+    const sites = source.initiatorDomainsOf(row)
+    if (sites) for (const site of sites) addUnder(this.initiators, site, row)
+    else this.loose.push(row)
   }
 
   private finish(): void {
-    const groups = new Map<string, TypeGroup<R>>()
-    for (const rule of this.loose) {
-      const key = rule.resourceTypes ? [...rule.resourceTypes].sort().join(',') : ''
-      const group = groups.get(key)
-      if (group) group.rules.push(rule)
-      else groups.set(key, { types: rule.resourceTypes, rules: [rule] })
+    const groups = new Map<number, WildcardGroup>()
+    for (const row of this.loose) {
+      const mask = this.source.typeMaskOf(row)
+      const group = groups.get(mask)
+      if (group) group.rows.push(row)
+      else groups.set(mask, { mask, rows: [row] })
     }
-    this.built = new RuleIndex(
+    this.built = new RowIndex(
+      this.source,
       this.hosts,
       this.initiators,
       this.buckets,
       [...groups.values()],
       this.allowAll,
+      this.bigHosts,
       this.tokenCandidates.length
     )
     this.phase = 'done'
   }
 }
 
-export class RuleIndex<R extends IndexedRule> {
-  /** @internal Built by {@link RuleIndexBuilder}; use {@link RuleIndex.build} for a whole set at once. */
+/** One rule set's rows indexed for `RuleEngine.decide`; see the file comment for the buckets. */
+export class RowIndex {
+  /** @internal Built by {@link RowIndexBuilder}; use {@link RowIndex.build} for a whole set at once. */
   constructor(
-    /** hostname → rule or rules. */
-    private readonly hosts: HostMap<R>,
-    /** initiator domain → rule or rules, for rules whose only selector is `initiatorDomains`. */
-    private readonly initiators: HostMap<R>,
-    /** token hash → rules whose rarest token it is. */
-    private readonly buckets: Map<number, R[]>,
-    /** Rules with nothing to index them by, one group per distinct `resourceTypes`. */
-    private readonly wildcard: readonly TypeGroup<R>[],
-    /** `allowAllRequests` rules, in the set's order. */
-    readonly allowAll: readonly R[],
-    /** Rules indexed by a token (the rest sit under a hostname or in the wildcard list). */
+    private readonly source: IndexSource,
+    /** hostname → row or rows (`||host^` rules and `requestDomains` entries). */
+    private readonly hosts: Buckets<string>,
+    /** initiator domain → row or rows, for rules whose only selector is `initiatorDomains`. */
+    private readonly initiators: Buckets<string>,
+    /** token hash → rows whose rarest token it is. */
+    private readonly buckets: Buckets<number>,
+    /** Rows with nothing to index them by, one group per distinct `resourceTypes` mask. */
+    private readonly wildcard: readonly WildcardGroup[],
+    /** `allowAllRequests` rows, in the set's order. */
+    readonly allowAll: readonly number[],
+    /** `requestDomains`-only rows whose list is over {@link BIG_LIST}: tested per request instead of filed per domain. */
+    readonly bigHostRows: readonly number[],
+    /** Rows indexed by a token (the rest sit under a hostname or in the wildcard list). */
     readonly tokenIndexedCount: number
   ) {}
 
-  /** Index `rules` now, in one go. */
-  static build<R extends IndexedRule>(rules: readonly R[]): RuleIndex<R> {
-    const builder = new RuleIndexBuilder(rules)
+  /** Index `source` now, in one go. */
+  static build(source: IndexSource): RowIndex {
+    const builder = new RowIndexBuilder(source)
     builder.step(Infinity)
     const built = builder.result
     if (!built) throw new Error('rule index build did not finish')
     return built
   }
 
-  /** Rules that had no hostname, site or token to index them by (tested for every request of their types). */
+  /** Rows that had no hostname, site or token to index them by (tested for every request of their types). */
   get wildcardCount(): number {
-    return this.wildcard.reduce((n, g) => n + g.rules.length, 0)
+    return this.wildcard.reduce((n, g) => n + g.rows.length, 0)
   }
 
   /** Hostnames the map indexes (`||host^` rules and `requestDomains` entries). */
@@ -554,23 +649,165 @@ export class RuleIndex<R extends IndexedRule> {
   }
 
   /**
+   * Visit every row that may match the request (other than `allowAllRequests` rows): a row
+   * under several of the host's suffixes or several tokens is visited more than once.
+   */
+  forEachCandidate(lookup: IndexLookup, visit: (row: number) => void): void {
+    const hostSuffixes = lookup.hostSuffixes
+    if (this.hosts.size > 0)
+      for (let i = 0; i < hostSuffixes.length; i++) visitUnder(this.hosts, hostSuffixes[i]!, visit)
+    const big = this.bigHostRows
+    for (let i = 0; i < big.length; i++)
+      if (this.source.requestDomainsHasAny(big[i]!, hostSuffixes)) visit(big[i]!)
+    if (this.initiators.size > 0) {
+      const suffixes = lookup.initiatorSuffixes
+      for (let i = 0; i < suffixes.length; i++) visitUnder(this.initiators, suffixes[i]!, visit)
+    }
+    if (this.buckets.size > 0) {
+      const tokens = lookup.tokens()
+      for (let i = 0; i < tokens.length; i++) visitUnder(this.buckets, tokens[i]!, visit)
+    }
+    const wildcard = this.wildcard
+    if (wildcard.length > 0) {
+      const bit = lookup.typeBit ?? typeBit(lookup.type)
+      for (let g = 0; g < wildcard.length; g++) {
+        const group = wildcard[g]!
+        if (group.mask !== 0 && (group.mask & bit) === 0) continue
+        const rows = group.rows
+        for (let i = 0; i < rows.length; i++) visit(rows[i]!)
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------------------------------------
+// The same index over an array of rule objects
+// -------------------------------------------------------------------------------------------
+
+const NO_TOKENS: readonly number[] = []
+
+/** An array of {@link IndexedRule} read as an {@link IndexSource}: row `i` is `rules[i]`. */
+class RuleArraySource<R extends IndexedRule> implements IndexSource {
+  constructor(private readonly rules: readonly R[]) {}
+
+  get size(): number {
+    return this.rules.length
+  }
+
+  isAllowAll(row: number): boolean {
+    return this.rules[row]!.allowAll
+  }
+
+  selectorKind(row: number): number {
+    const selector = this.rules[row]!.selector
+    if (selector.kind === 'hostname') return SELECTOR.hostname
+    if (selector.kind === 'tokens' && selector.tokens.length > 0) return SELECTOR.tokens
+    return SELECTOR.every
+  }
+
+  hostnameOf(row: number): string {
+    const selector = this.rules[row]!.selector
+    return selector.kind === 'hostname' ? selector.hostname : ''
+  }
+
+  tokensOf(row: number): ArrayLike<number> {
+    const selector = this.rules[row]!.selector
+    return selector.kind === 'tokens' ? selector.tokens : NO_TOKENS
+  }
+
+  typeMaskOf(row: number): number {
+    return typeMask(this.rules[row]!.resourceTypes ?? undefined)
+  }
+
+  requestDomainsOf(row: number): Iterable<string> | null {
+    return this.rules[row]!.requestDomains
+  }
+
+  requestDomainCount(row: number): number {
+    return this.rules[row]!.requestDomains?.size ?? 0
+  }
+
+  initiatorDomainsOf(row: number): Iterable<string> | null {
+    return this.rules[row]!.initiatorDomains
+  }
+
+  requestDomainsHasAny(row: number, suffixes: readonly string[]): boolean {
+    const domains = this.rules[row]!.requestDomains
+    return domains !== null && hasDomainOf(suffixes, domains)
+  }
+}
+
+/** {@link RowIndexBuilder} over an array of rule objects; `result` hands the rules back. */
+export class RuleIndexBuilder<R extends IndexedRule> {
+  private readonly inner: RowIndexBuilder
+  private built: RuleIndex<R> | null = null
+
+  constructor(private readonly rules: readonly R[]) {
+    this.inner = new RowIndexBuilder(new RuleArraySource(rules))
+  }
+
+  /** Advances the build by up to `work` rules; true once the index is complete. */
+  step(work: number): boolean {
+    const done = this.inner.step(work)
+    if (done && !this.built) this.built = new RuleIndex(this.rules, this.inner.result!)
+    return done
+  }
+
+  /** The index, once {@link step} has answered true. */
+  get result(): RuleIndex<R> | null {
+    return this.built
+  }
+}
+
+/** {@link RowIndex} over an array of rule objects: the same buckets, visited as the rules. */
+export class RuleIndex<R extends IndexedRule> {
+  /** `allowAllRequests` rules, in the set's order. */
+  readonly allowAll: readonly R[]
+
+  /** @internal Built by {@link RuleIndexBuilder}; use {@link RuleIndex.build} for a whole set at once. */
+  constructor(
+    private readonly rules: readonly R[],
+    /** The rows' index; row `i` is `rules[i]`. */
+    readonly rows: RowIndex
+  ) {
+    this.allowAll = rows.allowAll.map((row) => rules[row]!)
+  }
+
+  /** Index `rules` now, in one go. */
+  static build<R extends IndexedRule>(rules: readonly R[]): RuleIndex<R> {
+    const builder = new RuleIndexBuilder(rules)
+    builder.step(Infinity)
+    const built = builder.result
+    if (!built) throw new Error('rule index build did not finish')
+    return built
+  }
+
+  /** Rules that had no hostname, site or token to index them by (tested for every request of their types). */
+  get wildcardCount(): number {
+    return this.rows.wildcardCount
+  }
+
+  /** Hostnames the map indexes (`||host^` rules and `requestDomains` entries). */
+  get hostCount(): number {
+    return this.rows.hostCount
+  }
+
+  /** Initiator domains the second map indexes. */
+  get initiatorCount(): number {
+    return this.rows.initiatorCount
+  }
+
+  /** Rules indexed by a token (the rest sit under a hostname or in the wildcard list). */
+  get tokenIndexedCount(): number {
+    return this.rows.tokenIndexedCount
+  }
+
+  /**
    * Visit every rule that may match the request (other than `allowAllRequests` rules): a rule
    * under several of the host's suffixes or several tokens is visited more than once.
    */
   forEachCandidate(lookup: IndexLookup, visit: (rule: R) => void): void {
-    if (this.hosts.size > 0)
-      for (const key of lookup.hostSuffixes) visitUnder(this.hosts, key, visit)
-    if (this.initiators.size > 0)
-      for (const key of lookup.initiatorSuffixes) visitUnder(this.initiators, key, visit)
-    if (this.buckets.size > 0) {
-      for (const t of lookup.tokens()) {
-        const bucket = this.buckets.get(t)
-        if (bucket) for (const rule of bucket) visit(rule)
-      }
-    }
-    for (const group of this.wildcard) {
-      if (group.types && !group.types.has(lookup.type)) continue
-      for (const rule of group.rules) visit(rule)
-    }
+    const rules = this.rules
+    this.rows.forEachCandidate(lookup, (row) => visit(rules[row]!))
   }
 }
