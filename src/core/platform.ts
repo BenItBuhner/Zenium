@@ -1092,6 +1092,16 @@ export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
   /**
+   * Create a second live page for `tab` – the reader's cover (`TabManager.cover`): the
+   * `zen://reader` document drawn over the tab's own page, which stays alive and unmoved
+   * beneath it, so leaving the reader uncovers the page as it was – no load, no history entry
+   * (Chrome's immersive reading mode is an overlay over the tab's contents in the same way).
+   * The cover is not the tab's page to the host's own maps (a request's `tabId`, the extension
+   * API's view of the tab stay the page's). Hosts that hold one page per tab id (Android's
+   * WebViews) leave it out; the reader then loads as a navigation of the tab.
+   */
+  createCover?(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
+  /**
    * A view created for one tab id now belongs to another (a new tab page preloaded under a
    * placeholder id becomes a real tab); hosts that map their web contents to tabs update the map.
    */

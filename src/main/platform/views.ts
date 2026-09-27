@@ -3372,6 +3372,25 @@ export class ElectronTabViewHost implements TabViewHost {
   }
 
   /**
+   * The reader's cover (`TabViewHost.createCover`): a page like any other of the tab's session,
+   * routed to the tab for its messages and requests, but not the tab's page to `viewForTab` –
+   * the extension API and the capture host keep seeing the page beneath, as Chrome's do under
+   * its reading mode overlay.
+   */
+  createCover(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
+    const view = new ElectronTabView(
+      new WebContentsView({
+        webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
+      }),
+      this
+    )
+    view.wire(events)
+    view.attachTo(host)
+    this.track(view, tab.id, false)
+    return view
+  }
+
+  /**
    * A page's renderer stopped answering, or answers again (tabs-45): every live page in that
    * renderer is told – they hang and recover together – `view` first. A view whose process the
    * engine cannot name (gone between the event and the read) speaks for itself alone.
@@ -3529,11 +3548,12 @@ export class ElectronTabViewHost implements TabViewHost {
 
   /**
    * Map the page to its tab, give it the Appearance setting's scheme where pages emulate it,
-   * then let the followers (the extension API layer) see the view.
+   * then let the followers (the extension API layer) see the view. A cover (`primary` false)
+   * answers to the tab's id but does not become the tab's page (`viewForTab`).
    */
-  private track(view: ElectronTabView, tabId: string): void {
+  private track(view: ElectronTabView, tabId: string, primary = true): void {
     this.byWebContentsId.set(view.webContentsId, view)
-    this.byTabId.set(tabId, view)
+    if (primary) this.byTabId.set(tabId, view)
     this.tabIds.set(view.webContentsId, tabId)
     view.refreshColorScheme()
     for (const listener of this.viewListeners) listener(view)

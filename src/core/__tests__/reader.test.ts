@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { DEFAULT_READER_PREFERENCES } from '../../shared/reader'
 import { Browser } from '../browser'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
@@ -49,6 +49,8 @@ function fakePlatform(io: StoreIO): Platform & { scripts: Map<string, string[]> 
         })
     },
     views: stub<TabViewHost>({
+      // One page per tab, as on the phone: the reader loads as a navigation of the tab.
+      createCover: undefined,
       createView: (tab) => {
         const record: string[] = []
         scripts.set(tab.id, record)
@@ -89,7 +91,19 @@ function start(io = memoryIo()): {
   return { browser, platform, win, io }
 }
 
-const READER_URL = `${READER_URL_PREFIX}?id=article-1&url=${encodeURIComponent('https://example.com/a')}`
+const PAGE_URL = 'https://example.com/a'
+
+/**
+ * A tab reading `PAGE_URL` in Reader View: the article held by the service and the tab on the
+ * reader document's own address (a bare `zen://reader` address whose article the service does
+ * not hold wakes on the page instead – `TabManager.load`).
+ */
+function readerTab(browser: Browser, win: ZenWindow, active: boolean): Tab {
+  const tab = browser.tabs.createTab({ url: PAGE_URL, active }, win)
+  browser.reader.open(tab.id, { title: 'A', content: '<p>a</p>', length: 1 })
+  expect(tab.url.startsWith(`${READER_URL_PREFIX}?id=`)).toBe(true)
+  return tab
+}
 
 /** The preferences a `zenReaderApply` call handed the page, or null for a script that is not one. */
 function applied(script: string): Record<string, unknown> | null {
@@ -100,8 +114,8 @@ function applied(script: string): Record<string, unknown> | null {
 describe('reader text preferences in the browser', () => {
   it('saves a change and pushes it to every open reader page, not to the web pages', async () => {
     const { browser, platform, win, io } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
-    const second = browser.tabs.createTab({ url: READER_URL, active: false }, win)
+    const reader = readerTab(browser, win, true)
+    const second = readerTab(browser, win, false)
     const web = browser.tabs.createTab({ url: 'https://example.com/', active: false }, win)
     expect(browser.reader.preferences()).toEqual(DEFAULT_READER_PREFERENCES)
 
@@ -121,7 +135,7 @@ describe('reader text preferences in the browser', () => {
 
   it('ignores a patch with nothing valid in it and one that changes nothing', () => {
     const { browser, platform, win } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
+    const reader = readerTab(browser, win, true)
     browser.handleCommand(win, 'reader.setPreferences', { fontSize: 13, font: 'comic' })
     browser.handleCommand(win, 'reader.setPreferences', { theme: 'auto' })
     expect(browser.reader.preferences()).toEqual(DEFAULT_READER_PREFERENCES)
@@ -130,7 +144,7 @@ describe('reader text preferences in the browser', () => {
 
   it('renders a reader page with the saved preferences and follows a settings patch', () => {
     const { browser, platform, win } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
+    const reader = readerTab(browser, win, true)
     browser.handleCommand(win, 'settings.update', { reader: { width: 'narrow', fontSize: 15 } })
     expect(browser.reader.preferences()).toEqual({
       ...DEFAULT_READER_PREFERENCES,

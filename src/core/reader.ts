@@ -212,6 +212,9 @@ export class ReaderService {
 
   /** Called on `dom-ready`: ask the page whether it looks like an article. */
   async detect(tabId: string): Promise<void> {
+    // The reader's cover stands: the document in front is the article, and the page beneath
+    // keeps the answer it gave (it comes back with the cover down).
+    if (this.browser.tabs.isCovered(tabId)) return
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     const src = this.source('Readability-readerable.js')
@@ -236,11 +239,18 @@ export class ReaderService {
     }
   }
 
-  /** Enter Reader View for a page, or leave it when already reading. */
+  /**
+   * Enter Reader View for a page, or leave it when already reading. Leaving takes the reader's
+   * cover down (reader-30): the page beneath shows again as it was – its scroll kept, no load,
+   * no history entry, as closing Chrome's reading mode overlay does. A reader loaded as a
+   * navigation of the tab (the phone, whose host has one page per tab) goes back by loading
+   * the page.
+   */
   toggle(tabId: string, win: ZenWindow): void {
     const tab = this.browser.tabs.tab(tabId)
     if (!tab) return
     if (this.isReaderUrl(tab.url)) {
+      if (this.browser.tabs.uncover(tabId)) return
       const original = this.originalUrl(tab.url)
       if (original) this.browser.tabs.navigate(tabId, original)
       return
@@ -281,8 +291,11 @@ export class ReaderService {
 
   /**
    * Show an article already extracted from the tab's page in Reader View: the page script's
-   * result here, or a host's own extraction (the preview host stands one in). The tab goes to
-   * `zen://reader?id=…&url=…`, which renders it with the saved text preferences.
+   * result here, a selection's own markup (`openSelection`), or a host's own extraction (the
+   * preview host stands one in). The reader document `zen://reader?id=…&url=…` renders it with
+   * the saved text preferences – as a cover over the tab's page where the host has one
+   * (`TabManager.cover`: the page stays alive beneath, reader-30), else as a navigation of
+   * the tab.
    */
   open(tabId: string, raw: RawArticle): void {
     const tab = this.browser.tabs.tab(tabId)
@@ -306,7 +319,8 @@ export class ReaderService {
     // Keep memory bounded: articles are only needed while their tab shows them.
     if (this.articles.size > 40) this.articles.delete(this.articles.keys().next().value as string)
     const params = new URLSearchParams({ id, url: tab.url })
-    this.browser.tabs.navigate(tabId, `${READER_URL_PREFIX}?${params.toString()}`)
+    const readerUrl = `${READER_URL_PREFIX}?${params.toString()}`
+    if (!this.browser.tabs.cover(tabId, readerUrl)) this.browser.tabs.navigate(tabId, readerUrl)
   }
 }
 
