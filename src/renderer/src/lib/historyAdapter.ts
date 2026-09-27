@@ -46,7 +46,7 @@ export interface HistoryAdapter {
     now: number,
     options?: DayGroupOptions
   ): Promise<DayGroup<HistoryRow>[]>
-  /** How many visits there are in all (what "Clear history" is about to remove). */
+  /** How many visits there are in all (what "Delete history" is about to remove). */
   count(): Promise<number>
   /** Remove these visits. */
   deleteRows(rows: readonly HistoryRow[]): Promise<void>

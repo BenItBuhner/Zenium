@@ -61,8 +61,8 @@ interface Loaded {
  * a 56 header and a search field, one row per visit with its favicon, title, site and time. A row opens
  * the page; its trailing control or a sideways swipe removes it (undoable from the toast); a
  * long press starts selection mode, whose header replaces the panel's and acts on every picked
- * row. The top row clears the whole history behind the same question the desktop page asks
- * (`ClearHistorySheet`, the count of what goes, Cancel or Clear all). Recently closed tabs sit
+ * row. The top row, "Delete history", wipes the whole history behind a question
+ * (`ClearHistorySheet`, the count of what goes, Cancel or Delete all). Recently closed tabs sit
  * above the days (`historyAdapter.recentlyClosed`), and under them the other devices' open tabs
  * as one group per device (`OtherDevicesGroup`, TAB-02 / history-07: the desktop History page's
  * groups on the phone's; a tap opens a device's tab here, a device's heading held hides the
@@ -78,7 +78,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   const [loaded, setLoaded] = useState<Loaded>({ groups: [], at: 0 })
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
   const [rawSelection, setSelection] = useState<Selection>(NO_SELECTION)
-  /** "Clear history" asks first: the number of visits about to go, while the question is up. */
+  /** "Delete history" asks first: the number of visits about to go, while the question is up. */
   const [clearing, setClearing] = useState<number | null>(null)
   const pending = usePendingDeletes()
   const [attachList, listScrolled] = useScrolled<HTMLDivElement>()
@@ -294,7 +294,7 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
         {!searching && rows.length > 0 && (
           <PhoneListRow
             icon={<Trash2 className="h-5 w-5" strokeWidth={1.75} />}
-            title="Clear history"
+            title="Delete history"
             danger
             onTap={clearAll}
           />
@@ -358,13 +358,15 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
 }
 
 /**
- * "Clear history" asks before it wipes the history, with the count of what goes: the desktop
- * page's question (`HistoryPage`'s `ClearAllDialog`) as a prompt sheet (v2 draft §9.23 – grip
- * strip, title block with the glyph, the one paragraph, the §9.11 footer) in the frame's dialog
- * host. Escape, the scrim, the back gesture and Cancel keep the history; Clear all clears it
- * once the sheet is gone. The focus starts on the sheet itself (§9.22: a title-and-notice sheet
- * holds its container; Cancel first is the failure the section names), so a stray Enter does
- * no harm.
+ * "Delete history" asks before it wipes the history, with the count of what goes: a prompt
+ * sheet (v2 draft §9.23 – grip strip, title block with the glyph, the one paragraph, the §9.11
+ * footer) in the frame's dialog host. Escape, the scrim, the back gesture and Cancel keep the
+ * history; Delete all wipes it once the sheet is gone. The focus starts on the sheet itself
+ * (§9.22: a title-and-notice sheet holds its container; Cancel first is the failure the section
+ * names), so a stray Enter does no harm. The pair speaks the Delete family's verb (W8-11, the
+ * design lead's ruling after W8-7: "Delete history" / "Delete all", beside Chrome's
+ * `IDS_HISTORY_DELETE` and `IDS_HISTORY_REMOVE_SELECTED_ITEMS`); the sheet's name and this
+ * function's keep their `clear`, as Chrome's ids do.
  */
 function ClearHistorySheet({
   count,
@@ -383,9 +385,9 @@ function ClearHistorySheet({
       // A prompt: the title block (§9.23) with the glyph on the title's start.
       title={{
         pose: 'block',
-        text: 'Clear all history?',
+        text: 'Delete all history?',
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
-        description: `${visits} will be removed from Zenium's history. Recently closed tabs and windows stay.`
+        description: `${visits} will be deleted from Zenium's history. Recently closed tabs and windows stay.`
       }}
       focus="dialog"
       onClose={onClose}
@@ -402,7 +404,7 @@ function ClearHistorySheet({
           data-primary
           onClick={() => sheet.current?.dismiss(onConfirm)}
         >
-          Clear all
+          Delete all
         </button>
       </div>
     </PhoneSheet>

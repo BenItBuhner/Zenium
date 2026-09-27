@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit
  *     (§9.22, `focus="first"`), its rows' leading glyphs are full ink (§10.4), dragged up it
  *     stands at 80 % of the frame with the list scrolling under the title (§9.20, `body="list"`),
  *     and scrolled to its end the last row stands 16 + inset over the edge (§9.25).
- *  2. A PROMPT sheet (History's Clear history): the container holds the focus – not Cancel
+ *  2. A PROMPT sheet (History's Delete history): the container holds the focus – not Cancel
  *     (§9.22's named failure) – and draws no ring for it; the footer's buttons stand 16 + inset
  *     over the edge (§9.25).
  *  3. A VALUE sheet (Settings › Look and Feel › Colour scheme): it opens on the checked option
@@ -113,7 +113,7 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
         return state.toString()
     }
 
-    /** Yesterday's visits, in the history contract's shape, so the History list has rows and its Clear history row. */
+    /** Yesterday's visits, in the history contract's shape, so the History list has rows and its Delete history row. */
     override fun seedMore(zen: File) {
         val entries = JSONArray()
         val visits = JSONArray()
@@ -268,18 +268,18 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
         }
     }
 
-    // --- 2. a prompt sheet: Clear history -----------------------------------------------------------------
+    // --- 2. a prompt sheet: Delete history -----------------------------------------------------------------
 
     private fun promptSheet() {
-        step("2. A prompt sheet (Clear history): the container holds the focus with no ring; the footer's buttons 16 + inset over the edge") {
+        step("2. A prompt sheet (Delete history): the container holds the focus with no ring; the footer's buttons 16 + inset over the edge") {
             if (!openMenuItem("History")) error("the app menu has no 'History'")
             val panel = awaitChrome("!!document.querySelector('input[placeholder=\"$HISTORY_SEARCH\"]')", 10_000)
             if (!panel) error("the History panel never came up")
             SystemClock.sleep(1_500)
-            val up = touchControlExpecting("Clear history", CLEAR_ROW_JS, "the Clear history prompt is up", timeoutMs = 8_000) {
+            val up = touchControlExpecting("Delete history", CLEAR_ROW_JS, "the Delete history prompt is up", timeoutMs = 8_000) {
                 chromeValue("String(!!document.querySelector('$PROMPT_PRIMARY'))") == "true"
             }
-            if (!up) error("the Clear history prompt never came up under a finger")
+            if (!up) error("the Delete history prompt never came up under a finger")
             awaitSheetSettled(PROMPT_PRIMARY, 6_000)
             val probe = sheetProbe(PROMPT_PRIMARY)
             val r = ring()
@@ -880,7 +880,7 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
         private const val PICKER_OPTION = ".zen-sheet [role=\"radio\"]"
         /** A Recently closed row's main control (`PhoneListRow` in the sheet's list). */
         private const val CLOSED_ROW = ".zen-sheet .zen-phone-list .zen-list-main[role=\"button\"]"
-        /** The Clear history prompt's primary ("Clear all") in its footer. */
+        /** The Delete history prompt's primary ("Delete all") in its footer. */
         private const val PROMPT_PRIMARY = ".zen-sheet .zen-sheet-footer [data-primary]"
         private const val OVERVIEW_SCALE_JS = "(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()"
         /** The overview header's More button (`aria-label="More"`), the one on screen. */
@@ -889,8 +889,8 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
         /** The overview menu's Recently Closed row (`OverviewSheet`'s `.zen-sheet-item`, its count in the label). */
         private const val RECENTLY_CLOSED_ROW_JS =
             "Array.prototype.find.call(document.querySelectorAll('.zen-sheet .zen-sheet-item'),function(b){return b.textContent.trim().indexOf('Recently Closed (')===0})"
-        /** The History panel's Clear history row (`PhoneListRow`, its title the name). */
-        private const val CLEAR_ROW_JS = "document.querySelector('.zen-phone-list .zen-list-main[aria-label=\"Clear history\"]')"
+        /** The History panel's Delete history row (`PhoneListRow`, its title the name; the Delete family's words since W8-11). */
+        private const val CLEAR_ROW_JS = "document.querySelector('.zen-phone-list .zen-list-main[aria-label=\"Delete history\"]')"
         /** The Settings landing's Look and Feel row (`CategoryRow`, by the section's id). */
         private const val LOOK_AND_FEEL_JS = "document.querySelector('.zen-settings-category[data-section=\"look\"]')"
         /** The Colour scheme row in Look and Feel (`sections.tsx`, its `data-row`). */

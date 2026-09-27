@@ -345,7 +345,7 @@ describe("the History page's other devices' groups (TAB-02)", () => {
     await show(stateOf(pages(), { sync: sync(true) }))
     expect(of('sync.tabsFromDevices')).toHaveLength(1)
     expect(listTexts()).toEqual([
-      'Clear history',
+      'Delete history',
       '# Recently closed',
       'Damping - Wikipedia',
       '# Home desktopLast active 3 min ago',
@@ -510,7 +510,7 @@ describe("the History page's other devices' groups (TAB-02)", () => {
     expect(of('sync.tabsFromDevices')).toHaveLength(1)
     expect(byTestId('history-other-devices')).toBeNull()
     expect(listTexts()).toEqual([
-      'Clear history',
+      'Delete history',
       '# Recently closed',
       'Damping - Wikipedia',
       '# Today',

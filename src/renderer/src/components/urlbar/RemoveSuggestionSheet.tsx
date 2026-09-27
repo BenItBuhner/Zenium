@@ -9,7 +9,7 @@ import { PhoneSheet } from '../phone/PhoneSheet'
  * The phone's removal of a suggestion asks first (OMN-17, Chrome for Android's hold): a prompt
  * sheet on the frame's dialog host (v2 draft §9.23 – grip strip, the title block with its glyph,
  * the one paragraph, the §9.11 footer), the one prompt form every confirmation of the app takes
- * (History's Clear all, the overview's Close all). The title asks the question; the description
+ * (History's Delete all, the overview's Close all). The title asks the question; the description
  * is the suggestion's text, so what goes is named; Cancel | Remove are peers in the footer,
  * Remove in the danger ink (§10.4). Escape, the scrim, the back gesture and Cancel keep the
  * row; Remove forgets the entry once the sheet has gone, so the row's collapse (§11.4) runs in
