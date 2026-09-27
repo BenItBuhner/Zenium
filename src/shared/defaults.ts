@@ -262,6 +262,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // (#52) keeps working when the setting arrives; "Off" is a choice.
   homepage: { mode: 'newtab', url: '' },
   pullToRefresh: true,
+  // Chrome's default for its `touchpad_overscroll_history_navigation` pref; device-local, so no
+  // synced record changes (`DEVICE_LOCAL_SETTINGS`).
+  touchpadSwipeToNavigate: true,
   hideToolbarOnScroll: true,
   glanceEnabled: true,
   glanceTrigger: 'alt',
