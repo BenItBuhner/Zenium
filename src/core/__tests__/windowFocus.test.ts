@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   HostCapabilities,
   LayoutReport,
@@ -413,5 +413,39 @@ describe('keyboard focus when a surface beside the page goes away', () => {
     expect(f.chromeFocusCalls()).toBe(chrome + 1)
     expect(f.keyboard.document).toBe('chrome')
     expect(f.views.every((v) => !v.focused)).toBe(true)
+  })
+})
+
+/**
+ * The window's presence on the user's screen – neither minimised nor hidden – as the host's
+ * concealment refresh (W6-F6: every minimise, restore, hide and show) forwards it into the core.
+ */
+describe("the window's presence on the screen (W6-F6's signal into the core)", () => {
+  it('tells the media session once per change, away and back, and answers isOnScreen accordingly', () => {
+    const f = fixture()
+    const heard = vi.spyOn(f.browser.mediaSession, 'onWindowVisibleChanged')
+    // A window is made to be shown: on the screen from the start, and a host repeating that says nothing new.
+    expect(f.win.isOnScreen).toBe(true)
+    f.win.onWindowVisibleChanged(true)
+    expect(heard).not.toHaveBeenCalled()
+    // Minimised (the refresh runs again on the hide that may follow: the same state, told once).
+    f.win.onWindowVisibleChanged(false)
+    f.win.onWindowVisibleChanged(false)
+    expect(f.win.isOnScreen).toBe(false)
+    expect(heard).toHaveBeenCalledTimes(1)
+    expect(heard).toHaveBeenLastCalledWith(f.win, false)
+    // Restored.
+    f.win.onWindowVisibleChanged(true)
+    expect(f.win.isOnScreen).toBe(true)
+    expect(heard).toHaveBeenCalledTimes(2)
+    expect(heard).toHaveBeenLastCalledWith(f.win, true)
+  })
+
+  it('tells the media session when the window closes (what waited for its return is dropped there)', () => {
+    const f = fixture()
+    const closed = vi.spyOn(f.browser.mediaSession, 'onWindowClosed')
+    f.browser.onWindowClosed(f.win)
+    expect(closed).toHaveBeenCalledTimes(1)
+    expect(closed).toHaveBeenLastCalledWith(f.win)
   })
 })

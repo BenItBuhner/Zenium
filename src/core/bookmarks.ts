@@ -538,7 +538,14 @@ export class BookmarkService {
   // Sync (the engine repairs and commits once per batch)
   // ---------------------------------------------------------------------------
 
-  /** Upsert a node from a remote record. Local-only metadata (last used, group modified) is kept. */
+  /**
+   * Upsert a node from a remote record. Local-only metadata (last used, group modified) is kept,
+   * and so is this device's own favicon when the record carries none for the same page: a
+   * record names an icon only by its `http(s)` address (`sync/records.ts` `wireFavicon`; a
+   * `data:` icon and the cache's own address stay on the device that has them), so a record
+   * without one is the peer's icon staying home, not a deletion of the icon this device holds.
+   * A record whose `url` differs from the node's is a different page: its icon does not carry.
+   */
   applySynced(id: string, data: SyncedBookmarkFields): void {
     if (isBookmarkRoot(id)) return
     const existing = this.tree.get(id)
@@ -553,6 +560,8 @@ export class BookmarkService {
     if (data.type === 'url') {
       node.url = data.url
       if (data.favicon) node.favicon = data.favicon
+      else if (existing?.type === 'url' && existing.url === data.url && existing.favicon)
+        node.favicon = existing.favicon
       if (existing?.dateLastUsed) node.dateLastUsed = existing.dateLastUsed
     } else if (existing?.dateGroupModified) {
       node.dateGroupModified = existing.dateGroupModified

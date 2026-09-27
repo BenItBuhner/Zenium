@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's dark fill in Material You's colours on Android 14+ (WID-03; see
+     res/color-v34/widget_search_fill.xml): the platform's dark colorSurfaceContainerHigh, as MDC
+     1.12.0 reads it (values-v34/tokens.xml:50), at Chrome's 0.9 over the wallpaper, the alpha on
+     the fill alone. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:alpha="0.9"
+        android:color="@android:color/system_surface_container_high_dark" />
+</selector>

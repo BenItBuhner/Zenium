@@ -151,8 +151,22 @@ describe('the open-tabs record', () => {
         url: 'https://new.example/',
         lastActiveAt: 20,
         customTitle: 'Mine',
-        favicon: 'i',
+        favicon: 'https://new.example/icon.png',
         windowId: 'win_2'
+      }),
+      // An inline icon (the phone's decoded PNG) and the cache's own address stay home
+      // (`wireFavicon`): the list names the icon by an address a peer can fetch or not at all.
+      tab({
+        id: 'inline',
+        url: 'https://inline.example/',
+        lastActiveAt: 15,
+        favicon: 'data:image/png;base64,AAAA'
+      }),
+      tab({
+        id: 'cached',
+        url: 'https://cached.example/',
+        lastActiveAt: 12,
+        favicon: 'zen://favicon/0123456789abcdef0123456789abcdef01234567'
       }),
       tab({
         id: 'p',
@@ -168,9 +182,25 @@ describe('the open-tabs record', () => {
           tabId: 'new',
           url: 'https://new.example/',
           title: 'Mine',
-          favicon: 'i',
+          favicon: 'https://new.example/icon.png',
           lastActive: 20,
           windowId: 'win_2'
+        },
+        {
+          tabId: 'inline',
+          url: 'https://inline.example/',
+          title: 'A',
+          favicon: null,
+          lastActive: 15,
+          windowId: null
+        },
+        {
+          tabId: 'cached',
+          url: 'https://cached.example/',
+          title: 'A',
+          favicon: null,
+          lastActive: 12,
+          windowId: null
         },
         {
           tabId: 'old',
@@ -213,6 +243,28 @@ describe('the open-tabs record', () => {
           },
           { url: 'https://b.example/' },
           { tabId: 'z', url: 'zen://settings', title: 'S', lastActive: 9 },
+          // A peer's build that still sends an inline icon or its cache's address: read as none.
+          {
+            tabId: 'i',
+            url: 'https://i.example/',
+            title: 'I',
+            favicon: 'data:image/png;base64,AAAA',
+            lastActive: 4
+          },
+          {
+            tabId: 'c',
+            url: 'https://c.example/',
+            title: 'C',
+            favicon: 'zen://favicon/0123456789abcdef0123456789abcdef01234567',
+            lastActive: 3
+          },
+          {
+            tabId: 'h',
+            url: 'https://h.example/',
+            title: 'H',
+            favicon: 'https://h.example/favicon.ico',
+            lastActive: 2
+          },
           'junk'
         ]
       })
@@ -225,6 +277,30 @@ describe('the open-tabs record', () => {
           title: 'A',
           favicon: null,
           lastActive: 5,
+          windowId: null
+        },
+        {
+          tabId: 'i',
+          url: 'https://i.example/',
+          title: 'I',
+          favicon: null,
+          lastActive: 4,
+          windowId: null
+        },
+        {
+          tabId: 'c',
+          url: 'https://c.example/',
+          title: 'C',
+          favicon: null,
+          lastActive: 3,
+          windowId: null
+        },
+        {
+          tabId: 'h',
+          url: 'https://h.example/',
+          title: 'H',
+          favicon: 'https://h.example/favicon.ico',
+          lastActive: 2,
           windowId: null
         },
         {

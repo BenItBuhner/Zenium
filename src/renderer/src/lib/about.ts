@@ -1,5 +1,6 @@
 import type { UIState } from '@shared/types'
 import { isPrereleaseVersion, type UpdateTarget } from '@shared/updates'
+import { emptyUpdateDotRecord, updateDotShows } from '@core/updateDot'
 
 /*
  * The words of Settings › About's head (settings-73; `AboutVersionBlock`): the version with its
@@ -47,4 +48,18 @@ export function copyrightLine(year: number = new Date().getFullYear()): string {
  */
 export function updateReadyAt(state: Pick<UIState, 'updates'>): boolean {
   return state.updates?.phase === 'ready'
+}
+
+/**
+ * Whether a touch layout's menu button wears the update dot (TB-12; `core/updateDot.ts`): an
+ * update downloaded and waiting whose version the app menu has not yet been opened for
+ * (`UIState.updateDot`, this device's record, written by the core as the menu opens) – Chrome
+ * Android's ⋮ badge, which clears on the menu's first open and returns on a state change. The
+ * phone bar's ⋮ and the tablet toolbar's menu button read this; the desktop's ⋯ keeps
+ * `updateReadyAt` until W8-F3. A snapshot without the record (a partial state in a component
+ * test) reads as nothing seen – the plain ready dot.
+ */
+export function updateDotAt(state: Partial<Pick<UIState, 'updates' | 'updateDot'>>): boolean {
+  if (!state.updates) return false
+  return updateDotShows(state.updates, state.updateDot ?? emptyUpdateDotRecord())
 }
