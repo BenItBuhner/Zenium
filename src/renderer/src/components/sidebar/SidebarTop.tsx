@@ -302,6 +302,11 @@ export function NavRow({
   // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
   // count the buttons actually in the row); a trailing control joins it.
   const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
+  // The buttons the width-tiered controls make room against: the ones always in the row, the
+  // puzzle piece while there are extensions, the downloads button while it is up. Each tiered
+  // control then counts the tiered ones standing ahead of it in the bar's order (W8-3's Home
+  // first, on `otherButtons` alone; the leaf; the hub last), so the row gives way from the back.
+  const otherButtons = fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)
   // The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`): the row's to draw while the
   // governor says the mode is on and the control is pinned, ahead of the hub as Chrome's stands
   // ahead of its media button – and tiered by the row's width on the hub's one rule
@@ -312,18 +317,11 @@ export function NavRow({
   // hub counts the leaf: where the row has room for one of the two, the leaf stands and the hub
   // folds to its menu row – the leaf has no fold home, and the mode it speaks for runs on.
   const saverPinned = energySaverLeafUp(state, pins)
-  const saverUp =
-    saverPinned &&
-    (compact ||
-      energySaverLeafFits(rowWidth, fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
+  const saverUp = saverPinned && (compact || energySaverLeafFits(rowWidth, otherButtons))
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
-    (compact ||
-      mediaHubButtonFits(
-        rowWidth,
-        fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0) + (saverUp ? 1 : 0)
-      ))
+    (compact || mediaHubButtonFits(rowWidth, otherButtons + (saverUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
