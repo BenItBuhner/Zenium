@@ -1,7 +1,7 @@
 /**
- * The offline game's rules (ERR-03 / WID-04): Zenium's own endless runner, drawn on the
- * `net::ERR_INTERNET_DISCONNECTED` page and at `zen://game`. This module is the whole of the
- * game that is not a pixel or a listener: pure functions over a `GameState`, fed a frame's
+ * Roll's rules (ERR-03 / WID-04; design language v2 §9.17): Zenium's own endless runner, drawn
+ * on the `net::ERR_INTERNET_DISCONNECTED` page and at `zen://game`. This module is the whole of
+ * the game that is not a pixel or a listener: pure functions over a `GameState`, fed a frame's
  * elapsed time and a random source, so every rule here – the speed ramp, the spawn spacing, the
  * jump arc, the collision, the score, the day-night clock – is a unit test and never a screenshot.
  *
@@ -11,8 +11,9 @@
  * the duck, the speed ramps by `ACCELERATION` a frame from 6 towards 13 (`offline.ts:61-70`),
  * obstacles keep a gap of `width × speed + minGap × gapCoefficient` up to 1.5 of it
  * (`obstacle.ts:204-208`) and never repeat more than twice (`horizon.ts`), the score is the
- * distance × 0.025 in five digits (`distance_meter.ts:28-40`), night falls every 700 points for
- * twelve seconds (`offline.ts:903-924`), and after a crash a jump input restarts only past
+ * distance × 0.025 in five digits (`distance_meter.ts:28-40`), the best is set at the crash and
+ * stands through the run (`offline.ts:1520-1526`), night falls every 700 points for twelve
+ * seconds (`offline.ts:903-924`), and after a crash a jump input restarts only past
  * `GAMEOVER_CLEAR_TIME` (`offline.ts:1136-1162`). The ART is Zenium's own: the runner is the
  * app's mark – a ring with a dot – rolling over a page, the obstacles standing cards and floating
  * notes. Nothing here is a dinosaur, a cactus or a bird.
@@ -571,8 +572,9 @@ export function step(state: GameState, dt: number, random: Random = Math.random)
     }
   }
 
+  // The best stands at the previous runs' while this one runs (Chrome sets its high score at
+  // the crash, `offline.ts:1520-1526`); the meter reads `Best` against a live score.
   state.score = Math.round(state.distance * config.scoreCoefficient)
-  if (state.score > state.best) state.best = state.score
 
   if (state.night) {
     state.nightTimer += elapsed
@@ -595,6 +597,17 @@ function gameOver(state: GameState): void {
   if (state.score > state.best) state.best = state.score
 }
 
+/**
+ * The host answered with the profile's best (`bridge.ts`), or a peer's landed meanwhile: it
+ * raises the game's, never lowers it – a run in progress keeps the best it beat. True when it
+ * changed.
+ */
+export function takeBest(state: GameState, best: number): boolean {
+  if (!Number.isFinite(best) || best <= state.best) return false
+  state.best = Math.min(99999, Math.floor(best))
+  return true
+}
+
 /** How the page tells the user to begin, by the device it sees (Chrome's `neterror.ts:243-267`). */
 export type StartHintDevice = 'keyboard' | 'hybrid' | 'touch'
 
@@ -607,14 +620,4 @@ export const START_HINTS: Readonly<Record<StartHintDevice, string>> = {
   keyboard: 'Press Space to start',
   hybrid: 'Tap or press Space to start',
   touch: 'Tap to start'
-}
-
-/** The key under which the page keeps the high score where its storage lets it. */
-export const HIGH_SCORE_KEY = 'zenium.game.highScore'
-
-/** A stored high score read back: a whole number in range, else 0. */
-export function parseHighScore(value: string | null | undefined): number {
-  if (!value) return 0
-  const n = Number(value)
-  return Number.isInteger(n) && n >= 0 && n <= 99999 ? n : 0
 }

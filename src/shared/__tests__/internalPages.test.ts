@@ -293,11 +293,12 @@ describe('the page registry', () => {
       splittable: true,
       requires: 'pdfViewer'
     })
-    // The offline game (ERR-03 / WID-04): a document page on every host, a tab per open as
-    // Chrome's chrome://dino is; nothing it requires of a host.
+    // Roll, the offline game (ERR-03 / WID-04): a document page on every host, a tab per open as
+    // Chrome's chrome://dino is; nothing it requires of a host. The tab and the pill read the
+    // game's name (gate #607).
     expect(INTERNAL_PAGES.game).toMatchObject({
       id: 'game',
-      title: 'Offline game',
+      title: 'Roll',
       render: 'document',
       singleton: false,
       pill: { showStar: true },

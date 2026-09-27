@@ -3,7 +3,6 @@ import {
   DEFAULT_CONFIG,
   DUCK_HEIGHT,
   DUCK_WIDTH,
-  HIGH_SCORE_KEY,
   MAX_FRAME_MS,
   MAX_WIDTH,
   MS_PER_FRAME,
@@ -17,7 +16,6 @@ import {
   endJump,
   formatScore,
   minGapFor,
-  parseHighScore,
   playerBox,
   pressDown,
   releaseDown,
@@ -29,6 +27,7 @@ import {
   startHintDevice,
   startJump,
   step,
+  takeBest,
   type GameState,
   type Obstacle,
   type Random
@@ -412,12 +411,16 @@ describe('the collision', () => {
 })
 
 describe('the score', () => {
-  it('is the distance × 0.025, and the best follows it', () => {
+  it("is the distance × 0.025; the best stands at the previous runs' until the crash (Chrome's way)", () => {
     const state = running()
     run(state, 4000)
     expect(state.score).toBe(Math.round(state.distance * 0.025))
-    expect(state.best).toBe(state.score)
     expect(state.score).toBeGreaterThan(0)
+    expect(state.best).toBe(0)
+    state.obstacles.push(card(PLAYER_X))
+    step(state, MS_PER_FRAME)
+    expect(state.phase).toBe('over')
+    expect(state.best).toBe(state.score)
   })
 
   it('keeps the best across runs, and a lower run leaves it', () => {
@@ -429,10 +432,33 @@ describe('the score', () => {
     state.obstacles.push(card(PLAYER_X))
     step(state, MS_PER_FRAME)
     expect(state.phase).toBe('over')
+    expect(state.best).toBe(500)
     start(state)
     expect(state.best).toBe(500)
     expect(state.score).toBe(0)
     expect(state.runs).toBe(1)
+  })
+
+  it("takes the host's best when it is higher, never lower, whole and within five digits", () => {
+    const state = createGame({}, 500)
+    expect(takeBest(state, 400)).toBe(false)
+    expect(state.best).toBe(500)
+    expect(takeBest(state, 500)).toBe(false)
+    expect(takeBest(state, 620.9)).toBe(true)
+    expect(state.best).toBe(620)
+    expect(takeBest(state, Number.NaN)).toBe(false)
+    expect(takeBest(state, Infinity)).toBe(false)
+    expect(takeBest(state, 1e9)).toBe(true)
+    expect(state.best).toBe(99999)
+    // A run in progress keeps the best it has to beat, raised under it.
+    const live = running()
+    run(live, 4000)
+    expect(takeBest(live, 3)).toBe(true)
+    expect(live.best).toBe(3)
+    expect(live.score).toBeGreaterThan(3)
+    live.obstacles.push(card(PLAYER_X))
+    step(live, MS_PER_FRAME)
+    expect(live.best).toBe(live.score)
   })
 
   it("pads to Chrome's five digits", () => {
@@ -498,23 +524,12 @@ describe('the game over', () => {
   })
 })
 
-describe('the words and the store', () => {
+describe('the words', () => {
   it("picks the start hint by the device, Chrome's way", () => {
     expect(startHintDevice(0, true)).toBe('keyboard')
     expect(startHintDevice(5, true)).toBe('hybrid')
     expect(startHintDevice(5, false)).toBe('touch')
     expect(START_HINTS.keyboard).toBe('Press Space to start')
     expect(START_HINTS.touch).toBe('Tap to start')
-  })
-
-  it('reads a stored high score back and refuses anything else', () => {
-    expect(HIGH_SCORE_KEY).toBe('zenium.game.highScore')
-    expect(parseHighScore('420')).toBe(420)
-    expect(parseHighScore(null)).toBe(0)
-    expect(parseHighScore('')).toBe(0)
-    expect(parseHighScore('-1')).toBe(0)
-    expect(parseHighScore('1e9')).toBe(0)
-    expect(parseHighScore('12.5')).toBe(0)
-    expect(parseHighScore('abc')).toBe(0)
   })
 })

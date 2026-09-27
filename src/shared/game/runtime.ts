@@ -1,32 +1,35 @@
 /**
- * The offline game's runtime (ERR-03): what runs inside the page. It takes the fragment
- * `page.ts` wrote, sizes the stage to the content column, draws every frame from the state
- * `logic.ts` steps, turns keys and pointers into the game's three inputs, keeps the high score
- * where the document's storage allows, flips the page's theme for the night and speaks the
- * result into the live region. It is run by the page script (`shared/pageScript.ts`) in a
- * `zen:` or `chrome-error:` document on both hosts, so nothing here reaches for a host API.
+ * Roll's runtime (ERR-03, §9.17): what runs inside the page. It takes the fragment `page.ts`
+ * wrote, sizes the stage to the content column, draws every frame from the state `logic.ts`
+ * steps, turns keys and pointers into the game's three inputs, asks the browser for the
+ * profile's best and reports a run's (`bridge.ts`), flips the STAGE's theme for the night and
+ * speaks the result into the live region. It is carried inline by the two documents that mount
+ * it (`inlineRuntime.ts`, `runtimeEntry.ts`) on both hosts, so nothing here reaches for a host
+ * API and no other page pays a byte for it.
  *
  * Every frame is one `step` and one canvas paint: no DOM is touched between a start and a crash.
  * Under reduced motion the parallax and the ground's dashes are not drawn, the game-over card
  * cuts in (a 120 ms opacity fade is what §11.3 keeps), and the score never blinks; the game
  * itself – the runner's motion – is the user's own doing and is not slowed.
  *
- * Colours are the page's tokens, read once at mount and again at each theme flip through a probe
- * element (`--v2-accent` is a `color-mix()`, which only a computed `color` resolves), so the
- * stage repaints in the page's own inks and never carries a colour of its own.
+ * Colours are the page's tokens, read once at mount and again at each theme flip through the
+ * region itself as a probe (`--v2-accent` is a `color-mix()`, which only a computed `color`
+ * resolves), so the stage repaints in the page's own inks and never carries a colour of its own.
+ * The night (Chrome's inverted page every 700 points) is the stage's alone: the region's
+ * `data-theme` flips, the tokens re-resolve under it (`zenPages.ts` restates them there), and
+ * the canvas paints the other theme's `--v2-page` as its sky – a cut both ways (§11.6). The page
+ * text and the chrome around it keep their colours.
  */
 
 import {
   DUCK_HEIGHT,
   DUCK_WIDTH,
-  HIGH_SCORE_KEY,
   MAX_WIDTH,
   PLAYER_SIZE,
   START_HINTS,
   createGame,
   endJump,
   formatScore,
-  parseHighScore,
   playerBox,
   pressDown,
   releaseDown,
@@ -36,17 +39,23 @@ import {
   startHintDevice,
   startJump,
   step,
+  takeBest,
   type GameState,
   type Obstacle,
   type Random,
   type StartHintDevice
 } from './logic'
-import { GAME_MOUNT_ATTRIBUTE, GAME_MOUNTED_ATTRIBUTE } from './page'
+import { GAME_BEST_LABEL, GAME_MOUNT_ATTRIBUTE, GAME_MOUNTED_ATTRIBUTE } from './page'
+import { GAME_BEST_CALLBACK, gameWindowMessage, sanitizeGameBestScore } from './bridge'
 
-/** A place the high score is kept: the document's storage, or nothing. */
-export interface HighScoreStore {
-  read(): number
-  write(score: number): void
+/**
+ * Where the best score lives: the browser, through the bridge (`windowBestScoreHost`), or a
+ * test's stand-in. `read` asks and hands every answer to `onBest` (now or later; a peer's higher
+ * best can land after the mount), and returns the way to stop listening; `write` reports a run's.
+ */
+export interface BestScoreHost {
+  read(onBest: (best: number) => void): () => void
+  write(best: number): void
 }
 
 /** What the runtime is handed; every field has a browser default, tests hand their own. */
@@ -55,7 +64,7 @@ export interface GameRuntimeDeps {
   requestFrame?: (callback: (time: number) => void) => number
   cancelFrame?: (id: number) => void
   random?: Random
-  store?: HighScoreStore | null
+  best?: BestScoreHost | null
   reducedMotion?: boolean
   device?: StartHintDevice
 }
@@ -67,7 +76,8 @@ export interface GameHandle {
 }
 
 /** The inks the stage draws in, resolved from the page's tokens. */
-interface Palette {
+export interface Palette {
+  page: string
   text: string
   textDeemphasized: string
   border: string
@@ -79,6 +89,7 @@ interface Palette {
 }
 
 const PALETTE_TOKENS: ReadonlyArray<[keyof Omit<Palette, 'font'>, string]> = [
+  ['page', '--v2-page'],
   ['text', '--v2-text'],
   ['textDeemphasized', '--v2-text-deemphasized'],
   ['border', '--v2-border'],
@@ -88,17 +99,43 @@ const PALETTE_TOKENS: ReadonlyArray<[keyof Omit<Palette, 'font'>, string]> = [
   ['accent', '--v2-accent']
 ]
 
+/** The canvas calls the stage makes: the 2D context's, and what a test's recording stand-in gives. */
+export type StageContext = Pick<
+  CanvasRenderingContext2D,
+  | 'clearRect'
+  | 'fillRect'
+  | 'beginPath'
+  | 'closePath'
+  | 'moveTo'
+  | 'lineTo'
+  | 'arcTo'
+  | 'arc'
+  | 'ellipse'
+  | 'fill'
+  | 'stroke'
+  | 'fillText'
+  | 'measureText'
+  | 'fillStyle'
+  | 'strokeStyle'
+  | 'lineWidth'
+  | 'lineCap'
+  | 'lineJoin'
+  | 'font'
+  | 'textAlign'
+  | 'textBaseline'
+>
+
 /** The stage's height (Chrome's runner is 150 tall). */
 export const STAGE_HEIGHT = 150
 
-/** The card's corner as a superellipse (§2's squircle): the handles' share of the radius. */
-const SQUIRCLE_HANDLE = 0.91
+/** The stroke of the ring (the app's mark, `appIcon.ts`, at this size): the art's one finish. */
+export const RING_STROKE = 3
 
-/** The stroke of the ring (the app's mark, `appIcon.ts`, at this size). */
-const RING_STROKE = 3
-
-/** The corner radius of a card on the stage (`--v2-radius-inner`, 6). */
-const CARD_RADIUS = 6
+/**
+ * The corner of a card on the stage: `--v2-radius-inner`, 6, as a PLAIN ARC – the language's
+ * squircle goes on radius 8 and up (the game-over card, in the stylesheet), not here.
+ */
+export const CARD_RADIUS = 6
 
 /** The obstacle a note is: two hairlines inside the card. */
 const NOTE_LINE_INSET = 8
@@ -106,43 +143,52 @@ const NOTE_LINE_INSET = 8
 /** The parallax rings' rate against the ground. */
 const PARALLAX_RATE = 0.3
 
+/** The meter's place: its right edge from the stage's, and its baseline. */
+const METER_RIGHT_PAD = 8
+const METER_BASELINE = 20
+
 /** The page-family focus outline the region draws is the stylesheet's; the stage draws none. */
 
+/** The page's theme, as the page's root carries it (`errorPageAttributesScript`). */
+export type PageTheme = 'light' | 'dark'
+
+export function pageThemeOf(root: { dataset: DOMStringMap }): PageTheme {
+  return root.dataset.theme === 'dark' ? 'dark' : 'light'
+}
+
+/** The night's theme for a page: the other one (Chrome inverts its page, `offline.ts:903-924`). */
+export function nightThemeFor(page: PageTheme): PageTheme {
+  return page === 'dark' ? 'light' : 'dark'
+}
+
 /**
- * The document's `localStorage` as a store, when the origin allows it (a `zen:` or
- * `chrome-error:` document's may not, and the store then keeps the score for the document's
- * life alone).
+ * The browser as the best's keeper (`bridge.ts`): the ask goes as a window message the page
+ * script relays to the core, the answer comes back through `window.zenGameBest`, which every
+ * mounted stage listens on (a second answer – a peer's best landing later – reaches them all).
  */
-export function localStorageStore(storage: Storage | null | undefined): HighScoreStore {
-  let memory = 0
+const bestListeners = new Set<(best: number) => void>()
+
+export function windowBestScoreHost(win: Window = window): BestScoreHost {
   return {
-    read() {
-      try {
-        return storage ? parseHighScore(storage.getItem(HIGH_SCORE_KEY)) : memory
-      } catch {
-        return memory
+    read(onBest) {
+      bestListeners.add(onBest)
+      const w = win as Window & { [GAME_BEST_CALLBACK]?: (best: unknown) => void }
+      w[GAME_BEST_CALLBACK] = (best: unknown): void => {
+        const n = sanitizeGameBestScore(best)
+        for (const listener of bestListeners) listener(n)
+      }
+      win.postMessage(gameWindowMessage({ ask: 'best' }), '*')
+      return () => {
+        bestListeners.delete(onBest)
       }
     },
-    write(score) {
-      memory = score
-      try {
-        storage?.setItem(HIGH_SCORE_KEY, String(score))
-      } catch {
-        // The origin refused; the score stays in memory for this document.
-      }
+    write(best) {
+      win.postMessage(gameWindowMessage({ best: sanitizeGameBestScore(best) }), '*')
     }
   }
 }
 
-function tryLocalStorage(): Storage | null {
-  try {
-    return window.localStorage
-  } catch {
-    return null
-  }
-}
-
-/** The page's inks for the stage, resolved through `probe` (an element inside the page). */
+/** The page's inks for the stage, resolved through `probe` (the region itself). */
 function readPalette(probe: HTMLElement): Palette {
   const palette: Partial<Palette> = {}
   for (const [role, token] of PALETTE_TOKENS) {
@@ -157,39 +203,34 @@ function readPalette(probe: HTMLElement): Palette {
   return palette as Palette
 }
 
-/** A superellipse-cornered rectangle path (the language's squircle at radius `r`). */
-function squirclePath(
-  ctx: CanvasRenderingContext2D,
+/** A rectangle with plain-arc corners of radius `r` (`--v2-radius-inner`; no squircle under 8). */
+export function roundedRectPath(
+  ctx: StageContext,
   x: number,
   y: number,
   w: number,
   h: number,
   r: number
 ): void {
-  const radius = Math.min(r, w / 2, h / 2)
-  const k = radius * SQUIRCLE_HANDLE
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2))
   ctx.beginPath()
   ctx.moveTo(x + radius, y)
-  ctx.lineTo(x + w - radius, y)
-  ctx.bezierCurveTo(x + w - radius + k, y, x + w, y + radius - k, x + w, y + radius)
-  ctx.lineTo(x + w, y + h - radius)
-  ctx.bezierCurveTo(x + w, y + h - radius + k, x + w - radius + k, y + h, x + w - radius, y + h)
-  ctx.lineTo(x + radius, y + h)
-  ctx.bezierCurveTo(x + radius - k, y + h, x, y + h - radius + k, x, y + h - radius)
-  ctx.lineTo(x, y + radius)
-  ctx.bezierCurveTo(x, y + radius - k, x + radius - k, y, x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
   ctx.closePath()
 }
 
-function drawCard(ctx: CanvasRenderingContext2D, p: Palette, o: Obstacle): void {
+function drawCard(ctx: StageContext, p: Palette, o: Obstacle): void {
   const memberWidth = o.width / o.count
+  ctx.lineWidth = 1
   for (let i = 0; i < o.count; i++) {
     const x = o.x + i * memberWidth
-    squirclePath(ctx, x + 0.5, o.y + 0.5, memberWidth - 1, o.height - 1, CARD_RADIUS)
+    roundedRectPath(ctx, x + 0.5, o.y + 0.5, memberWidth - 1, o.height - 1, CARD_RADIUS)
     ctx.fillStyle = p.card
     ctx.fill()
     ctx.strokeStyle = p.cardBorder
-    ctx.lineWidth = 1
     ctx.stroke()
   }
   if (o.kind === 'note') {
@@ -205,8 +246,11 @@ function drawCard(ctx: CanvasRenderingContext2D, p: Palette, o: Obstacle): void 
   }
 }
 
-/** The runner: the app's mark, a ring with a dot, rolling; a squashed ring when ducking. */
-function drawPlayer(ctx: CanvasRenderingContext2D, p: Palette, state: GameState): void {
+/**
+ * The runner: the app's mark, a ring with a dot, the dot turning with the distance run; the ring
+ * squashed to an ellipse for a duck. No face, no limbs – the stroke's round finish is the art.
+ */
+function drawPlayer(ctx: StageContext, p: Palette, state: GameState): void {
   const box = playerBox(state.player)
   const cx = box.x + box.width / 2
   const cy = box.y + box.height / 2
@@ -246,7 +290,7 @@ function drawPlayer(ctx: CanvasRenderingContext2D, p: Palette, state: GameState)
 }
 
 /** The faint rings drifting behind the run (full motion only). */
-function drawParallax(ctx: CanvasRenderingContext2D, p: Palette, state: GameState): void {
+function drawParallax(ctx: StageContext, p: Palette, state: GameState): void {
   const width = state.config.width
   const span = width + 120
   ctx.strokeStyle = p.fill
@@ -266,12 +310,7 @@ function drawParallax(ctx: CanvasRenderingContext2D, p: Palette, state: GameStat
 }
 
 /** The ground: a hairline, and under full motion sparse dashes passing beneath it at the speed. */
-function drawGround(
-  ctx: CanvasRenderingContext2D,
-  p: Palette,
-  state: GameState,
-  reduced: boolean
-): void {
+function drawGround(ctx: StageContext, p: Palette, state: GameState, reduced: boolean): void {
   const width = state.config.width
   const y = state.ground + 0.5
   ctx.strokeStyle = p.border
@@ -292,40 +331,51 @@ function drawGround(
   ctx.stroke()
 }
 
-/** The meter: the score in the page ink, the best before it in the deemphasised ink (`Best 00123 00042`). */
-function drawScore(ctx: CanvasRenderingContext2D, p: Palette, state: GameState): void {
+/** The meter's best, as it reads before the score (`Best 00123`); '' when there is none yet. */
+export function meterBestText(best: number): string {
+  return best > 0 ? `${GAME_BEST_LABEL} ${formatScore(best)}` : ''
+}
+
+/** The card's line: the run's score and the best it stands against. */
+export function cardScoreText(score: number, best: number): string {
+  return `Score ${formatScore(score)} · ${GAME_BEST_LABEL} ${formatScore(best)}`
+}
+
+/** The meter: the score in the page ink, the best before it in the deemphasised ink. */
+function drawMeter(ctx: StageContext, p: Palette, state: GameState): void {
   ctx.font = p.font
   ctx.textAlign = 'right'
   ctx.textBaseline = 'alphabetic'
-  const right = state.config.width - 8
-  const baseline = 20
+  const right = state.config.width - METER_RIGHT_PAD
   ctx.fillStyle = p.text
   const score = formatScore(state.score)
-  ctx.fillText(score, right, baseline)
-  if (state.best > 0) {
+  ctx.fillText(score, right, METER_BASELINE)
+  const best = meterBestText(state.best)
+  if (best) {
     ctx.fillStyle = p.textDeemphasized
-    ctx.fillText(
-      `Best ${formatScore(state.best)}`,
-      right - ctx.measureText(score).width - 12,
-      baseline
-    )
+    ctx.fillText(best, right - ctx.measureText(score).width - 12, METER_BASELINE)
   }
 }
 
-/** One frame's paint. */
-export function draw(
-  ctx: CanvasRenderingContext2D,
-  state: GameState,
-  p: Palette,
-  reduced: boolean
-): void {
+/**
+ * One frame's paint. By day the stage is the page (nothing behind the shapes); at night it is
+ * the other theme's page colour, the palette having been re-read under the flipped region. The
+ * meter hides while the game-over card stands (the card carries the score and the best).
+ */
+export function draw(ctx: StageContext, state: GameState, p: Palette, reduced: boolean): void {
   const { width, height } = state.config
   ctx.clearRect(0, 0, width, height)
+  if (state.night) {
+    ctx.fillStyle = p.page
+    ctx.fillRect(0, 0, width, height)
+  }
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
   if (!reduced) drawParallax(ctx, p, state)
   drawGround(ctx, p, state, reduced)
   for (const o of state.obstacles) drawCard(ctx, p, o)
   drawPlayer(ctx, p, state)
-  drawScore(ctx, p, state)
+  if (state.phase !== 'over') drawMeter(ctx, p, state)
 }
 
 const JUMP_KEYS = new Set(['Space', 'ArrowUp'])
@@ -337,8 +387,11 @@ function codeOf(e: KeyboardEvent): string {
   return e.code || (e.key === ' ' ? 'Space' : e.key)
 }
 
-/** Keys aimed at another control (the page's Reload, the card's Retry) are that control's. */
-function isOtherControl(target: EventTarget | null, root: HTMLElement): boolean {
+/**
+ * Keys aimed at another control (the page's Reload, the card's Play again) are that control's;
+ * the document's own – nothing focused, or the region – are the game's. Tab is never taken.
+ */
+export function isOtherControl(target: EventTarget | null, root: HTMLElement): boolean {
   if (!(target instanceof Element)) return false
   if (target === root) return false
   return target.matches('button, a, input, select, textarea, [contenteditable]')
@@ -360,16 +413,19 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
   const hint = root.querySelector<HTMLElement>('.zen-game-hint')
   const card = root.querySelector<HTMLElement>('.zen-game-over')
   const cardScore = root.querySelector<HTMLElement>('.zen-game-over-score')
-  const retry = root.querySelector<HTMLButtonElement>('[data-zen-game-retry]')
+  const again = root.querySelector<HTMLButtonElement>('[data-zen-game-again]')
   const live = root.querySelector<HTMLElement>('.zen-game-live')
   const ctx = canvas?.getContext('2d')
-  if (!canvas || !ctx) return null
+  if (!canvas || !ctx) {
+    root.removeAttribute(GAME_MOUNTED_ATTRIBUTE)
+    return null
+  }
 
   const now = deps.now ?? (() => performance.now())
   const requestFrame = deps.requestFrame ?? ((cb) => requestAnimationFrame(cb))
   const cancelFrame = deps.cancelFrame ?? ((id) => cancelAnimationFrame(id))
   const random = deps.random ?? Math.random
-  const store = deps.store === undefined ? localStorageStore(tryLocalStorage()) : deps.store
+  const host = deps.best === undefined ? windowBestScoreHost() : deps.best
   const motionQuery =
     deps.reducedMotion === undefined && typeof matchMedia === 'function'
       ? matchMedia('(prefers-reduced-motion: reduce)')
@@ -382,13 +438,12 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
       typeof matchMedia === 'function' ? matchMedia('(hover: hover)').matches : true
     )
 
-  const state = createGame(
-    { width: stageWidthFor(root.clientWidth || MAX_WIDTH), height: STAGE_HEIGHT },
-    store?.read() ?? 0
-  )
+  const state = createGame({
+    width: stageWidthFor(root.clientWidth || MAX_WIDTH),
+    height: STAGE_HEIGHT
+  })
   let palette = readPalette(root)
-  const documentRoot = document.documentElement
-  const dayTheme = documentRoot.dataset.theme
+  const pageTheme = pageThemeOf(document.documentElement)
   let nightShown = false
   let frame = 0
   let last = 0
@@ -412,13 +467,15 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
     paint()
   }
 
-  /** Night is the page's other theme, as a cut (§11.6: page colours never tween). */
+  /**
+   * Night is the STAGE's other theme, as a cut (§11.6: page colours never tween): the region's
+   * `data-theme` flips and the palette is read again under it; the page keeps its own.
+   */
   const showNight = (night: boolean): void => {
     if (night === nightShown) return
     nightShown = night
-    if (night) documentRoot.dataset.theme = dayTheme === 'dark' ? 'light' : 'dark'
-    else if (dayTheme === undefined) delete documentRoot.dataset.theme
-    else documentRoot.dataset.theme = dayTheme
+    if (night) root.dataset.theme = nightThemeFor(pageTheme)
+    else delete root.dataset.theme
     palette = readPalette(root)
   }
 
@@ -426,10 +483,13 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
     if (live) live.textContent = text
   }
 
+  const writeCardScore = (): void => {
+    if (cardScore) cardScore.textContent = cardScoreText(state.score, state.best)
+  }
+
   const showCard = (): void => {
     if (!card) return
-    if (cardScore)
-      cardScore.textContent = `Score ${formatScore(state.score)} · Best ${formatScore(state.best)}`
+    writeCardScore()
     card.hidden = false
     if (typeof card.animate === 'function') {
       if (reduced)
@@ -457,8 +517,9 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
   const onGameOver = (): void => {
     setPhase()
     showCard()
-    store?.write(state.best)
-    announce(`Game over. Score ${state.score}. Best ${state.best}.`)
+    // A run that set the best (or matched it) is the profile's to keep; a lesser one is not news.
+    if (state.best > 0 && state.score >= state.best) host?.write(state.best)
+    announce(`Game over. Score ${state.score}. ${GAME_BEST_LABEL} ${state.best}.`)
     if (typeof navigator.vibrate === 'function' && device !== 'keyboard') navigator.vibrate(200)
   }
 
@@ -560,7 +621,7 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
     pointerId = null
     endJump(state)
   }
-  const onRetry = (e: Event): void => {
+  const onPlayAgain = (e: Event): void => {
     e.preventDefault()
     begin()
     root.focus({ preventScroll: true })
@@ -575,10 +636,17 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
     reduced = e.matches
     paint()
   }
+  /** The browser's answer, now or later: the best rises; a standing stage or card shows it. */
+  const onBest = (best: number): void => {
+    if (!takeBest(state, best)) return
+    if (state.phase === 'over') writeCardScore()
+    if (state.phase !== 'running') paint()
+  }
 
   if (hint) hint.textContent = START_HINTS[device]
   setPhase()
   fit()
+  const stopListening = host?.read(onBest)
 
   document.addEventListener('keydown', onKeyDown)
   document.addEventListener('keyup', onKeyUp)
@@ -586,7 +654,7 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
   root.addEventListener('pointermove', onPointerMove)
   root.addEventListener('pointerup', onPointerUp)
   root.addEventListener('pointercancel', onPointerUp)
-  retry?.addEventListener('click', onRetry)
+  again?.addEventListener('click', onPlayAgain)
   document.addEventListener('visibilitychange', onVisibility)
   motionQuery?.addEventListener('change', onMotionChange)
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null
@@ -599,13 +667,14 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
       if (frame) cancelFrame(frame)
       frame = 0
       showNight(false)
+      stopListening?.()
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('keyup', onKeyUp)
       root.removeEventListener('pointerdown', onPointerDown)
       root.removeEventListener('pointermove', onPointerMove)
       root.removeEventListener('pointerup', onPointerUp)
       root.removeEventListener('pointercancel', onPointerUp)
-      retry?.removeEventListener('click', onRetry)
+      again?.removeEventListener('click', onPlayAgain)
       document.removeEventListener('visibilitychange', onVisibility)
       motionQuery?.removeEventListener('change', onMotionChange)
       observer?.disconnect()

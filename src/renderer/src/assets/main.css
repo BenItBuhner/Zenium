@@ -931,6 +931,8 @@
   --zen-accent: var(--v2-text);
   /* The chrome's easing (§7), which the v2 button's press transition reads. */
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The chrome's corner (§2: the squircle on radius 8 and up), which the game-over card reads. */
+  --zen-corner: squircle;
   height: 100%;
   color-scheme: light;
 }
@@ -1240,15 +1242,20 @@
   opacity: 0.69;
 }
 /*
- * The offline game (ERR-03; `shared/game/`): the stage above the no-connection page's title, and
- * alone on `zen://game` – a region the content column wide, at most 600 by 150 (Chrome's runner's
- * size), the runner and the cards drawn in the page's tokens by the page script's runtime, so
- * the stylesheet gives the stage no colour. The start hint sits across the stage's middle in the
- * deemphasised ink; the game-over card is a v2 card over the stage with Retry as its one primary;
- * the live region is the screen reader's alone. `touch-action: none` keeps a swipe on the stage
- * the game's (a downward swipe mid-air is the speed drop). The card's arrival is the runtime's
- * (Web Animations: a 180 ms pop, a 120 ms opacity fade under reduced motion, §11.3), not a
- * transition here – the page's cut carries no reduced-motion remover of its own.
+ * Roll, the offline game (ERR-03, §9.17; `shared/game/`): the stage above the no-connection
+ * page's title, and alone on `zen://game` – a region the content column wide, at most 600 by 150
+ * (Chrome's runner's size), the runner and the cards drawn in the page's tokens by the document's
+ * inline runtime, so the stylesheet gives the stage no colour. The start hint sits across the
+ * stage's middle in the deemphasised ink; the game-over card is a v2 card at 8 (the squircle,
+ * `--zen-corner`) over the stage, "Game over" at the heading size, the score line deemphasised
+ * and tabular, Play again its one primary; the live region is the screen reader's alone.
+ * `touch-action: none` keeps a swipe on the stage the game's (a downward swipe mid-air is the
+ * speed drop). The card's arrival is the runtime's (Web Animations: a 180 ms pop, a 120 ms
+ * opacity fade under reduced motion, §11.3), not a transition here – the page's cut carries no
+ * reduced-motion remover of its own. The night is the region's: the runtime sets `data-theme` on
+ * `.zen-game` alone, and `zenPages.ts` restates the theme's tokens under that attribute
+ * (`gameStageThemeStyle`), so the hint, the card and the stage's palette flip while the page
+ * around them keeps its colours.
  */
 .zen-game {
   position: relative;
@@ -1298,7 +1305,9 @@
   padding: var(--v2-card-padding);
   border: 1px solid var(--v2-card-border);
   border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
   background: var(--v2-card);
+  color: var(--v2-text);
   transform: translateX(-50%);
 }
 .zen-game-over[hidden] {
