@@ -246,14 +246,16 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   // Menu items are Title Case (v2 draft 9.1) and read as the core's bookmark menus do (#119:
   // "Edit…" opens a sheet, "Open All (N)" counts what a folder opens) – with ONE deliberate
   // split, ruled per door (W6-E6b): a folder's edit item says "Edit…" here, not the core's
-  // "Rename…" (`src/core/menus.ts` `single?.type === 'url' ? 'Edit…' : 'Rename…'`, the desktop
-  // manager's rows likewise), because the sheet it opens is HB-16's "Edit folder" – name AND
-  // folder – where the desktop's dialog renames alone; the split closes the day that dialog
-  // gains the picker. Chrome 152 says Edit for every row (`BookmarkManagerMediator`
-  // `createListMenuForBookmark` l.1522-1523 adds `bookmark_item_edit` after `bookmark_item_select`
-  // for a folder as for a page – l.1524's `!isFolder()` gates Copy link alone – and l.1609-1613
-  // opens `startEditActivity` for either; `IDS_BOOKMARK_ITEM_EDIT` "Edit", grd l.4581-4583). The
-  // word is this panel's own literal, taken from no shared source.
+  // "Rename…" (`src/core/menus.ts` `single?.type === 'url' ? 'Edit…' : 'Rename…'`). The desktop's
+  // "Rename…" row is the manager's in-place rename of a folder in view (`BookmarkManager.tsx`
+  // l.400-414, `setRenamingId`; pinned in `BookmarkManager.test.tsx` l.532-547): it renames alone,
+  // so its word holds behind its door. This row opens the editor – HB-16's "Edit folder" sheet,
+  // the name and the folder – so its word is Chrome's. Chrome 152 says Edit for every row
+  // (`BookmarkManagerMediator` `createListMenuModelList`, l.1503: l.1522-1523 add
+  // `bookmark_item_edit` after `bookmark_item_select` for a folder as for a page, l.1524's
+  // `!isFolder()` gating Copy link alone; `createListMenuForBookmark`, l.1585, takes that list at
+  // l.1589 and at l.1609-1613 opens `startEditActivity` for either; `IDS_BOOKMARK_ITEM_EDIT`
+  // "Edit", grd l.4581-4583). The word is this panel's own literal, taken from no shared source.
   /** The addresses under `ids`, for the private rows (INC-08; a private tab is opened by URL). */
   const urlsUnder = (ids: readonly string[]): string[] =>
     ids.flatMap((id) => tree.urlsUnder(id)).map((node) => node.url ?? '')
