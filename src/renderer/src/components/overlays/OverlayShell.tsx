@@ -10,6 +10,11 @@ import { useScrolled } from '../bookmarks/popover'
 
 interface Props {
   title: string
+  /**
+   * §9.23's optional line under the title – 15 at 69 %, 4 below it – naming what the panel is
+   * about where the title is one word (the theme picker's "Theme" over "<space> space").
+   */
+  description?: string
   children: ReactNode
   /** `dock` → left-docked sidebar panel; `dialog` → centred card; `full` → fills the content area. */
   variant?: 'dock' | 'dialog' | 'full'
@@ -29,6 +34,7 @@ interface Props {
 /** Common chrome for panels that open over the content area. */
 export function OverlayShell({
   title,
+  description,
   children,
   variant = 'dock',
   actions,
@@ -90,13 +96,21 @@ export function OverlayShell({
           // at its bottom edge only while the body is scrolled under it. On a phone it is the
           // §9.16 bar header, 56 tall with the 44 close at a 6 margin. The close is the §9.3
           // icon button, named for the screen reader without the keyboard hint a tooltip carries
-          // on a phone (§9.31).
+          // on a phone (§9.31). With a `description` the title is a §9.23 block – the line 4
+          // under it – and the close stays on the title's line (main.css).
           <header
             className="zen-overlay-header"
             data-size={variant === 'full' ? 'page' : 'panel'}
             data-scrolled={scrolled || undefined}
           >
-            <h2 className="zen-overlay-title">{title}</h2>
+            {description ? (
+              <div className="zen-overlay-title-block">
+                <h2 className="zen-overlay-title">{title}</h2>
+                <p className="zen-overlay-description">{description}</p>
+              </div>
+            ) : (
+              <h2 className="zen-overlay-title">{title}</h2>
+            )}
             {actions}
             <button
               type="button"

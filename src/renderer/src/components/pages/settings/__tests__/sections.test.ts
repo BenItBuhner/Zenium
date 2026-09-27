@@ -7156,7 +7156,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       settings
     )
 
-  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme: "Default" at rest, with the picker as its door (Chrome’s row opens Customize Chrome; no store is named)', () => {
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named)', () => {
     const { model } = look()
     const ids = appearanceIds(model)
     expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
@@ -7164,7 +7164,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     expect(theme).toMatchObject({
       kind: 'action',
       label: 'Theme',
-      description: 'Default',
+      description: 'Default · Personal space',
       layouts: ['desktop', 'tablet'],
       button: 'Change…'
     })
@@ -7184,15 +7184,18 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     invoke.mockClear()
     const { model } = look(themed())
     const theme = row(model, 'theme')
-    expect(theme).toMatchObject({ description: 'Custom', button: 'Reset to default' })
+    expect(theme).toMatchObject({
+      description: 'Custom · Personal space',
+      button: 'Reset to default'
+    })
     if (theme.kind !== 'action') throw new Error('not an action row')
     theme.onPress?.()
     expect(invoke).toHaveBeenCalledWith('space.update', {
       spaceId: 'space',
       patch: { theme: null }
     })
-    // A preset as the picker wrote it reads by its name, and the space is named where there
-    // is more than one to tell apart.
+    // A preset as the picker wrote it reads by its name; the space is named the same way with
+    // several spaces as with one.
     const preset = state({
       spaces: [
         {
@@ -7206,7 +7209,9 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
         { id: 'other', name: 'Play', icon: '', activeTabId: null, tabIds: [] }
       ] as unknown as UIState['spaces']
     })
-    expect(row(look(preset).model, 'theme').description).toBe(`${THEME_PRESETS[1].name} · Work`)
+    expect(row(look(preset).model, 'theme').description).toBe(
+      `${THEME_PRESETS[1].name} · Work space`
+    )
   })
 
   it('"Show home button" is the Home control’s pin (toolbarPins.home; Chrome’s show_home_button, off by default), desktop alone: off it stands by itself, on it writes home: true and reveals the Home page value row – Chrome’s radio – at New Tab page', () => {

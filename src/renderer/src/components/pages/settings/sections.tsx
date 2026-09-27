@@ -498,18 +498,16 @@ function lookSection({
         // (`lib/theme.ts`, §9.1). At the default look the row is the door to the
         // picker instead, as Chrome's row opens Customize Chrome (its Web Store is no part of
         // Zenium's; the row says nothing of a store). The theme is a space's, so the row reads
-        // the active space's and names the space where there is more than one. The phone's
-        // Appearance keeps to its own rows; the tablet shares the desktop's two-pane page.
+        // the active space's and names it – "Ocean · Default space", the picker's own
+        // description under its title (#572's N5) – one space or many. The phone's Appearance
+        // keeps to its own rows; the tablet shares the desktop's two-pane page.
         ...(activeSpace
           ? [
               {
                 kind: 'action',
                 id: 'theme',
                 label: 'Theme',
-                description:
-                  state.spaces.length > 1
-                    ? `${themeLabel} · ${spaceLabel(activeSpace)}`
-                    : themeLabel,
+                description: `${themeLabel} · ${spaceLabel(activeSpace)} space`,
                 keywords: ['theme', 'accent', 'colour', 'color', 'gradient', 'preset', 'reset'],
                 layouts: ['desktop', 'tablet'],
                 button: themed ? 'Reset to default' : 'Change…',

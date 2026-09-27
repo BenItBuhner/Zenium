@@ -2447,6 +2447,43 @@
     line-height: var(--v2-line-heading);
     letter-spacing: -0.012em;
   }
+  /*
+   * The header's title with a description under it (`OverlayShell description`; §9.23's title
+   * block: the title 17/600 on 22, the description 15 at 69 % 4 under it – the theme picker's
+   * "Theme" over "<space> space", #572's N5): the text is a column and the header's items sit at
+   * its top, so the close stays centred on the title's line as it is without the description –
+   * the header's 13 puts the 28 button's centre 27 down, and the column's 3 puts the 22 line's
+   * there too. 13 + 3 + 22 + 4 + 20 + 3 + 13 = 78, §9.23's height with a description, the 16
+   * from the description's line box to the first content box kept. On a phone the 44 close at
+   * its 6 margin centres 28 down, so the column takes 11 above its line (6 + 11 + 11 = 28) and
+   * 10 below the description (10 + 6 = §9.7's 16 to the body).
+   */
+  .zen-overlay-header:has(> .zen-overlay-title-block) {
+    align-items: flex-start;
+  }
+  .zen-overlay-title-block {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+    padding: 3px 0;
+  }
+  .zen-overlay-title-block > .zen-overlay-title {
+    flex: none;
+  }
+  .zen-overlay-description {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  :root[data-form-factor='phone'] .zen-overlay-title-block {
+    padding: 11px 0 10px;
+  }
   .zen-overlay-header::after {
     content: '';
     position: absolute;

@@ -10,6 +10,7 @@ import {
   toMonochrome,
   wheelToColor
 } from '@shared/theme'
+import { spaceLabel } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { isDarkScheme } from '@renderer/lib/selectors'
 import { resetSpaceTheme } from '@renderer/lib/theme'
@@ -74,9 +75,13 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
   }, [working])
   const preview = resolveTheme(theme, dark)
 
+  // The title is the one word, the space the picker edits its §9.23 description under it
+  // ("Default space"; the Settings theme row's aside "Ocean · Default space" names the same
+  // space the same way – #572's N5), so the space's name never runs into the title.
   return (
     <OverlayShell
-      title={`Theme · ${space.name}`}
+      title="Theme"
+      description={`${spaceLabel(space)} space`}
       variant="dialog"
       className="mb-3 ml-3 mr-auto mt-auto w-[420px]"
     >
