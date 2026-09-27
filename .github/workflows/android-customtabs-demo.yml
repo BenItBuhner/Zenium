@@ -16,6 +16,9 @@ name: Android custom tabs demo
 # picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-twa-quality-fallbacks-9271
 
 permissions:
   contents: read
