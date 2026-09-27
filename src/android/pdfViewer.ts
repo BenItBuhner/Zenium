@@ -35,8 +35,10 @@ import {
 } from '@shared/pdfViewerProtocol'
 import {
   bytesToBase64,
+  fillableFieldCount,
   PDF_FORMS_CSS,
   PDF_FORMS_LAYER_CLASS,
+  PdfFormGate,
   pdfFormLinkService,
   type PdfFormLinkService
 } from './pdfViewerForms'
@@ -186,12 +188,14 @@ class Viewer {
   private lastTap: { at: number; x: number; y: number } | null = null
   /** The AcroForm's fields by name (`getFieldObjects`; null for a document without a form). */
   private fieldObjects: Promise<Map<string, object[]> | null> = Promise.resolve(null)
+  /** How many of them can be filled in (`fillableFieldCount`): the chrome's Save row wants one. */
   private formFields = 0
   /**
-   * A value of the form differs from the file's: set by the storage's first change since the
-   * document opened or the host last wrote a copy (`saved`), cleared by that write alone.
+   * Whether a value of the form differs from the file's: set by the storage's first change
+   * since the document opened or a copy was last written, cleared by the host's `saved` – and
+   * then only while the values are still the copy's (`PdfFormGate`).
    */
-  private formModified = false
+  private readonly formGate = new PdfFormGate(() => this.doc?.annotationStorage ?? null)
   private readonly linkService: PdfFormLinkService
 
   constructor(private readonly config: ViewerConfig) {
@@ -268,11 +272,14 @@ class Viewer {
    * bytes followed by an update holding the changed fields (`saveDocument`; Firefox's viewer
    * saves this way) – as base64 for the host's file. Null before the document is open, and when
    * pdf.js cannot write it. The modified flag is the host's to clear (`saved`): a copy written
-   * for printing leaves the form still unsaved.
+   * for printing leaves the form still unsaved. The gate notes which values the copy was made
+   * of, so a `saved` after an edit made during the write leaves the form modified.
    */
   async save(): Promise<string | null> {
     if (!this.doc || this.state !== 'ready') return null
     try {
+      // `saveDocument` serialises the storage as it is called: the digest taken here is the copy's.
+      this.formGate.copying()
       return bytesToBase64(await this.doc.saveDocument())
     } catch {
       return null
@@ -283,7 +290,7 @@ class Viewer {
   command(command: PdfViewerCommand): void {
     switch (command.kind) {
       case 'saved':
-        this.setFormModified(false)
+        if (this.formGate.saved()) this.report()
         return
       case 'zoom':
         this.setZoom(clampZoom(command.factor), null)
@@ -745,26 +752,22 @@ class Viewer {
   /**
    * The form's bookkeeping for the document: the storage's first change flags the form
    * modified (`AnnotationStorage.onSetModified`; pdf.js's viewer keys its own save button on
-   * it), and the fields are counted for the chrome (`getFieldObjects`, the layer's map for
-   * finding a button's siblings and a reset button's fields).
+   * it), and the fillable fields are counted for the chrome (`getFieldObjects`, the layer's map
+   * for finding a button's siblings and a reset button's fields).
    */
   private watchForm(doc: PDFDocumentProxy): void {
     const storage = doc.annotationStorage as unknown as { onSetModified: (() => void) | null }
-    storage.onSetModified = () => this.setFormModified(true)
+    storage.onSetModified = () => {
+      if (this.formGate.edited()) this.report()
+    }
     this.fieldObjects = doc
       .getFieldObjects()
       .then((fields) => {
-        this.formFields = fields?.size ?? 0
+        this.formFields = fillableFieldCount(fields)
         this.report()
         return fields
       })
       .catch(() => null)
-  }
-
-  private setFormModified(modified: boolean): void {
-    if (this.formModified === modified) return
-    this.formModified = modified
-    this.report()
   }
 
   /**
@@ -802,7 +805,7 @@ class Viewer {
     if (!widgets.length) return
     const fieldObjects = await this.fieldObjects
     const storage = doc.annotationStorage
-    const wasModified = this.formModified
+    const wasModified = this.formGate.modified
     const viewport = this.formViewport(page)
     // The builder's own recipe (`AnnotationLayerBuilder.#initAnnotationLayer`): the layer's div,
     // the page, a viewport cloned `dontFlip`, the document's storage, the widgets' canvases and
@@ -838,7 +841,7 @@ class Viewer {
     // (`RadioButtonWidgetAnnotationElement.render`) – a change of pdf.js's, not the user's.
     if (!wasModified) {
       storage.resetModified()
-      this.setFormModified(false)
+      if (this.formGate.reset()) this.report()
     }
     this.sizeForms(slot)
   }
@@ -1031,7 +1034,7 @@ class Viewer {
           }
         : null,
       outline: this.outline,
-      form: { fields: this.formFields, modified: this.formModified },
+      form: { fields: this.formFields, modified: this.formGate.modified },
       ...(this.error ? { error: this.error } : {}),
       ...(this.state === 'password' ? { passwordWrong: this.passwordWrong } : {})
     }

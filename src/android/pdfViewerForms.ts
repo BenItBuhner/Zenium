@@ -27,6 +27,11 @@ export const PDF_FORMS_LAYER_CLASS = 'zen-pdf-forms annotationLayer'
  * buttons use, the rotation transforms (6237–6245) and the page's scale variables (6300–6303),
  * keyed on the viewer's own page and layer classes. Popups, media, file attachments and the
  * forced-colours block are left out: the layer is given widgets only.
+ *
+ * The rotation rules are pdf.js's global `[data-main-rotation]` ones twice over: on the layer
+ * itself, which turns with the viewer's rotation, and on any element under it – a widget the
+ * document rotates (`/MK /R`) gets the attribute on its own section (`AnnotationElement.setRotation`,
+ * `display/annotation_layer.js`) and relies on the same rules.
  */
 export const PDF_FORMS_CSS = `
 .zen-pdf-page { --user-unit: 1; --total-scale-factor: calc(var(--scale-factor) * var(--user-unit)); --scale-round-x: 1px; --scale-round-y: 1px; }
@@ -52,6 +57,9 @@ export const PDF_FORMS_CSS = `
 .zen-pdf-forms[data-main-rotation="90"] .norotate { transform: rotate(270deg) translateX(-100%); }
 .zen-pdf-forms[data-main-rotation="180"] .norotate { transform: rotate(180deg) translate(-100%, -100%); }
 .zen-pdf-forms[data-main-rotation="270"] .norotate { transform: rotate(90deg) translateY(-100%); }
+.zen-pdf-forms [data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
+.zen-pdf-forms [data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.zen-pdf-forms [data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }
 .zen-pdf-forms .annotationContent { position: absolute; width: 100%; height: 100%; pointer-events: none; }
 .zen-pdf-forms section { position: absolute; text-align: initial; pointer-events: auto; box-sizing: border-box; transform-origin: 0 0; -webkit-user-select: none; user-select: none; }
 .zen-pdf-forms section:has(div.annotationContent) canvas.annotationContent { display: none; }
@@ -179,4 +187,92 @@ export function bytesToBase64(bytes: Uint8Array): string {
   for (let at = 0; at < bytes.length; at += SLICE)
     binary += String.fromCharCode(...bytes.subarray(at, at + SLICE))
   return btoa(binary)
+}
+
+/**
+ * The field kinds a user fills in, as the worker names them in a field object's `type`
+ * (`core/annotation.js`: `TextWidgetAnnotation`, `ButtonWidgetAnnotation` – `checkbox` and
+ * `radiobutton` for those, `button` for a push button – and `ChoiceWidgetAnnotation`'s
+ * `combobox` / `listbox`; `SignatureWidgetAnnotation` answers `signature`). A push button or a
+ * signature field holds no value a save could write.
+ */
+const FILLABLE_FIELD_TYPES = new Set(['text', 'checkbox', 'radiobutton', 'combobox', 'listbox'])
+
+/**
+ * How many of the form's fields can be filled in – the count behind the chrome's Save row
+ * (`PdfFormState.fields`): the names of `getFieldObjects` whose objects include a fillable
+ * kind. A brochure with one Print button or a contract with a signature field alone counts 0,
+ * and offers no Save that could never enable.
+ */
+export function fillableFieldCount(fields: Map<string, object[]> | null | undefined): number {
+  if (!fields) return 0
+  let count = 0
+  for (const objects of fields.values()) {
+    if (objects.some((o) => FILLABLE_FIELD_TYPES.has(String((o as { type?: unknown }).type ?? ''))))
+      count++
+  }
+  return count
+}
+
+/** What the gate reads of pdf.js's `AnnotationStorage`: the digest of the values it holds. */
+export interface PdfFormStorageLike {
+  readonly serializable: { readonly hash: string }
+}
+
+/**
+ * The form's modified flag – the Save row's gate (`PdfFormState.modified`) – kept true across
+ * the writing of a copy that misses an edit.
+ *
+ * pdf.js's storage flags itself modified on its first change and is reset by `saveDocument`
+ * (`AnnotationStorage.#setModified`, `resetModified`; `WorkerTransport.saveDocument`'s
+ * `finally`), so it cannot tell the viewer whether a value changed *while* the host was writing
+ * the copy: the copy is made of the values as they stood when `saveDocument` serialised them,
+ * the host's write takes its time, and an edit made meanwhile is in the storage but not in the
+ * copy. Clearing the flag on the host's `saved` would then hide that edit from Save, and Print
+ * – which prints the copy only for a modified form – would print the file. So the gate keeps
+ * the digest of the values the copy was made of (`serializable.hash`, pdf.js's own hash of the
+ * storage) and, on `saved`, reads unmodified only while the values are still those.
+ */
+export class PdfFormGate {
+  private modifiedFlag = false
+  /** The digest of the storage as the copy last handed out had it; null before a copy was made. */
+  private copyHash: string | null = null
+
+  constructor(private readonly storage: () => PdfFormStorageLike | null) {}
+
+  get modified(): boolean {
+    return this.modifiedFlag
+  }
+
+  /** The storage took its first change since it was last reset (`onSetModified`). True when the flag changed. */
+  edited(): boolean {
+    return this.set(true)
+  }
+
+  /** A copy of the document is being made of the values as they stand (before `saveDocument`). */
+  copying(): void {
+    this.copyHash = this.storage()?.serializable.hash ?? null
+  }
+
+  /**
+   * The host wrote the copy last handed out (`saved`): the form reads unmodified while its
+   * values are still the copy's, and stays modified when an edit came meanwhile. Nothing changes
+   * for a `saved` no copy preceded. True when the flag changed.
+   */
+  saved(): boolean {
+    const storage = this.storage()
+    if (this.copyHash === null || !storage) return false
+    return this.set(storage.serializable.hash !== this.copyHash)
+  }
+
+  /** The layer's first render wrote values of pdf.js's own (a radio group's siblings): not an edit. True when the flag changed. */
+  reset(): boolean {
+    return this.set(false)
+  }
+
+  private set(modified: boolean): boolean {
+    if (this.modifiedFlag === modified) return false
+    this.modifiedFlag = modified
+    return true
+  }
 }

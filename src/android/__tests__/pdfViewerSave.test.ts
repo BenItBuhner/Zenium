@@ -10,6 +10,7 @@ import { resolve } from 'node:path'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { PREVIEW_FORM_FIELDS, previewPdf } from '../previewPdf'
+import { fillableFieldCount, PdfFormGate, type PdfFormStorageLike } from '../pdfViewerForms'
 
 /** What `getAnnotations` says of a widget, the part the layer and these tests read. */
 interface Widget {
@@ -155,6 +156,61 @@ describe('the form fixture through pdf.js', () => {
       expect(storage.size).toBe(0)
       const saved = await doc.saveDocument()
       expect(Buffer.from(saved).equals(original)).toBe(true)
+      // What a print of the untouched form hands the host (`Viewer.bytes`): the file's own bytes.
+      expect(Buffer.from(await doc.getData()).equals(original)).toBe(true)
+    } finally {
+      await close()
+    }
+  })
+
+  it('counts six fillable fields: the reset button holds no value a save could write', async () => {
+    const { doc, close } = await open(previewPdf('form'))
+    try {
+      const fields = await doc.getFieldObjects()
+      expect(fields?.size).toBe(7)
+      expect(fillableFieldCount(fields)).toBe(6)
+      const kinds = new Map(
+        [...(fields?.entries() ?? [])].map(([name, objects]): [string, string] => [
+          name,
+          (objects as Array<{ type: string }>).map((o) => o.type).join('+')
+        ])
+      )
+      expect(kinds.get(F.clear)).toBe('button')
+      // A radio group's name holds the group's own object (`type: ""`, the field with kids;
+      // `Annotation.getFieldObject`) before its two buttons: one fillable field.
+      expect(kinds.get(F.berth)).toBe('+radiobutton+radiobutton')
+    } finally {
+      await close()
+    }
+  })
+
+  it('keeps the form modified through a save that an edit overtook, on pdf.js’s own digest', async () => {
+    const { doc, storage, close } = await open(previewPdf('form'))
+    const gate = new PdfFormGate(() => doc.annotationStorage as unknown as PdfFormStorageLike)
+    storage.onSetModified = () => gate.edited()
+    try {
+      const widgets = await widgetsOf(doc)
+      const id = (key: string): string => widgets.get(key)!.id
+      storage.setValue(id(F.applicant), { value: 'Ann Mooring' })
+      expect(gate.modified).toBe(true)
+      // Save: the copy is made of the values as they stand …
+      gate.copying()
+      const copy = await doc.saveDocument()
+      expect(copy.length).toBeGreaterThan(0)
+      // … the host is writing it, and the user types on – pdf.js's flag was reset by the save,
+      // so this is a first change again and the hook fires; the viewer's flag was true already.
+      storage.setValue(id(F.notes), { value: 'Arriving late April.' })
+      // The host's `saved` for the copy: the values are no longer the copy's, so still modified.
+      expect(gate.saved()).toBe(false)
+      expect(gate.modified).toBe(true)
+      // A second save takes the new values; its `saved` clears the flag.
+      gate.copying()
+      await doc.saveDocument()
+      expect(gate.saved()).toBe(true)
+      expect(gate.modified).toBe(false)
+      // The next edit is a first change for pdf.js too: the hook fires and the gate follows.
+      storage.setValue(id(F.electricity), { value: true })
+      expect(gate.modified).toBe(true)
     } finally {
       await close()
     }

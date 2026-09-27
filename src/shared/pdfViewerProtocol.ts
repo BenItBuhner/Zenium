@@ -39,11 +39,12 @@ export interface PdfOutlineItem {
 export type PdfFitMode = 'width' | 'page'
 
 /**
- * The document's form (its AcroForm), as the viewer's form layer sees it: how many fields it
- * has – 0 for a document with none, when the chrome has no Save to offer – and whether a value
- * has been changed since the document was opened or a copy last written (`saved` command): the
- * Save row's gate, as pdf.js's own viewer gates its unsaved-changes warning on the storage's
- * modified state.
+ * The document's form (its AcroForm), as the viewer's form layer sees it: how many fields a
+ * user can fill in – text fields, check boxes, radio buttons and choices; a push button or a
+ * signature field holds no value a save could write, and is not counted – 0 for a document
+ * with none, when the chrome has no Save to offer; and whether a value has been changed since
+ * the document was opened or a copy last written (`saved` command): the Save row's gate, as
+ * pdf.js's own viewer gates its unsaved-changes warning on the storage's modified state.
  */
 export interface PdfFormState {
   fields: number
@@ -97,8 +98,10 @@ export type PdfViewerCommand =
   | { kind: 'report' }
   /**
    * The host wrote the copy the viewer last handed it (`pdfSaveScript`): the form's values are
-   * saved, so `form.modified` is false until the next edit. Not sent when the write failed –
-   * the edits are still unsaved, and the row stays enabled.
+   * saved, so `form.modified` is false until the next edit – unless a value changed while the
+   * copy was being written, when the form stays modified (the viewer's gate compares the values
+   * with the copy's). Not sent when the write failed – the edits are still unsaved, and the row
+   * stays enabled.
    */
   | { kind: 'saved' }
 

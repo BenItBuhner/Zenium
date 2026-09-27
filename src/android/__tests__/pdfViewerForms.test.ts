@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   bytesToBase64,
+  fillableFieldCount,
   PDF_FORMS_CSS,
   PDF_FORMS_LAYER_CLASS,
+  PdfFormGate,
   pdfFormLinkService
 } from '../pdfViewerForms'
 
@@ -35,6 +37,117 @@ describe('the form layer’s stylesheet', () => {
       '--total-scale-factor: calc(var(--scale-factor) * var(--user-unit))'
     )
     expect(PDF_FORMS_LAYER_CLASS.split(' ')).toEqual(['zen-pdf-forms', 'annotationLayer'])
+  })
+
+  it('turns a widget the document rotates as well as the layer (pdf.js’s global rotation rules, twice)', () => {
+    // pdf.js sets `data-main-rotation` on the layer (`setLayerDimensions`) and on a rotated
+    // widget's own section (`AnnotationElement.setRotation`, `/MK /R`), and one global rule
+    // serves both; scoped to the viewer, the rule is written for the layer and for its descendants.
+    for (const [angle, transform] of [
+      ['90', 'rotate(90deg) translateY(-100%)'],
+      ['180', 'rotate(180deg) translate(-100%, -100%)'],
+      ['270', 'rotate(270deg) translateX(-100%)']
+    ]) {
+      expect(PDF_FORMS_CSS).toContain(
+        `.zen-pdf-forms[data-main-rotation="${angle}"] { transform: ${transform}; }`
+      )
+      expect(PDF_FORMS_CSS).toContain(
+        `.zen-pdf-forms [data-main-rotation="${angle}"] { transform: ${transform}; }`
+      )
+    }
+    // The section is turned about its corner, as pdf.js's `.annotationLayer section` is.
+    expect(PDF_FORMS_CSS).toMatch(/\.zen-pdf-forms section \{[^}]*transform-origin: 0 0;/)
+  })
+})
+
+describe('fillableFieldCount', () => {
+  const field = (...types: string[]): object[] => types.map((type) => ({ type, name: 'f' }))
+
+  it('counts the names a user can fill in and leaves push buttons and signatures out', () => {
+    expect(fillableFieldCount(null)).toBe(0)
+    expect(fillableFieldCount(undefined)).toBe(0)
+    expect(fillableFieldCount(new Map())).toBe(0)
+    // A brochure with a Print button, a contract with a signature field: no Save to offer.
+    expect(fillableFieldCount(new Map([['print', field('button')]]))).toBe(0)
+    expect(fillableFieldCount(new Map([['sig', field('signature')]]))).toBe(0)
+    expect(
+      fillableFieldCount(
+        new Map([
+          ['applicant', field('text')],
+          ['agree', field('checkbox')],
+          ['berth', field('radiobutton', 'radiobutton')],
+          ['season', field('combobox')],
+          ['extras', field('listbox')],
+          ['clear', field('button')],
+          ['signed', field('signature')],
+          ['odd', [{}]]
+        ])
+      )
+    ).toBe(5)
+    // A name shared by a button and a text widget is one fillable field.
+    expect(fillableFieldCount(new Map([['mixed', field('button', 'text')]]))).toBe(1)
+  })
+})
+
+describe('PdfFormGate', () => {
+  /** A storage whose digest the test moves by hand, as pdf.js's `serializable.hash` moves with the values. */
+  const storage = (): { hash: string; serializable: { readonly hash: string } } => {
+    const s = {
+      hash: '',
+      get serializable() {
+        return { hash: s.hash }
+      }
+    }
+    return s
+  }
+
+  it('reads unmodified after a save only while the values are still the copy’s', () => {
+    const s = storage()
+    const gate = new PdfFormGate(() => s)
+    expect(gate.modified).toBe(false)
+    s.hash = 'a'
+    expect(gate.edited()).toBe(true)
+    expect(gate.edited()).toBe(false)
+    expect(gate.modified).toBe(true)
+    // The copy is made of the values as they stand; the host writes it; `saved` arrives.
+    gate.copying()
+    expect(gate.saved()).toBe(true)
+    expect(gate.modified).toBe(false)
+    // Again, but an edit lands while the copy is being written: `saved` changes nothing.
+    s.hash = 'b'
+    gate.edited()
+    gate.copying()
+    s.hash = 'c'
+    expect(gate.saved()).toBe(false)
+    expect(gate.modified).toBe(true)
+    // The value edited back to what the copy holds is the copy's again.
+    s.hash = 'b'
+    expect(gate.saved()).toBe(true)
+    expect(gate.modified).toBe(false)
+  })
+
+  it('takes a `saved` no copy preceded, and a document gone, as nothing', () => {
+    const s = storage()
+    const gate = new PdfFormGate(() => s)
+    s.hash = 'a'
+    gate.edited()
+    expect(gate.saved()).toBe(false)
+    expect(gate.modified).toBe(true)
+    const gone = new PdfFormGate(() => null)
+    gone.edited()
+    gone.copying()
+    expect(gone.saved()).toBe(false)
+    expect(gone.modified).toBe(true)
+  })
+
+  it('is reset by the layer’s first render without an edit of the user’s', () => {
+    const s = storage()
+    const gate = new PdfFormGate(() => s)
+    s.hash = 'siblings'
+    gate.edited()
+    expect(gate.reset()).toBe(true)
+    expect(gate.reset()).toBe(false)
+    expect(gate.modified).toBe(false)
   })
 })
 
