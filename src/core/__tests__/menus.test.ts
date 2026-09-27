@@ -168,6 +168,7 @@ const DESKTOP_APP_MENU = [
   'Help > Zenium Help',
   'Help > Keyboard Shortcuts',
   'Help > Report an Issue…',
+  'Help > Report an Unsafe Site…',
   'Quit'
 ]
 
@@ -1023,15 +1024,17 @@ describe('the app menu', () => {
     appMenu(h)
     const help = deepItem(h.shown(), 'Help').submenu ?? []
     // Over no page (the harness's window holds none) Report an Unsafe Site… has nothing to
-    // report and is left out; see the row's own tests below.
+    // report and is greyed, the submenu keeping its shape (§9.17); see the row's own tests below.
     expect(topLabels(help)).toEqual([
       'About Zenium',
       "What's New",
       '-',
       'Zenium Help',
       'Keyboard Shortcuts',
-      'Report an Issue…'
+      'Report an Issue…',
+      'Report an Unsafe Site…'
     ])
+    expect(deepItem(h.shown(), 'Report an Unsafe Site…').enabled).toBe(false)
     const before = h.browser.tabs.activeTabFor(h.win)
     deepItem(h.shown(), 'Zenium Help').click?.()
     // Chrome's H&elp center opens `kChromeHelpViaMenuURL` in a tab of the browser (`ShowHelp`):
@@ -1103,18 +1106,23 @@ describe('the app menu', () => {
       expect(opened).toEqual([])
     })
 
-    it("is left out, not greyed, over a page without an address the form can take: Zenium's pages, a file, about:blank", () => {
+    it("is greyed, not left out, over a page without an address the form can take – Zenium's pages, a file, about:blank – the submenu keeping its shape (§9.17), and its click opens nothing", () => {
       const h = harness(DESKTOP)
       for (const url of ['zen://settings/look', 'file:///home/user/report.html', 'about:blank']) {
-        h.browser.tabs.createTab({ url, active: true }, h.win)
+        const page = h.browser.tabs.createTab({ url, active: true }, h.win)
         expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(url)
         const rows = helpRows(h)
-        expect(rows, url).not.toContain(reportRow)
-        expect(rows[rows.length - 1], url).toBe('Report an Issue…')
+        expect(rows[rows.length - 1], url).toBe(reportRow)
+        const row = deepItem(h.shown(), reportRow)
+        expect(row.enabled, url).toBe(false)
+        // A greyed row's click (a host that relays one anyway) opens no tab.
+        row.click?.()
+        expect(h.browser.tabs.activeTabFor(h.win)?.id, url).toBe(page.id)
       }
-      // Back over an http page the row returns.
+      // Back over an http page the row is enabled again.
       h.browser.tabs.createTab({ url: 'http://example.org/', active: true }, h.win)
-      expect(helpRows(h)).toContain(reportRow)
+      appMenu(h)
+      expect(deepItem(h.shown(), reportRow).enabled).not.toBe(false)
     })
 
     it('shows with Safe Browsing off – the form is public and needs no key – and from a private page opens the form in a private tab', () => {
@@ -1125,6 +1133,7 @@ describe('the app menu', () => {
       )
       expect(h.browser.state.settings.privacy.safeBrowsingEnabled).toBe(false)
       expect(helpRows(h)).toContain(reportRow)
+      expect(deepItem(h.shown(), reportRow).enabled).not.toBe(false)
       const privatePage = h.browser.tabs.createTab(
         { url: 'https://example.com/p', active: true, containerId: PRIVATE_CONTAINER_ID },
         h.win

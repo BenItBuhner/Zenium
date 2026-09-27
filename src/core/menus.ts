@@ -4280,14 +4280,18 @@ export class Menus {
     // shortcuts-menus-123): Google Safe Browsing's public report form with the page's address
     // in its query (`unsafeSiteReportUrl`), opened as a help page is. The form is public and
     // needs no key, so the row shows whether or not Safe Browsing is on (Chrome's own hides with
-    // Safe Browsing off and in Incognito, its dialog being a feedback form); a page without an
-    // address the form can take – `zen://`, `file:`, `about:blank` – has no row rather than a
-    // greyed one (Chrome gates nothing on the scheme: its dialog lets the address be typed).
+    // Safe Browsing off and in Incognito, its dialog being a feedback form); over a page without
+    // an address the form can take – `zen://`, `file:`, `about:blank`, no page at all – the row
+    // is greyed, the menu keeping its shape (§9.17; Chrome gates nothing on the scheme: its
+    // dialog lets the address be typed).
     const unsafeSiteReport = unsafeSiteReportUrl(active?.url)
-    const reportUnsafeSite: Template =
-      unsafeSiteReport === null
-        ? []
-        : [{ label: 'Report an Unsafe Site…', click: () => openHelpPage(unsafeSiteReport) }]
+    const reportUnsafeSite: MenuItemTemplate = {
+      label: 'Report an Unsafe Site…',
+      enabled: unsafeSiteReport !== null,
+      click: () => {
+        if (unsafeSiteReport !== null) openHelpPage(unsafeSiteReport)
+      }
+    }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
     const quit = when(caps.windows, {
@@ -4523,7 +4527,7 @@ export class Menus {
               label: 'Report an Issue…',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
             },
-            ...reportUnsafeSite
+            reportUnsafeSite
           ]
         },
         ...quit
