@@ -7309,3 +7309,118 @@ describe('Reset settings (W7-6, settings-70)', () => {
     expect(hit.caption).toBe('Reset Settings')
   })
 })
+
+/*
+ * Settings › System (Chrome's chrome://settings/system): the one row that opens the computer's
+ * proxy settings – the OS panel – and, while an extension holds `chrome.proxy`, the §10.5
+ * controlled-setting primitive on it: the host publishes `extensionControls.proxy` with the
+ * configuration's mode as the value (`ProxyApi.publishControls`, `PROXY_CONTROL_KEY`).
+ */
+describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s System page)', () => {
+  const desktop = (patch: Partial<UIState> = {}): UIState =>
+    state({ platform: 'linux', capabilities: { ...ANDROID, windows: true }, ...patch })
+  const extension = { extensionId: 'c'.repeat(32), name: 'FoxyProxy' }
+  const holding = (value?: string): UIState =>
+    desktop({ extensionControls: { proxy: { ...extension, ...(value ? { value } : {}) } } })
+
+  it('is a category of the desktop OSes, before Reset Settings as Chrome’s System precedes its Reset settings; Android has none, on any layout', () => {
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      const ids = availableSections(PAGE, ANDROID, 'desktop', platform).map((s) => s.id)
+      expect(ids.indexOf('system'), platform).toBe(ids.indexOf('reset') - 1)
+    }
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
+      expect(availableSections(PAGE, ANDROID, layout, 'android').map((s) => s.id)).not.toContain(
+        'system'
+      )
+    }
+    expect(phoneSections().map((m) => m.section.id)).not.toContain('system')
+    const def = PAGE.sections.find((s) => s.id === 'system')!
+    expect(def.label).toBe('System')
+    expect(def.platforms).toEqual(['win32', 'darwin', 'linux'])
+  })
+
+  it('is one action row under the title with no sub-heading, Chrome’s label word for word, leaving for the OS panel, whose press asks the host for the panel and says so in one sentence when nothing opened', async () => {
+    const model = section('system', desktop())
+    expect(model.groups.map((g) => [g.id, g.heading])).toEqual([['system', null]])
+    const proxy = row(model, 'proxy-settings')
+    if (proxy.kind !== 'action') throw new Error('not an action row')
+    expect(proxy).toMatchObject({
+      label: "Open your computer's proxy settings",
+      description: "Zenium uses your computer's proxy settings.",
+      leaves: 'external'
+    })
+    expect(proxy.button).toBeUndefined()
+    expect(proxy.controlled).toBeUndefined()
+    // The door opened: the host says so and the page says nothing.
+    invoke.mockResolvedValueOnce('opened' as unknown as null)
+    proxy.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('system.openProxySettings', undefined)
+    )
+    await Promise.resolve()
+    expect(uiStore.get().toasts.map((t) => t.message)).toEqual([])
+    // No door (a Linux desktop Chrome's table does not know, its tool not on the PATH): one
+    // sentence in Zenium's words, on the frame's toast.
+    invoke.mockResolvedValueOnce('unsupported' as unknown as null)
+    proxy.onPress?.()
+    await vi.waitFor(() =>
+      expect(uiStore.get().toasts.map((t) => [t.message, t.kind])).toEqual([
+        ["Zenium could not open your computer's proxy settings.", 'info']
+      ])
+    )
+    uiStore.set({ toasts: [] })
+  })
+
+  it('is held while an extension holds chrome.proxy: the row carries the control (one indicator row after it, "Controlled by FoxyProxy"), its description names the extension and its configuration’s mode in Chrome’s words, Disable takes the Extensions page’s path', () => {
+    const held = section('system', holding('fixed_servers'))
+    const proxy = row(held, 'proxy-settings')
+    expect(proxy.controlled).toMatchObject({ ...extension, value: 'fixed_servers' })
+    expect(proxy.description).toBe(
+      'FoxyProxy is controlling your proxy settings. It uses fixed servers.'
+    )
+    // The primitive draws the indicator after the run: one row, one indicator.
+    expect(controlledRuns(held.groups[0]!.rows)).toEqual([1])
+    // The other modes of a `chrome.proxy` configuration, each in Chrome's words.
+    const modes: Array<[string, string]> = [
+      ['pac_script', 'It uses a PAC script.'],
+      ['auto_detect', 'It uses automatic detection.'],
+      ['direct', 'It uses a direct connection.'],
+      ['system', "It uses the system's proxy settings."]
+    ]
+    for (const [mode, sentence] of modes) {
+      expect(row(section('system', holding(mode)), 'proxy-settings').description, mode).toBe(
+        `FoxyProxy is controlling your proxy settings. ${sentence}`
+      )
+    }
+    // A mode the table does not know (or none published): the first sentence alone.
+    expect(row(section('system', holding()), 'proxy-settings').description).toBe(
+      'FoxyProxy is controlling your proxy settings.'
+    )
+    // Disable takes the Extensions page's path; the host's proxy service puts the sessions back
+    // on the system proxy as the extension unloads.
+    proxy.controlled!.onDisable()
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
+      id: extension.extensionId,
+      enabled: false
+    })
+    // Another key held is not this row's.
+    const other = section(
+      'system',
+      desktop({ extensionControls: { homepage: { ...extension, value: 'https://x.example/' } } })
+    )
+    expect(row(other, 'proxy-settings').controlled).toBeUndefined()
+    expect(controlledRuns(other.groups[0]!.rows)).toEqual([0])
+  })
+
+  it('is found by the search by Chrome’s words and the row’s own, its caption the category alone', () => {
+    const models = buildSections(
+      availableSections(PAGE, ANDROID, 'desktop', 'linux'),
+      context(desktop()).ctx
+    )
+    const ids = (q: string): string[] => searchRows(models, q).map((h) => h.row.id)
+    expect(ids('proxy')).toEqual(['proxy-settings'])
+    expect(ids("computer's proxy settings")).toEqual(['proxy-settings'])
+    expect(ids('pac')).toContain('proxy-settings')
+    expect(searchRows(models, 'proxy')[0]!.caption).toBe('System')
+  })
+})

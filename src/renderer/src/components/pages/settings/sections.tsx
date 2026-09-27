@@ -127,7 +127,7 @@ import { formatRate } from '@renderer/lib/readAloud'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
-import { openOverlay } from '@renderer/lib/ui'
+import { openOverlay, pushToast } from '@renderer/lib/ui'
 import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { versionReport } from '@renderer/lib/versionReport'
@@ -342,6 +342,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   shortcuts: shortcutsSection,
   'default-browser': defaultBrowserSection,
   updates: updatesSection,
+  system: systemSection,
   reset: resetSection,
   about: aboutSection
 }
@@ -5221,6 +5222,89 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
     }
   ]
   return groups
+}
+
+// ---------------------------------------------------------------------------
+// System
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings › System (Chrome's chrome://settings/system): the words of its one row. The label is
+ * Chrome's (`IDS_SETTINGS_SYSTEM_PROXY_SETTINGS_LABEL`). At rest the description says whose proxy
+ * settings Zenium follows – the computer's, which is what the row opens. While an extension holds
+ * `chrome.proxy` the description is the root's sentence with the configuration's mode in Chrome's
+ * words (the API's `Mode`: fixed servers, a PAC script, automatic detection, direct, the
+ * system's), and the §10.5 indicator row follows: "Controlled by <name>" with Disable. When the
+ * host cannot open the panel (a Linux desktop Chrome's table does not know, or whose settings
+ * tool is not on the PATH) the renderer says so in one sentence.
+ */
+export const PROXY_SETTINGS_COPY = {
+  row: "Open your computer's proxy settings",
+  resting: "Zenium uses your computer's proxy settings.",
+  held: (name: string): string => `${name} is controlling your proxy settings.`,
+  modes: {
+    fixed_servers: 'It uses fixed servers.',
+    pac_script: 'It uses a PAC script.',
+    auto_detect: 'It uses automatic detection.',
+    direct: 'It uses a direct connection.',
+    system: "It uses the system's proxy settings."
+  } as Readonly<Record<string, string>>,
+  unsupported: "Zenium could not open your computer's proxy settings."
+} as const
+
+/** The held row's description: the extension's sentence, then its configuration's mode. */
+export function proxyHeldDescription(control: { name: string; value?: unknown }): string {
+  const mode =
+    typeof control.value === 'string' ? PROXY_SETTINGS_COPY.modes[control.value] : undefined
+  const held = PROXY_SETTINGS_COPY.held(control.name)
+  return mode ? `${held} ${mode}` : held
+}
+
+/**
+ * System (Chrome's System, the category before Reset settings in its list): one row, "Open your
+ * computer's proxy settings", leaving for the OS panel – Windows Settings › Network & internet ›
+ * Proxy, macOS System Settings › Network › Proxies, the Linux desktop's network settings by
+ * Chrome's own table of desktops (`main/platform/systemSettings.ts`, after Chromium's
+ * `settings_utils_linux.cc`). The host answers whether the panel opened; when it did not (a
+ * desktop the table does not know, its tool not on the PATH) the page says so in one sentence
+ * through the frame's toast, the surface Zenium already uses where an OS screen cannot be opened
+ * (`Browser.openAppLinkSettings`). While an extension holds the proxy (`chrome.proxy`,
+ * `UIState.extensionControls.proxy` with the configuration's mode as the value) the row is held
+ * (`RowBase.controlled`, §10.5): disabled at .4 as Chrome's row is not actionable then, its
+ * description saying which extension and what its configuration does, with the indicator row
+ * after it – Disable takes the Extensions page's path, and the host's proxy service puts every
+ * session back on the system proxy as the extension unloads. Chrome's other System rows
+ * (background apps, graphics acceleration) are not here. The desktop OSes' category alone
+ * (`internalPages.ts`): Android's proxy is the network's.
+ */
+function systemSection({ state }: SectionContext): RowGroup[] {
+  const control = extensionControlled(state, 'proxy')
+  return [
+    {
+      id: 'system',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'proxy-settings',
+          label: PROXY_SETTINGS_COPY.row,
+          description: control ? proxyHeldDescription(control) : PROXY_SETTINGS_COPY.resting,
+          keywords: ['proxy', 'network', 'pac', 'system', 'computer'],
+          leaves: 'external',
+          controlled: control,
+          onPress: () => void openProxySettings()
+        }
+      ]
+    }
+  ]
+}
+
+/** The door: the host opens the OS panel, and says when it could not. */
+async function openProxySettings(): Promise<void> {
+  const result = await cmd('system.openProxySettings', undefined).catch(
+    () => 'unsupported' as const
+  )
+  if (result === 'unsupported') pushToast(PROXY_SETTINGS_COPY.unsupported, 'info')
 }
 
 // ---------------------------------------------------------------------------

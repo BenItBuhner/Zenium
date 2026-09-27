@@ -40,6 +40,7 @@ import type {
   PermissionPrompt,
   PermissionPromptAnswer,
   Platform as PlatformOs,
+  ProxySettingsDoor,
   Rect,
   ResourceSnapshot,
   SavePageFormat,
@@ -1570,6 +1571,13 @@ export interface ShellHost {
    * checks the WebView's fields is chosen; for hosts without a spellchecker of the browser's own.
    */
   openKeyboardSettings?(): void
+  /**
+   * The computer's proxy settings panel (Settings › System, Chrome's "Open your computer's
+   * proxy settings"): Windows Settings' Proxy page, macOS's Network › Proxies, the Linux
+   * desktop's network settings by Chrome's table of desktops. Resolves with whether one opened;
+   * the desktop host's alone – a phone's proxy is its network's.
+   */
+  openProxySettings?(): Promise<ProxySettingsDoor>
 }
 
 /**
