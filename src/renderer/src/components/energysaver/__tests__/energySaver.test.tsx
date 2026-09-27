@@ -25,7 +25,7 @@ import { mediaHubButtonFits, mediaHubReturnRow } from '@renderer/lib/mediaHub'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, closeAllPopovers, placePopover } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
-import { EnergySaverBubbleLayer, TURN_OFF_DETAIL } from '../EnergySaverBubble'
+import { EnergySaverBubbleLayer } from '../EnergySaverBubble'
 import { EnergySaverButton } from '../EnergySaverButton'
 
 /*
@@ -168,14 +168,17 @@ describe('the leaf’s reading of the snapshot (lib/energySaver)', () => {
     expect(energySaverLeafFits(0, 9)).toBe(true)
   })
 
-  it('says what the mode does here in the user’s words, two lines of the 320 notice (N3, N4)', () => {
+  it('says what the mode does here in the user’s words and for how long, two lines of the 320 notice (N3, N4, L3)', () => {
     expect(ENERGY_SAVER_DETAIL).toBe(
-      'Background tabs are slowed and unloaded sooner to save power.'
+      'Background tabs are slowed and unloaded sooner until you plug in.'
     )
     // Two lines at 15/20 in the title block's 260 column (about 34 characters a line), and no
-    // word of the governor's – budgets, throttling – that names the implementation.
+    // word of the governor's – budgets, throttling – that names the implementation. The span is
+    // the mode's true one – on battery, so until the charger – not the turn-off's "until the
+    // next unplug", which was the row's line before L3 folded it here.
     expect(ENERGY_SAVER_DETAIL.length).toBeLessThanOrEqual(68)
-    expect(ENERGY_SAVER_DETAIL).not.toMatch(/budget|governor|throttl|%/)
+    expect(ENERGY_SAVER_DETAIL).toMatch(/until you plug in\.$/)
+    expect(ENERGY_SAVER_DETAIL).not.toMatch(/budget|governor|throttl|%|unplugged/)
     // Chrome's line and its button's label, verbatim (IDS_BATTERY_SAVER_BUBBLE_TITLE,
     // IDS_BATTERY_SAVER_SESSION_TURN_OFF in sentence case).
     expect(ENERGY_SAVER_TITLE).toBe('Energy Saver is on')
@@ -271,13 +274,17 @@ describe('EnergySaverBubble', () => {
     expect(title.textContent).toBe('Energy Saver is on')
     expect(dialog.querySelector('svg.lucide-leaf')).not.toBeNull()
     expect(dialog.querySelector<HTMLElement>('p')!.textContent).toBe(ENERGY_SAVER_DETAIL)
-    // Chrome's cancel button as a menu-style row below the hairline, its line saying what
-    // "now" means; Chrome's OK is the light dismiss and has no row.
+    // Chrome's cancel button as a plain one-line action row below the hairline (pr-584 L3):
+    // the label alone, no second line – what "now" spans is the sentence's – so the row is the
+    // 32 of a one-line desktop row; Chrome's OK is the light dismiss and has no row.
     const row = dialog.querySelector<HTMLElement>('[data-energy-saver-off]')!
     expect(row.tagName).toBe('BUTTON')
     expect(row.classList.contains('zen-v2-row')).toBe(true)
-    expect(row.textContent).toBe(`Turn off now${TURN_OFF_DETAIL}`)
-    expect(TURN_OFF_DETAIL).toBe('Until the next time your computer is unplugged.')
+    expect(row.textContent).toBe('Turn off now')
+    // The text block holds the label alone: no `line-clamp-2` description under it.
+    expect(row.children).toHaveLength(1)
+    expect(row.firstElementChild!.children).toHaveLength(1)
+    expect(row.querySelector('.line-clamp-2')).toBeNull()
     expect(row.previousElementSibling?.classList.contains('h-px')).toBe(true)
     expect([...dialog.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
       row.textContent

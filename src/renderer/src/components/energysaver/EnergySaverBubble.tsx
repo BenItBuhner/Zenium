@@ -29,9 +29,6 @@ export function EnergySaverBubbleLayer(): JSX.Element | null {
   return <EnergySaverBubble state={state} />
 }
 
-/** The row under the title block: Chrome's cancel button, "Turn off now", with what "now" means here. */
-export const TURN_OFF_DETAIL = 'Until the next time your computer is unplugged.'
-
 /**
  * Chrome's battery saver bubble (`BatterySaverBubbleView`; W8-2, settings-29) as a §9.20 popover
  * 320 wide hanging from the toolbar row, aligned with the leaf, through the chrome layer over a
@@ -39,9 +36,11 @@ export const TURN_OFF_DETAIL = 'Until the next time your computer is unplugged.'
  * place). Chrome's bubble is a title, a paragraph, OK and "Turn off now"; here, in the desktop
  * popover's vocabulary (the Memory Saver bubble's precedent, omnibox-40): a title block (§9.23)
  * – the leaf on the title's start, "Energy Saver is on", the one sentence on what that does
- * here in Zenium's words (§9.1) – and, below a hairline, "Turn off now" as a menu-style row
- * (§9.20's list-panel footer) that asks the governor to drop the mode for this battery session
- * and closes; OK is the light dismiss. The keyboard lands on the panel, not on the row (§9.22's
+ * here in Zenium's words and for how long (§9.1) – and, below a hairline, "Turn off now" as a
+ * plain one-line 32 action row (the downloads bubble's Show all is the precedent; pr-584 L3: the
+ * row's own second line, what "now" spans, went into the sentence above) that asks the governor
+ * to drop the mode for this battery session and closes; OK is the light dismiss. The keyboard
+ * lands on the panel, not on the row (§9.22's
  * `container`: a notice with one affordance arms nothing, as Chrome's default button is its
  * no-op OK), Tab reaches the row, Escape returns the keyboard to the leaf; a press anywhere else,
  * a resize and another popover opening put it away. The mode going off – the charger, the
@@ -90,7 +89,6 @@ function EnergySaverBubble({ state }: { state: UIState }): JSX.Element | null {
             <Separator />
             <ListRow
               label={ENERGY_SAVER_TURN_OFF}
-              description={TURN_OFF_DETAIL}
               onClick={() => {
                 turnOffEnergySaverForSession()
                 close()

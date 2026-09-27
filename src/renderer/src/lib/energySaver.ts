@@ -84,12 +84,18 @@ export function energySaverLeafFits(rowWidth: number, otherButtons: number): boo
  * The bubble's sentence under its title: Chrome's says what Chrome limits
  * (`IDS_BATTERY_SAVER_BUBBLE_DESCRIPTION`: "Background activity and some visual effects, like
  * smooth scrolling, may be limited"); Zenium's says what Zenium does (§9.1), in the user's words
- * – what a background tab feels, not the governor's budgets that do it (pr-584 N3) – and in two
- * lines of the 320 notice's 15/20 (pr-584 N4; the title block's text column is 260 after the
- * leaf, about 34 characters a line). How far the budgets shrink is Settings › Performance's row
- * to say (`resources.batteryFactor`), not the bubble's.
+ * – what a background tab feels, not the governor's budgets that do it (pr-584 N3) – and for
+ * how long, the clause that was the Turn off now row's own line before that row became the
+ * one-line action (pr-584 L3): the mode runs while the computer is on its battery, so the end
+ * the user can bring about is plugging in (the lead's "until your computer is unplugged" is the
+ * turn-off's span – off until the next unplug – and the computer is already unplugged while
+ * this bubble is up; the clause is put the way round that is true). Two lines of the 320
+ * notice's 15/20 (pr-584 N4; the title block's text column is 260 after the leaf, about 34
+ * characters a line; the lead's clause in full ran to a third). How far the budgets shrink is
+ * Settings › Performance's row to say (`resources.batteryFactor`), not the bubble's.
  */
-export const ENERGY_SAVER_DETAIL = 'Background tabs are slowed and unloaded sooner to save power.'
+export const ENERGY_SAVER_DETAIL =
+  'Background tabs are slowed and unloaded sooner until you plug in.'
 
 /**
  * The leaf while it is in the row and laid out (a button without a box is no anchor): what the
