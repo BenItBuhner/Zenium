@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { RotateCw, Star, X } from 'lucide-react'
+import { MoreHorizontal, RotateCw, Star, X } from 'lucide-react'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { cn } from '@renderer/lib/utils'
 import { RollingCount } from './RollingCount'
@@ -16,6 +16,23 @@ export function ReloadStopGlyph({ loading }: { loading: boolean }): JSX.Element 
     <span className="zen-glyph-swap relative flex h-5 w-5 items-center justify-center">
       <RotateCw className={cn(glyph, 'absolute')} data-shown={!loading} aria-hidden />
       <X className={cn(glyph, 'absolute')} data-shown={loading} aria-hidden />
+    </span>
+  )
+}
+
+/**
+ * The bar's Menu glyph: the "⋯", and at its corner – while an update is downloaded and waiting
+ * (TB-12) – the 6 px accent dot the desktop's ⋯ wears (`SidebarTop`, shortcuts-menus-101), the
+ * mark Chrome's ⋮ carries for its "Update Chrome" row (Chrome's badge is a red disc over the
+ * glyph; Zenium's is the one dot its menu buttons already wear, §9.19's marker form). The glyph
+ * is the dot's box, so it sits against the glyph's corner whatever the button's size
+ * (`.zen-glyph-dot` in main.css); the button's name says it for the tree (`barItems`).
+ */
+export function MenuGlyph({ updateReady }: { updateReady: boolean }): JSX.Element {
+  return (
+    <span className="zen-glyph-dot relative flex h-5 w-5 items-center justify-center">
+      <MoreHorizontal className={glyph} aria-hidden />
+      {updateReady && <span className="zen-mhub-dot" data-testid="update-ready-dot" aria-hidden />}
     </span>
   )
 }

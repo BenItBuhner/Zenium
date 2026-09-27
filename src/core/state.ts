@@ -129,6 +129,7 @@ import { newSearchChoiceSeed, sanitizeSearchChoice, searchChoiceState } from './
 import { sanitizeResourceSettings } from './resources/switches'
 import { sanitizeAgentSettings } from './agent/settings'
 import { migrateStartupSettings } from './startup'
+import { emptyUpdateDotRecord, sanitizeUpdateDotRecord, type UpdateDotRecord } from './updateDot'
 import {
   emptyUpdateStatus,
   sanitizeUpdateSettings,
@@ -271,6 +272,12 @@ export interface Persisted {
    * before the summary existed.
    */
   passwordsDevice?: PasswordsDeviceState
+  /**
+   * The update dot's device-local record (the same shape): the waiting update's version the app
+   * menu was last opened for, which clears the touch layouts' menu-button dot (TB-12). Never
+   * synced; missing before the dot had a cadence.
+   */
+  updateDot?: UpdateDotRecord
   /**
    * Where the pages' utility windows last stood, by page id (the task manager's, `WindowChrome`
    * `page`): normal bounds and display. Never synced – a window's place is this screen's; missing
@@ -420,6 +427,16 @@ export class BrowserState {
    * screen lock. The lock itself is the phone host's, in memory; the core keeps only the switch.
    */
   privateDevice: PrivateDeviceState = emptyPrivateDevice()
+  /**
+   * The update dot's device-local record, the same shape (`updateDot.ts`): the waiting update's
+   * version the app menu was last opened for on this device (TB-12 – Chrome Android's ⋮ badge
+   * clears on the menu's first open and returns on a state change). Written by
+   * `Menus.showAppMenu` on the touch layouts (`markUpdateMenuOpened`), read by the phone bar's
+   * ⋮ and the tablet toolbar's menu button (`updateDotShows`); the desktop's ⋯ reads the plain
+   * phase until W8-F3. Replaced whole, persisted with the profile, never synced – what this
+   * device's menu has shown is this device's.
+   */
+  updateDot: UpdateDotRecord = emptyUpdateDotRecord()
   /**
    * The password manager's device-local state, the same shape: the last Password Checkup's
    * counts and time (`PasswordsStatus.checkupSummary`, Safety Check's Passwords row), kept
@@ -881,6 +898,7 @@ export class BrowserState {
       newTabPhone
     })
     this.privateDevice = sanitizePrivateDevice(data.privateDevice)
+    this.updateDot = sanitizeUpdateDotRecord(data.updateDot)
     this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     this.pageWindowsDevice = sanitizePageWindows(data.pageWindowsDevice)
     this.readingList = sanitizeReadingList(data.readingList)
@@ -1220,6 +1238,7 @@ export class BrowserState {
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabHiddenModules: this.newTabDevice.hiddenModules,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
+      updateDot: this.updateDot,
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
@@ -1358,6 +1377,7 @@ export class BrowserState {
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice,
       privateDevice: this.privateDevice,
+      updateDot: this.updateDot,
       passwordsDevice: this.passwordsDevice,
       pageWindowsDevice: this.pageWindowsDevice,
       readingList: this.readingList

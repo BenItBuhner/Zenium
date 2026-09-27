@@ -72,7 +72,16 @@ describe('the wire shape', () => {
           type: 'added',
           visits: [
             { url: 'https://a.example/', title: 'A', at: 5, transition: 'link', favicon: null },
-            { url: 'https://b.example/', title: '', at: 6, transition: 'typed', favicon: 'i' }
+            {
+              url: 'https://b.example/',
+              title: '',
+              at: 6,
+              transition: 'typed',
+              favicon: 'https://b.example/favicon.ico'
+            },
+            // The bytes and the cache's own address stay home (`wireFavicon`).
+            { url: 'https://c.example/', at: 7, favicon: 'data:image/png;base64,AAAA' },
+            { url: 'https://d.example/', at: 8, favicon: 'zen://favicon/0123456789abcdef' }
           ]
         },
         NOW
@@ -81,8 +90,15 @@ describe('the wire shape', () => {
       { type: 'visit', visit: { url: 'https://a.example/', title: 'A', at: 5 } },
       {
         type: 'visit',
-        visit: { url: 'https://b.example/', at: 6, transition: 'typed', favicon: 'i' }
-      }
+        visit: {
+          url: 'https://b.example/',
+          at: 6,
+          transition: 'typed',
+          favicon: 'https://b.example/favicon.ico'
+        }
+      },
+      { type: 'visit', visit: { url: 'https://c.example/', at: 7 } },
+      { type: 'visit', visit: { url: 'https://d.example/', at: 8 } }
     ])
     const keys = Array.from({ length: REMOVED_KEYS_PER_ENTRY + 1 }, (_, i) => ({
       url: `https://k.example/${i}`,
@@ -161,6 +177,53 @@ describe('the wire shape', () => {
     expect(page).toMatchObject({ v: 1, seq: 3, sealed: false })
     expect(page!.entries).toHaveLength(4)
     expect(isEntry({ type: 'cleared' })).toBe(false)
+  })
+
+  it("reads a peer's visit without a favicon that may not travel (its bytes, its cache's address); an http(s) address stays", () => {
+    const page = readHistoryPage({
+      v: 1,
+      seq: 0,
+      sealed: false,
+      entries: [
+        {
+          type: 'visit',
+          visit: { url: 'https://a.example/', at: 1, favicon: 'data:image/png;base64,AAAA' }
+        },
+        {
+          type: 'visit',
+          visit: { url: 'https://b.example/', at: 2, favicon: 'zen://favicon/0123456789abcdef' }
+        },
+        {
+          type: 'visit',
+          visit: {
+            url: 'https://c.example/',
+            at: 3,
+            title: 'C',
+            favicon: 'https://c.example/i.png'
+          }
+        },
+        { type: 'visit', visit: { url: 'https://d.example/', at: 4 } }
+      ]
+    })
+    expect(page!.entries).toEqual([
+      { type: 'visit', visit: { url: 'https://a.example/', at: 1 } },
+      { type: 'visit', visit: { url: 'https://b.example/', at: 2 } },
+      {
+        type: 'visit',
+        visit: { url: 'https://c.example/', at: 3, title: 'C', favicon: 'https://c.example/i.png' }
+      },
+      { type: 'visit', visit: { url: 'https://d.example/', at: 4 } }
+    ])
+    // What lands in the model carries no icon it could not use.
+    const t = target()
+    applyEntries(t, page!.entries, 0, emptyDeletions(), NOW)
+    expect(t.imported).toHaveLength(1)
+    expect(t.imported[0].map((v) => v.favicon)).toEqual([
+      undefined,
+      undefined,
+      'https://c.example/i.png',
+      undefined
+    ])
   })
 
   it('completes and sanitises a persisted state from any build', () => {

@@ -129,9 +129,9 @@ describe('Sound (Content)', () => {
     expect(forget.rows).toHaveLength(1)
     expect(forget.rows[0]).toMatchObject({ kind: 'action', button: 'Forget' })
     expect(forget.rows[0]).not.toHaveProperty('confirm')
-    // A stored default reads on the row.
+    // A stored default reads on the row, in the row's own line for the value (services pass 11).
     const blocked = groups({ permissionDefaults: { sound: 'deny' } } as Partial<UIState>)
-    expect(row(blocked, 'sites:sound').description).toBe('Sites cannot use sound')
+    expect(row(blocked, 'sites:sound').description).toBe('Sites cannot play sound')
   })
 
   it('is on the phone too, where no device row is (the device APIs are not the phone’s)', () => {
@@ -354,7 +354,7 @@ describe('Automatic picture-in-picture (Additional permissions, MW-28)', () => {
     })
   })
 
-  it('reads a Block default plainly on the phone (no "without asking": the site never asks)', () => {
+  it('reads a Block default in the row’s own line on the phone (no "without asking": the site never asks; the same words as the desktop’s)', () => {
     const blocked = row(
       groups(
         { permissionDefaults: { 'auto-picture-in-picture': 'deny' } } as Partial<UIState>,
@@ -363,8 +363,14 @@ describe('Automatic picture-in-picture (Additional permissions, MW-28)', () => {
       'sites:auto-picture-in-picture'
     )
     expect(blocked).toMatchObject({
-      description: 'Sites cannot use automatic picture-in-picture'
+      description: 'Sites cannot move a playing video to a small window when you leave its tab'
     })
+    expect(
+      row(
+        groups({ permissionDefaults: { 'auto-picture-in-picture': 'deny' } } as Partial<UIState>),
+        'sites:auto-picture-in-picture'
+      ).description
+    ).toBe('Sites cannot move a playing video to a small window when you leave its tab')
     // The site card's own write for a site lists under the row on the phone as on the desktop.
     const withRule = groups(
       {

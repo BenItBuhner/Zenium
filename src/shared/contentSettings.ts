@@ -31,10 +31,14 @@ export interface ContentSetting {
   /** Chrome's sub-line for the built-in default: "Sites can ask for your location". */
   description: string
   /**
-   * The sub-line for a default other than the built-in, where the generic template ("Sites can
-   * use <label> without asking" / "Sites cannot use <label>") would say the wrong thing – a
-   * type a site never asks for, say. Read first by the rows' `defaultDescription`; a value
-   * without a line here (and every row without the field) keeps the template.
+   * The sub-line for each default other than the built-in (whose line is `description`), in the
+   * register of the design lead's #523 ruling: the Block line "Sites cannot …", the Allow line
+   * "Sites can …", one sentence in sentence case, the subject the row's own where the built-in
+   * line has one ("Recently closed sites", "Embedded sites", "Fullscreen sites"). Read first by
+   * the rows' `defaultDescription` on both hosts; the generic template ("Sites can use <label>
+   * without asking" / "Sites cannot use <label>") serves only a value no line is written for,
+   * which today is none a row offers – the template said the wrong thing for most rows ("Sites
+   * can use automatic downloads without asking"). A row with one choice carries no field.
    */
   descriptions?: Partial<Record<ContentDefault, string>>
   group: ContentGroup
@@ -62,6 +66,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'geolocation',
     label: 'Location',
     description: 'Sites can ask for your location',
+    descriptions: { deny: 'Sites cannot see your location' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -73,6 +78,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'camera',
     label: 'Camera',
     description: 'Sites can ask to use your camera',
+    descriptions: { deny: 'Sites cannot use your camera' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -84,6 +90,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'microphone',
     label: 'Microphone',
     description: 'Sites can ask to use your microphone',
+    descriptions: { deny: 'Sites cannot use your microphone' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -95,6 +102,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'notifications',
     label: 'Notifications',
     description: 'Sites can ask to send notifications',
+    descriptions: { deny: 'Sites cannot send notifications' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -108,6 +116,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'background-sync',
     label: 'Background sync',
     description: 'Recently closed sites can finish sending and receiving data',
+    descriptions: { deny: 'Recently closed sites cannot finish sending or receiving data' },
     group: 'permissions',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -119,6 +128,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'sensors',
     label: 'Motion sensors',
     description: 'Sites can use motion sensors',
+    descriptions: { deny: 'Sites cannot use motion sensors' },
     group: 'permissions',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -133,6 +143,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'automatic-downloads',
     label: 'Automatic downloads',
     description: 'Sites can ask to automatically download multiple files',
+    descriptions: {
+      allow: 'Sites can download multiple files without asking',
+      deny: 'Sites cannot download multiple files automatically'
+    },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'allow', 'deny'],
@@ -146,6 +160,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'midi',
     label: 'MIDI devices',
     description: 'Sites can ask to connect to MIDI devices',
+    descriptions: { deny: 'Sites cannot connect to MIDI devices' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -160,6 +175,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'usb',
     label: 'USB devices',
     description: 'Sites can ask to connect to USB devices',
+    descriptions: { deny: 'Sites cannot connect to USB devices' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -171,6 +187,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'serial',
     label: 'Serial ports',
     description: 'Sites can ask to connect to serial ports',
+    descriptions: { deny: 'Sites cannot connect to serial ports' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -182,6 +199,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'hid',
     label: 'HID devices',
     description: 'Sites can ask to connect to HID devices',
+    descriptions: { deny: 'Sites cannot connect to HID devices' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -193,6 +211,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'bluetooth',
     label: 'Bluetooth devices',
     description: 'Sites can ask to connect to Bluetooth devices',
+    descriptions: { deny: 'Sites cannot connect to Bluetooth devices' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -204,6 +223,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'fileSystem',
     label: 'File editing',
     description: 'Sites can ask to edit files and folders you pick',
+    descriptions: { deny: 'Sites cannot edit files or folders on your device' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -215,6 +235,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'clipboard-read',
     label: 'Clipboard',
     description: 'Sites can ask to see text and images on your clipboard',
+    descriptions: { deny: 'Sites cannot see text or images on your clipboard' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -226,6 +247,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'payment-handler',
     label: 'Payment handlers',
     description: 'Sites can install payment handlers',
+    descriptions: { deny: 'Sites cannot install payment handlers' },
     group: 'permissions',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -243,6 +265,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'insecure-content',
     label: 'Insecure content',
     description: 'Insecure content is blocked on secure sites',
+    descriptions: { allow: 'Secure sites can show insecure content' },
     group: 'permissions',
     builtInDefault: 'deny',
     choices: ['allow', 'deny'],
@@ -270,6 +293,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'window-management',
     label: 'Window management',
     description: 'Sites can ask to use information about your screens',
+    descriptions: { deny: 'Sites cannot use information about your screens' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -292,6 +316,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'local-network-access',
     label: 'Local network access',
     description: 'Sites can ask to look for and connect to devices on your local network',
+    descriptions: { deny: 'Sites cannot look for or connect to devices on your local network' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -304,6 +329,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'images',
     label: 'Images',
     description: 'Sites can show images',
+    descriptions: { deny: 'Sites cannot show images' },
     group: 'content',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -317,6 +343,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'javascript',
     label: 'JavaScript',
     description: 'Sites can use JavaScript',
+    descriptions: { deny: 'Sites cannot use JavaScript' },
     group: 'content',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -331,6 +358,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'popups',
     label: 'Pop-ups and redirects',
     description: 'Sites cannot send pop-ups or use redirects without a click',
+    descriptions: { allow: 'Sites can send pop-ups and use redirects' },
     group: 'content',
     builtInDefault: 'deny',
     choices: ['allow', 'deny'],
@@ -342,6 +370,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'ads',
     label: 'Ads and trackers',
     description: 'Ads and trackers are blocked; excepted sites show them',
+    descriptions: { allow: 'Sites can show ads and trackers' },
     group: 'content',
     // The blocking engine reads this row's default as its master switch: `allow` = blocking off.
     builtInDefault: 'deny',
@@ -356,6 +385,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'sound',
     label: 'Sound',
     description: 'Sites can play sound',
+    descriptions: { deny: 'Sites cannot play sound' },
     group: 'content',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -397,6 +427,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'pdf',
     label: 'PDF documents',
     description: 'PDF files open in Zenium',
+    descriptions: { deny: 'PDF files download instead of opening in Zenium' },
     group: 'content',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -411,6 +442,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'mediaKeySystem',
     label: 'Protected content',
     description: 'Sites can ask to play protected content',
+    descriptions: {
+      allow: 'Sites can play protected content without asking',
+      deny: 'Sites cannot play protected content'
+    },
     group: 'content',
     builtInDefault: 'ask',
     choices: ['ask', 'allow', 'deny'],
@@ -422,6 +457,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'third-party-sign-in',
     label: 'Third-party sign-in',
     description: 'Sites can show sign-in prompts from identity services',
+    descriptions: { deny: 'Sites cannot show sign-in prompts from identity services' },
     group: 'content',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -438,6 +474,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'on-device-site-data',
     label: 'On-device site data',
     description: 'Sites can save data on your device',
+    descriptions: { deny: 'Sites cannot save data on your device' },
     group: 'content',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -454,7 +491,8 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   {
     id: 'openExternal',
     label: 'Open other apps',
-    description: 'Sites can ask to open links in another application',
+    description: 'Sites can ask to open links in another app',
+    descriptions: { deny: 'Sites cannot open links in another app' },
     group: 'additional',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -466,6 +504,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'storage-access',
     label: 'Cookies while embedded',
     description: 'Embedded sites can ask to use the cookies they stored',
+    descriptions: {
+      allow: 'Embedded sites can use the cookies they stored without asking',
+      deny: 'Embedded sites cannot use the cookies they stored'
+    },
     group: 'additional',
     builtInDefault: 'ask',
     choices: ['ask', 'allow', 'deny'],
@@ -477,6 +519,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'top-level-storage-access',
     label: 'Cookies for embedded sites',
     description: 'Sites can ask to let the sites they embed use their cookies',
+    descriptions: {
+      allow: 'Sites can let the sites they embed use their cookies without asking',
+      deny: 'Sites cannot let the sites they embed use their cookies'
+    },
     group: 'additional',
     builtInDefault: 'ask',
     choices: ['ask', 'allow', 'deny'],
@@ -488,6 +534,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'idle-detection',
     label: 'Your device use',
     description: 'Sites can ask to know when you are actively using your device',
+    descriptions: { deny: 'Sites cannot know when you are actively using your device' },
     group: 'additional',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
@@ -499,6 +546,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'fullscreen',
     label: 'Fullscreen',
     description: 'Sites can go fullscreen after a click',
+    descriptions: { deny: 'Sites cannot go fullscreen' },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -516,6 +564,9 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'auto-picture-in-picture',
     label: 'Automatic picture-in-picture',
     description: 'A playing video moves to a small window when you leave its tab',
+    descriptions: {
+      deny: 'Sites cannot move a playing video to a small window when you leave its tab'
+    },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -527,6 +578,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'pointerLock',
     label: 'Pointer lock',
     description: 'Sites can hide and capture the pointer after a click',
+    descriptions: { deny: 'Sites cannot hide or capture the pointer' },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -538,6 +590,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'keyboardLock',
     label: 'Keyboard lock',
     description: 'Fullscreen sites can capture system keys',
+    descriptions: { deny: 'Fullscreen sites cannot capture system keys' },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -549,6 +602,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'speaker-selection',
     label: 'Speaker selection',
     description: 'Sites can pick which speaker plays their sound',
+    descriptions: { deny: 'Sites cannot pick which speaker plays their sound' },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -560,6 +614,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'clipboard-sanitized-write',
     label: 'Clipboard writes',
     description: 'Sites can copy text and images to your clipboard after a click',
+    descriptions: { deny: 'Sites cannot copy text or images to your clipboard' },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],
@@ -573,6 +628,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     id: 'display-capture',
     label: 'Screen sharing',
     description: 'Sites can ask to share your screen, a window or a tab; you pick what they see',
+    descriptions: { deny: 'Sites cannot share your screen, a window or a tab' },
     group: 'additional',
     builtInDefault: 'allow',
     choices: ['allow', 'deny'],

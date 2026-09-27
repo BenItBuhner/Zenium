@@ -7786,6 +7786,16 @@
     border-radius: 50%;
     background: var(--zen-accent);
   }
+  /*
+   * The same dot boxed by the glyph rather than the button (the phone bar's ⋯, TB-12;
+   * `MenuGlyph`): the 28 button's 4 in with its 16 glyph put the dot's centre a pixel in from
+   * the glyph's top-right corner, and 2 out from the glyph's own box is that place on a glyph
+   * of any size in a button of any size.
+   */
+  .zen-glyph-dot > .zen-mhub-dot {
+    top: -2px;
+    right: -2px;
+  }
 }
 
 @layer components {
@@ -9360,6 +9370,16 @@
 :root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button > svg {
   width: var(--v2-icon);
   height: var(--v2-icon);
+}
+/*
+ * The 6 px accent dot on the row's ⋯ – an update downloaded and waiting (TB-12), the folded
+ * hub's live media – keeps the desktop's place against the glyph on the 40 button with its 20
+ * glyph: 8 in, its centre a pixel in from the glyph's top-right corner, where the 28 button's
+ * 16 glyph puts it at 4.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-mhub-dot {
+  top: 8px;
+  right: 8px;
 }
 /*
  * `Tabs (N)` pressed while the overview stands (§9.36): the window's pressed fill – §9.29's

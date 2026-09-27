@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's face in Material You's colours on Android 14+ (WID-03; see
+     values-v31/colors.xml): the platform publishes the Material 3 roles themselves from API 34,
+     and MDC 1.12.0 reads them there (values-v34/tokens.xml:93), so the ink is the system's own
+     colorOnSurfaceVariant in place of the re-lit palette step of API 31–33. The fill lives in
+     res/color-v34/widget_search_fill.xml (the system's colorSurfaceContainerHigh at Chrome's 0.9);
+     no hairline. -->
+<resources>
+    <color name="widget_search_ink">@android:color/system_on_surface_variant_light</color>
+    <color name="widget_search_hint">@color/widget_search_ink</color>
+</resources>

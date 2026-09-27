@@ -30,19 +30,29 @@ describe('Site settings rows', () => {
     ])
   })
 
-  it("describes the built-in default in the catalogue's words and other choices plainly", () => {
+  it("describes the built-in default in the catalogue's words and every other choice in the row's own line (services pass 11)", () => {
     const camera = setting('camera')
     expect(defaultDescription(camera, 'ask')).toBe(camera.description)
-    expect(defaultDescription(camera, 'deny')).toBe('Sites cannot use camera')
+    expect(defaultDescription(camera, 'deny')).toBe('Sites cannot use your camera')
+    expect(defaultDescription(setting('popups'), 'allow')).toBe(
+      'Sites can send pop-ups and use redirects'
+    )
+    // The template's "Sites can use automatic downloads without asking" is gone with the lines.
+    const downloads = setting('automatic-downloads')
+    expect(defaultDescription(downloads, 'ask')).toBe(downloads.description)
+    expect(defaultDescription(downloads, 'allow')).toBe(
+      'Sites can download multiple files without asking'
+    )
+    expect(defaultDescription(downloads, 'deny')).toBe(
+      'Sites cannot download multiple files automatically'
+    )
+    // A value the row does not offer (Location has no Allow) still falls to the template.
     expect(defaultDescription(setting('geolocation'), 'allow')).toBe(
       'Sites can use location without asking'
     )
-    expect(defaultDescription(setting('popups'), 'allow')).toBe(
-      'Sites can use pop-ups and redirects without asking'
-    )
   })
 
-  it("reads a value's own line from the catalogue first (MED-08 / EDGE-32), the template serving every row without one", () => {
+  it("reads a value's own line from the catalogue first (MED-08 / EDGE-32), the template serving a row without one", () => {
     // Background video is not a thing a site asks for, so the template's "without asking" would
     // read wrong on Allow: the row carries its own line for that value and the one-line block
     // sentence as its description (the lead's #523 ruling).
@@ -55,11 +65,13 @@ describe('Site settings rows', () => {
     expect(defaultDescription(video, 'allow')).toBe(
       'Sites can keep playing video in the background'
     )
-    // A row without the field still reads the built-in's line and the template for the rest.
+    // A row without the field – none in the catalogue since services pass 11, so a made-up
+    // one – still reads the built-in's line and the template for the rest.
     const sound = setting('sound')
-    expect(sound.descriptions).toBeUndefined()
-    expect(defaultDescription(sound, 'allow')).toBe(sound.description)
-    expect(defaultDescription(sound, 'deny')).toBe('Sites cannot use sound')
+    expect(defaultDescription(sound, 'deny')).toBe('Sites cannot play sound')
+    const bare = { ...sound, descriptions: undefined }
+    expect(defaultDescription(bare, 'allow')).toBe(sound.description)
+    expect(defaultDescription(bare, 'deny')).toBe('Sites cannot use sound')
   })
 
   it('groups rules by site, sites by host, rows in catalogue order', () => {
