@@ -192,12 +192,20 @@
 //                as a checkbox, checked, with `settings.warnBeforeQuitting === true` behind it;
 //                ⌘Q's key down alone (sent to the chrome) arms the hold – `window.quitHold`
 //                carries the chord and its 1500 ms – and the key up at 0.5 s takes it down
-//                with nothing quit; the menu item clicked in the main process turns the
-//                setting off and the row unchecked; the graceful quit then comes at the PRESS,
-//                with no hold, and the profile's state.json keeps `warnBeforeQuitting: false`
-//                (macOS jobs; every other macOS scenario's graceful quit holds the chord and
-//                records the hold it saw – `hold` in the quit step, the screen grabbed
-//                mid-hold as <scenario>-quit-hold.png; the harness holds on Linux too when
+//                with nothing quit: the key up is scheduled INSIDE the app, on a main-process
+//                timer in the same evaluate as the key down, which returns both moments off
+//                the app's clock (`upAt − downAt` ≈ 500; W8-F9 – timed from the harness, one
+//                app.getState round trip on macos-x64 outlasted the hold and the app quit), and
+//                the arming is read by concurrent polls judged by their timestamps (a poll that
+//                answered after the release proves nothing and fails nothing); the menu item
+//                clicked in the main process turns the setting off and the row unchecked; the
+//                graceful quit then comes at the PRESS, with no hold, and the profile's
+//                state.json keeps `warnBeforeQuitting: false` (macOS jobs; every other macOS
+//                scenario's graceful quit holds the chord and records the hold it saw – `hold`
+//                in the quit step, the screen grabbed mid-hold as <scenario>-quit-hold.png; a
+//                quit not exited by the hold's end and a margin is traced through the budget –
+//                `window.quitHold` and a main-process probe every 500 ms, `trace` in the step
+//                and in a "did not exit" failure's message; the harness holds on Linux too when
 //                --extra-args carries the app's --test-quit-hold, the stand-in's chord being
 //                Ctrl+Shift+Q)
 //   visibility   a tab page's document.visibilityState follows its window as a Chrome tab's does
@@ -341,7 +349,18 @@ import {
   rowsExpected,
   waitForTabWithRetry
 } from './navigation.mjs'
-import { exitWithin, mainProcessState, unlessNoWindow, unlessTargetClosed } from './quit.mjs'
+import {
+  HOLD_RELEASE_AT_MS,
+  QUIT_HOLD_MS,
+  QUIT_TRACE_EVERY_MS,
+  exitWithin,
+  formatQuitTrace,
+  judgeHoldRelease,
+  mainProcessState,
+  probeOutcome,
+  unlessNoWindow,
+  unlessTargetClosed
+} from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
   SITE_DATA_FILE,
@@ -362,10 +381,9 @@ const IS_LINUX = process.platform === 'linux'
 const ACCEL = IS_MAC ? 'Meta' : 'Control'
 // The Chrome shortcut preset is the default (#126): Chrome's chords on every platform.
 const QUIT_COMBO = IS_MAC ? 'Meta+q' : 'Control+Shift+q'
-// On a Mac the chord is held this long before the app quits (session-08; `QUIT_HOLD_MS` in
-// src/core/quitHold.ts, Chrome's `kTimeToConfirmQuit`), and the smoke keeps the keys down a
-// margin past it before letting go.
-const QUIT_HOLD_MS = 1500
+// On a Mac the chord is held QUIT_HOLD_MS (quit.mjs; `QUIT_HOLD_MS` in src/core/quitHold.ts,
+// Chrome's `kTimeToConfirmQuit`) before the app quits (session-08), and the smoke keeps the keys
+// down a margin past it before letting go.
 const QUIT_HOLD_MARGIN_MS = 1000
 // The chord as the hold's panel spells it ("Hold ⌘Q to quit"; the stand-in names Chrome's Linux chord).
 const QUIT_HOLD_CHORD = IS_MAC ? '⌘Q' : 'Ctrl + Shift + Q'
@@ -589,6 +607,16 @@ async function waitFor(fn, timeoutMs, what, intervalMs = 150) {
     await delay(intervalMs)
   }
   throw new Error(`${what} (not within ${timeoutMs} ms; last value ${JSON.stringify(last)})`)
+}
+
+/** A chord ("Meta+q", "Control+Shift+q") as `webContents.sendInputEvent` takes it: the key and its modifiers. */
+function keyEventParts(combo) {
+  const parts = combo.split('+')
+  const key = parts.pop()
+  const modifiers = parts.map(
+    (m) => ({ Control: 'control', Meta: 'meta', Shift: 'shift', Alt: 'alt' })[m] || m.toLowerCase()
+  )
+  return { key, modifiers }
 }
 
 function sh(cmd, args, timeout = 60000, extra = {}) {
@@ -1549,13 +1577,9 @@ class Session {
     return this.sendKeys(combo, ['keyUp'], windowId)
   }
 
+  /** The keys sent; resolves with `{ at }`, the app's clock as the first went out. */
   sendKeys(combo, types, windowId) {
-    const parts = combo.split('+')
-    const key = parts.pop()
-    const modifiers = parts.map(
-      (m) =>
-        ({ Control: 'control', Meta: 'meta', Shift: 'shift', Alt: 'alt' })[m] || m.toLowerCase()
-    )
+    const { key, modifiers } = keyEventParts(combo)
     return this.app.evaluate(
       ({ BrowserWindow }, { key, modifiers, windowId, types }) => {
         const w =
@@ -1565,9 +1589,60 @@ class Session {
         if (!w || w.isDestroyed()) throw new Error('no window to send keys to')
         w.focus()
         w.webContents.focus()
+        const at = Date.now()
         for (const type of types) w.webContents.sendInputEvent({ type, keyCode: key, modifiers })
+        return { at }
       },
       { key, modifiers, windowId, types }
+    )
+  }
+
+  /**
+   * The chord's keys down, and up again `holdForMs` later BY THE APP'S OWN CLOCK (W8-F9): one
+   * evaluate in the main process sends the key down, schedules the key up on a timer there and
+   * resolves once it has gone out, with `{ downAt, upAt, released, error }` – both moments from
+   * the app's `Date.now()` (the harness's wall clock on the same machine), `released` false with
+   * the reason when the key up could not be sent (the window gone). The hold's length so holds no
+   * inspector or renderer round trip: the quit-hold scenario's `hold-release` used to time it
+   * from the harness – key down, app.getState polls, key up – and on macos-x64 one poll's round
+   * trip outlasted the hold's 1500 ms, so the app quit on the hold before the release was sent
+   * (five reds in 37 h, the arm64 twin green every time). A quit under the hold takes the target
+   * away before the timer fires; the caller reads that off the rejection.
+   */
+  holdKeysFor(combo, holdForMs, windowId = this.mainWindowId) {
+    const { key, modifiers } = keyEventParts(combo)
+    return this.app.evaluate(
+      ({ BrowserWindow }, { key, modifiers, windowId, holdForMs }) =>
+        new Promise((resolve, reject) => {
+          const w =
+            (windowId && BrowserWindow.fromId(windowId)) ||
+            BrowserWindow.getFocusedWindow() ||
+            BrowserWindow.getAllWindows()[0]
+          if (!w || w.isDestroyed()) {
+            reject(new Error('no window to send keys to'))
+            return
+          }
+          w.focus()
+          w.webContents.focus()
+          const downAt = Date.now()
+          w.webContents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers })
+          setTimeout(() => {
+            const upAt = Date.now()
+            let released = false
+            let error = null
+            try {
+              if (w.isDestroyed()) error = 'the window was gone'
+              else {
+                w.webContents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers })
+                released = true
+              }
+            } catch (e) {
+              error = String(e && e.message ? e.message : e)
+            }
+            resolve({ downAt, upAt, released, error })
+          }, holdForMs)
+        }),
+      { key, modifiers, windowId, holdForMs }
     )
   }
 
@@ -1595,10 +1670,18 @@ class Session {
    * names the chord and the duration), and they come up again only once the app has exited or
    * the hold has had its time and a margin (a downloads question or a slow teardown can keep
    * the app alive past it; a hold that ran its time quits whatever the keys do after). Returns
-   * what was seen: the hold's state, and whether the exit came within the hold.
+   * what was seen: the hold's state, whether the exit came within the hold, and `downAt`, the
+   * key down's moment on the app's clock.
+   *
+   * No exit by then is read BEFORE the keys come up (W8-F9): the chrome's `window.quitHold` and
+   * the main process, one `sampleQuit` into `trace` – a hold still up says the hold's timer never
+   * fired, none says it fired (and its quit was refused or stalled) or was cancelled – which is
+   * what a "did not exit" failure could not tell afterwards (macos-x64 `dark/quit`, run
+   * 36295201671: no before-quit for 17.8 s, the main process answering, nothing recorded between
+   * the chord and the forced close).
    */
-  async holdQuitChord() {
-    await Promise.race([unlessTargetClosed(this.holdKeys(QUIT_COMBO)), delay(3000)])
+  async holdQuitChord(trace = []) {
+    const down = await Promise.race([unlessTargetClosed(this.holdKeys(QUIT_COMBO)), delay(3000)])
     const panel = await unlessTargetClosed(
       waitFor(async () => (await this.appState()).window.quitHold, 2000, 'the hold armed', 50),
       null
@@ -1616,12 +1699,89 @@ class Session {
     // hold's end but has not exited within the margin (a slow teardown on a runner) has torn its
     // windows down already, so the release finds none – the quit under way, not a fault; the
     // exit budget that follows in `quitGracefully` judges it.
-    if (!exit)
+    if (!exit) {
+      await this.sampleQuit(trace, this.quitStartedAt)
       await Promise.race([
         unlessNoWindow(unlessTargetClosed(this.releaseKeys(QUIT_COMBO))),
         delay(3000)
       ])
-    return { panel, shot, exitedDuringHold: Boolean(exit) }
+    }
+    return {
+      panel,
+      shot,
+      exitedDuringHold: Boolean(exit),
+      downAt: down && typeof down === 'object' ? (down.at ?? null) : null
+    }
+  }
+
+  /**
+   * One reading of a quit under way, pushed onto `trace` and returned: `at` (ms since `since`,
+   * the chord), `quitHold` – the chrome's `window.quitHold` through app.getState (null, the hold's
+   * state, or 'gone' / 'blocked' / `{ error }` when the read did not answer within 3 s) – and the
+   * main process probed with an evaluate: `main` its state (`probeOutcome`), `windows` and
+   * `focused` what the probe counted. Both reads go out together, capped, and never throw: the
+   * app may be quitting under them (W8-F9).
+   */
+  async sampleQuit(trace, since) {
+    const at = Date.now() - since
+    const [hold, main] = await Promise.all([
+      probeOutcome(
+        this.appState().then((st) => st.window.quitHold),
+        3000
+      ),
+      probeOutcome(
+        this.app.evaluate(({ BrowserWindow }) => ({
+          windows: BrowserWindow.getAllWindows().length,
+          focused: BrowserWindow.getFocusedWindow() !== null
+        })),
+        3000
+      )
+    ])
+    const sample = {
+      at,
+      quitHold:
+        hold.state === 'responsive'
+          ? hold.value
+          : hold.state.startsWith('error')
+            ? { error: hold.state.slice('error: '.length) }
+            : hold.state,
+      main: main.state,
+      windows: main.state === 'responsive' ? main.value.windows : null,
+      focused: main.state === 'responsive' ? main.value.focused : null
+    }
+    trace.push(sample)
+    return sample
+  }
+
+  /**
+   * The quit under way read every QUIT_TRACE_EVERY_MS from `from` (a moment on the harness's
+   * clock) until the exit or `stop()`, each reading a `sampleQuit` onto `trace` (W8-F9). One
+   * reading at a time – a slow answer defers the next, never overlaps it – so a quitting app
+   * meets at most one pair of calls in flight. `done` settles once the loop has left.
+   */
+  traceQuit(trace, { from, since }) {
+    let stopped = false
+    let wake = () => {}
+    const stopping = new Promise((resolve) => {
+      wake = resolve
+    })
+    const done = (async () => {
+      let next = from
+      while (!stopped && !this.exit) {
+        const wait = next - Date.now()
+        if (wait > 0) await Promise.race([delay(wait), stopping])
+        if (stopped || this.exit) break
+        await this.sampleQuit(trace, since)
+        next = Math.max(next + QUIT_TRACE_EVERY_MS, Date.now())
+      }
+    })()
+    return {
+      stop() {
+        stopped = true
+        wake()
+      },
+      done
+    }
   }
 
   bringToFront(windowId = this.mainWindowId) {
@@ -2249,88 +2409,119 @@ class Session {
    * quit happening, and an evaluate can neither confirm the exit nor tell a slow teardown from a
    * hang (#148, #157). Callers read state.json only after this returns: the write a graceful
    * quit ends with is the run's last one (#150), complete once the process has exited.
+   *
+   * A quit still alive at the hold's end and a margin is READ through the budget (W8-F9): the
+   * chrome's `window.quitHold` and the main process every QUIT_TRACE_EVERY_MS (`traceQuit`,
+   * after `holdQuitChord`'s reading before the release), the hook's before-quit events, and the
+   * screen while the app is still up. A "did not exit" failure carries them – `quitHold` at
+   * +2.5 s and through the budget, the probes, `before-quit` or none – so it says whether the
+   * hold's timer never fired (the hold still up), the hold was cancelled or its quit refused (the
+   * hold gone, no before-quit) or the quit stalled after before-quit; `trace` is in the step's
+   * detail and in the return. Nothing is read while the quit comes within the hold and margin,
+   * so the green path is as before.
    */
   async quitGracefully(budgetMs = QUIT_BUDGET_MS) {
     const tabs = await this.sidebarTabCount().catch(() => 0)
     const holds = await this.quitChordHolds().catch(() => false)
     const expectPrompt = tabs > 1 && !holds
     this.quitStartedAt = Date.now()
+    const chordAt = this.quitStartedAt
+    const trace = []
     let hold = null
     if (holds) {
-      hold = await this.holdQuitChord()
+      hold = await this.holdQuitChord(trace)
     } else {
       // The chord's evaluate may lose its target: the quit it triggers can take the main-process
       // session down before the reply arrives. The exit event says what happened then.
       await Promise.race([unlessTargetClosed(this.press(QUIT_COMBO)), delay(3000)])
     }
-    const prompt = this.chrome.locator('[data-window-prompt="quit"]').first()
-    // The wait ends early when the chrome page closes under it: the app quitting without asking.
-    const first = await Promise.race([
-      this.exitPromise.then(() => 'exit'),
-      prompt
-        .waitFor({ state: 'visible', timeout: budgetMs })
-        .then(() => 'prompt')
-        .catch(() => 'no-prompt')
-    ])
-    let asked = null
-    if (first === 'prompt') {
-      asked = await this.windowPrompt()
-      await shot(`${this.scenario}-quit-prompt`, this)
-      if (asked.heading !== 'Quit Zenium?' || !asked.text.includes(`${tabs} tabs`)) {
-        throw new Error(
-          `quit question reads "${asked.heading}" / "${asked.text}" with ${tabs} tabs open`
+    // The trace's readings start where the hold's margin ends (the held path took that one
+    // itself, so its next comes a period later) and go on until the exit or the budget's end.
+    const tracer = this.traceQuit(trace, {
+      from: chordAt + QUIT_HOLD_MS + QUIT_HOLD_MARGIN_MS + (hold ? QUIT_TRACE_EVERY_MS : 0),
+      since: chordAt
+    })
+    try {
+      const prompt = this.chrome.locator('[data-window-prompt="quit"]').first()
+      // The wait ends early when the chrome page closes under it: the app quitting without asking.
+      const first = await Promise.race([
+        this.exitPromise.then(() => 'exit'),
+        prompt
+          .waitFor({ state: 'visible', timeout: budgetMs })
+          .then(() => 'prompt')
+          .catch(() => 'no-prompt')
+      ])
+      let asked = null
+      if (first === 'prompt') {
+        asked = await this.windowPrompt()
+        await shot(`${this.scenario}-quit-prompt`, this)
+        if (asked.heading !== 'Quit Zenium?' || !asked.text.includes(`${tabs} tabs`)) {
+          throw new Error(
+            `quit question reads "${asked.heading}" / "${asked.text}" with ${tabs} tabs open`
+          )
+        }
+        // Quit closes the window the button is in; the click's reply may not make it back.
+        await unlessTargetClosed(
+          prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
         )
+        this.quitStartedAt = Date.now()
       }
-      // Quit closes the window the button is in; the click's reply may not make it back.
-      await unlessTargetClosed(
-        prompt.getByRole('button', { name: 'Quit', exact: true }).click({ timeout: 5000 })
-      )
-      this.quitStartedAt = Date.now()
+      // One budget from the chord (or from Quit): the time the question took to show counts.
+      const exit = await exitWithin(this.exitPromise, budgetMs, this.quitStartedAt)
+      const ms = Date.now() - this.quitStartedAt
+      if (!exit) {
+        // Still alive past the bound. Whether the main process answers tells a quit that never
+        // started (responsive: the chord went nowhere; a prompt may be up) from a blocked one (a
+        // native dialog) from one gone from Playwright's view (windows and debugger closed, the
+        // process not ending: a teardown slower than the bound, or stuck).
+        tracer.stop()
+        await tracer.done
+        const last = await this.sampleQuit(trace, chordAt)
+        const main = last.main
+        const late = main === 'responsive' ? await this.windowPrompt().catch(() => null) : null
+        // The hook's before-quit events so far: a quit that began (and stalled after) or none.
+        const beforeQuit = this.readEvents()
+          .filter((e) => e.type === 'before-quit')
+          .map((e) => `+${e.t - chordAt} ms`)
+        // The screen while the app is still up; the step's own still comes after the close.
+        const stuck = grabScreen(`${this.scenario}-quit-stuck`)
+        log(
+          `app did not exit within ${budgetMs} ms after ${QUIT_COMBO} (main process ${main}); trace ${formatQuitTrace(trace, chordAt)}; closing`
+        )
+        await this.forceClose()
+        const err = new Error(
+          `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; before-quit ${beforeQuit.length ? beforeQuit.join(', ') : 'none'}; hold ${hold ? JSON.stringify(hold.panel) : 'n/a'}; trace ${formatQuitTrace(trace, chordAt)}; still ${stuck.ok ? stuck.file : 'none'}; exit after forceClose ${JSON.stringify(this.exit)})`
+        )
+        err.detail = { trace, beforeQuit, hold, prompt: late, still: stuck.ok ? stuck.file : null }
+        throw err
+      }
+      if (exit.code !== 0)
+        throw new Error(`app exited with code ${exit.code} signal ${exit.signal} after ${ms} ms`)
+      if (expectPrompt && !asked)
+        throw new Error(`quit went ahead without "Quit Zenium?" although ${tabs} tabs were open`)
+      if (!expectPrompt && asked)
+        throw new Error(
+          `"Quit Zenium?" asked with ${tabs} tab${tabs === 1 ? '' : 's'} open${holds ? ' after the chord was held (the hold is the confirmation)' : ''}: ${JSON.stringify(asked)}`
+        )
+      if (hold) {
+        // The hold must have shown: the chrome's state named it while the keys were down, with
+        // the Mac's chord and Chrome's 1500 ms; and the quit must have come from the hold's end,
+        // not before it (a quit at the press is the hold not running).
+        if (!hold.panel || hold.panel.error || hold.panel.chord !== QUIT_HOLD_CHORD) {
+          throw new Error(`the quit chord held showed no hold: ${JSON.stringify(hold.panel)}`)
+        }
+        if (hold.panel.durationMs !== QUIT_HOLD_MS) {
+          throw new Error(`the hold runs ${hold.panel.durationMs} ms, not ${QUIT_HOLD_MS}`)
+        }
+        if (ms < QUIT_HOLD_MS) {
+          throw new Error(`the app quit ${ms} ms after the chord went down, before the hold's end`)
+        }
+      }
+      return { ms, exit, prompt: asked, hold, ...(trace.length ? { trace } : {}) }
+    } finally {
+      tracer.stop()
+      await tracer.done
     }
-    // One budget from the chord (or from Quit): the time the question took to show counts.
-    const exit = await exitWithin(this.exitPromise, budgetMs, this.quitStartedAt)
-    const ms = Date.now() - this.quitStartedAt
-    if (!exit) {
-      // Still alive past the bound. Whether the main process answers tells a quit that never
-      // started (responsive: the chord went nowhere; a prompt may be up) from a blocked one (a
-      // native dialog) from one gone from Playwright's view (windows and debugger closed, the
-      // process not ending: a teardown slower than the bound, or stuck).
-      const main = await mainProcessState(
-        this.app.evaluate(() => 'ok'),
-        3000
-      )
-      const late = main === 'responsive' ? await this.windowPrompt().catch(() => null) : null
-      log(
-        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO} (main process ${main}); closing`
-      )
-      await this.forceClose()
-      throw new Error(
-        `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; exit after forceClose ${JSON.stringify(this.exit)})`
-      )
-    }
-    if (exit.code !== 0)
-      throw new Error(`app exited with code ${exit.code} signal ${exit.signal} after ${ms} ms`)
-    if (expectPrompt && !asked)
-      throw new Error(`quit went ahead without "Quit Zenium?" although ${tabs} tabs were open`)
-    if (!expectPrompt && asked)
-      throw new Error(
-        `"Quit Zenium?" asked with ${tabs} tab${tabs === 1 ? '' : 's'} open${holds ? ' after the chord was held (the hold is the confirmation)' : ''}: ${JSON.stringify(asked)}`
-      )
-    if (hold) {
-      // The hold must have shown: the chrome's state named it while the keys were down, with
-      // the Mac's chord and Chrome's 1500 ms; and the quit must have come from the hold's end,
-      // not before it (a quit at the press is the hold not running).
-      if (!hold.panel || hold.panel.error || hold.panel.chord !== QUIT_HOLD_CHORD) {
-        throw new Error(`the quit chord held showed no hold: ${JSON.stringify(hold.panel)}`)
-      }
-      if (hold.panel.durationMs !== QUIT_HOLD_MS) {
-        throw new Error(`the hold runs ${hold.panel.durationMs} ms, not ${QUIT_HOLD_MS}`)
-      }
-      if (ms < QUIT_HOLD_MS) {
-        throw new Error(`the app quit ${ms} ms after the chord went down, before the hold's end`)
-      }
-    }
-    return { ms, exit, prompt: asked, hold }
   }
 
   /**
@@ -7481,24 +7672,59 @@ async function scenarioQuitHold() {
       return { app: menu.app, row, quit, setting: state.settings.warnBeforeQuitting }
     })
     await s.step('hold-release', async () => {
-      // The chord down: the hold arms and the chrome's state names it (the panel is up). The
-      // keys let go at half a second: the hold ends, nothing quits, the main process answers.
-      const down = Date.now()
-      await s.holdKeys(QUIT_COMBO)
-      const hold = await waitFor(
-        async () => (await s.appState()).window.quitHold,
-        1000,
-        'the hold armed by the chord',
-        50
-      )
-      await delay(Math.max(0, down + 500 - Date.now()))
-      await s.releaseKeys(QUIT_COMBO)
-      const releasedAtMs = Date.now() - down
-      if (releasedAtMs >= QUIT_HOLD_MS) {
-        throw new Error(
-          `the keys came up ${releasedAtMs} ms after they went down, past the hold: the release cannot be judged on this runner`
+      // The chord down, and up again half a second later BY THE APP'S OWN CLOCK (W8-F9): one
+      // evaluate in the main process sends the key down, schedules the key up on a timer there
+      // and returns both moments (Session.holdKeysFor), so the hold's length holds no round
+      // trip. It used to be timed from here – key down, then app.getState polls, then the key
+      // up – and on macos-x64 one poll's round trip outlasted the hold's 1500 ms: the app quit
+      // on the hold before the release went out, the step read the state after the quit ("last
+      // value null") and the two steps after it met a closed target. Meanwhile the chrome's
+      // state is polled for the hold and judged by the polls' timestamps (quit.mjs
+      // judgeHoldRelease): a poll that saw the hold proves the arming, a null read whose whole
+      // round trip fell inside the hold disproves it, and a poll that answered after the
+      // release proves nothing – recorded as `arming: 'unproven'`, not failed (every other
+      // scenario's full hold proves the arming with a still, each run). Then the release's own
+      // checks: the state reads no hold, nothing quits by where the hold would have, the main
+      // process answers.
+      const polls = []
+      let polling = true
+      const holding = unlessTargetClosed(s.holdKeysFor(QUIT_COMBO, HOLD_RELEASE_AT_MS), null)
+      const polled = (async () => {
+        while (polling) {
+          const askedAt = Date.now()
+          const quitHold = await s.appState().then(
+            (st) => st.window.quitHold,
+            (e) => ({ error: String(e && e.message ? e.message : e) })
+          )
+          polls.push({ askedAt, answeredAt: Date.now(), quitHold })
+          if (polling) await delay(50)
+        }
+      })()
+      const held = await holding
+      polling = false
+      await polled
+      if (!held) {
+        // The evaluate lost its target before its timer fired: the app quit under the chord.
+        const exit = await exitWithin(s.exitPromise, 5000, Date.now())
+        const err = new Error(
+          `the app went away under the chord before the key up at ${HOLD_RELEASE_AT_MS} ms (exit ${JSON.stringify(exit)}; polls ${JSON.stringify(polls.map((p) => p.quitHold))})`
         )
+        err.detail = { polls }
+        throw err
       }
+      const judged = judgeHoldRelease(
+        { ...held, polls },
+        { chord: QUIT_HOLD_CHORD, durationMs: QUIT_HOLD_MS }
+      )
+      log(
+        `hold-release: the keys were down ${judged.heldForMs} ms by the app's clock (release at ${HOLD_RELEASE_AT_MS} ms, ${judged.lateByMs} ms of timer slack); arming ${judged.arming}${judged.note ? ` (${judged.note})` : ''}`
+      )
+      if (judged.problems.length) {
+        const err = new Error(judged.problems.join('; '))
+        err.detail = judged
+        throw err
+      }
+      // The key up ended the hold: the state reads none.
       await waitFor(
         async () => ((await s.appState()).window.quitHold === null ? { cleared: true } : null),
         1000,
@@ -7506,21 +7732,20 @@ async function scenarioQuitHold() {
         50
       )
       // Past where the hold would have quit: still here, and answering.
-      const exit = await exitWithin(s.exitPromise, QUIT_HOLD_MS + 500, down)
+      const exit = await exitWithin(s.exitPromise, QUIT_HOLD_MS + 500, held.downAt)
       if (exit) {
-        throw new Error(
-          `the app quit (${JSON.stringify(exit)}) although the chord was released at ${releasedAtMs} ms`
+        const err = new Error(
+          `the app quit (${JSON.stringify(exit)}) although the chord was released at ${judged.heldForMs} ms`
         )
+        err.detail = judged
+        throw err
       }
       const main = await mainProcessState(
         s.app.evaluate(() => 'ok'),
         3000
       )
       if (main !== 'responsive') throw new Error(`main process ${main} after the release`)
-      if (hold.chord !== QUIT_HOLD_CHORD || hold.durationMs !== QUIT_HOLD_MS) {
-        throw new Error(`the hold reads ${JSON.stringify(hold)}`)
-      }
-      return { hold, releasedAtMs, main }
+      return { ...judged, main }
     })
     await s.step('toggle-off', async () => {
       // The checkbox picked as a mouse picks it: the item's click flips its check and runs the
