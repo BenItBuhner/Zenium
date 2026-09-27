@@ -32,7 +32,13 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
     case 'downloads':
       return <DownloadsSheet state={state} />
     case 'theme':
-      return <ThemePicker state={state} spaceId={ui.overlaySpaceId ?? state.activeSpaceId} />
+      return (
+        <ThemePicker
+          state={state}
+          spaceId={ui.overlaySpaceId ?? state.activeSpaceId}
+          anchor={ui.overlayAnchor}
+        />
+      )
     case 'space-editor':
       return <SpaceEditor state={state} spaceId={ui.overlaySpaceId} />
     case 'boosts':

@@ -172,6 +172,106 @@ describe('the two-pane radio form (§9.14, §10.5; pr-584 N2)', () => {
   })
 })
 
+/*
+ * Appearance › Home page on the same primitive (W8-3, the lead's Q7 on #572; the seam with
+ * pr-584 R2 resolved to this one row): "New Tab page" / "Enter custom web address" under the
+ * Show home button switch, the Address field stacked under the second once it is picked. The
+ * group is named "Home page" for assistive technology alone; the sentence the phone's sheet
+ * carries (`sheetDescription`) stands over the options as the row's one visible line of its own.
+ */
+function homePage(onChange: (value: string) => void, patch: Partial<ValueRow> = {}): ValueRow {
+  return {
+    kind: 'value',
+    id: 'home-page',
+    label: 'Home page',
+    value: 'newtab',
+    radios: true,
+    sheetDescription: 'Where the Home button goes.',
+    options: [
+      { value: 'newtab', label: 'New Tab page' },
+      { value: 'url', label: 'Enter custom web address' }
+    ],
+    onChange,
+    ...patch
+  }
+}
+
+describe('Appearance › Home page on the radio-list row (pr-572 Q7 on pr-584 R2)', () => {
+  it('draws the two options on the page’s row chassis under the sheet’s sentence, the group named "Home page" for assistive technology alone, New Tab page checked – no menulist, no legend', () => {
+    const onChange = vi.fn()
+    ctx.open.mockClear()
+    const el = render(<RowView row={homePage(onChange)} ctx={ctx} variant="desktop" />)
+    const row = el.querySelector<HTMLElement>('[data-row="home-page"]')!
+    expect(row.className.split(' ')).toEqual(
+      expect.arrayContaining(['zen-settings-stacked-row', 'zen-settings-radios-row', 'zen-v2-row'])
+    )
+    expect(row.hasAttribute('data-static')).toBe(true)
+    expect(row.querySelector('.zen-v2-menulist, .zen-settings-menulist')).toBeNull()
+    const group = row.querySelector<HTMLElement>('[role="radiogroup"]')!
+    expect(group.getAttribute('aria-label')).toBe('Home page')
+    expect(group.hasAttribute('aria-labelledby')).toBe(false)
+    expect(group.classList.contains('zen-settings-radios')).toBe(true)
+    const block = row.querySelector<HTMLElement>('.zen-settings-field-block')!
+    const text = block.querySelector<HTMLElement>(':scope > .zen-settings-row-text')!
+    expect([...text.children].map((c) => [c.className, c.textContent])).toEqual([
+      ['zen-settings-description', 'Where the Home button goes.']
+    ])
+    expect(row.textContent).not.toContain('Home page')
+    const options = radios(el)
+    expect(options.map((o) => o.textContent)).toEqual(['New Tab page', 'Enter custom web address'])
+    expect(options.map((o) => o.getAttribute('aria-checked'))).toEqual(['true', 'false'])
+    expect(options.map((o) => o.tabIndex)).toEqual([0, -1])
+    // A press on the second is the url mode (the Address field's cue); on the checked, nothing.
+    act(() => options[0].click())
+    expect(onChange).not.toHaveBeenCalled()
+    act(() => options[1].click())
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith('url')
+    expect(ctx.open).not.toHaveBeenCalled()
+  })
+
+  it('held by an extension the row is drawn as a dependent row – the .4 class, the group aria-disabled, the options disabled with no press, the checked one still marked – and the "Controlled by" row follows it', () => {
+    const onChange = vi.fn()
+    const el = render(
+      <RowView
+        row={homePage(onChange, {
+          value: 'url',
+          controlled: {
+            extensionId: 'a'.repeat(32),
+            name: 'Bing Homepage & Search',
+            onDisable: () => undefined,
+            onManage: () => undefined
+          }
+        })}
+        ctx={ctx}
+        variant="desktop"
+      />
+    )
+    const row = el.querySelector<HTMLElement>('[data-row="home-page"]')!
+    expect(row.classList.contains('zen-settings-row-disabled')).toBe(true)
+    expect(row.querySelector('[role="radiogroup"]')?.getAttribute('aria-disabled')).toBe('true')
+    const options = radios(el)
+    expect(options.map((o) => o.getAttribute('aria-checked'))).toEqual(['false', 'true'])
+    expect(options.every((o) => o.disabled)).toBe(true)
+    act(() => options[0].click())
+    expect(onChange).not.toHaveBeenCalled()
+    expect(el.querySelector('[data-row="home-page-controlled"]')?.textContent).toContain(
+      'Controlled by Bing Homepage & Search'
+    )
+  })
+
+  it('the phone keeps its value row – the label with the current option, opening the picker sheet – whatever the desktop draws', () => {
+    ctx.open.mockClear()
+    const el = render(<RowView row={homePage(() => undefined)} ctx={ctx} variant="phone" />)
+    expect(el.querySelector('[role="radiogroup"]')).toBeNull()
+    const row = el.querySelector<HTMLElement>('[data-row="home-page"]')!
+    expect(row.textContent).toContain('Home page')
+    expect(row.textContent).toContain('New Tab page')
+    act(() => row.click())
+    expect(ctx.open).toHaveBeenCalledWith({ kind: 'options', rowId: 'home-page' })
+  })
+})
+
 describe('a dependent list dims as one group (§9.17, §9.30, §10.4; pr-584’s re-read, NEW 2 as ruled)', () => {
   const list = (disabled: boolean, rows: RowGroup['rows'] = []): RowGroup => ({
     id: 'keep-active',

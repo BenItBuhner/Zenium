@@ -4987,8 +4987,19 @@ describe('the chrome context menus', () => {
       expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
       marked.click('Unpin')
       expect(marked.browser.state.settings.toolbarPins).toEqual({ translate: false })
-      const unknown = pageHarness(DESKTOP, {
+      // Home (W8-3, settings-32) is a pin too – the one folded by default, so its rows read Pin
+      // first; its button carries `toolbarMenuMarks('home')` as the chips do.
+      const home = pageHarness(DESKTOP, {
         chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'home' } }
+      })
+      home.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
+      await settle()
+      expect(topLabels(home.shown())).toEqual(['Pin', 'Customise Toolbar…'])
+      home.click('Pin')
+      expect(home.browser.state.settings.toolbarPins).toEqual({ home: true })
+      // A control that is no pin – the Share chip, a hover-only utility (W8-6) – reads as none.
+      const unknown = pageHarness(DESKTOP, {
+        chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'share' } }
       })
       unknown.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
       await settle()

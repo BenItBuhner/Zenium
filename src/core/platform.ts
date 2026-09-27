@@ -2043,6 +2043,15 @@ export interface ThemeHost {
   onChanged(listener: () => void): void
   /** Which scheme pages and native UI use; `system` follows the OS. */
   setSource(scheme: ColorScheme): void
+  /**
+   * The OS accent colour, `#rrggbb`, or null where the OS has none the host can read (Settings ›
+   * Appearance › Use system accent colour, settings-116). The Electron host reads Windows' and
+   * macOS's through `systemPreferences.getAccentColor` and has no reading on Linux; a host
+   * without the method has no accent to follow, and the row is held.
+   */
+  systemAccent?(): string | null
+  /** The OS accent changed (Windows' `accent-color-changed`, macOS's system colours notice). */
+  onAccentChanged?(listener: () => void): void
 }
 
 /**

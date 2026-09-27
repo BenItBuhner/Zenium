@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import type { InternalPageQuery, InternalPageSection } from '@shared/internalPages'
 import { matchesQuery } from '@shared/internalPages'
-import type { FormFactor } from '@shared/types'
+import type { FormFactor, OverlayKind } from '@shared/types'
+import type { Anchor } from '@renderer/lib/anchor'
 
 /**
  * The phone Settings page as data (design language v2 §10.3–10.4). A section builder turns the
@@ -168,11 +169,14 @@ export interface ValueRow extends RowBase {
    * On the two-pane layout the row is §9.14's plain radio list rather than a menulist: one
    * radio row per option across the row's content width (the §9.13 picker's rows: the 16
    * circle, the label, the option's description under it), as Chrome's Performance page lists
-   * Memory Saver's tiers and Energy Saver's two conditions under their toggles (W8-2). The
-   * row's label names the group for assistive technology alone (pr-584 N2) – the options are
-   * the visible text; a description and a search's caption still stand over them. For 2–4
-   * options that fit on one screen and whose descriptions ARE the choice (§9.14; more become
-   * a menulist). The phone keeps its value row and picker sheet, which the same options fill.
+   * Memory Saver's tiers and Energy Saver's two conditions under their toggles (W8-2) and its
+   * Appearance page the Home page's "New Tab page" / "Enter custom web address" under the Home
+   * button's, the Address field stacked under the option that reveals it (W8-3, the lead's Q7
+   * on #572). The row's label names the group for assistive technology alone (pr-584 N2) – the
+   * options are the visible text; a description and a search's caption still stand over them.
+   * For 2–4 options that fit on one screen and whose descriptions ARE the choice (§9.14; more
+   * become a menulist). The phone keeps its value row and picker sheet, which the same options
+   * fill.
    */
   radios?: boolean
 }
@@ -193,8 +197,13 @@ export interface SwitchRow extends RowBase {
 /** Opens or does something. Destructive actions confirm in a sheet, never inline (§10.4). */
 export interface ActionRow extends RowBase {
   kind: 'action'
-  /** What the row does; with `form`, what its sheet's primary button does is the form's own. */
-  onPress?(): void
+  /**
+   * What the row does; with `form`, what its sheet's primary button does is the form's own.
+   * The desktop's `button` passes itself as `anchor` (lib/anchor.ts: its box and the column it
+   * stands in) for an action that opens a surface hanging from it – §9.20: the theme row's
+   * Change… places the picker under the button. The whole-row press and the phone pass none.
+   */
+  onPress?(anchor?: Anchor): void
   /** A 20 px glyph on the label's line (§9.2): a status the row acts on (Safety check's rows). */
   leading?: ReactNode
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */
@@ -233,6 +242,29 @@ export interface ActionRow extends RowBase {
    * (`aria-haspopup="dialog"`).
    */
   prompts?: boolean
+  /**
+   * The desktop's `button` opens this overlay hanging from itself (§9.20: the theme row's Change…
+   * hangs the picker, `openThemePicker(spaceId, anchor)` → `UiState.overlay` with an
+   * `overlayAnchor`): the button says so (`aria-haspopup="dialog"`) and carries `aria-expanded`
+   * for as long as that overlay is open from an anchor, so the chassis's
+   * `[aria-haspopup][aria-expanded='true']` paints the anchor's pressed fill while its popover
+   * hangs there (main.css beside the primitive). The same overlay open at its seat – from a
+   * menu, the palette, a shortcut – expands no button: the fill is the anchor's, and a seated
+   * panel has none. Only with `button`; the phone never reads it.
+   */
+  popover?: OverlayKind
+  /**
+   * The button is where this overlay hangs while it is open from an anchor, though pressing it
+   * now does something else: the theme row's button once a look is picked in the popover its
+   * Change… opened – it reads Reset to default under the picker still hanging from it (Chrome's
+   * row flips live), and resets when pressed after the picker has gone. While the overlay hangs
+   * it is the anchor still – `aria-expanded`, the `aria-haspopup` of the popup that is open from
+   * it, the pressed fill – and the same element the Change… was, so the focus the popover took
+   * has a control to come back to (§9.22); at rest it says nothing of a popup, since its press
+   * opens none. With `popover` the anchoring is implied; this names it for a button whose press
+   * has changed under the popover.
+   */
+  anchors?: OverlayKind
   /** A sheet holding a small form (add a route, create a container) instead of a plain press. */
   form?: FormSheet
   /**

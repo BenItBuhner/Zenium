@@ -798,7 +798,8 @@ function splitData<P extends object>(props: P): { data: DataAttributes; rest: P 
 /**
  * A checkbox with its label to the right; the label may carry a second, deemphasised line. The
  * label is #93's check row (`.zen-v2-check-row`): a box disabled puts the .4 on the row's content
- * and keeps the box itself at 1, so text and box read as one disabled control (§9.30).
+ * span, inside which the box sits, and the box itself stays at 1 – the span's .4 is the one dim,
+ * so text and box read as one disabled control and never compound to .16 (§9.30).
  * `data-*` attributes name the row, for tests and drivers.
  */
 export function Checkbox({

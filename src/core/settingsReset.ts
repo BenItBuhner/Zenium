@@ -9,7 +9,10 @@
  *
  * - the startup pages → the default `startup` model (`updateSettings`, #525);
  * - the home page → the new tab page (`DEFAULT_HOMEPAGE`; Chrome's `ResetHomepage`, which its
- *   sentence does not name – the clause is the W7-6 round's);
+ *   sentence does not name – the clause is the W7-6 round's), and the desktop's Home button off
+ *   the toolbar with it (`toolbarPins.home` back to its folded default – Chrome's `ResetHomepage`
+ *   clears `kShowHomeButton` beside `kHomePage` and `kHomePageIsNewTabPage`; the other pins are
+ *   not the resetter's and stay, W8-3);
  * - the new tab page → its defaults (`NewTabService.reset`, the Reset new tab page row's act);
  * - the search engine → the shipped default, the user's own engines kept as Chrome's
  *   `RepairPrepopulatedSearchEngines` keeps them; the EEA's choice record goes with it
@@ -47,6 +50,7 @@ import type {
 } from '../shared/types'
 import { DEFAULT_SETTINGS } from '../shared/defaults'
 import { DEFAULT_HOMEPAGE } from '../shared/homepage'
+import { withToolbarPin } from '../shared/toolbarPins'
 import type { Browser } from './browser'
 import { isEeaRegion } from './searchChoice'
 import type { ZenWindow } from './window'
@@ -61,8 +65,8 @@ export const SETTINGS_RESET_TOAST = 'Settings reset'
 export type SettingsResetStep =
   /** The startup pages back to the default model. */
   | { kind: 'startup'; patch: Pick<Settings, 'startup'> }
-  /** The home page back to the new tab page. */
-  | { kind: 'homepage'; patch: Pick<Settings, 'homepage'> }
+  /** The home page back to the new tab page, the Home button off the toolbar; the other pins stay. */
+  | { kind: 'homepage'; patch: Pick<Settings, 'homepage' | 'toolbarPins'> }
   /** The new tab page back to its defaults (whether a new tab opens it at all stays). */
   | { kind: 'newTab' }
   /**
@@ -88,7 +92,10 @@ export type SettingsResetStep =
 
 /** What the plan reads: the settings the sentence names, the tabs, the site rules, the extensions, the region. */
 export interface SettingsResetTerms {
-  settings: Pick<Settings, 'startup' | 'homepage' | 'searchEngineId' | 'searchChoice'>
+  settings: Pick<
+    Settings,
+    'startup' | 'homepage' | 'toolbarPins' | 'searchEngineId' | 'searchChoice'
+  >
   tabs: ReadonlyArray<Pick<Tab, 'id' | 'pinned' | 'essential'>>
   /** Every remembered per-site answer (`PermissionService.rules`). */
   rules: ReadonlyArray<Pick<PermissionRule, 'origin'>>
@@ -106,7 +113,13 @@ export interface SettingsResetTerms {
 export function planSettingsReset(terms: SettingsResetTerms): SettingsResetStep[] {
   return [
     { kind: 'startup', patch: { startup: structuredClone(DEFAULT_SETTINGS.startup) } },
-    { kind: 'homepage', patch: { homepage: { ...DEFAULT_HOMEPAGE } } },
+    {
+      kind: 'homepage',
+      patch: {
+        homepage: { ...DEFAULT_HOMEPAGE },
+        toolbarPins: withToolbarPin(terms.settings.toolbarPins, 'home', false)
+      }
+    },
     { kind: 'newTab' },
     {
       kind: 'searchEngine',

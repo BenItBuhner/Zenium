@@ -555,7 +555,8 @@ export function NewContainerForm({
  * `font-family` value – draws the label in that face (a font picker's row is its own sample).
  * `tabIndex` is the group's roving stop where a group walks its options with the arrow keys
  * (the desktop's radio-form value row, `rows.tsx`); `disabled` is a dependent row's option
- * while its switch is off (§10.4: laid out, not pressable).
+ * while its switch is off, or a held row's (an extension's homepage) – laid out, not pressable
+ * (§10.4), the row above it carrying §9.30's one .4; the checked one stays marked.
  */
 export function RadioOption({
   label,

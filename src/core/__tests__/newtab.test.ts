@@ -1753,6 +1753,68 @@ describe('NewTabService: the homepage (SET-36 / NTP-30)', () => {
     expect(lastLoad(f)).toBe('https://news.example/')
   })
 
+  it('nav.home (Alt+Home, the menu bar, the toolbar’s Home button; settings-32) reads the homepage setting as Chrome’s GetHomePage reads its prefs: the page, else the new tab page – Off included, an extension’s page over both', async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    const tab = activeTab(f)!
+    // "New Tab page" (the default): the served page, announced as an opened new tab page once
+    // the state broadcast that carries the tab has gone out.
+    f.sent.length = 0
+    f.browser.handleCommand(win, 'nav.home', undefined)
+    expect(lastLoad(f)).toBe(NEW_TAB_URL)
+    await settle()
+    expect(eventsNamed(f, 'newtab.opened')).toEqual([{ tabId: tab.id }])
+    // "Enter custom web address": the page as the setting stores it.
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    f.browser.handleCommand(win, 'nav.home', undefined)
+    expect(lastLoad(f)).toBe('https://news.example/')
+    // A page picked with no address yet: the new tab page, as Chrome's empty `homepage` is.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'url', url: '' } })
+    f.browser.handleCommand(win, 'nav.home', undefined)
+    expect(lastLoad(f)).toBe(NEW_TAB_URL)
+    // The phone's Off has no desktop reading (Chrome has no Off): the new tab page, and the
+    // desktop's Home button, Alt+Home and the menu bar still work, as they always have.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    f.browser.handleCommand(win, 'nav.home', undefined)
+    expect(lastLoad(f)).toBe(NEW_TAB_URL)
+    // An extension's homepage (chrome_settings_overrides) holds the destination over the user's.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'newtab', url: '' } })
+    f.browser.state.setExtensionControls({
+      homepage: {
+        extensionId: 'a'.repeat(32),
+        name: 'Bing Homepage',
+        value: 'https://www.bing.com/'
+      }
+    })
+    f.browser.handleCommand(win, 'nav.home', undefined)
+    expect(lastLoad(f)).toBe('https://www.bing.com/')
+    f.browser.state.setExtensionControls({})
+    expect(f.browser.tabs.tab(tab.id)).toBeDefined()
+  })
+
+  it('nav.home without a served new tab page: the blank tab with the URL bar open, as before', async () => {
+    const f = fixture({ newTabPage: false })
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    f.sent.length = 0
+    f.browser.handleCommand(win, 'nav.home', undefined)
+    expect(lastLoad(f)).toBe(BLANK_URL)
+    await settle()
+    expect(eventsNamed(f, 'urlbar.toggle')).toEqual([{ mode: 'edit', text: '' }])
+    expect(eventsNamed(f, 'newtab.opened')).toEqual([])
+  })
+
   it('Home from the new tab page itself, with the new tab page as homepage, does not reload it', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
