@@ -721,6 +721,8 @@ describe('Performance defaults – a fresh desktop profile vs an existing one (W
     }
     expect(on('win32').settings.unloadTimeoutMinutes).toBe(240)
     expect(on('win32').settings.energySaver).toBe('on-battery')
+    // The phone's fresh profile is not a desktop's: Edge's 20 minutes, beside the 240 above.
+    expect(on('android').settings.unloadTimeoutMinutes).toBe(20)
     // The defaults are in the profile's first write, so a later launch reads them as stored.
     const io = fakeIo()
     const s = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
