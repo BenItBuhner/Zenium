@@ -11,7 +11,8 @@ name: Android share and screenshot demo
 # build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks
 # the driver and the demo it runs. On API 33 the card's Share goes to the browser's own share
 # panel (SH-03; `Share.sharePicture`, as Chrome's screenshot Share goes to its sharing hub below
-# Android 14): the second job records the same demo there.
+# Android 14): the second job records the screenshot scenes there (a page's and a selection's
+# share take the panel too, and those scenes are android-share-demo.yml's API 33 job's).
 on:
   workflow_dispatch:
   push:

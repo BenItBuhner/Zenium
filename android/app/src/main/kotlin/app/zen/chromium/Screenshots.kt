@@ -166,7 +166,7 @@ class Screenshots(private val host: Host, private val io: Executor) {
 
     /**
      * The held capture cropped to the rows `[top, bottom)` of the picture, to the gallery – and
-     * with `share`, onto the system sheet. Null when the capture is gone or the write failed.
+     * with `share`, onto the share sheet ([share]). Null when the capture is gone or the write failed.
      */
     fun saveLong(id: String, top: Int, bottom: Int, share: Boolean, reply: (Any?) -> Unit) {
         val entry = held.remove(id)
