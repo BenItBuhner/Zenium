@@ -4137,8 +4137,8 @@ export class Browser {
 
       'selectionMenu.run': ({ tabId, id }) => this.selectionMenu.run(tabId, id),
       'selectionMenu.dismiss': ({ tabId }) => this.selectionMenu.dismiss(tabId),
-      'selectionMenu.surfaceSize': ({ tabId, width, height }) =>
-        this.selectionMenu.surfaceSize(tabId, width, height),
+      'selectionMenu.surfaceSize': ({ tabId, width, height, folded }) =>
+        this.selectionMenu.surfaceSize(tabId, width, height, folded === true),
       'define.lookup': ({ term, lang }) => this.define.lookup(term, lang),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {

@@ -9,8 +9,10 @@ import { browserStore } from '@renderer/lib/ui'
  * The mini menu over a text selection (CT-39) as the popup surface's document draws it
  * (`PopupSurface`, `MiniMenu`): the document marks itself, draws the picker in front of the
  * pill and the pill alone otherwise; the pill is a toolbar of the button primitive with a glyph
- * and the core's title per chip, in the core's order, tells the core the box it measured (again
- * for a new list of chips), runs a chip's action through the core and dismisses on Escape.
+ * and the core's title per chip, in the core's order – or, folded by the core for a narrow view,
+ * the whole row as icon buttons with the title as the tooltip – tells the core the box it
+ * measured with its pose (again for a new list of chips or the other pose), runs a chip's
+ * action through the core and dismisses on Escape.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -31,7 +33,7 @@ const MENU: SelectionMenuState = {
   tabId: 't1',
   text: 'quantum foam',
   rect: { x: 100, y: 200, width: 120, height: 18 },
-  isEditable: false,
+  folded: false,
   actions: [
     { id: 'copy', title: 'Copy' },
     { id: 'search', title: 'Search DuckDuckGo' },
@@ -180,15 +182,53 @@ describe('the mini menu', () => {
     ])
     for (const chip of chips()) {
       expect(chip.classList.contains('zen-v2-button')).toBe(true)
+      expect(chip.classList.contains('zen-mini-menu-chip')).toBe(true)
+      expect(chip.classList.contains('zen-v2-icon-button')).toBe(false)
       expect(chip.getAttribute('type')).toBe('button')
+      expect(chip.hasAttribute('title')).toBe(false)
       const glyph = chip.querySelector('svg')!
       expect(glyph).not.toBeNull()
       expect(glyph.getAttribute('aria-hidden')).toBe('true')
     }
+    expect(bar.hasAttribute('data-folded')).toBe(false)
     expect(bar.querySelector('[tabindex]')).toBeNull()
   })
 
-  it('tells the core the layout box it measured (not the pop animation’s scaled one), rounded up, and nothing for an empty one', () => {
+  it('folded by the core, draws the whole row as icon buttons – the glyph alone, the title as the tooltip and the name', () => {
+    render(<MiniMenu menu={{ ...MENU, folded: true }} />)
+    const bar = pill()!
+    expect(bar.hasAttribute('data-folded')).toBe(true)
+    expect(bar.getAttribute('role')).toBe('toolbar')
+    expect(chips().map((c) => c.getAttribute('data-mini-menu-chip'))).toEqual([
+      'copy',
+      'search',
+      'define',
+      'translate',
+      'readAloud'
+    ])
+    expect(chips().map((c) => c.textContent)).toEqual(['', '', '', '', ''])
+    expect(chips().map((c) => c.getAttribute('title'))).toEqual([
+      'Copy',
+      'Search DuckDuckGo',
+      'Define',
+      'Translate',
+      'Listen'
+    ])
+    for (const chip of chips()) {
+      expect(chip.classList.contains('zen-v2-icon-button')).toBe(true)
+      expect(chip.classList.contains('zen-v2-button')).toBe(false)
+      expect(chip.getAttribute('type')).toBe('button')
+      expect(chip.getAttribute('aria-label')).toBe(chip.getAttribute('title'))
+      const glyph = chip.querySelector('svg')!
+      expect(glyph).not.toBeNull()
+      expect(glyph.getAttribute('aria-hidden')).toBe('true')
+    }
+    // A folded chip runs its action the same way.
+    click(chips()[1])
+    expect(run).toHaveBeenCalledWith('selectionMenu.run', { tabId: 't1', id: 'search' })
+  })
+
+  it('tells the core the layout box it measured (not the pop animation’s scaled one), rounded up, with the pose, and nothing for an empty one', () => {
     render(<MiniMenu menu={MENU} />)
     expect(run).not.toHaveBeenCalledWith('selectionMenu.surfaceSize', expect.anything())
     box = { width: 412.4, height: 45.6 }
@@ -198,7 +238,8 @@ describe('the mini menu', () => {
     expect(run).toHaveBeenCalledWith('selectionMenu.surfaceSize', {
       tabId: 't1',
       width: 413,
-      height: 46
+      height: 46,
+      folded: false
     })
   })
 
@@ -214,8 +255,29 @@ describe('the mini menu', () => {
     expect(sizes()).toHaveLength(2)
     expect(sizes()[1]).toEqual([
       'selectionMenu.surfaceSize',
-      { tabId: 't1', width: 300, height: 46 }
+      { tabId: 't1', width: 300, height: 46, folded: false }
     ])
+  })
+
+  it('measures each pose it draws: the folded row’s box is told as folded, the full row’s again on unfolding', () => {
+    box = { width: 300, height: 46 }
+    render(<MiniMenu menu={MENU} />)
+    const sizes = (): unknown[] =>
+      run.mock.calls.filter(([name]) => name === 'selectionMenu.surfaceSize').map(([, a]) => a)
+    expect(sizes()).toEqual([{ tabId: 't1', width: 300, height: 46, folded: false }])
+    box = { width: 186, height: 42 }
+    render(<MiniMenu menu={{ ...MENU, folded: true }} />)
+    expect(sizes()).toEqual([
+      { tabId: 't1', width: 300, height: 46, folded: false },
+      { tabId: 't1', width: 186, height: 42, folded: true }
+    ])
+    // The same pose again tells nothing new; the other pose tells its own box again.
+    render(<MiniMenu menu={{ ...MENU, folded: true, text: 'foam' }} />)
+    expect(sizes()).toHaveLength(2)
+    box = { width: 300, height: 46 }
+    render(<MiniMenu menu={MENU} />)
+    expect(sizes()).toHaveLength(3)
+    expect(sizes()[2]).toEqual({ tabId: 't1', width: 300, height: 46, folded: false })
   })
 
   it('runs a chip’s action through the core for the selection’s tab', () => {

@@ -640,9 +640,11 @@ export class ZenWindow {
     this.send('layout.applied', { contentHidden: report.contentHidden, hid, shown })
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // A view placed again may have come up above the popup surface: put it back on top. The
-    // mini menu's pill follows the view it hangs over (and goes down while chrome covers it).
+    // mini menu's pill follows the view it hangs over (and goes down while chrome covers it):
+    // while the pill is the surface's front owner, its placing below is the one push (the host
+    // re-adds the view on every push), so the surface is not pushed twice per layout.
     const popup = this.popupBounds
-    if (popup) this.host.setPopupSurface?.(popup)
+    if (popup && this.popupFrontOwner !== 'selectionMenu') this.host.setPopupSurface?.(popup)
     this.browser.selectionMenu.onLayout(this)
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
     // window / a page tab the chrome itself draws) keyboard input must go to the chrome,
@@ -737,9 +739,14 @@ export class ZenWindow {
 
   /** Where the popup surface stands – the front owner's bounds – or null while nobody wants it. */
   private get popupBounds(): Rect | null {
+    const owner = this.popupFrontOwner
+    return owner ? (this.popupWanted.get(owner) ?? null) : null
+  }
+
+  /** The owner in front of the popup surface (`POPUP_SURFACE_OWNERS`' order), or null while nobody wants it. */
+  private get popupFrontOwner(): PopupSurfaceOwner | null {
     for (const owner of POPUP_SURFACE_OWNERS) {
-      const bounds = this.popupWanted.get(owner)
-      if (bounds) return bounds
+      if (this.popupWanted.has(owner)) return owner
     }
     return null
   }

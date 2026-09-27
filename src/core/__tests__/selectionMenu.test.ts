@@ -4,10 +4,13 @@ import { anchorInChrome } from '../credentials/fill'
 import { SELECTION_MINI_MENU_ORDER } from '../menus'
 import {
   estimateMiniMenuSize,
+  MINI_MENU_FOLD_SLACK,
+  MINI_MENU_FOLDED_HEIGHT,
   MINI_MENU_GAP,
   MINI_MENU_HEIGHT,
   MINI_MENU_MARGIN,
   MINI_MENU_SURFACE_PAD,
+  miniMenuFolds,
   parseSelectionReport,
   placeMiniMenuSurface,
   SELECTION_MENU_MAX_CHARS
@@ -25,7 +28,8 @@ import {
  * `UIState.selectionMenu` – its text, its box and the chips the page menu's own selection
  * actions give it – for the tab on screen in its window, and goes with the selection, the
  * document, the tab, the window's keyboard or the chip that ran. The pill stands on the
- * window's popup surface over the selection's box, at the size its document measures.
+ * window's popup surface over the selection's box, at the size its document measures, hugging
+ * its chips and folding as one row to glyph buttons where the view is narrower than it.
  */
 
 const RECT = { x: 100, y: 200, width: 120, height: 18 }
@@ -43,10 +47,24 @@ function layout(h: PageHarness, view: Rect = VIEW, contentHidden = false): void 
   })
 }
 
-/** Where the surface should stand for `rect` reported in a page at `view`, before any measurement. */
+/** Where the surface should stand for `rect` reported in a page at `view`, before any measurement (the model's pose). */
 function expectedSurface(h: PageHarness, rect: Rect, view: Rect = VIEW): Rect {
-  const actions = h.browser.state.snapshot(h.win).selectionMenu?.actions ?? []
-  return placeMiniMenuSurface(anchorInChrome(rect, view, 1), view, estimateMiniMenuSize(actions))
+  const menu = h.browser.state.snapshot(h.win).selectionMenu
+  const actions = menu?.actions ?? []
+  return placeMiniMenuSurface(
+    anchorInChrome(rect, view, 1),
+    view,
+    estimateMiniMenuSize(actions, menu?.folded ?? false)
+  )
+}
+
+function measure(h: PageHarness, width: number, height: number, folded = false): void {
+  h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
+    tabId: h.tabId,
+    width,
+    height,
+    folded
+  })
 }
 
 /** A desktop host with the translation engine and a speech engine: every chip can show. */
@@ -129,16 +147,17 @@ describe('where the pill stands', () => {
     expect(placed.height).toBe(SIZE.height + PAD * 2)
   })
 
-  it('estimates the pill from its chips: the box height, the button floor or the label, the gaps and sides', () => {
+  it('estimates the pill from its chips hugging their labels (no floor), the gaps and sides; folded, from the 28 glyph buttons', () => {
     const three = estimateMiniMenuSize([
       { id: 'copy', title: 'Copy' },
       { id: 'search', title: 'Search Google' },
       { id: 'define', title: 'Define' }
     ])
     expect(three.height).toBe(MINI_MENU_HEIGHT)
-    // Copy sits at the 96 floor; Define's and Search Google's labels outgrow it.
-    const chip = (title: string): number => Math.max(96, 16 + 8 + 32 + title.length * 7)
-    expect(chip('Copy')).toBe(96)
+    // 12 each side around the 16 glyph, its 8 gap and the label at 7 a character: Copy is 76,
+    // under the button primitive's 96 floor the chip gives up.
+    const chip = (title: string): number => 12 + 16 + 8 + 12 + title.length * 7
+    expect(chip('Copy')).toBe(76)
     expect(three.width).toBe(14 + chip('Copy') + chip('Search Google') + chip('Define') + 2 * 8)
     const five = estimateMiniMenuSize([
       { id: 'copy', title: 'Copy' },
@@ -149,6 +168,27 @@ describe('where the pill stands', () => {
     ])
     expect(five.width).toBeGreaterThan(three.width)
     expect(estimateMiniMenuSize([]).width).toBe(14)
+    // Folded: five 28 glyph buttons, the gaps and sides, in the 42 box – whatever the labels.
+    const folded = estimateMiniMenuSize(
+      [
+        { id: 'copy', title: 'Copy' },
+        { id: 'search', title: 'Search Google' },
+        { id: 'define', title: 'Define' },
+        { id: 'translate', title: 'Translate' },
+        { id: 'readAloud', title: 'Listen' }
+      ],
+      true
+    )
+    expect(folded).toEqual({ width: 14 + 5 * 28 + 4 * 8, height: MINI_MENU_FOLDED_HEIGHT })
+  })
+
+  it('folds where the view is narrower than the full pill and its two margins, and not at that width', () => {
+    const full = { width: 500, height: MINI_MENU_HEIGHT }
+    expect(MINI_MENU_FOLD_SLACK).toBe(2 * MINI_MENU_MARGIN)
+    expect(miniMenuFolds(full, { width: 500 + MINI_MENU_FOLD_SLACK })).toBe(false)
+    expect(miniMenuFolds(full, { width: 500 + MINI_MENU_FOLD_SLACK - 1 })).toBe(true)
+    expect(miniMenuFolds(full, { width: 1280 })).toBe(false)
+    expect(miniMenuFolds(full, { width: 300 })).toBe(true)
   })
 })
 
@@ -171,34 +211,19 @@ describe('the pill on the popup surface', () => {
     const h = pageHarness()
     layout(h)
     report(h, 'quantum foam')
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: h.tabId,
-      width: 420,
-      height: 46
-    })
+    measure(h, 420, 46)
     expect(h.popupCalls.at(-1)).toMatchObject({ width: 420 + PAD * 2, height: 46 + PAD * 2 })
     const placed = h.popupCalls.length
     h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
       tabId: 'tab_gone',
       width: 100,
-      height: 46
+      height: 46,
+      folded: false
     })
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: h.tabId,
-      width: Number.NaN,
-      height: 46
-    })
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: h.tabId,
-      width: 420,
-      height: 0
-    })
+    measure(h, Number.NaN, 46)
+    measure(h, 420, 0)
     // The same size again places nothing anew.
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: h.tabId,
-      width: 420,
-      height: 46
-    })
+    measure(h, 420, 46)
     expect(h.popupCalls.length).toBe(placed)
   })
 
@@ -206,11 +231,7 @@ describe('the pill on the popup surface', () => {
     const h = pageHarness()
     layout(h)
     report(h, 'foam')
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: h.tabId,
-      width: 400,
-      height: 46
-    })
+    measure(h, 400, 46)
     // Two words: the same three chips, so the pill is placed at the measured 400 at once.
     report(h, 'quantum foam')
     expect(h.popupCalls.at(-1)).toMatchObject({ width: 400 + PAD * 2 })
@@ -286,11 +307,7 @@ describe('the pill on the popup surface', () => {
     h.win.setPopupSurface(picker, 'autofill')
     expect(h.popupCalls.at(-1)).toEqual(picker)
     // The pill placed again behind the picker changes nothing the host sees.
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: h.tabId,
-      width: 500,
-      height: 46
-    })
+    measure(h, 500, 46)
     expect(h.popupCalls.at(-1)).toEqual(picker)
     h.win.setPopupSurface(null, 'autofill')
     expect(h.popupCalls.at(-1)).toMatchObject({ width: 500 + PAD * 2 })
@@ -326,6 +343,106 @@ describe('the pill on the popup surface', () => {
     expect(model(h)?.text).toBe('quantum foam')
   })
 
+  it('folds the whole row to glyph buttons where the view is narrower than the pill and its margins, and unfolds as the view widens', () => {
+    const h = pageHarness({ ...DESKTOP, readAloud: true }, FULL)
+    const full = estimateMiniMenuSize([
+      { id: 'copy', title: 'Copy' },
+      { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' },
+      { id: 'translate', title: 'Translate' },
+      { id: 'readAloud', title: 'Listen' }
+    ])
+    // A split pane: narrower than the five chips and their two margins.
+    const narrow: Rect = { x: 0, y: 120, width: full.width + MINI_MENU_FOLD_SLACK - 1, height: 680 }
+    layout(h, narrow)
+    report(h, 'quantum foam')
+    expect(model(h)?.folded).toBe(true)
+    expect(chips(h)).toEqual([...SELECTION_MINI_MENU_ORDER])
+    const foldedEstimate = estimateMiniMenuSize(model(h)!.actions, true)
+    expect(h.popupCalls.at(-1)).toEqual(
+      placeMiniMenuSurface(anchorInChrome(RECT, narrow, 1), narrow, foldedEstimate)
+    )
+    expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_FOLDED_HEIGHT + PAD * 2 })
+    // The folded pill measures itself: the surface follows, the pose stands.
+    measure(h, 190, 42, true)
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 42 + PAD * 2 })
+    expect(model(h)?.folded).toBe(true)
+    // The view at exactly the pill and its margins: the row unfolds, at the full estimate until
+    // the full pill has measured.
+    const wide: Rect = { ...narrow, width: full.width + MINI_MENU_FOLD_SLACK }
+    layout(h, wide)
+    expect(model(h)?.folded).toBe(false)
+    expect(h.popupCalls.at(-1)).toEqual(
+      placeMiniMenuSurface(anchorInChrome(RECT, wide, 1), wide, full)
+    )
+    // The full pill measures wider than the estimate, past the view: the row folds again, at the
+    // folded measurement it already has.
+    measure(h, full.width + 4, 46)
+    expect(model(h)?.folded).toBe(true)
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 42 + PAD * 2 })
+    // A view with the room for the measured pill: unfolded, at the measured 46.
+    layout(h, { ...narrow, width: full.width + 4 + MINI_MENU_FOLD_SLACK })
+    expect(model(h)?.folded).toBe(false)
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: full.width + 4 + PAD * 2 })
+    // A report over the same words keeps the pose; other chips start unfolded from the estimate.
+    layout(h, narrow)
+    expect(model(h)?.folded).toBe(true)
+    report(h, 'quantum foam')
+    expect(model(h)?.folded).toBe(true)
+    report(h, 'the quantum foam theory')
+    expect(chips(h)).toEqual(['copy', 'search', 'translate', 'readAloud'])
+    expect(model(h)?.folded).toBe(miniMenuFolds(estimateMiniMenuSize(model(h)!.actions), narrow))
+  })
+
+  it('never folds one chip at a time: the pose is one answer for the row', () => {
+    const h = pageHarness()
+    layout(h, { x: 0, y: 120, width: 240, height: 680 })
+    report(h, 'quantum foam')
+    expect(model(h)?.folded).toBe(true)
+    expect(chips(h)).toEqual(['copy', 'search', 'define'])
+    layout(h)
+    expect(model(h)?.folded).toBe(false)
+    expect(chips(h)).toEqual(['copy', 'search', 'define'])
+  })
+
+  it('pushes the surface to the host once per layout while the pill is in front, and takes a window\u2019s stale surface down when its tab has moved on', () => {
+    const h = pageHarness()
+    layout(h)
+    report(h, 'quantum foam')
+    const before = h.popupCalls.length
+    layout(h, { ...VIEW, x: 300, width: 980 })
+    expect(h.popupCalls.length).toBe(before + 1)
+    // The picker in front: the layout puts it back on top, and the pill's placing behind it
+    // pushes the picker's bounds again – two pushes of the front owner's rect, nothing of the pill.
+    const picker = { x: 40, y: 300, width: 336, height: 200 }
+    h.win.setPopupSurface(picker, 'autofill')
+    const withPicker = h.popupCalls.length
+    layout(h)
+    expect(h.popupCalls.slice(withPicker).every((call) => call === picker)).toBe(true)
+    h.win.setPopupSurface(null, 'autofill')
+    // The tab moves to another window: the source's surface is up until the source lays out, and
+    // then it goes; the destination gets the pill as it lays out.
+    const other = h.browser.openWindow('unsynced', h.win)!
+    const source = vi.spyOn(h.win, 'setPopupSurface')
+    const target = vi.spyOn(other, 'setPopupSurface')
+    expect(h.browser.tabs.moveTabToWindow(h.tabId, other)).toBe(true)
+    // The model stands – the tab is on screen in the other window – and is that window's now.
+    expect(model(h)).toBeNull()
+    expect(h.browser.state.snapshot(other).selectionMenu?.text).toBe('quantum foam')
+    layout(h)
+    expect(source).toHaveBeenCalledWith(null, 'selectionMenu')
+    expect(target).not.toHaveBeenCalled()
+    other.applyLayout({
+      contentHidden: false,
+      glance: null,
+      placements: [{ tabId: h.tabId, rect: VIEW, radius: 0 }]
+    })
+    expect(target).toHaveBeenCalledWith(
+      expect.objectContaining({ width: expect.any(Number) }),
+      'selectionMenu'
+    )
+  })
+
   it('hands the keyboard back to the page as a chip runs and on dismiss', () => {
     const h = pageHarness()
     layout(h)
@@ -355,14 +472,14 @@ describe('the selection menu model', () => {
       tabId: h.tabId,
       text: 'quantum foam',
       rect: RECT,
-      isEditable: false,
       actions: [
         { id: 'copy', title: 'Copy' },
         { id: 'search', title: 'Search Google' },
         { id: 'define', title: 'Define' },
         { id: 'translate', title: 'Translate' },
         { id: 'readAloud', title: 'Listen' }
-      ]
+      ],
+      folded: false
     })
     expect(chips(h)).toEqual([...SELECTION_MINI_MENU_ORDER])
   })
@@ -378,14 +495,28 @@ describe('the selection menu model', () => {
     expect(chips(bare)).toEqual(['copy', 'search', 'define'])
   })
 
-  it('carries whether the selection is a text field\u2019s', () => {
+  it('shows nothing over a text field\u2019s selection (the lead\u2019s ruling): the report arrives, clears what stood, and draws no surface', () => {
     const h = pageHarness()
+    layout(h)
     h.browser.handlePageMessage(h.tabId, {
       type: 'selection',
       selection: { text: 'hello', rect: RECT, isEditable: true },
       frameId: 0
     })
-    expect(model(h)?.isEditable).toBe(true)
+    expect(model(h)).toBeNull()
+    expect(h.popupCalls).toEqual([])
+    // The page's selection stood; the field's replaced it: the menu goes with it.
+    report(h, 'quantum foam')
+    expect(model(h)?.text).toBe('quantum foam')
+    h.browser.handlePageMessage(h.tabId, {
+      type: 'selection',
+      selection: { text: 'quantum foam', rect: RECT, isEditable: true },
+      frameId: 0
+    })
+    expect(model(h)).toBeNull()
+    expect(h.popupCalls.at(-1)).toBeNull()
+    // The page context menu over a field's selection stands as it was (menus.test.ts: the
+    // editable field's own items); the gate is the mini menu's alone.
   })
 
   it('clears on the empty report, and stays clear when nothing was shown', () => {

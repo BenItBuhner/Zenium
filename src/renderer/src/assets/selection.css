@@ -48,6 +48,20 @@
   cursor: default;
   user-select: none;
 }
+/*
+ * A chip hugs its glyph and title (the lead's rule): the button primitive's 96 floor and 16
+ * gutters give way to 12 each side, the pose `.zen-mstack-action` takes inside a card. The 32
+ * height, the fill, the type and the hover are the primitive's own.
+ */
+.zen-v2-button.zen-mini-menu-chip {
+  min-width: 0;
+  padding: 0 12px;
+}
+/*
+ * Folded (`[data-folded]`: the page view is narrower than the pill and its margins, the core's
+ * `miniMenuFolds`), every chip is the shared `.zen-v2-icon-button` as it is – the 28 glyph
+ * button with its title as the tooltip, the whole row at once. Nothing to add here.
+ */
 
 /* --- The Define surface (a §9.20 popover, a §9.13 sheet) ------------------------------------ */
 

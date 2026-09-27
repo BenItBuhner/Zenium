@@ -389,10 +389,14 @@ export interface SelectionMenuState {
   text: string
   /** Where the selection is, in CSS pixels of the page view; null when the page could not say. */
   rect: Rect | null
-  /** Whether the selection is a text field's. */
-  isEditable: boolean
   /** The chips, in order; never empty (an empty list clears the state instead). */
   actions: SelectionMenuAction[]
+  /**
+   * Whether the pill is folded to its glyphs: the page view is narrower than the pill at full
+   * width plus its margins, so the whole row is 28 px glyph buttons with the titles as tooltips
+   * (`SelectionMenuService`, `miniMenuFolds`). One fold for the row, never chip by chip.
+   */
+  folded: boolean
 }
 
 /**
@@ -6550,11 +6554,12 @@ export interface Commands {
   'selectionMenu.dismiss': { args: { tabId: string }; result: void }
   /**
    * The pill's document measured the size its content wants (CSS px, the pill's box without the
-   * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`; the
-   * core places the popup surface to fit (`SelectionMenuService.surfaceSize`).
+   * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`, in the
+   * pose it drew (`folded`: the glyph row, or the full pill); the core keeps one measurement per
+   * pose and places the popup surface to fit (`SelectionMenuService.surfaceSize`).
    */
   'selectionMenu.surfaceSize': {
-    args: { tabId: string; width: number; height: number }
+    args: { tabId: string; width: number; height: number; folded: boolean }
     result: void
   }
   /**
