@@ -193,15 +193,25 @@ export function fileNameOf(path: string): string {
 }
 
 /**
+ * The directory of Android's public Downloads collection (`Environment.DIRECTORY_DOWNLOADS`),
+ * which its Files app lists as "Downloads": the one folder named otherwise than it is spelt.
+ */
+const ANDROID_DOWNLOADS_DIRECTORY = 'Download'
+
+/**
  * The folder a saved file sits in, by its own name – "Downloads", or the name of the folder
  * the user chose instead (§9.33: a toast that reports a save names the destination, which is
- * what its Show in folder acts on, not the file). A file at a root has no folder to name.
+ * what its Show in folder acts on, not the file). Android's public collection is the directory
+ * `Download`, and is named here as its Files app names it, "Downloads" – once, for every toast
+ * that reports a save (the capture card's, the PDF viewer's). A file at a root has no folder to
+ * name.
  */
 export function folderNameOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   if (at <= 0) return ''
   const parent = path.slice(0, at)
-  return fileNameOf(parent) || parent
+  const folder = fileNameOf(parent) || parent
+  return folder === ANDROID_DOWNLOADS_DIRECTORY ? 'Downloads' : folder
 }
 
 export interface Point {

@@ -200,12 +200,12 @@ export const PDF_PRINT_REFUSED = 'This PDF cannot be printed.'
 
 /**
  * What the toast says once the copy is written: the destination, as the capture card's Save and
- * the share hub's name theirs (§9.33) – the folder the path landed in by its own name, with
- * Android's public collection (`Environment.DIRECTORY_DOWNLOADS`, the directory `Download`)
- * under the name its Files app gives it; "Downloads" where the path names no folder (a
- * `content:` address from a host that could not read the row's path).
+ * the share hub's name theirs (§9.33) – the folder the path landed in by its own name, through
+ * the shared `folderNameOf`, which names Android's public collection "Downloads" as its Files
+ * app does; "Downloads" too where the path names no folder (a `content:` address from a host
+ * that could not read the row's path, which is no path).
  */
 export function pdfSavedMessage(path: string): string {
   const folder = /^[a-z][a-z0-9+.-]+:/i.test(path) ? '' : folderNameOf(path)
-  return `Saved to ${folder === '' || folder === 'Download' ? 'Downloads' : folder}`
+  return `Saved to ${folder || 'Downloads'}`
 }

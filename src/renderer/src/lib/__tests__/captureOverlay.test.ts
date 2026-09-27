@@ -588,6 +588,23 @@ describe('a saved file’s name', () => {
     expect(folderNameOf('D:\\captures\\Screenshot.png')).toBe('captures')
   })
 
+  it('names Android’s public collection – the directory `Download` – as its Files app does, "Downloads", for every save toast', () => {
+    // The phone's capture card and the PDF viewer's copy both land here (the lead's ruling: the
+    // one mapping, in the shared reading, so the two toasts agree by construction).
+    expect(folderNameOf('/storage/emulated/0/Download/Screenshot 2026-09-23 at 14.05.09.png')).toBe(
+      'Downloads'
+    )
+    expect(folderNameOf('/storage/emulated/0/Download/mooring (1).pdf')).toBe('Downloads')
+    // Below Android 10 the host writes under its own external files: the same directory by name.
+    expect(folderNameOf('/storage/emulated/0/Android/data/app.zen/files/Download/x.png')).toBe(
+      'Downloads'
+    )
+    // Only that directory, spelt as Android spells it: another folder keeps its own name.
+    expect(folderNameOf('/storage/emulated/0/Downloads/x.png')).toBe('Downloads')
+    expect(folderNameOf('/storage/emulated/0/download/x.png')).toBe('download')
+    expect(folderNameOf('/storage/emulated/0/Documents/x.png')).toBe('Documents')
+  })
+
   it('has no folder to name for a file at a root or a bare name', () => {
     expect(folderNameOf('/Screenshot.png')).toBe('')
     expect(folderNameOf('Screenshot.png')).toBe('')

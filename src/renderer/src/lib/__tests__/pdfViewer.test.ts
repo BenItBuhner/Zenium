@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { UIState } from '@shared/types'
 import type { PdfViewerReport } from '@shared/pdfViewerProtocol'
+import { folderNameOf } from '../captureOverlay'
 import { browserStore } from '../ui'
 import {
   canZoomIn,
@@ -169,9 +170,14 @@ describe('the overflow’s Save and Print rows (CT-44)', () => {
   })
 
   it('names the destination of a written copy as the capture card does, and states a refusal of the document', () => {
-    // Android's public collection: the directory `Download`, the Files app's "Downloads".
-    expect(pdfSavedMessage('/storage/emulated/0/Download/mooring (1).pdf')).toBe(
-      'Saved to Downloads'
+    // Android's public collection – the directory `Download` – is "Downloads" through the shared
+    // `folderNameOf`, the one place that names it (the lead's ruling: across both toasts), so the
+    // message is the capture card's shape, `Saved to ${folderNameOf(path) || 'Downloads'}`.
+    const inDownloads = '/storage/emulated/0/Download/mooring (1).pdf'
+    expect(folderNameOf(inDownloads)).toBe('Downloads')
+    expect(pdfSavedMessage(inDownloads)).toBe('Saved to Downloads')
+    expect(pdfSavedMessage(inDownloads)).toBe(
+      `Saved to ${folderNameOf(inDownloads) || 'Downloads'}`
     )
     // Below Android 10 the host writes under its own files: the same folder by name.
     expect(
