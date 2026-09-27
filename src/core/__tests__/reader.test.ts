@@ -3,11 +3,13 @@ import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared
 import {
   DEFAULT_READER_PREFERENCES,
   READER_IMAGES_ATTRIBUTE,
-  READER_LINKS_ATTRIBUTE
+  READER_LINKS_ATTRIBUTE,
+  type ReaderPreferences
 } from '../../shared/reader'
 import { Browser } from '../browser'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import { READER_URL_PREFIX, readerArticleId, sanitizeArticleHtml } from '../reader'
+import { readerPage } from '../readerPage'
 import type { ZenWindow } from '../window'
 
 /** In-memory documents; `state.json` is what the settings round-trip through. */
@@ -233,6 +235,45 @@ describe('the Links and Images toggles (reader-12)', () => {
       })
     )
     expect(odd.reader.preferences()).toMatchObject({ links: true, images: true })
+  })
+
+  it('a peer’s record from before the two toggles reads as both on: the reader document carries neither attribute', () => {
+    const { browser, win } = start()
+    const tab = readerTab(browser, win, true)
+    const id = readerArticleId(tab.url)!
+    // A settings merge lands the whole `reader` object of an older device as it came
+    // (`sync/apply.ts`), seven fields and no `links` / `images` – not through `settings.update`.
+    const sevenField = {
+      fontSize: 20,
+      font: 'sans',
+      theme: 'dark',
+      width: 'wide',
+      lineFocus: 0,
+      spacing: 'normal',
+      syllables: false
+    }
+    Object.assign(browser.state.settings, { reader: sevenField })
+    expect(browser.reader.preferences()).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 20,
+      font: 'sans',
+      theme: 'dark',
+      width: 'wide'
+    })
+    const html = browser.reader.pageHtml(id) ?? ''
+    expect(html).not.toContain(`${READER_LINKS_ATTRIBUTE}="off"`)
+    expect(html).not.toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    expect(html).not.toContain('="off"')
+    // The document's renderer on its own reads the record the same way: off is the one word
+    // that turns a toggle off, absence is on.
+    const article = browser.reader.article(id)!
+    const raw = readerPage(
+      article,
+      sevenField as unknown as ReaderPreferences,
+      browser.reader.shown(article)
+    )
+    expect(raw).not.toContain('="off"')
+    expect(raw).toContain(`:root[${READER_LINKS_ATTRIBUTE}='off'] article a`)
   })
 })
 

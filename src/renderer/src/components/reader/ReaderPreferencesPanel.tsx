@@ -280,15 +280,16 @@ export function Rows({
         data-reader-pref="syllables"
       />
       <Separator />
+      {/* On unless off: a peer's record from before the two toggles carries neither. */}
       <SwitchRow
         label="Links"
-        checked={prefs.links}
+        checked={prefs.links !== false}
         onChange={(links) => onChange({ links })}
         data-reader-pref="links"
       />
       <SwitchRow
         label="Images"
-        checked={prefs.images}
+        checked={prefs.images !== false}
         onChange={(images) => onChange({ images })}
         data-reader-pref="images"
       />

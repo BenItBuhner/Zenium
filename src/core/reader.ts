@@ -3,7 +3,11 @@ import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { readerPage, type ReaderShown } from './readerPage'
-import { readerPreferencesPatch, type ReaderPreferences } from '../shared/reader'
+import {
+  readerPreferencesPatch,
+  sanitizeReaderPreferences,
+  type ReaderPreferences
+} from '../shared/reader'
 import { renderArticleHtml, splitArticleHtml, type ArticleSplit } from './translate/articleHtml'
 
 export const READER_URL_PREFIX = 'zen://reader'
@@ -193,9 +197,14 @@ export class ReaderService {
     void view.executeJavaScript(call).catch(() => undefined)
   }
 
-  /** The text preferences every reader page is rendered with (Settings, persisted). */
+  /**
+   * The text preferences every reader page is rendered with (Settings, persisted), read
+   * through the sanitiser: a peer on an older build syncs its seven-field record over the
+   * setting whole (`sync/apply.ts` lands the settings record key by key), and the fields it
+   * lacks – Links and Images (reader-12) – read as their defaults, on, not as off.
+   */
   preferences(): ReaderPreferences {
-    return this.browser.state.settings.reader
+    return sanitizeReaderPreferences(this.browser.state.settings.reader)
   }
 
   /**

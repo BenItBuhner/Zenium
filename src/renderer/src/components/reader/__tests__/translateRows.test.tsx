@@ -484,6 +484,34 @@ describe('the panel’s order', () => {
     }
   })
 
+  it('a peer’s record from before the two toggles reads as both on: absence is not off', () => {
+    desktop()
+    // A settings merge lands an older device's seven-field `reader` object as it came.
+    const sevenField = {
+      fontSize: 18,
+      font: 'serif',
+      theme: 'auto',
+      width: 'normal',
+      lineFocus: 0,
+      spacing: 'normal',
+      syllables: false
+    } as unknown as ReaderPreferences
+    const patches: Array<Partial<ReaderPreferences>> = []
+    const el = render(
+      <Rows
+        prefs={sevenField}
+        onChange={(patch) => void patches.push(patch)}
+        onListen={null}
+        translate={null}
+      />
+    )
+    expect(row(el, 'links').getAttribute('aria-checked')).toBe('true')
+    expect(row(el, 'images').getAttribute('aria-checked')).toBe('true')
+    // A press from there asks for off, as from any record that reads on.
+    act(() => row(el, 'links').click())
+    expect(patches).toEqual([{ links: false }])
+  })
+
   it('without the engine the type rows run straight into the aids’ hairline', () => {
     desktop()
     const el = render(

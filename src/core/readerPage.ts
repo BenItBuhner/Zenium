@@ -153,8 +153,10 @@ export function readerPage(
     `${READER_LINE_FOCUS_ATTRIBUTE}="${prefs.lineFocus}"`,
     `${READER_SPACING_ATTRIBUTE}="${prefs.spacing}"`,
     `${READER_SYLLABLES_ATTRIBUTE}="${prefs.syllables}"`,
-    prefs.links ? '' : `${READER_LINKS_ATTRIBUTE}="off"`,
-    prefs.images ? '' : `${READER_IMAGES_ATTRIBUTE}="off"`,
+    // Off is the one word that turns them off: a record without the two (a peer's, from
+    // before reader-12) reads on.
+    prefs.links !== false ? '' : `${READER_LINKS_ATTRIBUTE}="off"`,
+    prefs.images !== false ? '' : `${READER_IMAGES_ATTRIBUTE}="off"`,
     `data-prefs="${escapeHtml(JSON.stringify(prefs))}"`,
     `style="--font-size: ${prefs.fontSize}px"`
   ]
