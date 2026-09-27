@@ -179,7 +179,11 @@ describe('foldPillChips: an offer has the slot under every state and above the q
   })
 
   it('two offers never stack: the first in the pill’s order has the slot, both are rows', () => {
-    const fold = foldPillChips([chip('lock'), { id: 'offer-a', fold: 'offer' }, { id: 'offer-b', fold: 'offer' }])
+    const fold = foldPillChips([
+      chip('lock'),
+      { id: 'offer-a', fold: 'offer' },
+      { id: 'offer-b', fold: 'offer' }
+    ])
     expect(ids(fold.shown)).toEqual(['offer-a'])
     expect(ids(fold.folded)).toEqual(['offer-a', 'offer-b'])
     expect(ids(fold.yielded)).toEqual(['lock'])

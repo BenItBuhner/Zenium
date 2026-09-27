@@ -13,7 +13,7 @@ import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
 import { readerArticleTab } from '@renderer/lib/readerEntry'
-import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
+import { READER_BANNER_KEY, useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { bringChromeBack, settleChromeAway, slideChromeAway } from '@renderer/lib/fullscreenMotion'
 import {
@@ -722,19 +722,28 @@ export function PillContent({
   const privateMark = shown ? isPrivateTab(shown) : false
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
   const quietPromptOpen = uiStore.use((s) => s.quietPromptId !== null)
+  // The §9.33 "Show Reader View?" strip stands on the banner stack for the tab in front
+  // (`useReaderEntryMessage`, one banner under its key): the reader chip waits in the sheet
+  // while it asks, and takes the slot as the strip leaves (CT-37's coexistence with PUI-14).
+  const readerOfferUp = uiStore.use((s) =>
+    s.banners.some((b) => b.key === READER_BANNER_KEY && b.leaving !== true)
+  )
   // The chips after the address as data (`phonePillChips`): the lock, the blocking shield with
-  // its count, a translate offer, the Now playing chip (MW-16). At rest the pill draws the
-  // favicon, the host and the lock alone – v2 §9.29 as amended on Bennett's ruling (OMN-02):
-  // the shield and the translate offer are the site-information sheet's rows, always, and a
-  // transient state chip (media) takes the lock's slot while its state is live, the lock
-  // returning when it ends (`lib/pillChips.ts`). The favicon ahead of the host and the lock
-  // both open the sheet the others went into; the favicon alone while a state has the slot.
+  // its count, a translate offer, the Now playing chip (MW-16), the reader chip on an article.
+  // At rest the pill draws the favicon, the host and the lock alone – v2 §9.29 as amended on
+  // Bennett's ruling (OMN-02): the shield and the translate offer are the site-information
+  // sheet's rows, always, and a transient state chip (media) takes the lock's slot while its
+  // state is live, the lock returning when it ends (`lib/pillChips.ts`); the reader chip, the
+  // readerable indicator (CT-37), has the slot on a quiet secure article. The favicon ahead of
+  // the host and the lock both open the sheet the others went into; the favicon alone while a
+  // state or the offer has the slot.
   const chips = phonePillChips(state, shown, {
     siteInfoOpen,
     mediaSheetOpen,
     quietPromptOpen,
     activeTabId: tab?.id ?? null,
-    locked
+    locked,
+    readerOfferUp
   })
   const drawn = pillChipsDrawn(chips)
   // What TalkBack hears at the address, the pill's one stop (`phoneAddressLabel`): the host,

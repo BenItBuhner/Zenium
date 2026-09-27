@@ -25,7 +25,6 @@ import { readerArticleTab } from '@renderer/lib/readerEntry'
 import { crossReaderView } from '@renderer/lib/readerTransition'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
-import { hint } from '@renderer/lib/shortcuts'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, pairLabel, translateStateOf } from '@renderer/lib/translate'
 import { openMediaSheet, overlayAvailable, uiStore } from '@renderer/lib/ui'
@@ -385,7 +384,8 @@ export function phonePillChips(
   // has the chip from dom-ready, the strip never comes. The glyph is the desktop chip's
   // (`BookOpenText`, `SidebarTop`), at rest in the slot's quiet ink, lit to the full ink on the
   // press by `.zen-phone-pill`'s rule; its name is the row's, its description the desktop chip's
-  // vocabulary ("Enter Reader View", the shortcut appended where a keyboard is attached, §9.31).
+  // vocabulary ("Enter Reader View") without the desktop's chord – the phone's chips carry none,
+  // and §9.31's tooltip is a mouse's or a keyboard's, so here the words are TalkBack's alone.
   // The tap is routed by `PhoneShell`'s pill (`data-reader-chip`) to the same crossing.
   if (identity && !page && !extension && readerArticleTab(tab)) {
     const quietSlot = verdict === null || verdict.tone === 'neutral'
@@ -402,7 +402,7 @@ export function phonePillChips(
         <PillChip
           inert={!interactive}
           label={READER_ROW_LABEL}
-          title={hint(READER_CHIP_HINT, state, 'page.readerMode')}
+          title={READER_CHIP_HINT}
           data-reader-chip
           data-testid="reader-chip"
           className={cn(CHIP_CLASS, 'zen-pill-quiet')}
