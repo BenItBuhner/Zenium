@@ -123,7 +123,8 @@ export function caretVerdict(detail, carets = [detail.caret]) {
   const missing = carets.find((caret) => caret && !caret.focused)
   if (!missing) return detail
   const bar = missing.bar === 'accel-t' ? 'brought up with Accel+T' : 'found up'
-  const trace = missing.trace && missing.trace.length ? `; polls ${formatCaretTrace(missing.trace)}` : ''
+  const trace =
+    missing.trace && missing.trace.length ? `; polls ${formatCaretTrace(missing.trace)}` : ''
   const error = new Error(
     `the URL bar ${bar} had no caret: the keyboard was ${missing.owner} for the ${missing.ms} ms before the harness focused the field${trace}`
   )
