@@ -43,7 +43,7 @@ export function HintBubbleCard({ bubble, leaving, onMeasure }: Props): JSX.Eleme
       data-surface="page"
       data-edge={bubble.edge}
       data-anchor={bubble.anchorItem}
-      data-leaving={leaving || undefined}
+      data-leaving={leaving ? '' : undefined}
       role="status"
     >
       <span className="zen-message-text">{bubble.text}</span>

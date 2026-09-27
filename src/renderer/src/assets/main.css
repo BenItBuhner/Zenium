@@ -3544,7 +3544,9 @@
    * over 2.5 s – `PulseDrawable.java` l.39, l.208–231, l.263, `dimens.xml` l.129). The bar
    * carries the item the bubble points at (`data-iph-anchor`, PhoneShell.tsx); the pulse is the
    * bubble's and lives in its block, so the accent token stays within the messages' span. The
-   * reduced-motion remover leaves the circle still.
+   * alpha is in the colour – `--v2-selection` is the accent at 30 %, Chrome's 76 / 255 – because
+   * no rule of the bar's writes an opacity but the sheet's recede (lib/__tests__/recede.test.ts).
+   * The reduced-motion remover leaves the circle still.
    */
   .zen-phone-bar[data-iph-anchor='tabs'] [data-bar-item='tabs'] {
     position: relative;
@@ -3558,8 +3560,7 @@
     height: 32px;
     margin: -16px 0 0 -16px;
     border-radius: 50%;
-    background: var(--v2-accent);
-    opacity: 0.3;
+    background: var(--v2-selection);
     pointer-events: none;
     animation: zen-iph-pulse 1250ms cubic-bezier(0.8, 0, 0.6, 1) infinite alternate;
   }
