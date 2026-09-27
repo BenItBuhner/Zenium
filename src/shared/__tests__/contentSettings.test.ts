@@ -92,3 +92,105 @@ describe('contentSettingsFor', () => {
     })
   })
 })
+
+/*
+ * Services pass 11 (seed 3): every row with a choice beyond its built-in default carries its own
+ * line for that choice (`descriptions`), in the register of the design lead's #523 ruling – the
+ * Block line "Sites cannot …", the Allow line "Sites can …", one sentence in sentence case, the
+ * subject the row's own where the built-in line has one. The lines are proposals for the lead;
+ * these pins hold whatever words the lead settles on, and the shape rules hold regardless.
+ */
+describe('the rows’ per-value description lines (services pass 11, seed 3)', () => {
+  it('pins each row’s lines for the choices beyond its built-in default', () => {
+    const table = Object.fromEntries(
+      CONTENT_SETTINGS.filter((s) => s.descriptions).map((s) => [s.id, s.descriptions])
+    )
+    expect(table).toEqual({
+      geolocation: { deny: 'Sites cannot see your location' },
+      camera: { deny: 'Sites cannot use your camera' },
+      microphone: { deny: 'Sites cannot use your microphone' },
+      notifications: { deny: 'Sites cannot send notifications' },
+      'background-sync': {
+        deny: 'Recently closed sites cannot finish sending or receiving data'
+      },
+      sensors: { deny: 'Sites cannot use motion sensors' },
+      'automatic-downloads': {
+        allow: 'Sites can download multiple files without asking',
+        deny: 'Sites cannot download multiple files automatically'
+      },
+      midi: { deny: 'Sites cannot connect to MIDI devices' },
+      usb: { deny: 'Sites cannot connect to USB devices' },
+      serial: { deny: 'Sites cannot connect to serial ports' },
+      hid: { deny: 'Sites cannot connect to HID devices' },
+      bluetooth: { deny: 'Sites cannot connect to Bluetooth devices' },
+      fileSystem: { deny: 'Sites cannot edit files or folders on your device' },
+      'clipboard-read': { deny: 'Sites cannot see text or images on your clipboard' },
+      'payment-handler': { deny: 'Sites cannot install payment handlers' },
+      'insecure-content': { allow: 'Secure sites can show insecure content' },
+      'window-management': { deny: 'Sites cannot use information about your screens' },
+      'local-network-access': {
+        deny: 'Sites cannot look for or connect to devices on your local network'
+      },
+      images: { deny: 'Sites cannot show images' },
+      javascript: { deny: 'Sites cannot use JavaScript' },
+      popups: { allow: 'Sites can send pop-ups and use redirects' },
+      ads: { allow: 'Sites can show ads and trackers' },
+      sound: { deny: 'Sites cannot play sound' },
+      'background-video': { allow: 'Sites can keep playing video in the background' },
+      pdf: { deny: 'PDF files download instead of opening in Zenium' },
+      mediaKeySystem: {
+        allow: 'Sites can play protected content without asking',
+        deny: 'Sites cannot play protected content'
+      },
+      'third-party-sign-in': {
+        deny: 'Sites cannot show sign-in prompts from identity services'
+      },
+      'on-device-site-data': { deny: 'Sites cannot save data on your device' },
+      openExternal: { deny: 'Sites cannot open links in another application' },
+      'storage-access': {
+        allow: 'Embedded sites can use the cookies they stored without asking',
+        deny: 'Embedded sites cannot use the cookies they stored'
+      },
+      'top-level-storage-access': {
+        allow: 'Sites can let the sites they embed use their cookies without asking',
+        deny: 'Sites cannot let the sites they embed use their cookies'
+      },
+      'idle-detection': { deny: 'Sites cannot know when you are actively using your device' },
+      fullscreen: { deny: 'Sites cannot go fullscreen' },
+      'auto-picture-in-picture': {
+        deny: 'Sites cannot move a playing video to a small window when you leave its tab'
+      },
+      pointerLock: { deny: 'Sites cannot hide or capture the pointer' },
+      keyboardLock: { deny: 'Fullscreen sites cannot capture system keys' },
+      'speaker-selection': { deny: 'Sites cannot pick which speaker plays their sound' },
+      'clipboard-sanitized-write': { deny: 'Sites cannot copy text or images to your clipboard' },
+      'display-capture': { deny: 'Sites cannot share your screen, a window or a tab' }
+    })
+    // 39 rows carry lines (38 new beside #523's Background video), 43 lines in all.
+    expect(Object.keys(table)).toHaveLength(39)
+    expect(Object.values(table).flatMap((own) => Object.values(own!))).toHaveLength(43)
+  })
+
+  it('writes a line for every choice beyond the built-in default and for nothing else; a row with one choice has no field', () => {
+    for (const setting of CONTENT_SETTINGS) {
+      const others = setting.choices.filter((value) => value !== setting.builtInDefault)
+      if (others.length === 0) {
+        expect(setting.descriptions, setting.id).toBeUndefined()
+        continue
+      }
+      expect(Object.keys(setting.descriptions ?? {}).sort(), setting.id).toEqual(others.sort())
+    }
+  })
+
+  it('keeps every line to the lead’s register: one sentence in sentence case without a full stop (the catalogue’s), Block as "… cannot …", Allow as "… can …", never the built-in’s own line', () => {
+    for (const setting of CONTENT_SETTINGS) {
+      for (const [value, line] of Object.entries(setting.descriptions ?? {})) {
+        const where = `${setting.id} ${value}`
+        expect(line, where).toMatch(/^[A-Z][^.!?]*[^.!?\s]$/)
+        if (value === 'deny') expect(line, where).toMatch(/\b(cannot|instead of)\b/)
+        if (value === 'allow') expect(line, where).toMatch(/\bcan\b/)
+        expect(line, where).not.toBe(setting.description)
+      }
+    }
+  })
+})
