@@ -26,7 +26,7 @@ import { tabAlertTooltip, type TabAlert } from '@shared/captureState'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
+import { hoverCard, measureRow, useHoverCardUp } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
 import { ChromePortal } from '@renderer/lib/portals'
@@ -224,8 +224,9 @@ export function TabItem({
   // The hover card (lib/hoverCard.ts) replaces the row's native tooltip: it shows after the
   // pointer rests on the row, or at once when keyboard focus lands on it (§9.22), never for the
   // focus a click leaves behind; the controller holds it back while a popover, a menu, a dialog
-  // or an overlay has the chrome. The row's buttons keep their own tooltips.
-  const cardUp = uiStore.use((s) => s.hoverCard.tabId === tab.id)
+  // or an overlay has the chrome. The row's buttons keep their own tooltips. The card the row
+  // is described by (`aria-describedby` below) is the chrome's own or a native host's alike.
+  const cardUp = useHoverCardUp(tab.id)
   const onPointerEnter = (e: React.PointerEvent): void => {
     // The card would read the page's title and address: none for a masked row.
     if (e.pointerType !== 'mouse' || renaming || dragging || masked) return

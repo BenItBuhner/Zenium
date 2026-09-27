@@ -34,6 +34,7 @@ import {
   tabletDrawerShift,
   tabletDrawerStore
 } from './tabletChrome'
+import { TabletHoverCardHost } from './TabletHoverCardHost'
 import { TabletToolbar } from './TabletToolbar'
 import { type SidebarSwipeHandlers, useSidebarSwipe } from './useSidebarSwipe'
 
@@ -219,6 +220,11 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         />
       )}
       {drawerLayout && drawerUp && <TabletDrawer state={state} isDark={isDark} side={side} />}
+      {/* The tab hover card's host (TABLET-05): renders nothing – the Android host draws the
+          card above the pages where lib/hoverCard.ts says; this lets the rows raise one and binds
+          the card's dismissals while one is up (its text for the focused row is Android's root's,
+          src/android/main.tsx). */}
+      <TabletHoverCardHost state={state} />
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
       {onboarding && <Onboarding state={state} />}

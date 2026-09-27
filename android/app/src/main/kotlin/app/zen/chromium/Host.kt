@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
 import android.net.Uri
@@ -116,6 +117,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val historyNavBubbleLayer = HistoryNavBubbleLayer(activity)
     /** The bubble's disc, for whoever reads where it stands (the gestures demo). */
     val historyNavBubble: HistoryNavBubbleView get() = historyNavBubbleLayer.disc
+    /**
+     * The tab hover card (TABLET-05), drawn natively above the pages – the chrome's card could
+     * not show through them, and the page keeps playing under this one – where the chrome's
+     * machine puts it (`chrome.hoverCard`, lib/hoverCard.ts). Made on the first frame, never at
+     * boot (the cold-start rule), into the activity's shell under the fullscreen layer.
+     */
+    private var tabHoverCardLayer: TabHoverCardLayer? = null
+    /** Frames of the card in flight to a picture read: the one that lands last wins. */
+    private var tabHoverCardSeq = 0
+    /** The card as it stands, for whoever reads it (the tablet hover card demo); null before the first frame. */
+    val tabHoverCard: TabHoverCardLayer? get() = tabHoverCardLayer
     /**
      * Page-to-chrome Tab traversal for a hardware keyboard (A11Y-09): the chrome's WebView and
      * every page's are wired into it ([TabHost.create]); a Tab run off one document lands in
@@ -1328,6 +1340,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
             "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "chrome.historyNavBubble" -> { historyNavBubbleLayer.apply(HistoryNavBubbleFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
+            // The tab hover card the chrome's machine raises on the tablet's rows (TABLET-05), drawn
+            // above the pages where it says; `{ visible: false }` takes it down (see `applyTabHoverCard`).
+            "chrome.hoverCard" -> { applyTabHoverCard(TabHoverCardFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
@@ -1785,6 +1800,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // and later the system's prompt never stops us, so a stop then is a departure with the
         // prompt open (Home, a call, the screen off) and the system takes the prompt down as the
         // task leaves; a pass means the user was there (PrivateLock, onPromptAnswered).
+        // The tab hover card pictures a page above the chrome (TABLET-05): the pointer that
+        // raised it is gone with the window, and it is never the first frame back.
+        applyTabHoverCard(null)
         // The window away draws no frame: a veil's frame wait and its deadline are the next start's.
         lockVeil.windowStopped()
         main.removeCallbacks(veilDeadline)
@@ -1808,6 +1826,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // (MainActivity), where the chrome's cover could not cover it, and the page's view under
         // the layer is what the cover is for.
         fullscreenTab?.takeIf { Profiles.isPrivate(it.containerId) }?.let(::exitFullscreen)
+        // The tab hover card's layer sits there too, and its picture is a page's: down with the lock.
+        applyTabHoverCard(null)
         for (tab in tabs.all()) {
             if (!Profiles.isPrivate(tab.containerId) || tab.visibility != View.VISIBLE) continue
             tabs.setVisible(tab.tabId, false)
@@ -2114,6 +2134,57 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         refreshGuard()
     }
 
+    /**
+     * One frame of the tab hover card from the chrome (`chrome.hoverCard`), or null for the card
+     * down. The layer is made on the first frame that shows something and laid into the shell
+     * under the fullscreen layer (above the bubble's layer and every page). A frame that pictures
+     * the page (a background tab, `preview`) waits for the tab's own picture – the JPEG the
+     * chrome's thumbnail store holds for that document, read and decoded off the main thread at
+     * about the box's size – and shows the card whole once it is read, with the box when the
+     * store had one, without when it had none (a page the tab has left, a tab never hidden);
+     * a frame for another row, or the card going down, meanwhile drops the read's result. No
+     * page is captured for the card: the live page plays on under it.
+     */
+    private fun applyTabHoverCard(frame: TabHoverCardFrame?) {
+        val seq = ++tabHoverCardSeq
+        if (frame == null) {
+            tabHoverCardLayer?.apply(null, null)
+            return
+        }
+        val layer = tabHoverCardLayer ?: TabHoverCardLayer(activity, V2Ink(activity, themeDark, themeAccent, themeOnAccent)).also { made ->
+            val shell = fullscreenLayer.parent as? FrameLayout
+            if (shell != null) {
+                shell.addView(made, shell.indexOfChild(fullscreenLayer), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            } else {
+                root.addView(made, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            tabHoverCardLayer = made
+        }
+        if (!frame.preview) {
+            layer.apply(frame, null)
+            return
+        }
+        val density = activity.resources.displayMetrics.density
+        val boxWidth = ((TabHoverCardSpec.WIDTH_DP - 2 * TabHoverCardSpec.PADDING_DP) * density).toInt()
+        io.execute {
+            val picture = thumbnails.loadPicture(frame.tabId, frame.url)
+            val bitmap = picture?.let { p ->
+                val options = BitmapFactory.Options()
+                var sample = 1
+                while (p.width / (sample * 2) >= boxWidth) sample *= 2
+                options.inSampleSize = sample
+                runCatching { BitmapFactory.decodeByteArray(p.jpeg, 0, p.jpeg.size, options) }.getOrNull()
+            }
+            main.post {
+                if (seq != tabHoverCardSeq) {
+                    bitmap?.recycle()
+                    return@post
+                }
+                layer.apply(frame, bitmap)
+            }
+        }
+    }
+
     private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String, accent: String, onAccent: String) {
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
@@ -2122,6 +2193,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         themeAccent = if (accent.isNotEmpty()) parseColor(accent) else ContextCompat.getColor(activity, if (dark) R.color.v2_accent_dark else R.color.v2_accent_light)
         themeOnAccent = if (onAccent.isNotEmpty()) parseColor(onAccent) else ContextCompat.getColor(activity, if (dark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
         historyNavBubbleLayer.retint(V2Ink(activity, dark, themeAccent, themeOnAccent))
+        tabHoverCardLayer?.retint(V2Ink(activity, dark, themeAccent, themeOnAccent))
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         themeBackground = color
         root.setBackgroundColor(color)

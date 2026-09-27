@@ -8,6 +8,7 @@ import { ErrorBoundary, Root } from '@renderer/Root'
 import '@renderer/lib/lastInput'
 import { dismissBanner, pushToast, showBanner, startBrowserSync } from '@renderer/lib/ui'
 import { bootAndroid } from './boot'
+import { NativeHoverCardDescription } from './nativeHoverCardDescription'
 import { installPreviewStates } from './previewStates'
 
 /**
@@ -36,6 +37,9 @@ void bootAndroid().then(
       <StrictMode>
         <ErrorBoundary>
           <Root />
+          {/* The native tab hover card's text for the focused row (TABLET-05): one home beside
+              whichever shell the chrome mounts; nothing until the host draws a card. */}
+          <NativeHoverCardDescription />
         </ErrorBoundary>
       </StrictMode>
     )
