@@ -88,8 +88,11 @@ export const SITE_DATA_TEXT = {
    * "Delete data" (the row's), `IDS_SETTINGS_SITE_SETTINGS_DELETE_ALL_STORAGE_LABEL` "Delete all
    * data" and its dialog `IDS_SETTINGS_SITE_SETTINGS_DELETE_ALL_STORAGE_DIALOG_TITLE` "Delete all
    * data?" – and the house lines take the verb along; the per-site question names the site,
-   * "Delete data for <site>?". The identifiers keep their `clear` names, as Chrome's ids do. The
-   * viewer raises no toast (the row leaving the list is the report), so it carries none.
+   * "Delete data for <site>?", over Cancel | "Delete data" (`clear`) – one confirmation form on
+   * both hosts (the lead's second ruling): the phone page's item sheet asks it as its prompt
+   * sheet, the desktop viewer's row as the dialog's 320 notice. The identifiers keep their
+   * `clear` names, as Chrome's ids do. The viewer raises no toast (the row leaving the list is
+   * the report), so it carries none.
    */
   viewer: {
     open: 'See all site data and permissions',
@@ -110,7 +113,7 @@ export const SITE_DATA_TEXT = {
     clearAllTitle: 'Delete all data?',
     clearAllDescription:
       'Deletes every site’s cookies and stored data, from every container, and signs you out everywhere. Permissions stay.',
-    /** The item sheet's danger row (§10.4) and its prompt (§9.23). */
+    /** The item sheet's danger row (§10.4); its prompt (§9.23) is the question below over `clear`. */
     clearSite: 'Delete site data',
     clearSiteDescription: 'Signs you out of the site; its permissions stay.',
     clearSiteTitle: (site: string) => `Delete data for ${site}?`,

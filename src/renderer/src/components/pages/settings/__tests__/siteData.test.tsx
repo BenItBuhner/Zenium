@@ -19,9 +19,10 @@ import {
  * row, a switch row per on-exit type, the viewer's row – and what each asks of the engine; the
  * Add form (§9.12: the hint, the refusal, Add at .4, the busy form, the engine's refusal back in
  * the field); and the viewer (the rows and their lines, the count aside, the cap's and the
- * sizes-unavailable notes, a row's Delete data leaving the list, Delete all data in the footer
- * slot with its prompt over the dialog – inert under it, Escape to the prompt alone, the focus
- * back on Delete all data when it has gone). The words are the Delete family's (W8-11).
+ * sizes-unavailable notes, a row's Delete data asking "Delete data for <site>?" first and the
+ * row leaving the list, Delete all data in the footer slot with its prompt over the dialog –
+ * inert under it, Escape to the prompt alone, the focus back on what asked when it has gone).
+ * The words are the Delete family's (W8-11); the per-site question is one form on both hosts.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -648,9 +649,23 @@ describe('the site-data viewer', () => {
     expect(line?.dataset.tone).toBe('danger')
   })
 
-  it('clears one origin from its row: the button busy while the engine works, the row gone after, the count following', async () => {
+  /** The viewer with a host for its prompts (the primitive portals into the nearest frame dialog host). */
+  function hosted(): HTMLElement {
+    return render(
+      <FrameDialogHost>
+        <SiteDataViewer />
+      </FrameDialogHost>
+    )
+  }
+  /** A row's question, standing (a prompt on its way out is gone for this reading). */
+  const rowPrompt = (el: ParentNode, origin: string): HTMLElement | null =>
+    el.querySelector<HTMLElement>(
+      `[data-dialog="confirm:site-data-origin:${origin}:clear"]:not([data-leaving])`
+    )
+
+  it('deletes one origin from its row through its question: the button asks first, the prompt’s "Delete data" runs siteData.clearSite, the button busy while the engine works, the row gone after, the count following', async () => {
     invoke.mockImplementationOnce(async () => listing())
-    const el = render(createElement(SiteDataViewer))
+    const el = hosted()
     await settle()
     let finish: (value: unknown) => void = () => undefined
     invoke.mockImplementationOnce(
@@ -660,13 +675,22 @@ describe('the site-data viewer', () => {
         })
     )
     const clear = rows(el)[1]!.querySelector('button')!
+    expect(clear.getAttribute('aria-haspopup')).toBe('dialog')
     act(() => clear.click())
+    // The press asks; nothing runs until the question is answered.
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const p = rowPrompt(el, 'https://news.example')!
+    expect(p).not.toBeNull()
+    act(() => button(p, 'Delete data').click())
     expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
       origin: 'https://news.example'
     })
+    await settle()
+    expect(rowPrompt(el, 'https://news.example')).toBeNull()
     expect(clear.getAttribute('aria-busy')).toBe('true')
-    // A second press while busy sends nothing.
+    // A second press while busy does nothing: no question, nothing sent.
     act(() => clear.click())
+    expect(rowPrompt(el, 'https://news.example')).toBeNull()
     expect(invoke).toHaveBeenCalledTimes(2)
     act(() => finish(null))
     await settle()
@@ -676,12 +700,13 @@ describe('the site-data viewer', () => {
 
   it('keeps a row whose Delete data the engine refused, its line the failure in the danger ink', async () => {
     invoke.mockImplementationOnce(async () => listing())
-    const el = render(createElement(SiteDataViewer))
+    const el = hosted()
     await settle()
     invoke.mockImplementationOnce(async () => {
       throw new Error('locked')
     })
     act(() => rows(el)[0]!.querySelector('button')!.click())
+    act(() => button(rowPrompt(el, 'https://example.com')!, 'Delete data').click())
     await settle()
     const row = rows(el)[0]!
     expect(rowText(row)).toEqual({
@@ -694,13 +719,14 @@ describe('the site-data viewer', () => {
 
   it('a row with the cap behind it: the total follows the row out and the cap’s line stays while more are behind', async () => {
     invoke.mockImplementationOnce(async () => listing({ total: 5, truncated: true }))
-    const el = render(createElement(SiteDataViewer))
+    const el = hosted()
     await settle()
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe(
       '1,000 of 5 sites'
     )
     invoke.mockImplementationOnce(async () => null)
     act(() => rows(el)[0]!.querySelector('button')!.click())
+    act(() => button(rowPrompt(el, 'https://example.com')!, 'Delete data').click())
     await settle()
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe(
       '1,000 of 4 sites'
@@ -837,6 +863,73 @@ describe('the site-data viewer', () => {
       // The next Escape is the viewer dialog's.
       escape()
       expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('a row’s Delete data asks the phone page’s question as the same 320 notice over the viewer’s dialog: "Delete data for <site>?" over its line, Cancel | Delete data, the focus on the prompt itself; Escape closes the prompt alone and the focus returns to the row’s button; the prompt’s Delete data runs siteData.clearSite and the row leaves', async () => {
+      invoke.mockImplementationOnce(async () => listing())
+      const { el, onClose } = open()
+      await settle()
+      const rowButton = rows(el)[1]!.querySelector<HTMLButtonElement>('button')!
+      expect(rowButton.getAttribute('aria-haspopup')).toBe('dialog')
+      act(() => rowButton.focus())
+      act(() => rowButton.click())
+      expect(dialogs(el)).toHaveLength(2)
+      const p = el.querySelector<HTMLElement>(
+        '[data-dialog="confirm:site-data-origin:https://news.example:clear"]:not([data-leaving])'
+      )!
+      expect(p).not.toBeNull()
+      // The same primitive the footer's question is (§9.20's notice over the dialog, §9.23).
+      expect(p.getAttribute('role')).toBe('alertdialog')
+      expect(p.classList.contains('zen-confirm-dialog')).toBe(true)
+      expect(p.getAttribute('data-confirm')).toBe('site-data-origin:https://news.example:clear')
+      expect(p.hasAttribute('data-destructive')).toBe(true)
+      expect(p.style.width).toBe('320px')
+      const title = p.querySelector('.zen-v2-title-block-title')
+      const line = p.querySelector('.zen-v2-title-block-description')
+      // One confirmation form on both hosts: the phone page's question, line and action.
+      expect(title?.textContent).toBe('Delete data for news.example?')
+      expect(line?.textContent).toBe(SITE_DATA_TEXT.viewer.clearSitePrompt)
+      const [cancel, verb] = [...p.querySelectorAll<HTMLButtonElement>('button')]
+      expect([cancel, verb].map((b) => b?.textContent)).toEqual(['Cancel', 'Delete data'])
+      expect(verb!.hasAttribute('data-danger')).toBe(true)
+      expect(p.querySelector('[data-primary], .zen-settings-row, input')).toBeNull()
+      expect(viewerDialog(el).hasAttribute('inert')).toBe(true)
+      expect(document.activeElement).toBe(p)
+      expect(p.getAttribute('aria-labelledby')).toBe(title?.id)
+      expect(p.getAttribute('aria-describedby')).toBe(line?.id)
+      // Nothing ran for the press: the question stands between the button and the engine.
+      expect(invoke).toHaveBeenCalledTimes(1)
+
+      // Escape is Cancel: the prompt alone goes, the viewer stands, the focus is back on the row's button.
+      escape()
+      expect(
+        el.querySelector('[data-dialog^="confirm:site-data-origin:"]:not([data-leaving])')
+      ).toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(viewerDialog(el).hasAttribute('inert')).toBe(false)
+      await settle()
+      expect(document.activeElement).toBe(rowButton)
+      expect(rows(el)).toHaveLength(3)
+      expect(invoke).toHaveBeenCalledTimes(1)
+
+      // Asked again and answered: the engine runs, the row leaves.
+      act(() => rowButton.click())
+      const again = el.querySelector<HTMLElement>(
+        '[data-dialog="confirm:site-data-origin:https://news.example:clear"]:not([data-leaving])'
+      )!
+      invoke.mockImplementationOnce(async () => null)
+      act(() => button(again, 'Delete data').click())
+      expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
+        origin: 'https://news.example'
+      })
+      await settle()
+      expect(rows(el).map((r) => rowText(r).label)).toEqual([
+        'example.com',
+        'http://127.0.0.1:18131'
+      ])
+      expect(
+        el.querySelector('[data-dialog^="confirm:site-data-origin:"]:not([data-leaving])')
+      ).toBeNull()
     })
 
     it('clears everything on the prompt’s Delete all data: siteData.clearAll, then the empty line', async () => {
@@ -1044,7 +1137,8 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(title?.textContent).toBe('Delete data for news.example?')
     expect(line?.textContent).toBe(SITE_DATA_TEXT.viewer.clearSitePrompt)
     // §9.20's notice: a title block and the two buttons, nothing else (the chassis's handle aside).
-    expect(labels(prompt)).toEqual(['Cancel', 'Delete site data'])
+    // Cancel | "Delete data": the one form the desktop viewer's row asks too (W8-11).
+    expect(labels(prompt)).toEqual(['Cancel', 'Delete data'])
     expect(prompt.querySelector('.zen-settings-row, input')).toBeNull()
     // §9.22 as amended on #392 (the prompt primitive's shape, `ConfirmSheet`): the container
     // takes the focus, no verb preselected.
@@ -1066,7 +1160,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(invoke).toHaveBeenCalledTimes(1)
 
     invoke.mockImplementationOnce(async () => null)
-    act(() => button(prompt, 'Delete site data').click())
+    act(() => button(prompt, 'Delete data').click())
     // The prompt leaves first; the clear runs as it lands.
     await until(() => invoke.mock.calls.length === 2)
     expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
@@ -1097,7 +1191,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     invoke.mockImplementationOnce(async () => {
       throw new Error('locked')
     })
-    act(() => button(topSheet(el), 'Delete site data').click())
+    act(() => button(topSheet(el), 'Delete data').click())
     await until(() => invoke.mock.calls.length === 2)
     await settle()
     const row = pageRows(el)[0]!

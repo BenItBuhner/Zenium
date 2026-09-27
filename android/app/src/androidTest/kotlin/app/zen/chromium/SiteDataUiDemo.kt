@@ -1076,7 +1076,8 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                     note("  item sheet: ${topSheetText()}")
                     shot("20-viewer-item-sheet")
                     beat()
-                    // Its prompt: the title block and two buttons, the container focused (§9.20, §9.22).
+                    // Its prompt: the title block and two buttons – Cancel | "Delete data", the one form the
+                    // desktop viewer's row asks too (W8-11) – the container focused (§9.20, §9.22).
                     if (tapPageRow(clearRow) { sheetCount() == 2 && topSheetTitled("Delete data for") }) {
                         awaitSheetsSettled()
                         SystemClock.sleep(400)
@@ -1084,7 +1085,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                         claim("the prompt focuses its container, not a button", chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];return String(!!d&&document.activeElement===d)})()") == "true")
                         shot("21-viewer-item-prompt")
                         beat()
-                        if (tapSheetButton("Delete site data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
+                        if (tapSheetButton("Delete data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
                             awaitNoSheet(8_000)
                             awaitSettled(6_000) { !chromeHas(originRowSelector) }
                             SystemClock.sleep(800)
