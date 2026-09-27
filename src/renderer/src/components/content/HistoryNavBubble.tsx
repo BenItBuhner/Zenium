@@ -165,7 +165,11 @@ export function HistoryNavBubble(): JSX.Element | null {
             <Arrow />
           </span>
           {caption !== null && (
-            <span ref={captionRef} className="zen-histnav-caption" data-testid="history-nav-caption">
+            <span
+              ref={captionRef}
+              className="zen-histnav-caption"
+              data-testid="history-nav-caption"
+            >
               {caption}
             </span>
           )}

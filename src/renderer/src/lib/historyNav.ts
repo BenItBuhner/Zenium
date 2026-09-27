@@ -790,7 +790,8 @@ if (!flags.__zenHistoryNavWired) {
     // as `willNavigate()` turns true). A host that draws the disc performs Chrome's constant
     // itself on the frame that arms (`HistoryNavBubbleLayer`, one message with the disc's full
     // frame): the chrome's tick is for the DOM disc alone.
-    if (armed && !wasArmed && phase === 'dragging' && bubbleHost === null) run('haptic', { kind: 'tick' })
+    if (armed && !wasArmed && phase === 'dragging' && bubbleHost === null)
+      run('haptic', { kind: 'tick' })
     wasArmed = armed
   })
   browserStore.subscribe(() => {

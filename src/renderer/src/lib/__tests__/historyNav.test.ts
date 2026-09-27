@@ -339,8 +339,12 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
     expect(reducedLeave.reduced).toBe(true)
     // Not so with motion on: the same frame carries the exit's tenth of shrink.
     expect(
-      bubbleHostFrame({ offset: 96, hide: 1, grow: 1, caption: 0 }, state('left', true), anchorLeft, false)
-        .scale
+      bubbleHostFrame(
+        { offset: 96, hide: 1, grow: 1, caption: 0 },
+        state('left', true),
+        anchorLeft,
+        false
+      ).scale
     ).toBeCloseTo(1 - HIDE_SHRINK, 9)
   })
 })
@@ -424,7 +428,13 @@ describe('HistoryNavMachine', () => {
   it('paints the bubble under the finger while it is down and arms past the threshold', () => {
     const h = harness()
     h.machine.dispatch('t1', 'start', { edge: 'left' })
-    expect(h.machine.state).toEqual({ tabId: 't1', edge: 'left', phase: 'dragging', armed: false, closeTarget: 'none' })
+    expect(h.machine.state).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'dragging',
+      armed: false,
+      closeTarget: 'none'
+    })
     expect(h.frames).toEqual([{ offset: 0, hide: 0, grow: 0, caption: 0 }])
     now += 16
     h.machine.dispatch('t1', 'move', { travel: 10, time: now })
@@ -508,7 +518,13 @@ describe('HistoryNavMachine', () => {
     expect(h.machine.state.phase).toBe('settling')
     settle()
     expect(h.navigated).toEqual([])
-    expect(h.machine.state).toEqual({ tabId: null, edge: 'left', phase: 'idle', armed: false, closeTarget: 'none' })
+    expect(h.machine.state).toEqual({
+      tabId: null,
+      edge: 'left',
+      phase: 'idle',
+      armed: false,
+      closeTarget: 'none'
+    })
     expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0, grow: 0, caption: 0 })
     // The return never overshoots out past the side, and never hides the disc on the way.
     for (const f of h.frames) {
@@ -576,7 +592,13 @@ describe('HistoryNavMachine', () => {
     drag(h, 60)
     h.machine.dispatch('t2', 'move', { travel: 200, time: now })
     h.machine.dispatch('t2', 'release', { time: now })
-    expect(h.machine.state).toEqual({ tabId: 't1', edge: 'left', phase: 'dragging', armed: false, closeTarget: 'none' })
+    expect(h.machine.state).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'dragging',
+      armed: false,
+      closeTarget: 'none'
+    })
     h.machine.dispatch('t1', 'release', { time: now })
     // Late moves after the release change nothing.
     h.machine.dispatch('t1', 'move', { travel: 300, time: now })
@@ -589,7 +611,13 @@ describe('HistoryNavMachine', () => {
     drag(h, 120)
     expect(queued).toHaveLength(1)
     h.machine.abort()
-    expect(h.machine.state).toEqual({ tabId: null, edge: 'left', phase: 'idle', armed: false, closeTarget: 'none' })
+    expect(h.machine.state).toEqual({
+      tabId: null,
+      edge: 'left',
+      phase: 'idle',
+      armed: false,
+      closeTarget: 'none'
+    })
     expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0, grow: 0, caption: 0 })
     expect(queued).toHaveLength(0)
   })
@@ -609,7 +637,12 @@ describe('HistoryNavMachine', () => {
     h.machine.dispatch('t1', 'release', { time: now })
     expect(h.navigated).toEqual([['t1', 'left']])
     // One frame with the disc where it stands and `hide` at 1: the CSS fade does the rest.
-    expect(h.frames[h.frames.length - 1]).toEqual({ offset: standing, hide: 1, grow: 1, caption: 0 })
+    expect(h.frames[h.frames.length - 1]).toEqual({
+      offset: standing,
+      hide: 1,
+      grow: 1,
+      caption: 0
+    })
     expect(h.machine.state.phase).toBe('navigating')
     expect(queued).toHaveLength(0)
     vi.advanceTimersByTime(119)
@@ -622,7 +655,12 @@ describe('HistoryNavMachine', () => {
     drag(short, 30)
     short.machine.dispatch('t1', 'release', { time: now })
     // Cut on release, still full: nothing shrinks back under reduced motion.
-    expect(short.frames[short.frames.length - 1]).toEqual({ offset: 30, hide: 1, grow: 1, caption: 0 })
+    expect(short.frames[short.frames.length - 1]).toEqual({
+      offset: 30,
+      hide: 1,
+      grow: 1,
+      caption: 0
+    })
     vi.advanceTimersByTime(120)
     expect(short.machine.state.phase).toBe('idle')
     expect(short.navigated).toEqual([])
@@ -644,7 +682,7 @@ describe('HistoryNavMachine', () => {
       expect(h.asked).toHaveLength(1)
     })
 
-    it('runs the pill out on the growth\'s spring as the drag arms, and back in as it eases under', () => {
+    it("runs the pill out on the growth's spring as the drag arms, and back in as it eases under", () => {
       const h = harness()
       h.closeTarget = 'tab'
       drag(h, 90)
@@ -705,7 +743,11 @@ describe('HistoryNavMachine', () => {
       h.machine.dispatch('t1', 'release', { time: now })
       expect(h.navigated).toEqual([['t1', 'left']])
       // The state carries the target through the leave, for whoever draws the pill's text.
-      expect(h.machine.state).toMatchObject({ phase: 'navigating', armed: true, closeTarget: 'app' })
+      expect(h.machine.state).toMatchObject({
+        phase: 'navigating',
+        armed: true,
+        closeTarget: 'app'
+      })
       const hiding = h.frames.length
       settle()
       for (const f of h.frames.slice(hiding, -1)) expect(f.caption).toBeCloseTo(1, 2)
