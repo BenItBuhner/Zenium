@@ -1254,8 +1254,12 @@ export function NavRow({
                 <MonitorDown className="h-3.5 w-3.5" />
                 {installLabelUp && (
                   // The word's size is the stylesheet's `.zen-pill-label` (13 px, shared with
-                  // "Not secure"); its weight the button's 500 (§4).
-                  <span className="zen-pill-label leading-none font-medium" aria-hidden>
+                  // "Not secure"); its weight the button's 500 (§4). Its line box is the pill's
+                  // own (19.5 at 13 px, centred in the chip's 20), the address's line box: a
+                  // `leading-none` line box centred in the chip put the word's baseline 1 px
+                  // under the address's (the FIRST LINE's N4 on #589 – ink row 62 to the
+                  // address's 61; both at 61 now).
+                  <span className="zen-pill-label font-medium" aria-hidden>
                     Install
                   </span>
                 )}

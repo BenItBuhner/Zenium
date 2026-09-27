@@ -1821,6 +1821,10 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     // the button's medium.
     expect(label.className.split(/\s+/).some((c) => c.startsWith('text-['))).toBe(false)
     expect(label.classList.contains('font-medium')).toBe(true)
+    // Its line box is the pill's own, the address's – no leading of its own: a `leading-none`
+    // box centred in the chip's 20 put the word's baseline 1 px under the address's (the FIRST
+    // LINE's N4 on #589; W8-F7 measured both at ink row 61 with it gone).
+    expect(label.className.split(/\s+/).some((c) => c.startsWith('leading-'))).toBe(false)
   })
 
   // The seam with W8-1 (#578), folded once it landed: the Install chip takes the shared
@@ -2111,7 +2115,10 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     expect(chip('[aria-label="Copy URL"]').hasAttribute('data-zen-anchored')).toBe(false)
     // The three hover-only utilities keep the run for an anchored chip's open popup alone: the
     // stylesheet's `:has([data-zen-anchored][aria-expanded=true])` on the chips' scope, never
-    // the bare `aria-expanded` that held them drawn under the install dialog's scrim.
+    // the bare `aria-expanded` that held them drawn under the install dialog's scrim. (The
+    // retired class is assembled here so the stylesheet's scanner, which reads this file too,
+    // never emits its rule again.)
+    const bareKeepRule = ['group-has-[[aria-expanded=true]]', 'chips:flex'].join('/')
     for (const selector of [
       '[aria-label="Copy URL"]',
       '[data-share-chip]',
@@ -2122,9 +2129,7 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
         c.classList.contains('group-has-[[data-zen-anchored][aria-expanded=true]]/chips:flex'),
         selector
       ).toBe(true)
-      expect(c.classList.contains('group-has-[[aria-expanded=true]]/chips:flex'), selector).toBe(
-        false
-      )
+      expect(c.classList.contains(bareKeepRule), selector).toBe(false)
       expect(c.classList.contains('group-hover/pill:flex'), selector).toBe(true)
       expect(c.classList.contains('group-focus-within/chips:flex'), selector).toBe(true)
     }

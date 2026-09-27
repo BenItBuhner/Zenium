@@ -6174,9 +6174,9 @@
  * and the pill filling its slot (`PILL_BLEED`, the `-mx-0.5` on it). At the default sidebar
  * width the pill is §9.29's 100 and its content box 84, the address 58 beside the site icon;
  * with the star it would keep 32, which no host fits. 110: with the star the field would keep
- * 58 px, under the shortest internal address (`zenium://settings`, ~106 px at the address's
- * 13 px), which still needs a ~132 px content box without the star, so a sidebar dragged wider
- * never trades the address for the title and back.
+ * 58 px, under the shortest internal address (`zenium://settings`, 106.7 px at the address's
+ * 13 px on the build's font stack), which still needs a ~133 px content box without the star,
+ * so a sidebar dragged wider never trades the address for the title and back.
  */
 @container (width < 110px) {
   .zen-pill-chip {
