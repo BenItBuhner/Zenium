@@ -12524,16 +12524,48 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * page or side panel in an `ExtensionSheet`, an install or permission prompt
      * (`NativePromptSheet`), a page dialog, an auth sheet – each a `BottomSheetDialog` whose
      * window covers the screen behind its scrim, so [dismissDialog]'s height test never meets
-     * one. The activity's own window is the lowest of the app's; every window of the app's
-     * above it is a surface the back gesture dismisses. Empty with the activity alone up.
+     * one. Every window of the app's above the activity's own is a surface the back gesture
+     * dismisses. Empty with the activity alone up.
+     *
+     * The activity's window is NOT simply the lowest of the app's: a sheet's window is touch
+     * modal, and the framework leaves the windows beneath a touch-modal window out of the
+     * accessibility window list (the unaccounted-space walk that builds it stops there), so
+     * with a sheet up the list holds the sheet alone and the activity's window is not in it.
+     * Round 22's 113 runs (the BEFORE 36285609473, the AFTER 36300834746) had Screen Recorder's
+     * page-dialog sheet up for thirteen and seventeen minutes with [dismissPageDialogSheet] –
+     * under the [PageDialogWatch] and at the cleanup – and [dismissSheets] answering nothing:
+     * this function wanted two windows and took the lowest for the activity's, and no run of
+     * the round ever saw a window here. The lowest window is therefore read: a sheet
+     * ([isSheetWindow]) is a surface, with every window over it; anything else is the activity's,
+     * and the windows over it are the surfaces.
      */
     private fun extraWindows(): List<AccessibilityWindowInfo> {
         val own = ui.windows.filter {
             it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString() == app.packageName
         }
-        if (own.size < 2) return emptyList()
         val lowest = own.minByOrNull { it.layer } ?: return emptyList()
-        return own.filter { it !== lowest }
+        return if (isSheetWindow(lowest)) own else own.filter { it !== lowest }
+    }
+
+    /**
+     * Whether a window of the app's is one of its bottom sheets: Material's `BottomSheetDialog`
+     * wraps every content view in its own layout, whose sheet frame carries the id
+     * `design_bottom_sheet` – the extension sheets, the prompt chassis (`NativePromptSheet`: an
+     * install or permission prompt, a page's dialog) and the auth sheet alike; the activity's own
+     * window has no such node. Read breadth first from the window's root (the frame sits a few
+     * levels down), a few hundred nodes at most; the view ids are reported since
+     * `FLAG_REPORT_VIEW_IDS` is on for every driver (`DemoHarness.runSequence`).
+     */
+    private fun isSheetWindow(window: AccessibilityWindowInfo): Boolean {
+        val root = window.root ?: return false
+        val queue = ArrayDeque(listOf(root))
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < 400) {
+            val node = queue.removeFirst()
+            if (node.viewIdResourceName?.endsWith(SHEET_FRAME_ID) == true) return true
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return false
     }
 
     /** A window's first texts (labels and descriptions, breadth first) behind its layer: the evidence of what was up. */
@@ -13120,6 +13152,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val STOCK_DIALOG_TITLE_HEAD = "The page at \""
         private const val STOCK_DIALOG_TITLE_TAIL = "\" says:"
+        /** The tail of the reported view id of a `BottomSheetDialog`'s sheet frame (Material's `design_bottom_sheet`, behind the app's package): what marks a window as one of the app's sheets ([isSheetWindow]). */
+        private const val SHEET_FRAME_ID = ":id/design_bottom_sheet"
         /** Where a label's words break ([shownDespiteEmptyDom]): whitespace, and the zero-width space, joiner, non-joiner and BOM a merged accessibility node carries between the rows it joined. */
         private val LABEL_WORD_BREAK = Regex("[\\s\u200B\u200C\u200D\uFEFF]+")
         private const val HANG_MAIN_THREAD_MS = 90_000L
