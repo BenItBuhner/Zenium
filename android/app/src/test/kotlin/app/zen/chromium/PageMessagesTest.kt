@@ -22,7 +22,7 @@ class PageMessagesTest {
 
     @Test
     fun helloEvalResultAndDomReadyAreTheViewsOwn() {
-        assertEquals(PageMessageRoute.Hello, routePageMessage(message("type" to "hello"), token))
+        assertTrue(routePageMessage(message("type" to "hello"), token) is PageMessageRoute.Hello)
         assertEquals(
             PageMessageRoute.EvalResult(7, "\"title\""),
             routePageMessage(message("type" to "evalResult", "id" to 7, "value" to "\"title\""), token)
@@ -32,6 +32,31 @@ class PageMessagesTest {
             routePageMessage(message("type" to "evalResult", "id" to 8, "value" to null), token)
         )
         assertEquals(PageMessageRoute.DomReady, routePageMessage(message("type" to "domReady"), token))
+    }
+
+    @Test
+    fun theHelloCarriesItsDocumentsNavigationStartOrNaNForNone() {
+        // The page script's `documentStart: performance.timeOrigin` – wall-clock milliseconds, fractional.
+        val stamped = routePageMessage(message("type" to "hello", "documentStart" to 1_758_965_000_123.75), token)
+        assertTrue(stamped is PageMessageRoute.Hello)
+        assertEquals(1_758_965_000_123.75, (stamped as PageMessageRoute.Hello).documentStart, 0.0)
+        // An integer stamp reads the same.
+        assertEquals(1_758_965_000_000.0, (routePageMessage(message("type" to "hello", "documentStart" to 1_758_965_000_000L), token) as PageMessageRoute.Hello).documentStart, 0.0)
+        // No stamp (a hello from before the field), a null, or one that is not a number: unknown, NaN.
+        for (hello in listOf(
+            message("type" to "hello"),
+            message("type" to "hello", "documentStart" to null),
+            message("type" to "hello", "documentStart" to "soon"),
+            message("type" to "hello", "documentStart" to true)
+        )) {
+            val route = routePageMessage(hello, token)
+            assertTrue(hello, route is PageMessageRoute.Hello)
+            assertTrue(hello, (route as PageMessageRoute.Hello).documentStart.isNaN())
+        }
+        // The stamp is the main document's alone to act on, but every frame's hello carries it and
+        // the route is the same for both (the view tells them apart by `isMainFrame`).
+        assertTrue(routePageMessage(message("type" to "hello", "documentStart" to 1.0), token).heardFrom(isMainFrame = true))
+        assertFalse(routePageMessage(message("type" to "hello", "documentStart" to 1.0), token).heardFrom(isMainFrame = false))
     }
 
     @Test
