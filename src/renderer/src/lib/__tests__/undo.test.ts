@@ -1,5 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
 import { UNDO_DELAY_MS, UndoableDeletes } from '../undo'
+
+// `removeWithUndo` lives with the phone panels; what it needs of the chrome is stubbed so the
+// toast it pushes can be read back, and the shared `undoableDeletes` instance runs for real.
+const pushToast = vi.fn<(message: string, kind: string, opts: { duration?: number }) => number>(
+  () => 1
+)
+vi.mock('@renderer/lib/ui', () => ({
+  pushToast: (...args: Parameters<typeof pushToast>) => pushToast(...args),
+  uiStore: { get: () => ({ menu: null, bookmarkEdit: null }) }
+}))
+vi.mock('@renderer/lib/back', () => ({ useBackSurface: () => undefined }))
+const { removeWithUndo } = await import('@renderer/components/phone/phonePanel')
+
+describe('the grace period is the §9.33 Undo clock', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    pushToast.mockClear()
+  })
+
+  it('UNDO_DELAY_MS is TOAST_UNDO_MS, and the phone panels push their Undo toast for exactly as long as the delete can be undone', () => {
+    expect(UNDO_DELAY_MS).toBe(TOAST_UNDO_MS)
+    expect(TOAST_UNDO_MS).toBe(8000)
+
+    const commit = vi.fn()
+    removeWithUndo(['row'], 'Bookmark deleted', commit)
+    expect(pushToast).toHaveBeenCalledTimes(1)
+    expect(pushToast).toHaveBeenCalledWith(
+      'Bookmark deleted',
+      'info',
+      expect.objectContaining({ duration: TOAST_UNDO_MS })
+    )
+
+    // The commit's clock is the toast's: the delete goes through the instant the toast would go.
+    vi.advanceTimersByTime(TOAST_UNDO_MS - 1)
+    expect(commit).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('UndoableDeletes', () => {
   beforeEach(() => vi.useFakeTimers())
