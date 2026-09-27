@@ -7,6 +7,7 @@ import {
   FOLD_UNIT_CHARS,
   foldFilesFor,
   injectsProgrammatically,
+  latin1Json,
   mergeAlikeGroups,
   originRulesFor,
   planUnits,
@@ -270,6 +271,31 @@ describe('planUnits', () => {
     }
     expect(page.kind).toBe('page')
     expect(page.extension.groups).toEqual([])
+  })
+
+  it('serves the page config Latin-1 – a manifest and messages outside Latin-1 travel as escapes and parse the same (compat round 22, R22-2)', () => {
+    const manifest = parseRuntimeManifest(
+      {
+        manifest_version: 3,
+        name: '__MSG_name__',
+        description: 'Übersetzt Seiten – 翻訳 · Перевод · 😀',
+        version: '1.2.3'
+      },
+      null
+    )
+    const messages = { name: { message: 'ページ翻訳' } }
+    const boot = buildExtensionBoot(ID, manifest, messages, [], 'world')
+    const planned = planUnits(boot, manifest, env)
+    expect(/[\u0100-\uffff]/.test(planned.served.page)).toBe(false)
+    expect(planned.served.page).toContain('\\u7ffb\\u8a33')
+    expect(planned.served.page).toContain('\\ud83d\\ude00')
+    // The Latin-1 characters stay as they are; the bootstrap reads the same config.
+    expect(planned.served.page).toContain('Übersetzt Seiten')
+    const page = JSON.parse(planned.served.page) as {
+      extension: { manifest: { description: string }; messages: typeof messages }
+    }
+    expect(page.extension.manifest.description).toBe('Übersetzt Seiten – 翻訳 · Перевод · 😀')
+    expect(page.extension.messages).toEqual(messages)
   })
 
   it('generates the MV2 background page at the path Chrome uses', () => {
@@ -581,5 +607,29 @@ describe('injectsProgrammatically', () => {
         )
       )
     ).toBe(true)
+  })
+})
+
+describe('latin1Json', () => {
+  it('writes every character over U+00FF as a \\uXXXX escape, a surrogate half each, and leaves Latin-1 as it is', () => {
+    const value = {
+      latin: 'café ÿ \u00ff \u0000 "quoted" \\ back',
+      wide: '\u0100 ⁝ 翻訳 Перевод',
+      astral: '😀',
+      nested: [{ k: 'ključ' }, 1, null, true]
+    }
+    const text = latin1Json(value)
+    expect(/[\u0100-\uffff]/.test(text)).toBe(false)
+    expect(text).toContain('"latin":"café ÿ ÿ \\u0000 \\"quoted\\" \\\\ back"')
+    expect(text).toContain(
+      '"wide":"\\u0100 \\u205d \\u7ffb\\u8a33 \\u041f\\u0435\\u0440\\u0435\\u0432\\u043e\\u0434"'
+    )
+    expect(text).toContain('"astral":"\\ud83d\\ude00"')
+    expect(text).toContain('"k":"klju\\u010d"')
+    expect(JSON.parse(text)).toEqual(value)
+    // A Latin-1 value is JSON.stringify's text unchanged.
+    expect(latin1Json({ a: 'plain ascii', b: 'à la carte' })).toBe(
+      JSON.stringify({ a: 'plain ascii', b: 'à la carte' })
+    )
   })
 })

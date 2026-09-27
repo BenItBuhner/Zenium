@@ -14,10 +14,11 @@ import {
   type ContentDefault,
   type ContentSetting
 } from '@shared/contentSettings'
-import { run } from '@renderer/lib/api'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
+import { cmd, run } from '@renderer/lib/api'
 import { grantDetail, grantsOf, sitesWithGrants } from '@renderer/lib/devices'
 import { headline, safetyRows, worstState, type SafetyAction } from '@renderer/lib/safetyCheck'
-import { openOverlay } from '@renderer/lib/ui'
+import { openOverlay, pushToast } from '@renderer/lib/ui'
 import {
   DEFAULT_WORDS,
   SITE_SETTINGS_GROUPS,
@@ -37,7 +38,8 @@ import {
   type FormSheet,
   type ItemRow,
   type RowGroup,
-  type SettingsRow
+  type SettingsRow,
+  type SwitchRow
 } from '../pages/settings/model'
 import type { SectionContext } from '../pages/settings/sections'
 import { ClearBrowsingDataForm } from './ClearBrowsingDataForm'
@@ -78,7 +80,13 @@ const SAFETY_CHECK_INTRO =
 export function safetyCheckGroups({ state, tab, navigate }: SectionContext): RowGroup[] {
   const result = state.lastSafetyCheck
   const worst = result ? worstState(result) : null
-  const check = (): void => run('privacy.safetyCheck', undefined)
+  // Settled once the result has landed in the state (the reviews' acts wait on it; errors are
+  // the command layer's to log, never a row's).
+  const check = (): Promise<void> =>
+    cmd('privacy.safetyCheck', undefined).then(
+      () => undefined,
+      () => undefined
+    )
   const act = (action: SafetyAction): void => {
     switch (action.kind) {
       case 'command':
@@ -185,6 +193,15 @@ export function safetyCheckGroups({ state, tab, navigate }: SectionContext): Row
  * to a reader, plain ink, no confirmation – and runs the check again. The lead's #431 Q1 ruling:
  * a per-site reset is the same plain act as one Forget and costs nothing but that site asking
  * again; §10.5's bulk is the list emptied, which Reset all sites is and confirms.
+ *
+ * Before them, while the check's revoked list holds anything, Chrome's Safety Hub module row
+ * for row (PS-41; `unused_site_permissions_module.html`, `SafetyHubPermissionsFragment`): the
+ * sites the sweep removed permissions from – each an item row in the same shape whose one
+ * action, Allow again, grants them back at once (`permissions.regrantRevoked`; the site is
+ * kept from the sweep after) with Chrome's toast and its Undo (`undoRegrantRevoked`) – and Got
+ * it, which takes the list as reviewed (`acknowledgeRevoked`: the permissions stay removed)
+ * with the bulk toast and its Undo (`restoreRevokedList`). Each act runs the check again, so
+ * the row's sentence and the sheet follow. The sheet's description covers both lists.
  */
 function permissionsReview(
   id: string,
@@ -193,7 +210,7 @@ function permissionsReview(
   leading: ReactNode,
   result: SafetyCheckResult,
   state: UIState,
-  recheck: () => void
+  recheck: () => Promise<void>
 ): ItemRow {
   const flagged = new Map(result.permissions.review.map((r) => [r.origin, r]))
   const granted = bySite(state.permissionRules.filter((r) => r.decision === 'allow'))
@@ -202,6 +219,9 @@ function permissionsReview(
     const fb = flagged.has(b.origin) ? 0 : 1
     return fa - fb
   })
+  const revoked = result.permissions.revoked
+  const revokedGroups: RowGroup[] =
+    revoked.length > 0 ? [revokedReview(id, summary, revoked, recheck)] : []
   return {
     kind: 'item',
     id,
@@ -210,11 +230,14 @@ function permissionsReview(
     leading,
     sheet: {
       title: 'Site permissions',
-      description: 'Sites allowed to use something. Resetting a site makes it ask again.',
+      description:
+        'Sites allowed to use something, and permissions taken back from unused sites. Resetting a site makes it ask again.',
       groups: [
+        ...revokedGroups,
         {
           id: `${id}:sites`,
-          heading: null,
+          // Alone the list needs no heading; under the removed permissions it names itself.
+          heading: revoked.length > 0 ? 'Sites with permissions you granted' : null,
           rows: sites.map((site): ItemRow => {
             const host = hostOf(site.origin)
             const flag = flagged.get(site.origin)
@@ -252,6 +275,117 @@ function permissionsReview(
         }
       ]
     }
+  }
+}
+
+/**
+ * The sites whose Allow again is on its way: pressed, and the check not yet back with the list
+ * that no longer holds them. A second press meanwhile is the engine's no-op and would only
+ * double the toast (the desktop's column keeps every toast), so it does nothing. Module state,
+ * since the rows are rebuilt from the state on every render and the press outlives the build.
+ */
+const regranting = new Set<string>()
+
+/**
+ * The removed-permissions block of the permissions review, Chrome's Safety Hub module as a
+ * group: its heading the row's own sentence ("Permissions removed from N sites"), its
+ * description Chrome's subheader – which says once why they went – one item row per site, the
+ * permissions alone under the host ("Camera, Microphone"), Allow again its one action, and Got
+ * it closing the block. Allow again and Got it each raise Chrome's toast with Undo on §9.33's
+ * Undo clock (`TOAST_UNDO_MS`); the check runs again after each act and each undo. Got it
+ * leaves the review sheet with its press (`closesSheet`): its act ends the list the sheet was
+ * opened for, and the toast then stands over the page on the phone, where a message sits under
+ * an open sheet. Allow again keeps the sheet open for the sites left.
+ */
+function revokedReview(
+  id: string,
+  summary: string,
+  revoked: SafetyCheckResult['permissions']['revoked'],
+  recheck: () => Promise<void>
+): RowGroup {
+  const groupId = `${id}:revoked`
+  const allowAgain = (origin: string): void => {
+    if (regranting.has(origin)) return
+    regranting.add(origin)
+    run('permissions.regrantRevoked', { origin })
+    void recheck().finally(() => regranting.delete(origin))
+    pushToast(`Permissions allowed again for ${hostOf(origin)}`, 'info', {
+      duration: TOAST_UNDO_MS,
+      action: {
+        label: 'Undo',
+        onPick: () => {
+          run('permissions.undoRegrantRevoked', { origin })
+          void recheck()
+        }
+      }
+    })
+  }
+  const acknowledge = (): void => {
+    void cmd('permissions.acknowledgeRevoked', undefined)
+      .then((records) => {
+        void recheck()
+        if (records.length === 0) return
+        pushToast(`Review complete for ${count(records.length, 'site')}`, 'info', {
+          duration: TOAST_UNDO_MS,
+          action: {
+            label: 'Undo',
+            onPick: () => {
+              run('permissions.restoreRevokedList', { records })
+              void recheck()
+            }
+          }
+        })
+      })
+      .catch(() => undefined)
+  }
+  const rows: SettingsRow[] = revoked.map((record): ItemRow => {
+    const host = hostOf(record.origin)
+    const description = record.permissions.map(permissionName).join(', ')
+    const rowId = `${groupId}:${record.origin}`
+    const onPress = (): void => allowAgain(record.origin)
+    const regrant: ActionRow = {
+      kind: 'action',
+      id: `${rowId}:allow-again`,
+      label: 'Allow again',
+      button: 'Allow again',
+      onPress
+    }
+    return {
+      kind: 'item',
+      id: rowId,
+      label: host,
+      description,
+      action: {
+        label: 'Allow again',
+        // Chrome's reader name for the button (`settings_strings.grdp`: "Allow permissions
+        // again for $1"); the label then the host would read "Allow again meet.example".
+        ariaLabel: `Allow permissions again for ${host}`,
+        onPress
+      },
+      sheet: {
+        title: host,
+        description,
+        groups: [{ id: `${rowId}:actions`, heading: null, rows: [regrant] }]
+      }
+    }
+  })
+  rows.push({
+    kind: 'action',
+    id: `${groupId}:acknowledge`,
+    label: 'Got it',
+    description: 'Clears this list. Sites ask again when they need a permission.',
+    button: 'Got it',
+    closesSheet: true,
+    onPress: acknowledge
+  })
+  return {
+    id: groupId,
+    heading: summary,
+    description:
+      revoked.length === 1
+        ? "To protect your data, permissions were removed from a site you haven't visited recently."
+        : "To protect your data, permissions were removed from sites you haven't visited recently.",
+    rows
   }
 }
 
@@ -376,7 +510,8 @@ const SITE_SETTINGS_INTRO =
  * that type, each an item row whose one action, Forget, runs at once (the lead's #418 ruling 5;
  * Chrome's per-type pages); a type with one possible default is a fact. Then the sites with
  * settings of their own, each a sheet of its answers with a Reset that runs at once (the lead's
- * #431 Q1 ruling), and Reset all, the one confirmed act: the list emptied.
+ * #431 Q1 ruling), and Reset all, the one confirmed act: the list emptied. Last, as on both
+ * Chromes' Site settings pages, the switch of the sweep that removes unused sites' permissions.
  */
 export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
   const platform = state.platform === 'android' ? 'android' : 'desktop'
@@ -463,7 +598,41 @@ export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
     rows: siteRows,
     empty: 'No site has settings of its own yet'
   })
+  // A heading of its own: after the danger-ink Reset all sites, a headingless switch would read
+  // as that list's tail (the lead's #637 ruling 6).
+  groups.push({
+    id: 'sites-unused',
+    heading: 'Unused sites',
+    rows: [autoRevokeRow(state, platform)]
+  })
   return groups
+}
+
+/**
+ * The unused-site-permissions sweep's switch (PS-41; `Settings.autoRevokeUnusedPermissions`),
+ * where both Chromes keep it – the last thing on the Site settings page (desktop
+ * `site_settings_page.html`'s `unusedSitePermissionsRevocationToggle`; Android's
+ * `IDS_SAFETY_HUB_AUTOREVOCATION_TOGGLE_*`, "a setting located in the 'Site settings' page") –
+ * in each host's own words: the desktop's two sentences, and on the phone the one that fits
+ * the sublabel's two lines with "recently" kept (a clamp that drops it changes the meaning,
+ * §10.5). Off, nothing more is removed; what the sweep removed stays listed in the Safety
+ * check until it is reviewed or a month passes.
+ */
+function autoRevokeRow(state: UIState, platform: 'android' | 'desktop'): SwitchRow {
+  const phone = platform === 'android'
+  return {
+    kind: 'switch',
+    id: 'sites-auto-revoke',
+    label: phone
+      ? 'Automatically remove permissions'
+      : 'Automatically remove permissions from unused sites',
+    description: phone
+      ? "Let Zenium remove permissions from sites that you haven't visited recently."
+      : "To protect your data, let Zenium remove permissions from sites you haven't visited recently. Notifications are not removed.",
+    keywords: ['unused sites', 'revoke', 'remove permissions', 'safety check', 'safety hub'],
+    checked: state.settings.autoRevokeUnusedPermissions,
+    onChange: (checked) => run('settings.update', { autoRevokeUnusedPermissions: checked })
+  }
 }
 
 /**

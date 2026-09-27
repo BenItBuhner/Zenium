@@ -1,6 +1,5 @@
 package app.zen.chromium.ext
 
-import androidx.annotation.VisibleForTesting
 import app.zen.chromium.strOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -13,16 +12,24 @@ import kotlin.concurrent.withLock
  * Compiles the content-script units the core plans for one extension (`ext.configure`) into the
  * document-start scripts the WebView injects, and remembers them per extension and version:
  *
- *  - the sources of an extension's files are read once per version, however many units and
- *    reconfigures ask for them (a `registerContentScripts` call re-plans the extension's units,
- *    it does not change its files) – held softly: every source is also inside the assembled
- *    script, so under heap pressure the GC takes the raw texts back and the next reconfigure
- *    reads them again (Grammarly's ten million characters of sources are that much heap twice,
- *    on a 192 MB debug heap that also holds the other extensions' units). A file of
- *    [LARGE_SOURCE_CHARS] or more is not held at all: it goes into the script as a
- *    [ExtensionScripts.Source.transient] text released as it is copied in, and a re-plan reads
- *    it from disk again (Monica's 28 million characters of `content.js`: a soft copy of it kept
- *    the heap at its limit, and the assembly's third copy of it was the allocation that failed);
+ *  - the sources of an extension's files are read once per compile, however many units and
+ *    groups of the plan copy them (a file a plan lists in several units – Adblock Ad Blocker
+ *    Pro's scriptlets sit in its whole units and in its hostname units alike – is read once), and
+ *    let go once every unit of the plan is compiled: every source is inside the assembled
+ *    scripts, and a re-plan (a `registerContentScripts` call re-plans the extension's units, it
+ *    does not change its files) answers its unchanged units from the unit cache without a read
+ *    and reads only the files its changed units name – file IO on the runtime's io executor,
+ *    off the main thread. Between compiles the texts were held softly until compat round 22: ART
+ *    keeps a soft referent as it keeps a strong one and clears it only in the collection it runs
+ *    after an allocation has failed, so the 651 sources of Adblock Ad Blocker Pro's plan – 15.8
+ *    million characters, 24.7 MB beside its 37.7 MB of units – stood on the 192 MB heap through
+ *    every row after it and went only at the edge of the allocation failure the soft hold was
+ *    meant to spare, while the lanes' second configure of an extension compiled every unit anew
+ *    (`0 cached`) and the hold bought nothing. A file of [LARGE_SOURCE_CHARS] or more is not held
+ *    even for the compile's duration: it goes into the script as a [ExtensionScripts.Source.transient]
+ *    text released as it is copied in, and a later unit of the plan reads it from disk again
+ *    (Monica's 28 million characters of `content.js`: a held copy of it kept the heap at its
+ *    limit, and the assembly's third copy of it was the allocation that failed);
  *  - a unit whose inputs (config, groups, CSS, debug flag) did not change keeps its assembled
  *    script, so a reconfigure that re-sends an unchanged unit costs a hash, not an assembly;
  *  - a unit the heap cannot hold as one script is refused before any of it is read
@@ -83,9 +90,26 @@ class UnitCompiler(
     class Refused(val chars: Long, val groups: Int, val budgetChars: Int)
 
     private class ExtensionCache(val version: String) {
-        /** Extension-relative path → the file's text behind a [SoftReference], or [MISSING] (unreadable). */
+        /**
+         * Extension-relative path → the file's text behind a [SoftReference] while a compile
+         * runs (the plan's units share it), or [MISSING] (unreadable, not read again for the
+         * version). [releaseSources] at the end of every compile leaves the [MISSING] marks alone.
+         */
         val sources = HashMap<String, Any>()
         val units = HashMap<String, Compiled>()
+
+        /** Let go of every text held for the compile that ends; the [MISSING] marks stay. Answers how many texts were still there. */
+        fun releaseSources(): Int {
+            var held = 0
+            val it = sources.entries.iterator()
+            while (it.hasNext()) {
+                val entry = it.next()
+                if (entry.value === MISSING) continue
+                if ((entry.value as SoftReference<*>).get() != null) held++
+                it.remove()
+            }
+            return held
+        }
     }
 
     private val cache = HashMap<String, ExtensionCache>()
@@ -99,9 +123,10 @@ class UnitCompiler(
 
     /**
      * What [close] let go of, for the runtime's destroy line: the extensions cached, their
-     * compiled units and those units' characters, the source texts still soft-held. [deferred]
-     * when a compile held the lock: the figures are then zero here, and that compile releases
-     * everything at its next unit boundary.
+     * compiled units and those units' characters, the source texts still held (none between
+     * compiles since compat round 22 – a count here is a compile the close cut short).
+     * [deferred] when a compile held the lock: the figures are then zero here, and that compile
+     * releases everything at its next unit boundary.
      */
     class Released(val extensions: Int, val units: Int, val unitChars: Long, val sources: Int, val deferred: Boolean)
 
@@ -113,9 +138,11 @@ class UnitCompiler(
      * files is read: a UTF-8 file has at most as many characters as bytes, so the sum bounds the
      * script, and a unit over the budget is [Compiled.refused] with nothing of it allocated. The
      * shape (whole when the plan names none) is part of the unit's identity and of its measure:
-     * a thin unit is its sources without the bootstrap. After [close] nothing is compiled: an
-     * empty list, and a compile that was in flight at the close releases the cache and answers
-     * the same (its runtime is gone; the configure that asked drops the answer).
+     * a thin unit is its sources without the bootstrap. The files read for the plan are held
+     * while its units compile and let go when the last one has (the units hold every text
+     * already; [memoryOf] reads no source after a compile). After [close] nothing is compiled:
+     * an empty list, and a compile that was in flight at the close releases the cache and
+     * answers the same (its runtime is gone; the configure that asked drops the answer).
      */
     fun compile(
         id: String,
@@ -199,6 +226,8 @@ class UnitCompiler(
         }
         // Units the plan no longer has are not kept around (a registered script that went away).
         entry.units.keys.retainAll(keysNow)
+        // Every unit of the plan is compiled: the texts read for them go, the units keep their own.
+        entry.releaseSources()
         out
     }
 
@@ -212,7 +241,7 @@ class UnitCompiler(
 
     /**
      * The runtime that owns this compiler is destroyed: let go of every extension's compiled
-     * units and soft-held sources, and compile nothing from now on. Does not wait: when a
+     * units (and the sources of a compile in flight), and compile nothing from now on. Does not wait: when a
      * compile holds the lock (a configure in flight at destroy) the release is [Released.deferred]
      * to it – it sees [closed] at its next unit boundary, releases and answers empty – and the
      * figures here are zero; else the release is done here, with what it came to.
@@ -244,44 +273,64 @@ class UnitCompiler(
         return Released(extensions, units, unitChars, sources, deferred = false)
     }
 
-    /** The number of source files held for an extension (a text the GC took back no longer counts), for instrumentation. */
+    /**
+     * The number of source files remembered for an extension, for instrumentation: between
+     * compiles the [MISSING] marks alone (a text the GC took back never counted; the texts read
+     * for a plan go when its units are compiled).
+     */
     fun cachedSources(id: String): Int = lock.withLock { cache[id]?.sources?.values?.count { it === MISSING || (it as SoftReference<*>).get() != null } ?: 0 }
 
     /**
      * What the compiler holds for an extension, for instrumentation: its compiled scripts'
      * characters and the bytes ART keeps them in (a script with a character over U+00FF is two
      * bytes a character, else one – the string's own compact form), how many of them are 16-bit,
-     * and the source texts still soft-held, their characters and bytes the same way.
+     * and the source texts still held (none after a compile), their characters and bytes the
+     * same way. The width is the sources' own: the bootstrap, the boot config the core
+     * serializes and the assembly's glue are Latin-1 (compat round 22 read Adblock Ad Blocker
+     * Pro's every unit 16-bit for one U+205D in each uBlock scriptlet's `makeLogPrefix` and the
+     * filter lists' CJK, Cyrillic and Arabic text – theirs to carry as they are). The units a
+     * plan refused ([Compiled.refused], kept with an empty script) are counted apart, so the
+     * count installed on the tabs has its match here. Does not wait: the lock is a compile's for
+     * its whole run (seconds for a plan of Adblock Ad Blocker Pro's size), and what the reading
+     * would count under it is the plan being replaced – `compiling: true` and nothing else says
+     * so (compat round 22's `[lane]` run read a heap split off such a wait: the instrumentation's
+     * main-thread reading stood on the lock for the compile's last 1.5 s and the count it got
+     * was the old plan's beside the new plan's units, landed a moment later).
      */
-    fun memoryOf(id: String): JSONObject = lock.withLock {
-        val entry = cache[id] ?: return@withLock JSONObject().put("units", 0)
-        var unitChars = 0L
-        var unitBytes = 0L
-        var wideUnits = 0
-        for (unit in entry.units.values) {
-            val wide = unit.script.any { it > '\u00FF' }
-            if (wide) wideUnits++
-            unitChars += unit.script.length
-            unitBytes += unit.script.length.toLong() * (if (wide) 2 else 1)
+    fun memoryOf(id: String): JSONObject {
+        if (!lock.tryLock()) return JSONObject().put("compiling", true)
+        try {
+            val entry = cache[id] ?: return JSONObject().put("compiling", false).put("units", 0).put("refused", 0)
+            var unitChars = 0L
+            var unitBytes = 0L
+            var wideUnits = 0
+            var refused = 0
+            for (unit in entry.units.values) {
+                if (unit.refused != null) {
+                    refused++
+                    continue
+                }
+                val wide = unit.script.any { it > '\u00FF' }
+                if (wide) wideUnits++
+                unitChars += unit.script.length
+                unitBytes += unit.script.length.toLong() * (if (wide) 2 else 1)
+            }
+            var sources = 0
+            var sourceChars = 0L
+            var sourceBytes = 0L
+            for (held in entry.sources.values) {
+                val text = (held as? SoftReference<*>)?.get() as? String ?: continue
+                sources++
+                sourceChars += text.length
+                sourceBytes += text.length.toLong() * (if (text.any { it > '\u00FF' }) 2 else 1)
+            }
+            return JSONObject()
+                .put("compiling", false)
+                .put("units", entry.units.size).put("refused", refused).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
+                .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
+        } finally {
+            lock.unlock()
         }
-        var sources = 0
-        var sourceChars = 0L
-        var sourceBytes = 0L
-        for (held in entry.sources.values) {
-            val text = (held as? SoftReference<*>)?.get() as? String ?: continue
-            sources++
-            sourceChars += text.length
-            sourceBytes += text.length.toLong() * (if (text.any { it > '\u00FF' }) 2 else 1)
-        }
-        JSONObject()
-            .put("units", entry.units.size).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
-            .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
-    }
-
-    /** What the GC may do at any time: let go of every source text held for the extension. */
-    @VisibleForTesting
-    fun clearSourcesForTest(id: String) {
-        lock.withLock { cache[id]?.sources?.values?.forEach { (it as? SoftReference<*>)?.clear() } }
     }
 
     /**
@@ -336,7 +385,7 @@ class UnitCompiler(
         return if (transient) ExtensionScripts.Source.transient(text) else ExtensionScripts.Source(text)
     }
 
-    /** The file's text: from the soft cache, or read now (and cached when under [LARGE_SOURCE_CHARS]). */
+    /** The file's text: from the compile's cache, or read now (and held for the rest of the compile when under [LARGE_SOURCE_CHARS]). */
     private fun text(entry: ExtensionCache, path: String, read: (String) -> String?): String? {
         if (path.isEmpty()) return null
         when (val held = entry.sources[path]) {
@@ -356,10 +405,10 @@ class UnitCompiler(
         private val MISSING = Any()
 
         /**
-         * From this many characters a file is not soft-cached and travels into the script as a
-         * transient source: a megabyte of text is two megabytes of heap held for a re-plan that
-         * may never come, and the files this size are the ones whose second and third copies do
-         * not fit (Monica's `content.js`, 28 M).
+         * From this many characters a file is not held even for the compile and travels into the
+         * script as a transient source: a megabyte of text is two megabytes of heap beside the
+         * builder that copies it, and the files this size are the ones whose second and third
+         * copies do not fit (Monica's `content.js`, 28 M).
          */
         const val LARGE_SOURCE_CHARS = 1 shl 20
 

@@ -130,6 +130,24 @@ export const FOLD_ABOVE_UNITS = 8
 export const FOLD_UNIT_CHARS = 512 * 1024
 
 /**
+ * A boot config as the host embeds it into a unit or a page bootstrap: `JSON.stringify`'s text
+ * with every character over U+00FF written as its `\uXXXX` escape (a surrogate half each, for
+ * a character outside the BMP). JSON and a JS object literal read the escape as the character,
+ * so the bootstrap parses the same config; the host's copy of the script stays Latin-1 where
+ * the extension's own sources are – ART keeps a string in one byte per character only while
+ * every character is Latin-1, and the config carries the raw manifest and the locale messages,
+ * so an extension named or localized outside Latin-1 made every unit of its plan 16-bit
+ * through this serialization alone (compat round 22, R22-2). A character the extension's own
+ * files carry is theirs, written into the unit as it is.
+ */
+export function latin1Json(value: unknown): string {
+  return JSON.stringify(value).replace(
+    /[\u0100-\uffff]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`
+  )
+}
+
+/**
  * `addDocumentStartJavaScript` filters by origin rule (`scheme://host[:port]`, `*` wildcards in
  * the host's leftmost label, or `*` for everything). A match pattern with a path is wider than
  * its origin, so the rule is the origin; anything the rule grammar cannot express becomes `*`
@@ -485,7 +503,7 @@ export function planUnits(
             ? extensionUrl(boot.id, background.script)
             : extensionUrl(boot.id, '_generated_background_page.html')
         : null,
-      page: JSON.stringify(page)
+      page: latin1Json(page)
     }
   }
 }

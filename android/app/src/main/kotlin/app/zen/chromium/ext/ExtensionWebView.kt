@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.graphics.Canvas
 import android.graphics.Color
 import android.webkit.ConsoleMessage
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -15,6 +17,10 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.BuildConfig
 import app.zen.chromium.Host
+import app.zen.chromium.PageDialogKind
+import app.zen.chromium.PageDialogSheet
+import app.zen.chromium.PageDialogSpec
+import app.zen.chromium.PageDialogVisit
 import app.zen.chromium.UserAgent
 
 /**
@@ -24,18 +30,26 @@ import app.zen.chromium.UserAgent
  * directory plus the generated background page from `shouldInterceptRequest`, injects the page
  * bootstrap at document start and speaks the same `__zenExtBridge` protocol as tab frames.
  * Navigations off the origin open as tabs (a popup linking to a website, say); the view itself
- * never leaves the extension.
+ * never leaves the extension. The page's own dialogs are the host's sheet, titled with the
+ * extension's name as Chrome titles them ([ExtensionPageDialogs], [pageDialog]).
  */
 @SuppressLint("SetJavaScriptEnabled")
 class ExtensionWebView(
     private val host: Host,
     private val extensions: Extensions,
     val served: Extensions.Served,
-    val context: String
+    val context: String,
+    /** The extension's name, the title line of the page's dialogs (Chrome's); the id when the caller has none (a hidden view shows no dialog). */
+    private val name: String = served.id
 ) : NestedScrollWebView(host.activity) {
     private val origin = "https://${served.id}${Extensions.ORIGIN_SUFFIX}"
     /** Console lines of the page, for the probe and the demo (background pages have no visible UI). */
     val console = ArrayDeque<String>()
+    /** The page's dialog up: the sheet and the WebView's result it answers. */
+    private class PageDialogUp(val sheet: PageDialogSheet, val result: JsResult)
+    private var dialog: PageDialogUp? = null
+    /** Chrome's per-visit count of the page's dialogs, for the "create no more dialogs" check row from its second on. */
+    private val dialogVisit = PageDialogVisit()
 
     init {
         settings.apply {
@@ -89,8 +103,63 @@ class ExtensionWebView(
     }
 
     override fun destroy() {
+        // The page goes with its dialog: the sheet down, the WebView's result cancelled so the renderer's call returns.
+        dialog?.let { up ->
+            dialog = null
+            up.sheet.dismiss()
+            up.result.cancel()
+        }
         extensions.onWebViewDestroyed(this)
         super.destroy()
+    }
+
+    /**
+     * The page called `alert`, `confirm` or `prompt` from the frame at `frameUrl` – or objected
+     * to its unload – and waits in the call, the renderer every WebView of the app shares with
+     * it: answered at once as a dismissal for a hidden view (the worker page, an offscreen
+     * document: Chrome's service worker has no dialogs) and for a page told to create no more
+     * this visit, with a console line saying so; the host's sheet otherwise
+     * ([PageDialogSheet], as a tab page's: Chrome's words, the extension's name as the title
+     * line – [ExtensionPageDialogs.spec]), one at a time. Left to the WebView, the dialog is its
+     * stock one, `The page at "https://<id>.ext.zenium.invalid" says:` – compat round 22's 156
+     * lane met it on Popup Blocker (strict)'s popup, the emulated origin shown and the renderer
+     * parked for the sweep's whole wait.
+     */
+    private fun pageDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
+        val offer = if (ExtensionPageDialogs.shows(context)) dialogVisit.request() else null
+        if (offer == null) {
+            result.cancel()
+            val why = ExtensionPageDialogs.silence(context, kind, dialogVisit.suppressed) ?: return
+            val line = "WARNING $frameUrl:0 $why"
+            synchronized(console) {
+                console.addLast(line)
+                while (console.size > 200) console.removeFirst()
+            }
+            android.util.Log.w(Extensions.TAG, "[${served.id.take(8)}/$context] $line")
+            return
+        }
+        val spec = if (kind == PageDialogKind.LEAVE) PageDialogSpec.beforeUnload(reload = false)
+        else ExtensionPageDialogs.spec(kind, frameUrl, origin, name, message ?: "", defaultValue ?: "", offer)
+        // A dialog already up – it cannot be, the renderer waits in the call – would be cancelled for this one.
+        dialog?.let { up ->
+            dialog = null
+            up.sheet.dismiss()
+            up.result.cancel()
+        }
+        lateinit var up: PageDialogUp
+        val sheet = PageDialogSheet(host, spec) { accepted, value, suppress ->
+            if (dialog !== up) return@PageDialogSheet
+            dialog = null
+            when {
+                !accepted -> result.cancel()
+                result is JsPromptResult -> result.confirm(value ?: "")
+                else -> result.confirm()
+            }
+            dialogVisit.answered(suppress)
+        }
+        up = PageDialogUp(sheet, result)
+        dialog = up
+        sheet.show()
     }
 
     private inner class Client : WebViewClient() {
@@ -114,6 +183,8 @@ class ExtensionWebView(
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+            // Another document: the dialogs' visit is over, its count and its silencing with it.
+            dialogVisit.reset()
             extensions.onDocumentGone(view, url)
         }
 
@@ -126,6 +197,26 @@ class ExtensionWebView(
     }
 
     private inner class Chrome : WebChromeClient() {
+        override fun onJsAlert(view: WebView, url: String, message: String?, result: JsResult): Boolean {
+            pageDialog(PageDialogKind.ALERT, url, message, null, result)
+            return true
+        }
+
+        override fun onJsConfirm(view: WebView, url: String, message: String?, result: JsResult): Boolean {
+            pageDialog(PageDialogKind.CONFIRM, url, message, null, result)
+            return true
+        }
+
+        override fun onJsPrompt(view: WebView, url: String, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
+            pageDialog(PageDialogKind.PROMPT, url, message, defaultValue, result)
+            return true
+        }
+
+        override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
+            pageDialog(PageDialogKind.LEAVE, url, null, null, result)
+            return true
+        }
+
         override fun onConsoleMessage(message: ConsoleMessage): Boolean {
             val line = "${message.messageLevel()} ${message.sourceId()}:${message.lineNumber()} ${message.message()}"
             synchronized(console) {

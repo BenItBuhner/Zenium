@@ -5,10 +5,11 @@ import type {
   MouseEvent as ReactMouseEvent,
   ReactNode
 } from 'react'
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { focusableIn } from '@renderer/lib/popover'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import type { InternalPageQuery } from '@shared/internalPages'
@@ -26,6 +27,8 @@ import {
   type CustomRow,
   type FieldRow,
   type InfoRow,
+  type InlineAction,
+  type ItemRow,
   type RowControl,
   type RowCopy,
   type RowGroup,
@@ -573,6 +576,91 @@ function PopoverActionButton({
 }
 
 /**
+ * An item row's one action as its trailing 32 button (`ItemRow.action`, §10.5), named for the
+ * row it acts on – the label then the row's label, or the action's own reader name where those
+ * two make no sentence. The act commonly removes the row (Reset, Remove, Allow again), and a
+ * button that unmounts with its row leaves the keyboard nowhere: the focus falls to `body`,
+ * where the frame is held inert under a dialog and the next Tab re-enters at the first
+ * control. So a button holding the focus as its row goes hands it on first – the layout
+ * cleanup runs while the row still stands in the document – to the next row's control, else
+ * the group's heading, the next group's first control, the row before, or the dialog:
+ * whichever still stands once the commit is through (`handOffFocus`).
+ */
+function InlineActionButton({ row, action }: { row: ItemRow; action: InlineAction }): JSX.Element {
+  const ref = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    const button = ref.current
+    return () => {
+      if (button && document.activeElement === button) handOffFocus(button)
+    }
+  }, [])
+  return (
+    <V2Button
+      ref={ref}
+      variant={action.destructive ? 'danger' : 'secondary'}
+      busy={action.busy}
+      disabled={row.disabled}
+      aria-label={action.ariaLabel ?? `${action.label} ${row.label}`}
+      onClick={action.onPress}
+    >
+      {action.label}
+    </V2Button>
+  )
+}
+
+/** What the browser focuses without being told to: the controls, and anything given a tabindex. */
+const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]'
+
+/** The row's own control: the row where it is one (`PressableRow`), else its first control. */
+function controlOf(row: HTMLElement): HTMLElement | undefined {
+  return row.matches(FOCUSABLE) ? row : focusableIn(row)[0]
+}
+
+/** The nearest row (`data-row`) on one side of `row`, over the hairlines and indicators between. */
+function siblingRow(
+  row: HTMLElement,
+  side: 'nextElementSibling' | 'previousElementSibling'
+): HTMLElement | null {
+  for (let el = row[side]; el; el = el[side]) {
+    if (el instanceof HTMLElement && el.hasAttribute('data-row')) return el
+  }
+  return null
+}
+
+/**
+ * Move the focus from a control whose row is leaving the document to what stands after it, once
+ * the commit that removes the row is through (a microtask: the candidates are read now, while
+ * the row is still in place, and the first still connected then takes the focus). A heading
+ * takes `tabindex="-1"` to hold it. Nothing moves when something else has the focus by then –
+ * the dialog returning it to its opener as it leaves with the row, a user's click.
+ */
+function handOffFocus(control: HTMLElement): void {
+  const row = control.closest<HTMLElement>('[data-row]')
+  if (!row) return
+  const group = row.closest<HTMLElement>('.zen-settings-group')
+  const candidates: (HTMLElement | undefined | null)[] = []
+  const next = siblingRow(row, 'nextElementSibling')
+  if (next) candidates.push(controlOf(next))
+  candidates.push(group?.querySelector<HTMLElement>('.zen-settings-heading'))
+  const after = group?.nextElementSibling
+  if (after instanceof HTMLElement && after.classList.contains('zen-settings-group'))
+    candidates.push(focusableIn(after)[0])
+  const previous = siblingRow(row, 'previousElementSibling')
+  if (previous) candidates.push(controlOf(previous))
+  candidates.push(row.closest<HTMLElement>('[role="dialog"]'))
+  queueMicrotask(() => {
+    const now = document.activeElement
+    if (now && now !== document.body && now.isConnected) return
+    for (const target of candidates) {
+      if (!target?.isConnected) continue
+      if (!target.matches(FOCUSABLE)) target.tabIndex = -1
+      target.focus()
+      if (document.activeElement === target) return
+    }
+  })
+}
+
+/**
  * A model row in the desktop vocabulary. Info and custom rows are the phone's, and so is an item
  * row unless it carries its one `action`, which then trails it as a button in place of a dialog,
  * or its `menu`, the 28 ⋯ over its sheet's actions; a value row trails a menulist, a switch row
@@ -640,18 +728,9 @@ function DesktopRowView({
       // mouse and opens no dialog (§10.5); the button is named for the row it acts on, as the
       // viewer's Clear is, since a list of them reads "Remove" many times over.
       if (row.action) {
-        const action = row.action
         return (
           <ControlRow row={row} caption={caption} description={row.description}>
-            <V2Button
-              variant={action.destructive ? 'danger' : 'secondary'}
-              busy={action.busy}
-              disabled={row.disabled}
-              aria-label={`${action.label} ${row.label}`}
-              onClick={action.onPress}
-            >
-              {action.label}
-            </V2Button>
+            <InlineActionButton row={row} action={row.action} />
           </ControlRow>
         )
       }

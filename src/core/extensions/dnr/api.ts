@@ -159,13 +159,16 @@ export function toMatchRequest(request: TestMatchRequestDetails): MatchRequest {
   return out
 }
 
-/** `chrome.declarativeNetRequest.testMatchOutcome` against the extension's rulesets. */
-export function testMatchOutcome(
+/**
+ * `chrome.declarativeNetRequest.testMatchOutcome` against the extension's rulesets (a static
+ * ruleset whose rules the state let go is read again for the call).
+ */
+export async function testMatchOutcome(
   state: DnrState,
   request: TestMatchRequestDetails
-): TestMatchOutcomeResult {
+): Promise<TestMatchOutcomeResult> {
   const matchRequestDetails = toMatchRequest(request)
-  const outcome = matchRequest(state.matcherRulesets(), matchRequestDetails)
+  const outcome = matchRequest(await state.matcherRulesets(), matchRequestDetails)
   return { matchedRules: outcome?.matchedRules ?? [] }
 }
 
