@@ -413,6 +413,8 @@ function isCapability(permission: string): boolean {
  * older than 60 days; with the sweep on, what it reaches is revoked before this composes, so the
  * flag names what the sweep leaves alone – sites allowed again (`keepGranted`) and, with the
  * sweep off, every unused grant. A site whose grants carry no stamp is not flagged, as before.
+ * While the revoked list holds anything the row is Chrome's "Permissions removed from N sites"
+ * in the info state, whatever the grants say: the list is the thing to review first.
  */
 function permissionsRow(
   rules: PermissionRule[],
@@ -448,6 +450,12 @@ function permissionsRow(
       revokedAt
     }))
   }
+  // Chrome's Safety Hub words for the module while its revoked list holds anything
+  // (`IDS_SETTINGS_SAFETY_CHECK_UNUSED_SITE_PERMISSIONS_PRIMARY_LABEL`, settings_strings.grdp;
+  // Android's `IDS_SAFETY_HUB_PERMISSIONS_WARNING_TITLE`), and its INFO state
+  // (`SafetyHubUtils.java`: a non-empty list is the info state, an empty one is safe).
+  if (revoked.length > 0)
+    return { ...row('info', `Permissions removed from ${plural(revoked.length, 'site')}`), ...base }
   if (granted.size === 0) return { ...row('safe', 'No site holds extra permissions'), ...base }
   if (review.length === 0)
     return {

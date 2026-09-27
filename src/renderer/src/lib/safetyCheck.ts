@@ -149,8 +149,10 @@ export function safetyRows(result: SafetyCheckResult, state: UIState): SafetyRow
       label: 'Site permissions',
       state: result.permissions.state,
       summary: result.permissions.summary,
+      // Something to review: a site holding a permission, or one the sweep removed permissions
+      // from (the revoked list is reviewed in the same sheet, its sites first).
       action:
-        result.permissions.grantedSites > 0
+        result.permissions.grantedSites > 0 || result.permissions.revoked.length > 0
           ? section('Review', 'site-settings', 'Review site permissions')
           : null
     },
