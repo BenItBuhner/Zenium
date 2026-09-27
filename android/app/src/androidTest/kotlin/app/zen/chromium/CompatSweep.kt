@@ -32,6 +32,7 @@ import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
+import app.zen.chromium.ext.SweepHeapSteps
 import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepScreenGuard
 import app.zen.chromium.privacy.NonUniqueHost
@@ -323,7 +324,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
                         "bridge refused ${entry.optInt("bridgeRefused")}; flood guard ${entry.optJSONObject("floodGuard")}" +
                         (entry.optJSONObject("coreStall")?.let { "; core stall $it" } ?: "") +
-                        (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB${if (it.optBoolean("disturbed")) " (DISTURBED)" else ""}" } ?: "")
+                        (entry.optJSONObject("heapSplit")?.let { "; heap split: the runtime's units ${it.optLong("runtimeUnitsKb") / 1024} MB, the rules and the rest ${it.optLong("rulesAndRestKb") / 1024} MB${if (it.optBoolean("disturbed")) " (DISTURBED)" else ""}" } ?: "") +
+                        (entry.optJSONObject("memoryRow")?.takeIf { it.has("peakStep") }?.let { "; heap peak ${it.optLong("peakJavaHeapBytes") / 1048576} MB under '${it.optString("peakStep")}'" } ?: "")
                 )
                 rowEntry = null
                 rowStalledOut = false
@@ -375,10 +377,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         report.put("id", id).put("name", entry.optString("name")).put("url", url)
         val factor = speedFactor(entry)
         report.put("speedFactor", factor)
+        // The same-process restart's heap per step (R23-1): the enable, the page as a tab, the
+        // restart itself (the new core's configure of every enabled extension – the row's
+        // compile and attach cut out by its log lines), the restored tab's render.
+        memory.mark()
+        memory.step("restart-enable")
         coreCall("extension.setEnabled", JSONObject().put("id", id).put("enabled", true).toString())
         poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == id }?.takeIf { it.getBoolean("enabled") } }
             ?: error("$id did not come back enabled")
         closeExtraTabs()
+        memory.step("restart-page")
         val tabId = createTab(url)
         showTab(tabId)
         val view = waitForView(tabId)
@@ -403,6 +411,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         Log.i(TAG, "RESTORE: starting the browser over with $url active")
         val since = SystemClock.uptimeMillis()
+        memory.step("restart")
         launch()
         report.put("relaunchMs", SystemClock.uptimeMillis() - since)
         // The restored session's active tab is the options page, in whichever of the two
@@ -420,6 +429,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val restoredId = restoredTab.optString("id")
         report.put("restoredTabId", restoredId).put("restoredUrl", restoredTab.optString("url"))
+        memory.step("restart-render")
         val restored = waitForView(restoredId)
         val rendered = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(restored)) true else null }
         report.put("renderedMs", SystemClock.uptimeMillis() - since)
@@ -445,6 +455,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             else "the restored tab did not render within ${scaled(OPTIONS_TIMEOUT_MS, factor) / 1000} s of the restart: ${after.toString().take(300)}"
         )
         Log.i(TAG, "RESTORE ${entry.optString("name")}: $verdict – ${report.optString("note")}")
+        // The restart's heap per step, the row's configures of the new core cut out (R23-1).
+        runCatching {
+            val lines = configureLines(memory.rowStartedAtMs, id.take(8))
+            val heap = memory.rowReport(SweepHeapSteps.segments(lines, id.take(8)))
+            heap.put("configures", JSONArray(lines.map { l -> JSONObject().put("atMs", l.atMs - memory.rowStartedAtMs).put("configured", l.configured).put("units", l.units).put("heapMb", l.heapMb).put("maxMb", l.maxMb).put("compileMs", l.compileMs ?: JSONObject.NULL) }))
+            report.put("memory", heap)
+            Log.i(TAG, "RESTORE HEAP STEPS ${entry.optString("name")}: peak ${heap.optLong("peakJavaHeapBytes") / 1048576} MB of ${heap.optLong("maxHeapBytes") / 1048576} under '${heap.optString("peakStep")}'; steps ${heap.optJSONArray("steps")?.let { s -> (0 until s.length()).map { s.getJSONObject(it) }.joinToString(", ") { "${it.optString("step")} ${it.optLong("peakKb") / 1024} MB" } }}")
+        }.onFailure { report.put("memoryError", it.toString().take(200)) }
         write()
     }
 
@@ -456,7 +474,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         memory.mark()
         // The two guards run where the deaths were (the Google image's WebView); the other lane reads the row as before, the control.
         val googleImage = results.optString("webView").startsWith("com.google.android.webview")
-        row.preflight?.takeIf { googleImage }?.let { preflight(row, entry, it) }
+        row.preflight?.takeIf { googleImage }?.let {
+            memory.step("preflight")
+            preflight(row, entry, it)
+        }
+        // The row's steps for the heap peak per step (R23-1; [MemorySampler.step]): the install
+        // (its prompt and its landing marked inside [install]; the runtime's compile and attach
+        // cut out of it by its own log lines at the row's end, [cleanup]), then each stage.
+        memory.step("install")
         val ext = install(row, entry, slug) ?: return
         if (row.closeInstallTabs && googleImage) closeInstallTabs(row, entry)
         val dir = File(ext.optString("path"))
@@ -466,17 +491,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return
         }
         entry.put("version", ext.optString("version")).put("manifestVersion", manifest.optInt("manifest_version"))
+        memory.step("background")
         background(row, entry, manifest)
         showTab(fixtureTab)
+        memory.step("popup")
         popup(row, entry, manifest, slug)
         showTab(fixtureTab)
+        memory.step("options")
         options(row, entry, manifest, slug)
         showTab(fixtureTab)
+        memory.step("core")
         core(row, entry, slug)
+        memory.step("evidence")
         evidence(row, entry)
         // What the extension costs the Java heap while it runs (its units, its rules in the
         // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot –
         // read once the runtime's units for the row are its last configure's ([settleUnits]).
+        memory.step("settle")
         settleUnits(row, entry)
         val enabledKb = heapKb()
         entry.put("heapEnabledKb", enabledKb)
@@ -484,7 +515,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         entry.put("chromeJsHeap", chromeJsHeap())
         entry.put("rendererRssKb", rendererRssKb())
         entry.put("blockingEnabled", runCatching { Blocking.shared(app).stats() }.getOrNull() ?: JSONObject.NULL)
-        if (enabledKb >= heapSplitFromKb) heapSplit(row, entry, enabledKb)
+        if (enabledKb >= heapSplitFromKb) {
+            memory.step("split")
+            heapSplit(row, entry, enabledKb)
+        }
     }
 
     /** A row whose live heap with the extension enabled reaches half the process's limit has its heap split ([heapSplit]). */
@@ -652,11 +686,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             zen("extension.installFromStore", args, INSTALL_TIMEOUT_MS) { button ->
                 prompted = true
                 taps++
+                if (taps == 1) memory.step("install-prompt")
                 val up = SystemClock.uptimeMillis()
                 SystemClock.sleep(900)
                 if (row.id == table.first().id && taps == 1) snap("$slug-prompt")
                 tapRect(button)
                 promptMs += SystemClock.uptimeMillis() - up
+                // The prompt answered: the record's landing and the runtime's first configure follow.
+                memory.step("install-landing")
             }
         }
         val total = SystemClock.uptimeMillis() - started
@@ -766,11 +803,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 val still = rect != null && rect == lastRect
                 lastRect = rect
                 if (rect != null && still && taps < PROMPT_TAPS && (taps == 0 || now - tappedAt > PROMPT_RETAP_MS) && onScreen("$name: the sideload prompt's button")) {
-                    if (taps == 0) snap("$slug-prompt")
+                    if (taps == 0) {
+                        snap("$slug-prompt")
+                        memory.step("install-prompt")
+                    }
                     tapRect(rect)
                     taps++
                     tappedAt = SystemClock.uptimeMillis()
                     promptMs += tappedAt - now
+                    memory.step("install-landing")
                 } else if ((rect == null && now - promptSeenAt > PROMPT_TAP_TIMEOUT_MS) || (taps >= PROMPT_TAPS && now - tappedAt > PROMPT_RETAP_MS)) {
                     Log.w(TAG, "$name: the sideload prompt goes through the command (${if (rect == null) "button not reachable" else "$taps tap(s) did not answer"})")
                     snap("$slug-prompt-by-command")
@@ -1287,7 +1328,60 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun cleanup(row: Row, entry: JSONObject) {
         if (!chromeAnswers()) Log.w(TAG, "${row.name} cleanup: the chrome is not answering")
         // The row's own memory peaks (install to here): the Java heap its popup stage climbed to.
+        // Written again at the end with the disable inside and the peak per step ([memoryPerStep]).
         entry.put("memoryRow", memory.rowReport())
+        memory.step("cleanup")
+        try {
+            cleanupSteps(row, entry)
+        } finally {
+            runCatching { memoryPerStep(row, entry) }.onFailure { entry.put("memoryRowError", it.toString().take(200)) }
+        }
+    }
+
+    /**
+     * The row's memory report with the peak per step (R23-1): the runtime's `configure` /
+     * `configured` lines of the row's window, read off logcat, cut the install into the plan's
+     * arrival, the compile (the io executor's) and the units' attach (the main thread's), and
+     * the report names the step the row's Java heap peaked under (`memoryRow.peakStep`, the
+     * steps' peaks in `memoryRow.steps`); the lines themselves go in as `configures` (each plan's
+     * arrival heap, its compile time, the heap after its attach – the runtime's own figures). A
+     * peak within a tenth of the cap is said on the log line.
+     */
+    private fun memoryPerStep(row: Row, entry: JSONObject) {
+        val lines = configureLines(memory.rowStartedAtMs, row.id.take(8))
+        val report = memory.rowReport(SweepHeapSteps.segments(lines, row.id.take(8)))
+        report.put(
+            "configures",
+            JSONArray(lines.map { l ->
+                JSONObject().put("atMs", l.atMs - memory.rowStartedAtMs).put("configured", l.configured).put("units", l.units).put("heapMb", l.heapMb).put("maxMb", l.maxMb)
+                    .put("compileMs", l.compileMs ?: JSONObject.NULL)
+            })
+        )
+        entry.put("memoryRow", report)
+        val peakKb = report.optLong("peakJavaHeapBytes") / 1024
+        val capKb = report.optLong("maxHeapBytes") / 1024
+        Log.i(
+            TAG,
+            "HEAP STEPS ${row.name}: peak ${peakKb / 1024} MB of ${capKb / 1024} under '${report.optString("peakStep")}'" +
+                (if (capKb > 0 && peakKb * 10 >= capKb * 9) " – WITHIN A TENTH OF THE CAP" else "") +
+                "; steps ${report.optJSONArray("steps")?.let { s -> (0 until s.length()).map { s.getJSONObject(it) }.joinToString(", ") { "${it.optString("step")} ${it.optLong("peakKb") / 1024} MB" } }}" +
+                "; configures ${report.optJSONArray("configures")?.let { c -> (0 until c.length()).map { c.getJSONObject(it) }.joinToString(", ") { "${if (it.optBoolean("configured")) "configured" else "arrival"} ${it.optInt("units")} unit(s) heap ${it.optInt("heapMb")} MB at +${it.optLong("atMs")} ms${it.optLong("compileMs", -1).takeIf { ms -> ms >= 0 }?.let { ms -> " ($ms ms compile)" } ?: ""}" } }}"
+        )
+    }
+
+    /**
+     * The runtime's `configure` / `configured` lines for an extension since a moment, off
+     * `logcat -v epoch` ([SweepHeapSteps.parseConfigureLine]); empty when the buffer has turned
+     * over past the window or the shell refuses (the steps stand unsplit then).
+     */
+    private fun configureLines(sinceEpochMs: Long, id8: String): List<SweepHeapSteps.ConfigureLine> = runCatching {
+        shell("logcat -d -v epoch -s ${Extensions.TAG}:I").lineSequence()
+            .mapNotNull(SweepHeapSteps::parseConfigureLine)
+            .filter { it.id8 == id8 && it.atMs >= sinceEpochMs }
+            .toList()
+    }.getOrDefault(emptyList())
+
+    private fun cleanupSteps(row: Row, entry: JSONObject) {
         runCatching { coreCall("extension.closePopup", "null") }
         val installed = runCatching { extensions().firstOrNull { it.getString("id") == row.id } }
         val enabled = installed.getOrNull()?.getBoolean("enabled") ?: installed.isFailure
@@ -13112,7 +13206,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             .put("longestStallMs", longestStallMs)
     }
 
-    /** Peak PSS and Java heap of the app process, sampled twice a second while the sweep runs. */
+    /**
+     * Peak PSS and Java heap of the app process while the sweep runs: the Java heap in use every
+     * [HEAP_SAMPLE_MS] (two runtime reads, no cost to speak of), the PSS every fifth sample as
+     * before (a `/proc` read). Since compat round 23 (R23-1) every heap sample of the row keeps its
+     * time and the driver marks the step it is in ([step]), so the row's report names the peak
+     * PER STEP ([SweepHeapSteps]) – round 22 read the OOM row's ART peak rise 16 MB while its
+     * settled heap fell 28 and could not say under which step.
+     */
     private class MemorySampler {
         private var thread: Thread? = null
         @Volatile private var running = false
@@ -13120,21 +13221,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private var peakPssKb = 0L
         private var peakHeapBytes = 0L
         private var baselinePssKb = -1L
+        private val lock = Any()
+        private val rowSamples = ArrayList<SweepHeapSteps.Sample>()
+        private val rowMarks = ArrayList<SweepHeapSteps.Mark>()
+        /** When [mark] was last called, epoch ms: the row's window for the runtime's log lines. */
+        @Volatile var rowStartedAtMs = System.currentTimeMillis()
+            private set
 
         fun start() {
             running = true
             thread = Thread {
                 val runtime = Runtime.getRuntime()
                 while (running) {
-                    val pss = Debug.getPss()
                     val heap = runtime.totalMemory() - runtime.freeMemory()
-                    if (baselinePssKb < 0) baselinePssKb = pss
-                    peakPssKb = maxOf(peakPssKb, pss)
                     peakHeapBytes = maxOf(peakHeapBytes, heap)
-                    rowPeakPssKb = maxOf(rowPeakPssKb, pss)
                     rowPeakHeapBytes = maxOf(rowPeakHeapBytes, heap)
+                    synchronized(lock) { rowSamples.add(SweepHeapSteps.Sample(System.currentTimeMillis(), heap)) }
+                    if (samples % 5 == 0) {
+                        val pss = Debug.getPss()
+                        if (baselinePssKb < 0) baselinePssKb = pss
+                        peakPssKb = maxOf(peakPssKb, pss)
+                        rowPeakPssKb = maxOf(rowPeakPssKb, pss)
+                    }
                     samples++
-                    SystemClock.sleep(500)
+                    SystemClock.sleep(HEAP_SAMPLE_MS)
                 }
             }.apply { isDaemon = true; start() }
         }
@@ -13154,13 +13264,42 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             rowPeakPssKb = 0L
             rowPeakHeapBytes = runtime.totalMemory() - runtime.freeMemory()
             rowSamplesAtMark = samples
+            rowStartedAtMs = System.currentTimeMillis()
+            synchronized(lock) {
+                rowSamples.clear()
+                rowMarks.clear()
+            }
         }
 
-        fun rowReport(): JSONObject = JSONObject()
-            .put("samples", samples - rowSamplesAtMark)
-            .put("peakPssKb", rowPeakPssKb)
-            .put("peakJavaHeapBytes", rowPeakHeapBytes)
-            .put("maxHeapBytes", Runtime.getRuntime().maxMemory())
+        /** The driver enters a step of the row: the samples from here to the next mark are the step's. */
+        fun step(name: String) {
+            synchronized(lock) { rowMarks.add(SweepHeapSteps.Mark(System.currentTimeMillis(), name)) }
+        }
+
+        /**
+         * The row's memory report: its peaks, and every step's peak with the row's peak step named
+         * (`peakStep`), the runtime's `segments` (a configure's compile and attach, off its log
+         * lines) cutting the driver's steps where they fall.
+         */
+        fun rowReport(segments: List<SweepHeapSteps.Segment> = emptyList()): JSONObject {
+            val (rowSamplesNow, marks) = synchronized(lock) { ArrayList(rowSamples) to ArrayList(rowMarks) }
+            val peaks = SweepHeapSteps.attribute(rowSamplesNow, marks, segments)
+            val peak = SweepHeapSteps.peak(peaks)
+            return JSONObject()
+                .put("samples", samples - rowSamplesAtMark)
+                .put("peakPssKb", rowPeakPssKb)
+                .put("peakJavaHeapBytes", rowPeakHeapBytes)
+                .put("maxHeapBytes", Runtime.getRuntime().maxMemory())
+                .put("sampleMs", HEAP_SAMPLE_MS)
+                .put("peakStep", peak?.step ?: JSONObject.NULL)
+                .put(
+                    "steps",
+                    JSONArray(peaks.map { p ->
+                        JSONObject().put("step", p.step).put("peakKb", p.peakBytes / 1024).put("peakAtMs", p.peakAtMs - rowStartedAtMs)
+                            .put("samples", p.samples).put("fromMs", p.fromMs - rowStartedAtMs).put("toMs", p.toMs - rowStartedAtMs)
+                    })
+                )
+        }
 
         fun report(): JSONObject = JSONObject()
             .put("samples", samples)
@@ -13172,6 +13311,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     companion object {
         private const val TAG = "CompatSweep"
+        /** The memory sampler's cadence for the Java heap (compat round 23, R23-1: a compile's transient of a few seconds is read at ten samples a second; the PSS every fifth). */
+        private const val HEAP_SAMPLE_MS = 100L
         /** The runner serves the fixture pages; the emulator reaches its host loopback as 10.0.2.2. */
         private const val BASE = "http://10.0.2.2:8765"
         /**
