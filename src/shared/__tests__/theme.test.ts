@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BASE_DARK,
   CAPTION_HEIGHT,
+  DARK_ACCENT_LIFT,
   DARK_INK,
   LIGHT_INK,
   PRIVATE_THEME,
@@ -322,17 +324,29 @@ describe('withSystemAccent (settings-116: "Use system accent colour")', () => {
   const light = resolveTheme(null, false)
   const dark = resolveTheme(null, true)
 
-  it('puts the OS accent in the default look’s accent, light and dark alike, and touches nothing else', () => {
+  it('puts the OS accent in the default look’s accent – as read in the light scheme, lifted a fifth toward white in the dark one, the resolver’s own dark step (#572’s L9) – and touches nothing else', () => {
     const lit = withSystemAccent(light, null, '#0078d4')
     expect(lit.accent).toEqual([0, 120, 212])
     expect({ ...lit, accent: light.accent }).toEqual(light)
     const dimmed = withSystemAccent(dark, null, '#0078D4')
-    expect(dimmed.accent).toEqual([0, 120, 212])
+    expect(dimmed.accent).toEqual(mix([0, 120, 212], [255, 255, 255], DARK_ACCENT_LIFT))
+    expect(dimmed.accent).toEqual([51, 147, 221])
     expect({ ...dimmed, accent: dark.accent }).toEqual(dark)
+    // The lift is the default look's: its dark accent stands a fifth of the way from its light
+    // one to white on red and green (98 → 130, 100 → 132), and so the OS accent reads on the
+    // dark chrome as the default look's does (`#0078d4` on BASE_DARK: 3.75:1 raw, 5.14:1 lifted).
+    expect(DARK_ACCENT_LIFT).toBe(0.2)
+    expect(mix(light.accent, [255, 255, 255], DARK_ACCENT_LIFT).slice(0, 2)).toEqual([129, 131])
+    expect(dark.accent.slice(0, 2)).toEqual([130, 132])
+    expect(contrastRatio([0, 120, 212], BASE_DARK)).toBeCloseTo(3.75, 2)
+    expect(contrastRatio([51, 147, 221], BASE_DARK)).toBeCloseTo(5.14, 2)
     // A theme with no colours is the base look too.
     expect(
       withSystemAccent(light, { ...makeTheme('#9d7cff'), colors: [] }, '#0078d4').accent
     ).toEqual([0, 120, 212])
+    expect(
+      withSystemAccent(dark, { ...makeTheme('#9d7cff'), colors: [] }, '#0078d4').accent
+    ).toEqual([51, 147, 221])
   })
 
   it('yields to a themed space, to no accent read, and to an accent it cannot parse', () => {

@@ -423,12 +423,25 @@ export function isDefaultLook(theme: SpaceTheme | null): boolean {
 }
 
 /**
+ * How far the OS accent is lifted toward white in the dark scheme (settings-116; #572's L9):
+ * the default look's own dark step – its accent pair goes 98/100 → 130/132 on red and green,
+ * a fifth of the way to white (`resolveTheme`) – so an accent read from the OS reads on the
+ * dark chrome as the default look's does: Windows' `#0078d4` on `BASE_DARK` is 3.75:1 raw and
+ * 5.14:1 lifted, beside the default dark accent's 5.26:1. The controls' accent follows, mixed
+ * from it (`--v2-accent`). A themed space's accent is its own colour in both schemes
+ * (`resolveTheme`), and is not this function's.
+ */
+export const DARK_ACCENT_LIFT = 0.2
+
+/**
  * The resolved theme with the OS accent in the theme's own (settings-116; Chrome's
  * `follows_system_colors`, whose `kColorAccent` is the OS accent): `--zen-accent` takes it, and
  * with it the controls' accent the tokens mix from it (`--v2-accent`: the primary button, the
  * on switch, the focus ring, the selection). The default look alone – a themed space keeps the
  * accent its colours give it, as Chrome's follow yields to an installed theme – and only where
- * the host read an accent (`UIState.systemAccent`; Windows and macOS) and the switch is on.
+ * the host read an accent (`UIState.systemAccent`; Windows and macOS) and the switch is on. In
+ * the dark scheme the accent takes the resolver's dark step (`DARK_ACCENT_LIFT`), as the
+ * default look's own accent does; in the light scheme it is the OS's colour as read.
  */
 export function withSystemAccent(
   resolved: ResolvedTheme,
@@ -437,7 +450,11 @@ export function withSystemAccent(
 ): ResolvedTheme {
   if (!accent || !isDefaultLook(theme)) return resolved
   const rgb = hexToRgb(accent)
-  return rgb ? { ...resolved, accent: rgb } : resolved
+  if (!rgb) return resolved
+  return {
+    ...resolved,
+    accent: resolved.isDark ? mix(rgb, [255, 255, 255], DARK_ACCENT_LIFT) : rgb
+  }
 }
 
 function sameTheme(a: SpaceTheme, b: SpaceTheme): boolean {
