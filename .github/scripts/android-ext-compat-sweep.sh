@@ -73,6 +73,15 @@ df -h / /tmp
 if [ -n "${WEBVIEW_APK:-}" ]; then
   if ! bash .github/scripts/android-webview-swap.sh "$WEBVIEW_APK" "$out"; then
     echo "::warning::WebView swap failed; continuing with the image's WebView"
+    # A failed swap can leave adbd restarting (its `adb root`) or the framework mid-restart (its
+    # `stop` / `start` or reboot leg), and the first unguarded `adb shell` below (`wm size`) would
+    # end the job under `set -e` before the sweep began: wait for the device and its boot to
+    # complete again, bounded, before going on with the image's WebView. Compat round 23, R23-2(b).
+    timeout 180 adb wait-for-device || echo "::warning::the device did not answer within 180 s of the failed swap"
+    for _ in $(seq 1 120); do
+      [ "$(adb shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = "1" ] && break
+      sleep 2
+    done
   fi
 fi
 adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
