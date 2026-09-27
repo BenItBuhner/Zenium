@@ -335,10 +335,10 @@ describe('the header’s Sort and view options (Chrome’s sort_submenu)', () =>
 // --- the orders --------------------------------------------------------------------------------
 
 describe('the orders (ImprovedBookmarkQueryHandler.sortByStoredPref)', () => {
-  it('manual order shows the folder as stored', async () => {
+  it('manual order shows the folder as stored – folders and pages interleaved, nothing grouped (Chrome returns the model’s order untouched)', async () => {
     await show()
     await tap('Mobile bookmarks')
-    expect(titles()).toEqual(['Work', 'arts', 'Zebra', 'apple', 'Mango'])
+    expect(titles()).toEqual(['Zebra', 'apple', 'Work', 'Mango', 'arts'])
   })
 
   it.each([
@@ -386,7 +386,7 @@ describe('the orders (ImprovedBookmarkQueryHandler.sortByStoredPref)', () => {
     const cells = [...document.querySelectorAll<HTMLElement>('.zen-phone-list [data-cell]')].map(
       (c) => c.dataset.cell
     )
-    expect(cells).toEqual(['work', 'arts', 'zebra', 'apple', 'mango'])
+    expect(cells).toEqual(['zebra', 'apple', 'work', 'mango', 'arts'])
   })
 })
 
@@ -403,7 +403,7 @@ describe('the views (BookmarkRowDisplayPref)', () => {
     // The chrome captured the open tab (example.com/fruit; the bookmark names it with a fragment).
     act(() => rememberThumbnail('ex', 'data:image/png;base64,AAAA'))
     await settle()
-    expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:mark', 'tile:picture'])
+    expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:picture', 'tile:mark'])
     expect(
       rowByTitle('Mango').querySelector<HTMLImageElement>('.zen-list-page')?.getAttribute('src')
     ).toBe('data:image/png;base64,AAAA')
