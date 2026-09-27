@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's bar in the medium form below Android 12 (WID-02): Chrome's 50 dp pill
+     under the system's ripple (quick_action_search_widget_medium_search_bar_background.xml:8-24),
+     the panel fill under the v2 hairline as the search widget's pill wears it. On Android 12+ the
+     pill is the fill alone (res/drawable-v31/widget_quick_actions_medium_bar.xml). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?android:attr/colorControlHighlight">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/white" />
+            <corners android:radius="@dimen/widget_quick_actions_medium_bar_radius" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_quick_actions_bar" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/widget_quick_actions_hairline" />
+            <corners android:radius="@dimen/widget_quick_actions_medium_bar_radius" />
+        </shape>
+    </item>
+</ripple>

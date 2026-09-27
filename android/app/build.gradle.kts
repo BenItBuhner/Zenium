@@ -222,7 +222,7 @@ android {
             // WebAppDisclosureTest, ScreenClassTest, LockVeilTest, PrivateBrowsingTest, BackupRulesTest,
             // LocalDocumentsTest, ExternalProtocolsTest, StartupSplashTest, WebAppSplashTest,
             // PageDialogsTest, PrivateLockTest, NotificationsTest, SyncPeerTest, IndexDifferentialTest,
-            // BlockingTest, SearchWidgetFaceTest, AuthTabTest) read these off the repository as TEXT – the core's and the chrome's
+            // BlockingTest, SearchWidgetFaceTest, AuthTabTest, ShapeDetectionManifestTest, QuickActionsWidgetFaceTest) read these off the repository as TEXT – the core's and the chrome's
             // TypeScript, the sync core's fixture, the bundled filter lists, this module's Kotlin,
             // manifest and resources – none of which is on the task's classpath in a form that changes
             // with them (a KDoc, a manifest attribute, a resource value). Undeclared, a change to one of
@@ -276,7 +276,10 @@ android {
                 webRoot.resolve("src/renderer/src/lib/bookmarkUndo.ts"),
                 webRoot.resolve("src/renderer/src/lib/gestures/swipe.ts"),
                 webRoot.resolve("src/renderer/src/lib/gestures/dismiss.ts"),
-                webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx")
+                webRoot.resolve("src/renderer/src/components/messages/ToastCard.tsx"),
+                // The keyboard-shortcut helper's pin (ShortcutHelperTest): Chrome's rows name the core's actions, every core group has a home.
+                webRoot.resolve("src/shared/shortcuts.ts"),
+                webRoot.resolve("src/shared/types.ts")
             ).withPathSensitivity(PathSensitivity.RELATIVE)
             // NotificationsTest scans every source set for a deleted channel id, and the drivers
             // (androidTest) are not on the unit tests' classpath: name them as an input so a

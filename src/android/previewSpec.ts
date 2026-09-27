@@ -487,6 +487,11 @@ export type PreviewState =
       /** The active tab in Reader View on a stand-in article; `preferences` opens its text sheet. */
       kind: 'reader'
       preferences: boolean
+      /**
+       * The text sheet opens at its peek detent (its rows outrun that height): tap its handle so
+       * it rests expanded, for the rows under the peek fold – the reading aids, Links, Images.
+       */
+      expand?: boolean
     }
   | {
       /**
@@ -799,7 +804,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * PREVIEW_READ_ALOUD_STATUSES (`readAloud=` is `playing`; `rate=<n>` sets the speed chip,
  * `voices` opens the voice picker sheet over it), `reader=article` for the active
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
- * sheet over it), `readerEntry=offer` for the stand-in site's article with the "Show Reader
+ * sheet over it; `&expand` rests that sheet on its expanded detent, for the rows under the
+ * peek fold), `readerEntry=offer` for the stand-in site's article with the "Show Reader
  * View?" strip standing over it (`readerEntry=article` is the same article with the offer
  * gone – the site muted for the session – for the site-information sheet's Reader View row;
  * `readerEntry=crossing` holds the crossing into Reader View at
@@ -1025,7 +1031,11 @@ export function parsePreviewSpec(spec: string): PreviewState {
     }
   }
   const reader = params.get('reader')
-  if (reader !== null) return { kind: 'reader', preferences: reader === 'preferences' }
+  if (reader !== null) {
+    const preferences = reader === 'preferences'
+    if (preferences && params.has('expand')) return { kind: 'reader', preferences, expand: true }
+    return { kind: 'reader', preferences }
+  }
   const readerEntry = params.get('readerEntry')
   if (readerEntry !== null) {
     if (readerEntry === 'landed') return { kind: 'readerEntry', pose: 'landed', at: 1 }

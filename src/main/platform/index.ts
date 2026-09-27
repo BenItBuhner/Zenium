@@ -74,6 +74,7 @@ import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
 import { installFaviconProtocol, installZenProtocol } from './protocol'
+import { desktopVersionFacts, readDesktopVersionInput } from './versionFacts'
 import { chromiumLicencesResponder } from './licences'
 import { ElectronDownloads, downloadDir } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
@@ -764,7 +765,9 @@ export class ElectronPlatform implements Platform {
         () => this.newTabBackground.response(),
         chromiumLicences,
         () => this.views.colorScheme,
-        (hash) => browser.favicons.document(hash)
+        (hash) => browser.favicons.document(hash),
+        // zen://version (SET-66): the process's facts, read as the page is requested.
+        () => desktopVersionFacts(readDesktopVersionInput(ses, this.profileDir))
       )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.

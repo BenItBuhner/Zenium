@@ -28,6 +28,13 @@ export interface ReaderPreferences {
   spacing: ReaderSpacing
   /** Syllable boundaries marked inside words (English heuristic; `readerExtras.ts`). */
   syllables: boolean
+  /**
+   * Chrome's Reading mode "Links" toggle (`read_anything.links_enabled`): off draws the
+   * article's links as plain text — still there, no colour, no underline, no click.
+   */
+  links: boolean
+  /** Chrome's "Images" toggle (`read_anything.images_enabled`): off hides the article's images. */
+  images: boolean
 }
 
 /** The ladder the A− / A+ steps and the size slider walk. */
@@ -45,7 +52,9 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   width: 'normal',
   lineFocus: 0,
   spacing: 'normal',
-  syllables: false
+  syllables: false,
+  links: true,
+  images: true
 }
 
 /** Chrome's labels for the choices (the Reading mode side panel's menus). */
@@ -95,7 +104,9 @@ export function sanitizeReaderPreferences(raw: unknown): ReaderPreferences {
     spacing: READER_SPACINGS.includes(r.spacing as ReaderSpacing)
       ? (r.spacing as ReaderSpacing)
       : d.spacing,
-    syllables: typeof r.syllables === 'boolean' ? r.syllables : d.syllables
+    syllables: typeof r.syllables === 'boolean' ? r.syllables : d.syllables,
+    links: typeof r.links === 'boolean' ? r.links : d.links,
+    images: typeof r.images === 'boolean' ? r.images : d.images
   }
 }
 
@@ -117,6 +128,8 @@ export function readerPreferencesPatch(raw: unknown): Partial<ReaderPreferences>
   if (READER_SPACINGS.includes(r.spacing as ReaderSpacing))
     patch.spacing = r.spacing as ReaderSpacing
   if (typeof r.syllables === 'boolean') patch.syllables = r.syllables
+  if (typeof r.links === 'boolean') patch.links = r.links
+  if (typeof r.images === 'boolean') patch.images = r.images
   return Object.keys(patch).length > 0 ? patch : null
 }
 
@@ -140,6 +153,9 @@ export function stepReaderFontSize(current: number, direction: number): number {
 export const READER_LINE_FOCUS_ATTRIBUTE = 'data-line-focus'
 export const READER_SYLLABLES_ATTRIBUTE = 'data-syllables'
 export const READER_SPACING_ATTRIBUTE = 'data-spacing'
+/** `data-links="off"` / `data-images="off"` when the toggle is off; absent while on. */
+export const READER_LINKS_ATTRIBUTE = 'data-links'
+export const READER_IMAGES_ATTRIBUTE = 'data-images'
 
 /** The syllable mark's class (an empty span; the reader stylesheet draws the dot). */
 export const SYLLABLE_MARK_CLASS = 'zen-syl'

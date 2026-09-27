@@ -129,6 +129,7 @@ import {
   inputToUrl,
   isBlankTabUrl,
   isEmptyTabUrl,
+  isNewTabUrl,
   isWebPageUrl,
   presentedUrl,
   titleForUrl
@@ -1767,7 +1768,10 @@ export class Browser {
   onNavigated(tabId: string, inPage = false): void {
     const tab = this.tabs.tab(tabId)
     if (tab) {
-      tab.readerable = false
+      // A new document answers for itself at its dom-ready (`onPageReady` → `reader.detect`);
+      // a move within the same document (`pushState`, a hash) keeps the answer, as Chrome keeps
+      // a page's distillability across same-document navigations.
+      if (!inPage) tab.readerable = false
       this.webApps.onNavigated(tabId, tab.url, inPage)
       this.webNotifications.onNavigated(tabId, tab.url, inPage)
     }
@@ -2803,7 +2807,7 @@ export class Browser {
       if (s.binding) bindings.push(s.binding)
       bindings.push(...s.extraBindings)
     }
-    this.platform.views.setShortcuts?.(bindings)
+    this.platform.views.setShortcuts?.(bindings, table)
     // The menu bar shows the chords: it changes with the table.
     this.menus.syncApplicationMenu()
   }
@@ -2985,6 +2989,11 @@ export class Browser {
     }
     const url = inputToUrl(text)
     if (!url) return { url: buildSearchUrl(this.defaultSearchEngine(), text) }
+    // `chrome://newtab` (`zenium://newtab`, `about:newtab`) on a host without the served page
+    // – the phone – is the new tab that host opens: the empty one its chrome draws the page
+    // over (SET-66; Chrome Android's is its native new tab in the tab). The served page where
+    // the host has it, as typed.
+    if (isNewTabUrl(url) && !this.state.capabilities.newTabPage) return { url: BLANK_URL }
     const upgradedFrom =
       url.startsWith('https://') && !/^[a-z][a-z0-9+.-]*:/i.test(text) ? text : undefined
     return { url, upgradedFrom }

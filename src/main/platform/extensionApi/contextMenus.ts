@@ -222,7 +222,7 @@ export class ContextMenusApi {
     const info = onClickData(item, click, checkState)
     if (tab) this.activeTab.grant(ext.id, tab)
     const chromeTab = tab
-      ? this.host.model.chromeTab(tab, this.host.canSeeTab(ext, tab.url))
+      ? this.host.model.chromeTab(tab, this.host.canSeeTab(ext, this.host.model.urlOf(tab)))
       : undefined
     const args: unknown[] = chromeTab ? [info, chromeTab] : [info]
     this.host.dispatch(ext.id, 'contextMenus', 'onClicked', args, { wake: true })

@@ -52,6 +52,9 @@ import java.util.concurrent.atomic.AtomicLong
 class Storage(private val dir: File, private val lease: Lease? = null, private val log: (String) -> Unit = {}) {
     constructor(context: Context, lease: Lease? = null, log: (String) -> Unit = {}) : this(File(context.filesDir, "zen"), lease, log)
 
+    /** The profile's directory – what zen://version prints as Chrome's Profile Path (SET-66). */
+    val root: File get() = dir
+
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-storage") }
 
     /** This instance's claim on [lease] ([Lease.claim]); 0 without one. */

@@ -24,7 +24,7 @@ import {
   setDebuggerRecycler
 } from '../pageDebugger'
 import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
-import { PAINT_STATE_SCRIPT } from '../firstPaint'
+import { FRAME_DRAWN_SCRIPT, PAINT_STATE_SCRIPT } from '../firstPaint'
 import { IMAGE_THUMBNAIL_WORLD_ID, PRIVATE_WORLD_CHANNELS } from '../../../shared/privateWorld'
 import { DevtoolsQuitHoldNotice } from '../devtoolsQuitHoldNotice'
 import type { QuitHoldPanel } from '../../../shared/quitHoldPanel'
@@ -543,6 +543,65 @@ describe('ElectronTabViewHost', () => {
 
     expect(host.tabIdForWebContents(wc)).toBeUndefined()
     expect(host.viewForWebContents(wc)).toBeUndefined()
+  })
+
+  it('makes the reader’s cover a marked page of the tab: routed to the tab, never the tab’s page to viewForTab, seen by every view follower (reader-30)', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const tab = { id: 'tab_1', containerId: 'default' } as Tab
+    const seen: Array<[number, boolean]> = []
+    host.onViewCreated((view) => seen.push([view.webContentsId, view.cover]))
+    const page = host.createView(tab, noEvents, detachedWindow) as ElectronTabView
+    const cover = host.createCover(tab, noEvents, detachedWindow) as ElectronTabView
+    expect(page.cover).toBe(false)
+    expect(cover.cover).toBe(true)
+    // Both answer to the tab (a message or a request from the cover is the tab's); the tab's
+    // page is the page alone, before and after the cover.
+    expect(host.tabIdForWebContents(page.webContents)).toBe('tab_1')
+    expect(host.tabIdForWebContents(cover.webContents)).toBe('tab_1')
+    expect(host.viewForTab('tab_1')).toBe(page)
+    expect(host.viewForWebContents(cover.webContents)).toBe(cover)
+    // The followers of every view (the extension layer's) hear of the cover with its mark, so
+    // they can leave it out; a follower that came before saw the page as one too.
+    expect(seen).toEqual([
+      [page.webContentsId, false],
+      [cover.webContentsId, true]
+    ])
+    cover.destroy()
+    expect(host.tabIdForWebContents(cover.webContents)).toBeUndefined()
+    expect(host.viewForTab('tab_1')).toBe(page)
+  })
+
+  it('asks a document for its word that a frame is drawn through the main frame – a double requestAnimationFrame, answered with the document’s clock; unanswered by a hung renderer; refused for a page that is gone (the reader cover’s paint handshake, §11)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const tab = { id: 'tab_1', containerId: 'default' } as Tab
+    const view = host.createCover(tab, noEvents, detachedWindow) as ElectronTabView
+    const wc = view.webContents as unknown as {
+      mainFrame: { scripts: string[] }
+      scripts: string[]
+      renderer: { hung: boolean; answer(): void }
+      close(): void
+    }
+    // The ask runs in the main frame (never the contents' `executeJavaScript`, suspended while
+    // the page loads) and is the double-rAF script, named for the drive's hook.
+    const word = view.frameDrawn()
+    expect(wc.mainFrame.scripts).toEqual([FRAME_DRAWN_SCRIPT])
+    expect(wc.scripts).toEqual([])
+    expect(FRAME_DRAWN_SCRIPT.startsWith('/* zenium: frame drawn */')).toBe(true)
+    expect(FRAME_DRAWN_SCRIPT.match(/requestAnimationFrame\(/g)).toHaveLength(2)
+    expect(FRAME_DRAWN_SCRIPT).toContain('resolve(performance.now())')
+    await expect(word).resolves.toBe(1)
+    // A renderer that gives no turn gives no word: the asker's ceiling is the only clock.
+    wc.renderer.hung = true
+    const held = view.frameDrawn()
+    let answered = false
+    void held.then(() => (answered = true))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(answered).toBe(false)
+    wc.renderer.answer()
+    await held
+    // A page that is gone refuses the ask outright.
+    wc.close()
+    await expect(view.frameDrawn()).rejects.toThrow('The page is gone')
   })
 
   it('sends Cut, Copy and Paste to the page’s focused frame as asked (the app menu’s Find and Edit ▸ rows, W8-1), and drops them once the page is gone', () => {

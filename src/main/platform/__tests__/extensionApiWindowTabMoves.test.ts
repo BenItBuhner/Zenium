@@ -91,6 +91,7 @@ function world({ ownPrivate = false } = {}): World {
     zenTab: (id: number) => (id === 7 ? tab : id === 8 ? other : undefined),
     chromeTabId: chromeIdOf,
     chromeTab: (t: Tab) => ({ id: chromeIdOf(t), url: t.url }),
+    urlOf: (t: Tab) => t.url,
     windowOfTab: (t: Tab) => homes.get(t.id),
     tabsInWindow: (win: FakeWindow) => all().filter((t) => homes.get(t.id) === win),
     lastFocusedWindow: () => own,

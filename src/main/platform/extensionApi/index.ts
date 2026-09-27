@@ -444,8 +444,15 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.browser.state.subscribe(() => this.scheduleTick())
     // Every tab view, the ones alive already included: `webNavigation.*` comes from their
     // events, the pages follow `privacy.network.webRTCIPHandlingPolicy`, and the user-script
-    // worlds' pending answers die with their documents.
+    // worlds' pending answers die with their documents. Not the reader's cover over a tab's
+    // page (`ElectronTabView.cover`, `TabManager.cover`): to an extension the tab is its page
+    // throughout – the record, the events and the ids are the page's – so the cover's own
+    // navigation to `zen://reader` is no `webNavigation` event of the tab, and no world runs
+    // in it (`userScripts` matches web pages; `zen://` is none) to leave answers behind, and
+    // the WebRTC policy `privacy.pageCreated` lays on each page would guard a document that
+    // opens no connection.
     this.views.onViewCreated((view) => {
+      if (view.cover) return
       this.webNavigation.attach(view)
       this.privacy.pageCreated(view.webContents, this.isPrivateView(view.webContents))
       this.userScripts.pageCreated(view.webContents)

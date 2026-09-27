@@ -28,6 +28,7 @@ const NONE: Mods = {}
 const META: Mods = { meta: true }
 const META_SHIFT: Mods = { meta: true, shift: true }
 const META_ALT: Mods = { meta: true, alt: true }
+const META_ALT_SHIFT: Mods = { meta: true, alt: true, shift: true }
 const META_CTRL: Mods = { meta: true, ctrl: true }
 
 export function chromeReference(platform: Platform): ReferenceBinding[] {
@@ -111,6 +112,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
       ref('j', META_ALT, 'JavaScript console', ['devtools.console']),
       ref('c', META_ALT, 'Inspect element', ['devtools.inspector']),
       ref('i', META_SHIFT, 'Email page location', ['page.emailLink']),
+      ref('i', META_ALT_SHIFT, 'Report an issue', ['help.reportIssue'], CHROME),
       ref('f', META_CTRL, 'Enter full screen', ['page.fullscreen']),
       ref('m', META, 'Minimise window', ['window.minimize'], CHROME),
       ref('m', META, 'Mute tab', ['page.toggleMute'], EDGE),
@@ -154,7 +156,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
     ref('F10', NONE, 'Focus the browser menu', ['menu.app']),
     ref('t', ALT_SHIFT, 'Focus the toolbar', ['focus.toolbar']),
     ref('b', ALT_SHIFT, 'Focus the bookmarks bar', ['focus.bookmarksBar']),
-    ref('i', ALT_SHIFT, 'Send feedback'),
+    ref('i', ALT_SHIFT, 'Send feedback', ['help.reportIssue']),
     ref('m', CTRL, 'Mute tab', ['page.toggleMute'], EDGE),
     ref('F9', NONE, 'Immersive Reader', ['page.readerMode'], EDGE)
   ]

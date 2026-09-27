@@ -122,14 +122,15 @@ function harness(): Harness {
   const allow = { value: true }
   const net = fakeNet()
   const tab = { id: 't1', url: 'https://maps.example/', title: 'Maps' } as Tab
+  // The service speaks to the tab's page (`pageView`, `pageUrl`): the one beneath a reader
+  // cover too, which this tab never has.
+  const page = { isDestroyed: () => false, postToPage: (m: PageHostMessage) => posted.push(m) }
   const browser = {
     platform: { net: net.net, geolocation: { scanWifi: async () => APS } },
     tabs: {
       tab: (id: string) => (id === 't1' ? tab : undefined),
-      view: (id: string) =>
-        id === 't1'
-          ? { isDestroyed: () => false, postToPage: (m: PageHostMessage) => posted.push(m) }
-          : undefined
+      pageView: (id: string) => (id === 't1' ? page : undefined),
+      pageUrl: (id: string) => (id === 't1' ? tab.url : undefined)
     },
     permissions: {
       decide: async (permission: string, url: string) => {

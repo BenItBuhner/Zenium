@@ -134,7 +134,8 @@
 //                tabs?row=pinned-close, resources?row=protect-pinned) – the row's group at the
 //                column's top under its scroll padding, the row within the column, the page
 //                carrying data-landing; Reader View on the fixture's article – the tab read as
-//                readerable, Ctrl+Alt+R puts it on zen://reader for the article with the pill's
+//                readerable, Ctrl+Alt+R puts it on zen://reader for the article – a reader
+//                document laid over the page, which stands untouched beneath – with the pill's
 //                Reader View chip aria-pressed=true and the article's words in the reader
 //                document, again brings the article back with the chip unpressed; the bookmarks
 //                bar – Ctrl+D's star bubble ("Bookmark added"), the Folder menulist files the
@@ -231,8 +232,11 @@
 //                harness – Chrome's menus in Chrome's order with the Tab menu between Bookmarks
 //                and Window; the Tab menu's rows, order, the Chrome preset's chords and the
 //                enabled states with a new tab page in front and then a site page with a tab
-//                below it; Pin Tab / Unpin Tab and Mute Site / Unmute Site picked through the
-//                items' own click and read back; the Help menu's rows under the help role; About
+//                below it, its direction rows flipped to the Right and back with the strip's
+//                layout; Pin Tab / Unpin Tab and Mute Site / Unmute Site picked through the
+//                items' own click and read back; the Help menu's rows under the help role –
+//                Report an Issue… on Chrome's chord, Report an Unsafe Site… greyed on the new
+//                tab page and enabled on the site page; About
 //                Zenium an enabled row of the application menu opening Settings › About. Off
 //                macOS the one step reads that no application menu is set (macOS jobs judge
 //                the bar; the Windows unpacked leg and the Linux job the absence)
@@ -6878,9 +6882,12 @@ async function scenarioFeatures() {
     }
     await s.step('reader-toggle', async () => {
       // The fixture's article into a tab of its own: the detector reads it as an article. The
-      // Chrome preset's Toggle Reader View puts the tab on zen://reader for it (the chip pressed,
-      // the reader document carrying the article's words) and, pressed again, brings the article
-      // back (the chip unpressed where the pill shows it).
+      // Chrome preset's Toggle Reader View puts the tab on zen://reader for it – a reader
+      // document of its own laid over the tab's page, which stays as it was beneath (reader-30:
+      // Chrome's immersive reading mode overlay) – with the chip pressed and the reader document
+      // carrying the article's words; pressed again, the cover comes down and the article shows
+      // as it stood: its page never navigated (the same document, its history untouched), the
+      // chip unpressed where the pill shows it.
       const opened = await openUrlInNewTab(s, article.url)
       const tab = await waitFor(
         async () => {
@@ -6895,18 +6902,37 @@ async function scenarioFeatures() {
       if (chipBefore !== null && chipBefore !== 'false') {
         throw new Error(`the reader chip reads aria-pressed=${chipBefore} on the article`)
       }
+      const PAGE_IDENTITY =
+        '({ historyLength: history.length, timeOrigin: performance.timeOrigin })'
+      const pageBefore = await s.tabEval(opened.tab.id, PAGE_IDENTITY)
       await s.press(READER_COMBO)
-      const readerView = await waitFor(
-        async () =>
-          (await s.tabs()).find(
-            (v) => v.id === opened.tab.id && v.url.startsWith('zen://reader') && !v.loading
-          ) ?? null,
+      const readerTab = await waitFor(
+        async () => {
+          const t = (await featureState(s)).tabs.find((t) => t.id === tab.id)
+          return t && t.url.startsWith('zen://reader') ? t : null
+        },
         15000,
         'the tab on zen://reader'
       )
-      const named = new URL(readerView.url).searchParams.get('url')
+      const named = new URL(readerTab.url).searchParams.get('url')
       if (named !== article.url) {
         throw new Error(`the reader URL names ${named}, not the article ${article.url}`)
+      }
+      // The reader document is a web contents of its own over the page's, which stands on the
+      // article beneath it.
+      const readerView = await waitFor(
+        async () =>
+          (await s.tabs()).find(
+            (v) => v.id !== opened.tab.id && v.url.startsWith('zen://reader') && !v.loading
+          ) ?? null,
+        15000,
+        'the reader document loaded over the page'
+      )
+      const beneath = (await s.tabs()).find((v) => v.id === opened.tab.id) ?? null
+      if (!beneath || beneath.url !== article.url) {
+        throw new Error(
+          `the page beneath the reader ${beneath ? `moved to ${beneath.url}` : 'is gone'}; it should stand on the article untouched`
+        )
       }
       await chip.waitFor({ state: 'visible', timeout: 5000 })
       await waitFor(
@@ -6915,7 +6941,7 @@ async function scenarioFeatures() {
         'the reader chip pressed'
       )
       const text = String(
-        await s.tabEval(opened.tab.id, 'document.body ? document.body.innerText : ""')
+        await s.tabEval(readerView.id, 'document.body ? document.body.innerText : ""')
       )
       if (!text.includes(article.marker)) {
         throw new Error(
@@ -6926,13 +6952,29 @@ async function scenarioFeatures() {
       await s.shot('05-reader-view')
       await s.press(READER_COMBO)
       const back = await waitFor(
-        async () =>
-          (await s.tabs()).find(
-            (v) => v.id === opened.tab.id && v.url === article.url && !v.loading
-          ) ?? null,
+        async () => {
+          const t = (await featureState(s)).tabs.find((t) => t.id === tab.id)
+          return t && t.url === article.url ? t : null
+        },
         15000,
         'the tab back on the article'
       )
+      // The cover goes a frame after the exit; the page beneath is the document it was: never
+      // reloaded, no history entry spent on the reader.
+      await waitFor(
+        async () => ((await s.tabs()).some((v) => v.id === readerView.id) ? null : true),
+        5000,
+        'the reader document gone'
+      )
+      const pageAfter = await s.tabEval(opened.tab.id, PAGE_IDENTITY)
+      if (
+        pageAfter.timeOrigin !== pageBefore.timeOrigin ||
+        pageAfter.historyLength !== pageBefore.historyLength
+      ) {
+        throw new Error(
+          `the article beneath the reader was reloaded or its history grew: ${JSON.stringify({ pageBefore, pageAfter })}`
+        )
+      }
       const chipAfter = await waitFor(
         async () => {
           if (!(await chip.count())) return { shown: false }
@@ -6946,8 +6988,11 @@ async function scenarioFeatures() {
         tab: tab.id,
         readerable: tab.readerable,
         chipBefore,
-        readerUrl: readerView.url,
+        readerUrl: readerTab.url,
+        readerView: readerView.url,
+        beneath: beneath.url,
         readerTextLength: text.length,
+        page: { before: pageBefore, after: pageAfter },
         chipAfter,
         back: back.url
       }

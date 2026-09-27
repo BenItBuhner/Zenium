@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's dark card on Android 12+ (WID-02; see res/color-v31/widget_quick_actions_surface.xml):
+     MDC 1.12.0's dark colorSurface, neutral variant tone 6 (values-v31/tokens.xml:41 →
+     color-v31/m3_ref_palette_dynamic_neutral_variant6.xml:18). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@android:color/system_neutral2_600"
+        android:lStar="6" />
+</selector>

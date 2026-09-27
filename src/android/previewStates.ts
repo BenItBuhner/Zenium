@@ -1371,9 +1371,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
               afterFrames(2, finish)
               return
             }
-            // The page's document mounts and paints before the sheet takes its picture.
+            // The page's document mounts and paints before the sheet takes its picture. The
+            // sheet presents at its peek (its rows outrun that height); `expand` taps its handle
+            // once the presenting spring rests, for a still of the rows under the peek fold.
+            const done = (): void => afterFrames(2, finish)
             window.setTimeout(() => {
-              void openReaderPreferences(web.id).then(() => afterFrames(2, finish))
+              void openReaderPreferences(web.id).then(() =>
+                target.expand ? expandSheet(done) : done()
+              )
             }, STEP_SETTLE_MS)
           }
         )

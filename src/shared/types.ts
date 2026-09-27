@@ -2513,6 +2513,12 @@ export type ShortcutAction =
   | 'tasks.open'
   | 'settings.open'
   | 'addons.open'
+  /**
+   * Chrome's Help › Report an issue… (`IDC_FEEDBACK`, ⌥⇧⌘I on macOS, Alt+Shift+I on Windows
+   * and Linux): Zenium's issue tracker in the system browser (`ISSUES_URL`), the Help rows'
+   * command. Desktop layouts only – the touch shells' listings leave the row out.
+   */
+  | 'help.reportIssue'
   | 'boost.new'
 
 export interface Shortcut {
@@ -2525,7 +2531,19 @@ export interface Shortcut {
   binding: KeyBinding | null
   /** Secondary built-in bindings that are not user editable (e.g. F5 for reload). */
   extraBindings: KeyBinding[]
-  /** Actions this build cannot perform yet (kept so the list matches Zen 1:1). */
+  /**
+   * The row's words on the system's keyboard-shortcut helper (Android's Meta + / sheet), in the
+   * sentence form Chrome's rows there use ('Duplicate tab', 'Move tab to start'; a product's name
+   * keeps its capitals – 'Toggle Split View grid'). A second register, read by the helper alone:
+   * `label` stays the Settings page's Title Case and is what every other listing prints. Left
+   * out, the helper prints `label`. Never derived from `label` by a case transform.
+   */
+  helperLabel?: string
+  /**
+   * Actions this build cannot perform yet (kept so the list matches Zen 1:1): the chord routes
+   * and says so (`Keys.handle`'s toast), the Settings row is disabled, and the system's helper
+   * leaves the row out. Per platform when a host lacks the surface (DevTools on Android).
+   */
   unsupported?: boolean
   /** Reserved for a feature that has not shipped: bound (a no-op) but left out of the list. */
   hidden?: boolean

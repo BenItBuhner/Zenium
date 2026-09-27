@@ -24,6 +24,8 @@ export const SETTINGS_URL = 'zen://settings'
 export const BOOKMARKS_URL = 'zen://bookmarks'
 /** The Downloads page: an internal page that opens as a tab (see `shared/internalPages.ts`). */
 export const DOWNLOADS_URL = 'zen://downloads'
+/** The version page (chrome://version): a document page every host serves (`zenPages.ts`). */
+export const VERSION_URL = 'zen://version'
 /** The addresses of an empty tab (Zen's blank page and the aliases that resolve to it). */
 const NEW_TAB_URLS = new Set([BLANK_URL, NEW_TAB_URL, 'about:newtab', 'about:blank', ''])
 
@@ -49,7 +51,11 @@ const KNOWN_SCHEMES = [
 
 /**
  * The internal pages a user may type by another browser's name: `chrome://settings`,
- * `about:preferences`, `zenium://newtab`. Each resolves to the canonical `zen://` address.
+ * `about:preferences`, `zenium://newtab`, `chrome://version`. Each resolves to the canonical
+ * `zen://` address. The set is the pages Zenium has: of the addresses Chrome Android serves in a
+ * tab (SET-66), `version`, `newtab`, `history`, `downloads` and `bookmarks` are here (`settings`
+ * too, which Chrome Android does not serve); `chrome://flags` and `chrome://policy` are not, and
+ * stay as typed – Zenium has no flags page and no policy engine.
  */
 const INTERNAL_PAGE_ALIASES: Record<string, string> = {
   blank: BLANK_URL,
@@ -59,7 +65,8 @@ const INTERNAL_PAGE_ALIASES: Record<string, string> = {
   settings: SETTINGS_URL,
   history: HISTORY_URL,
   bookmarks: BOOKMARKS_URL,
-  downloads: DOWNLOADS_URL
+  downloads: DOWNLOADS_URL,
+  version: VERSION_URL
 }
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =

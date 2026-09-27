@@ -1137,6 +1137,37 @@ describe('RuleEngine indexes', () => {
     expect(e.indexOf('a')?.tokenIndexedCount).toBe(0)
   })
 
+  it('compiles nothing at setRuleSet: the table is built by the first decision, linear or indexed', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('a', [
+        block(1, { urlFilter: '||ads.example^' }),
+        block(2, { regexFilter: '(' }),
+        allow(3, { requestDomains: ['t.example'] })
+      ])
+    )
+    // Counted (the bad expression is refused) but not compiled: a host whose native engine
+    // decides keeps the rules and the summary, nothing else.
+    expect(e.summary('a')?.ruleCount).toBe(2)
+    expect(e.tableOf('a')).toBeNull()
+    expect(e.tableOf('missing')).toBeUndefined()
+    e.setEnabled('a', false)
+    e.setEnabled('a', true)
+    expect(e.tableOf('a')).toBeNull()
+    // The linear scan builds the table (it reads rows) but never an index.
+    expect(e.decideLinear(req('https://ads.example/x.js')).action).toBe('block')
+    const table = e.tableOf('a')
+    expect(table?.size).toBe(2)
+    expect(e.indexOf('a')).toBeNull()
+    // The indexed decision keeps that table and indexes it; a replaced set starts over.
+    expect(e.decide(req('https://ads.example/x.js')).action).toBe('block')
+    expect(e.tableOf('a')).toBe(table)
+    expect(e.indexOf('a')).not.toBeNull()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    expect(e.tableOf('a')).not.toBe(table)
+    expect(e.tableOf('a')?.size).toBe(1)
+  })
+
   it('scans a large set until its index is built in slices off the tick, then swaps it in', async () => {
     const e = new RuleEngine()
     e.setRuleSet(large('big', 2_500))

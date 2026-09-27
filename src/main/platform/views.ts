@@ -88,7 +88,7 @@ import { IMAGE_THUMBNAIL_WORLD_ID } from '../../shared/privateWorld'
 import { PrivateWorldRelay } from './privateWorld'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
-import { awaitFirstPaint, hasPainted } from './firstPaint'
+import { awaitFirstPaint, frameDrawn, hasPainted } from './firstPaint'
 import {
   emulatedColorScheme,
   emulatedMediaParams,
@@ -580,9 +580,17 @@ export class ElectronTabView implements TabView {
    */
   private pausedByDebugger = false
 
+  /**
+   * @param cover Whether this view is the reader's cover over a tab's page
+   *   (`ElectronTabViewHost.createCover`) rather than the tab's page. A cover answers to the
+   *   tab's id for its messages and requests, but is not the tab's page to `viewForTab`, and
+   *   the followers that speak of the tab's page to extensions (`webNavigation`, the privacy
+   *   hooks, the user-script worlds) leave it out: to an extension the tab never navigated.
+   */
   constructor(
     readonly view: WebContentsView,
-    private readonly owner: ElectronTabViewHost
+    private readonly owner: ElectronTabViewHost,
+    readonly cover = false
   ) {
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
@@ -2315,6 +2323,15 @@ export class ElectronTabView implements TabView {
     return hasPainted(this.wc)
   }
 
+  /**
+   * The document's word that it has drawn a frame with what it holds now (`TabView.frameDrawn`;
+   * `firstPaint.ts`): a double `requestAnimationFrame` through the main frame, never resolving
+   * for a view that draws no frame – the asker (`TabManager.afterFrame`) holds the ceiling.
+   */
+  frameDrawn(): Promise<number> {
+    return frameDrawn(this.wc)
+  }
+
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
   executeIsolatedJavaScript(code: string): Promise<unknown> {
     return this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }], true)
@@ -3610,15 +3627,33 @@ export class ElectronTabViewHost implements TabViewHost {
   }
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
+    return this.make(tab, events, host, false)
+  }
+
+  /**
+   * The reader's cover (`TabViewHost.createCover`): a page like any other of the tab's session,
+   * routed to the tab for its messages and requests (`tabIdForWebContents`), but not the tab's
+   * page to `viewForTab` – the capture host and the extension layer reach the page beneath
+   * through it, as Chrome's do under its reading mode overlay – and marked (`cover`) so the
+   * layer's followers of every view can leave it out; the layer reads the tab's address, title
+   * and status from the page beneath meanwhile (`TabManager.coveredPage`).
+   */
+  createCover(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
+    return this.make(tab, events, host, true)
+  }
+
+  /** A live page of the tab's session, wired, attached and mapped; the tab's own or its cover. */
+  private make(tab: Tab, events: TabViewEvents, host: WindowHost, cover: boolean): TabView {
     const view = new ElectronTabView(
       new WebContentsView({
         webPreferences: pageWebPreferences(this.sessions.get(tab.containerId))
       }),
-      this
+      this,
+      cover
     )
     view.wire(events)
     view.attachTo(host)
-    this.track(view, tab.id)
+    this.track(view, tab.id, !cover)
     return view
   }
 
@@ -3785,11 +3820,12 @@ export class ElectronTabViewHost implements TabViewHost {
 
   /**
    * Map the page to its tab, give it the Appearance setting's scheme where pages emulate it,
-   * then let the followers (the extension API layer) see the view.
+   * then let the followers (the extension API layer) see the view. A cover (`primary` false)
+   * answers to the tab's id but does not become the tab's page (`viewForTab`).
    */
-  private track(view: ElectronTabView, tabId: string): void {
+  private track(view: ElectronTabView, tabId: string, primary = true): void {
     this.byWebContentsId.set(view.webContentsId, view)
-    this.byTabId.set(tabId, view)
+    if (primary) this.byTabId.set(tabId, view)
     this.tabIds.set(view.webContentsId, tabId)
     view.refreshColorScheme()
     for (const listener of this.viewListeners) listener(view)

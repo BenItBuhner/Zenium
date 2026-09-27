@@ -31,7 +31,9 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
-import { unsafeSiteReportUrl } from '../unsafeSiteReport'
+import { readerArticleId } from '../reader'
+import { reportUnsafeSiteUrl } from '../help'
+import { bindingFor, toAccelerator } from '../../shared/shortcuts'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 import {
@@ -1148,6 +1150,25 @@ describe('the app menu', () => {
     expect(opened).toEqual([])
     deepItem(h.shown(), 'Report an Issue…').click?.()
     expect(opened).toEqual([ISSUES_URL])
+    // Report an Issue… names the key table's `help.reportIssue`, so Chrome's chord shows after
+    // it here as in the menu bar's Help menu (the lead's ruling 5 on #588) – the table's
+    // binding, never a second truth: Alt+Shift+I in the Chrome preset, nothing in Zen's. No
+    // other Help row names an action of the table (Chrome's ⇧⌘/ is its help page's), so none
+    // shows a chord.
+    const report = deepItem(h.shown(), 'Report an Issue…')
+    expect(report.action).toBe('help.reportIssue')
+    expect(report.accelerator).toBe('Alt+Shift+I')
+    expect(report.accelerator).toBe(
+      toAccelerator(bindingFor(h.browser.state.shortcuts, 'help.reportIssue'))
+    )
+    for (const row of help.filter((i) => i.type !== 'separator' && i.label !== 'Report an Issue…'))
+      expect(row.accelerator, row.label).toBeUndefined()
+    h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
+    appMenu(h)
+    expect(deepItem(h.shown(), 'Report an Issue…').action).toBe('help.reportIssue')
+    expect(deepItem(h.shown(), 'Report an Issue…').accelerator).toBeUndefined()
+    deepItem(h.shown(), 'Report an Issue…').click?.()
+    expect(opened).toEqual([ISSUES_URL, ISSUES_URL])
     // About is a row that acts now – the About page (Settings › About: the version, the
     // update row, the legal pages), not a disabled version line; the version is the page's.
     const about = deepItem(h.shown(), 'About Zenium')
@@ -1194,7 +1215,7 @@ describe('the app menu', () => {
       expect(report.url).toBe(
         `https://safebrowsing.google.com/safebrowsing/report_phish/?url=${encodeURIComponent(PAGE_URL)}`
       )
-      expect(report.url).toBe(unsafeSiteReportUrl(PAGE_URL))
+      expect(report.url).toBe(reportUnsafeSiteUrl(PAGE_URL))
       expect(report.openerTabId).toBe(page.id)
       expect(report.containerId).toBe(page.containerId)
       // The form is a page of the browser's, as Chrome's help centre is – not the system browser's.
@@ -1244,7 +1265,7 @@ describe('the app menu', () => {
       appMenu(h)
       deepItem(h.shown(), reportRow).click?.()
       const report = h.browser.tabs.activeTabFor(h.win)!
-      expect(report.url).toBe(unsafeSiteReportUrl('https://example.com/p'))
+      expect(report.url).toBe(reportUnsafeSiteUrl('https://example.com/p'))
       expect(report.containerId).toBe(PRIVATE_CONTAINER_ID)
       expect(report.openerTabId).toBe(privatePage.id)
     })
@@ -3540,6 +3561,7 @@ describe('the page context menu', () => {
       'Copy',
       'Search Google for “quantum foam”',
       'Copy Link to Highlight',
+      'Open Selection in Reader View',
       '-',
       'Boosts',
       'Inspect Element'
@@ -3567,6 +3589,110 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Search Google for “example.org/docs”')
     h.click('Go to example.org/docs')
     expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://example.org/docs')
+  })
+
+  describe('Open Selection in Reader View (reader-02)', () => {
+    const SELECTED = { content: '<p>hello <b>world</b></p>', length: 11 }
+    /** The page answers the selection script with `markup`, and every other script with true. */
+    const selectionScript =
+      (markup: unknown) =>
+      (code: string): unknown =>
+        code.includes('getSelection()') ? markup : true
+
+    it('seats the row after Copy Link to Highlight and before Translate Selection on the desktop alone', () => {
+      const h = pageHarness(DESKTOP, { translate: true })
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
+        'Copy',
+        'Search Google for “quantum foam”',
+        'Copy Link to Highlight',
+        'Open Selection in Reader View',
+        'Translate Selection'
+      ])
+      // The phone's page menu stands as it was; its toolbar has no reader item (Chrome's has none).
+      const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+      expect(phone.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+        'Open Selection in Reader View'
+      )
+      expect(
+        phone.browser.menus.selectionToolbar(phone.tabId, 'quantum foam').map((i) => i.id)
+      ).not.toContain('reader')
+      expect(phone.browser.menus.runSelectionAction(phone.tabId, 'reader', 'quantum foam')).toBe(
+        false
+      )
+    })
+
+    it('is gated like Chrome’s: the page’s own selection, a normal window, not while reading', () => {
+      const h = pageHarness()
+      // A text field's selection: the editing group's tail carries the search, not the reader.
+      expect(
+        h.menu(
+          pageParams({ selectionText: 'quantum foam', isEditable: true, editFlags: ALL_EDITS })
+        )
+      ).not.toContain('Open Selection in Reader View')
+      // A popup's toolbar-only chrome (Chrome's `IsNormalBrowser`): no row.
+      const popup = h.browser.createWindow({
+        kind: 'synced',
+        from: h.win,
+        chrome: 'popup',
+        bounds: { x: 0, y: 0, width: 400, height: 300 }
+      })
+      const inPopup = h.browser.tabs.createTab({ url: PAGE_URL, active: true }, popup)
+      h.browser.menus.showPageContextMenu(
+        inPopup.id,
+        pageParams({ selectionText: 'quantum foam' }),
+        popup
+      )
+      expect(topLabels(h.shown())).not.toContain('Open Selection in Reader View')
+      // Reading already: the reader document's own selection has no reader to open.
+      h.browser.tabs.tab(h.tabId)!.url =
+        'zen://reader?id=article_1&url=https%3A%2F%2Fexample.com%2Farticle'
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+        'Open Selection in Reader View'
+      )
+    })
+
+    it('reads the selection’s markup out of the clicked frame and opens the reader on it, over the page', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: selectionScript(SELECTED) })
+      h.menu(pageParams({ selectionText: 'hello world', frameId: 3 }))
+      h.viewCalls.length = 0
+      h.click('Open Selection in Reader View')
+      await settle()
+      // The selection script ran in the frame the click landed in, through the page's own world.
+      expect(
+        h.viewCalls.some(
+          (c) => c.startsWith('executeJavaScript(3:') && c.includes('getSelection()')
+        )
+      ).toBe(true)
+      // The reader stands over the page as a cover (reader-30): the page was never navigated.
+      const tab = h.browser.tabs.tab(h.tabId)!
+      expect(tab.url.startsWith('zen://reader?id=')).toBe(true)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(true)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL("zen://reader'))).toBe(true)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL("https://'))).toBe(false)
+      // The article is the selection's own markup, titled as the page is, with its address.
+      const article = h.browser.reader.article(readerArticleId(tab.url)!)
+      expect(article?.content).toBe(SELECTED.content)
+      expect(article?.length).toBe(SELECTED.length)
+      expect(article?.url).toBe(PAGE_URL)
+      expect(article?.title).toBe(tab.title)
+      // Leaving the reader uncovers the page: its address back, no load of it.
+      h.viewCalls.length = 0
+      expect(h.browser.tabs.uncover(h.tabId)).toBe(true)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(false)
+      expect(h.browser.tabs.tab(h.tabId)!.url).toBe(PAGE_URL)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL('))).toBe(false)
+    })
+
+    it('says so in a toast when the page has no selection to read by the time the row runs', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: selectionScript(null) })
+      h.menu(pageParams({ selectionText: 'hello world' }))
+      h.toasts.length = 0
+      h.click('Open Selection in Reader View')
+      await settle()
+      expect(h.toasts.map((t) => t.message)).toEqual(['Select some text to open in Reader View.'])
+      expect(h.browser.tabs.tab(h.tabId)!.url).toBe(PAGE_URL)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(false)
+    })
   })
 
   it('gives a text field the editing group and nothing else', () => {
@@ -5940,6 +6066,65 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Close Other Tabs'
     ])
     expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
+  })
+
+  describe("the tab row's direction rows read along the strip, Chrome's rule for its tab menu (`tab_menu_model.cc`, the lead's ruling under §9.37)", () => {
+    const directionRows = (h: Harness): string[] => [
+      topLabels(h.shown())[0]!,
+      ...topLabels(item(h, 'Close Multiple Tabs').submenu!)
+    ]
+
+    it('the desktop under its horizontal layout: New Tab to the Right, Close Tabs to the Left / to the Right; under each sidebar layout: Below / Above – the same seats and commands, only the words', () => {
+      const h = pageHarness()
+      const { tabs } = h.browser
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      expect(directionRows(h)).toEqual([
+        'New Tab to the Right',
+        'Close Tabs to the Left',
+        'Close Tabs to the Right',
+        'Close Other Tabs'
+      ])
+      expect(labels(h.shown())).not.toContain('New Tab Below')
+      // The rows run the commands their vertical twins run: a new tab after this one, the
+      // tabs after it closed.
+      const before = h.win.activeSpace().tabIds
+      item(h, 'New Tab to the Right').click!()
+      const ids = h.win.activeSpace().tabIds
+      expect(ids).toHaveLength(before.length + 1)
+      const after = ids[ids.indexOf(h.tabId) + 1]!
+      expect(before).not.toContain(after)
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      expect(enabled(h, 'Close Tabs to the Right')).toBe(true)
+      item(h, 'Close Tabs to the Right').click!()
+      expect(tabs.tab(after)).toBeUndefined()
+      expect(tabs.tab(h.tabId)).toBeDefined()
+      for (const layout of ['multiple', 'collapsed', 'single'] as const) {
+        h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: layout })
+        h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+        expect(directionRows(h)).toEqual([
+          'New Tab Below',
+          'Close Tabs Above',
+          'Close Tabs Below',
+          'Close Other Tabs'
+        ])
+      }
+    })
+
+    it('a phone or tablet window keeps Below / Above whatever the layout setting says: its strip runs down (the horizontal layout is the desktop shell’s alone)', () => {
+      for (const formFactor of ['phone', 'tablet'] as const) {
+        const h = pageHarness(ANDROID, { formFactor })
+        h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'horizontal' })
+        h.browser.menus.showTabContextMenu(h.tabId, h.win)
+        expect(directionRows(h)).toEqual([
+          'New Tab Below',
+          'Close Tabs Above',
+          'Close Tabs Below',
+          'Close Other Tabs'
+        ])
+        expect(labels(h.shown())).not.toContain('New Tab to the Right')
+      }
+    })
   })
 
   it("the phone row's Remove Bookmark (the drawer's hold menu) is told as the desktop's: bookmark.deleted for the toast with Undo, no bare word (#357 G2)", () => {

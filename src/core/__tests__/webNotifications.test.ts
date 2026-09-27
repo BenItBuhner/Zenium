@@ -165,7 +165,8 @@ function harness(options: { host?: boolean } = {}): Harness {
     },
     tabs: {
       tab: (id: string) => (views.has(id) ? { id } : undefined),
-      view: (id: string) => views.get(id),
+      // The service speaks to the tab's page (`pageView`) – the one beneath a reader cover too.
+      pageView: (id: string) => views.get(id),
       allViews: () => views.entries(),
       isPrivate: (tab: { id: string }) => privateTabs.has(tab.id),
       createTab: (opts: { url: string }) => {

@@ -136,7 +136,7 @@ export class TabsApi {
   }
 
   private chromeTab(ext: LoadedExtension, tab: Tab): ChromeTab {
-    return this.model.chromeTab(tab, this.host.canSeeTab(ext, tab.url))
+    return this.model.chromeTab(tab, this.host.canSeeTab(ext, this.model.urlOf(tab)))
   }
 
   private windowOf(tab: Tab): ZenWindow {
@@ -437,9 +437,11 @@ export class TabsApi {
     const win = this.resolveWindow(ctx, windowId)
     const active = this.host.browser.tabs.activeTabFor(win)
     if (!active) return null
+    // The tab's page – beneath the reader's cover too: Chrome captures the tab's contents
+    // under its reading mode overlay, and the page's address is what the checks read.
     const wc = this.model.webContentsOf(active)
     if (!wc) return null
-    return { wc, url: active.url, tabId: this.model.chromeTabId(active) }
+    return { wc, url: this.model.urlOf(active), tabId: this.model.chromeTabId(active) }
   }
 
   /** Chrome's "Allow access to file URLs" toggle of an extension, kept in the registry. */

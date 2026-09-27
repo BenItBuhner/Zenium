@@ -13,33 +13,30 @@ import {
   type RuleSetSummary
 } from './rules'
 import { domainOf, hostnameOf, isThirdParty } from './domain'
-import {
-  compileHeaderConditions,
-  indexReceivedHeaders,
-  matchesHeaderStage,
-  type ReceivedHeaders
-} from './headerCondition'
+import { indexReceivedHeaders, matchesHeaderStage, type ReceivedHeaders } from './headerCondition'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import { isExtensionPageUrl } from '../extensions/runtime/extensionUrls'
-import {
-  applyRegexSubstitution,
-  compileRegexFilter,
-  compileUrlFilter,
-  type UrlPredicate
-} from './urlFilter'
+import { applyRegexSubstitution } from './urlFilter'
 import { countNetworkFilters } from './lists'
 import {
-  EVERY_URL,
-  RuleIndex,
-  RuleIndexBuilder,
-  hasDomainOf,
+  RowIndex,
+  RowIndexBuilder,
   hostSuffixes,
-  regexSelector,
   tokenize,
-  urlFilterSelector,
-  type IndexLookup,
-  type UrlSelector
+  typeBit,
+  type IndexLookup
 } from './ruleIndex'
+import {
+  ACTION,
+  FLAG,
+  RuleTable,
+  bandOf,
+  compilableCount,
+  effectivePriority,
+  rankOf,
+  type RuleTableOptions,
+  type UrlFacts
+} from './ruleTable'
 
 /**
  * What the platform's filter-text matcher answers for a request. `allow` means an exception
@@ -63,59 +60,24 @@ export interface TextMatcher {
 /** Set id reported for text matches (the matcher works on all enabled text sets at once). */
 export const TEXT_MATCH_SET_ID = 'filter-text'
 
-interface CompiledRule {
-  setId: string
-  effective: number
-  rank: number
-  rule: Rule
-  /**
-   * The rule's index in its set's `compiled` (resolution order: a stable sort of the set's own
-   * order by effective priority, then rank). On a full tie – equal effective priority and rank –
-   * the lower position wins, which is the rule the linear scan meets first; the index visits
-   * rules in bucket order and needs this to agree with it (and with the Kotlin engine).
-   */
-  position: number
-  /** `allowAllRequests`: kept apart by the index, matched against the document too. */
-  allowAll: boolean
-  /** How the index finds the rule from a URL (`ruleIndex.ts`). */
-  selector: UrlSelector
-  /** The last `decide` that visited the rule through an index (a rule under several buckets is visited once). */
-  seen: number
-  url: UrlPredicate | null
-  regex: RegExp | null
-  initiatorDomains: Set<string> | null
-  excludedInitiatorDomains: Set<string> | null
-  requestDomains: Set<string> | null
-  excludedRequestDomains: Set<string> | null
-  topDomains: Set<string> | null
-  excludedTopDomains: Set<string> | null
-  excludedNonUniqueHosts: boolean
-  resourceTypes: Set<ResourceType> | null
-  excludedResourceTypes: Set<ResourceType> | null
-  methods: Set<string> | null
-  excludedMethods: Set<string> | null
-  domainType: 'firstParty' | 'thirdParty' | null
-  tabIds: Set<string> | null
-  excludedTabIds: Set<string> | null
-  responseHeaders: ReturnType<typeof compileHeaderConditions>
-  excludedResponseHeaders: ReturnType<typeof compileHeaderConditions>
-  /** The rule is decided at the headers-received stage (it has a header condition). */
-  headerStage: boolean
-}
-
 interface StoredSet {
   summary: RuleSetSummary
   rules: Rule[]
-  /** In resolution order; what `decideLinear` scans and `index` is built from. */
-  compiled: CompiledRule[]
+  /**
+   * The rules compiled as a struct-of-arrays table (`ruleTable.ts`), in resolution order: what
+   * `decideLinear` scans and `index` is built from. Built by the first decision that reads the
+   * set (or by `setRuleSet` once the engine indexes), so a host whose native engine decides
+   * (Android) never holds one: after `setRuleSet` it keeps the `rules` and the summary alone.
+   */
+  table: RuleTable | null
   /** The set's index, or null while a large set's is still to be built (`decide` scans it then). */
-  index: RuleIndex<CompiledRule> | null
+  index: RowIndex | null
 }
 
 /**
  * A matching rule's claim. `order` is where the linear scan would have met it – the set's place
- * among the ordered sets above the rule's `position` – and breaks a full tie the way the scan
- * does: the first met wins. A filter-text match is met after every structured rule (`Infinity`).
+ * among the ordered sets above the rule's row – and breaks a full tie the way the scan does: the
+ * first met wins. A filter-text match is met after every structured rule (`Infinity`).
  */
 interface Candidate {
   effective: number
@@ -124,13 +86,15 @@ interface Candidate {
   decision: Decision
 }
 
-/** A `modifyHeaders` rule that matched, with where the scan meets it. */
+/** A `modifyHeaders` rule that matched – a row of a table – with where the scan meets it. */
 interface HeaderCandidate {
-  rule: CompiledRule
+  table: RuleTable
+  row: number
+  effective: number
   order: number
 }
 
-/** `order` of a rule: `setIndex` above `position` (positions stay below 2^32). */
+/** `order` of a rule: `setIndex` above its row (rows stay below 2^32). */
 const ORDER_BASE = 0x100000000
 
 /**
@@ -150,89 +114,17 @@ const now: () => number =
 /** A pending index build for the set as it was when the build was queued. */
 interface IndexJob {
   stored: StoredSet
-  builder: RuleIndexBuilder<CompiledRule>
-}
-
-/** Tie-break order inside one priority: allow > allowAllRequests > block > upgradeScheme > redirect. */
-const RANK: Record<string, number> = {
-  allow: 5,
-  allowAllRequests: 4,
-  block: 3,
-  upgradeScheme: 2,
-  redirect: 1,
-  modifyHeaders: 0
-}
-
-const RULE_PRIORITY_BITS = 20
-const RULE_PRIORITY_MAX = (1 << RULE_PRIORITY_BITS) - 1
-
-function effectivePriority(setPriority: number, rulePriority: number | undefined): number {
-  const rp = Math.min(Math.max(1, Math.floor(rulePriority ?? 1)), RULE_PRIORITY_MAX)
-  return setPriority * (RULE_PRIORITY_MAX + 1) + rp
+  builder: RowIndexBuilder
 }
 
 const TEXT_EFFECTIVE = effectivePriority(RULE_SET_PRIORITY.filterList, 1)
 
-function lower(list: string[] | undefined): Set<string> | null {
-  return list && list.length > 0 ? new Set(list.map((d) => d.toLowerCase())) : null
-}
-
-function set<T>(list: T[] | undefined): Set<T> | null {
-  return list && list.length > 0 ? new Set(list) : null
-}
-
-function compileRule(setId: string, setPriority: number, rule: Rule): CompiledRule | null {
-  const c = rule.condition ?? {}
-  const caseSensitive = c.isUrlFilterCaseSensitive === true
-  let url: UrlPredicate | null = null
-  let regex: RegExp | null = null
-  let selector: UrlSelector = EVERY_URL
-  if (c.regexFilter !== undefined) {
-    regex = compileRegexFilter(c.regexFilter, caseSensitive)
-    if (!regex) return null
-    selector = regexSelector(c.regexFilter)
-  } else if (c.urlFilter) {
-    url = compileUrlFilter(c.urlFilter, caseSensitive)
-    selector = urlFilterSelector(c.urlFilter, caseSensitive)
-  }
-  return {
-    setId,
-    effective: effectivePriority(setPriority, rule.priority),
-    rank: RANK[rule.action.type] ?? 0,
-    rule,
-    position: -1,
-    allowAll: rule.action.type === 'allowAllRequests',
-    selector,
-    seen: 0,
-    url,
-    regex,
-    initiatorDomains: lower(c.initiatorDomains),
-    excludedInitiatorDomains: lower(c.excludedInitiatorDomains),
-    requestDomains: lower(c.requestDomains),
-    excludedRequestDomains: lower(c.excludedRequestDomains),
-    topDomains: lower(c.topDomains),
-    excludedTopDomains: lower(c.excludedTopDomains),
-    excludedNonUniqueHosts: c.excludedNonUniqueHosts === true,
-    resourceTypes: set(c.resourceTypes),
-    excludedResourceTypes: set(c.excludedResourceTypes),
-    methods: c.requestMethods ? new Set(c.requestMethods.map((m) => m.toLowerCase())) : null,
-    excludedMethods: c.excludedRequestMethods
-      ? new Set(c.excludedRequestMethods.map((m) => m.toLowerCase()))
-      : null,
-    domainType: c.domainType ?? null,
-    tabIds: c.tabIds ? new Set(c.tabIds.map(String)) : null,
-    excludedTabIds: c.excludedTabIds ? new Set(c.excludedTabIds.map(String)) : null,
-    responseHeaders: compileHeaderConditions(c.responseHeaders),
-    excludedResponseHeaders: compileHeaderConditions(c.excludedResponseHeaders),
-    headerStage:
-      (c.responseHeaders?.length ?? 0) > 0 || (c.excludedResponseHeaders?.length ?? 0) > 0
-  }
-}
-
 /** Request facts computed once per `decide` call; also what the indexes are walked with. */
-class Facts implements IndexLookup {
+class Facts implements IndexLookup, UrlFacts {
   readonly url: string
   readonly type: ResourceType
+  /** `typeBit(type)`: what a row's type masks are tested with. */
+  readonly typeBit: number
   readonly host: string
   readonly initiatorHost: string
   /**
@@ -249,6 +141,7 @@ class Facts implements IndexLookup {
   readonly topSuffixes: string[]
   /** The received headers, indexed; null at the request stage. */
   readonly headers: ReceivedHeaders | null
+  private lowered: string | null = null
   private urlTokens: number[] | null = null
 
   constructor(ctx: RequestContext) {
@@ -256,6 +149,7 @@ class Facts implements IndexLookup {
     const top = ctx.type === 'main_frame' ? ctx.url : (ctx.documentUrl ?? ctx.initiator)
     this.url = ctx.url
     this.type = ctx.type
+    this.typeBit = typeBit(ctx.type)
     this.host = hostnameOf(ctx.url) ?? ''
     this.initiatorHost = initiator ? (hostnameOf(initiator) ?? '') : ''
     this.topHost = top ? (hostnameOf(top) ?? '') : ''
@@ -268,50 +162,52 @@ class Facts implements IndexLookup {
     this.headers = ctx.responseHeaders ? indexReceivedHeaders(ctx.responseHeaders) : null
   }
 
+  /** The URL lowercased, once per request: what plain `urlFilter` substrings are looked for in. */
+  lowerUrl(): string {
+    return (this.lowered ??= this.url.toLowerCase())
+  }
+
   /** Tokens of the lowercased URL, for the token buckets; computed on first use. */
   tokens(): number[] {
-    return (this.urlTokens ??= tokenize(this.url.toLowerCase()))
+    return (this.urlTokens ??= tokenize(this.lowerUrl()))
   }
 }
 
-/**
- * `hostMatchesDomain(host, d)` for some `d` of a set, as a membership test over the host's
- * suffixes: a list of tens of thousands of domains (uBlock Origin Lite folds whole hosts files
- * into one rule's `requestDomains`) costs as many lookups as the host has labels.
- */
-function matchesDomains(
-  suffixes: readonly string[],
-  include: Set<string> | null,
-  exclude: Set<string> | null
-): boolean {
-  if (exclude && hasDomainOf(suffixes, exclude)) return false
-  if (include) return hasDomainOf(suffixes, include)
-  return true
-}
-
-function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
-  if (r.resourceTypes && !r.resourceTypes.has(ctx.type)) return false
-  if (r.excludedResourceTypes && r.excludedResourceTypes.has(ctx.type)) return false
-  if (r.methods && !r.methods.has(f.method)) return false
-  if (r.excludedMethods && r.excludedMethods.has(f.method)) return false
-  if (r.domainType === 'thirdParty' && !f.thirdParty) return false
-  if (r.domainType === 'firstParty' && f.thirdParty) return false
-  if (r.tabIds && (f.tabId === undefined || !r.tabIds.has(f.tabId))) return false
-  if (r.excludedTabIds && f.tabId !== undefined && r.excludedTabIds.has(f.tabId)) return false
-  if (!matchesDomains(f.hostSuffixes, r.requestDomains, r.excludedRequestDomains)) return false
-  if (r.excludedNonUniqueHosts && isNonUniqueHost(f.host)) return false
-  if (r.initiatorDomains || r.excludedInitiatorDomains) {
-    if (r.initiatorDomains && !f.initiatorHost) return false
-    if (!matchesDomains(f.initiatorSuffixes, r.initiatorDomains, r.excludedInitiatorDomains))
+/** Whether row `row` of `t` matches the request `f` describes (every condition but the header stage's). */
+function ruleMatches(t: RuleTable, row: number, f: Facts): boolean {
+  const types = t.types[row]!
+  if (types !== 0 && (types & f.typeBit) === 0) return false
+  const excludedTypes = t.excludedTypes[row]!
+  if (excludedTypes !== 0 && (excludedTypes & f.typeBit) !== 0) return false
+  const methods = t.methods[row]!
+  if (methods >= 0 && !t.stringSets[methods]!.has(f.method)) return false
+  const excludedMethods = t.excludedMethods[row]!
+  if (excludedMethods >= 0 && t.stringSets[excludedMethods]!.has(f.method)) return false
+  const flags = t.flags[row]!
+  if ((flags & FLAG.thirdParty) !== 0 && !f.thirdParty) return false
+  if ((flags & FLAG.firstParty) !== 0 && f.thirdParty) return false
+  const tabIds = t.tabIds[row]!
+  if (tabIds >= 0 && (f.tabId === undefined || !t.stringSets[tabIds]!.has(f.tabId))) return false
+  const excludedTabIds = t.excludedTabIds[row]!
+  if (excludedTabIds >= 0 && f.tabId !== undefined && t.stringSets[excludedTabIds]!.has(f.tabId))
+    return false
+  if (!t.matchesDomains(f.hostSuffixes, t.requestDomains[row]!, t.excludedRequestDomains[row]!))
+    return false
+  if ((flags & FLAG.excludedNonUniqueHosts) !== 0 && isNonUniqueHost(f.host)) return false
+  const initiatorDomains = t.initiatorDomains[row]!
+  const excludedInitiatorDomains = t.excludedInitiatorDomains[row]!
+  if (initiatorDomains >= 0 || excludedInitiatorDomains >= 0) {
+    if (initiatorDomains >= 0 && !f.initiatorHost) return false
+    if (!t.matchesDomains(f.initiatorSuffixes, initiatorDomains, excludedInitiatorDomains))
       return false
   }
-  if (r.topDomains || r.excludedTopDomains) {
-    if (r.topDomains && !f.topHost) return false
-    if (!matchesDomains(f.topSuffixes, r.topDomains, r.excludedTopDomains)) return false
+  const topDomains = t.topDomains[row]!
+  const excludedTopDomains = t.excludedTopDomains[row]!
+  if (topDomains >= 0 || excludedTopDomains >= 0) {
+    if (topDomains >= 0 && !f.topHost) return false
+    if (!t.matchesDomains(f.topSuffixes, topDomains, excludedTopDomains)) return false
   }
-  if (r.regex) return r.regex.test(f.url)
-  if (r.url) return r.url(f.url)
-  return true
+  return t.urlMatches(row, f)
 }
 
 function factsFor(ctx: RequestContext): Facts {
@@ -389,34 +285,32 @@ function samePartitions(
   return a.length === b.length && a.every((value, index) => value === b[index])
 }
 
-function decisionFor(r: CompiledRule, f: Facts): Decision | null {
-  const matched = { setId: r.setId, ruleId: r.rule.id }
-  switch (r.rule.action.type) {
-    case 'allow':
-    case 'allowAllRequests':
+function decisionFor(t: RuleTable, row: number, f: Facts): Decision | null {
+  const rule = t.ruleOf(row)
+  const matched = { setId: t.setId, ruleId: rule.id }
+  switch (t.action[row]) {
+    case ACTION.allow:
+    case ACTION.allowAllRequests:
       return { action: 'allow', matched }
-    case 'block':
+    case ACTION.block:
       return { action: 'block', matched }
-    case 'upgradeScheme':
+    case ACTION.upgradeScheme:
       if (!/^http:\/\//i.test(f.url)) return null
       return { action: 'upgrade', redirectUrl: `https://${f.url.slice(7)}`, matched }
-    case 'redirect': {
-      const redirect = r.rule.action.redirect
+    case ACTION.redirect: {
+      const redirect = rule.action.redirect
       let target: string | null = null
       if (redirect?.url) target = redirect.url
-      else if (redirect?.regexSubstitution && r.regex)
-        target = applyRegexSubstitution(r.regex, f.url, redirect.regexSubstitution)
+      else if (redirect?.regexSubstitution) {
+        const regex = t.regexFilterOf(row)
+        if (regex) target = applyRegexSubstitution(regex, f.url, redirect.regexSubstitution)
+      }
       if (!target || target === f.url) return null
       return { action: 'redirect', redirectUrl: target, matched }
     }
     default:
       return null
   }
-}
-
-/** The priority band (the set priority) an effective priority belongs to. */
-function bandOf(effective: number): number {
-  return Math.floor(effective / (RULE_PRIORITY_MAX + 1))
 }
 
 /**
@@ -461,41 +355,46 @@ class Resolution {
    * belongs to (everything under an excepted document is allowed). The document's headers are
    * not at hand, so a header-conditioned `allowAllRequests` only matches the frame request.
    */
-  matches(r: CompiledRule): boolean {
-    if (ruleMatches(r, this.ctx, this.facts)) return true
-    if (!r.allowAll || r.headerStage) return false
+  matches(t: RuleTable, row: number): boolean {
+    if (ruleMatches(t, row, this.facts)) return true
+    const flags = t.flags[row]!
+    if ((flags & FLAG.allowAll) === 0 || (flags & FLAG.headerStage) !== 0) return false
     if (this.frameCtx === undefined) {
       this.frameCtx = frameContext(this.ctx)
       this.frameFacts = this.frameCtx ? factsFor(this.frameCtx) : null
     }
-    return (
-      this.frameCtx !== null &&
-      this.frameFacts !== null &&
-      ruleMatches(r, this.frameCtx, this.frameFacts)
-    )
+    return this.frameFacts !== null && ruleMatches(t, row, this.frameFacts)
   }
 
-  /** A rule that matched, met at `order`. */
-  claim(r: CompiledRule, order: number): void {
-    if (r.headerStage) {
+  /** A rule that matched – row `row` of `t` – met at `order`. */
+  claim(t: RuleTable, row: number, order: number): void {
+    const effective = t.effectiveOf(row)
+    const headerStage = (t.flags[row]! & FLAG.headerStage) !== 0
+    if (headerStage) {
       if (!this.facts.headers) {
-        this.lateEffective = Math.max(this.lateEffective, r.effective)
+        this.lateEffective = Math.max(this.lateEffective, effective)
         return
       }
-      if (!matchesHeaderStage(this.facts.headers, r.responseHeaders, r.excludedResponseHeaders))
+      if (
+        !matchesHeaderStage(
+          this.facts.headers,
+          t.headerConditionsOf(t.responseHeaders[row]!),
+          t.headerConditionsOf(t.excludedResponseHeaders[row]!)
+        )
+      )
         return
     }
-    if (r.rule.action.type === 'modifyHeaders') {
-      ;(r.headerStage ? this.lateHeaders : this.headers).push({ rule: r, order })
+    if (t.action[row] === ACTION.modifyHeaders) {
+      ;(headerStage ? this.lateHeaders : this.headers).push({ table: t, row, effective, order })
       return
     }
-    const decision = decisionFor(r, this.facts)
+    const decision = decisionFor(t, row, this.facts)
     if (!decision) return
-    const candidate = { effective: r.effective, rank: r.rank, order, decision }
-    if (r.headerStage) {
-      if (!this.bestLate || better(r.effective, r.rank, order, this.bestLate))
-        this.bestLate = candidate
-    } else if (!this.best || better(r.effective, r.rank, order, this.best)) this.best = candidate
+    const rank = t.rankOf(row)
+    const candidate = { effective, rank, order, decision }
+    if (headerStage) {
+      if (!this.bestLate || better(effective, rank, order, this.bestLate)) this.bestLate = candidate
+    } else if (!this.best || better(effective, rank, order, this.best)) this.best = candidate
   }
 
   /**
@@ -513,25 +412,33 @@ class Resolution {
  */
 function composeHeaderEdits(applicable: HeaderCandidate[], otherwise: Decision): Decision {
   if (applicable.length === 0) return otherwise
-  applicable.sort((a, b) => b.rule.effective - a.rule.effective || a.order - b.order)
+  applicable.sort((a, b) => b.effective - a.effective || a.order - b.order)
   const requestHeaders: HeaderOp[] = []
   const responseHeaders: HeaderOp[] = []
-  for (const { rule: r } of applicable) {
+  for (const { table, row } of applicable) {
+    const action = table.ruleOf(row).action
     // A header-conditioned rule decides once the request is out, so it can only edit the
     // response (Chrome refuses its `requestHeaders` at parse:
     // ERROR_RESPONSE_HEADER_RULE_CANNOT_MODIFY_REQUEST_HEADERS); a set written by hand gets the
     // same treatment here.
-    if (r.rule.action.requestHeaders && !r.headerStage)
-      requestHeaders.push(...r.rule.action.requestHeaders)
-    if (r.rule.action.responseHeaders) responseHeaders.push(...r.rule.action.responseHeaders)
+    if (action.requestHeaders && (table.flags[row]! & FLAG.headerStage) === 0)
+      requestHeaders.push(...action.requestHeaders)
+    if (action.responseHeaders) responseHeaders.push(...action.responseHeaders)
   }
-  const first = applicable[0].rule
+  const first = applicable[0]!
   return {
     action: 'modifyHeaders',
     requestHeaders,
     responseHeaders,
-    matched: { setId: first.setId, ruleId: first.rule.id }
+    matched: { setId: first.table.setId, ruleId: first.table.ruleOf(first.row).id }
   }
+}
+
+/** Every row of `table` (the set at `setIndex` among the ordered sets) tested in order. */
+function scanTable(table: RuleTable, setIndex: number, resolution: Resolution): void {
+  const base = setIndex * ORDER_BASE
+  for (let row = 0; row < table.size; row++)
+    if (resolution.matches(table, row)) resolution.claim(table, row, base + row)
 }
 
 /**
@@ -562,6 +469,9 @@ export class RuleEngine implements BlockingEngine {
   /** Stamp of the current `decide`, marking the rules the index has visited for it. */
   private stamp = 0
 
+  /** @param tableOptions How the sets' tables are built (the domain lists' form). */
+  constructor(private readonly tableOptions: RuleTableOptions = {}) {}
+
   /**
    * Add or replace a set. `options.persisted` registers a set whose text already lives on disk
    * (startup, bundled snapshots) without re-writing it.
@@ -571,15 +481,8 @@ export class RuleEngine implements BlockingEngine {
     options: { persisted?: boolean; filterCount?: number; hasFilterText?: boolean } = {}
   ): void {
     const rules = Array.isArray(input.rules) ? input.rules : []
-    const compiled: CompiledRule[] = []
-    for (const rule of rules) {
-      const c = compileRule(input.id, input.priority, rule)
-      if (c) compiled.push(c)
-    }
-    compiled.sort((a, b) => b.effective - a.effective || b.rank - a.rank)
-    compiled.forEach((c, i) => {
-      c.position = i
-    })
+    // Counted, not compiled: the table is built by the first decision that needs it.
+    const ruleCount = compilableCount(rules)
     const hasFilterText =
       input.filterText !== undefined ? input.filterText.length > 0 : Boolean(options.hasFilterText)
     // A caller that prepared the text (`prepareListText`, in the background worker) knows the
@@ -592,7 +495,7 @@ export class RuleEngine implements BlockingEngine {
       source: input.source,
       priority: input.priority,
       enabled: input.enabled,
-      ruleCount: compiled.length,
+      ruleCount,
       filterCount,
       hasFilterText
     }
@@ -600,7 +503,7 @@ export class RuleEngine implements BlockingEngine {
     if (input.updatedAt !== undefined) summary.updatedAt = input.updatedAt
     if (input.attribution) summary.attribution = { ...input.attribution }
     if (input.partitions) summary.partitions = [...input.partitions]
-    const stored: StoredSet = { summary, rules, compiled, index: null }
+    const stored: StoredSet = { summary, rules, table: null, index: null }
     this.sets.set(input.id, stored)
     this.ordered = null
     if (this.indexing) this.indexSet(stored)
@@ -633,9 +536,28 @@ export class RuleEngine implements BlockingEngine {
   }
 
   /** How the rules of a set are indexed, for tests and diagnostics; undefined until it is indexed. */
-  indexOf(id: string): RuleIndex<CompiledRule> | null | undefined {
+  indexOf(id: string): RowIndex | null | undefined {
     const stored = this.sets.get(id)
     return stored ? stored.index : undefined
+  }
+
+  /**
+   * The set's compiled table, for tests and diagnostics: null until a decision (or the engine's
+   * indexing) has built it – on a host that never decides in JavaScript, never.
+   */
+  tableOf(id: string): RuleTable | null | undefined {
+    const stored = this.sets.get(id)
+    return stored ? stored.table : undefined
+  }
+
+  /** The set's table, built now if it is not yet. */
+  private table(stored: StoredSet): RuleTable {
+    return (stored.table ??= RuleTable.build(
+      stored.summary.id,
+      stored.summary.priority,
+      stored.rules,
+      this.tableOptions
+    ))
   }
 
   /** Turn indexing on: every set gets an index, small ones now and large ones in slices. */
@@ -645,11 +567,12 @@ export class RuleEngine implements BlockingEngine {
   }
 
   private indexSet(stored: StoredSet): void {
-    if (stored.compiled.length <= INDEX_INLINE_LIMIT) {
-      stored.index = RuleIndex.build(stored.compiled)
+    const table = this.table(stored)
+    if (table.size <= INDEX_INLINE_LIMIT) {
+      stored.index = RowIndex.build(table)
       return
     }
-    this.indexJobs.push({ stored, builder: new RuleIndexBuilder(stored.compiled) })
+    this.indexJobs.push({ stored, builder: new RowIndexBuilder(table) })
     this.scheduleIndexSlice()
   }
 
@@ -798,28 +721,45 @@ export class RuleEngine implements BlockingEngine {
     // does not look: such requests (which Chromium's network stack does not make) are scanned.
     if (hasUserInfo(ctx.url)) return this.decideLinear(ctx)
     const resolution = new Resolution(ctx, factsFor(ctx))
-    const stamp = ++this.stamp
+    const stamp = this.nextStamp()
     const ordered = this.orderedSets()
     for (let i = 0; i < ordered.length; i++) {
-      const stored = ordered[i]
-      if (!stored.summary.enabled || stored.compiled.length === 0) continue
+      const stored = ordered[i]!
+      if (!stored.summary.enabled || stored.summary.ruleCount === 0) continue
       if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
       if (!resolution.worthScanning(stored)) break
+      const table = this.table(stored)
       const index = stored.index
       if (!index) {
-        this.scanSet(stored, i, resolution)
+        scanTable(table, i, resolution)
         continue
       }
       const base = i * ORDER_BASE
-      for (const r of index.allowAll)
-        if (resolution.matches(r)) resolution.claim(r, base + r.position)
-      index.forEachCandidate(resolution.facts, (r) => {
-        if (r.seen === stamp) return
-        r.seen = stamp
-        if (resolution.matches(r)) resolution.claim(r, base + r.position)
+      const allowAll = index.allowAll
+      for (let k = 0; k < allowAll.length; k++) {
+        const row = allowAll[k]!
+        if (resolution.matches(table, row)) resolution.claim(table, row, base + row)
+      }
+      const seen = table.seen
+      index.forEachCandidate(resolution.facts, (row) => {
+        if (seen[row] === stamp) return
+        seen[row] = stamp
+        if (resolution.matches(table, row)) resolution.claim(table, row, base + row)
       })
     }
     return this.conclude(ctx, resolution)
+  }
+
+  /**
+   * The stamp of the next `decide`. Stamps live in each table's `seen` column (32 bits): when
+   * they run out, every column is cleared and they start over.
+   */
+  private nextStamp(): number {
+    if (this.stamp === 0xffffffff) {
+      this.stamp = 0
+      for (const stored of this.sets.values()) stored.table?.seen.fill(0)
+    }
+    return ++this.stamp
   }
 
   /**
@@ -831,19 +771,13 @@ export class RuleEngine implements BlockingEngine {
     const resolution = new Resolution(ctx, factsFor(ctx))
     const ordered = this.orderedSets()
     for (let i = 0; i < ordered.length; i++) {
-      const stored = ordered[i]
-      if (!stored.summary.enabled || stored.compiled.length === 0) continue
+      const stored = ordered[i]!
+      if (!stored.summary.enabled || stored.summary.ruleCount === 0) continue
       if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
       if (!resolution.worthScanning(stored)) break
-      this.scanSet(stored, i, resolution)
+      scanTable(this.table(stored), i, resolution)
     }
     return this.conclude(ctx, resolution)
-  }
-
-  private scanSet(stored: StoredSet, setIndex: number, resolution: Resolution): void {
-    const base = setIndex * ORDER_BASE
-    for (const r of stored.compiled)
-      if (resolution.matches(r)) resolution.claim(r, base + r.position)
   }
 
   /** Weigh the text matcher's answer against the structured claims and apply header rules. */
@@ -861,7 +795,7 @@ export class RuleEngine implements BlockingEngine {
             ? { action: 'redirect', redirectUrl: text.redirectUrl }
             : { action: text.action === 'allow' ? 'allow' : 'block' }
         decision.matched = { setId: TEXT_MATCH_SET_ID, filter: text.filter }
-        const rank = RANK[text.action] ?? 0
+        const rank = rankOf(text.action)
         // Met after every structured rule: a structured rule it ties with wins.
         if (!best || better(TEXT_EFFECTIVE, rank, Infinity, best))
           best = { effective: TEXT_EFFECTIVE, rank, order: Infinity, decision }
@@ -874,7 +808,7 @@ export class RuleEngine implements BlockingEngine {
     const allowEffective = best ? best.effective : -1
     if (resolution.facts.headers === null) {
       const decision = composeHeaderEdits(
-        resolution.headers.filter((h) => h.rule.effective > allowEffective),
+        resolution.headers.filter((h) => h.effective > allowEffective),
         best?.decision ?? ALLOW
       )
       // A second round is only worth it when a header rule could beat the request stage's allow.
@@ -890,10 +824,10 @@ export class RuleEngine implements BlockingEngine {
     const lateAllowEffective = bestLate ? bestLate.effective : -1
     const applicable = [
       ...resolution.headers.filter(
-        (h) => h.rule.effective > allowEffective && h.rule.effective >= lateAllowEffective
+        (h) => h.effective > allowEffective && h.effective >= lateAllowEffective
       ),
       ...resolution.lateHeaders.filter(
-        (h) => h.rule.effective > Math.max(allowEffective, lateAllowEffective)
+        (h) => h.effective > Math.max(allowEffective, lateAllowEffective)
       )
     ]
     return composeHeaderEdits(applicable, bestLate?.decision ?? best?.decision ?? ALLOW)

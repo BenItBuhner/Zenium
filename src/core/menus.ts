@@ -92,14 +92,15 @@ import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import {
   applicationMenu,
-  HELP_URL,
   ISSUES_URL,
   menuSignature,
   runFromMenuBar,
-  splitViewSubmenu
+  splitViewSubmenu,
+  tabDirectionLabels
 } from './menuBar'
+import { isHorizontalTabs } from '../shared/toolbarLayout'
 import { isSendableUrl } from './sync/sendTab'
-import { unsafeSiteReportUrl } from './unsafeSiteReport'
+import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
 import { markUpdateMenuOpened } from './updateDot'
 import {
   folderTabs,
@@ -139,6 +140,8 @@ interface SelectionPlaces {
   at?: { x: number; y: number }
   /** Where the selection sits in the page, 0…1 of its width and height (the toolbar's touch). */
   origin?: { x: number; y: number }
+  /** The frame the context menu's selection is in (`PageContextParams.frameId`), for the actions that read it. */
+  frameId?: number
 }
 
 /** What a toolbar host draws for one action: the id it names back and the title it shows. */
@@ -455,14 +458,21 @@ export class Menus {
       // misspelled word is auto-selected on right-click, so skip the search there – its group is
       // the spelling suggestions, as in Chrome.
       const tail =
-        selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
+        selection && !params.misspelledWord
+          ? this.selectionGroup(tab, selection, win, { frameId: params.frameId }).slice(1)
+          : []
       groups.push(this.editGroup(params, { tail }))
       // Chrome's "Spell check" submenu, its own group after the editing items, on hosts with a
       // spellchecker of the browser's own.
       const spellcheck = this.spellcheckSubmenu(win)
       if (spellcheck) groups.push([spellcheck])
     } else if (selection) {
-      groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
+      groups.push(
+        this.selectionGroup(tab, selection, win, {
+          at: { x: params.x, y: params.y },
+          frameId: params.frameId
+        })
+      )
     }
     if (plainPage) {
       // The new tab page's own rows lead its menu (NTP-18): what the page shows, hidden with
@@ -1165,17 +1175,18 @@ export class Menus {
 
   /**
    * Selected text: Copy, then either "Go to <url>" when the selection reads as an address or
-   * `Search <engine> for "…"` (a new tab next to this one, like Chrome), Translate Selection
-   * where the click landed (`at`; the page's own selection, not a text field's), Share.
+   * `Search <engine> for "…"` (a new tab next to this one, like Chrome), Copy Link to Highlight,
+   * Open Selection in Reader View on the desktop (reader-02), Translate Selection where the
+   * click landed (`at`; the page's own selection, not a text field's), Share.
    */
   private selectionGroup(
     tab: Tab,
     selection: string,
     win: ZenWindow,
-    at?: { x: number; y: number }
+    places: Pick<SelectionPlaces, 'at' | 'frameId'> = {}
   ): Template {
     const items: Template = [{ label: 'Copy', role: 'copy' }]
-    for (const action of this.selectionActions(tab, selection, win, { at })) {
+    for (const action of this.selectionActions(tab, selection, win, places)) {
       if (action.menu) items.push({ label: action.label, click: () => action.run('menu') })
     }
     return items
@@ -1194,9 +1205,9 @@ export class Menus {
     tab: Tab,
     selection: string,
     win: ZenWindow,
-    { at, origin = { x: 0.5, y: 0.5 } }: SelectionPlaces = {}
+    { at, origin = { x: 0.5, y: 0.5 }, frameId }: SelectionPlaces = {}
   ): SelectionAction[] {
-    const { tabs, state, translate } = this.browser
+    const { tabs, state, translate, reader } = this.browser
     const engine = state.defaultSearchEngine()
     // The toolbar's tab opens in the background, with this tab as its opener: a back on it
     // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome).
@@ -1260,6 +1271,27 @@ export class Menus {
         menu: true,
         toolbar: false,
         run: () => void this.copyHighlightLink(tab, win)
+      })
+    }
+    // Chrome's "Open in reading mode" on a selection (reader-02; `IDC_CONTENT_CONTEXT_OPEN_IN_
+    // READING_MODE`, seated after the search and before Translate, hidden while reading mode is
+    // open and off app and popup windows): the selection's own markup is the article the reader
+    // document renders. The desktop's menu alone – the phone's page menu stands as it is, and
+    // the floating toolbar has no reader item (Chrome's has none); the page's own selection,
+    // not a text field's.
+    if (
+      win.formFactor === 'desktop' &&
+      win.chrome === 'full' &&
+      at !== undefined &&
+      !reader.isReaderUrl(tab.url)
+    ) {
+      actions.push({
+        id: 'reader',
+        label: 'Open Selection in Reader View',
+        title: 'Reader View',
+        menu: true,
+        toolbar: false,
+        run: () => void reader.openSelection(tab.id, win, frameId)
       })
     }
     // The services core's selection translation: the menu offers it for the page's own selection
@@ -2140,6 +2172,13 @@ export class Menus {
 
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     const panes = win.formFactor !== 'phone'
+    // The rows that name a direction read along the strip (`tabDirectionLabels`, Chrome's rule
+    // for its own tab menu): "to the Right" / "to the Left" beside the desktop's horizontal
+    // strip, "Below" / "Above" beside every strip that runs down – the sidebar layouts', the
+    // phone's and the tablet's.
+    const direction = tabDirectionLabels(
+      win.formFactor === 'desktop' && isHorizontalTabs(state.settings.toolbarLayout)
+    )
 
     // Firefox's tab menu in Firefox's groups (design language v2 §6 "Menus": a context menu that
     // runs long is regrouped to the app menu's counts – about eighteen rows, four separators at
@@ -2151,7 +2190,7 @@ export class Menus {
     // the flat menu did is gone – the long tails are in the submenus.
     const openGroup: Template = [
       {
-        label: 'New Tab Below',
+        label: direction.newTab,
         enabled: !tab.essential,
         click: () => this.browser.newTabAfter(tabId, win)
       }
@@ -2392,12 +2431,12 @@ export class Menus {
         label: 'Close Multiple Tabs',
         submenu: [
           {
-            label: 'Close Tabs Above',
+            label: direction.closeBefore,
             enabled: tabs.closeScope(tabId, 'above', win).length > 0,
             click: () => tabs.closeAbove(tabId, win)
           },
           {
-            label: 'Close Tabs Below',
+            label: direction.closeAfter,
             enabled: tabs.closeScope(tabId, 'below', win).length > 0,
             click: () => tabs.closeBelow(tabId, win)
           },
@@ -4270,37 +4309,30 @@ export class Menus {
     // back returns there (the renderer's `rootBackAction`), as Chrome's help centre opens in a
     // tab of the browser (`ShowHelp`, `IDC_HELP_PAGE_VIA_MENU`) and its phone's help activity
     // returns to the tab – in the tab's own container, so a private page's help stays private.
-    // One shape for the phone's Help row, the desktop's Zenium Help and Report an Unsafe Site…
-    // rows (the macOS menu bar's Help menu is `menuBar.ts`'s, W8-4's seam).
-    const openHelpPage = (url: string): void =>
-      void tabs.createTab(
-        { url, active: true, openerTabId: active?.id, containerId: active?.containerId },
-        win
-      )
+    // One shape, `help.ts`'s, for the phone's Help row, the desktop's Zenium Help and Report an
+    // Unsafe Site… rows and the macOS menu bar's Help menu (`menuBar.ts`; W8-4's fold on #588).
     // Chrome's "Help & feedback", the phone menu's last row (TB-07): one flat row where the
     // sidebar layouts fold a Help submenu (a phone's list folds nothing in). Its pick opens the
     // help page (`HELP_URL`, the one address the desktop's Zenium Help row and Settings › About's
-    // Get help open). The feedback half is Settings › About's Report an issue row, and no
-    // `zen://help` page exists to open instead.
+    // Get help open; `openHelp`). The feedback half is Settings › About's Report an issue row,
+    // and no `zen://help` page exists to open instead.
     const help: MenuItemTemplate = {
       label: 'Help',
-      click: () => openHelpPage(HELP_URL)
+      click: () => openHelp(this.browser, win)
     }
     // Chrome's "Report an unsafe site…" (`IDC_REPORT_UNSAFE_SITE`, the Help submenu's last row;
     // shortcuts-menus-123): Google Safe Browsing's public report form with the page's address
-    // in its query (`unsafeSiteReportUrl`), opened as a help page is. The form is public and
-    // needs no key, so the row shows whether or not Safe Browsing is on (Chrome's own hides with
-    // Safe Browsing off and in Incognito, its dialog being a feedback form); over a page without
-    // an address the form can take – `zen://`, `file:`, `about:blank`, no page at all – the row
-    // is greyed, the menu keeping its shape (§9.17; Chrome gates nothing on the scheme: its
-    // dialog lets the address be typed).
-    const unsafeSiteReport = unsafeSiteReportUrl(active?.url)
+    // in its query (`reportUnsafeSiteUrl`), opened as a help page is (`openReportUnsafeSite`).
+    // The form is public and needs no key, so the row shows whether or not Safe Browsing is on
+    // (Chrome's own hides with Safe Browsing off and in Incognito, its dialog being a feedback
+    // form); over a page without an address the form can take – `zen://`, `file:`,
+    // `about:blank`, no page at all – the row is greyed, the menu keeping its shape as the menu
+    // bar's does (§9.17; Chrome gates nothing on the scheme: its dialog lets the address be
+    // typed). Its click reads the page again and opens nothing over one the form cannot take.
     const reportUnsafeSite: MenuItemTemplate = {
       label: 'Report an Unsafe Site…',
-      enabled: unsafeSiteReport !== null,
-      click: () => {
-        if (unsafeSiteReport !== null) openHelpPage(unsafeSiteReport)
-      }
+      enabled: reportUnsafeSiteUrl(active?.url) !== null,
+      click: () => void openReportUnsafeSite(this.browser, win)
     }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
@@ -4533,17 +4565,20 @@ export class Menus {
           // New, the help centre, Report an Issue…, Report an Unsafe Site… – with Zenium's
           // Keyboard Shortcuts beside its help row. Two groups behind one hairline: this build
           // (its About page, its release notes), then the help. Zenium Help opens the help page
-          // in a new tab as Chrome's help centre does (`openHelpPage`); Report an Issue… is the
-          // GitHub issues page in the system browser. The legal pages are About's rows, not
-          // Help's (Chrome's Help has none).
+          // in a new tab as Chrome's help centre does (`openHelp`); Report an Issue… is the
+          // GitHub issues page in the system browser, and names the key table's
+          // `help.reportIssue` so Chrome's chord (⌥⇧⌘I, Alt+Shift+I) shows after it here as in
+          // the menu bar's Help menu (the lead's ruling 5 on #588). The legal pages are About's
+          // rows, not Help's (Chrome's Help has none).
           submenu: [
             aboutPage,
             whatsNew,
             separator,
-            { label: 'Zenium Help', click: () => openHelpPage(HELP_URL) },
+            { label: 'Zenium Help', click: () => openHelp(this.browser, win) },
             keyboardShortcuts,
             {
               label: 'Report an Issue…',
+              action: 'help.reportIssue',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
             },
             reportUnsafeSite

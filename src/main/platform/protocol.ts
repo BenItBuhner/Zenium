@@ -2,7 +2,12 @@ import { protocol, type CustomScheme, type Session } from 'electron'
 import { faviconHashOf } from '../../shared/favicons'
 import { CHROMIUM_LICENCES_HOST } from '../../shared/licences'
 import type { ColorScheme } from '../../shared/types'
-import { ZEN_SCHEME, zenPageHtml, type ReaderPageLookup } from '../../shared/zenPages'
+import {
+  ZEN_SCHEME,
+  zenPageHtml,
+  type ReaderPageLookup,
+  type VersionPageLookup
+} from '../../shared/zenPages'
 import { EXTENSION_RESOURCE_SCHEME_PRIVILEGES } from './extensionApi/resourceOrigin'
 import type { ChromiumLicencesResponder } from './licences'
 import { NEW_TAB_BACKGROUND_HOST } from './newTabBackground'
@@ -49,12 +54,12 @@ export type FaviconResponder = (hash: string) => Promise<{ bytes: Uint8Array; mi
 export const FAVICON_HOST = 'favicon'
 
 /**
- * Serve `zen://newtab`, `zen://blank`, `zen://error` and `zen://reader` (articles come from the
- * core), plus the new tab page's background image, the favicon cache's icons
- * (`zen://favicon/<hash>`) and Chromium's credits document (`zen://chromium-licences`,
- * `./licences.ts`). `colorScheme` is the Appearance setting as it stands when a page is served:
- * the documents that paint a theme of their own take it from there rather than from the engine
- * (`errorPageAttributesScript`).
+ * Serve `zen://newtab`, `zen://blank`, `zen://error`, `zen://reader` (articles come from the
+ * core) and `zen://version` (the build's facts, `version`, read when the page is requested),
+ * plus the new tab page's background image, the favicon cache's icons (`zen://favicon/<hash>`)
+ * and Chromium's credits document (`zen://chromium-licences`, `./licences.ts`). `colorScheme` is
+ * the Appearance setting as it stands when a page is served: the documents that paint a theme of
+ * their own take it from there rather than from the engine (`errorPageAttributesScript`).
  */
 export function installZenProtocol(
   ses: Session,
@@ -62,7 +67,8 @@ export function installZenProtocol(
   background?: BackgroundImageResponder,
   chromiumLicences?: ChromiumLicencesResponder,
   colorScheme: () => ColorScheme = () => 'system',
-  favicon?: FaviconResponder
+  favicon?: FaviconResponder,
+  version?: VersionPageLookup
 ): void {
   if (ses.protocol.isProtocolHandled(ZEN_SCHEME)) return
   ses.protocol.handle(ZEN_SCHEME, (request) => {
@@ -71,9 +77,10 @@ export function installZenProtocol(
     if (chromiumLicences && host === CHROMIUM_LICENCES_HOST) return chromiumLicences()
     if (favicon && host === FAVICON_HOST) return faviconResponse(request.url, favicon)
     const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-    return new Response(zenPageHtml(request.url, reader, undefined, undefined, colorScheme()), {
-      headers
-    })
+    return new Response(
+      zenPageHtml(request.url, reader, undefined, undefined, colorScheme(), 'desktop', version),
+      { headers }
+    )
   })
 }
 

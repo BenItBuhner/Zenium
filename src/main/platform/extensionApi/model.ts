@@ -299,10 +299,26 @@ export class ApiModel {
     return owner ? !visibleToExtensions(owner) : false
   }
 
+  /**
+   * The tab's page – its own, beneath the reader's cover while one stands (`TabManager.cover`;
+   * `pageView`, never `view`, which is the cover then). Every way the layer reaches a tab's
+   * contents goes through here (messages, capture, the debugger, scripts, `webRequest`'s
+   * attribution), so to an extension the tab is its page throughout, as under Chrome's reading
+   * mode overlay, and its id (`chromeTabId`) does not change on the way in or out.
+   */
   webContentsOf(tab: Tab): WebContents | undefined {
-    const view = this.browser.tabs.view(tab.id) as ElectronTabView | undefined
+    const view = this.browser.tabs.pageView(tab.id) as ElectronTabView | undefined
     const wc = view?.webContents
     return wc && !wc.isDestroyed() ? wc : undefined
+  }
+
+  /**
+   * The tab's address as extensions see it: the page's beneath the reader's cover (the row
+   * carries the reader's meanwhile), else the row's. What host permissions are matched against
+   * (`canSeeTab`, `hostAccess`, activeTab's origin), what the record and the events carry.
+   */
+  urlOf(tab: Tab): string {
+    return this.browser.tabs.coveredPage(tab.id)?.url ?? tab.url
   }
 
   chromeTabId(tab: Tab): number {
@@ -457,8 +473,13 @@ export class ApiModel {
     const active = win ? this.isActive(tab, win) : false
     const highlighted =
       active || (win ? this.browser.tabs.visibleTabIds(win).includes(tab.id) : false)
-    const view = this.browser.tabs.view(tab.id) as ElectronTabView | undefined
+    const view = this.browser.tabs.pageView(tab.id) as ElectronTabView | undefined
     const bounds = view && !view.isDestroyed() ? view.view.getBounds() : undefined
+    // Beneath the reader's cover the row says the reader; the record says the page (its
+    // address, its title, its icon), as Chrome's does under its reading mode overlay – the
+    // reader is no navigation of the tab to an extension. The page's load state is its own
+    // either way (the cover's loading never reaches the row).
+    const page = this.browser.tabs.coveredPage(tab.id)
     const record: ChromeTab = {
       id: this.chromeTabId(tab),
       index: placement.index,
@@ -485,9 +506,10 @@ export class ApiModel {
     const openerTab = opener ? this.tab(opener) : undefined
     if (openerTab) record.openerTabId = this.chromeTabId(openerTab)
     if (urls) {
-      record.url = tab.url
-      record.title = tab.customTitle ?? tab.title
-      if (tab.favicon) record.favIconUrl = tab.favicon
+      record.url = page?.url ?? tab.url
+      record.title = tab.customTitle ?? page?.title ?? tab.title
+      const favicon = page ? page.favicon : tab.favicon
+      if (favicon) record.favIconUrl = favicon
     }
     return record
   }
@@ -533,12 +555,15 @@ export class ApiModel {
     const tabs = new Map<string, TabSnapshot>()
     for (const tab of this.allTabs()) {
       const chrome = this.chromeTab(tab, true, placements.get(tab.id) ?? this.placementOf(tab))
+      // The page's zoom and address beneath the reader's cover (the row's are the reader's
+      // meanwhile): entering and leaving the reader is no `onZoomChange`, no `onUpdated`.
+      const page = this.browser.tabs.coveredPage(tab.id)
       tabs.set(tab.id, {
         chrome,
         zenId: tab.id,
         windowId: chrome.windowId,
-        zoom: tab.zoom,
-        url: tab.url
+        zoom: page?.zoom ?? tab.zoom,
+        url: page?.url ?? tab.url
       })
     }
     return { tabs, windows, focused: this.focusedWindowId() }

@@ -38,8 +38,9 @@ export const INTERNAL_ALIAS_SCHEME = 'zenium'
  * notes, from Settings › About), the two legal pages (`zen://privacy-notice`, `zen://terms`,
  * from Settings › Legal), the print preview (`zen://print`, a chrome page that is the desktop's
  * print dialog), the PDF viewer (`zen://pdf?id=…`, a document page on hosts whose engine
- * cannot draw a PDF) and the task manager (`zen://tasks`, Chrome's Shift+Esc: a desktop-only
- * chrome page with no panel form). Widened as pages move onto the mechanism.
+ * cannot draw a PDF), the task manager (`zen://tasks`, Chrome's Shift+Esc: a desktop-only
+ * chrome page with no panel form) and the version page (`zen://version`, chrome://version: a
+ * document page every host serves). Widened as pages move onto the mechanism.
  */
 export type InternalPageId =
   | 'settings'
@@ -54,6 +55,7 @@ export type InternalPageId =
   | 'print'
   | 'pdf'
   | 'tasks'
+  | 'version'
 
 /**
  * How a page's tab holds its page.
@@ -694,6 +696,22 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     pill: { showStar: false },
     splittable: false,
     layouts: ['desktop'],
+    sections: []
+  },
+  /**
+   * The version page (`zen://version`; SET-66): Chrome's chrome://version – the build, the engine,
+   * the OS, the user agent, the paths – as a document every host serves from `zenPages.ts`
+   * (`versionPageHtml`) with the facts the host knows. `chrome://version` and `about:version`
+   * typed into the bar are its aliases (`shared/url.ts`). Chrome's tab title ("About Version");
+   * the star stays as on chrome://version; every open its own tab, as Chrome's is.
+   */
+  version: {
+    id: 'version',
+    title: 'About Version',
+    render: 'document',
+    singleton: false,
+    pill: { showStar: true },
+    splittable: true,
     sections: []
   }
 }

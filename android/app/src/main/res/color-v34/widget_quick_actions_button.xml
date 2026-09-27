@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's buttons on Android 14+ (WID-02; see res/color-v31/widget_quick_actions_button.xml):
+     the system's colorSurfaceContainer, as MDC 1.12.0 reads it (values-v34/tokens.xml:96). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@android:color/system_surface_container_light" />
+</selector>

@@ -625,7 +625,9 @@ export class MediaSessionService {
     }
     const target = tabId ?? this.sessionTabId
     if (!target) return
-    const view = this.browser.tabs.view(target)
+    // The media is the page's: beneath the reader's cover too (the cover is the tab's document
+    // in front; the OS's keys are for the page playing under it).
+    const view = this.browser.tabs.pageView(target)
     if (!view || view.isDestroyed()) return
     const message: MediaSessionHostMessage = { type: 'mediaSession', action }
     if (typeof details.seekTime === 'number' && Number.isFinite(details.seekTime))
@@ -739,7 +741,7 @@ export class MediaSessionService {
    * cannot; resolves whether a video went into (or left) its small window.
    */
   async togglePictureInPicture(tabId: string, win: ZenWindow): Promise<boolean> {
-    const view = this.browser.tabs.view(tabId)
+    const view = this.browser.tabs.pageView(tabId)
     if (!view) return false
     const tab = this.browser.tabs.tab(tabId)
     if (tab && this.browser.tabs.isPrivate(tab)) {
@@ -765,7 +767,8 @@ export class MediaSessionService {
    * has no such video or refuses (a page without a user gesture, a document that is gone).
    */
   private async toggleInPage(tabId: string): Promise<boolean> {
-    const view = this.browser.tabs.view(tabId)
+    // The video is the page's, beneath the reader's cover too.
+    const view = this.browser.tabs.pageView(tabId)
     if (!view) return false
     try {
       const result: unknown = await view.executeJavaScript(
@@ -797,7 +800,7 @@ export class MediaSessionService {
   }
 
   private fill(tabId: string, on: boolean): void {
-    const view = this.browser.tabs.view(tabId)
+    const view = this.browser.tabs.pageView(tabId)
     if (!view || view.isDestroyed()) return
     view.postToPage?.({ type: 'mediaSession', action: 'fill', on })
   }
@@ -931,12 +934,14 @@ export class MediaSessionService {
     const { report } = tracked
     if (!report.video || !reportIsPlaying(report) || !sessionWorthy(report)) return false
     const { tabs } = this.browser
-    const view = tabs.view(tabId)
+    const view = tabs.pageView(tabId)
     if (!view || view.isDestroyed()) return false
     const tab = tabs.tab(tabId)
     if (!tab || tabs.isPrivate(tab)) return false
     if (!this.browser.popups.activation(tabId).hasBeenActive()) return false
-    if (!this.browser.permissions.check(AUTO_PIP_SETTING, tab.url)) return false
+    // The setting is the page's site's (the page beneath a reader cover included).
+    if (!this.browser.permissions.check(AUTO_PIP_SETTING, tabs.pageUrl(tabId) ?? tab.url))
+      return false
     for (const [id] of tabs.allViews()) if (tabs.tab(id)?.alert === 'pip') return false
     return true
   }
@@ -947,7 +952,7 @@ export class MediaSessionService {
    * as for any refusal: no `autoPip`, no toast, the tab's alert never set.
    */
   private async enterAuto(tabId: string, hiddenOnly = false): Promise<void> {
-    const view = this.browser.tabs.view(tabId)
+    const view = this.browser.tabs.pageView(tabId)
     if (!view || view.isDestroyed()) return
     // Claimed before the page answers, so a second trigger in the meantime does not double up.
     this.autoPip = { tabId, confirmed: false }
@@ -1039,8 +1044,8 @@ export class MediaSessionService {
    * is stopped in one tap). The user's own picture-in-picture is not this service's to take back.
    */
   async optOutAuto(tabId: string): Promise<void> {
-    const tab = this.browser.tabs.tab(tabId)
-    if (tab) this.browser.permissions.set(AUTO_PIP_SETTING, tab.url, 'deny')
+    const url = this.browser.tabs.pageUrl(tabId)
+    if (url !== undefined) this.browser.permissions.set(AUTO_PIP_SETTING, url, 'deny')
     if (this.autoPip?.tabId === tabId) await this.leaveAuto()
   }
 
@@ -1048,7 +1053,7 @@ export class MediaSessionService {
     const auto = this.autoPip
     if (!auto) return
     this.autoPip = null
-    const view = this.browser.tabs.view(auto.tabId)
+    const view = this.browser.tabs.pageView(auto.tabId)
     if (!view || view.isDestroyed()) return
     try {
       await view.executeJavaScript(AUTO_PIP_LEAVE)

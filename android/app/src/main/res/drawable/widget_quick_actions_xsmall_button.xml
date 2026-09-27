@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's buttons in the extra-small form (WID-02): no disc – the 28 dp glyph
+     box shows a ripple alone when pressed, in the button role (the small and medium discs' fill:
+     res/color-v31/widget_quick_actions_button.xml and its pairs, the v2 panel below), as Chrome's does
+     (quick_action_search_widget_xsmall_button_background.xml:8-10: a bare ripple in widget_button_bg,
+     colorSurfaceContainer). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/widget_quick_actions_button" />

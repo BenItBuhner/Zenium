@@ -220,6 +220,10 @@ function harness(
       navigate: (id: string, url: string) => {
         if (id === TAB) view.url = url
       },
+      // One page per tab here: the reader loads as a navigation, as on the phone.
+      cover: () => false,
+      uncover: () => false,
+      isCovered: () => false,
       windowFor: () => WINDOW,
       close: () => {
         present = false

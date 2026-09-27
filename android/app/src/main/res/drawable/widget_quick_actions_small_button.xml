@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's buttons in the small form (WID-02): Chrome's disc inset 3.5 dp in its
+     48 dp button (radius 21) under the system's ripple
+     (quick_action_search_widget_small_button_background.xml:8-28), in Chrome's colorSurfaceContainer. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="@dimen/widget_quick_actions_small_button_inset"
+    android:insetTop="@dimen/widget_quick_actions_small_button_inset"
+    android:insetRight="@dimen/widget_quick_actions_small_button_inset"
+    android:insetBottom="@dimen/widget_quick_actions_small_button_inset">
+    <ripple android:color="?android:attr/colorControlHighlight">
+        <item android:id="@android:id/mask">
+            <shape android:shape="rectangle">
+                <solid android:color="@android:color/white" />
+                <corners android:radius="@dimen/widget_quick_actions_small_button_radius" />
+            </shape>
+        </item>
+        <item>
+            <shape android:shape="rectangle">
+                <solid android:color="@color/widget_quick_actions_button" />
+                <corners android:radius="@dimen/widget_quick_actions_small_button_radius" />
+            </shape>
+        </item>
+    </ripple>
+</inset>

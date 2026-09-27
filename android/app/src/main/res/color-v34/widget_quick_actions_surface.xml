@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's card on Android 14+ (WID-02; see res/color-v31/widget_quick_actions_surface.xml):
+     the platform publishes the Material 3 roles themselves from API 34, and MDC 1.12.0 reads
+     colorSurface there (values-v34/tokens.xml:90), so the card is the system's own role. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@android:color/system_surface_light" />
+</selector>
