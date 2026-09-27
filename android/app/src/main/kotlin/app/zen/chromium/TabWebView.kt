@@ -62,6 +62,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.URLDecoder
+import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -145,6 +146,11 @@ class TabWebView(
     /** The last `historyChanged` payload sent, as text: the same list again is not sent twice. */
     private var lastHistoryText: String? = null
     private var replyProxy: JavaScriptReplyProxy? = null
+    /**
+     * The image search's frame-owner protocol for this tab ([ImageOwner]): made at the first
+     * sub-frame `hello` or the first `view.imageThumbnail`, never at construction.
+     */
+    private var imageOwner: ImageOwner<JavaScriptReplyProxy>? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
     /**
@@ -388,6 +394,8 @@ class TabWebView(
             up.result.cancel()
         }
         unloadCheck?.settle(leave = true, destroyView = false)
+        // An image search still waiting on a frame hears that the page went ([ImageOwner]).
+        imageOwner?.destroy()
         NavigationReports.detach(this, navigationListener)
         navigationListener = null
         host.extensions?.detach(this)
@@ -973,6 +981,10 @@ class TabWebView(
      */
     private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?, isMainFrame: Boolean = true) {
         val route = routePageMessage(message.data, host.pageToken)
+        // A sub-frame's hello, before it is dropped below: its reply proxy joins the frames the
+        // image search's frame-owner protocol asks ([ImageOwner.registerFrame]). The tab's
+        // replyProxy stays the main document's: the flags and the core's messages are its alone.
+        if (!isMainFrame && proxy != null && route === PageMessageRoute.Hello) imageOwner().registerFrame(proxy)
         if (!route.heardFrom(isMainFrame)) return
         when (route) {
             PageMessageRoute.Ignore -> return
@@ -991,10 +1003,50 @@ class TabWebView(
                 val origin = route.origin
                 if (route.document != null && origin != null) referrerPolicyWord.document(route.document, origin)
             }
-            is PageMessageRoute.Forward ->
-                if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
-                else host.viewEvent(tabId, "pageMessage", route.message)
+            is PageMessageRoute.Forward -> when (route.message.optString("type")) {
+                // The frame-owner protocol's answers (a frame's hash claim, the owner's bytes) are
+                // the orchestrator's alone: never a `pageMessage` to the core, which hears the
+                // verb's reply. With no orchestrator there is no live request to answer.
+                PageMessageRoute.IMAGE_OWNER, PageMessageRoute.IMAGE_THUMBNAIL ->
+                    imageOwner?.onMessage(route.message, proxy, isMainFrame)
+                "share" -> host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
+                else -> host.viewEvent(tabId, "pageMessage", route.message)
+            }
         }
+    }
+
+    /**
+     * The frame-owner protocol's orchestrator, made on first use (this file is on the boot path:
+     * nothing of it is built with the view). Its timers run on the main looper – the view's own
+     * `postDelayed` waits for an attach a hidden tab may not get – and its nonces come from a
+     * `SecureRandom` made at the first request, not at a frame's hello; a proxy that is gone
+     * drops the message on its own (`JsReplyProxy`), the `runCatching` is for the boundary.
+     */
+    private fun imageOwner(): ImageOwner<JavaScriptReplyProxy> = imageOwner ?: run {
+        val handler = Handler(Looper.getMainLooper())
+        val random = lazy(LazyThreadSafetyMode.NONE) { SecureRandom() }
+        ImageOwner<JavaScriptReplyProxy>(
+            schedule = { delayMs, block ->
+                val run = Runnable { block() }
+                handler.postDelayed(run, delayMs)
+                ({ handler.removeCallbacks(run) })
+            },
+            randomBytes = { count -> ByteArray(count).also(random.value::nextBytes) },
+            post = { proxy, payload -> runCatching { proxy.postMessage(payload) } }
+        ).also { imageOwner = it }
+    }
+
+    /**
+     * `view.imageThumbnail`: the image search's thumbnail from the frame that holds the image
+     * ([ImageOwner], the frame-owner protocol). [reply] gets the `ImageFetchResult` JSON text
+     * once. On the legacy bridge – no reply proxies to tell frames apart by, or no
+     * document-start script to put the answerer in every frame – it is
+     * `{ ok:false, reason:'unsupported' }` at once, and the core keeps today's path there.
+     */
+    fun imageThumbnail(src: String, bounds: JSONObject, quality: Double, maxBytes: Long, reply: (String) -> Unit) {
+        val legacy = !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        imageOwner().start(src, bounds, quality, maxBytes, replyProxy, legacy, reply)
     }
 
     // --- script evaluation for the core (async-aware) --------------------------------------------
@@ -2844,6 +2896,8 @@ class TabWebView(
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
             loading = true
             domReady.documentStarted()
+            // The frames the image search's protocol knew were the old document's ([ImageOwner]).
+            imageOwner?.documentStarted()
             // Whatever the user agent is now, this page was requested with it.
             userAgentStale = false
             // Darkening for the page that is coming, before its first paint; the core confirms.

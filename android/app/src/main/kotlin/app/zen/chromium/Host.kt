@@ -1064,6 +1064,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     if (error != null) reply(Rejection(error)) else reply(RawJson(result ?: "null"))
                 }
             }
+            // The image search's thumbnail from the frame that holds the image (the frame-owner
+            // protocol, ImageOwner): the ImageFetchResult's JSON text, `unsupported` at once on
+            // the legacy bridge; a view already gone answers null, as `view.eval` does.
+            "view.imageThumbnail" ->
+                if (tab == null) reply(null)
+                else tab.imageThumbnail(
+                    args.str("src"), args.obj("bounds"), args.num("quality", 0.4), args.num("maxBytes", 20_971_520.0).toLong()
+                ) { reply(RawJson(it)) }
             "view.input" -> if (tab == null) reply(null) else tab.sendAgentInput(args.obj("event")) { reply(null) }
             "view.setFlags" -> { tab?.setFlags(args.obj("flags")); reply(null) }
             "view.setZap" -> { tab?.setZap(args.bool("on")); reply(null) }

@@ -123,6 +123,39 @@ class PageMessagesTest {
     }
 
     @Test
+    fun aFramesAnswersInTheImageSearchsFrameOwnerProtocolAreHeard() {
+        // The frame that holds the image says so (its salted hashes) and thumbnails it from its
+        // own document (frame-owner-protocol-interface.md §2.2, §2.4): both are Forward, the token
+        // off, heard from any frame; the orchestrator, not the core, consumes them (ImageOwner).
+        val nonce = "0123456789abcdef0123456789abcdef"
+        val answer = routePageMessage(
+            message("type" to PageMessageRoute.IMAGE_OWNER, "v" to 1, "nonce" to nonce, "hashes" to org.json.JSONArray(), "truncated" to false),
+            token
+        )
+        assertTrue(answer is PageMessageRoute.Forward)
+        assertTrue(answer.heardFrom(isMainFrame = false))
+        assertTrue(answer.heardFrom(isMainFrame = true))
+        assertEquals("zen:image-owner", (answer as PageMessageRoute.Forward).message.getString("type"))
+        assertEquals(nonce, answer.message.getString("nonce"))
+        assertFalse(answer.message.has("token"))
+        val thumbnail = routePageMessage(
+            message("type" to PageMessageRoute.IMAGE_THUMBNAIL, "v" to 1, "nonce" to nonce, "result" to json("ok" to false, "reason" to "opaque")),
+            token
+        )
+        assertTrue(thumbnail is PageMessageRoute.Forward)
+        assertTrue(thumbnail.heardFrom(isMainFrame = false))
+        assertTrue(thumbnail.heardFrom(isMainFrame = true))
+        assertEquals("zen:image-thumbnail", (thumbnail as PageMessageRoute.Forward).message.getString("type"))
+        assertFalse(thumbnail.message.has("token"))
+        // The question is the host's word downward; a frame echoing it upward is not heard.
+        assertFalse(routePageMessage(message("type" to "zen:image-owner?", "v" to 1, "nonce" to nonce), token).heardFrom(isMainFrame = false))
+        // Without the session's token, as any message: nothing.
+        assertEquals(PageMessageRoute.Ignore, routePageMessage(json("type" to PageMessageRoute.IMAGE_OWNER, "v" to 1, "nonce" to nonce).toString(), token))
+        assertEquals("zen:image-owner", PageMessageRoute.IMAGE_OWNER)
+        assertEquals("zen:image-thumbnail", PageMessageRoute.IMAGE_THUMBNAIL)
+    }
+
+    @Test
     fun anythingElseGoesToTheCoreWithoutTheToken() {
         val route = routePageMessage(message("type" to "media", "playing" to true), token)
         assertTrue(route is PageMessageRoute.Forward)
