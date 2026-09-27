@@ -18,7 +18,7 @@ import {
   readerTranslateTarget,
   readerTranslateWorking
 } from '@renderer/lib/readerTranslate'
-import { DEFAULT_READER_PREFERENCES } from '@shared/reader'
+import { DEFAULT_READER_PREFERENCES, type ReaderPreferences } from '@shared/reader'
 import { Rows, TranslateRow } from '../ReaderPreferencesPanel'
 
 /*
@@ -451,6 +451,34 @@ describe('the panel’s order', () => {
       />
     )
     expect(outline(el).slice(0, 3)).toEqual(['Translate', '—', 'Text size'])
+  })
+
+  it('Links and Images are switch rows on the saved preferences, each patching its own key (reader-12)', () => {
+    desktop()
+    const patches: Array<Partial<ReaderPreferences>> = []
+    const el = render(
+      <Rows
+        prefs={{ ...DEFAULT_READER_PREFERENCES, images: false }}
+        onChange={(patch) => void patches.push(patch)}
+        onListen={null}
+        translate={null}
+      />
+    )
+    const links = row(el, 'links')
+    const images = row(el, 'images')
+    expect(links.getAttribute('role')).toBe('switch')
+    expect(images.getAttribute('role')).toBe('switch')
+    // The rows read the saved preferences: links on, images off.
+    expect(links.getAttribute('aria-checked')).toBe('true')
+    expect(images.getAttribute('aria-checked')).toBe('false')
+    // Each press asks for the opposite of its own key alone (the preferences record is the
+    // core's; the page follows the patch as any other).
+    act(() => links.click())
+    act(() => images.click())
+    expect(patches).toEqual([{ links: false }, { images: true }])
+    // The description says what off does, in sentence case (§9.1).
+    expect(el.textContent).toContain('Off shows the article’s links as plain text')
+    expect(el.textContent).toContain('Off hides the article’s pictures and video')
   })
 
   it('without the engine the type rows run straight into the aids’ hairline', () => {

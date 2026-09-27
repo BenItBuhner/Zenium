@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
-import { DEFAULT_READER_PREFERENCES } from '../../shared/reader'
+import {
+  DEFAULT_READER_PREFERENCES,
+  READER_IMAGES_ATTRIBUTE,
+  READER_LINKS_ATTRIBUTE
+} from '../../shared/reader'
 import { Browser } from '../browser'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
-import { READER_URL_PREFIX, sanitizeArticleHtml } from '../reader'
+import { READER_URL_PREFIX, readerArticleId, sanitizeArticleHtml } from '../reader'
 import type { ZenWindow } from '../window'
 
 /** In-memory documents; `state.json` is what the settings round-trip through. */
@@ -173,6 +177,62 @@ describe('reader text preferences in the browser', () => {
       theme: 'dark',
       width: 'wide'
     })
+  })
+})
+
+describe('the Links and Images toggles (reader-12)', () => {
+  it('render as root attributes of the reader document only while off, and reach an open reader as a patch', () => {
+    const { browser, platform, win } = start()
+    const tab = readerTab(browser, win, true)
+    const id = readerArticleId(tab.url)!
+    const html = (): string => browser.reader.pageHtml(id) ?? ''
+    // On by default: the document carries neither attribute (the stylesheet's off rules sleep).
+    expect(browser.reader.preferences()).toMatchObject({ links: true, images: true })
+    expect(html()).not.toContain(`${READER_LINKS_ATTRIBUTE}="off"`)
+    expect(html()).not.toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    // The document's own rules for the two states.
+    expect(html()).toContain(`:root[${READER_LINKS_ATTRIBUTE}='off'] article a`)
+    expect(html()).toContain(`:root[${READER_IMAGES_ATTRIBUTE}='off'] article`)
+
+    browser.handleCommand(win, 'reader.setPreferences', { links: false })
+    expect(html()).toContain(`${READER_LINKS_ATTRIBUTE}="off"`)
+    expect(html()).not.toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    browser.handleCommand(win, 'reader.setPreferences', { images: false })
+    expect(html()).toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    // Each change went to the open reader page as the whole preferences record.
+    const pushes = platform.scripts.get(tab.id)!.map(applied).filter(Boolean)
+    expect(pushes).toEqual([
+      { ...DEFAULT_READER_PREFERENCES, links: false },
+      { ...DEFAULT_READER_PREFERENCES, links: false, images: false }
+    ])
+    // Back on: the attributes go.
+    browser.handleCommand(win, 'reader.setPreferences', { links: true, images: true })
+    expect(html()).not.toContain('="off"')
+  })
+
+  it('are saved with the reader preferences and come back on the next start', async () => {
+    const { browser, win, io } = start()
+    browser.handleCommand(win, 'reader.setPreferences', { links: false, images: false })
+    await new Promise((r) => setImmediate(r))
+    await browser.state.flush()
+    expect(JSON.parse(io.files['state.json']).settings.reader).toMatchObject({
+      links: false,
+      images: false
+    })
+    const { browser: reloaded } = start(memoryIo({ ...io.files }))
+    expect(reloaded.reader.preferences()).toMatchObject({ links: false, images: false })
+    // A stored value that is not a boolean reads as the default.
+    const { browser: odd } = start(
+      memoryIo({
+        'state.json': JSON.stringify({
+          version: 2,
+          settings: { reader: { links: 'no', images: 0 } },
+          tabs: [],
+          spaces: []
+        })
+      })
+    )
+    expect(odd.reader.preferences()).toMatchObject({ links: true, images: true })
   })
 })
 
