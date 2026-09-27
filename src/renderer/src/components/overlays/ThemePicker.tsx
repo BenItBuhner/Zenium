@@ -163,10 +163,13 @@ export function ThemePicker({
                 <SelectTrigger className="h-7 min-w-0 text-[12px]">
                   <SelectValue />
                 </SelectTrigger>
-                {/* The popup portals to `body` at the menulist's z 50; hanging from the Settings
-                    row the panel stands in the chrome layer (z 100, lib/portals.tsx), so the
-                    popup lifts past it or it would open under its own picker. */}
-                <SelectContent className="z-[110]">
+                {/* The popup portals to `body` at the menulist's z 50. Hanging from the Settings
+                    row the panel stands in the chrome layer (z 100, lib/portals.tsx), so there
+                    the popup lifts past it or it would open under its own picker. Seated – the
+                    space menu's and the palette's picker, and the phone's, which never anchors
+                    – the popup keeps the menulist's 50: under the phone's sheets (z 90), as it
+                    always was. */}
+                <SelectContent className={anchor ? 'z-[110]' : undefined}>
                   {ALGORITHMS.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.label}

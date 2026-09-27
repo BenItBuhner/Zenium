@@ -159,4 +159,31 @@ describe('the picker hung from the Settings row’s Change… button (§9.20; #5
     expect(panel.classList.contains('zen-animate-in')).toBe(true)
     expect(panel.className).toMatch(/w-\[420px\]/)
   })
+
+  // The Colour-algorithm popup is a Radix Select portaled to `body`: ArrowDown on the combobox
+  // opens it, and its listbox is the popup's box.
+  const openAlgorithmPopup = (): HTMLElement => {
+    const trigger = document.querySelector<HTMLElement>('[role="combobox"]')!
+    act(() => {
+      trigger.focus()
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    return document.querySelector<HTMLElement>('[role="listbox"]')!
+  }
+
+  it('hung from the row, the Colour-algorithm popup lifts to z 110 – past the chrome layer (100) the panel stands in, or it would open under its own picker', () => {
+    sized()
+    mount(state(), 'space', button)
+    const listbox = openAlgorithmPopup()
+    expect(listbox.classList.contains('z-[110]')).toBe(true)
+    expect(listbox.classList.contains('z-50')).toBe(false)
+  })
+
+  it('seated – the space menu’s and the palette’s picker, and the phone’s, which never anchors – the popup keeps the menulist’s z 50, under the phone’s sheets (z 90) as it always was (Android’s re-nod on #572)', () => {
+    mount(state())
+    const listbox = openAlgorithmPopup()
+    expect(listbox.classList.contains('z-50')).toBe(true)
+    expect(listbox.classList.contains('z-[110]')).toBe(false)
+  })
 })
