@@ -512,15 +512,19 @@ export function formatScore(score: number): string {
 }
 
 /**
- * One frame. `dt` is the elapsed ms (capped at `MAX_FRAME_MS`); `random` feeds the spawns. The
- * order is Chrome's `Runner.update`: the clock, the speed, the runner, the obstacles' travel and
- * the spawn at the right edge, the collision, the score and the night. A waiting or finished
- * game only advances its clock (the game-over clear time reads it).
+ * One frame. `dt` is the elapsed ms (capped at `MAX_FRAME_MS` while running); `random` feeds the
+ * spawns. The order is Chrome's `Runner.update`: the clock, the speed, the runner, the
+ * obstacles' travel and the spawn at the right edge, the collision, the score and the night. A
+ * waiting or finished game only advances its clock, by the whole of `dt` (the game-over clear
+ * time reads it, and a finished game's loop is not running).
  */
 export function step(state: GameState, dt: number, random: Random = Math.random): void {
+  if (state.phase !== 'running') {
+    state.time += Math.max(0, dt)
+    return
+  }
   const elapsed = Math.min(Math.max(0, dt), MAX_FRAME_MS)
   state.time += elapsed
-  if (state.phase !== 'running') return
   const frames = elapsed / MS_PER_FRAME
   const { config, player } = state
   state.frames++

@@ -17,6 +17,8 @@ import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
 import { fullscreenElementOf, installRotateToFullscreen } from './rotateToFullscreen'
+import { isGameMountMessage } from './game/page'
+import { mountGames } from './game/runtime'
 import type { CaptureStateReport } from './captureState'
 
 /**
@@ -252,6 +254,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
   installPdfViewerRelay(transport)
+  installOfflineGame()
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
   if (transport.discoverSearchEngines) installOpenSearch(transport)
@@ -505,6 +508,28 @@ function installInterstitialRelay(transport: PageScriptTransport): void {
     const { action, url } = message
     if (typeof action !== 'string' || !actions.has(action) || typeof url !== 'string') return
     transport.send({ type: 'interstitial', action: action as InterstitialAction, url })
+  })
+}
+
+/**
+ * The offline game (ERR-03; `shared/game/`): the no-connection page and `zen://game` carry its
+ * fragment, and this – the page script, which every document of Zenium's own scheme runs on both
+ * hosts – is what brings it to life, so the page itself ships no script of its own and the game
+ * runs the same in the served document (`zen:`) and in the one the desktop writes in place into
+ * the engine's error document (`chrome-error:`, `inPlaceErrorPageScript`). The fragments already
+ * in the tree are mounted once the tree is parsed; the in-place page posts `zeniumGame: mount`
+ * after its write (the tree changes under a document that has long loaded), which mounts
+ * whatever is new. Nothing crosses to the browser: the game is the page's own.
+ */
+function installOfflineGame(): void {
+  if (!INTERSTITIAL_DOCUMENT_PROTOCOLS.includes(location.protocol)) return
+  const mount = (): void => {
+    mountGames(document)
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount)
+  else mount()
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source === window && isGameMountMessage(e.data)) mount()
   })
 }
 

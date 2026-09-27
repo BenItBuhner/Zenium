@@ -6,6 +6,8 @@ import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { PDF_VIEWER_ASSETS, pdfViewerAssetUrl, pdfViewerDocumentUrl } from '@shared/pdfPage'
 import { pdfReportOf, pdfReportTokenOf } from '@shared/pdfViewerProtocol'
+import { GAME_MOUNT_ATTRIBUTE } from '@shared/game/page'
+import { PREVIEW_GAME_SCENE_KEY } from './previewSpec'
 import {
   blocksFromHtml,
   type ReadAloudExtractRequest,
@@ -50,6 +52,11 @@ const PAGE_ROUTE = '/__zen/page/'
 const PDF_ROUTE = '/__zen/pdf/'
 /** The viewer document's script, as the dev server serves it (a module under the Vite root, `src/android`). */
 const PDF_VIEWER_SCRIPT = '/pdfViewer.ts'
+/**
+ * The offline game's mount for a document that carries its fragment (`previewGame.ts`, served
+ * the same way): what the page script does in every document on a device.
+ */
+const GAME_MOUNT_SCRIPT = '/previewGame.ts'
 /**
  * Whether the preview "holds the browser role" (outside the file store: it is not profile data);
  * `sheet=promo` (previewStates.ts) puts the role up for grabs before it raises the campaign.
@@ -380,6 +387,23 @@ export function createPreviewBridge(): NativeBridge {
       .split(pdfViewerDocumentUrl())
       .join(`${origin}${PDF_ROUTE}document/${variant}`)
       .replace('</head>', `${relay}</head>`)
+  }
+
+  /**
+   * A document carrying the offline game's fragment (the no-connection page, `zen://game`) gets
+   * the game's runtime as a module the dev server serves: on a device the page script mounts it
+   * in every `zen:` document (`shared/pageScript.ts`), and this host's frames run no page script.
+   * The pose a state asked for (`&game=`, left on the root by the states module) rides on the
+   * script tag for the driver to read.
+   */
+  const gameDocumentHtml = (html: string): string => {
+    if (!html.includes(GAME_MOUNT_ATTRIBUTE)) return html
+    const scene = document.documentElement.dataset[PREVIEW_GAME_SCENE_KEY]
+    const pose = scene ? ` data-zen-game-scene="${scene}"` : ''
+    return html.replace(
+      '</body>',
+      `<script type="module" src="${GAME_MOUNT_SCRIPT}"${pose}></script></body>`
+    )
   }
 
   // A viewer document's report, relayed by the script above with the document's token: the tab
@@ -872,7 +896,9 @@ export function createPreviewBridge(): NativeBridge {
       // Kotlin to serve); here that picks the sample document the dev server answers with.
       const pdf = document as { path?: unknown } | undefined
       const shown =
-        pdf && typeof pdf.path === 'string' ? pdfDocumentHtml(String(html), pdf.path) : String(html)
+        pdf && typeof pdf.path === 'string'
+          ? pdfDocumentHtml(String(html), pdf.path)
+          : gameDocumentHtml(String(html))
       void showDocument(frame, shown, commitEntry(String(tabId), String(url)))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },

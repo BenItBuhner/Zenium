@@ -40,7 +40,8 @@ describe('the page registry', () => {
       'print',
       'pdf',
       'tasks',
-      'version'
+      'version',
+      'game'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Apps (the installed web
@@ -292,6 +293,20 @@ describe('the page registry', () => {
       splittable: true,
       requires: 'pdfViewer'
     })
+    // The offline game (ERR-03 / WID-04): a document page on every host, a tab per open as
+    // Chrome's chrome://dino is; nothing it requires of a host.
+    expect(INTERNAL_PAGES.game).toMatchObject({
+      id: 'game',
+      title: 'Offline game',
+      render: 'document',
+      singleton: false,
+      pill: { showStar: true },
+      splittable: true,
+      sections: []
+    })
+    expect(INTERNAL_PAGES.game.requires).toBeUndefined()
+    expect(pageOpensAsTab(INTERNAL_PAGES.game, NONE, 'phone')).toBe(true)
+    expect(parseInternalPageUrl('zenium://game')).toEqual({ id: 'game', section: null })
   })
 })
 

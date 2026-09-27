@@ -40,6 +40,7 @@ import {
 import { hexToRgb, resolveTheme, rgbToHex } from './theme'
 import { newTabPageHtml } from './newTabPage'
 import { pdfMissingPageHtml, pdfViewerPageHtml, type PdfPageLookup } from './pdfPage'
+import { GAME_TITLE, gameMarkupHtml, gameMountMessageScript } from './game/page'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -811,6 +812,12 @@ function emphasiseSite(reason: string, site: string): string {
 /** `net::ERR_BLOCKED_BY_CLIENT`: the request engine stopped the navigation itself. */
 export const BLOCKED_BY_CLIENT_CODE = -20
 
+/**
+ * `net::ERR_INTERNET_DISCONNECTED`: the one page that carries the offline game (ERR-03), as
+ * Chrome's does (`neterror.ts:279-287` mounts its runner on the `icon-offline` page alone).
+ */
+export const OFFLINE_CODE = -106
+
 /** Toggles the Advanced block open and closed (the page's own script; nothing crosses to the browser). */
 const ADVANCED_TOGGLE_SCRIPT =
   "var a=document.getElementById('zen-error-advanced'),open=a.hidden;a.hidden=!open;" +
@@ -848,15 +855,19 @@ function interstitialHtml(interstitial: CertificateInterstitial, target: string)
  * page script's listeners and the entry the failure committed stay with it, and the root
  * attributes the page's inline script would set are set here (markup written this way runs no
  * scripts). Only an error document is touched; a page that did load meanwhile is left alone.
- * `scheme` is the app's colour scheme (`errorPageAttributesScript`).
+ * `scheme` is the app's colour scheme (`errorPageAttributesScript`). On the offline page, the
+ * write done, the page script is told (`gameMountMessageScript`) so the game, whose fragment
+ * arrived with the markup, is mounted (`installOfflineGame`).
  */
 export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system'): string {
   const html = JSON.stringify(errorPageHtml(url, scheme))
+  const mount =
+    Number(url.searchParams.get('code')) === OFFLINE_CODE ? `${gameMountMessageScript()};` : ''
   return (
     "(function(html){if(location.protocol!=='chrome-error:')return false;" +
     "var doc=new DOMParser().parseFromString(html,'text/html'),root=document.documentElement;" +
     'root.className=doc.documentElement.className;root.innerHTML=doc.documentElement.innerHTML;' +
-    `${errorPageAttributesScript(scheme)};return true})(${html})`
+    `${errorPageAttributesScript(scheme)};${mount}return true})(${html})`
   )
 }
 
@@ -906,11 +917,29 @@ export function errorPageHtml(
       ? reloadHtml(content)
       : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
+  // The offline page carries the game above its title (ERR-03), where Chrome's carries its
+  // runner in the icon's slot; the page script mounts it (`installOfflineGame`).
+  const game = code === OFFLINE_CODE ? `\n  ${gameMarkupHtml()}` : ''
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
-<body class="zen-error-page" data-surface="page"><main>
+<body class="zen-error-page" data-surface="page"><main>${game}
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${suggestionsHtml(content)}${name}${controls}
 </main><script>${RELOADING_SCRIPT}</script></body></html>`
+}
+
+/**
+ * `zen://game`: the offline game on its own page (ERR-03's second half; Chrome's `chrome://dino`,
+ * `offline.ts:1481-1493`), the stage alone in the error page's column on the error page's
+ * chassis – the same tokens, the same anchor at 30% – so it reads as the offline page's game
+ * come out on its own. The 1×1 widget (WID-04) lands here. The accent is the URL's where the
+ * core wrote one (`errorPageAccentOf`), the default theme's otherwise.
+ */
+export function gamePageHtml(url: URL, scheme: ColorScheme = 'system'): string {
+  const accent = errorPageAccentOf(url.searchParams)
+  return `<!doctype html><html class="zen-error-document zen-game-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${GAME_TITLE}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
+<body class="zen-error-page zen-game-page" data-surface="page"><main>
+  ${gameMarkupHtml()}
+</main></body></html>`
 }
 
 /**
@@ -1479,6 +1508,8 @@ export function zenPageHtml(
       const doc = pdf?.(url.searchParams.get('id') ?? '')
       return doc ? pdfViewerPageHtml(doc) : pdfMissingPageHtml()
     }
+    case 'game':
+      return gamePageHtml(url, scheme)
     default:
       return blankPageHtml()
   }

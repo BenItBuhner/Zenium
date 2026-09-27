@@ -1239,6 +1239,99 @@
   color: inherit;
   opacity: 0.69;
 }
+/*
+ * The offline game (ERR-03; `shared/game/`): the stage above the no-connection page's title, and
+ * alone on `zen://game` – a region the content column wide, at most 600 by 150 (Chrome's runner's
+ * size), the runner and the cards drawn in the page's tokens by the page script's runtime, so
+ * the stylesheet gives the stage no colour. The start hint sits across the stage's middle in the
+ * deemphasised ink; the game-over card is a v2 card over the stage with Retry as its one primary;
+ * the live region is the screen reader's alone. `touch-action: none` keeps a swipe on the stage
+ * the game's (a downward swipe mid-air is the speed drop). The card's arrival is the runtime's
+ * (Web Animations: a 180 ms pop, a 120 ms opacity fade under reduced motion, §11.3), not a
+ * transition here – the page's cut carries no reduced-motion remover of its own.
+ */
+.zen-game {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 0 24px;
+  outline: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.zen-game:focus-visible,
+.zen-game[data-keyboard-focus]:focus {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 4px;
+  border-radius: var(--v2-radius-inner);
+}
+.zen-game-stage {
+  display: block;
+  max-width: 100%;
+}
+.zen-game-hint {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  left: 0;
+  margin: 0;
+  text-align: center;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  pointer-events: none;
+}
+.zen-game-hint[hidden] {
+  display: none;
+}
+.zen-game-over {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 200px;
+  padding: var(--v2-card-padding);
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  background: var(--v2-card);
+  transform: translateX(-50%);
+}
+.zen-game-over[hidden] {
+  display: none;
+}
+.zen-game-over-title {
+  margin: 0;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-heading);
+}
+.zen-game-over-score {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-game-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.zen-game-page main {
+  display: flex;
+  justify-content: center;
+}
+.zen-game-page .zen-game {
+  margin: 0;
+}
 
 @layer base {
   html,

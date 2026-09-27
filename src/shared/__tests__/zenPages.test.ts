@@ -13,6 +13,7 @@ import {
   type CrashPageOptions
 } from '../url'
 import { INTERSTITIAL_MESSAGE_KEY } from '../interstitial'
+import { GAME_MOUNT_ATTRIBUTE, GAME_MOUNT_MESSAGE_KEY, gameMountMessageScript } from '../game/page'
 import type { CertificateDetails } from '../types'
 import {
   BLOCKED_BY_CLIENT_CODE,
@@ -1132,6 +1133,81 @@ describe('inPlaceErrorPageScript', () => {
     expect(script.endsWith(`})(${JSON.stringify(errorPageHtml(parseZenUrl(EXPIRED)!))})`)).toBe(
       true
     )
+  })
+
+  it('tells the page script to mount the game after writing the offline page, and no other', () => {
+    // The fragment arrives with the markup; the page script's mount listens for the message
+    // (`installOfflineGame`), since the tree changed under a document that had long loaded.
+    const offline = inPlaceErrorPageScript(parseZenUrl(OFFLINE)!)
+    expect(offline).toContain(
+      `${ERROR_PAGE_ATTRIBUTES_SCRIPT};${gameMountMessageScript()};return true`
+    )
+    expect(offline).toContain(GAME_MOUNT_ATTRIBUTE)
+    const refused = inPlaceErrorPageScript(parseZenUrl(REFUSED)!)
+    expect(refused).not.toContain(GAME_MOUNT_MESSAGE_KEY)
+    expect(refused).toContain(`${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true`)
+  })
+})
+
+describe('the offline game (ERR-03)', () => {
+  it('carries the game above the title of the no-connection page alone', () => {
+    const html = errorPageHtml(parseZenUrl(OFFLINE)!, 'system', 'android')
+    const game = html.indexOf(`<div class="zen-game" ${GAME_MOUNT_ATTRIBUTE}`)
+    expect(game).toBeGreaterThan(html.indexOf('<main>'))
+    expect(game).toBeLessThan(html.indexOf('<h1>No internet</h1>'))
+    // The region, the stage, the hint, the card with Retry as the primary, the live region.
+    expect(html).toContain('role="application" tabindex="0" aria-label="Offline game.')
+    expect(html).toContain(
+      '<canvas class="zen-game-stage" width="600" height="150" aria-hidden="true">'
+    )
+    expect(html).toContain('<p class="zen-game-hint" aria-hidden="true"></p>')
+    expect(html).toContain(
+      '<div class="zen-game-over" hidden><h2 class="zen-game-over-title">Game over</h2>'
+    )
+    expect(html).toContain('class="zen-v2-button" data-primary data-zen-game-retry>Retry</button>')
+    expect(html).toContain(
+      '<div class="zen-game-live" aria-live="assertive" aria-atomic="true"></div>'
+    )
+    // The page carries no script for it: the page script mounts it.
+    expect(html).not.toContain(GAME_MOUNT_MESSAGE_KEY)
+    expect(html.split('<div class="zen-game" ')).toHaveLength(2)
+    for (const other of [
+      REFUSED,
+      EXPIRED,
+      errorPageUrl(-105, 'net::ERR_NAME_NOT_RESOLVED', 'http://x/')
+    ]) {
+      expect(errorPageHtml(parseZenUrl(other)!)).not.toContain('<div class="zen-game" ')
+    }
+  })
+
+  it("serves zen://game as the stage alone on the error page's chassis (Chrome's chrome://dino)", () => {
+    const html = zenPageHtml('zen://game', undefined, undefined, undefined, 'dark')
+    expect(html).toContain('<title>Offline game</title>')
+    expect(html).toContain('<html class="zen-error-document zen-game-document">')
+    expect(html).toContain('<body class="zen-error-page zen-game-page" data-surface="page"><main>')
+    expect(html).toContain(GAME_MOUNT_ATTRIBUTE)
+    expect(html).not.toContain('<h1>')
+    expect(html).not.toContain('zen-error-reload')
+    // The theme's attributes and the accent, as the error page has them.
+    expect(html).toContain(errorPageAttributesScript('dark'))
+    expect(html).toContain('--zen-accent: #6264dc;')
+    expect(html).toContain(":root[data-theme='dark'] {\n  --zen-accent: #8284f0;")
+    expect(html).toContain('.zen-game {')
+    expect(html).toContain('.zen-game-over {')
+  })
+
+  it("draws the stage's chrome from the tokens alone", () => {
+    const own = errorPageStyle().slice(errorPageStyle().indexOf('.zen-game {'))
+    expect(own).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+    expect(own).not.toMatch(/rgba?\(/)
+    expect(own).toContain('touch-action: none;')
+    expect(own).toContain('max-width: 600px;')
+    expect(own).toContain('border-radius: var(--v2-radius-card);')
+    expect(own).toContain('background: var(--v2-card);')
+    // No transition of its own: the card's arrival is the runtime's (§11.3, the page's cut has
+    // no remover).
+    expect(own).not.toContain('transition')
+    expect(own).not.toContain('animation')
   })
 })
 

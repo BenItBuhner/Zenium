@@ -24,6 +24,7 @@
  * {@link INTERNAL_PAGES}, so a page can be tried against the mechanism before it is registered.
  */
 import type { FormFactor, HostCapabilities, OverlayKind, Platform } from './types'
+import { GAME_TITLE } from './game/page'
 
 /** The scheme `tab.url` carries for every internal document and page. */
 export const INTERNAL_SCHEME = 'zen'
@@ -56,6 +57,7 @@ export type InternalPageId =
   | 'pdf'
   | 'tasks'
   | 'version'
+  | 'game'
 
 /**
  * How a page's tab holds its page.
@@ -708,6 +710,22 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
   version: {
     id: 'version',
     title: 'About Version',
+    render: 'document',
+    singleton: false,
+    pill: { showStar: true },
+    splittable: true,
+    sections: []
+  },
+  /**
+   * Roll, the offline game (`zen://game`, ERR-03 / WID-04; `shared/game/`): the game the
+   * no-connection page carries, on a page of its own – Chrome's `chrome://dino`, an ordinary
+   * page every open of which is a tab of its own (`offline.ts:1481-1493`). A document page
+   * (`zenPages.ts`'s `gamePageHtml`) on every host; `chrome://dino` typed into the bar is its
+   * alias (`shared/url.ts`); the 1×1 widget lands here.
+   */
+  game: {
+    id: 'game',
+    title: GAME_TITLE,
     render: 'document',
     singleton: false,
     pill: { showStar: true },
