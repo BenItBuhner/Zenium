@@ -1514,8 +1514,96 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         SystemClock.sleep(800)
         shot("20-game-tab")
         finding("after the face: ${describeActive()}, landing $landed")
+        val glyphs = chromeJs(ROLL_GLYPHS_JS).toIntOrNull() ?: -1
+        expect("the game tab's favicon slot wears Roll's picture (§9.17): a `lucide-roll` glyph in the chrome, drawn from `shared/game/mark.ts` ($glyphs)", glyphs > 0)
+        rollToTheNight()
+        theGlyphInTheOverview()
         backToThePrevious(tab?.optString("id"))
         showOverlay()
+    }
+
+    /**
+     * Roll's night on the device, for the still the lead asked for ((g-look) on #607): a REAL tap
+     * on the stage starts the game (the hint by device reads "Tap to start" here), then an
+     * auto-player is put into the document ([GAME_BOT_JS]) – it takes over `requestAnimationFrame`,
+     * hands the runtime's loop one 60 Hz frame per turn, reads the canvas for what stands in the
+     * runner's lane and presses Space on the document eight frames ahead of it – until the 700-point
+     * night has painted eight frames, where it holds the next frame so the still is the runtime's
+     * own paint of the night, the auto-player's word (frames, jumps, starts, the theme, the sky's
+     * corner) beside it. A crashed run is started again by the same key; the game's device stays
+     * the touch the mount read.
+     */
+    private fun rollToTheNight() {
+        val stage = gameStageBounds()
+        expect("the stage's box is read (the tree's region, else the document's canvas)", stage != null && !stage.isEmpty)
+        stage ?: return
+        Finger().tap(stage.exactCenterX(), stage.exactCenterY())
+        SystemClock.sleep(400)
+        val running = awaitTrue(4_000) { gameTabJs(GAME_RUNNING_JS) == "true" }
+        expect("a finger on the stage starts the game (the hint gone, the region live)", running)
+        gameTabJs(GAME_BOT_JS)
+        var word = JSONObject()
+        val reached = awaitTrue(150_000) {
+            word = runCatching { JSONObject(gameTabJs("JSON.stringify(window.__zenBot||{})") ?: "{}") }.getOrDefault(JSONObject())
+            word.optBoolean("done")
+        }
+        finding("Roll's auto-player: $word")
+        expect("the auto-player reaches the 700-point night and holds its frame (frames ${word.optInt("frames")}, jumps ${word.optInt("jumps")}, starts again ${word.optInt("starts")})", reached && word.optBoolean("night"))
+        expect("the night's sky is the runtime's rounded box: the canvas's corner clear, the sky inside it opaque", word.optInt("corner", -1) == 0 && word.optInt("sky", -1) == 255)
+        expect("the night is the stage's alone: the region wears the other theme while the page keeps its own", word.optString("theme").isNotEmpty() && word.optString("theme") != word.optString("page"))
+        SystemClock.sleep(600)
+        shot("21-game-night")
+    }
+
+    /** The overview's grid with Roll's tab in it: its card's favicon slot wears the picture. */
+    private fun theGlyphInTheOverview() {
+        val tabs = tabsButton(6_000)
+        val point = tabs?.let { touchPoint(it) }
+        expect("the bar's Tabs button is under a finger", point != null)
+        point ?: return
+        Finger().tap(point.x, point.y)
+        val open = awaitTrue(8_000) { overviewOpen() }
+        expect("the Tabs button opens the overview", open)
+        SystemClock.sleep(1_500)
+        val glyphs = chromeJs(ROLL_GLYPHS_JS).toIntOrNull() ?: -1
+        expect("the overview draws Roll's picture in the game tab's card ($glyphs `lucide-roll` glyphs in the chrome)", glyphs > 0)
+        shot("22-game-glyph-overview")
+        finding("the overview with Roll's tab: $glyphs roll glyph(s), ${chromeJs(GLOBE_GLYPHS_JS)} globe(s) in the chrome")
+        back()
+        awaitTrue(6_000) { !overviewOpen() }
+        SystemClock.sleep(600)
+    }
+
+    private fun overviewOpen(): Boolean =
+        chromeJs("((((window.__zenStores||{}).stage||{get:function(){return {}}}).get()||{}).overview||{}).phase!=='closed'") == "true"
+
+    /** Roll's region on screen: the tree's node by its label, else the document's canvas box under the shown tab's view. */
+    private fun gameStageBounds(): Rect? {
+        waitFor({ it.startsWith(GAME_STAGE_LABEL) }, 3_000)?.takeIf { !it.isEmpty }?.let { return it }
+        val raw = gameTabJs(GAME_STAGE_BOX_JS)?.trim('"') ?: return null
+        val css = raw.split(',').map { it.toFloatOrNull() ?: return null }
+        if (css.size != 4) return null
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            origin = IntArray(2).also { view?.getLocationOnScreen(it) }
+        }
+        return Rect(
+            origin[0] + (css[0] * density).toInt(),
+            origin[1] + (css[1] * density).toInt(),
+            origin[0] + (css[2] * density).toInt(),
+            origin[1] + (css[3] * density).toInt()
+        )
+    }
+
+    /** `code` evaluated in the shown tab's document (Roll's), its JSON answer; null with no view or in 5 s. */
+    private fun gameTabJs(code: String): String? {
+        val done = ArrayBlockingQueue<String>(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            if (view == null) done.offer("") else view.evaluateJavascript(code) { value -> done.offer(value ?: "null") }
+        }
+        return done.poll(5, TimeUnit.SECONDS)?.takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -2135,6 +2223,102 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         /** The document's word: the region carries the runtime's mounted mark (`page.ts`) and its canvas is inside. */
         private const val GAME_STAGE_MOUNTED_JS =
             "(function(){var g=document.querySelector('.zen-game[data-zen-game-mounted]');return !!(g&&g.querySelector('canvas'))})()"
+        /** The region's phase, as the runtime marks it (`data-phase`): the game is running. */
+        private const val GAME_RUNNING_JS =
+            "(function(){var g=document.querySelector('.zen-game[data-zen-game-mounted]');return !!g&&g.dataset.phase==='running'})()"
+        /** The canvas's box in the document's CSS px: left,top,right,bottom. */
+        private const val GAME_STAGE_BOX_JS =
+            "(function(){var c=document.querySelector('.zen-game[data-zen-game-mounted] canvas');if(!c)return '';var r=c.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom].join(',')})()"
+        /** How many of Roll's glyphs (`PAGE_GLYPHS.roll`, the class Lucide gives it) the chrome draws; and how many globes. */
+        private const val ROLL_GLYPHS_JS = "document.querySelectorAll('svg.lucide-roll').length"
+        private const val GLOBE_GLYPHS_JS = "document.querySelectorAll('svg.lucide-globe').length"
+        /**
+         * Roll's auto-player, for the night still alone. The runtime asks the window for every frame
+         * (`requestFrame` → `requestAnimationFrame`, `runtime.ts`); this takes the window's over and
+         * answers each ask on the next turn of the event loop with a clock 1000/60 ahead – one game
+         * frame a turn, the physics untouched, real time not waited for. After each frame it reads the
+         * canvas: the lane the runner's body crosses (stage y 90–135 – the tall card's top at 90 to the
+         * ground's hairline at 138; the parallax rings stay above 72 and a high note above 88) from the
+         * runner's right edge (x 54) on, a column with four device px unlike the sky (the pixel at 2,100,
+         * clear by day and the painted box at night) is the next obstacle's left edge; the speed is that
+         * edge's shift a frame. Eight frames before it reaches the runner it presses Space on the
+         * document (`onKeyDown`, as a keyboard would) and lifts it twenty frames on, past the jump's
+         * peak so `endJump` cuts nothing. A frame in which the region carries `data-theme` is the
+         * night; after eight of them it holds the next ask, so the still is the frame the runtime
+         * painted, and reads the canvas's corner (0,0; clear outside the rounded box) and the sky
+         * (2,75; opaque inside it). A run that crashed – or a game still waiting – asks for no frame:
+         * every 1.5 s of no frames the same key starts it (again). Its word is `window.__zenBot`.
+         */
+        private val GAME_BOT_JS = """
+            (function () {
+              var root = document.querySelector('.zen-game[data-zen-game-mounted]');
+              var canvas = root && root.querySelector('canvas');
+              var ctx = canvas && canvas.getContext('2d');
+              var status = (window.__zenBot = { error: null, frames: 0, jumps: 0, starts: 0, night: false, done: false, theme: '', page: document.documentElement.dataset.theme || 'light', corner: -1, sky: -1 });
+              if (!ctx) { status.error = 'no stage'; return; }
+              var FRAME = 1000 / 60, LOOKAHEAD = 8, AIR = 34, LIFT_AT = 20;
+              var clock = performance.now(), airborne = 0, lastEdge = null, speed = 8, nightFrames = 0, held = null;
+              function key(type, code) { document.dispatchEvent(new KeyboardEvent(type, { code: code, key: code === 'Space' ? ' ' : code, bubbles: true, cancelable: true })); }
+              function ratio() { return canvas.width / (parseFloat(canvas.style.width) || canvas.clientWidth || 600); }
+              function edge() {
+                var k = ratio();
+                var ref = ctx.getImageData(Math.round(2 * k), Math.round(100 * k), 1, 1).data;
+                var x0 = 56, w = 150, y0 = 90, h = 45;
+                var img = ctx.getImageData(Math.round(x0 * k), Math.round(y0 * k), Math.round(w * k), Math.round(h * k));
+                var W = img.width, H = img.height, d = img.data, need = Math.max(3, Math.round(4 * k));
+                for (var px = 0; px < W; px++) {
+                  var run = 0;
+                  for (var py = 0; py < H; py++) {
+                    var i = (py * W + px) * 4;
+                    var diff = Math.abs(d[i] - ref[0]) + Math.abs(d[i + 1] - ref[1]) + Math.abs(d[i + 2] - ref[2]) + Math.abs(d[i + 3] - ref[3]);
+                    if (diff > 24) { if (++run >= need) return x0 + px / k; } else run = 0;
+                  }
+                }
+                return null;
+              }
+              function decide() {
+                var e = edge();
+                if (e !== null && lastEdge !== null && lastEdge > e && lastEdge - e < 20) speed = lastEdge - e;
+                lastEdge = e;
+                if (airborne > 0) {
+                  airborne++;
+                  if (airborne === LIFT_AT) key('keyup', 'Space');
+                  if (airborne > AIR) airborne = 0;
+                  return;
+                }
+                if (e !== null && e - 54 <= LOOKAHEAD * speed) { key('keydown', 'Space'); airborne = 1; status.jumps++; }
+              }
+              window.requestAnimationFrame = function (cb) {
+                if (status.done) { held = cb; return 1; }
+                setTimeout(function () {
+                  if (status.done) { held = cb; return; }
+                  clock += FRAME;
+                  cb(clock);
+                  status.frames++;
+                  var theme = root.getAttribute('data-theme');
+                  if (theme !== null) {
+                    status.night = true;
+                    status.theme = theme;
+                    if (++nightFrames >= 8) {
+                      status.done = true;
+                      var k = ratio();
+                      status.corner = ctx.getImageData(0, 0, 1, 1).data[3];
+                      status.sky = ctx.getImageData(Math.round(2 * k), Math.round(75 * k), 1, 1).data[3];
+                      return;
+                    }
+                  }
+                  decide();
+                }, 0);
+                return 1;
+              };
+              var seen = 0;
+              var kick = setInterval(function () {
+                if (status.done) { clearInterval(kick); return; }
+                if (status.frames === seen) { key('keydown', 'Space'); key('keyup', 'Space'); status.starts++; airborne = 0; lastEdge = null; }
+                seen = status.frames;
+              }, 1500);
+            })();
+        """.trimIndent()
         /**
          * The game widget's measures (`values/dimens.xml`): the platform's one-cell minimum the info
          * declares, the glyph's box; and the cell handed to the provider – a launcher's 1×1 on a 412 dp
