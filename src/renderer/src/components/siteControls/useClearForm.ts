@@ -103,7 +103,8 @@ export function useClearForm(onDone: () => void): ClearForm {
       (outcome: ReauthOutcome<ClearBrowsingDataResult>) => {
         switch (outcome.status) {
           case 'ok':
-            pushToast(clearedToast(outcome.value.cleared))
+            // The toast names the period the form cleared, in the picker's words.
+            pushToast(clearedToast(args.range, outcome.value.cleared))
             onDone()
             return
           case 'passphrase':

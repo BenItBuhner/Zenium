@@ -176,8 +176,11 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
       find('src/renderer/src/components/pages/history/HistoryPage.tsx', 'Delete browsing data…')
     ).toBe(true)
     expect(find('src/shared/shortcutReference.ts', 'Delete browsing data')).toBe(true)
-    expect(find('src/renderer/src/lib/browsingData.ts', 'Nothing to delete')).toBe(true)
+    // The toast's three shapes: the period's tail ("<period> deleted"), all time's "Deleted",
+    // and the empty selection's "Nothing deleted".
+    expect(find('src/renderer/src/lib/browsingData.ts', 'deleted')).toBe(true)
     expect(find('src/renderer/src/lib/browsingData.ts', 'Deleted')).toBe(true)
+    expect(find('src/renderer/src/lib/browsingData.ts', 'Nothing deleted')).toBe(true)
     // The menu rows and the shortcut's label were Chrome's Title Case already (#396).
     expect(find('src/core/menus.ts', 'Delete Browsing Data…')).toBe(true)
     expect(find('src/core/menuBar.ts', 'Delete Browsing Data…')).toBe(true)
