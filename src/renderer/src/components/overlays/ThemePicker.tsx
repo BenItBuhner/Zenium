@@ -13,6 +13,7 @@ import {
 import { spaceLabel } from '@shared/defaults'
 import type { Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { POPOVER_WIDTH } from '@renderer/lib/portals'
 import { isDarkScheme } from '@renderer/lib/selectors'
 import { resetSpaceTheme } from '@renderer/lib/theme'
 import { cn, debounce } from '@renderer/lib/utils'
@@ -33,12 +34,14 @@ const ALGORITHMS: Array<{ id: ThemeAlgorithm; label: string }> = [
 
 const WHEEL = 200
 /**
- * The picker's width, its own: the 200 wheel beside its column of controls. At its seat it is
- * the `w-[420px]` on the panel; hanging from the Settings row's button (§9.20) it is the extent
- * `placeUnder` takes – a surface with a width of its own, like a menu's, not one of the
- * chassis's three.
+ * The picker's two widths are its two seats' (§9.20 as the lead amended it on #572: the chrome
+ * is the seat's, never the content's). At the sidebar's seat the panel is the `w-[420px]`
+ * `.zen-panel` card it always was. Hanging from the Settings row's Change… button it is a
+ * popover, and a popover's width is one of the chassis's three, chosen by content and never
+ * fitted to it (lib/portals.tsx): the 400 of rows with trailing controls and forms – the wheel's
+ * 200 beside its column of controls fits, the column 20 narrower than at the seat.
  */
-const WIDTH = 420
+const POPOVER = POPOVER_WIDTH.form
 
 function defaultTheme(): SpaceTheme {
   return structuredClone(THEME_PRESETS[0].theme)
@@ -48,7 +51,10 @@ function defaultTheme(): SpaceTheme {
  * Zen's gradient theme picker: colour wheel dots, harmony algorithm, opacity, texture, rotation.
  * With an `anchor` – the Settings theme row's Change… button, `UiState.overlayAnchor` – the
  * panel hangs from it, end-aligned under the button (§9.20, #572's L8), instead of sitting at
- * the sidebar's seat the space menu and the palette open it at.
+ * the sidebar's seat the space menu and the palette open it at; and hanging there it is the
+ * popover the shell draws for an anchored panel (`OverlayShell anchor`: the `.zen-v2-panel`
+ * chrome, no close, the focus held and returned), 400 wide. The seat – the space menu's and
+ * the palette's picker on a mouse, and the phone's, which never anchors – is unchanged.
  */
 export function ThemePicker({
   state,
@@ -105,7 +111,7 @@ export function ThemePicker({
       description={`${spaceLabel(space)} space`}
       variant="dialog"
       className="mb-3 ml-3 mr-auto mt-auto w-[420px]"
-      anchor={anchor ? { at: anchor, width: WIDTH } : undefined}
+      anchor={anchor ? { at: anchor, width: POPOVER } : undefined}
     >
       <div className="flex flex-col gap-4 px-4 pb-4">
         <div className="flex gap-4">
