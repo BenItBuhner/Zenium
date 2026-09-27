@@ -34,3 +34,40 @@ export function coverFor(bannerStack: number, toast: number, inset = MESSAGE_INS
     bottom: toast > 0 ? toast + 2 * inset : 0
   }
 }
+
+/**
+ * The in-product help bubble's width (HintBubbleCard.tsx): §9.20's notice, 320 – one of the
+ * three fixed popover widths, never fitted to the sentence – so the words sit on two lines
+ * inside its 288 (the lead's (c) on #641). The stylesheet's `.zen-hint-bubble` carries the same
+ * numbers; lib/__tests__/v2Tokens.test.ts pins its `width` and `padding` to these two.
+ */
+export const HINT_BUBBLE_WIDTH = 320
+
+/** The bubble's padding a side: Chrome's 16 dp (`textbubble_text.xml` l.17–23). */
+export const HINT_BUBBLE_PADDING = 16
+
+/**
+ * The `left` of a bubble `width` wide in §9.20's anchored pose: end-aligned with its anchor –
+ * the bubble's right edge on the button's right edge, `anchorEnd` (the chrome is LTR; the Tabs
+ * button stands in the bar's trailing half, and an anchor there end-aligns) – then slid the
+ * least distance that keeps it `inset` inside the layer on either side (the rule's step 3, no
+ * flip: the other alignment would put the bubble past the frame's edge on a phone). A bubble
+ * wider than the layer allows sits at the left inset.
+ */
+export function hintBubbleLeft(
+  anchorEnd: number,
+  width: number,
+  layerWidth: number,
+  inset = MESSAGE_INSET
+): number {
+  const max = Math.max(inset, layerWidth - inset - width)
+  return Math.min(max, Math.max(inset, anchorEnd - width))
+}
+
+/**
+ * The strip the bubble covers on its edge: the card – flush against the bar band's inner edge at
+ * gap 0, so its box starts at the edge – and the inset over it on the page's side.
+ */
+export function hintCoverFor(height: number, inset = MESSAGE_INSET): number {
+  return height > 0 ? height + inset : 0
+}

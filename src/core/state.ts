@@ -141,6 +141,7 @@ import {
 } from '../shared/updates'
 import { BLANK_URL } from '../shared/url'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { sanitizeIphState } from '../shared/iph'
 import {
   emptyBlockingStatus,
   sanitizeBlockingSettings,
@@ -844,6 +845,8 @@ export class BrowserState {
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.autofill = sanitizeAutofillSettings(data.settings?.autofill)
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
+    // The phone's hint bubbles' records (TB-19): a profile from before them reads the defaults.
+    this.settings.iph = sanitizeIphState(data.settings?.iph)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     // Off only when the profile says so: an older profile, or anything but a boolean, reads on.

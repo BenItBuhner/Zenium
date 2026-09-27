@@ -3205,6 +3205,13 @@ export interface Settings {
   /** The one-time exit hint for a video in fullscreen (GN-20) has been shown (phones). */
   fullscreenHintDone: boolean
   /**
+   * The phone's in-product help bubbles (TB-19, `shared/iph.ts`): one record per bubble Chrome
+   * Android shows on its toolbar. Device-local (`DEVICE_LOCAL_SETTINGS`), as Chrome's feature
+   * engagement store is the profile's own; a profile from before it reads the defaults
+   * (`sanitizeIphState`).
+   */
+  iph: IphState
+  /**
    * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
    * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
    */
@@ -3422,6 +3429,36 @@ export interface DefaultBrowserPromoState {
 
 /** What the chrome should show for the default-browser prompts right now. */
 export type DefaultBrowserPrompt = 'sheet' | 'banner' | null
+
+// ---------------------------------------------------------------------------
+// In-product help (the phone's hint bubbles, TB-19)
+// ---------------------------------------------------------------------------
+
+/**
+ * One hint bubble's record (`shared/iph.ts`), device-local. Chrome's feature engagement tracker
+ * keeps the same two things per IPH feature: the day it became available, and whether it has
+ * been triggered or its subject used.
+ */
+export interface IphBubbleState {
+  /**
+   * When the bubble became available on this device (ms since the epoch): stamped by the first
+   * deferred arm of a build that has the bubble; Chrome's `availability` clock starts the same
+   * day. `null` until then.
+   */
+  availableAt: number | null
+  /**
+   * The bubble has been shown – or the user did what it teaches before it was due (Chrome's
+   * `used` event: `tab_switcher_button_clicked` holds the tab switcher bubble back). Either way
+   * it is spent and never shows.
+   */
+  shown: boolean
+}
+
+/** The bubbles, one record each: the ones Chrome Android 152 shows by default. */
+export interface IphState {
+  /** Chrome's `IPH_TabSwitcherButton`: the bubble on the bar's Tabs button. */
+  tabSwitcher: IphBubbleState
+}
 
 export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */

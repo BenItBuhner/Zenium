@@ -75,6 +75,9 @@ const EXTENSION_ID = /^[a-p]{32}$/
  * and the confirmation toast after a pin (`pinned`).
  */
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
+/** The in-product help bubbles a preview state may raise (TB-19): Chrome 152's one, on the Tabs button. */
+export const PREVIEW_IPH_BUBBLES = ['tab-switcher'] as const
+export type PreviewIphBubble = (typeof PREVIEW_IPH_BUBBLES)[number]
 /** The screenshot flow's stills (SH-07, SH-08): the flash, the preview card, the long-screenshot editor. */
 export const PREVIEW_SCREENSHOT_SURFACES = ['flash', 'card', 'editor'] as const
 export type PreviewScreenshotSurface = (typeof PREVIEW_SCREENSHOT_SURFACES)[number]
@@ -556,6 +559,17 @@ export type PreviewState =
        */
       kind: 'unresponsive'
       url: string | null
+    }
+  | {
+      /**
+       * An in-product help bubble (TB-19) up on the active page: `tab-switcher` is Chrome 152's
+       * one default toolbar bubble, on the bar's Tabs button. The seed makes it due (the record
+       * 15 days old, the first run and the gesture hint behind the user) and the shell's own
+       * trigger raises it, so the still shows the bubble as a phone shows it – at either edge
+       * with `bar=top` / `bar=bottom`.
+       */
+      kind: 'iph'
+      bubble: PreviewIphBubble
     }
   | {
       kind: 'messages'
@@ -1083,6 +1097,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
           ? { edge, by: distance }
           : null
     }
+  }
+  const iph = params.get('iph')
+  if (iph !== null && (PREVIEW_IPH_BUBBLES as readonly string[]).includes(iph)) {
+    return { kind: 'iph', bubble: iph as PreviewIphBubble }
   }
   const toast = params.get('toast')
   const banners = params.get('banners')

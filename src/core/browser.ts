@@ -176,6 +176,7 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { sanitizeIphState } from '../shared/iph'
 import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
@@ -4440,6 +4441,10 @@ export class Browser {
           ...s.defaultBrowserPromo,
           ...(value as Partial<Settings['defaultBrowserPromo']>)
         })
+      } else if (key === 'iph' && value && typeof value === 'object') {
+        // A one-bubble patch (the tab switcher's stamp or `shown`) keeps the other bubbles'
+        // records; every record comes back sanitised (TB-19, `shared/iph.ts`).
+        s.iph = sanitizeIphState({ ...s.iph, ...(value as Partial<Settings['iph']>) })
       } else if (key === 'blocking' && value && typeof value === 'object') {
         s.blocking = sanitizeBlockingSettings({
           ...s.blocking,

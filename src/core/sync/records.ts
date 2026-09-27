@@ -375,6 +375,13 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   stripped at apply and never winning.
  * - `bookmarkRowSortOrder`, `bookmarkRowDisplay` (HB-13): the phone's bookmark rows' order and
  *   display, Chrome's `BookmarkUiPrefs` – two SharedPreferences keys on the device, never synced.
+ * - `iph`: the phone's in-product help bubbles' records (TB-19, `shared/iph.ts`) – when each
+ *   became available on this device and whether it has been shown. Chrome's feature engagement
+ *   tracker keeps its events in the profile's own LevelDB
+ *   (`components/feature_engagement/internal/persistent_event_store.cc` l.25–26, a
+ *   `leveldb_proto::ProtoDatabase<Event>`; l.43 `WriteEvent`), no sync layer over it: a phone
+ *   that has seen a bubble says nothing about the phone beside it, and a desktop has no such
+ *   bubble to be told about. No migration, as above.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -387,7 +394,8 @@ export const DEVICE_LOCAL_SETTINGS = [
   'touchpadSwipeToNavigate',
   'hoverCardMemoryUsage',
   'bookmarkRowSortOrder',
-  'bookmarkRowDisplay'
+  'bookmarkRowDisplay',
+  'iph'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

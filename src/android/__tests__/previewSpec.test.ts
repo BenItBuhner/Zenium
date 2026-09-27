@@ -497,6 +497,18 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&toast=y')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('raises an in-product help bubble by name (TB-19), at either edge of the bar', () => {
+    expect(parsePreviewSpec('iph=tab-switcher')).toEqual({ kind: 'iph', bubble: 'tab-switcher' })
+    expect(parsePreviewSpec('iph=tab-switcher&bar=top')).toEqual({
+      kind: 'iph',
+      bubble: 'tab-switcher'
+    })
+    expect(parsePreviewSeed('iph=tab-switcher&bar=top').bar).toBe('top')
+    // A bubble Chrome does not show is no state; the bubble wins over the messages.
+    expect(parsePreviewSpec('iph=back-swipe')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('iph=tab-switcher&toast=y')).toMatchObject({ kind: 'iph' })
+  })
+
   it('raises an "Add to Home screen" surface by name', () => {
     for (const surface of PREVIEW_WEBAPP_SURFACES) {
       expect(parsePreviewSpec(`webapp=${surface}`)).toEqual({ kind: 'webapp', surface })

@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
 import { QUIT_HOLD_FONT, QUIT_HOLD_PANEL } from '@shared/quitHoldPanel'
 import { REDUCED_FADE_MS, TOAST_CARD, TOAST_SHOW_MS } from '@shared/toastCard'
-import { MESSAGE_INSET } from '../../components/messages/stack'
+import {
+  HINT_BUBBLE_PADDING,
+  HINT_BUBBLE_WIDTH,
+  MESSAGE_INSET
+} from '../../components/messages/stack'
 import { FULLSCREEN_RETURN_MS } from '../../components/phone/useFullscreenReturn'
 import { TOOLBAR_STROKE } from '../../components/v2/controls'
 import { TOAST_DURATION } from '../ui'
@@ -2017,6 +2021,18 @@ describe('the chrome tooltip (§9.31, a11y-26)', () => {
     expect(tip).toMatch(/^ {4}background: var\(--v2-panel\);$/m)
     expect(tip).toMatch(/^ {4}border: 1px solid var\(--v2-border\);$/m)
     expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-control: 4px;$/m)
+  })
+})
+
+describe('the in-product help bubble (TB-19, §9.20’s anchored pose)', () => {
+  it("is §9.20's notice width by value: the stylesheet's 320 and its 16 of padding are the chrome's constants, not copies (#641's first line, N1)", () => {
+    // The rule sits inside `@layer components`: its own close is the indented one.
+    const whole = block('.zen-hint-bubble')
+    const card = whole.slice(0, whole.indexOf('\n  }'))
+    expect(card).toMatch(new RegExp(`^ {4}width: ${HINT_BUBBLE_WIDTH}px;$`, 'm'))
+    expect(card).toMatch(new RegExp(`^ {4}padding: ${HINT_BUBBLE_PADDING}px;$`, 'm'))
+    // The sentence's measure inside the padding: 288, two lines (the lead's (c)).
+    expect(HINT_BUBBLE_WIDTH - 2 * HINT_BUBBLE_PADDING).toBe(288)
   })
 })
 
