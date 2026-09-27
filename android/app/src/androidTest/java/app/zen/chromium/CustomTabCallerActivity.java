@@ -39,15 +39,30 @@ public class CustomTabCallerActivity extends Activity {
      * set {@code setStartAnimations} (CCT-08). None: a plain {@code startActivity}.
      */
     public static final String EXTRA_LAUNCH_OPTIONS = "app.zen.chromium.demo.LAUNCH_OPTIONS";
+    /**
+     * A boolean: start the launch for a RESULT ({@code startActivityForResult}), the way an app
+     * starts an Auth Tab (CCT-13); the result's code and data land in the status line as
+     * {@value #RESULT_PREFIX}{@code <code> <data URI or "no data">}.
+     */
+    public static final String EXTRA_FOR_RESULT = "app.zen.chromium.demo.FOR_RESULT";
+    /** A string: what the button reads instead of "Read the story". */
+    public static final String EXTRA_BUTTON = "app.zen.chromium.demo.BUTTON";
+    /** The status line's start after a result came back. */
+    public static final String RESULT_PREFIX = "Auth result ";
 
     private static final int BRAND = 0xFF2E5BFF;
     private static final String STORY_URL = "https://en.wikipedia.org/wiki/Damping";
     private static final String DEFAULT_BROWSER = "io.github.benitbuhner.zenium.debug";
+    private static final int REQUEST_AUTH = 41;
 
     private Intent launch;
     private Bundle launchOptions;
+    private boolean forResult;
     private String browser = DEFAULT_BROWSER;
     private TextView status;
+    private Button read;
+    /** The last result's line, shown until the next launch; null when none came back. */
+    private String result;
     private int opened = 0;
 
     @Override
@@ -67,7 +82,21 @@ public class CustomTabCallerActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (opened > 0) status.setText("Back in Nimbus News after custom tab " + opened);
+        if (result != null) {
+            status.setText(result);
+        } else if (opened > 0) {
+            status.setText("Back in Nimbus News after custom tab " + opened);
+        }
+    }
+
+    /** An Auth Tab's answer (CCT-13): the code and the redirect URI it carried, if any. */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_AUTH) return;
+        Uri uri = data != null ? data.getData() : null;
+        result = RESULT_PREFIX + resultCode + " " + (uri != null ? uri.toString() : "no data");
+        status.setText(result);
     }
 
     @SuppressWarnings("deprecation")
@@ -80,14 +109,28 @@ public class CustomTabCallerActivity extends Activity {
             launch = next;
             // The options belong to the launch they came with: a later launch without any starts plainly.
             launchOptions = intent.getBundleExtra(EXTRA_LAUNCH_OPTIONS);
+            forResult = intent.getBooleanExtra(EXTRA_FOR_RESULT, false);
+            result = null;
         }
         String pkg = intent.getStringExtra(EXTRA_BROWSER);
         if (pkg != null) browser = pkg;
+        String label = intent.getStringExtra(EXTRA_BUTTON);
+        if (label != null && read != null) read.setText(label);
     }
 
     private void open() {
         Intent intent = launch != null ? new Intent(launch) : fallback();
         opened++;
+        result = null;
+        if (forResult) {
+            status.setText("Signing in through the Auth Tab…");
+            if (launchOptions != null) {
+                startActivityForResult(intent, REQUEST_AUTH, launchOptions);
+            } else {
+                startActivityForResult(intent, REQUEST_AUTH);
+            }
+            return;
+        }
         status.setText("Opening the story in a custom tab…");
         if (launchOptions != null) {
             startActivity(intent, launchOptions);
@@ -146,7 +189,7 @@ public class CustomTabCallerActivity extends Activity {
             15, 0xFF374151, Typeface.DEFAULT
         ));
 
-        Button read = new Button(this);
+        read = new Button(this);
         read.setText("Read the story");
         read.setAllCaps(false);
         read.setTextColor(Color.WHITE);

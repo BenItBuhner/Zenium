@@ -53,7 +53,17 @@ class CustomTabConfig(
     /** The `EXTRA_TOOLBAR_ITEMS` buttons that belong to the bottom toolbar, in the caller's order. */
     val bottomButtons: List<ActionButton>,
     /** `EXTRA_SECONDARY_TOOLBAR_SWIPE_UP_GESTURE`: fired when the bottom toolbar is swiped up. */
-    val swipeUpIntent: PendingIntent?
+    val swipeUpIntent: PendingIntent?,
+    /**
+     * The Auth Tab's redirect (CCT-13, `AuthTabIntent.EXTRA_LAUNCH_AUTH_TAB`): set, the tab hands
+     * the caller its redirect as the activity's result instead of loading it ([AuthTabVerifier]),
+     * and wears Chrome's Auth Tab chrome – the title row, no share, no star or Download, no
+     * caller buttons, menu rows or bottom toolbar, the toolbar never hiding. Null on every
+     * ordinary custom tab, whose one cost for the feature is this null.
+     */
+    val authTab: AuthTab.Redirect? = null,
+    /** The Auth Tab's session (its `AuthTabCallback` binder under `EXTRA_SESSION`), in place of [session]. */
+    val authSession: AuthTabSession? = null
 ) {
     class ActionButton(val icon: Bitmap, val description: String, val intent: PendingIntent, val tint: Boolean, val id: Int = CustomTabButtons.TOP_BAR_ID)
     class MenuItem(val title: String, val intent: PendingIntent)
@@ -120,6 +130,13 @@ class CustomTabConfig(
             val actionBundle = actionButton(extras.getBundle(CustomTabsIntent.EXTRA_ACTION_BUTTON_BUNDLE), tint)
             val items = toolbarItems(extras, tint)
             val placement = CustomTabButtons.place(actionBundle != null, items.map { it.id })
+            val authTab = AuthTab.redirect(
+                launch = extras.getBoolean(AuthTab.EXTRA_LAUNCH_AUTH_TAB, false),
+                scheme = extras.getString(AuthTab.EXTRA_REDIRECT_SCHEME),
+                host = extras.getString(AuthTab.EXTRA_HTTPS_REDIRECT_HOST),
+                path = extras.getString(AuthTab.EXTRA_HTTPS_REDIRECT_PATH)
+            )
+            if (authTab != null) return authTabConfig(intent, extras, scheme, authTab)
             return CustomTabConfig(
                 url = intent.dataString ?: "about:blank",
                 session = CustomTabsSessionToken.getSessionTokenFromIntent(intent),
@@ -142,6 +159,38 @@ class CustomTabConfig(
                 swipeUpIntent = CustomTabsIntent.getSecondaryToolbarSwipeUpGesture(intent)
             )
         }
+
+        /**
+         * An Auth Tab's config: Chrome's `AuthTabIntentDataProvider` reads the colour scheme, the
+         * close icon and the exit animation off the intent and nothing else of the custom tab's
+         * extras – no action or toolbar buttons, no menu rows, no bottom toolbar, share off, no
+         * star or Download, the title shown, the toolbar never hiding – so neither does this. The
+         * session is the auth kind ([AuthTabSession]), never a `CustomTabsSessionToken` over the
+         * same binder.
+         */
+        private fun authTabConfig(intent: Intent, extras: Bundle, scheme: CustomTabScheme.Resolved, authTab: AuthTab.Redirect): CustomTabConfig =
+            CustomTabConfig(
+                url = intent.dataString ?: "about:blank",
+                session = null,
+                callerPackage = intent.getStringExtra(CustomTabIntents.EXTRA_CALLER_PACKAGE),
+                scheme = scheme,
+                closeIcon = IntentCompat.getParcelableExtra(intent, CustomTabsIntent.EXTRA_CLOSE_BUTTON_ICON, Bitmap::class.java),
+                closeAtEnd = false,
+                showTitle = true,
+                hideToolbarOnScroll = false,
+                actionButton = null,
+                menuItems = emptyList(),
+                share = false,
+                shareState = CustomTabsIntent.SHARE_STATE_OFF,
+                bookmarksButton = false,
+                downloadButton = false,
+                exitAnimation = extras.getBundle(CustomTabsIntent.EXTRA_EXIT_ANIMATION_BUNDLE),
+                remoteViews = null,
+                bottomButtons = emptyList(),
+                swipeUpIntent = null,
+                authTab = authTab,
+                authSession = AuthTabSession.fromIntent(intent)
+            )
 
         /** One custom button bundle (`KEY_ICON`, `KEY_DESCRIPTION`, `KEY_PENDING_INTENT`, `KEY_ID`); null when unusable. */
         fun actionButton(bundle: Bundle?, tint: Boolean): ActionButton? {

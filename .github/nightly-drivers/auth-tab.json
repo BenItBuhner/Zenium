@@ -1,0 +1,9 @@
+{
+  "id": "auth-tab",
+  "class": "AuthTabDemo",
+  "shard": "phone-d",
+  "mirrors": "android-auth-tab-demo.yml",
+  "dir": "auth-tab-demo",
+  "estimate": 1.5,
+  "note": "The Auth Tab (CCT-13; W6-D19): the demo caller starts an Auth Tab intent for a result (androidx.browser 1.9.0's extras by their strings, a session made through the provider's newAuthTabSession transaction) over a sign-in page the driver serves on the loopback; the tab's chrome and menu read light and dark (the design stills), the form's Continue taking a 303 to zeniumtest://done?code=1 that is returned to the caller as RESULT_OK with the URI, back out of the tab as RESULT_CANCELED, and an https redirect the caller cannot prove refused as RESULT_VERIFICATION_FAILED. Three Auth Tabs and their returns: 64 s of driver after the boot in its first run (36287792373), a minute and a half on the estimate. On phone-d, at 60.5 of its 68 before this line."
+}

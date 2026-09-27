@@ -101,8 +101,9 @@ class CustomTabToolbar(
         if (!config.closeAtEnd) row.addView(close)
 
         // Minimize sits at the bar's start beside the close control, where Chrome keeps it; with
-        // the close control sent to the end it is the first thing in the bar.
-        if (mode == Mode.CUSTOM_TAB) {
+        // the close control sent to the end it is the first thing in the bar. An Auth Tab has
+        // none (Chrome's MinimizedFeatureUtils refuses an auth tab): a sign-in is not parked.
+        if (mode == Mode.CUSTOM_TAB && config.authTab == null) {
             val minimize = iconButton(context.getString(R.string.cct_minimize)) { listener.onMinimize() }
             minimize.setImageResource(R.drawable.ic_cct_minimize)
             ImageViewCompat.setImageTintList(minimize, ColorStateList.valueOf(ink))

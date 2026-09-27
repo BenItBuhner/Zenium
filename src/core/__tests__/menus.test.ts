@@ -4551,6 +4551,25 @@ describe('the chrome context menus', () => {
       expect(desktop.popups()).toBe(0)
     })
 
+    it('opens on the Install-app chip as on the other pinned controls (W8-6, the seam with W8-1): Unpin folds `install`, Pin brings it back, and the host’s read of the chip’s marks reaches the same rows', async () => {
+      const h = pageHarness({ ...DESKTOP, pageTabs: true })
+      const install = chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'install' })
+      expect(await show(h, install)).toEqual(['Unpin', 'Customise Toolbar…'])
+      h.click('Unpin')
+      expect(h.browser.state.settings.toolbarPins).toEqual({ install: false })
+      expect(await show(h, install)).toEqual(['Pin', 'Customise Toolbar…'])
+      h.click('Pin')
+      expect(h.browser.state.settings.toolbarPins).toEqual({})
+      // The chip's marks are `toolbarMenuMarks('install')`'s – `data-zen-menu="toolbar"` with
+      // `data-zen-menu-control="install"` – which the host reads under the pointer.
+      const marked = pageHarness(DESKTOP, {
+        chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'install' } }
+      })
+      marked.win.onContextMenu(chromeParams({ x: 640, y: 18 }))
+      await settle()
+      expect(topLabels(marked.shown())).toEqual(['Unpin', 'Customise Toolbar…'])
+    })
+
     it('reaches the core from the host’s read of the chrome document: the control under the pointer (`data-zen-menu-control`), an unknown one reading as none', async () => {
       const marked = pageHarness(DESKTOP, {
         chromeDocument: { hit: { target: 'toolbar', tabId: null, control: 'translate' } }

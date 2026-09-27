@@ -1,0 +1,38 @@
+name: Android auth tab demo
+
+# Records the Auth Tab (CCT-13) on a hardware-accelerated Android emulator: "Nimbus News" (the
+# instrumentation APK's caller) starts an Auth Tab intent FOR A RESULT – androidx.browser 1.9.0's
+# extras put on by their strings, a session made through the provider's newAuthTabSession
+# transaction – over a sign-in page the driver serves on the loopback. The tab's chrome (the
+# custom tab's under Chrome's fixed configuration: close and title, no Minimize, no Share, a menu
+# without Add to Home Screen or Open in Zenium) is read light and dark; the form's Continue takes a
+# 303 to zeniumtest://done?code=1, which the tab never loads – it closes and the caller reads
+# RESULT_OK with the URI; back out of a tab reads RESULT_CANCELED; an https redirect the caller
+# cannot prove it owns reads RESULT_VERIFICATION_FAILED. Dispatch-only, like the custom tabs demo:
+# it takes about seven minutes (the driver a minute after the boot: 64 s in its first run) and says
+# nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-auth-tab-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Auth tab demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.AuthTabDemo
+        DEMO_DIR=auth-tab-demo
+        DEMO_OUT=artifacts/android-auth-tab-demo
+        DEMO_VIDEO=android-auth-tab-demo.mp4
+      artifact-name: android-auth-tab-demo
+      artifact-path: artifacts/android-auth-tab-demo/
