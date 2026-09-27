@@ -394,31 +394,29 @@ describe('phonePillChips: the chips as data', () => {
   })
 
   /*
-   * PUI-14 (§9.29's reader chip; the design gate for #491): on an article page – the reader
-   * probe's verdict on the tab, the same predicate the §9.33 offer stands on – the sheet lists
-   * a Reader View row after the translate offer, spoken at the address as the offer is; the
-   * pill draws nothing for it. Not on a page the probe did not read as an article, not in
-   * Reader View itself, not on an internal page.
+   * PUI-14 (§9.29's reader chip; the design gate for #491) as CT-37's phone half amends it: on
+   * an article page – the reader probe's verdict on the tab, the same predicate the §9.33 offer
+   * stands on – the sheet lists a Reader View row after the translate offer, and the pill draws
+   * the chip in the glyph slot while the slot is quiet (the readerable indicator), the lock
+   * giving way; its own stop speaks it, so the address does not. Not on a page the probe did
+   * not read as an article, not in Reader View itself, not on an internal page.
    */
-  it('lists the Reader View row on an article page, after the offer, spoken at the address and never drawn', () => {
+  it('lists the Reader View row on an article page, after the offer, and draws the chip in the quiet slot (CT-37)', () => {
     const article = tab('https://news.example.com/story', { readerable: true, blockedCount: 5 })
     const chips = phonePillChips(offered(state(article)), article, ctx)
     expect(chips.map((c) => [c.id, c.fold])).toEqual([
       ['lock', 'glyph'],
       ['blocked', 'sheet'],
       ['translate', 'sheet'],
-      ['reader', 'sheet']
+      ['reader', 'offer']
     ])
     const reader = chips.find((c) => c.id === 'reader')!
-    expect(reader.render).toBeUndefined()
+    expect(reader.render).toBeDefined()
     expect(reader.row?.label).toBe('Reader View')
     expect(reader.row?.value).toBeUndefined()
-    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['lock'])
-    expect(pillChipsSpoken(chips)).toEqual([
-      '5 requests blocked',
-      'Translation offered',
-      'Reader View available'
-    ])
+    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['reader'])
+    // Spoken at its own stop, not at the address (it would be heard twice).
+    expect(pillChipsSpoken(chips)).toEqual(['5 requests blocked', 'Translation offered'])
     expect(pillChipRows(offered(state(article)), article, ctx).map((r) => r.id)).toEqual([
       'blocked',
       'translate',

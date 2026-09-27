@@ -35,8 +35,8 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
     expect(pillChipFold('save-prompt')).toBe('live')
   })
 
-  it('names the reader chip the sheet’s (PUI-14), and treats a chip it does not know as informational too: the sheet’s (an extension action)', () => {
-    expect(pillChipFold('reader')).toBe('sheet')
+  it('names the reader chip the one offer (CT-37 over PUI-14’s sheet-only row), and treats a chip it does not know as informational: the sheet’s (an extension action)', () => {
+    expect(pillChipFold('reader')).toBe('offer')
     expect(pillChipFold('extension-action')).toBe('sheet')
     expect(Object.keys(PILL_CHIP_FOLDS).sort()).toEqual(
       [
@@ -126,6 +126,78 @@ describe('foldPillChips: a quiet state sits under a live one and above the glyph
     expect(ids(fold.shown)).toEqual(['quiet-a'])
     expect(ids(fold.folded)).toEqual(['quiet-b'])
     expect(ids(fold.yielded)).toEqual(['lock'])
+  })
+})
+
+describe('foldPillChips: an offer has the slot under every state and above the quiet glyph (CT-37)', () => {
+  const page = [chip('lock'), chip('blocked'), chip('translate')]
+
+  it('takes the slot on a quiet secure article: the lock gives way, and the sheet still lists the row (#491’s row stays)', () => {
+    const fold = foldPillChips([...page, chip('reader')])
+    expect(ids(fold.shown)).toEqual(['reader'])
+    expect(ids(fold.yielded)).toEqual(['lock'])
+    expect(ids(fold.folded)).toEqual(['blocked', 'translate', 'reader'])
+    // Mutant M1 (the offer folded as `sheet`): the lock would stay and nothing would be drawn for it.
+    expect(fold.shown).not.toContainEqual(chip('lock'))
+  })
+
+  it('leaves the slot when the page stops being an article: the lock returns, nothing yielded', () => {
+    const fold = foldPillChips(page)
+    expect(ids(fold.shown)).toEqual(['lock'])
+    expect(fold.yielded).toEqual([])
+    expect(ids(fold.folded)).toEqual(['blocked', 'translate'])
+  })
+
+  it('is the sheet’s row alone under a quiet state (the bell has the slot), whichever came first', () => {
+    const bellFirst = foldPillChips([...page, chip('notifications-blocked'), chip('reader')])
+    expect(ids(bellFirst.shown)).toEqual(['notifications-blocked'])
+    expect(ids(bellFirst.folded)).toEqual(['blocked', 'translate', 'reader'])
+    const readerFirst = foldPillChips([...page, chip('reader'), chip('notifications-blocked')])
+    expect(ids(readerFirst.shown)).toEqual(['notifications-blocked'])
+    expect(ids(readerFirst.folded)).toEqual(['blocked', 'translate', 'reader'])
+    expect(ids(readerFirst.yielded)).toEqual(['lock'])
+  })
+
+  it('is the sheet’s row alone under a live state, and the slot’s again when the state ends', () => {
+    const chips = [...page, chip('reader'), chip('media')]
+    const during = foldPillChips(chips, liveArrival([], ['media']))
+    expect(ids(during.shown)).toEqual(['media'])
+    expect(ids(during.folded)).toEqual(['blocked', 'translate', 'reader'])
+    const after = foldPillChips([...page, chip('reader')], liveArrival(['media'], []))
+    expect(ids(after.shown)).toEqual(['reader'])
+    expect(ids(after.yielded)).toEqual(['lock'])
+  })
+
+  it('never displaces a status glyph: the caller gives it the sheet’s fold under a warning or a danger glyph', () => {
+    const warn = foldPillChips([chip('not-secure'), chip('reader', 'sheet')])
+    expect(ids(warn.shown)).toEqual(['not-secure'])
+    expect(ids(warn.folded)).toEqual(['reader'])
+    expect(warn.yielded).toEqual([])
+    const danger = foldPillChips([chip('dangerous'), chip('reader', 'sheet')])
+    expect(ids(danger.shown)).toEqual(['dangerous'])
+    expect(ids(danger.folded)).toEqual(['reader'])
+  })
+
+  it('two offers never stack: the first in the pill’s order has the slot, both are rows', () => {
+    const fold = foldPillChips([chip('lock'), { id: 'offer-a', fold: 'offer' }, { id: 'offer-b', fold: 'offer' }])
+    expect(ids(fold.shown)).toEqual(['offer-a'])
+    expect(ids(fold.folded)).toEqual(['offer-a', 'offer-b'])
+    expect(ids(fold.yielded)).toEqual(['lock'])
+  })
+
+  it('on a page without a glyph stands alone, nothing yielded, still listed', () => {
+    const fold = foldPillChips([chip('blocked'), chip('reader')])
+    expect(ids(fold.shown)).toEqual(['reader'])
+    expect(fold.yielded).toEqual([])
+    expect(ids(fold.folded)).toEqual(['blocked', 'reader'])
+  })
+
+  it('takes no part in the states’ record, and the record does not know it', () => {
+    expect(liveArrival([], ['media'])).toEqual(['media'])
+    const chips = [...page, chip('media'), chip('reader'), chip('save-prompt')]
+    const fold = foldPillChips(chips, liveArrival([], ['media', 'save-prompt']))
+    expect(ids(fold.shown)).toEqual(['save-prompt'])
+    expect(ids(fold.folded)).toEqual(['blocked', 'translate', 'media', 'reader'])
   })
 })
 
