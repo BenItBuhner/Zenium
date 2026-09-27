@@ -469,6 +469,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot.
         val enabledKb = heapKb()
         entry.put("heapEnabledKb", enabledKb)
+        // The chrome WebView's JS heap and the renderer's RSS at the same moment (compat round 22, R22-3's lane read beside the ART heap line).
+        entry.put("chromeJsHeap", chromeJsHeap())
+        entry.put("rendererRssKb", rendererRssKb())
         entry.put("blockingEnabled", runCatching { Blocking.shared(app).stats() }.getOrNull() ?: JSONObject.NULL)
         if (enabledKb >= heapSplitFromKb) heapSplit(row, entry, enabledKb)
     }
@@ -12346,6 +12349,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runtime.gc()
         SystemClock.sleep(100)
         return (runtime.totalMemory() - runtime.freeMemory()) / 1024
+    }
+
+    /**
+     * The chrome WebView's JS heap as `performance.memory` gives it (compat round 22, R22-3's lane
+     * read): Blink hands the legacy API out bucketized and refreshes it at most every twenty
+     * minutes unless the WebView runs with `--enable-precise-memory-info`, so the reading is
+     * coarse and, past the process's first, mostly the same – recorded as it comes beside the
+     * ART heap line, [rendererRssKb] the row's exact number.
+     */
+    private fun chromeJsHeap(): Any {
+        val json = runCatching {
+            JSONTokener(chromeJs("JSON.stringify((function(){var m=performance.memory;return m?{usedKb:Math.round(m.usedJSHeapSize/1024),totalKb:Math.round(m.totalJSHeapSize/1024),limitKb:Math.round(m.jsHeapSizeLimit/1024)}:null})())")).nextValue() as? String
+        }.getOrNull() ?: return JSONObject.NULL
+        return runCatching { JSONObject(json) }.getOrNull() ?: JSONObject.NULL
+    }
+
+    /** `VmRSS` (kB) of the WebView's sandboxed renderer processes summed (`ps`, then `/proc/<pid>/status` through the shell); 0 when none is seen. */
+    private fun rendererRssKb(): Long = runCatching {
+        shell("ps -A -o PID,NAME").lineSequence()
+            .filter { it.contains("sandboxed_process") }
+            .mapNotNull { it.trim().split(Regex("\\s+")).firstOrNull()?.toLongOrNull() }
+            .sumOf { pid -> Regex("""VmRSS:\s+(\d+)\s+kB""").find(shell("cat /proc/$pid/status"))?.groupValues?.get(1)?.toLongOrNull() ?: 0L }
+    }.getOrDefault(0L)
+
+    private fun shell(command: String): String {
+        val fd = ui.executeShellCommand(command)
+        return java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes().toString(Charsets.UTF_8) }.also { fd.close() }
     }
 
     /** Breadth-first search of every window on screen (the app and a dialog). */
