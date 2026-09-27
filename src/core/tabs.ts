@@ -1171,8 +1171,18 @@ export class TabManager {
         if (before && inPage) {
           // The page moved within its own document beneath the reader (a script's pushState):
           // the address it comes back to moves with it; the reader stays up, as Chrome's does
-          // over a fragment change.
+          // over a fragment change. The move is the page's visit all the same – Chrome records
+          // a same-document navigation – under the page's own title and icon (`covered` keeps
+          // them current), never the reader's fields the row wears; and the page's last commit
+          // is this address, for the chain a later `location.replace` folds into.
           before.url = url
+          this.committedUrls.set(tabId, url)
+          const t = this.tab(tabId)
+          if (t && !this.isPrivate(t))
+            this.browser.history.visit(url, before.title, before.favicon, {
+              transition: 'link',
+              tabId
+            })
           this.rememberNavigation(tabId)
           return
         }

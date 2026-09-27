@@ -857,6 +857,43 @@ describe('what speaks of the page beneath the cover', () => {
     expect(s.browser.tabs.pageUrl('nope')).toBeUndefined()
   })
 
+  it('a move within the page’s document beneath the cover is the page’s visit – its own title and icon, the row’s reader fields untouched – and the reader stays up', () => {
+    const s = scene()
+    const tab = s.browser.tabs.tab(s.tabId)!
+    tab.title = 'The Story'
+    tab.favicon = 'https://example.com/icon.png'
+    const cover = enterReader(s)
+    cover.events.onTitleUpdated(READER_TITLE)
+    const readerUrl = tab.url
+    const visitsBefore = s.browser.history.visits({ limit: 10 }).length
+    // A `pushState` to the next part, then a hash: two visits of the page, none of the reader.
+    for (const moved of [`${PAGE_URL}/part-2`, `${PAGE_URL}/part-2#notes`]) {
+      s.page.url = moved
+      s.page.events.onNavigated(moved, true)
+    }
+    const visits = s.browser.history.visits({ limit: 10 })
+    expect(visits).toHaveLength(visitsBefore + 2)
+    expect(
+      visits
+        .filter((v) => v.url.startsWith(`${PAGE_URL}/`))
+        .map((v) => [v.url, v.title, v.favicon, v.transition, v.tabId])
+        .sort()
+    ).toEqual([
+      [`${PAGE_URL}/part-2#notes`, 'The Story', 'https://example.com/icon.png', 'link', s.tabId],
+      [`${PAGE_URL}/part-2`, 'The Story', 'https://example.com/icon.png', 'link', s.tabId]
+    ])
+    expect(visits.some((v) => v.url.startsWith(READER_URL_PREFIX))).toBe(false)
+    // The row is the reader's still; what speaks of the page moved with it.
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
+    expect(tab.url).toBe(readerUrl)
+    expect(tab.title).toBe(READER_TITLE)
+    expect(s.browser.tabs.pageUrl(s.tabId)).toBe(`${PAGE_URL}/part-2#notes`)
+    // The exit comes back to where the page is now.
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(tab.url).toBe(`${PAGE_URL}/part-2#notes`)
+    expect(s.browser.history.visits({ limit: 10 })).toHaveLength(visitsBefore + 2)
+  })
+
   it('the site’s sound is the page’s: Mute Site under the cover mutes the page’s site, and a sound decision reaches the page beneath', () => {
     const s = scene()
     const tab = s.browser.tabs.tab(s.tabId)!
