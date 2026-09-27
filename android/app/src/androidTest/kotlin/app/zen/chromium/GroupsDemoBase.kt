@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
@@ -116,6 +117,12 @@ abstract class GroupsDemoBase(
     protected fun still(state: String) {
         shots++
         shot("%02d-%s".format(shots, state))
+    }
+
+    /** A numbered still from a frame the driver took itself (handed over: recycled once written). */
+    protected fun still(state: String, frame: Bitmap) {
+        shots++
+        shot("%02d-%s".format(shots, state), frame)
     }
 
     // --- the chrome's DOM ------------------------------------------------------------------------

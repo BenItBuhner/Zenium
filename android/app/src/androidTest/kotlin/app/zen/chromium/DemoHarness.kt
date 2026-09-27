@@ -134,12 +134,14 @@ abstract class DemoHarness(
     protected open fun launchOptions(): Bundle? = null
 
     /**
-     * The activity has started ([launch]'s `startActivitySync` returned: resumed, the chrome
-     * booting) and the harness is about to wait for the pill: a driver that reads or shoots the
-     * BOOT itself – the landing's frames, the marks as they are set – does it here, before the
-     * wait has let the boot settle. Every launch calls it, the first and any relaunch.
+     * The intent is about to be handed to `startActivitySync` ([launch]): a driver that must see
+     * the activity's VERY FIRST moment – the landing's frames from `onCreate` on – arms its
+     * `Instrumentation.ActivityMonitor` and its watcher here, since `startActivitySync` itself
+     * returns only at the main looper's first idle, a boot's seconds after `onCreate` (the tablet
+     * new tab demo's first landing watch began 2.2 s into the boot for that). Every launch calls
+     * it, the first and any relaunch.
      */
-    protected open fun onLaunched() {}
+    protected open fun onLaunching() {}
 
     /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
@@ -366,6 +368,7 @@ abstract class DemoHarness(
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
+        onLaunching()
         appLaunchedAt = SystemClock.uptimeMillis()
         val options = launchOptions()
         activity = if (options != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -373,7 +376,6 @@ abstract class DemoHarness(
         } else {
             instrumentation.startActivitySync(intent)
         }
-        onLaunched()
         // The chrome is a WebView booting the browser core: wait for the address pill to show up
         // (by either of its names: a state whose active tab is the new tab page has no address).
         val deadline = SystemClock.uptimeMillis() + 30_000
@@ -581,6 +583,15 @@ abstract class DemoHarness(
             SystemClock.sleep(400)
         }
         val bitmap = taken ?: return
+        shot(name, bitmap)
+    }
+
+    /**
+     * A still from a frame the driver took itself (a landing watch's display capture, chosen
+     * after the fact): encoded on the same background thread as [shot]'s, and recycled once
+     * written – the caller hands the bitmap over.
+     */
+    protected fun shot(name: String, bitmap: Bitmap) {
         val file = File(out, "$shotPrefix-$name.png")
         shotEncoder.execute {
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }

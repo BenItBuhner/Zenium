@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.app.Instrumentation
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -12,6 +13,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Process
 import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.webkit.WebViewCompat
@@ -22,7 +24,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /**
  * Drives the TABLET's new tab page (NTP-35: the served `zen://newtab` document – the desktop's,
@@ -40,11 +45,14 @@ import kotlin.math.abs
  *     a host with the new tab page the window's first tab is the served page – MADE, LOADED and
  *     placed after the FULLY DRAWN frame (the host's boot hold, #563's third half) – and its own
  *     `performance.timing` says what the document cost. THE LANDING is watched from the
- *     activity's start ([onLaunched], the lead's conditions of form): stills of the slot in the
- *     space's ground before the page, of the page's first painted frame WHOLE (filled from the
- *     state push, its icons in hand), and of the 120 ms fade mid-flight when the poll catches
- *     it – light at the fresh boot, dark and with tiles at a relaunch off camera in the warm-up
- *     ([darkLanding]: the session restored on a served tab). On main's tree
+ *     DISPLAY's side, from `onCreate` on ([LandingWatch], the lead's conditions of form): the
+ *     frames SurfaceFlinger composed, classified after the fact against the slot's own pixels –
+ *     the slot in the space's ground and nothing else before the page, the page's first painted
+ *     frame WHOLE (filled from the state push, its icons in hand: one paint, nothing arriving
+ *     after it), the 120 ms fade where a capture landed in it – with the page's own clock
+ *     (`performance.timeOrigin`, the landing's `performance.mark`s) beside them; the stills cut
+ *     from those frames – light at the fresh boot, dark and with tiles at a relaunch off camera
+ *     in the warm-up ([darkLanding]: the session restored on a served tab). On main's tree
  *     (`newTabPage` off: `Browser.ensureFirstTab` opens no tab) the window comes up with no tab
  *     and the chrome's own surface, so the same driver on main is the 'before' run. The fresh
  *     tab COMES UP BARE on the tablet: the served page in view, its own field at rest – no URL
@@ -103,17 +111,14 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
     /** The tab the recording's served page is in, once the sidebar's row opened it. */
     private var pageTab: String? = null
 
-    /** The scheme the next launch's landing is captured in ([onLaunched]); null for a launch whose landing is not wanted. */
+    /** The scheme the next launch's landing is watched in ([onLaunching]); null for a launch whose landing is not wanted. */
     private var landingScheme: String? = "light"
 
-    /** The served tab the next launch's landing is expected in; null for a fresh profile's one and only tab. */
-    private var landingTab: String? = null
+    /** Whether the next launch is a relaunch (the boot marks the first boot's, the picture before it the old activity's). */
+    private var landingRelaunch = false
 
-    /** The landings' lines, taken before the findings have their head and written into section 0. */
-    private val landingLines = ArrayList<String>()
-
-    /** What each landing's watch saw, by scheme, for the checks once the findings are open. */
-    private val landings = HashMap<String, Landing>()
+    /** The watch on the launch in progress, read once the launch has settled ([readLanding]). */
+    private var watch: LandingWatch? = null
 
     /** Where the last hold's finger was on the screen ([holdTile]): the point the menu must NOT hang from. */
     private var lastHold: PointF? = null
@@ -219,10 +224,8 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
                 "READY +${since("ready")} ms, FULLY DRAWN (frame, reportFullyDrawn) +${since("frame")} ms"
         )
         check("the boot reached its first frame (the marks ready and frame are set)", since("ready") != null && since("frame") != null, marks)
-        // The landing as [onLaunched] watched it from the activity's start, and its stills.
-        for (line in landingLines) finding(line)
-        landingLines.clear()
-        if (served) landingChecks("light")
+        // The landing as the watch saw it from the display's side, its stills and the conditions.
+        if (served) readLanding(null) else dropLanding()
         val active = activeCoreTab()
         val url = active?.optString("url").orEmpty()
         if (served) {
@@ -292,106 +295,442 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
                 ", ${if (awaiting) "awaiting its state" else "let in"} at opacity $opacity, $readyState, tiles $tiles (icons $icons ${if (iconsInHand) "in hand" else "on their way"}, letters $letters), empty line ${if (emptyShown) "shown" else "hidden"}, theme '$theme'"
     }
 
-    /** What a landing's watch saw ([captureLanding]). */
+    /** One frame of the display during a landing's watch, kept because it differed from the one kept before it. */
+    private class Frame(
+        /** The capture as taken; null once recycled (past [LANDING_FULL_CAP], or not chosen for a still). */
+        var full: Bitmap?,
+        /** The capture at a [LANDING_SCALE]th of its size: the pixels the frames are told apart and classified by. */
+        val small: Bitmap,
+        /** Uptime the capture was asked. */
+        val at: Long
+    ) {
+        fun recycle() {
+            full?.recycle()
+            full = null
+            small.recycle()
+        }
+    }
+
+    /**
+     * A launch's landing watched from the DISPLAY's side. An `Instrumentation.ActivityMonitor` on
+     * MainActivity hands the activity over the moment `onCreate` has returned (where
+     * `startActivitySync` returns at the main looper's first idle – 2.2 s into the fresh boot on
+     * the first sample, after the whole relaunch landing), and from then a thread of its own takes
+     * SurfaceFlinger's frame (`UiAutomation.takeScreenshot`: no part of the app's UI thread, which
+     * the served view's first frame stalls for seconds on the emulator – a poll through
+     * `runOnMainSync` sat behind that stall and saw nothing of the landing) as fast as the capture
+     * allows, keeping each frame that differs from the one kept before it (a status bar's clock is
+     * under the mark; a tile's icon is not), until the window is over: [LANDING_AFTER_FRAME_MS]
+     * after the FULLY DRAWN mark at a fresh boot – the hold's 5 s and the page's 5 s cap inside it –
+     * or [LANDING_RELAUNCH_MS] from `onCreate` at a relaunch, whose marks are the first boot's. What
+     * the frames show is read after the fact, against the slot's own rectangle ([classify]). The
+     * captures share the emulator's CPU with the boot they watch.
+     */
+    private inner class LandingWatch(val scheme: String, val relaunch: Boolean) : Runnable {
+        private val monitor = Instrumentation.ActivityMonitor(MainActivity::class.java.name, null, false)
+        private val done = CountDownLatch(1)
+        val frames = ArrayList<Frame>()
+        /** Uptime the monitor handed the activity over (`onCreate` returned); 0 when it never came. */
+        var createdAt = 0L
+        /** Captures asked for, kept or not. */
+        var looked = 0
+        var note: String? = null
+
+        fun arm() {
+            instrumentation.addMonitor(monitor)
+            Thread(this, "landing-watch-$scheme").start()
+        }
+
+        override fun run() {
+            try {
+                val started = monitor.waitForActivityWithTimeout(30_000)
+                instrumentation.removeMonitor(monitor)
+                if (started == null) {
+                    note = "the activity did not come within 30 s of the launch"
+                    return
+                }
+                createdAt = SystemClock.uptimeMillis()
+                var last: IntArray? = null
+                var fullKept = 0
+                while (SystemClock.uptimeMillis() < windowEnd()) {
+                    val at = SystemClock.uptimeMillis()
+                    val bmp = ui.takeScreenshot()
+                    looked++
+                    if (bmp == null) {
+                        SystemClock.sleep(LANDING_RETRY_MS)
+                        continue
+                    }
+                    val small = Bitmap.createScaledBitmap(bmp, bmp.width / LANDING_SCALE, bmp.height / LANDING_SCALE, true)
+                    val px = pixels(small)
+                    if (last == null || differing(px, last) > LANDING_KEEP_FRACTION) {
+                        val keepFull = fullKept < LANDING_FULL_CAP
+                        if (keepFull) fullKept++ else bmp.recycle()
+                        frames += Frame(if (keepFull) bmp else null, small, at)
+                        last = px
+                    } else {
+                        bmp.recycle()
+                        small.recycle()
+                    }
+                    SystemClock.sleep(LANDING_CADENCE_MS)
+                }
+            } catch (e: Throwable) {
+                note = "the watch stopped: $e"
+                Log.e(tag, "the landing watch stopped", e)
+            } finally {
+                done.countDown()
+            }
+        }
+
+        /** When the watch is over: the fresh boot's from its FULLY DRAWN mark once set, a relaunch's from `onCreate`. */
+        private fun windowEnd(): Long {
+            if (relaunch) return createdAt + LANDING_RELAUNCH_MS
+            val frame = BootMarks.get("frame") ?: return createdAt + LANDING_NO_FRAME_MS
+            return Process.getStartUptimeMillis() + frame + LANDING_AFTER_FRAME_MS
+        }
+
+        fun await(timeoutMs: Long): Boolean = done.await(timeoutMs, TimeUnit.MILLISECONDS)
+    }
+
+    /** What a landing's frames showed, read against the slot ([classify]). */
     private class Landing(
-        /** ms from the activity's start to the served view's first moment (made after the FULLY DRAWN frame). */
-        val viewAt: Long,
-        /** The first boot's `frame` mark was set when the view appeared; null when the marks are not this boot's (a relaunch). */
-        val frameSet: Boolean?,
-        /** The page at the moment the view was made (null: no document in it yet). */
-        val made: LandingSample?,
-        /** The page at the ground still, ~[LANDING_GROUND_MS] on (null: none taken – the page had come in already). */
-        val ground: LandingSample?,
-        /** The first sample with the attribute gone: the page's first painted frame, by the poll. */
-        val firstIn: LandingSample?,
-        /** The sample the mid-fade still was taken on, when the poll caught one. */
-        val mid: LandingSample?,
-        /** The sample the first-paint still was taken on: the page whole at opacity 1. */
-        val whole: LandingSample?,
-        /** ms from the view's first moment to the first sample with the attribute gone. */
-        val inAfterMs: Long?
+        /** The served view's box on the screen at the read; null when the view was not shown (no classification then). */
+        val slot: Rect?,
+        /** Uptime of the FULLY DRAWN frame (the `frame` mark) at the fresh boot; null at a relaunch. */
+        val frameAt: Long?,
+        /** The frames from the FULLY DRAWN frame on (a fresh boot) or all of them (a relaunch), in order. */
+        val window: List<Frame>,
+        /** The first frame of the run with the slot in one tone that ends at [ground]. */
+        val groundFrom: Frame?,
+        /** The last frame with the slot in one tone before the page's first paint: the space's ground alone. */
+        val ground: Frame?,
+        /** The ground's tone (the slot's one colour). */
+        val groundTone: Int?,
+        /** Frames between the ground and the first paint whose slot lies between the ground and the settled picture: the fade in flight, with its opacity read off the blend. */
+        val mids: List<Pair<Frame, Double>>,
+        /** The first frame whose slot is the settled picture: the page's first painted frame, whole. */
+        val firstPaint: Frame?,
+        /** The last frame kept: the settled picture. */
+        val settled: Frame?,
+        /** Frames between the ground and the first paint that were neither the ground, a blend toward the settled picture nor that picture: a cover, a skeleton, a partial page. */
+        val strangers: List<Frame>,
+        /** Frames after the first paint whose slot changed from the settled picture by more than [LANDING_LATE_FRACTION]: things arriving after the page showed. */
+        val late: List<Frame>
     )
 
     /**
-     * The landing of the launch that just started: the served view is MADE only after the FULLY
-     * DRAWN frame (the host's boot hold), so the first moment it exists is a moment after the
-     * frame – a still is taken there (`landing-made`), and the GROUND still [LANDING_GROUND_MS]
-     * later, once the splash's own 180 ms exit is done, while the page still awaits its state:
-     * the slot in the space's ground, no cover, no card. Then the page's root is watched at a
-     * tight poll: the attribute gone with the opacity under 1 is the 120 ms fade in flight (a
-     * `landing-mid-fade` still when the poll lands a sample in it), and at opacity 1 the page
-     * whole (`landing-first-paint`). `tabId` names the served tab when known (a relaunch's), null
-     * for a fresh profile's one tab. The lines and the samples wait for the findings' head.
+     * The next launch's landing is watched from its very first moment: the monitor and the watch
+     * go on before the intent is handed over ([DemoHarness.onLaunching]).
      */
-    override fun onLaunched() {
+    override fun onLaunching() {
         val scheme = landingScheme ?: return
         landingScheme = null
-        captureLanding(scheme, landingTab)
-        landingTab = null
+        watch = LandingWatch(scheme, landingRelaunch).also { it.arm() }
+        landingRelaunch = false
     }
 
-    private fun captureLanding(scheme: String, tabId: String?) {
-        val started = SystemClock.uptimeMillis()
-        var id: String? = null
-        val viewDeadline = started + 25_000
-        while (id == null && SystemClock.uptimeMillis() < viewDeadline) {
-            id = onMain { if (tabId != null) host.tabs.get(tabId)?.tabId else host.tabs.all().firstOrNull()?.tabId }
-            if (id == null) SystemClock.sleep(LANDING_POLL_MS)
-        }
-        val viewAt = SystemClock.uptimeMillis() - started
-        if (id == null) {
-            landingLines += "  landing ($scheme): no page view within 25 s of the activity's start – no stills of it"
-            landings[scheme] = Landing(viewAt, null, null, null, null, null, null, null)
+    /** A launch whose landing is not read (main's tree: no served view): the watch's frames let go. */
+    private fun dropLanding() {
+        val w = watch ?: return
+        watch = null
+        w.await(LANDING_WAIT_MS)
+        w.frames.forEach { it.recycle() }
+    }
+
+    /**
+     * The landing of the launch that has settled, read: the watch's frames classified against the
+     * served view's box ([classify]), the stills cut from the chosen frames (`landing-ground`,
+     * `landing-mid-fade` where a capture landed in the fade, `landing-first-paint`), the page's own
+     * clock read post hoc (`performance.timeOrigin` – the served document's load began – and the
+     * landing's marks: ready, state, icons, in, or the cap), the page's DOM as it stands, and the
+     * lead's conditions as checks. `tabId` names the served tab when known (a relaunch's), null
+     * for a fresh profile's one tab.
+     */
+    private fun readLanding(tabId: String?) {
+        val w = watch ?: run {
+            finding("  landing: no watch was armed for this launch")
             return
         }
-        val frameSet = if (tabId == null) BootMarks.get("frame") != null else null
-        still("landing-made-$scheme")
-        val made = landingSample(id)
-        var ground: LandingSample? = null
-        var firstIn: LandingSample? = null
-        var mid: LandingSample? = null
-        var whole: LandingSample? = null
-        val viewSeen = SystemClock.uptimeMillis()
-        val revealDeadline = viewSeen + 20_000
-        var groundDue = true
-        while (whole == null && SystemClock.uptimeMillis() < revealDeadline) {
-            val s = landingSample(id)
-            val letIn = s != null && s.served && !s.awaiting
-            if (groundDue && SystemClock.uptimeMillis() - viewSeen >= LANDING_GROUND_MS) {
-                groundDue = false
-                if (!letIn) {
-                    still("landing-ground-$scheme")
-                    ground = s
-                }
-            }
-            if (letIn) {
-                groundDue = false
-                if (firstIn == null) firstIn = s
-                if (s.opacity < 1.0) {
-                    if (mid == null) {
-                        still("landing-mid-fade-$scheme")
-                        mid = s
-                    }
-                } else {
-                    still("landing-first-paint-$scheme")
-                    whole = s
-                }
-            }
-            if (whole == null) SystemClock.sleep(LANDING_POLL_MS)
+        watch = null
+        val scheme = w.scheme
+        val finished = w.await(LANDING_WAIT_MS)
+        if (!finished) finding("  landing ($scheme): the watch had not finished ${LANDING_WAIT_MS / 1000} s after the launch settled; read as it stands")
+        w.note?.let { finding("  landing ($scheme): $it") }
+        var id = tabId
+        if (id == null) {
+            awaitUntil(10_000) { onMain { host.tabs.all().firstOrNull()?.tabId }.also { id = it } != null }
         }
-        val inAfterMs = firstIn?.let { it.at - viewSeen }
-        landings[scheme] = Landing(viewAt, frameSet, made, ground, firstIn, mid, whole, inAfterMs)
-        landingLines += "  landing ($scheme): the served view $id exists +$viewAt ms after the activity's start" +
-            (if (frameSet == true) " – the FULLY DRAWN frame mark set before it (frame=${BootMarks.get("frame")} ms from the process's start)" else "") +
-            "; the page then: ${made?.describe() ?: "no document in the view yet"}"
-        landingLines += "  landing ($scheme): the ground still ${if (ground != null) "taken +${ground.at - viewSeen} ms after the view was made: ${ground.describe()}" else "not taken (the page had come in within $LANDING_GROUND_MS ms of the view)"}"
-        landingLines += "  landing ($scheme): the page let in ${inAfterMs?.let { "+$it ms after the view was made" } ?: "NEVER within 20 s"}" +
-            (firstIn?.let { ": ${it.describe()}" } ?: "") +
-            "; the fade ${if (mid != null) "caught at opacity ${mid.opacity} (the mid-fade still)" else "not caught by the poll (every sample after the attribute went read opacity 1)"}" +
-            (whole?.let { "; whole at opacity ${it.opacity} +${it.at - viewSeen} ms (the first-paint still)" } ?: "")
+        val served = id
+        val relaunch = w.relaunch
+        val frameAt = if (relaunch) null else BootMarks.get("frame")?.let { Process.getStartUptimeMillis() + it }
+        val ref = frameAt ?: w.createdAt
+        val refName = if (frameAt != null) "the FULLY DRAWN frame" else "onCreate"
+        val cadence = w.frames.zipWithNext { a, b -> b.at - a.at }.sorted().let { if (it.isEmpty()) null else it[it.size / 2] }
+        finding(
+            "  landing ($scheme): watched from the display's side from onCreate (+${w.createdAt - appLaunchedAt} ms after the launch was asked" +
+                (frameAt?.let { "; the FULLY DRAWN frame +${it - w.createdAt} ms after onCreate" } ?: "; a relaunch: the marks are the first boot's, the times from onCreate") +
+                "): ${w.looked} frames looked at, ${w.frames.size} kept as changed" +
+                (cadence?.let { " (the kept frames' median spacing $it ms)" } ?: "") +
+                "; the kept frames at ${w.frames.joinToString(", ") { "+${it.at - ref}" }} ms from $refName"
+        )
+        val l = classify(w, served, frameAt)
+        val slotLine = l.slot?.let { "the slot ${it.width()}x${it.height()} at (${it.left},${it.top})" } ?: "NO SLOT RECT (the served view not shown at the read: the frames are not classified)"
+        val groundLine = l.ground?.let { g ->
+            "the GROUND: the slot in one tone (${tone(l.groundTone!!)}) from +${(l.groundFrom ?: g).at - ref} to +${g.at - ref} ms after $refName – the space's ground alone"
+        } ?: "no frame with the slot in one tone before the page (${if (l.firstPaint != null) "the page's first paint came within one capture of $refName" else "no first paint either"})"
+        val midLine = if (l.mids.isEmpty()) {
+            "the fade not caught (no capture landed between the ground and the page's first paint)"
+        } else {
+            "the FADE caught at " + l.mids.joinToString(", ") { (f, alpha) -> "+${f.at - ref} ms at opacity ${"%.2f".format(alpha)}" }
+        }
+        val paintLine = l.firstPaint?.let { "the page's FIRST PAINT on the display +${it.at - ref} ms after $refName (within one capture), whole: its slot the settled picture's" } ?: "no first paint: no frame whose slot is the settled picture's"
+        val afterLine = if (l.late.isEmpty()) "nothing changed in the slot after it" else "the slot CHANGED after it at ${l.late.joinToString(", ") { "+${it.at - ref}" }} ms"
+        val strangerLine = if (l.strangers.isEmpty()) "no other picture between the ground and the page" else "OTHER PICTURES between the ground and the page at ${l.strangers.joinToString(", ") { "+${it.at - ref}" }} ms"
+        finding("  landing ($scheme): $slotLine; $groundLine; $midLine; $paintLine; $afterLine; $strangerLine")
+
+        // The stills: the chosen frames' captures handed to the encoder (recycled once written);
+        // every frame's remains recycled at the end.
+        fun cut(state: String, frame: Frame?) {
+            if (frame == null) return
+            val full = frame.full
+            if (full == null) {
+                finding("  landing ($scheme): the $state frame's full capture was not kept (past the $LANDING_FULL_CAP kept frames); no still of it")
+                return
+            }
+            still(state, full)
+            frame.full = null
+        }
+        cut("landing-ground-$scheme", l.ground)
+        cut("landing-mid-fade-$scheme", l.mids.getOrNull(l.mids.size / 2)?.first)
+        cut("landing-first-paint-$scheme", l.firstPaint)
+
+        // The page's own clock: the served document's load began (timeOrigin) and the landing's marks.
+        val page = served?.let { landingSample(it) }
+        val clock = served?.let { landingClock(it) }
+        val loadAt = clock?.first
+        val marks = clock?.second.orEmpty()
+        val markAt = { name: String -> marks[name]?.let { it - ref } }
+        finding(
+            "  landing ($scheme): the page's own clock – " +
+                (loadAt?.let { "the served document's load began +${it - ref} ms after $refName (performance.timeOrigin)" } ?: "no timeOrigin read") +
+                "; the marks after $refName: ready ${markAt("zen-newtab-ready") ?: "–"}, state ${markAt("zen-newtab-state") ?: "–"}, icons ${markAt("zen-newtab-icons") ?: "–"}, in ${markAt("zen-newtab-in") ?: "–"} ms" +
+                (marks["zen-newtab-cap"]?.let { "; THE CAP FIRED +${it - ref} ms (the shell in without its state)" } ?: "; the cap did not fire") +
+                (l.firstPaint?.let { p -> marks["zen-newtab-in"]?.let { "; the display's first paint ${p.at - it} ms after the page let itself in" } } ?: "")
+        )
+        finding("  landing ($scheme): the page after the landing: ${page?.describe() ?: "no served page answered"}")
+
+        // The lead's conditions, as checks.
+        check(
+            "($scheme) the landing was watched from onCreate and the page's first painted frame found on the display",
+            l.firstPaint != null && l.slot != null,
+            "frames kept ${w.frames.size}, slot ${l.slot != null}, first paint ${l.firstPaint != null}"
+        )
+        if (frameAt != null) {
+            check(
+                "($scheme) the served document began loading AFTER the FULLY DRAWN frame, by its own clock (timeOrigin against the frame mark: the boot hold's order)",
+                loadAt != null && loadAt > frameAt,
+                loadAt?.let { "load began ${it - frameAt} ms after the frame" } ?: "no timeOrigin"
+            )
+        }
+        // (1) The slot in the space's ground alone while the page is held: one tone until the page,
+        // and nothing between that tone and the page but the page's own fade.
+        check(
+            "($scheme) the slot showed the space's ground and nothing else before the page: one tone from $refName until the page's first paint, no cover, no skeleton, no partial page",
+            l.firstPaint != null && l.strangers.isEmpty() && (l.ground != null || !relaunch),
+            "ground ${if (l.ground != null) "caught" else "not caught (the page within one capture of $refName)"}, other pictures ${l.strangers.size}"
+        )
+        // (2) The page arrives whole in one paint: the first painted frame IS the settled picture,
+        // nothing arrives after it, and the page says it was filled from the state before it let
+        // itself in (the state mark before the in mark, the cap never fired).
+        val stateAt = marks["zen-newtab-state"]
+        val inAt = marks["zen-newtab-in"]
+        check(
+            "($scheme) the page came in WHOLE in one paint: its first painted frame the settled picture, nothing arriving in the slot after it, the state applied before the root was let in (the page's marks), the cap unfired, the document complete with its tiles or its empty line",
+            l.firstPaint != null && l.late.isEmpty() && page != null && page.served && !page.awaiting && page.readyState == "complete" && (page.tiles > 0 || page.emptyShown) &&
+                stateAt != null && inAt != null && stateAt <= inAt && !marks.containsKey("zen-newtab-cap"),
+            "late changes ${l.late.size}; marks state ${stateAt?.let { it - ref } ?: "–"} in ${inAt?.let { it - ref } ?: "–"} cap ${marks["zen-newtab-cap"]?.let { it - ref } ?: "none"}; page ${page?.describe() ?: "none"}"
+        )
+        if (page != null && page.tiles > 0) {
+            check(
+                "($scheme) the icons were in hand at the first paint: every tile's icon complete, no letter that turned into an icon (no change in the slot after the first paint)",
+                page.icons == page.tiles && page.iconsInHand && page.letters == 0 && l.late.isEmpty(),
+                "tiles ${page.tiles}, icons ${page.icons} ${if (page.iconsInHand) "in hand" else "on their way"}, letters ${page.letters}, late changes ${l.late.size}"
+            )
+        }
+        // (3) The fade: 120 ms on the root's opacity under full motion (the stylesheet's rule, pinned
+        // in vitest); the display's word where a capture landed in it. Not a check: a capture every
+        // ~200 ms lands in a 120 ms fade only now and then.
+        finding("  ($scheme) the first paint's fade: $midLine; from $refName to the page's first paint on the display: ${l.firstPaint?.let { "${it.at - ref} ms" } ?: "n/a"} (THE EMULATOR's NUMBER; the hardware-equivalent is stated in the PR's body)")
+        if (scheme == "dark") check("(dark) the relaunch landed dark: the page's own theme after a landing with no change after its first paint", page?.theme == "dark" && l.late.isEmpty(), "theme '${page?.theme}', late changes ${l.late.size}")
+
+        w.frames.forEach { it.recycle() }
     }
 
-    /** The served page's root read for the landing, or null while the view has no document that answers. */
+    /**
+     * The frames read against the slot. The FULLY DRAWN frame opens the window at a fresh boot (the
+     * splash and its exit are before it); a relaunch's window is every frame, the old activity's
+     * picture first – so the ground is the LAST frame with the slot in one tone before the first
+     * frame whose slot is the settled picture's, and the first paint the first such frame after
+     * the ground. A frame between them is the fade where its slot lies between the ground's tone
+     * and the settled picture (its opacity read off the blend), a stranger otherwise; a frame after
+     * the first paint whose slot differs from the settled picture is a late change.
+     */
+    private fun classify(w: LandingWatch, tabId: String?, frameAt: Long?): Landing {
+        val slot = tabId?.let { pageBox(it) }
+        val window = w.frames.filter { frameAt == null || it.at >= frameAt }
+        val settled = window.lastOrNull()
+        if (slot == null || settled == null || slot.width() < 4 * LANDING_SCALE || slot.height() < 4 * LANDING_SCALE) {
+            return Landing(slot, frameAt, window, null, null, null, emptyList(), null, settled, emptyList(), emptyList())
+        }
+        val settledPx = slotPixels(settled, slot)
+        val uniformity = window.map { uniform(slotPixels(it, slot)) }
+        val isGround = uniformity.map { it.first >= LANDING_UNIFORM }
+        val isSettled = window.map { differing(slotPixels(it, slot), settledPx) <= LANDING_NEAR_FINAL_FRACTION }
+        var ground = -1
+        var first = -1
+        for (i in window.indices) {
+            if (isGround[i]) {
+                ground = i
+            } else if (isSettled[i] && ground >= 0) {
+                first = i
+                break
+            }
+        }
+        // No frame in one tone before the page (the page came within one capture of the frame):
+        // at a fresh boot the window opens at the FULLY DRAWN frame, so the first frame that is
+        // the settled picture is still the first paint; a relaunch has no such anchor.
+        if (first < 0 && frameAt != null) {
+            ground = -1
+            first = isSettled.indexOf(true)
+        }
+        var groundFrom = ground
+        while (groundFrom > 0 && isGround[groundFrom - 1]) groundFrom--
+        val groundTone = if (ground >= 0) uniformity[ground].second else null
+        val mids = ArrayList<Pair<Frame, Double>>()
+        val strangers = ArrayList<Frame>()
+        if (first >= 0) {
+            for (i in (ground + 1) until first) {
+                val px = slotPixels(window[i], slot)
+                val blend = groundTone?.let { blendToward(px, it, settledPx) }
+                if (blend != null && blend.first >= LANDING_BLEND) mids += window[i] to blend.second else strangers += window[i]
+            }
+        }
+        val late = if (first >= 0) window.drop(first + 1).filter { differing(slotPixels(it, slot), settledPx) > LANDING_LATE_FRACTION } else emptyList()
+        return Landing(
+            slot, frameAt, window,
+            if (ground >= 0) window[groundFrom] else null,
+            if (ground >= 0) window[ground] else null,
+            groundTone, mids,
+            if (first >= 0) window[first] else null,
+            settled, strangers, late
+        )
+    }
+
+    /** The pixels of the small frame inside the slot (in screen px), the slot's edge left out. */
+    private fun slotPixels(frame: Frame, slot: Rect): IntArray {
+        val s = LANDING_SCALE
+        val left = (slot.left / s + 1).coerceIn(0, frame.small.width - 1)
+        val top = (slot.top / s + 1).coerceIn(0, frame.small.height - 1)
+        val right = (slot.right / s - 1).coerceIn(left + 1, frame.small.width)
+        val bottom = (slot.bottom / s - 1).coerceIn(top + 1, frame.small.height)
+        val w = right - left
+        val h = bottom - top
+        val px = IntArray(w * h)
+        frame.small.getPixels(px, 0, w, left, top, w, h)
+        return px
+    }
+
+    private fun pixels(bitmap: Bitmap): IntArray {
+        val px = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(px, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return px
+    }
+
+    /** The fraction of pixels that differ between two frames of the same size (a channel sum over [LANDING_PIXEL_TOLERANCE]). */
+    private fun differing(a: IntArray, b: IntArray): Double {
+        if (a.size != b.size || a.isEmpty()) return 1.0
+        var n = 0
+        for (i in a.indices) if (distance(a[i], b[i]) > LANDING_PIXEL_TOLERANCE) n++
+        return n.toDouble() / a.size
+    }
+
+    private fun distance(p: Int, q: Int): Int =
+        abs(Color.red(p) - Color.red(q)) + abs(Color.green(p) - Color.green(q)) + abs(Color.blue(p) - Color.blue(q))
+
+    /** The fraction of the pixels within [LANDING_TONE] per channel of their most common tone, and that tone. */
+    private fun uniform(px: IntArray): Pair<Double, Int> {
+        if (px.isEmpty()) return 0.0 to Color.BLACK
+        val bins = HashMap<Int, Int>()
+        val bin = { p: Int -> ((Color.red(p) shr 3) shl 10) or ((Color.green(p) shr 3) shl 5) or (Color.blue(p) shr 3) }
+        for (p in px) bins[bin(p)] = (bins[bin(p)] ?: 0) + 1
+        val mode = bins.maxByOrNull { it.value }!!.key
+        var r = 0L
+        var g = 0L
+        var b = 0L
+        var n = 0
+        for (p in px) if (bin(p) == mode) {
+            r += Color.red(p)
+            g += Color.green(p)
+            b += Color.blue(p)
+            n++
+        }
+        val tone = Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+        val near = px.count { abs(Color.red(it) - Color.red(tone)) <= LANDING_TONE && abs(Color.green(it) - Color.green(tone)) <= LANDING_TONE && abs(Color.blue(it) - Color.blue(tone)) <= LANDING_TONE }
+        return near.toDouble() / px.size to tone
+    }
+
+    /**
+     * How much of a frame's slot lies between the ground's tone and the settled picture, pixel by
+     * pixel (a fade in flight), and the opacity the blend reads as, averaged over the pixels the
+     * page changes the most.
+     */
+    private fun blendToward(px: IntArray, ground: Int, settled: IntArray): Pair<Double, Double>? {
+        if (px.size != settled.size || px.isEmpty()) return null
+        var between = 0
+        var alphaSum = 0.0
+        var alphaN = 0
+        val gr = Color.red(ground)
+        val gg = Color.green(ground)
+        val gb = Color.blue(ground)
+        for (i in px.indices) {
+            val p = px[i]
+            val f = settled[i]
+            val inR = Color.red(p) in (minOf(gr, Color.red(f)) - LANDING_TONE)..(maxOf(gr, Color.red(f)) + LANDING_TONE)
+            val inG = Color.green(p) in (minOf(gg, Color.green(f)) - LANDING_TONE)..(maxOf(gg, Color.green(f)) + LANDING_TONE)
+            val inB = Color.blue(p) in (minOf(gb, Color.blue(f)) - LANDING_TONE)..(maxOf(gb, Color.blue(f)) + LANDING_TONE)
+            if (inR && inG && inB) between++
+            val span = abs(Color.red(f) - gr) + abs(Color.green(f) - gg) + abs(Color.blue(f) - gb)
+            if (span >= LANDING_BLEND_SPAN) {
+                val moved = abs(Color.red(p) - gr) + abs(Color.green(p) - gg) + abs(Color.blue(p) - gb)
+                alphaSum += (moved.toDouble() / span).coerceIn(0.0, 1.0)
+                alphaN++
+            }
+        }
+        return between.toDouble() / px.size to (if (alphaN > 0) alphaSum / alphaN else Double.NaN)
+    }
+
+    private fun tone(color: Int): String = String.format("#%06X", color and 0xFFFFFF)
+
+    /**
+     * The served page's own clock: `performance.timeOrigin` (the document's load began) and the
+     * landing's marks (`newTabPageScript.ts` LANDING_MARKS), each as uptime – the page's epoch
+     * times moved onto the device's uptime clock by the offset between the two as read now.
+     */
+    private fun landingClock(tabId: String): Pair<Long, Map<String, Long>>? {
+        val a = pageJson(
+            tabId,
+            "(function(){var m={};performance.getEntriesByType('mark').forEach(function(e){if(e.name.indexOf('zen-newtab-')===0&&m[e.name]===undefined)m[e.name]=e.startTime});return [performance.timeOrigin,m]})()"
+        ) ?: return null
+        if (a.length() < 2) return null
+        val epochToUptime = SystemClock.uptimeMillis() - System.currentTimeMillis()
+        val origin = a.optDouble(0)
+        if (origin.isNaN()) return null
+        val marks = a.optJSONObject(1) ?: JSONObject()
+        val at = HashMap<String, Long>()
+        for (name in marks.keys()) at[name] = (origin + marks.getDouble(name) + epochToUptime).roundToLong()
+        return (origin + epochToUptime).roundToLong() to at
+    }
+
+    /** The served page's root read after the landing, or null while the view has no document that answers. */
     private fun landingSample(tabId: String): LandingSample? {
         val at = SystemClock.uptimeMillis()
         val a = pageJson(
@@ -416,37 +755,6 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
             theme = a.optString(9),
             at = at
         )
-    }
-
-    /** The lead's conditions of form, read off what the landing's watch saw. */
-    private fun landingChecks(scheme: String) {
-        val l = landings[scheme]
-        check("($scheme) the landing was watched: the served view seen, the ground still and the page's first-paint still taken", l?.whole != null, l?.let { "view +${it.viewAt} ms, ground ${it.ground != null}, whole ${it.whole != null}" } ?: "no landing")
-        if (l == null) return
-        // (1) The slot in the space's ground alone while the page is held: the view made after the
-        // frame, and at the ground still the document not in or awaiting its state transparent.
-        check(
-            "($scheme) the slot showed the space's ground alone before the page: the served view was made after the FULLY DRAWN frame, and at the ground still its document was not in or awaited its state transparent",
-            l.frameSet != false && (l.ground == null || !l.ground.served || l.ground.awaiting) && (l.made == null || !l.made.served || l.made.awaiting),
-            "frame set ${l.frameSet ?: "n/a (a relaunch: the marks are the first boot's)"}; made: ${l.made?.describe() ?: "no document"}; ground: ${l.ground?.describe() ?: "none"}"
-        )
-        // (2) The page arrives whole: at its first painted frame the state is applied and the document complete.
-        val f = l.firstIn
-        check(
-            "($scheme) the page came in whole: at its first painted frame the state was applied – the tiles or the empty line – and the document complete",
-            f != null && f.readyState == "complete" && (f.tiles > 0 || f.emptyShown),
-            f?.describe() ?: "never let in"
-        )
-        if (f != null && f.tiles > 0) {
-            check(
-                "($scheme) the icons were in hand at the first painted frame: every tile's icon complete, no letter turning into an icon",
-                f.icons == f.tiles && f.iconsInHand && f.letters == 0,
-                "tiles ${f.tiles}, icons ${f.icons} ${if (f.iconsInHand) "in hand" else "on their way"}, letters ${f.letters}"
-            )
-        }
-        // (3) The fade: 120 ms on the root's opacity, read where the poll caught it; a cut under reduced motion is the stylesheet's.
-        finding("  ($scheme) the first paint's fade: ${l.mid?.let { "caught at opacity ${it.opacity}, ${it.at - (f?.at ?: it.at)} ms after the first sample let in" } ?: "not caught (the poll's ${LANDING_POLL_MS} ms and a read's round trip: the 120 ms ran between samples)"}; the page whole +${l.inAfterMs ?: "n/a"} ms after the view was made (the emulator's number)")
-        if (scheme == "dark") check("(dark) the relaunch landed dark: the page's own theme at its first painted frame", f?.theme == "dark", "theme '${f?.theme}'")
     }
 
     /**
@@ -478,11 +786,9 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         finding("  dark landing: the profile written with the dark scheme and the served tab $id before the relaunch: $written")
         SystemClock.sleep(1_000)
         landingScheme = "dark"
-        landingTab = id
+        landingRelaunch = true
         launch()
-        for (line in landingLines) finding(line)
-        landingLines.clear()
-        landingChecks("dark")
+        readLanding(id)
         // Back to the light scheme and the state the sequence expects.
         val front = activeTabId()
         if (front != null && !setScheme("light", front)) finding("  (dark landing: the light scheme did not come back on both the chrome and the page)")
@@ -1110,10 +1416,37 @@ class TabletNewTabDemo : GroupsDemoBase(shotPrefix = "tablet-newtab", handshakeD
         /** The tile the holds land on: the third, as the phone's demo holds its third. */
         private const val TILE = 2
         private const val TILE_SELECTOR = ".zen-tile:not(.zen-tile-add) a.zen-v2-shortcut"
-        /** The landing's poll ([captureLanding]): tight enough for samples inside the page's 120 ms fade. */
-        private const val LANDING_POLL_MS = 10L
-        /** The ground still this long after the served view was made: the splash's 180 ms exit done, the page ordinarily still awaiting its state. */
-        private const val LANDING_GROUND_MS = 240L
+        /** The landing watch's frames are told apart and classified at this fraction of the display's size (1280x800 → 320x200). */
+        private const val LANDING_SCALE = 4
+        /** A pause between captures: the capture itself is the cadence's bulk (some 100–300 ms on the emulator). */
+        private const val LANDING_CADENCE_MS = 30L
+        private const val LANDING_RETRY_MS = 200L
+        /** The fresh boot's window after its FULLY DRAWN frame: the hold's 5 s fail-safe, the page's 5 s cap and the fade inside it. */
+        private const val LANDING_AFTER_FRAME_MS = 9_000L
+        /** A fresh boot whose FULLY DRAWN frame never comes. */
+        private const val LANDING_NO_FRAME_MS = 25_000L
+        /** A relaunch's window from `onCreate` (a warm process boots in a fraction of the fresh boot's time). */
+        private const val LANDING_RELAUNCH_MS = 12_000L
+        /** How long the read waits for the watch once the launch has settled. */
+        private const val LANDING_WAIT_MS = 30_000L
+        /** Full captures kept at most (4 MB each at 1280x800): the landing's changed frames are a handful. */
+        private const val LANDING_FULL_CAP = 12
+        /** Two pixels differ when their channel differences sum past this. */
+        private const val LANDING_PIXEL_TOLERANCE = 24
+        /** A frame is kept when this fraction of its (small) pixels differ from the last kept: an icon's swap is over it, a clock's digit under. */
+        private const val LANDING_KEEP_FRACTION = 0.0005
+        /** A pixel is of a tone when each channel is within this of it. */
+        private const val LANDING_TONE = 10
+        /** A slot is in one tone when this fraction of its pixels are of its most common tone. */
+        private const val LANDING_UNIFORM = 0.995
+        /** A slot is the settled picture when no more than this fraction of its pixels differ from it (a fresh page is sparse: its field's words and its sentence are a percent or two of the slot). */
+        private const val LANDING_NEAR_FINAL_FRACTION = 0.002
+        /** A change after the first paint: more than this fraction of the slot differing from the settled picture (one tile's icon swapped for a letter is over it). */
+        private const val LANDING_LATE_FRACTION = 0.0005
+        /** A frame is the fade in flight when this fraction of its slot lies between the ground's tone and the settled picture. */
+        private const val LANDING_BLEND = 0.98
+        /** The opacity is read off pixels the page changes at least this much (a channel sum). */
+        private const val LANDING_BLEND_SPAN = 40
         /** The touch template's rows (`Menus.showNewTabTileMenu`: Open in Private Tab on `privateTabs && !windows`, Copy Link on `!windows`), the separator between them not a row. */
         private val TOUCH_ROWS = listOf("Open in New Tab", "Open in Private Tab", "Copy Link", "Remove")
         /** How far (screen px) a menu's edge may sit from the tile box's it is read against: a rounding each side. */
