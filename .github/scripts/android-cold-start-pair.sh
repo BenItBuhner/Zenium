@@ -126,6 +126,29 @@
 #                   candidate cadence only (a change of clock proves its band before the defaults move)
 #   P0_LOGCAT_BUFFERS – the buffers every log read names, main,system by default; a name adb
 #                   refuses exercises the UNREAD path (every row UNREAD, not judged, read-errors.txt says why)
+#   DEMO_DISPLAY  – the display the chrome is laid out on, `<width>x<height>@<density>` for `wm size`
+#                   and `wm density`, as android-gesture-demo.sh takes it; `720x1600@280` by default
+#                   (the phone demos' Pixel 6 layout: main's pairs as they were). The pixel_tablet
+#                   profile passes `1280x800@160`, the tablet demos' 1280 x 800 dp layout: under the
+#                   phone's display a tablet AVD lays the chrome out 411 dp wide and boots the PHONE
+#                   chrome (ScreenClass reads smallestScreenWidthDp), so a change on the tablet's boot
+#                   path – the served new tab page – is not on the measured path at all (the pair
+#                   36280306973 on pixel_tablet under the default display measured that).
+#   P0_SEED_ONBOARDING – `1` seeds the profile PAST ITS FIRST RUN on both arms, after each install and
+#                   before the settle start: the tablet new tab demo's own profile
+#                   (android/app/src/androidTest/assets/tablet-newtab-demo-state.json) written as
+#                   files/zen/state.json the way DemoHarness.seedProfile writes it for the demo drivers
+#                   (the zen directory emptied, the asset as state.json; its keys: version 2, one space
+#                   `space_home` with no tab, settings.onboardingDone true, colorScheme light,
+#                   privacy.httpsOnly off, updates.autoCheck / autoDownload false, no bookmarks) – so
+#                   the measured starts are the browser's boot, not the first-run tour's: the install's
+#                   own profile boots EVERY start into the tour (nothing seeds onboardingDone; the
+#                   settle start does not finish the tour), under which READY waits for no page and a
+#                   change on the first tab's path is blind to the gate. Off by default: main's pairs
+#                   as they were. The settle start is the seeded profile's first boot, the measured
+#                   starts its second and later, on both arms alike (a build with the served new tab
+#                   page then restores the one `zen://newtab` tab its settle start left; one without
+#                   it boots with no tab).
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt, the raw am start output, read-errors.txt)
 #
 # The arms are interleaved (seed 71): `adb install -r -d` of one build over the other (the same
@@ -173,6 +196,15 @@ NEXT_AT_S=${P0_NEXT_AT_S:-15}
 # Overridable (P0_LOGCAT_BUFFERS) so that the UNREAD path can be exercised on a runner with a
 # buffer name adb refuses – the read fails, the rows read UNREAD, the record says why.
 LOGCAT_BUFFERS=${P0_LOGCAT_BUFFERS:-main,system}
+# The display, the demos' way (DEMO_DISPLAY): the phone's layout unless the caller names the tablet's.
+display=${DEMO_DISPLAY:-720x1600@280}
+# The profile past its first run (P0_SEED_ONBOARDING=1): the tablet new tab demo's state.json, the
+# demo drivers' own seed – not a new one. Empty when the install's own profile is measured (the default).
+seed_state=
+if [ "${P0_SEED_ONBOARDING:-0}" = 1 ]; then
+  seed_state=android/app/src/androidTest/assets/tablet-newtab-demo-state.json
+  [ -f "$seed_state" ] || { echo "::error::P0_SEED_ONBOARDING=1 and no seed at $seed_state"; exit 1; }
+fi
 out=${DEMO_OUT:-artifacts/android-cold-start-pair}
 base_apk=${P0_BASE_APK:?P0_BASE_APK must name the APK of the base build}
 head_apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
@@ -188,9 +220,10 @@ if [ "$(adb get-state 2> /dev/null || true)" != "device" ]; then
   exit 1
 fi
 
-# The demos' device (android-gesture-demo.sh): the same display, no error dialogs, the buttons.
-adb shell wm size 720x1600
-adb shell wm density 280
+# The demos' device (android-gesture-demo.sh): the display the demos name (the phone's by default,
+# the tablet's for the pixel_tablet profile), no error dialogs, the buttons.
+adb shell wm size "${display%@*}"
+adb shell wm density "${display#*@}"
 adb shell settings put global hide_error_dialogs 1 || true
 sleep 2
 adb shell am force-stop com.google.android.apps.nexuslauncher || true
@@ -372,10 +405,24 @@ dexopt_state() {
   adb shell dumpsys package "$app_id" 2>> "$read_errors" | tr -d '\r' | grep -o 'status=[a-z-]*' | sed 's/status=//' | sort -u | tr '\n' ' ' | sed 's/ $//' || true
 }
 dexopt_ref=
+# The profile past its first run (P0_SEED_ONBOARDING=1): the app's `files/zen` emptied and the tablet
+# new tab demo's state.json written in it through run-as (the app's own uid), as DemoHarness.seedProfile
+# writes it on the device for the demo drivers – the tour done, one space, no tab. Once per install,
+# before the arm's settle start, so both arms' measured starts boot the browser and not the tour.
+seed_profile() {
+  adb push "$seed_state" /data/local/tmp/cold-start-pair-state.json > /dev/null
+  adb shell chmod 644 /data/local/tmp/cold-start-pair-state.json
+  adb shell run-as "$app_id" rm -rf files/zen
+  adb shell run-as "$app_id" mkdir -p files/zen
+  adb shell run-as "$app_id" cp /data/local/tmp/cold-start-pair-state.json files/zen/state.json
+  adb shell rm -f /data/local/tmp/cold-start-pair-state.json || true
+  echo "  seeded: files/zen/state.json, $(adb exec-out run-as "$app_id" wc -c files/zen/state.json | tr -d '\r' | awk '{print $1}') bytes (the tablet new tab demo's profile: the tour done, one space, no tab)"
+}
 # Install one build over the other (the profile stays: the same applicationId), read its ART state
 # (the first install's is the reference; a later one that differs fails the run, the arms not in
-# one state), then one discarded start by the direct way: it pays for the install's dexopt and the
-# profile's first run, so the measured starts of either build come after the same warm-up.
+# one state), seed the profile past its first run when asked (P0_SEED_ONBOARDING=1), then one
+# discarded start by the direct way: it pays for the install's dexopt and the profile's first run,
+# so the measured starts of either build come after the same warm-up.
 install_build() {
   local name=$1 apk=$2 label=$3 state
   echo "== $name ($label): $apk"
@@ -388,6 +435,7 @@ install_build() {
     echo "::error::the arms are not in one ART state: $name ($label) installed at dexopt '${state:-?}', the first install read '$dexopt_ref'"
     exit 1
   fi
+  if [ -n "$seed_state" ]; then seed_profile; fi
   to_launcher
   start_app direct > /dev/null
   sleep 8
@@ -694,6 +742,9 @@ values_table() {
   echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved and the order alternated (odd blocks base then head, even blocks head then base: each block installs one arm, reads its ART state (dexopt ${dexopt_ref:-?}: ART Service leaves a debuggable package no compiled code whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the other arm the same; the i-th start of a block's one arm pairs with the i-th of its other; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on the direct way or +$ALIAS_THRESHOLD_MS ms on the alias way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms (direct) or +$FULLY_DRAWN_ALIAS_THRESHOLD_MS ms (alias) fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails – unless every pair it lacks was lost to a read that failed (UNREAD, below) and none to a build's -: that row is UNREAD, a warning, not judged; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it; the position reading (the arm installed first in its block against the arm installed second, whatever the build) says what the order alone costs."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
+  if [ -n "$seed_state" ]; then
+    echo "profile: seeded PAST ITS FIRST RUN on both arms after each install, before the settle start (P0_SEED_ONBOARDING=1: files/zen emptied and the tablet new tab demo's state.json – the tour done, one space, no tab – written through run-as, as DemoHarness.seedProfile seeds the demo drivers' profile); the settle start is the seeded profile's first boot and the measured starts its second and later, so they are the browser's boot, not the first-run tour's"
+  fi
   echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - when the log was read to the end of the wait and the line was not there (a build without the mark, or one that did not reach READY within the wait: the build's fact), UNREAD when the read itself failed (adb's error, or a start after which the buffers answered nothing: the runner's, its stderr in read-errors.txt beside this record). Every log read is \`adb logcat -d -b $LOGCAT_BUFFERS -s <tag>\`, its stderr kept. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
   echo
   echo "| build, way | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"

@@ -17,7 +17,12 @@ name: Android cold start pair
 # is made). Dispatch-only: a worker whose change touches the boot path's neighbourhood fires it
 # on its branch and writes the numbers into its PR body; a PASS says nothing about a change being
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
-# emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+# emulator. A change on the TABLET's boot path (the served new tab page, NTP-35) takes the
+# `profile` input at pixel_tablet – the tablet's chassis at the tablet demos' 1280 x 800 dp
+# display, where the phone's display would boot the phone chrome on it – and `seed-onboarding`,
+# the profile past its first run on both arms (the install's own boots every start into the
+# first-run tour, under which the first tab's path is not measured); the phone's pairs leave both
+# at their defaults. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -40,6 +45,10 @@ on:
         options:
           - pixel_6
           - pixel_tablet
+      seed-onboarding:
+        description: Seed the profile past its first run on both arms after each install (the tablet new tab demo's state.json – the tour done, one space, no tab), so the measured starts are the browser's boot and not the first-run tour's; off, the install's own profile boots every start into the tour
+        type: boolean
+        default: false
       runs:
         description: Blocks (each installs, settles and measures one arm, then the other; the order alternates block to block); N = runs × starts pairs
         required: false
@@ -56,12 +65,18 @@ on:
         type: number
         default: 150
   # TEMPORARY, on cursor/android-tablet-newtab-page-9271 alone (removed in a `.github`-only commit
-  # once the run is read): #563's gate – the tablet's served new tab page with mitigation (1), READY
-  # not waiting for the served page's placement – on the pixel_tablet chassis, the base pinned to
+  # once the run is read): #563's gate – the tablet's served new tab page with mitigation (1)'s two
+  # halves (READY not waiting for the served page's placement; the host holding that placement to
+  # the frame after READY) – on the pixel_tablet chassis at the tablet demos' display, the profile
+  # seeded past its first run on both arms (the root's ruling of 27 Sep on the recipe: the install's
+  # own profile boots every start into the tour, blind to the first tab's path), the base pinned to
   # the main this head contains (aea763e73, v0.5.6), where a dispatch is refused to the agent's
   # token. The push path takes the tablet's values below; a dispatch's are the inputs', unchanged.
+  # A push that touches the demo workflow's file alone (the demo's second sample) does not refire
+  # or cancel this pair.
   push:
     branches: [cursor/android-tablet-newtab-page-9271]
+    paths-ignore: ['.github/workflows/android-tablet-newtab-demo.yml']
 
 permissions:
   contents: read
@@ -82,11 +97,17 @@ jobs:
       profile: ${{ github.event_name == 'push' && 'pixel_tablet' || inputs.profile || 'pixel_6' }}
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
+      # The display follows the chassis, the demos' way (DEMO_DISPLAY): the tablet's 1280 x 800 dp at
+      # one px per dp on pixel_tablet – under the phone's 720x1600@280 a tablet AVD boots the PHONE
+      # chrome, 411 dp wide – the phone's Pixel 6 layout otherwise. The seed is the caller's opt-in
+      # (the push path's gate seeds; main's pairs do not).
       script-env: |
         P0_BASE_REF=${{ github.event_name == 'push' && 'aea763e7310f2ca8daa6e5b27e6e52b0278bbddb' || inputs.base-ref || 'main' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=${{ inputs.runs || 15 }}
         P0_STARTS=${{ inputs.starts || 2 }}
+        P0_SEED_ONBOARDING=${{ (github.event_name == 'push' || inputs.seed-onboarding) && '1' || '0' }}
+        DEMO_DISPLAY=${{ (github.event_name == 'push' || inputs.profile == 'pixel_tablet') && '1280x800@160' || '720x1600@280' }}
         DEMO_OUT=artifacts/android-cold-start-pair
       setup-script: |
         set -euo pipefail
