@@ -10,7 +10,7 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { findRow, type RowGroup } from '../../pages/settings/model'
 import { GroupList, type SheetRequest } from '../../pages/settings/rows'
 import type { SectionContext } from '../../pages/settings/sections'
@@ -45,6 +45,7 @@ afterEach(() => {
   root = null
   host = null
   vi.mocked(run).mockClear()
+  vi.mocked(cmd).mockClear()
 })
 
 const RULES: PermissionRule[] = [
@@ -144,11 +145,12 @@ describe('the Safety check’s per-site Reset runs at once (the lead’s #431 Q1
     expect(button.hasAttribute('data-danger')).toBe(false)
     expect(button.hasAttribute('data-primary')).toBe(false)
     act(() => button.click())
-    // The one reset command, then the check reads again – nothing asked in between.
+    // The one reset command, then the check reads again (awaited for its result, so the acts
+    // that wait on it can) – nothing asked in between.
     expect(vi.mocked(run).mock.calls).toEqual([
-      ['permissions.resetOrigin', { origin: 'https://meet.example' }],
-      ['privacy.safetyCheck', undefined]
+      ['permissions.resetOrigin', { origin: 'https://meet.example' }]
     ])
+    expect(vi.mocked(cmd).mock.calls).toEqual([['privacy.safetyCheck', undefined]])
     expect(open).not.toHaveBeenCalled()
     expect(h.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
   })
@@ -181,9 +183,9 @@ describe('the Safety check’s per-site Reset runs at once (the lead’s #431 Q1
     expect(reset.querySelector('.zen-settings-label')?.textContent).toBe('Reset')
     act(() => reset.click())
     expect(vi.mocked(run).mock.calls).toEqual([
-      ['permissions.resetOrigin', { origin: 'https://meet.example' }],
-      ['privacy.safetyCheck', undefined]
+      ['permissions.resetOrigin', { origin: 'https://meet.example' }]
     ])
+    expect(vi.mocked(cmd).mock.calls).toEqual([['privacy.safetyCheck', undefined]])
   })
 
   it('leaves Notifications’ Stop… as it is: a new Block is a decision, confirmed first', () => {

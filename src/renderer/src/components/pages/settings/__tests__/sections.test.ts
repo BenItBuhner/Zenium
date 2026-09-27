@@ -61,6 +61,7 @@ import { THEME_PRESETS, makeTheme } from '@shared/theme'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -2508,29 +2509,40 @@ describe('the section model', () => {
     if (permissions.kind !== 'item') throw new Error('not an item')
     expect(permissions.description).toBe('Permissions removed from 2 sites')
     expect(permissions.sheet.title).toBe('Site permissions')
+    // The sheet's description covers both lists (the lead's #637 ruling on nit 6).
+    expect(permissions.sheet.description).toBe(
+      'Sites allowed to use something, and permissions taken back from unused sites. Resetting a site makes it ask again.'
+    )
     expect(permissions.sheet.groups.map((g) => [g.id, g.heading])).toEqual([
       ['safety-check:permissions:revoked', 'Permissions removed from 2 sites'],
       ['safety-check:permissions:sites', 'Sites with permissions you granted']
     ])
     const block = permissions.sheet.groups[0]
+    // The block's description says once why the permissions went; each row is the permissions
+    // alone (ruling 1); Got it says what it does in the house's words (ruling 2).
     expect(block.description).toBe(
       "To protect your data, permissions were removed from sites you haven't visited recently."
     )
     expect(block.rows.map((r) => [r.kind, r.label, r.description])).toEqual([
-      ['item', 'meet.example', "Camera, Microphone · Removed because you haven't visited recently"],
-      ['item', 'maps.example', "Location · Removed because you haven't visited recently"],
-      ['action', 'Got it', 'The list is cleared and the permissions stay removed.']
+      ['item', 'meet.example', 'Camera, Microphone'],
+      ['item', 'maps.example', 'Location'],
+      ['action', 'Got it', 'Clears this list. Sites ask again when they need a permission.']
     ])
     expect(permissions.sheet.groups[1].rows.map((r) => r.label)).toEqual(['docs.example'])
 
     // Allow again: the site's permissions come back at once (no confirmation), the check runs
-    // again, and Chrome's toast offers Undo, which reverses it and reads the check once more.
+    // again, and Chrome's toast offers Undo – on §9.33's Undo clock – which reverses it and
+    // reads the check once more. The desktop button's reader name is Chrome's own sentence.
     uiStore.set({ toasts: [] })
     const meet = row(privacy, 'safety-check:permissions:revoked:https://meet.example')
     if (meet.kind !== 'item') throw new Error('not an item')
-    expect(meet.action).toMatchObject({ label: 'Allow again' })
+    expect(meet.action).toMatchObject({
+      label: 'Allow again',
+      ariaLabel: 'Allow permissions again for meet.example'
+    })
     expect(meet.action?.destructive).toBeUndefined()
     expect(meet.sheet.title).toBe('meet.example')
+    expect(meet.sheet.description).toBe('Camera, Microphone')
     const regrant = row(
       privacy,
       'safety-check:permissions:revoked:https://meet.example:allow-again'
@@ -2538,6 +2550,8 @@ describe('the section model', () => {
     expect(regrant).toMatchObject({ kind: 'action', label: 'Allow again', button: 'Allow again' })
     if (regrant.kind !== 'action') throw new Error('not an action')
     expect(regrant.confirm).toBeUndefined()
+    // Allow again keeps the sheet open for the sites left (ruling 8 iii).
+    expect(regrant.closesSheet).toBeUndefined()
     invoke.mockClear()
     meet.action?.onPress()
     expect(invoke.mock.calls).toEqual([
@@ -2545,9 +2559,16 @@ describe('the section model', () => {
       ['privacy.safetyCheck', undefined]
     ])
     let toasts = uiStore.get().toasts
-    expect(toasts.map((t) => [t.message, t.kind, t.action?.label])).toEqual([
-      ['Permissions allowed again for meet.example', 'info', 'Undo']
+    expect(toasts.map((t) => [t.message, t.kind, t.action?.label, t.duration])).toEqual([
+      ['Permissions allowed again for meet.example', 'info', 'Undo', TOAST_UNDO_MS]
     ])
+    // A second press inside the round-trip – the row stands until the check's result lands –
+    // is the engine's no-op and would only double the toast: it does nothing, from the button
+    // or from the phone sheet's row alike.
+    meet.action?.onPress()
+    regrant.onPress?.()
+    expect(invoke.mock.calls).toHaveLength(2)
+    expect(uiStore.get().toasts).toHaveLength(1)
     invoke.mockClear()
     toasts[0].action?.onPick()
     expect(invoke.mock.calls).toEqual([
@@ -2555,16 +2576,50 @@ describe('the section model', () => {
       ['privacy.safetyCheck', undefined]
     ])
     uiStore.set({ toasts: [] })
+    // The check back (its promise settled), the guard lifts and a press acts again.
+    await new Promise((resolve) => setTimeout(resolve, 0))
     invoke.mockClear()
     regrant.onPress?.()
-    expect(invoke.mock.calls[0]).toEqual([
-      'permissions.regrantRevoked',
-      { origin: 'https://meet.example' }
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.regrantRevoked', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
     ])
+    expect(uiStore.get().toasts).toHaveLength(1)
     uiStore.set({ toasts: [] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The check's result back without the site: its rows are gone from the rebuilt sheet, so
+    // the phone's item sheet opened for it resolves to no row and leaves with its act (the
+    // stack's orphan rule, `sheets.tsx`), while the review sheet stays for the sites left.
+    const afterMeet = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          permissions: {
+            ...result.permissions,
+            summary: 'Permissions removed from 1 site',
+            revoked: [revoked[1]]
+          }
+        },
+        permissionRules: rules
+      } as Partial<UIState>)
+    )
+    expect(
+      findRow(afterMeet.groups, 'safety-check:permissions:revoked:https://meet.example')
+    ).toBeNull()
+    expect(
+      findRow(afterMeet.groups, 'safety-check:permissions:revoked:https://meet.example:allow-again')
+    ).toBeNull()
+    expect(row(afterMeet, 'safety-check:permissions:revoked:https://maps.example').kind).toBe(
+      'item'
+    )
+    expect(row(afterMeet, 'safety-check:permissions').kind).toBe('item')
 
     // Got it: the list is acknowledged through the engine, which hands back the records; the
-    // bulk toast counts them and its Undo puts them back as they were.
+    // bulk toast counts them – on the Undo clock – and its Undo puts them back as they were.
+    // The press leaves the review sheet first (`closesSheet`): its act ends the list the sheet
+    // was opened for, and the toast then stands over the page on the phone.
     const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
     invoke.mockImplementation(async (name) =>
       name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
@@ -2572,7 +2627,7 @@ describe('the section model', () => {
     invoke.mockClear()
     const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
     if (gotIt.kind !== 'action') throw new Error('not an action')
-    expect(gotIt).toMatchObject({ button: 'Got it' })
+    expect(gotIt).toMatchObject({ button: 'Got it', closesSheet: true })
     expect(gotIt.confirm).toBeUndefined()
     expect(gotIt.destructive).toBeUndefined()
     gotIt.onPress?.()
@@ -2582,8 +2637,8 @@ describe('the section model', () => {
       ['privacy.safetyCheck', undefined]
     ])
     toasts = uiStore.get().toasts
-    expect(toasts.map((t) => [t.message, t.kind, t.action?.label])).toEqual([
-      ['Review complete for 2 sites', 'info', 'Undo']
+    expect(toasts.map((t) => [t.message, t.kind, t.action?.label, t.duration])).toEqual([
+      ['Review complete for 2 sites', 'info', 'Undo', TOAST_UNDO_MS]
     ])
     invoke.mockClear()
     toasts[0].action?.onPick()
@@ -2645,17 +2700,20 @@ describe('the section model', () => {
     ])
   })
 
-  it('keeps the sweep’s switch last among the Site settings, bound to the setting, in each host’s own words (PS-41)', () => {
+  it('keeps the sweep’s switch last among the Site settings under its own heading, bound to the setting, in each host’s own words (PS-41)', () => {
     const phone = section('privacy')
     const ids = phone.groups.map((g) => g.id)
     expect(ids[ids.indexOf('sites-own') + 1]).toBe('sites-unused')
     expect(ids.indexOf('sites-own')).toBeGreaterThan(ids.indexOf('sites-permissions'))
+    // A heading of its own after the danger-ink Reset all sites (the lead's #637 ruling 6).
+    expect(phone.groups.find((g) => g.id === 'sites-unused')?.heading).toBe('Unused sites')
     const sw = row(phone, 'sites-auto-revoke')
+    // The phone's one sentence keeps "recently" (ruling 5); Chrome's contraction stays with
+    // Chrome's verbatim words (ruling 7).
     expect(sw).toMatchObject({
       kind: 'switch',
       label: 'Automatically remove permissions',
-      description:
-        "To protect your data, let Zenium remove permissions from sites that you haven't visited recently.",
+      description: "Let Zenium remove permissions from sites that you haven't visited recently.",
       checked: true
     })
     if (sw.kind !== 'switch') throw new Error('not a switch')
@@ -2673,6 +2731,7 @@ describe('the section model', () => {
       'privacy',
       state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })
     )
+    expect(desktop.groups.find((g) => g.id === 'sites-unused')?.heading).toBe('Unused sites')
     expect(row(desktop, 'sites-auto-revoke')).toMatchObject({
       kind: 'switch',
       label: 'Automatically remove permissions from unused sites',
@@ -2680,9 +2739,11 @@ describe('the section model', () => {
         "To protect your data, let Zenium remove permissions from sites you haven't visited recently. Notifications are not removed.",
       checked: true
     })
-    // The search reaches it; a headingless group's caption is the category's (as Check now's).
+    // The search reaches it under its heading.
     const hits = searchRows(phoneSections(), 'unused sites')
-    expect(hits.find((h) => h.row.id === 'sites-auto-revoke')?.caption).toBe('Privacy and Security')
+    expect(hits.find((h) => h.row.id === 'sites-auto-revoke')?.caption).toBe(
+      'Privacy and Security › Unused sites'
+    )
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {

@@ -282,10 +282,12 @@ export interface ActionRow extends RowBase {
    */
   pageQuery?: InternalPageQuery
   /**
-   * `onPress` opens a surface of its own over the page (an editor sheet): inside an item's sheet
-   * the row dismisses that sheet first and presses once it has gone, so the editor is the one
-   * sheet over the page and may open its own pickers (§9.24: a sheet opens one sheet, and that
-   * one opens nothing). On the page itself the press is immediate.
+   * Inside an item's sheet the row dismisses that sheet first and presses once it has gone; on
+   * the page itself the press is immediate. For an `onPress` that opens a surface of its own
+   * over the page (an editor sheet), so the editor is the one sheet over the page and may open
+   * its own pickers (§9.24: a sheet opens one sheet, and that one opens nothing) – and for one
+   * whose act ends what the sheet was opened for (the review's Got it clearing its list), so
+   * the message the act raises stands over the page rather than under the sheet (§9.33).
    */
   closesSheet?: boolean
 }
@@ -500,10 +502,20 @@ export function itemMenuItems(
   )
 }
 
-/** An item row's one action as the desktop's trailing button (`ItemRow.action`, §10.5). */
+/**
+ * An item row's one action as the desktop's trailing button (`ItemRow.action`, §10.5). A press
+ * that removes the row it acts on leaves the keyboard nowhere; the button hands the focus on
+ * as it goes – to the next row's control, else the group's heading, else the next group's
+ * first control, the row before, or the dialog (`rows.tsx`).
+ */
 export interface InlineAction {
   /** The button's label ("Remove", "Clear"); its name for a reader is this and the row's label. */
   label: string
+  /**
+   * The name a reader hears instead, where the label and the row's label make no sentence
+   * ("Allow permissions again for meet.example", Chrome's own, over "Allow again meet.example").
+   */
+  ariaLabel?: string
   /** The danger ink, where the action removes what the row stands for. */
   destructive?: boolean
   /** The action is running (§9.30): the button is busy, not disabled. */
