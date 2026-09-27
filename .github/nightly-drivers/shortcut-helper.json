@@ -1,0 +1,10 @@
+{
+  "id": "shortcut-helper",
+  "order": 118,
+  "class": "ShortcutHelperDemo",
+  "shard": "tablet",
+  "mirrors": "android-shortcut-helper-demo.yml",
+  "dir": "shortcut-helper-demo",
+  "estimate": 4,
+  "note": "The keyboard-shortcut helper (TABLET-20, #591) and the chrome:// addresses Chrome Android serves (SET-66): META + / opens the system's helper (Android 14's large-screen KeyboardShortcutListSearch sheet on this AVD; the browser's groups under its Current app button), read off SystemUI's accessibility tree in each colour scheme; then wm size 1280x590 for chrome://version (the About Version document's rows off the page's DOM), chrome://flags (stays as typed) and chrome://settings (the Settings tab) typed into the URL field. The driver sets the dark scheme itself (the core's setting and the system's night mode), so DEMO_THEME is not read. The estimate is the dispatch run's measure."
+}

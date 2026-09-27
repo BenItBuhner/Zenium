@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's bar on Android 12+ (WID-02): Chrome's colorSurfaceContainerHigh
+     (res/color/widget_searchbox_bg.xml:8), MDC 1.12.0's neutral variant tone 92
+     (values-v31/tokens.xml:97 → color-v31/m3_ref_palette_dynamic_neutral_variant92.xml:18) – the
+     search widget's fill role (res/color-v31/widget_search_fill.xml), here opaque as Chrome's
+     quick action bar is. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@android:color/system_neutral2_600"
+        android:lStar="92" />
+</selector>

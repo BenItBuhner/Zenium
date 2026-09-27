@@ -95,7 +95,8 @@ export class DebuggerApi {
     const refusedVersion = protocolVersionRefusal(version)
     if (refusedVersion) throw new ApiError(refusedVersion)
     const { tabId, tab } = this.tabOf(target)
-    const refused = attachRefusal(tab.url, ctx.extensionId)
+    // The page's address and contents, beneath the reader's cover too (`webContentsOf`).
+    const refused = attachRefusal(this.host.model.urlOf(tab), ctx.extensionId)
     if (refused) throw new ApiError(refused)
     const wc = this.host.model.webContentsOf(tab)
     if (!wc || wc.isDestroyed()) throw new ApiError(ERROR_CANNOT_ATTACH)
@@ -187,6 +188,8 @@ export class DebuggerApi {
     const attached = new Set(this.attachedTabs())
     return this.host.model.allTabs().map((tab) => {
       const tabId = this.host.model.chromeTabId(tab)
+      // The page beneath the reader's cover, where one stands (the target is the page).
+      const page = this.host.browser.tabs.coveredPage(tab.id)
       const info: DebuggerTargetInfo = {
         type: 'page',
         id: tabTargetId(tabId),
@@ -194,10 +197,11 @@ export class DebuggerApi {
         attached:
           attached.has(tabId) ||
           (this.host.model.webContentsOf(tab)?.debugger.isAttached() ?? false),
-        title: tab.title,
-        url: tab.url
+        title: page?.title ?? tab.title,
+        url: page?.url ?? tab.url
       }
-      if (tab.favicon) info.faviconUrl = tab.favicon
+      const favicon = page ? page.favicon : tab.favicon
+      if (favicon) info.faviconUrl = favicon
       return info
     })
   }

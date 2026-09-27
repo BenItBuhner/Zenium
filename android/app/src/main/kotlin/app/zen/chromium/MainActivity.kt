@@ -12,6 +12,9 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.KeyboardShortcutGroup
+import android.view.KeyboardShortcutInfo
+import android.view.Menu
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -488,6 +491,30 @@ class MainActivity : BrowserActivity() {
             return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * The keyboard-shortcut helper the system opens on Meta + /, on any device with a keyboard
+     * (Chrome's `ChromeTabbedActivity.onProvideKeyboardShortcuts` has no tablet gate; TABLET-20): the core's
+     * shortcut table – the rows `Keys` routes – in Chrome's groups (`ShortcutHelper`). The listing
+     * follows the chrome's layout (`largeScreen()`: tablet rows on a tablet, phone rows on a phone).
+     */
+    override fun onProvideKeyboardShortcuts(data: MutableList<KeyboardShortcutGroup>, menu: Menu?, deviceId: Int) {
+        super.onProvideKeyboardShortcuts(data, menu, deviceId)
+        if (!::host.isInitialized) return
+        val layout = if (largeScreen()) "tablet" else "phone"
+        for (group in ShortcutHelper.groups(host.keys.helperRows, layout)) {
+            val out = KeyboardShortcutGroup(group.title)
+            for (item in group.items) {
+                val modifiers = ShortcutHelper.metaState(item.chord)
+                val code = ShortcutHelper.keyCode(item.chord.key)
+                out.addItem(
+                    if (code != null) KeyboardShortcutInfo(item.label, code, modifiers)
+                    else KeyboardShortcutInfo(item.label, item.chord.key[0], modifiers)
+                )
+            }
+            data.add(out)
+        }
     }
 
     // --- mouse -----------------------------------------------------------------------------------

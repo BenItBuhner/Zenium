@@ -97,8 +97,11 @@ function world(): World {
       zenTab: (tabId: number) => pages.get(tabId)?.tab,
       webContentsOf: (tab: Tab) => [...pages.values()].find((p) => p.tab === tab)?.wc,
       allTabs: () => [...pages.values()].map((p) => p.tab),
-      chromeTabId: (tab: Tab) => Number(tab.id.slice(4))
-    }
+      chromeTabId: (tab: Tab) => Number(tab.id.slice(4)),
+      // The tab's address as extensions see it (the page's beneath a reader cover; none here).
+      urlOf: (tab: Tab) => tab.url
+    },
+    browser: { tabs: { coveredPage: () => undefined } }
   } as unknown as ApiHost
   return {
     api: new DebuggerApi(host),

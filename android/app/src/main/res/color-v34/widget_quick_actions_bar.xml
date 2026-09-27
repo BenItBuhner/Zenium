@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's bar on Android 14+ (WID-02; see res/color-v31/widget_quick_actions_bar.xml):
+     the system's colorSurfaceContainerHigh, as MDC 1.12.0 reads it (values-v34/tokens.xml:95). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@android:color/system_surface_container_high_light" />
+</selector>

@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.os.Build
+import android.util.Log
 import android.view.Display
 import android.view.MotionEvent
 import android.view.ViewConfiguration
@@ -72,8 +73,14 @@ class HistoryNavGesture(
                 }
                 classifier.move(event.x, event.y, event.eventTime)
             }
-            MotionEvent.ACTION_UP -> classifier.up(event.eventTime)
-            MotionEvent.ACTION_CANCEL -> classifier.cancel(event.eventTime)
+            MotionEvent.ACTION_UP -> {
+                logRefusal()
+                classifier.up(event.eventTime)
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                logRefusal()
+                classifier.cancel(event.eventTime)
+            }
             else -> Step.FORWARD
         }
         val handled = apply(step, event)
@@ -144,6 +151,14 @@ class HistoryNavGesture(
     }
 
     /**
+     * An inward drag from an edge window that never became the history drag says why, next to
+     * the `history start` line `TabWebView` writes for one that did (both under `ZenPull`).
+     */
+    private fun logRefusal() {
+        classifier.refusal()?.let { Log.d(TAG, "history not started: $it") }
+    }
+
+    /**
      * Whether `event` (a down) opens a touchpad's two-finger swipe rather than a finger's touch:
      * the classifier's test on the event's buttons and – from API 29, where it exists – its
      * classification (before that nothing is classified, and no touch is the swipe).
@@ -193,6 +208,9 @@ class HistoryNavGesture(
     }
 
     companion object {
+        /** `TabWebView`'s tag for the drag's lines (`history start / release on …`), so one filter reads a drag whole. */
+        private const val TAG = "ZenPull"
+
         /**
          * `1` when the viewport's `overscroll-behavior-x` is `auto`, `0` when the page keeps its
          * sideways overscroll (`contain` / `none` on the root or, propagated like overflow, on

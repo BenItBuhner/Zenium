@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The quick actions widget's card radii on Android 12+ (WID-02): the system's widget radius, which
+     the launcher clips widgets to from Android 12 – as Chrome's are
+     (chrome/browser/ui/android/quickactionsearchwidget/java/res/values-v31/dimens.xml:9-13). The
+     card's root carries @android:id/background and clipToOutline so the launcher finds the view to
+     clip (res/layout/widget_quick_actions_*.xml). -->
+<resources>
+    <dimen name="widget_quick_actions_radius">@android:dimen/system_app_widget_background_radius</dimen>
+    <dimen name="widget_quick_actions_xsmall_radius">@android:dimen/system_app_widget_background_radius</dimen>
+</resources>

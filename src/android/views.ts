@@ -2,10 +2,12 @@ import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
   type ContentCover,
+  type ImageThumbnailBounds,
   type KeyBinding,
   type NavigationSnapshot,
   type PageRules,
   type Rect,
+  type Shortcut,
   type Tab
 } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
@@ -17,9 +19,20 @@ import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { parsePageViewport, type PageViewport } from '@shared/capture'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
-import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
+import {
+  zenPageHtml,
+  type ImagePageLookup,
+  type ReaderPageLookup,
+  type VersionPageLookup
+} from '@shared/zenPages'
 import { pdfPageDownloadId, pdfViewerBaseUrl, type PdfPageLookup } from '@shared/pdfPage'
-import { imageUploadFormDoc, urlencodeImagePost, type ImagePost } from '@shared/imageUpload'
+import {
+  imageUploadFormDoc,
+  parseImageFetchResult,
+  urlencodeImagePost,
+  type ImageFetchResult,
+  type ImagePost
+} from '@shared/imageUpload'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -38,6 +51,7 @@ import type {
 import { looksLikeStatements } from '@core/agent/util'
 import { isKeepableHostState, NAVIGATION_ENTRIES_MAX, sanitizeSnapshot } from '@core/session'
 import { bridgeTraced, type Bridge } from './bridge'
+import { helperShortcuts } from './shortcutHelper'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
 export interface ViewNavState {
@@ -191,7 +205,8 @@ export class AndroidTabView implements TabView {
     private readonly pages: ZenPageLookups = {
       reader: () => null,
       image: () => null,
-      pdf: () => null
+      pdf: () => null,
+      version: () => null
     },
     private readonly navigation: NavigationBridge = new NavigationBridge(bridge),
     private readonly placement: PlacementListener = noPlacementListener,
@@ -407,14 +422,16 @@ export class AndroidTabView implements TabView {
       this.bridge.send('view.loadHtml', {
         tabId: this.tabId,
         url,
-        // The error page lists Chrome Android's suggestions on this host (`ErrorPageHost`).
+        // The error page lists Chrome Android's suggestions on this host (`ErrorPageHost`);
+        // `zen://version` prints the facts the host answers when asked (`versionFacts.ts`).
         html: zenPageHtml(
           url,
           this.pages.reader,
           this.pages.image,
           this.pages.pdf,
           'system',
-          'android'
+          'android',
+          this.pages.version
         ),
         // The PDF viewer's document runs under the PDF's own URL, as Chrome's viewer presents
         // its tab (`pdfViewerBaseUrl`: the viewer's origin for a PDF with none); pdf.js fetches
@@ -628,6 +645,45 @@ export class AndroidTabView implements TabView {
   executeJavaScript(code: string): Promise<unknown> {
     const shaped = looksLikeStatements(code) ? `(() => { ${code}\n })()` : code
     return this.bridge.call<unknown>('view.eval', { tabId: this.tabId, code: shaped })
+  }
+
+  /**
+   * The frame-owner protocol's verb (`frame-owner-protocol-interface.md` §6.1 hunk 5): Kotlin
+   * asks every frame of the page which holds the image at `src` by a salted hash, has the owner
+   * frame thumbnail its own copy, and replies the owner's `ImageFetchResult` JSON – or its own
+   * `no-owner` / `timeout` / `unsupported`. The reply is checked, never trusted raw: one the
+   * core cannot read is a decode failure (a refusal, never today's top-document script on a
+   * WebView that has the protocol). A host without the verb – an APK before it – rejects the
+   * call ("Unknown method"), and null hands the core today's path.
+   */
+  async imageThumbnailByOwner(
+    src: string,
+    bounds: ImageThumbnailBounds,
+    quality: number,
+    maxBytes: number
+  ): Promise<ImageFetchResult | null> {
+    let raw: unknown
+    try {
+      raw = await this.bridge.call<unknown>('view.imageThumbnail', {
+        tabId: this.tabId,
+        src,
+        bounds: { maxSide: bounds.maxSide, minArea: bounds.minArea },
+        quality,
+        maxBytes
+      })
+    } catch {
+      return null
+    }
+    if (raw === null || raw === undefined) return null
+    let value: unknown = raw
+    if (typeof raw === 'string') {
+      try {
+        value = JSON.parse(raw)
+      } catch {
+        return { ok: false, reason: 'decode-failed' }
+      }
+    }
+    return parseImageFetchResult(value, maxBytes) ?? { ok: false, reason: 'decode-failed' }
   }
 
   /** Trusted touch / key events synthesised by Kotlin on the tab's WebView. */
@@ -984,12 +1040,19 @@ export interface ZenPageLookups {
   image: ImagePageLookup
   /** `zen://pdf?id=…` → the download it shows (`core/pdf.ts`), or null once the file is gone. */
   pdf: PdfPageLookup
+  /** `zen://version`'s rows (SET-66), asked of the host when the page is opened; null before the core is bound. */
+  version: VersionPageLookup
 }
 
 /** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
 export class AndroidTabViewHost implements TabViewHost, PlacementListener {
   private readonly views = new Map<string, AndroidTabView>()
-  readonly pages: ZenPageLookups = { reader: () => null, image: () => null, pdf: () => null }
+  readonly pages: ZenPageLookups = {
+    reader: () => null,
+    image: () => null,
+    pdf: () => null,
+    version: () => null
+  }
   /** Shared by the views: what the host offers is learnt once for the run, not per view. */
   private readonly navigation: NavigationBridge
   /**
@@ -1060,8 +1123,12 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
     this.views.delete(tabId)
   }
 
-  setShortcuts(bindings: KeyBinding[]): void {
-    this.bridge.send('keys.setShortcuts', { bindings })
+  /**
+   * Kotlin pre-filters native key presses against `bindings`; the system's keyboard-shortcut
+   * helper (Meta + /) lists the table's rows in Chrome's groups, so the rows cross too.
+   */
+  setShortcuts(bindings: KeyBinding[], table: readonly Shortcut[]): void {
+    this.bridge.send('keys.setShortcuts', { bindings, shortcuts: helperShortcuts(table) })
   }
 
   /** Kotlin keeps the policy so a navigation gets its user agent and viewport before it starts. */

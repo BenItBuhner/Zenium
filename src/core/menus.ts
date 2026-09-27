@@ -17,6 +17,7 @@ import {
   type ImageSearchByUpload
 } from '../shared/search'
 import {
+  IMAGE_THUMBNAIL_JPEG_QUALITY,
   IMAGE_UPLOAD_MAX_BYTES,
   expandImagePost,
   imageFetchScript,
@@ -140,6 +141,8 @@ interface SelectionPlaces {
   at?: { x: number; y: number }
   /** Where the selection sits in the page, 0…1 of its width and height (the toolbar's touch). */
   origin?: { x: number; y: number }
+  /** The frame the context menu's selection is in (`PageContextParams.frameId`), for the actions that read it. */
+  frameId?: number
 }
 
 /** What a toolbar host draws for one action: the id it names back and the title it shows. */
@@ -456,14 +459,21 @@ export class Menus {
       // misspelled word is auto-selected on right-click, so skip the search there – its group is
       // the spelling suggestions, as in Chrome.
       const tail =
-        selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
+        selection && !params.misspelledWord
+          ? this.selectionGroup(tab, selection, win, { frameId: params.frameId }).slice(1)
+          : []
       groups.push(this.editGroup(params, { tail }))
       // Chrome's "Spell check" submenu, its own group after the editing items, on hosts with a
       // spellchecker of the browser's own.
       const spellcheck = this.spellcheckSubmenu(win)
       if (spellcheck) groups.push([spellcheck])
     } else if (selection) {
-      groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
+      groups.push(
+        this.selectionGroup(tab, selection, win, {
+          at: { x: params.x, y: params.y },
+          frameId: params.frameId
+        })
+      )
     }
     if (plainPage) {
       // The new tab page's own rows lead its menu (NTP-18): what the page shows, hidden with
@@ -1166,17 +1176,18 @@ export class Menus {
 
   /**
    * Selected text: Copy, then either "Go to <url>" when the selection reads as an address or
-   * `Search <engine> for "…"` (a new tab next to this one, like Chrome), Translate Selection
-   * where the click landed (`at`; the page's own selection, not a text field's), Share.
+   * `Search <engine> for "…"` (a new tab next to this one, like Chrome), Copy Link to Highlight,
+   * Open Selection in Reader View on the desktop (reader-02), Translate Selection where the
+   * click landed (`at`; the page's own selection, not a text field's), Share.
    */
   private selectionGroup(
     tab: Tab,
     selection: string,
     win: ZenWindow,
-    at?: { x: number; y: number }
+    places: Pick<SelectionPlaces, 'at' | 'frameId'> = {}
   ): Template {
     const items: Template = [{ label: 'Copy', role: 'copy' }]
-    for (const action of this.selectionActions(tab, selection, win, { at })) {
+    for (const action of this.selectionActions(tab, selection, win, places)) {
       if (action.menu) items.push({ label: action.label, click: () => action.run('menu') })
     }
     return items
@@ -1195,9 +1206,9 @@ export class Menus {
     tab: Tab,
     selection: string,
     win: ZenWindow,
-    { at, origin = { x: 0.5, y: 0.5 } }: SelectionPlaces = {}
+    { at, origin = { x: 0.5, y: 0.5 }, frameId }: SelectionPlaces = {}
   ): SelectionAction[] {
-    const { tabs, state, translate } = this.browser
+    const { tabs, state, translate, reader } = this.browser
     const engine = state.defaultSearchEngine()
     // The toolbar's tab opens in the background, with this tab as its opener: a back on it
     // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome).
@@ -1261,6 +1272,27 @@ export class Menus {
         menu: true,
         toolbar: false,
         run: () => void this.copyHighlightLink(tab, win)
+      })
+    }
+    // Chrome's "Open in reading mode" on a selection (reader-02; `IDC_CONTENT_CONTEXT_OPEN_IN_
+    // READING_MODE`, seated after the search and before Translate, hidden while reading mode is
+    // open and off app and popup windows): the selection's own markup is the article the reader
+    // document renders. The desktop's menu alone – the phone's page menu stands as it is, and
+    // the floating toolbar has no reader item (Chrome's has none); the page's own selection,
+    // not a text field's.
+    if (
+      win.formFactor === 'desktop' &&
+      win.chrome === 'full' &&
+      at !== undefined &&
+      !reader.isReaderUrl(tab.url)
+    ) {
+      actions.push({
+        id: 'reader',
+        label: 'Open Selection in Reader View',
+        title: 'Reader View',
+        menu: true,
+        toolbar: false,
+        run: () => void reader.openSelection(tab.id, win, frameId)
       })
     }
     // The services core's selection translation: the menu offers it for the page's own selection
@@ -2025,15 +2057,21 @@ export class Menus {
   }
 
   /**
-   * The image's thumbnail, read where the image can be read. For an http(s) image the host's
-   * copy first (`readImageResource`, the desktop's DevTools read of the bytes the renderer
-   * holds: the page's own response, no second request, a cross-origin image without CORS
-   * headers included), handed to the page's script as a `data:` address for the canvas; the
-   * host's copy comes before any fetch from the page because a refused cross-origin fetch
-   * evicts it. Then the page's own fetch of the address (`imageFetchScript`, run in the
-   * clicked frame: the page's cookies and referrer; a `data:`/`blob:` image read in place),
-   * downscaled within the engine's `bounds`. `'too-large'` past the cap, null when neither
-   * could read it.
+   * The image's thumbnail, read where the image can be read. On a phone whose host offers the
+   * frame-owner protocol (`TabView.imageThumbnailByOwner`, `frame-owner-protocol-interface.md`)
+   * the frame that holds the image thumbnails its own copy, the address reaching no frame that
+   * does not hold it – the host's verb takes the protocol's four scheme classes; `unsupported`
+   * (a WebView without the protocol's channel) and a host that answered nothing (an APK before
+   * the verb) keep today's path below, any other refusal is this row's usual "nothing could
+   * read it" (the address route for an http(s) image, the toast otherwise). Otherwise, for an
+   * http(s) image the host's copy first (`readImageResource`, the desktop's DevTools read of
+   * the bytes the renderer holds: the page's own response, no second request, a cross-origin
+   * image without CORS headers included), handed to the page's script as a `data:` address for
+   * the canvas; the host's copy comes before any fetch from the page because a refused
+   * cross-origin fetch evicts it. Then the page's own fetch of the address (`imageFetchScript`,
+   * run in the clicked frame: the page's cookies and referrer; a `data:`/`blob:` image read in
+   * place), downscaled within the engine's `bounds`. `'too-large'` past the cap, null when
+   * neither could read it.
    */
   private async imageThumbnail(
     view: TabView,
@@ -2041,6 +2079,23 @@ export class Menus {
     bounds: ImageThumbnailBounds,
     frameId?: number
   ): Promise<ImageThumbnail | 'too-large' | null> {
+    if (view.imageThumbnailByOwner && /^(?:https?|blob|data):/i.test(src)) {
+      const owned = await Promise.resolve()
+        .then(() =>
+          view.imageThumbnailByOwner!(
+            src,
+            bounds,
+            IMAGE_THUMBNAIL_JPEG_QUALITY,
+            IMAGE_UPLOAD_MAX_BYTES
+          )
+        )
+        .catch(() => null)
+      if (owned) {
+        if (owned.ok) return owned.thumbnail
+        if (owned.reason === 'too-large') return 'too-large'
+        if (owned.reason !== 'unsupported') return null
+      }
+    }
     if (view.readImageResource && /^https?:\/\//i.test(src)) {
       const held = await Promise.resolve()
         .then(() => view.readImageResource!(src, IMAGE_UPLOAD_MAX_BYTES))

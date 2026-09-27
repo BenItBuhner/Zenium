@@ -24,6 +24,7 @@ import type {
   ExtensionUpdateCheck,
   HapticKind,
   HostCapabilities,
+  ImageThumbnailBounds,
   KeyBinding,
   LongCapture,
   LongCaptureCrop,
@@ -48,6 +49,7 @@ import type {
   ScreenshotSaved,
   SharePanelAction,
   SharePayload,
+  Shortcut,
   ShortcutAction,
   SidePanelInfo,
   Suggestion,
@@ -103,7 +105,7 @@ import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
 import type { ShareFile, ShareOutcome } from '../shared/share'
 import type { ToolbarControl } from '../shared/toolbarPins'
-import type { ImagePost, ImageResource } from '../shared/imageUpload'
+import type { ImageFetchResult, ImagePost, ImageResource } from '../shared/imageUpload'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -919,6 +921,20 @@ export interface TabView {
   isVisible(): boolean
   bringToFront(): void
   /**
+   * The document's word that it has drawn a frame with what it holds now (design language v2
+   * §11: a stand-in over a live page comes down, and a page beneath a cover goes, on the word
+   * of the one in front that its first frame is drawn – never on a clock). Resolves once a
+   * frame of the current document has been produced – on Electron a double
+   * `requestAnimationFrame` in the document, the second callback running after the frame the
+   * first one preceded was committed to the compositor – with the document's own clock
+   * (`performance.now()`) as its value, for a log. Never resolves for a document that draws no
+   * frame: a hidden view (its animation frames are paused), a hung renderer, a page that stops
+   * its own animation frames – the asker holds a failure ceiling (`COVER_REPORT_CEILING_MS`)
+   * and treats a rejection (the page gone) as no word either. Hosts with no way to ask leave it
+   * out; the swap then falls on the ceiling alone.
+   */
+  frameDrawn?(): Promise<number>
+  /**
    * Chrome messages (toasts, banners) cover these strips of the view's edges. Hosts whose pages
    * are layered above the chrome clip the page out of the strips – animating the clip so it
    * moves with the message – and hand touches inside them to the chrome. Optional: on Electron
@@ -1013,6 +1029,27 @@ export interface TabView {
    * client's. Hosts without it leave the read to the page's script.
    */
   readImageResource?(url: string, maxBytes: number): Promise<ImageResource | 'too-large' | null>
+  /**
+   * The phone's frame-owner protocol for the image-search upload
+   * (`internal/parity-services/frame-owner-protocol-interface.md`; `shared/imageOwner.ts` is
+   * the frame side): the host asks every frame of the page which holds the image at `src` – by
+   * a salted hash of the address, so the address itself reaches no frame that does not already
+   * have it – and has the owner frame thumbnail its own copy within `bounds`, a JPEG at
+   * `quality`, the encoded image refused above `maxBytes`. Resolves to the owner's answer –
+   * the thumbnail, or a typed refusal: the frame's `opaque` / `gone` / `no-canvas` /
+   * `too-large` / `fetch-failed` / `decode-failed`, or the host's own `no-owner` (no frame
+   * claimed it within the window), `timeout` (the owner did not answer, or a newer ask
+   * superseded this one) and `unsupported` (a WebView without the protocol's channel, where
+   * the core keeps today's script path) – or null when the host answered nothing the core
+   * could read (an APK before the verb rejects it; the core keeps today's path). The desktop
+   * has no such verb: the clicked frame's private world already serves its script.
+   */
+  imageThumbnailByOwner?(
+    src: string,
+    bounds: ImageThumbnailBounds,
+    quality: number,
+    maxBytes: number
+  ): Promise<ImageFetchResult | null>
   /**
    * Run `code` (one expression, awaited) in `frameId` – the top frame when omitted – in a
    * world of the browser's own where no page script and no extension has run
@@ -1111,12 +1148,26 @@ export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
   /**
+   * Create a second live page for `tab` – the reader's cover (`TabManager.cover`): the
+   * `zen://reader` document drawn over the tab's own page, which stays alive and unmoved
+   * beneath it, so leaving the reader uncovers the page as it was – no load, no history entry
+   * (Chrome's immersive reading mode is an overlay over the tab's contents in the same way).
+   * The cover is not the tab's page to the host's own maps (a request's `tabId`, the extension
+   * API's view of the tab stay the page's). Hosts that hold one page per tab id (Android's
+   * WebViews) leave it out; the reader then loads as a navigation of the tab.
+   */
+  createCover?(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
+  /**
    * A view created for one tab id now belongs to another (a new tab page preloaded under a
    * placeholder id becomes a real tab); hosts that map their web contents to tabs update the map.
    */
   retargetView?(view: TabView, tabId: string): void
-  /** Shortcut table changed – hosts that pre-filter native key events refresh their copy. */
-  setShortcuts?(bindings: KeyBinding[]): void
+  /**
+   * Shortcut table changed – hosts that pre-filter native key events refresh their copy.
+   * `table` is the table the bindings were flattened from (action, group, label, layouts), for a
+   * host whose system lists the shortcuts natively (Android's keyboard-shortcut helper, Meta + /).
+   */
+  setShortcuts?(bindings: KeyBinding[], table: readonly Shortcut[]): void
   /** Page controls changed – hosts that decide per navigation refresh their copy of the rules. */
   setPageRules?(rules: PageRules): void
   /**

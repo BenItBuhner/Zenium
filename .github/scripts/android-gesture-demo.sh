@@ -271,20 +271,46 @@ logcat_pid=$!
 
 jank_gate=${JANK_GATE:-soft}
 echo "jank gate: $jank_gate"
-# shellcheck disable=SC2086 # DEMO_INSTRUMENT_FLAGS is a list of flags and DEMO_ARGS a list of `-e key value` words, split on purpose
-adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" -e jankGate "$jank_gate" ${DEMO_ARGS:-} "$runner" > "$out/instrument.txt" 2>&1 &
-driver_pid=$!
+start_driver() {
+  # shellcheck disable=SC2086 # DEMO_INSTRUMENT_FLAGS is a list of flags and DEMO_ARGS a list of `-e key value` words, split on purpose
+  adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" -e jankGate "$jank_gate" ${DEMO_ARGS:-} "$runner" > "$out/instrument.txt" 2>&1 &
+  driver_pid=$!
+}
+start_driver
 
+# The handshake: the driver's `record` file. A driver whose process the SYSTEM killed before it
+# is started once more on the same boot. The Google image's GMS restarts itself for a module
+# update a minute or so after its first boot ("ChimeraModuleLdr: Module config changed, forcing
+# restart due to module com.google.android.gms.rcs"), and the ActivityManager kills every
+# process bound to one of its providers along with it – the app through AndroidX emoji2's font
+# request: "Killing 5420:io.github.benitbuhner.zenium.debug/u0a192 (adj 0): depends on provider
+# com.google.android.gms/.fonts.provider.FontsProvider in dying proc com.google.android.gms.persistent"
+# (the shortcut helper demo's first run, 6 s into the driver; the extension sweep's round 14 met
+# the same kill and starts its driver once more the same way). Only that line, the system's own
+# word for its kill, earns the second start: an app that crashed on its own ("Process crashed"
+# without it) fails the run at once, as before. The first try's instrument output is kept
+# beside the second's.
 ready=0
-for _ in $(seq 1 $(( ${DEMO_HANDSHAKE_S:-300} * 4 ))); do
-  if adb shell run-as "$app_id" test -f "files/$demo_dir/record" 2>/dev/null; then
-    ready=1
-    break
-  fi
-  if ! kill -0 "$driver_pid" 2>/dev/null; then
-    break
-  fi
-  sleep 0.25
+attempt=1
+while :; do
+  for _ in $(seq 1 $(( ${DEMO_HANDSHAKE_S:-300} * 4 ))); do
+    if adb shell run-as "$app_id" test -f "files/$demo_dir/record" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "$driver_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+  if [ "$ready" -eq 1 ] || [ "$attempt" -ge 2 ]; then break; fi
+  system_kill=$(grep -m1 -oE "Killing [0-9]+:$app_id/[^ ]+ \(adj [-0-9]+\): .*" "$out/logcat.txt" 2> /dev/null || true)
+  if [ -z "$system_kill" ] || ! grep -q 'Process crashed' "$out/instrument.txt" 2> /dev/null; then break; fi
+  attempt=$((attempt + 1))
+  echo "the system killed the driver's process before its handshake ($system_kill); started once more"
+  cp -f "$out/instrument.txt" "$out/instrument-first-try.txt"
+  sleep 15
+  start_driver
 done
 if [ "$ready" -ne 1 ]; then
   echo "::error::the gesture driver never reached the recording handshake"

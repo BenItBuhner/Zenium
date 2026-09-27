@@ -288,7 +288,41 @@ describe('internal pages', () => {
     expect(inputToUrl('about:settings')).toBe('zen://settings')
     // Chrome addresses Zenium has no page for stay what they are.
     expect(inputToUrl('chrome://flags')).toBe('chrome://flags')
-    expect(inputToUrl('chrome://version')).toBe('chrome://version')
+    expect(inputToUrl('chrome://policy')).toBe('chrome://policy')
+  })
+
+  it('resolves the chrome:// addresses Chrome Android serves that Zenium has a page for, and no other (SET-66)', () => {
+    // Chrome Android's chrome://version (a WebUI page in the tab) is Zenium's version document.
+    expect(inputToUrl('chrome://version')).toBe('zen://version')
+    expect(inputToUrl('chrome://version/')).toBe('zen://version')
+    expect(inputToUrl('CHROME://Version')).toBe('zen://version')
+    expect(inputToUrl('about:version')).toBe('zen://version')
+    expect(inputToUrl('zenium://version')).toBe('zen://version')
+    expect(displayUrl('zen://version')).toBe('zenium://version')
+    expect(titleForUrl('zen://version')).toBe('About Version')
+    // Chrome Android's native pages in the tab: the new tab, History, Downloads, Bookmarks.
+    expect(inputToUrl('chrome://newtab')).toBe('zen://newtab')
+    expect(inputToUrl('chrome://history')).toBe('zen://history')
+    expect(inputToUrl('chrome://downloads')).toBe('zen://downloads')
+    expect(inputToUrl('chrome://bookmarks')).toBe('zen://bookmarks')
+    // chrome://flags (Chrome's experiments) and chrome://policy (its enterprise policy) are
+    // served by Chrome Android; Zenium has neither page, so they stay as typed and load as
+    // the engine answers them – never a Zenium page that is not the one asked for.
+    expect(inputToUrl('chrome://flags')).toBe('chrome://flags')
+    expect(inputToUrl('chrome://policy')).toBe('chrome://policy')
+    expect(inputToUrl('chrome://flags/#enable-something')).toBe('chrome://flags/#enable-something')
+    // The rest of Chrome's set – chrome-urls, credits, crashes, components, the internals –
+    // stay as typed the same way.
+    for (const name of [
+      'chrome-urls',
+      'credits',
+      'crashes',
+      'components',
+      'gpu',
+      'net-internals'
+    ]) {
+      expect(inputToUrl(`chrome://${name}`)).toBe(`chrome://${name}`)
+    }
   })
 
   it('shows the alias in the address bar and the title on the tab', () => {

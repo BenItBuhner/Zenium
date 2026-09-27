@@ -45,9 +45,10 @@ class FakeContents extends EventEmitter {
   }
 }
 
-function view(wc: FakeContents): ElectronTabView {
+function view(wc: FakeContents, cover = false): ElectronTabView {
   return {
     webContents: wc,
+    cover,
     onNavigationTarget: null,
     takeNavigationHint: () => ({})
   } as unknown as ElectronTabView
@@ -128,6 +129,32 @@ describe('WebNavigationApi events and the pages that are tabs', () => {
     spare.emit('did-navigate-in-page', {}, 'zen://newtab/#x', true, spare.mainFrame.processId, 1)
     spare.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'zen://newtab/', true, 14, 1)
     expect(dispatched).toEqual([])
+  })
+
+  it('stays silent for the reader’s cover over a tab’s page: its zen://reader load is no navigation of the tab (reader-30)', () => {
+    const { host, dispatched } = fakeHost(tabs)
+    const api = new WebNavigationApi(host)
+    const page = new FakeContents(7, 'https://example.com/story')
+    tabs.set(7, { id: 'tab-7', url: 'https://example.com/story' } as Tab)
+    api.attach(view(page))
+    // The cover answers to the tab too (the host routes its messages and requests to the tab),
+    // which is exactly why it must not be attached: every event of it would be the tab's.
+    const cover = new FakeContents(8, 'about:blank')
+    tabs.set(8, { id: 'tab-7', url: 'https://example.com/story' } as Tab)
+    api.attach(view(cover, true))
+    navigate(cover, 'zen://reader?id=article_1&url=https%3A%2F%2Fexample.com%2Fstory')
+    cover.emit('did-navigate-in-page', {}, 'zen://reader?id=article_1#h', true, 18, 1)
+    cover.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'zen://reader', true, 18, 1)
+    expect(dispatched).toEqual([])
+    // The page beneath goes on reporting as the tab: a link followed in the reader loads there.
+    navigate(page, 'https://example.com/linked')
+    expect(dispatched.map((d) => [d.event, d.tabId, d.url])).toEqual([
+      ['onBeforeNavigate', 7, 'https://example.com/linked'],
+      ['onCommitted', 7, 'https://example.com/linked'],
+      ['onDOMContentLoaded', 7, 'https://example.com/linked'],
+      ['onCompleted', 7, 'https://example.com/linked']
+    ])
+    expect(dispatched.some((d) => d.url.startsWith('zen://reader'))).toBe(false)
   })
 
   it('reports the page once the model adopts it as a tab, under that tab’s id', () => {

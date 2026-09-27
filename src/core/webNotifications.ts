@@ -197,10 +197,14 @@ export class WebNotificationService {
     return notificationStatusOf(this.browser.permissions.resolve('notifications', url, { tabId }))
   }
 
-  /** The page's polyfill asked (`notification` page message). */
+  /**
+   * The page's polyfill asked (`notification` page message). The asker is the tab's page – the
+   * one beneath the reader's cover while it stands (`pageView`; the cover in front asks
+   * nothing) – and so is its address and the addressee of the answer.
+   */
   handle(tabId: string, request: NotificationPageRequest): void {
     if (!request || typeof request !== 'object' || typeof request.notification !== 'string') return
-    const view = this.browser.tabs.view(tabId)
+    const view = this.browser.tabs.pageView(tabId)
     if (!view || view.isDestroyed()) return
     const url = view.getURL()
     switch (request.notification) {
@@ -378,7 +382,7 @@ export class WebNotificationService {
     this.live.delete(id)
     if (event === 'replaced') return
     if (event === 'click') this.reveal(entry)
-    const view = this.browser.tabs.view(entry.tabId)
+    const view = this.browser.tabs.pageView(entry.tabId)
     if (view && !view.isDestroyed())
       view.postToPage?.({ type: 'notification', action: event, id: entry.pageId })
   }
@@ -386,7 +390,7 @@ export class WebNotificationService {
   /** A tap: the notification's tab comes to the front; a tab that is gone gets its page opened again. */
   private reveal(entry: LiveNotification): void {
     const tab = this.browser.tabs.tab(entry.tabId)
-    if (tab && this.browser.tabs.view(entry.tabId)) {
+    if (tab && this.browser.tabs.pageView(entry.tabId)) {
       this.browser.revealTab(entry.tabId)
       return
     }
@@ -422,7 +426,7 @@ export class WebNotificationService {
   }
 
   private post(tabId: string, message: NotificationHostMessage): void {
-    const view = this.browser.tabs.view(tabId)
+    const view = this.browser.tabs.pageView(tabId)
     if (!view || view.isDestroyed()) return
     view.postToPage?.(message)
   }

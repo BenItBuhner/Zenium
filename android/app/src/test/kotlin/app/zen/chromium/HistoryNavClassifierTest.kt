@@ -11,6 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class HistoryNavClassifierTest {
     private val slop = 8f
@@ -228,6 +229,65 @@ class HistoryNavClassifierTest {
         assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), c.pageAnswered(true))
     }
 
+    // --- the refusal's diagnosis (the `history not started` log line) -----------------------------
+
+    @Test
+    fun aRefusedEdgeDragNamesItsCauseAtTheLift() {
+        // The page never reported the overscroll and never answered the probe.
+        val silent = classifier()
+        assertEquals(Step.FORWARD, silent.down(20f, 600f, width, canBack = true, canForward = false))
+        assertEquals(Step.FORWARD, silent.move(120f, 602f, 10L))
+        assertEquals("LEFT edge: eligible=true page=unanswered overscroll=false", silent.refusal())
+
+        // The page keeps its sideways overscroll.
+        val kept = classifier()
+        assertEquals(Step.FORWARD, kept.down(20f, 600f, width, canBack = true, canForward = false))
+        assertNull(kept.pageAnswered(false))
+        assertEquals(Step.FORWARD, kept.move(120f, 600f, 10L))
+        assertEquals("LEFT edge: eligible=true page=false overscroll=false", kept.refusal())
+
+        // The right edge with no forward entry, the overscroll reported all the same.
+        val nowhere = classifier()
+        assertEquals(Step.FORWARD, nowhere.down(1070f, 600f, width, canBack = true, canForward = false))
+        assertNull(nowhere.overscrolledX(Edge.RIGHT))
+        assertEquals(Step.FORWARD, nowhere.move(960f, 600f, 10L))
+        assertEquals("RIGHT edge: eligible=false page=unanswered overscroll=false", nowhere.refusal())
+    }
+
+    @Test
+    fun onlyAnInwardDragFromAnEdgeWindowThatNeverStartedIsARefusal() {
+        // The drag that started (and released) is no refusal.
+        val went = classifier()
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), dragFromLeft(went, 30f))
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(100f, 20L)), went.move(150f, 600f, 20L))
+        assertNull(went.refusal())
+
+        // Nor one that started and was then handed back to a second finger.
+        val handedBack = classifier()
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), dragFromLeft(handedBack, 30f))
+        assertEquals(Step(Disposition.HANDBACK, Nav.Cancel(20L)), handedBack.pointerDown(20L))
+        assertEquals(Step.FORWARD, handedBack.move(150f, 600f, 30L))
+        assertNull(handedBack.refusal())
+
+        // A tap at the edge, a drag out over the edge, a touch away from the edges, a touchpad swipe.
+        val tap = classifier()
+        assertEquals(Step.FORWARD, tap.down(20f, 600f, width, canBack = true, canForward = true))
+        assertEquals(Step.FORWARD, tap.move(24f, 603f, 10L))
+        assertNull(tap.refusal())
+        val outward = classifier()
+        assertEquals(Step.FORWARD, outward.down(20f, 600f, width, canBack = true, canForward = true))
+        assertEquals(Step.FORWARD, outward.move(2f, 600f, 10L))
+        assertNull(outward.refusal())
+        val middle = classifier()
+        assertEquals(Step.FORWARD, middle.down(540f, 600f, width, canBack = true, canForward = true))
+        assertEquals(Step.FORWARD, middle.move(700f, 600f, 10L))
+        assertNull(middle.refusal())
+        val pad = classifier()
+        assertEquals(Step.FORWARD, pad.down(540f, 600f, width, canBack = true, canForward = true, touchpad = true))
+        assertEquals(Step.FORWARD, pad.move(700f, 600f, 10L))
+        assertNull(pad.refusal())
+    }
+
     // --- a touchpad's two-finger swipe (GN-23 / A11Y-14) ------------------------------------------
 
     /** A touchpad swipe from the middle of the page, moved by (`dx`, `dy`) past the slop, with the page answering `allows`. */
@@ -401,5 +461,25 @@ class HistoryNavClassifierTest {
         assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_DEEP_PRESS))
         assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, MotionEvent.CLASSIFICATION_PINCH))
         assertFalse(HistoryNavClassifier.isTouchpadSwipe(0, 4))
+    }
+
+    /**
+     * The back drag's eligibility, held in the source between nightlies (the device pin is
+     * `GesturesDemo.edgeDragCloseTab`): `TabWebView.historyNavEligible` answers a LEFT-edge drag
+     * true whatever the history – Chrome's `NavigationHandler.isNavigationEnabled(forward)` is
+     * `!forward || canGoForward()` (152.0.7977.89, l.388–392), the back with no page to go to
+     * closing the tab or leaving at the release (`lib/back.ts` `dragBack`) – while a RIGHT-edge
+     * drag still asks for a forward entry. The `when` is read from the file, the repo's idiom for
+     * a WebView branch no JVM test can reach (`TabWebView` needs the platform).
+     */
+    @Test
+    fun theBackDragIsEligibleAtTheHistorysFirstPage() {
+        val sources = listOf("src/main/kotlin/app/zen/chromium", "app/src/main/kotlin/app/zen/chromium").map(::File).first { it.isDirectory }
+        val eligible = File(sources, "TabWebView.kt").readText()
+            .substringAfter("fun historyNavEligible(")
+            .substringBefore("\n    }\n")
+        assertTrue("a back drag is eligible whatever the history", "HistoryNavClassifier.Edge.LEFT -> true" in eligible)
+        assertTrue("a forward drag still needs a forward entry", "HistoryNavClassifier.Edge.RIGHT -> canGoForward()" in eligible)
+        assertFalse("the history's depth is no part of the back drag's answer", "canGoBack()" in eligible)
     }
 }

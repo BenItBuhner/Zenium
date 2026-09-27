@@ -14,7 +14,12 @@ import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
-import type { ImagePost, ImagePostField } from '../../shared/imageUpload'
+import {
+  IMAGE_UPLOAD_MAX_BYTES,
+  type ImageFetchResult,
+  type ImagePost,
+  type ImagePostField
+} from '../../shared/imageUpload'
 import { Browser } from '../browser'
 import type { MenuItemTemplate } from '../platform'
 import type { ZenWindow } from '../window'
@@ -31,6 +36,7 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { readerArticleId } from '../reader'
 import { reportUnsafeSiteUrl } from '../help'
 import { bindingFor, toAccelerator } from '../../shared/shortcuts'
 import { releaseNotesUrl } from '../../shared/links'
@@ -3426,6 +3432,225 @@ describe('the page context menu', () => {
         expect(menu).toContain('Copy Image Address')
       }
     })
+
+    /**
+     * The phone's frame-owner protocol (`frame-owner-protocol-interface.md`): a host with the
+     * `imageThumbnailByOwner` verb has the frame that holds the image thumbnail its own copy;
+     * the core's dispatch chooses it over today's top-document script, and each refusal falls
+     * to the row's URL-only route.
+     */
+    describe('the phone’s frame-owner protocol (a host with the imageThumbnailByOwner verb)', () => {
+      const DATA = 'data:image/png;base64,iVBORw0KGgo='
+      const BLOB = 'blob:https://example.com/1d2c3b4a'
+      /** The owner frame's answer: the thumbnail the page script's `FETCHED` carries, typed. */
+      const OWNED: ImageFetchResult = { ok: true, thumbnail: THUMB }
+      interface Ask {
+        src: string
+        bounds: { maxSide: number; minArea: number }
+        quality: number
+        maxBytes: number
+      }
+      /**
+       * A phone whose host offers the verb, answering `answer` (a function answers per ask)
+       * and recording every ask; today's script, were it to run, reads a failure – so a path
+       * wrongly taken shows as the address route, not as the POST the protocol's `ok` makes.
+       */
+      const phoneWithOwner = (
+        answer: ImageFetchResult | null | (() => Promise<ImageFetchResult | null>),
+        pageScript: (code: string) => unknown = () => ({ ok: false, reason: 'fetch-failed' })
+      ): { h: ReturnType<typeof pageHarness>; asks: Ask[] } => {
+        const asks: Ask[] = []
+        const h = pageHarness(ANDROID, {
+          formFactor: 'phone',
+          pageScript,
+          view: {
+            imageThumbnailByOwner: (
+              src: string,
+              bounds: { maxSide: number; minArea: number },
+              quality: number,
+              maxBytes: number
+            ) => {
+              asks.push({ src, bounds: { ...bounds }, quality, maxBytes })
+              return typeof answer === 'function' ? answer() : Promise.resolve(answer)
+            }
+          }
+        })
+        return { h, asks }
+      }
+      const evals = (h: ReturnType<typeof pageHarness>): string[] =>
+        h.viewCalls.filter((c) => /^executeJavaScript(InPrivateWorld)?\(/.test(c))
+
+      it('runs the protocol in place of today’s script: the verb is asked for the address within the engine’s bounds, the owner’s thumbnail is what travels, and no script reaches the page', async () => {
+        const { h, asks } = phoneWithOwner(OWNED)
+        imageMenu(h, IMAGE)
+        h.click('Search Image with Google Lens')
+        await settle()
+        // The one ask: the address, Google's Lens bounds (1000 px, 300 × 300), the JPEG quality
+        // of every thumbnail of this row's, the cap the row refuses above.
+        expect(asks).toEqual([
+          {
+            src: IMAGE,
+            bounds: { maxSide: 1000, minArea: 90000 },
+            quality: 0.4,
+            maxBytes: IMAGE_UPLOAD_MAX_BYTES
+          }
+        ])
+        expect(evals(h)).toEqual([])
+        const opened = openedBeside(h)
+        expect(opened?.url).toBe('https://lens.google.com/v3/upload')
+        expect(opened?.openerTabId).toBe(h.tabId)
+        const { url, post } = posted(h)!
+        expect(url).toBe('https://lens.google.com/v3/upload')
+        expect(field(post, 'encoded_image')).toEqual({
+          name: 'encoded_image',
+          file: { base64: THUMB.base64, contentType: 'image/jpeg' }
+        })
+        expect(field(post, 'image_url')).toEqual({ name: 'image_url', value: IMAGE })
+        expect(field(post, 'processed_image_dimensions')).toEqual({
+          name: 'processed_image_dimensions',
+          value: '1000,500'
+        })
+        expect(h.viewCalls.filter((c) => c.startsWith('loadURL('))).toEqual([])
+      })
+
+      it('hands the verb the engine’s own bounds (Bing: 600 px) and uploads the owner’s thumbnail urlencoded', async () => {
+        const { h, asks } = phoneWithOwner(OWNED)
+        h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'bing' })
+        imageMenu(h, IMAGE)
+        h.click('Search Image with Bing')
+        await settle()
+        expect(asks.map((a) => a.bounds)).toEqual([{ maxSide: 600, minArea: 90000 }])
+        expect(posted(h)?.post).toEqual({
+          encoding: 'urlencoded',
+          fields: [{ name: 'imageBin', value: THUMB.base64 }]
+        })
+        expect(evals(h)).toEqual([])
+      })
+
+      it.each([
+        ['a data: image', DATA],
+        ['a blob: image', BLOB]
+      ])(
+        'asks the verb for %s too (the owner frame reads it in place; today’s top document could not read another frame’s)',
+        async (_name, src) => {
+          const { h, asks } = phoneWithOwner(OWNED)
+          imageMenu(h, src)
+          h.click('Search Image with Google Lens')
+          await settle()
+          expect(asks.map((a) => a.src)).toEqual([src])
+          expect(evals(h)).toEqual([])
+          expect(posted(h)?.url).toBe('https://lens.google.com/v3/upload')
+          expect(field(posted(h)!.post, 'image_url')).toBeUndefined()
+        }
+      )
+
+      const REFUSALS = [
+        'opaque',
+        'gone',
+        'no-canvas',
+        'no-owner',
+        'timeout',
+        'fetch-failed',
+        'decode-failed'
+      ] as const
+
+      it.each(REFUSALS)(
+        'takes the address route for an http(s) image on %s – the address goes from the core to the engine’s by-URL page, never into a frame, never to today’s top-document script – with no POST and no toast',
+        async (reason) => {
+          const { h, asks } = phoneWithOwner({ ok: false, reason })
+          imageMenu(h, IMAGE)
+          h.click('Search Image with Google Lens')
+          await settle()
+          expect(asks).toHaveLength(1)
+          expect(evals(h)).toEqual([])
+          const opened = openedBeside(h)
+          expect(opened?.url).toBe(
+            `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+          )
+          expect(opened?.openerTabId).toBe(h.tabId)
+          expect(posted(h)).toBeNull()
+          expect(h.toasts).toEqual([])
+        }
+      )
+
+      it.each(REFUSALS)(
+        'says so for a data: image on %s: no address to fall back to, the error toast, no tab, no script',
+        async (reason) => {
+          const { h } = phoneWithOwner({ ok: false, reason })
+          imageMenu(h, DATA)
+          const before = h.win.activeSpace().tabIds.length
+          h.click('Search Image with Google Lens')
+          await settle()
+          expect(h.toasts).toEqual([{ message: 'This image cannot be read', kind: 'error' }])
+          expect(h.win.activeSpace().tabIds.length).toBe(before)
+          expect(posted(h)).toBeNull()
+          expect(evals(h)).toEqual([])
+        }
+      )
+
+      it('takes the address route silently for an http(s) image the owner found above the cap, the info toast for a data: one', async () => {
+        const { h } = phoneWithOwner({ ok: false, reason: 'too-large' })
+        imageMenu(h, IMAGE)
+        h.click('Search Image with Google Lens')
+        await settle()
+        expect(openedBeside(h)?.url).toBe(
+          `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(IMAGE)}`
+        )
+        expect(h.toasts).toEqual([])
+        expect(posted(h)).toBeNull()
+        const { h: h2 } = phoneWithOwner({ ok: false, reason: 'too-large' })
+        imageMenu(h2, DATA)
+        const before = h2.win.activeSpace().tabIds.length
+        h2.click('Search Image with Google Lens')
+        await settle()
+        expect(h2.toasts).toEqual([{ message: 'This image is too large to search', kind: 'info' }])
+        expect(h2.win.activeSpace().tabIds.length).toBe(before)
+        expect(evals(h2)).toEqual([])
+      })
+
+      it('keeps today’s path on unsupported (the legacy channel: frames cannot be told apart) – the top document’s script runs once, as before the protocol', async () => {
+        const { h, asks } = phoneWithOwner({ ok: false, reason: 'unsupported' }, () => FETCHED)
+        imageMenu(h, IMAGE)
+        h.click('Search Image with Google Lens')
+        await settle()
+        expect(asks).toHaveLength(1)
+        expect(h.viewCalls.filter((c) => c.startsWith('executeJavaScript('))).toHaveLength(1)
+        expect(posted(h)?.url).toBe('https://lens.google.com/v3/upload')
+      })
+
+      it('keeps today’s path when the host answers nothing the core can read (an APK before the verb rejects it; the view hands the core null)', async () => {
+        const { h } = phoneWithOwner(null, () => FETCHED)
+        imageMenu(h, IMAGE)
+        h.click('Search Image with Google Lens')
+        await settle()
+        expect(h.viewCalls.filter((c) => c.startsWith('executeJavaScript('))).toHaveLength(1)
+        expect(posted(h)?.url).toBe('https://lens.google.com/v3/upload')
+        const { h: h2 } = phoneWithOwner(
+          () => Promise.reject(new Error('Unknown method: view.imageThumbnail')),
+          () => FETCHED
+        )
+        imageMenu(h2, IMAGE)
+        h2.click('Search Image with Google Lens')
+        await settle()
+        expect(h2.viewCalls.filter((c) => c.startsWith('executeJavaScript('))).toHaveLength(1)
+        expect(posted(h2)?.url).toBe('https://lens.google.com/v3/upload')
+      })
+
+      it('is not asked for an address the row lists by URL alone (Yandex takes the address, no thumbnail is read)', () => {
+        const { h, asks } = phoneWithOwner(OWNED)
+        h.browser.handleCommand(h.win, 'settings.update', {
+          searchEngines: [YANDEX],
+          searchEngineId: YANDEX.id
+        })
+        imageMenu(h, IMAGE)
+        h.click('Search Image with Yandex')
+        expect(asks).toEqual([])
+        expect(evals(h)).toEqual([])
+        expect(openedBeside(h)?.url).toBe(
+          `https://yandex.com/images/search?rpt=imageview&url=${encodeURIComponent(IMAGE)}`
+        )
+      })
+    })
   })
 
   it('folds a linked image’s link items into one group to stay within three separators', () => {
@@ -3560,6 +3785,7 @@ describe('the page context menu', () => {
       'Copy',
       'Search Google for “quantum foam”',
       'Copy Link to Highlight',
+      'Open Selection in Reader View',
       '-',
       'Boosts',
       'Inspect Element'
@@ -3587,6 +3813,110 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Search Google for “example.org/docs”')
     h.click('Go to example.org/docs')
     expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://example.org/docs')
+  })
+
+  describe('Open Selection in Reader View (reader-02)', () => {
+    const SELECTED = { content: '<p>hello <b>world</b></p>', length: 11 }
+    /** The page answers the selection script with `markup`, and every other script with true. */
+    const selectionScript =
+      (markup: unknown) =>
+      (code: string): unknown =>
+        code.includes('getSelection()') ? markup : true
+
+    it('seats the row after Copy Link to Highlight and before Translate Selection on the desktop alone', () => {
+      const h = pageHarness(DESKTOP, { translate: true })
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
+        'Copy',
+        'Search Google for “quantum foam”',
+        'Copy Link to Highlight',
+        'Open Selection in Reader View',
+        'Translate Selection'
+      ])
+      // The phone's page menu stands as it was; its toolbar has no reader item (Chrome's has none).
+      const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+      expect(phone.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+        'Open Selection in Reader View'
+      )
+      expect(
+        phone.browser.menus.selectionToolbar(phone.tabId, 'quantum foam').map((i) => i.id)
+      ).not.toContain('reader')
+      expect(phone.browser.menus.runSelectionAction(phone.tabId, 'reader', 'quantum foam')).toBe(
+        false
+      )
+    })
+
+    it('is gated like Chrome’s: the page’s own selection, a normal window, not while reading', () => {
+      const h = pageHarness()
+      // A text field's selection: the editing group's tail carries the search, not the reader.
+      expect(
+        h.menu(
+          pageParams({ selectionText: 'quantum foam', isEditable: true, editFlags: ALL_EDITS })
+        )
+      ).not.toContain('Open Selection in Reader View')
+      // A popup's toolbar-only chrome (Chrome's `IsNormalBrowser`): no row.
+      const popup = h.browser.createWindow({
+        kind: 'synced',
+        from: h.win,
+        chrome: 'popup',
+        bounds: { x: 0, y: 0, width: 400, height: 300 }
+      })
+      const inPopup = h.browser.tabs.createTab({ url: PAGE_URL, active: true }, popup)
+      h.browser.menus.showPageContextMenu(
+        inPopup.id,
+        pageParams({ selectionText: 'quantum foam' }),
+        popup
+      )
+      expect(topLabels(h.shown())).not.toContain('Open Selection in Reader View')
+      // Reading already: the reader document's own selection has no reader to open.
+      h.browser.tabs.tab(h.tabId)!.url =
+        'zen://reader?id=article_1&url=https%3A%2F%2Fexample.com%2Farticle'
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+        'Open Selection in Reader View'
+      )
+    })
+
+    it('reads the selection’s markup out of the clicked frame and opens the reader on it, over the page', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: selectionScript(SELECTED) })
+      h.menu(pageParams({ selectionText: 'hello world', frameId: 3 }))
+      h.viewCalls.length = 0
+      h.click('Open Selection in Reader View')
+      await settle()
+      // The selection script ran in the frame the click landed in, through the page's own world.
+      expect(
+        h.viewCalls.some(
+          (c) => c.startsWith('executeJavaScript(3:') && c.includes('getSelection()')
+        )
+      ).toBe(true)
+      // The reader stands over the page as a cover (reader-30): the page was never navigated.
+      const tab = h.browser.tabs.tab(h.tabId)!
+      expect(tab.url.startsWith('zen://reader?id=')).toBe(true)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(true)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL("zen://reader'))).toBe(true)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL("https://'))).toBe(false)
+      // The article is the selection's own markup, titled as the page is, with its address.
+      const article = h.browser.reader.article(readerArticleId(tab.url)!)
+      expect(article?.content).toBe(SELECTED.content)
+      expect(article?.length).toBe(SELECTED.length)
+      expect(article?.url).toBe(PAGE_URL)
+      expect(article?.title).toBe(tab.title)
+      // Leaving the reader uncovers the page: its address back, no load of it.
+      h.viewCalls.length = 0
+      expect(h.browser.tabs.uncover(h.tabId)).toBe(true)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(false)
+      expect(h.browser.tabs.tab(h.tabId)!.url).toBe(PAGE_URL)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL('))).toBe(false)
+    })
+
+    it('says so in a toast when the page has no selection to read by the time the row runs', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: selectionScript(null) })
+      h.menu(pageParams({ selectionText: 'hello world' }))
+      h.toasts.length = 0
+      h.click('Open Selection in Reader View')
+      await settle()
+      expect(h.toasts.map((t) => t.message)).toEqual(['Select some text to open in Reader View.'])
+      expect(h.browser.tabs.tab(h.tabId)!.url).toBe(PAGE_URL)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(false)
+    })
   })
 
   it('gives a text field the editing group and nothing else', () => {

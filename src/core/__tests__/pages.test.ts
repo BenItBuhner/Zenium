@@ -75,6 +75,11 @@ function fixture(
     windows?: boolean
     /** Private browsing as tabs of the one window (Android); off by default. */
     privateTabs?: boolean
+    /**
+     * Whether the host serves the new tab page (`zen://newtab`). Left to the stub's truthy
+     * answer unless given: false is the phone, whose new tab is the empty one.
+     */
+    newTabPage?: boolean
     profile?: unknown
     pages?: InternalPageRegistry
   } = {}
@@ -91,7 +96,8 @@ function fixture(
     privateTabs: opts.privateTabs ?? false,
     updates: false,
     agents: false,
-    pageTabs: opts.pageTabs ?? true
+    pageTabs: opts.pageTabs ?? true,
+    ...(opts.newTabPage === undefined ? {} : { newTabPage: opts.newTabPage })
   })
   const platform: Platform = {
     info: { os: 'android' as PlatformOs, version: '0.0.0' },
@@ -545,6 +551,104 @@ describe('History, the bookmarks manager and Downloads as page tabs (styling pas
       expect(f.browser.tabs.tab(tabId)?.splitGroupId).toBeNull()
       expect(f.browser.bookmarkable(`zen://${id}`)).toBe(false)
     }
+  })
+})
+
+describe('the chrome:// addresses Chrome Android serves, typed on the phone (SET-66)', () => {
+  function overlays(f: Fixture): unknown[] {
+    return f.sent.filter((s) => s.name === 'overlay.open').map((s) => s.payload)
+  }
+
+  function phone(): Fixture {
+    const f = fixture({ newTabPage: false })
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'phone' })
+    return f
+  }
+
+  function type(f: Fixture, input: string, tabId: string, newTab = false): void {
+    f.browser.handleCommand(f.win, 'urlbar.submit', { input, newTab, tabId, background: false })
+  }
+
+  it('loads chrome://version as the zen://version document in the tab it was typed into, starred as chrome://version is', () => {
+    const f = phone()
+    const site = openSite(f, 'https://a.test/')
+    type(f, 'chrome://version', site.id)
+    const tab = f.browser.tabs.tab(site.id)
+    // A document page: the view loads it like any document, no chrome page and no overlay.
+    expect(tab?.url).toBe('zen://version')
+    expect(f.loaded).toContain('zen://version')
+    expect(f.browser.pages.isChromePage(tab!)).toBe(false)
+    expect(overlays(f)).toEqual([])
+    expect(f.browser.bookmarkable('zen://version')).toBe(true)
+    // The other spellings land on the same document; each open is its own tab, as Chrome's is.
+    const other = openSite(f, 'https://b.test/')
+    type(f, 'about:version', other.id)
+    expect(f.browser.tabs.tab(other.id)?.url).toBe('zen://version')
+    type(f, 'zenium://version', other.id, true)
+    expect(activeTab(f)?.id).not.toBe(other.id)
+    expect(activeTab(f)?.url).toBe('zen://version')
+    expect(spaceUrls(f).filter((u) => u === 'zen://version')).toHaveLength(3)
+  })
+
+  it('makes chrome://newtab the empty tab the phone opens, the served page on a host that has it', () => {
+    const f = phone()
+    const site = openSite(f, 'https://a.test/')
+    type(f, 'chrome://newtab', site.id)
+    // The phone serves no new tab page: the tab is the empty one its chrome draws the page over.
+    expect(f.browser.tabs.tab(site.id)?.url).toBe('zen://blank')
+    type(f, 'zenium://newtab', site.id, true)
+    expect(activeTab(f)?.id).not.toBe(site.id)
+    expect(activeTab(f)?.url).toBe('zen://blank')
+    expect(spaceUrls(f).some((u) => u.startsWith('zen://newtab'))).toBe(false)
+    expect(overlays(f)).toEqual([])
+    // A host with the page (the desktop) loads the page, as it did.
+    const desktop = fixture({ windows: true, newTabPage: true })
+    const home = openSite(desktop, 'https://a.test/')
+    type(desktop, 'chrome://newtab', home.id)
+    expect(desktop.browser.tabs.tab(home.id)?.url).toBe('zen://newtab')
+  })
+
+  it('opens chrome://history, chrome://downloads and chrome://bookmarks as the phone’s panels, the tab left alone', () => {
+    const f = phone()
+    const site = openSite(f, 'https://a.test/')
+    const before = spaceUrls(f)
+    for (const id of ['history', 'downloads', 'bookmarks'] as const) {
+      type(f, `chrome://${id}`, site.id)
+      expect(overlays(f).pop()).toEqual({ kind: id, section: undefined, folderId: undefined })
+    }
+    expect(spaceUrls(f)).toEqual(before)
+    expect(f.browser.tabs.tab(site.id)?.url).toBe('https://a.test/')
+  })
+
+  it('opens chrome://settings and a section of it as the Settings tab, one per window', () => {
+    const f = phone()
+    const site = openSite(f, 'https://a.test/')
+    type(f, 'chrome://settings/privacy', site.id)
+    const tab = activeTab(f)
+    expect(tab?.url).toBe('zen://settings/privacy')
+    expect(tab?.openerTabId).toBe(site.id)
+    expect(f.browser.pages.isChromePage(tab!)).toBe(true)
+    f.browser.tabs.activateTab(site.id, f.win)
+    type(f, 'chrome://settings', site.id)
+    expect(activeTab(f)?.id).toBe(tab?.id)
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://settings'))).toHaveLength(1)
+  })
+
+  it('lets chrome://flags and chrome://policy stand as typed – no Zenium page stands in for them, and no tab moves', () => {
+    // Zenium has no flags page and no policy engine: the address resolves to nothing of its
+    // own (`inputToUrl` leaves it as typed) and a `chrome://` address is not one a tab may load
+    // (`isNavigableUrl`), so the tab stays on its page and nothing opens in its place.
+    const f = phone()
+    const site = openSite(f, 'https://a.test/')
+    const before = [...f.loaded]
+    for (const url of ['chrome://flags', 'chrome://policy']) {
+      type(f, url, site.id)
+      expect(f.browser.tabs.tab(site.id)?.url).toBe('https://a.test/')
+      expect(activeTab(f)?.id).toBe(site.id)
+    }
+    expect(f.loaded).toEqual(before)
+    expect(overlays(f)).toEqual([])
+    expect(spaceUrls(f)).toEqual(['https://a.test/'])
   })
 })
 

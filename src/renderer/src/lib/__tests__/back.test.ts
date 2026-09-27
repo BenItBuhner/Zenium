@@ -9,7 +9,10 @@ import {
   BackDismissal,
   backStore,
   CLOSE_AFTER_LEAVE_MS,
+  closeTargetOf,
   dispatchBackEvent,
+  dragBack,
+  dragCloseTarget,
   handleSystemBack,
   lastActiveOther,
   pushBackSurface,
@@ -212,6 +215,69 @@ describe('rootBackAction', () => {
     expect(rootBackAction(pinned, state(pinned, tab('other')))).toBe('background')
     const essential = tab('essential', { spaceId: null, essential: true })
     expect(rootBackAction(essential, state(essential, tab('other')))).toBe('background')
+  })
+})
+
+describe("the history drag's close target and back (Chrome's CloseTarget and BackActionDelegate)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(run).mockClear()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("maps the root's action to what the bubble captions: the tab, the app, or nothing for a page turn", () => {
+    expect(closeTargetOf('opener')).toBe('tab')
+    expect(closeTargetOf('closeTab')).toBe('tab')
+    expect(closeTargetOf('previousTab')).toBe('tab')
+    expect(closeTargetOf('caller')).toBe('app')
+    expect(closeTargetOf('background')).toBe('app')
+    // Chrome's back onto the new-tab page's history entry is a navigation: no caption.
+    expect(closeTargetOf('newTabPage')).toBe('none')
+  })
+
+  it('a page with a back of its own captions nothing, whatever a root back would do', () => {
+    const child = tab('child', { openerTabId: 'opener', canGoBack: true })
+    expect(dragCloseTarget(child, state(child, tab('opener')))).toBe('none')
+    const rooted = tab('child', { openerTabId: 'opener' })
+    expect(dragCloseTarget(rooted, state(rooted, tab('opener')))).toBe('tab')
+    const last = tab('blank', { url: BLANK_URL })
+    expect(dragCloseTarget(last, state(last))).toBe('app')
+    expect(dragCloseTarget(tab('page'), state(tab('page')))).toBe('none')
+  })
+
+  it("the drag's back turns the page while it has one, else performs Chrome's back at the root", () => {
+    const paged = tab('paged', { canGoBack: true })
+    dragBack(paged, state(paged))
+    expect(vi.mocked(run).mock.calls).toEqual([['tab.back', { tabId: 'paged' }]])
+    vi.mocked(run).mockClear()
+
+    const child = tab('child', { openerTabId: 'opener' })
+    dragBack(child, state(child, tab('opener')))
+    expect(vi.mocked(run).mock.calls).toEqual([
+      ['tab.activate', { tabId: 'opener' }],
+      ['tab.close', { tabId: 'child' }]
+    ])
+    vi.mocked(run).mockClear()
+
+    // A page at its root starts over as a new-tab page in its slot (no caption, a page turn).
+    const page = tab('page')
+    dragBack(page, state(page))
+    expect(vi.mocked(run).mock.calls.map((c) => c[0])).toEqual(['tab.create', 'tab.close'])
+  })
+
+  it("the last tab of the space stays and the drag sends the app to the background: Chrome's mSendToBackground(null)", () => {
+    const last = tab('blank', { url: BLANK_URL })
+    dragBack(last, state(last))
+    expect(vi.mocked(run).mock.calls).toEqual([['window.minimize', undefined]])
+    vi.mocked(run).mockClear()
+    // A tab another app sent leaves with the app and closes out of sight (the caller rule).
+    const sent = tab('sent', { fromIntent: true })
+    dragBack(sent, state(sent))
+    expect(vi.mocked(run).mock.calls).toEqual([['window.minimize', undefined]])
+    vi.advanceTimersByTime(CLOSE_AFTER_LEAVE_MS)
+    expect(vi.mocked(run).mock.calls.slice(1)).toEqual([['tab.close', { tabId: 'sent' }]])
   })
 })
 

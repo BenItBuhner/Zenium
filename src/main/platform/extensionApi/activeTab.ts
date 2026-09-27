@@ -33,7 +33,9 @@ export class ActiveTabGrants {
   /** The extension was invoked on `tab` by the user. */
   grant(extensionId: string, tab: Tab): void {
     const permissions = this.host.grants(extensionId).permissions
-    const origin = originPattern(tab.url)
+    // The page's origin – beneath the reader's cover too: the gesture on a tab reading an
+    // article grants the article's site, as Chrome's does under its reading mode overlay.
+    const origin = originPattern(this.host.model.urlOf(tab))
     const tabId = this.host.model.chromeTabId(tab)
     if (permissions.includes('activeTab') && origin) {
       const perTab = this.grants.get(extensionId) ?? new Map<number, Grant>()

@@ -6,12 +6,20 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.os.Build
+import android.util.Log
+import android.util.TypedValue
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.animation.AnimationUtils
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import androidx.annotation.ColorInt
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
@@ -31,18 +39,28 @@ class HistoryNavBubbleFrame(
     val scale: Float,
     val alpha: Float,
     /**
-     * Letting go would navigate – the drag's state as the chrome sends it. The disc draws no mark
-     * of its own for it (v2 §11.9: the threshold shows as the full disc and the haptic).
+     * Letting go would navigate – the drag's state as the chrome sends it. The disc shows it as
+     * Chrome's does: the arrow (and the caption, in the arrow's ink) tints to the accent over
+     * 250 ms as it comes on and back as it goes off ([ArmedTint]; the lead's 04:34 ruling, v2 §11.9
+     * amended for the arrow alone); the pill's fill and hairline never tint.
      */
     val armed: Boolean,
-    /** Motion is reduced: the leave fades over 120 ms and nothing else animates; the box still follows the finger (v2 §11.3, §11.9). */
+    /** Motion is reduced: the leave fades over 120 ms and the tint rides 120 ms; nothing else animates; the box still follows the finger (v2 §11.3, §11.9). */
     val reduced: Boolean,
     /**
      * The page frame's box: the disc is drawn only inside it, as the DOM disc under the frame's
      * `overflow: hidden` – it comes out from beyond the frame's side, not over the gutter between
      * the frame and the window's edge. Null when the chrome sent none: unclipped.
      */
-    val clip: Clip?
+    val clip: Clip?,
+    /**
+     * How far the caption's pill is out of the disc, 0 (a disc) to 1 (the whole caption): Chrome's
+     * 'Close tab' / 'Close Chrome' indicator at the history's first page, shown while the drag is
+     * armed (`SideSlideLayout.showCaption` while `mWillNavigate`). 0 whenever [captionText] is null.
+     */
+    val caption: Float = 0f,
+    /** The caption's text as the chrome words it; null: the drag has none (a page turn, a forward drag). */
+    val captionText: String? = null
 ) {
     /** A box in device px (a plain value: `android.graphics.Rect` is a stub on the JVM, the layer makes one of it). */
     data class Clip(val left: Int, val top: Int, val right: Int, val bottom: Int) {
@@ -55,6 +73,8 @@ class HistoryNavBubbleFrame(
             if (!args.optBoolean("visible", true)) return null
             val size = (args.num("size") * density).roundToInt()
             if (size <= 0) return null
+            // A caption is a text: an extent without one, or a blank, is a disc.
+            val captionText = args.strOrNull("captionText")?.takeIf { it.isNotBlank() }
             return HistoryNavBubbleFrame(
                 if (args.str("edge", "left") == "right") HistoryNavClassifier.Edge.RIGHT else HistoryNavClassifier.Edge.LEFT,
                 (args.num("left") * density).toFloat(),
@@ -71,7 +91,9 @@ class HistoryNavBubbleFrame(
                     val bottom = (clip.num("bottom") * density).roundToInt()
                     // An empty box is no clip.
                     if (right > left && bottom > top) Clip(left, top, right, bottom) else null
-                }
+                },
+                if (captionText == null) 0f else args.num("caption", 0.0).toFloat().coerceIn(0f, 1f),
+                captionText
             )
         }
     }
@@ -84,12 +106,20 @@ class HistoryNavBubbleFrame(
  * frame's side and nothing of it shows over the gutter to the window's edge or a sidebar. Gone
  * while the bubble is down, so an idle window pays nothing for it; touches pass through it as
  * through the disc.
+ *
+ * The threshold's tap is the layer's too: Chrome's `SideSlideLayout.pull()` performs
+ * `HapticFeedbackConstants.KEYBOARD_TAP` on its own view as `willNavigate()` turns true
+ * (152.0.7977.89, l.345–351), and this layer performs the same constant on the frame whose
+ * `armed` comes on ([BubbleThresholdTap]) – the disc's full frame and the tap are one message
+ * from the chrome, as they are one `pull()` in Chrome. The chrome's own `haptic` tick stands
+ * only where no host draws the disc (`lib/historyNav.ts`).
  */
 class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
     /** The disc itself; the layer moves nothing – the disc rides its own translation, scale and alpha. */
     val disc = HistoryNavBubbleView(context)
     /** The clip as last set, so a frame carrying the same box (every frame of a drag) sets nothing. */
     private var clip: HistoryNavBubbleFrame.Clip? = null
+    private val tap = BubbleThresholdTap()
 
     init {
         visibility = GONE
@@ -102,6 +132,12 @@ class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
     /** One frame from the chrome; null takes the bubble down. */
     fun apply(frame: HistoryNavBubbleFrame?) {
         disc.apply(frame)
+        if (tap.take(frame?.armed)) {
+            // The platform's answer is logged with the pin: false when the view is detached or
+            // view-level haptics are off, so a device that never buzzes reads as such in the run.
+            val performed = performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            Log.d(TAG, "history threshold: KEYBOARD_TAP (${frame?.edge}) performed=$performed")
+        }
         if (frame == null) {
             visibility = GONE
             clip = null
@@ -120,6 +156,134 @@ class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
 
     /** The layer takes no touch: what is under it is the page's. */
     override fun onTouchEvent(event: MotionEvent): Boolean = false
+
+    companion object {
+        /** `TabWebView`'s tag for the gesture's own lines (`history start / release on …`), so one filter reads the drag whole. */
+        private const val TAG = "ZenPull"
+    }
+}
+
+/**
+ * When the threshold taps the finger, on the frames the chrome sends: Chrome performs
+ * `KEYBOARD_TAP` each time `willNavigate()` turns true (`SideSlideLayout.pull()`, l.345–351) –
+ * once per rising crossing, not on every frame past the threshold, and again if the finger eases
+ * back under it and crosses once more; nothing on the way back and nothing at the release. The
+ * crossing is the frame whose `armed` is on after one whose was off; a null frame (the bubble
+ * down) leaves the next drag to start unarmed. A plain class, so the JVM holds it without the view.
+ */
+class BubbleThresholdTap {
+    private var armed = false
+
+    /** The frame's armed flag in (null: the bubble is down); whether this frame taps. */
+    fun take(frameArmed: Boolean?): Boolean {
+        val now = frameArmed ?: false
+        val fires = now && !armed
+        armed = now
+        return fires
+    }
+}
+
+/**
+ * The arrow's tint as the drag arms, on the frames the chrome sends and the clock between them:
+ * Chrome's `NavigationBubble` runs its arrow's tint from the ink to the accent over 250 ms as
+ * `willNavigate()` turns true and back over 250 ms as it turns false (152.0.7977.89
+ * `NavigationBubble.java` l.51 `COLOR_TRANSITION_DURATION_MS`, l.101–102 the colour animator,
+ * l.201–206 `setImageTint`). Chrome's 250 ms; the reversal from the standing value is the lead's
+ * ruling (04:34, v2 §11.9 amended), Chrome's own restarts from 0 – `setImageTint` swaps the two
+ * endpoints and `start()`s the animator afresh (l.205), so its arrow jumps to the far colour
+ * mid-tint and eases from there, where a finger that eases back under the threshold mid-tint
+ * here takes the colour back from where it is, with no jump. So: a value 0 (the ink) to 1 (the
+ * accent) that moves toward its target at the leg's rate, the rising `armed` setting the target
+ * to 1 and the falling one to 0, each leg starting from the value as it stands. Under reduced
+ * motion the leg is v2 §11.3's 120 ms – a shorter tween, not a jump. A null frame (the bubble
+ * down) resets it, so the next drag starts in the ink. The lead's 04:34 ruling, v2 §11.9 amended
+ * for the arrow alone: the caption wears the same ink, the pill's fill and hairline never tint
+ * ([bubbleInks]). A plain class on a clock it is handed, so the JVM holds it without the view;
+ * the DOM disc runs the same class in TS (`lib/historyNav.ts` `ArmedTint`), writing the value
+ * per frame for the stylesheet to mix.
+ */
+class ArmedTint {
+    /** Where the tint stands: 0 the text ink, 1 the accent. */
+    var value = 0f
+        private set
+    private var target = 0f
+    private var durationMs = TINT_MS
+    /** The leg under way, as it started: the value it left from and when – each step lands where the clock says, no residue. */
+    private var legFrom = 0f
+    private var legStartMs = 0L
+
+    /** The tint has a way to go: the view keeps stepping it between the chrome's frames. */
+    val running: Boolean get() = value != target
+
+    /**
+     * A frame's armed flag (null: the bubble is down – the tint is reset at once) and reduced flag,
+     * at [nowMs] on the animation clock; the value as it stands on this frame. A change of target
+     * starts a leg from the value as it stands; the same target lets the leg run on.
+     */
+    fun take(frameArmed: Boolean?, reduced: Boolean, nowMs: Long): Float {
+        if (frameArmed == null) {
+            value = 0f
+            target = 0f
+            legFrom = 0f
+            legStartMs = nowMs
+            return value
+        }
+        step(nowMs)
+        val duration = if (reduced) REDUCED_TINT_MS else TINT_MS
+        if (duration != durationMs) {
+            durationMs = duration
+            legFrom = value
+            legStartMs = nowMs
+        }
+        val next = if (frameArmed) 1f else 0f
+        if (next != target) {
+            target = next
+            legFrom = value
+            legStartMs = nowMs
+        }
+        return value
+    }
+
+    /** The clock at [nowMs]: the value the leg's rate puts between where it left from and its target, and no further. */
+    fun step(nowMs: Long): Float {
+        if (value == target) return value
+        val travel = (nowMs - legStartMs).coerceAtLeast(0L).toFloat() / durationMs
+        value = if (target > legFrom) (legFrom + travel).coerceAtMost(target) else (legFrom - travel).coerceAtLeast(target)
+        return value
+    }
+
+    companion object {
+        /** Chrome's `COLOR_TRANSITION_DURATION_MS` (`NavigationBubble.java` l.51); `lib/historyNav.ts` `TINT_MS`. */
+        const val TINT_MS = 250L
+        /** Reduced motion's tween (v2 §11.3's 120 ms, `REDUCED_FADE_MS`; `lib/historyNav.ts` `REDUCED_TINT_MS`). */
+        const val REDUCED_TINT_MS = 120L
+    }
+}
+
+/** The pill's colours at one tint ([bubbleInks]): the arrow's stroke, the caption's text, the fill and the hairline. */
+data class BubbleInks(@ColorInt val arrow: Int, @ColorInt val caption: Int, @ColorInt val fill: Int, @ColorInt val border: Int)
+
+/**
+ * The pill's colours at a tint of [tint] (0 the ink, 1 the accent): one ink per pill – the arrow's
+ * stroke and the caption's text are the same mix of the text ink and the accent (the lead's 04:34
+ * ruling (a) and (d)); the fill and the hairline are the panel and the border whatever the tint.
+ * A top-level function, so the JVM holds it without the view.
+ */
+fun bubbleInks(@ColorInt text: Int, @ColorInt accent: Int, @ColorInt panel: Int, @ColorInt border: Int, tint: Float): BubbleInks {
+    val ink = lerpArgb(text, accent, tint)
+    return BubbleInks(arrow = ink, caption = ink, fill = panel, border = border)
+}
+
+/** [from] toward [to] by [t] (clamped to 0..1) per ARGB channel, rounded; the endpoints exact. Plain bit ops: `android.graphics.Color` is a stub on the JVM. */
+@ColorInt
+fun lerpArgb(@ColorInt from: Int, @ColorInt to: Int, t: Float): Int {
+    val f = t.coerceIn(0f, 1f)
+    fun channel(shift: Int): Int {
+        val a = (from ushr shift) and 0xFF
+        val b = (to ushr shift) and 0xFF
+        return (a + (b - a) * f).roundToInt().coerceIn(0, 255)
+    }
+    return (channel(24) shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
 }
 
 /**
@@ -131,15 +295,28 @@ class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
  * added above the root, and draws what the chrome's disc draws (v2 §11.9): a 44 dp disc of the
  * panel token with the hairline and the panel's shadow, round a 20 dp arrow (lucide's
  * `arrow-left` / `arrow-right` at stroke 1.75, as `.zen-histnav-glyph svg` sets it) in the text
- * ink. The chrome's machine drives it per frame ([apply]) on translation, scale and alpha alone
+ * ink. The chrome's machine drives it per frame ([apply]) on translation, scale and alpha
  * – the disc grows from .6 to full on the chrome's spring as the drag approaches the threshold,
- * and the threshold itself shows as the full disc and the haptic, no tint. Touches pass through
- * it, and it is nothing to accessibility, as the DOM disc is (`pointer-events: none`,
- * `aria-hidden`).
+ * and the threshold shows as the full disc, the haptic, and the arrow's tint: over Chrome's 250 ms
+ * the arrow goes to the accent as the drag arms and back as it disarms ([ArmedTint]; the lead's
+ * 04:34 ruling, v2 §11.9 amended for the arrow alone), the caption in the same ink, the fill and
+ * the hairline never tinted. The tint is the one thing the view animates between the chrome's
+ * frames, on its own animation ticks while it has a way to go. Touches pass through it, and it
+ * is nothing to accessibility, as the DOM disc is (`pointer-events: none`, `aria-hidden`).
  *
- * The colours are the v2 tokens through [V2Ink] (`V2TokensPinTest` holds them to the CSS); the
- * shadow is the view's elevation over the disc's outline, the platform's approximation of
- * `--v2-shadow-panel` (`0 2px 6px rgb(0 0 0 / 0.2)`).
+ * The colours are the v2 tokens through [V2Ink] (`V2TokensPinTest` holds them to the CSS): the
+ * panel, the border, the text ink, and the accent the chrome computes for `--v2-accent` – what
+ * `--v2-control-accent` resolves to on the page surface the disc is drawn in – handed over with
+ * the theme (`Host.applyTheme` → [retint]). The shadow is the view's elevation over the disc's
+ * outline, the platform's approximation of `--v2-shadow-panel` (`0 2px 6px rgb(0 0 0 / 0.2)`).
+ *
+ * At the history's first page the armed disc widens into a pill with Chrome's caption – 'Close
+ * tab' / 'Close Zenium', as the chrome words it (`NavigationBubble.showCaption`; the
+ * `TextView` after the arrow in `navigation_bubble.xml`) – by the frame's caption extent: the
+ * pill's far end runs out from the disc on the chrome's spring, the arrow staying where it is,
+ * the text revealed inside as the pill opens over it ([captionGeometry]). The scale stays about
+ * the disc's centre. The text is the badge's type (v2 §9.19: 13/600) in the text ink, a
+ * hair-gap from the arrow and the pill's end padding beyond it (`CAPTION_*`).
  */
 class HistoryNavBubbleView(context: Context) : View(context) {
     private val density = resources.displayMetrics.density
@@ -154,11 +331,36 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, CAPTION_SP, resources.displayMetrics)
+        typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Typeface.create(Typeface.DEFAULT, CAPTION_WEIGHT, false)
+            else Typeface.DEFAULT_BOLD
+    }
     private val glyph = Path()
+    private val pill = RectF()
     private var edge = HistoryNavClassifier.Edge.LEFT
     private var sizePx = 0
+    /** The caption as last drawn: its text, its geometry (measured once per text, not per frame), and how far out it is. */
+    private var captionText: String? = null
+    private var captionAdvance = 0f
+    private var captionTextX = 0f
+    private var caption = 0f
     /** An opacity fade under reduced motion is running on the view's animator. */
     private var fading = false
+    /** The theme's tokens as last handed over ([retint]); the paints are mixed from them at the tint. */
+    private lateinit var tokens: V2Ink
+    /** The arrow's tint toward the accent while armed, stepped on the chrome's frames and the view's own ticks between them. */
+    private val tint = ArmedTint()
+    /** A tick is posted for the next animation frame. */
+    private var ticking = false
+    private val tick = Runnable {
+        ticking = false
+        if (visibility != VISIBLE || !tint.running) return@Runnable
+        tint.step(AnimationUtils.currentAnimationTimeMillis())
+        recolour()
+        invalidate()
+        scheduleTick()
+    }
 
     init {
         visibility = GONE
@@ -168,18 +370,39 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         elevation = SHADOW_ELEVATION_DP * density
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setOval(0, 0, view.width, view.height)
+                // The pill as far as it is out: a disc at rest, so the shadow follows the shape.
+                val radius = view.height / 2f
+                outline.setRoundRect(0, 0, pillWidth().roundToInt().coerceAtLeast(view.height), view.height, radius)
             }
         }
         retint(V2Ink(context, dark = false))
     }
 
-    /** The theme in force: the panel, the hairline and the text ink (the chrome's live pair). */
+    /** The theme in force: the panel, the hairline, the text ink and the accent (the chrome's live pair), mixed at the tint as it stands. */
     fun retint(tokens: V2Ink) {
-        fill.color = tokens.panel
-        border.color = tokens.border
-        ink.color = tokens.text
+        this.tokens = tokens
+        recolour()
         invalidate()
+    }
+
+    /**
+     * The paints at the tint as it stands ([bubbleInks]): the arrow and the caption in one ink, the
+     * text ink to the accent by the tween's value (a linear mix, as the DOM disc's `color-mix` of the
+     * same value is); the fill and the hairline the tokens'.
+     */
+    private fun recolour() {
+        val inks = bubbleInks(tokens.text, tokens.accent, tokens.panel, tokens.border, tint.value)
+        ink.color = inks.arrow
+        text.color = inks.caption
+        fill.color = inks.fill
+        border.color = inks.border
+    }
+
+    /** One redraw per animation frame while the tint has a way to go, whether or not the chrome sends frames meanwhile. */
+    private fun scheduleTick() {
+        if (ticking || !tint.running) return
+        ticking = true
+        postOnAnimation(tick)
     }
 
     /** One frame from the chrome; null takes the bubble down at once. */
@@ -188,20 +411,70 @@ class HistoryNavBubbleView(context: Context) : View(context) {
             hide()
             return
         }
+        var relayout = false
         if (frame.sizePx != sizePx || frame.edge != edge) {
             sizePx = frame.sizePx
             edge = frame.edge
+            // The scale is about the disc's centre whatever the pill's width.
+            pivotX = sizePx / 2f
+            pivotY = sizePx / 2f
             buildGlyph()
+            relayout = true
+        }
+        if (frame.captionText != captionText || relayout) {
+            captionText = frame.captionText
+            // The text is measured here, once per text (and per disc size), not on each drawn frame.
+            val geometry = captionText?.let { captionGeometry(sizePx, text.measureText(it), density) }
+            captionAdvance = geometry?.advance ?: 0f
+            captionTextX = geometry?.textX ?: 0f
+            relayout = true
+        }
+        if (relayout) {
             requestLayout()
             invalidateOutline()
             invalidate()
         }
+        if (frame.caption != caption) {
+            caption = frame.caption
+            // The pill's far end moved: the one redraw a drag asks for, on the caption's frames alone.
+            invalidateOutline()
+            invalidate()
+        }
+        // The tint's frame: the value as it stands at this clock, the target from `armed`; a
+        // redraw only while it moves, and the view's own ticks carry it between the chrome's frames.
+        val tintBefore = tint.value
+        tint.take(frame.armed, frame.reduced, AnimationUtils.currentAnimationTimeMillis())
+        if (tint.value != tintBefore) {
+            recolour()
+            invalidate()
+        }
+        scheduleTick()
         translationX = frame.leftPx
         translationY = frame.topPx
         scaleX = frame.scale
         scaleY = frame.scale
         setShown(frame.alpha, frame.reduced)
         if (visibility != VISIBLE) visibility = VISIBLE
+    }
+
+    /** The pill's width right now: the disc, plus the caption's advance as far as it is out. */
+    private fun pillWidth(): Float = sizePx + caption * captionAdvance
+
+    /** The caption as drawn, for the harness (`GesturesDemo`): its text, how far out it is, and the pill's width in px. */
+    val shownCaption: ShownCaption get() = ShownCaption(captionText, caption, pillWidth())
+
+    class ShownCaption(val text: String?, val extent: Float, val pillWidthPx: Float) {
+        override fun toString(): String = "caption=${text?.let { "'$it'" } ?: "none"} extent=${"%.2f".format(extent)} pill=${"%.0f".format(pillWidthPx)}px"
+    }
+
+    /** The tint as drawn, for the harness: where it stands (0 the ink, 1 the accent) and the arrow's and the caption's paint colours. */
+    val shownTint: ShownTint get() = ShownTint(tint.value, ink.color, text.color, fill.color, border.color)
+
+    class ShownTint(val value: Float, @ColorInt val arrow: Int, @ColorInt val caption: Int, @ColorInt val fill: Int, @ColorInt val border: Int) {
+        override fun toString(): String =
+            "tint=${"%.2f".format(value)} arrow=${hex(arrow)} caption=${hex(caption)} fill=${hex(fill)} border=${hex(border)}"
+
+        private fun hex(color: Int): String = "#%08X".format(color)
     }
 
     private fun hide() {
@@ -211,6 +484,13 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         scaleX = 1f
         scaleY = 1f
         visibility = GONE
+        // Down: the tint is reset for the next drag, its tick dropped.
+        removeCallbacks(tick)
+        ticking = false
+        if (tint.value != 0f || tint.running) {
+            tint.take(null, false, AnimationUtils.currentAnimationTimeMillis())
+            recolour()
+        }
     }
 
     /** The frame's opacity: set outright, save reduced motion's leave, the one 120 ms fade ([bubbleAlphaStep]). */
@@ -255,15 +535,29 @@ class HistoryNavBubbleView(context: Context) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(sizePx, sizePx)
+        // The view is as wide as the pill would be whole; what is drawn is as far as it is out.
+        setMeasuredDimension((sizePx + captionAdvance).roundToInt(), sizePx)
     }
 
     override fun onDraw(canvas: Canvas) {
-        val radius = width / 2f
-        canvas.drawCircle(radius, radius, radius, fill)
-        // The hairline sits inside the disc's box, as a `border` inside a `border-box` does.
-        canvas.drawCircle(radius, radius, radius - border.strokeWidth / 2f, border)
+        val radius = height / 2f
+        val pillWidth = pillWidth()
+        pill.set(0f, 0f, pillWidth, height.toFloat())
+        canvas.drawRoundRect(pill, radius, radius, fill)
+        // The hairline sits inside the pill's box, as a `border` inside a `border-box` does.
+        val inset = border.strokeWidth / 2f
+        pill.inset(inset, inset)
+        canvas.drawRoundRect(pill, radius - inset, radius - inset, border)
         canvas.drawPath(glyph, ink)
+        val caption = captionText
+        if (caption != null && this.caption > 0f) {
+            // Revealed as the pill opens over it: nothing of it past the pill's end padding.
+            canvas.save()
+            canvas.clipRect(0f, 0f, pillWidth - CAPTION_END_DP * density, height.toFloat())
+            val baseline = height / 2f - (text.ascent() + text.descent()) / 2f
+            canvas.drawText(caption, captionTextX, baseline, text)
+            canvas.restore()
+        }
     }
 
     /** The disc takes no touch: the finger under it is the page's drag (`pointer-events: none`). */
@@ -282,8 +576,32 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         private const val SHADOW_ELEVATION_DP = 3f
         /** `--zen-ease`: `cubic-bezier(0.2, 0.8, 0.2, 1)`. */
         private val EASE = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
+        /** The caption's type: the badge's 13/600 (v2 §9.19; `.zen-histnav-caption`). */
+        private const val CAPTION_SP = 13f
+        private const val CAPTION_WEIGHT = 600
+        /** The pill's end padding beyond the text (`.zen-histnav-caption`'s `padding-inline: 0 12px`). */
+        const val CAPTION_END_DP = 12f
+        /** The gap from the arrow's box to the text's start. */
+        const val CAPTION_GAP_DP = 6f
     }
 }
+
+/**
+ * Where the caption sits in the pill (device px): the text starts [textX] in – past the disc's
+ * centre, the arrow's half-box and the gap – and the pill runs [advance] beyond the disc when the
+ * caption is whole: the text and the end padding past its start.
+ */
+data class CaptionGeometry(val textX: Float, val advance: Float)
+
+/** The caption's geometry for a disc of `sizePx` and a text `textWidthPx` wide, at `density`. A top-level function the JVM holds without the view. */
+fun captionGeometry(sizePx: Int, textWidthPx: Float, density: Float): CaptionGeometry {
+    val textX = sizePx / 2f + (GLYPH_BOX_DP / 2f + HistoryNavBubbleView.CAPTION_GAP_DP) * density
+    val advance = textX + textWidthPx + HistoryNavBubbleView.CAPTION_END_DP * density - sizePx
+    return CaptionGeometry(textX, advance.coerceAtLeast(0f))
+}
+
+/** The arrow's box: v2 §11.9's 20 (`GLYPH_DP`), the caption measured from its far side. */
+private const val GLYPH_BOX_DP = 20f
 
 /** What a frame's opacity does to the disc ([bubbleAlphaStep]). */
 enum class BubbleAlphaStep {
