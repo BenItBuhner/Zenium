@@ -8764,7 +8764,8 @@
   /*
    * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml`): the
    * type's glyph in the page's own tile – 56 at radius 8 with the space's corner shape on the
-   * window's fill, the glyph 24 (§9.29's phone tile and its icon; the gate on #642 read a tinted
+   * card surface's `--v2-fill` (the card is a page surface: the tile takes its fill, not the
+   * window's), the glyph 24 (§9.29's phone tile and its icon; the gate on #642 read a tinted
    * 56 / 12 tile as a near-twin of the shortcuts' that isn't the same object) in the type's ink,
    * the success ink for the permissions already removed and the accent for the two asks – and,
    * 16 to its right, §9.23's title block: the title at 17/600 on 22 on two lines at most,

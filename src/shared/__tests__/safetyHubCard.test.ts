@@ -257,6 +257,60 @@ describe('pickSafetyHubCard: one impression of the stack', () => {
     expect(pick.memories.passwords?.impressions).toBe(1)
   })
 
+  it('a higher priority beats a running type: Safe Browsing’s run is dismissed the moment a login turns up compromised', () => {
+    // Safe Browsing two days into its run, three impressions in, when the passwords check finds one.
+    const before = running('safe-browsing', SB_OFF, T0, 3, T0 + DAY)
+    const now = T0 + 2 * DAY
+    const pick = pickSafetyHubCard({ ...SB_OFF, compromisedPasswords: 1 }, before, now)
+    expect(pick.type).toBe('passwords')
+    expect(pick.memories.passwords).toEqual(
+      memory({ activeSince: now, impressions: 1, lastShownAt: now, result: '1' })
+    )
+    expect(pick.memories['safe-browsing']).toEqual(
+      memory({ activeSince: null, impressions: 0, lastShownAt: T0 + DAY, runs: 1, result: 'off' })
+    )
+    expect(activeSafetyHubType(pick.memories)).toBe('passwords')
+  })
+
+  it('at one priority the running type stays ahead of a new one – Chrome’s tie-break, dormant while the three priorities differ', () => {
+    // Chrome's notification-review module shares Safe Browsing's MEDIUM
+    // (`menu_notification_service.cc:85-145`); Zenium has no fourth type, so the tie is staged by
+    // lowering Safe Browsing to revoked permissions' LOW for the length of this test.
+    const sbPriority = SAFETY_HUB_PRIORITY['safe-browsing']
+    SAFETY_HUB_PRIORITY['safe-browsing'] = SAFETY_HUB_PRIORITY['revoked-permissions']
+    try {
+      const inputs = { ...REVOKED, safeBrowsingEnabled: false }
+      const now = T0 + 2 * DAY
+      // Revoked permissions running when Safe Browsing's day is over: the run holds, Safe Browsing waits.
+      const holdRevoked = pickSafetyHubCard(
+        inputs,
+        {
+          ...running('revoked-permissions', REVOKED, T0, 2),
+          'safe-browsing': memory({ result: 'off', showAfter: T0 + DAY })
+        },
+        now
+      )
+      expect(holdRevoked.type).toBe('revoked-permissions')
+      expect(holdRevoked.memories['revoked-permissions']?.impressions).toBe(3)
+      expect(holdRevoked.memories['safe-browsing']?.activeSince).toBeNull()
+      // The other way round: Safe Browsing running when a permission is revoked – Safe Browsing holds.
+      const holdSb = pickSafetyHubCard(
+        inputs,
+        {
+          ...running('safe-browsing', SB_OFF, T0, 2),
+          'revoked-permissions': memory({ result: '' })
+        },
+        now
+      )
+      expect(holdSb.type).toBe('safe-browsing')
+      expect(holdSb.memories['safe-browsing']?.impressions).toBe(3)
+      expect(holdSb.memories['revoked-permissions']?.activeSince).toBeNull()
+    } finally {
+      SAFETY_HUB_PRIORITY['safe-browsing'] = sbPriority
+    }
+    expect(SAFETY_HUB_PRIORITY['safe-browsing']).toBe(1)
+  })
+
   it('a run ends after three days and five impressions and the next type steps up', () => {
     const start = pickSafetyHubCard({ ...REVOKED, compromisedPasswords: 1 }, {}, T0)
     expect(start.type).toBe('passwords')

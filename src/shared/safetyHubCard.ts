@@ -15,6 +15,9 @@
  * `safety_hub.menu_notifications` pref), one record per type; the renderer runs `pickSafetyHubCard`
  * once per impression of the stack and writes the record back through `newtab.setSafetyHubCardMemory`.
  * Nothing here reads a clock: `now` is an argument.
+ * Decision: `due` is persisted with the record where Chrome's `should_be_shown_after_interval_` is
+ * memory-only (`menu_notification.h:102`; absent from `ToDictValue`, `menu_notification.cc:34-79`):
+ * a warranted run survives a relaunch here instead of dying with the process – stricter on restart.
  */
 
 const DAY_MS = 24 * 3_600_000
