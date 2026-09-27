@@ -3685,6 +3685,16 @@ export interface ResourceSnapshot {
      */
     batteryPercent: number | null
     /**
+     * Whether the computer has a battery to save: true / false where the host can tell (Linux's
+     * sysfs lists a `Battery` supply of the computer's own; macOS's `pmset` lists an
+     * InternalBattery), null where it cannot (Windows without a native module; a host before its
+     * first reading; the phone and tablet shells, which never sample). Chrome hides its Battery
+     * Saver section on a computer without one (`performance_page_index.ts`'s
+     * `showBatterySettings_`, off `BatterySaverModeManager::DeviceHasBattery`); Settings hides
+     * the Energy Saver group on `false` alone – a host that cannot tell shows it.
+     */
+    hasBattery: boolean | null
+    /**
      * Energy Saver is on now – `Settings.energySaver` met by the power state – and the budgets
      * are tightened by `batteryFactor` (Chrome's `BatterySaverModeManager::IsBatterySaverActive`,
      * what its toolbar leaf shows).

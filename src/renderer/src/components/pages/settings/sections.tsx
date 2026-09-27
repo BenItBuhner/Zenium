@@ -2078,7 +2078,17 @@ function siteHost(raw: string): string {
  *   URL cut to its host, the phone sheet's rule) and Chrome's Add current site.
  * - Energy Saver: `energySaver` as switch + Chrome's two conditions as a radio, and its effect
  *   – the budget factor the governor applies while the mode is on (`resources.batteryFactor`,
- *   the row moved here from Resources › Budgets; one setting, one place).
+ *   the row moved here from Resources › Budgets; one setting, one place). The group goes on a
+ *   computer without a battery, as Chrome's Battery Saver section does (pr-584 L5):
+ *   `performance_page_index.ts` hides `<settings-battery-page>` on `showBatterySettings_`, the
+ *   handler's `getDeviceHasBattery` / `device-has-battery-changed` off
+ *   `BatterySaverModeManager::DeviceHasBattery` – a `BatteryStateSampler` count above zero.
+ *   Zenium's host reads it itself (`ResourceSnapshot.system.hasBattery`: Linux's sysfs, macOS's
+ *   pmset); the group is hidden on `false` alone and stays where the host cannot tell (null –
+ *   Windows without a native module, the tablet). Chrome's `has_battery_` starts false and is
+ *   never set on Linux (no `BatteryLevelProvider` there: `_has_battery_provider_impl = is_win ||
+ *   is_mac`), so Chrome on Linux never shows the section; Zenium shows it on a Linux laptop. The
+ *   mode's rule and the leaf's are unchanged: a computer never on battery never turns it on.
  */
 function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
   const s = state.settings
@@ -2110,6 +2120,59 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
     set({ unloadExcludedDomains: [...s.unloadExcludedDomains, host] })
   }
   const saverOff = s.energySaver === 'off'
+  const energySaver: RowGroup = {
+    id: 'energy-saver',
+    heading: 'Energy Saver',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'energy-saver',
+        label: 'Energy Saver',
+        description:
+          'Zenium conserves battery power by shrinking the resource governor’s memory, CPU and GPU budgets while it is on.',
+        keywords: energyKeywords,
+        checked: !saverOff,
+        onChange: (v) => set({ energySaver: v ? 'on-battery' : 'off' })
+      },
+      {
+        ...choice<EnergySaverMode>({
+          id: 'energy-saver-mode',
+          label: 'Energy Saver options',
+          keywords: energyKeywords,
+          // Off, the row shows Chrome's default condition unchecked-in-waiting: the switch
+          // turning on lands on `on-battery`, Zenium's default, so that is the one shown.
+          value: saverOff ? 'on-battery' : s.energySaver,
+          disabled: saverOff,
+          options: energySaverOptions(state.platform, snap.system.batteryPercent),
+          onChange: (v) => set({ energySaver: v })
+        }),
+        radios: true
+      },
+      choice({
+        id: 'energy-saver-factor',
+        label: 'While Energy Saver is on, shrink the budgets to',
+        description: snap.system.energySaver
+          ? 'Energy Saver is on now.'
+          : snap.system.onBattery
+            ? `On battery${snap.system.batteryPercent !== null ? ` at ${snap.system.batteryPercent}%` : ''} – Energy Saver is off.`
+            : undefined,
+        keywords: [...energyKeywords, 'shrink', 'factor'],
+        value: String(Math.round(r.batteryFactor * 100)),
+        disabled: saverOff,
+        options: [
+          { value: '100', label: '100% (no change)' },
+          { value: '85', label: '85%' },
+          { value: '70', label: '70%' },
+          { value: '50', label: '50%' },
+          { value: '25', label: '25%' }
+        ],
+        onChange: (v) => set({ resources: { ...r, batteryFactor: Number(v) / 100 } })
+      })
+    ]
+  }
+  // A computer the host knows to have no battery: nothing to save, no group (Chrome's
+  // `showBatterySettings_`); unknown shows.
+  const noBattery = snap.system.hasBattery === false
   return [
     {
       id: 'memory-saver',
@@ -2222,56 +2285,7 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
         }
       ]
     },
-    {
-      id: 'energy-saver',
-      heading: 'Energy Saver',
-      rows: [
-        {
-          kind: 'switch',
-          id: 'energy-saver',
-          label: 'Energy Saver',
-          description:
-            'Zenium conserves battery power by shrinking the resource governor’s memory, CPU and GPU budgets while it is on.',
-          keywords: energyKeywords,
-          checked: !saverOff,
-          onChange: (v) => set({ energySaver: v ? 'on-battery' : 'off' })
-        },
-        {
-          ...choice<EnergySaverMode>({
-            id: 'energy-saver-mode',
-            label: 'Energy Saver options',
-            keywords: energyKeywords,
-            // Off, the row shows Chrome's default condition unchecked-in-waiting: the switch
-            // turning on lands on `on-battery`, Zenium's default, so that is the one shown.
-            value: saverOff ? 'on-battery' : s.energySaver,
-            disabled: saverOff,
-            options: energySaverOptions(state.platform, snap.system.batteryPercent),
-            onChange: (v) => set({ energySaver: v })
-          }),
-          radios: true
-        },
-        choice({
-          id: 'energy-saver-factor',
-          label: 'While Energy Saver is on, shrink the budgets to',
-          description: snap.system.energySaver
-            ? 'Energy Saver is on now.'
-            : snap.system.onBattery
-              ? `On battery${snap.system.batteryPercent !== null ? ` at ${snap.system.batteryPercent}%` : ''} – Energy Saver is off.`
-              : undefined,
-          keywords: [...energyKeywords, 'shrink', 'factor'],
-          value: String(Math.round(r.batteryFactor * 100)),
-          disabled: saverOff,
-          options: [
-            { value: '100', label: '100% (no change)' },
-            { value: '85', label: '85%' },
-            { value: '70', label: '70%' },
-            { value: '50', label: '50%' },
-            { value: '25', label: '25%' }
-          ],
-          onChange: (v) => set({ resources: { ...r, batteryFactor: Number(v) / 100 } })
-        })
-      ]
-    }
+    ...(noBattery ? [] : [energySaver])
   ]
 }
 

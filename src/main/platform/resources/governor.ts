@@ -19,7 +19,7 @@ import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
 import { ConcurrencyClamp } from './clamp'
 import { hostMetrics } from './hostMetrics'
-import { BatteryLevel } from './battery'
+import { BatteryLevel, forceDeviceHasBatteryRequested } from './battery'
 import { energySaverActive } from '../../../core/resources/energySaver'
 import { LoadScheduler } from '../../../core/resources/scheduler'
 import {
@@ -86,8 +86,14 @@ export class ResourceGovernor implements Governor {
   private lastPressureToastAt = 0
   private readonly startupProfile = appliedStartupProfile()
   private readonly cleanups: Array<() => void> = []
-  /** The charge where the host can read it (`battery.ts`); Energy Saver's `low-battery` mode reads it. */
-  private readonly battery = new BatteryLevel()
+  /**
+   * The battery as the host can read it (`battery.ts`): its charge for Energy Saver's
+   * `low-battery` mode, and whether there is one for the Settings page's Energy Saver group.
+   * Chrome's `--force-device-has-battery` stands a battery in on a machine without one (the drives).
+   */
+  private readonly battery = new BatteryLevel(process.platform, {
+    forceHasBattery: forceDeviceHasBatteryRequested(process.argv)
+  })
   /**
    * Energy Saver's "Turn off now" (the toolbar leaf's bubble; Chrome's
    * `SetTemporaryBatterySaverDisabledForSession`): the mode stands but is not on until the
@@ -97,6 +103,7 @@ export class ResourceGovernor implements Governor {
   private energySaverDisabledForSession = false
   private lastEnergySaverMode: EnergySaverMode | null = null
   private batteryPercent: number | null = null
+  private hasBattery: boolean | null = null
 
   /** Windows whose minimise / restore events already feed the governor. */
   private readonly watched = new WeakSet<ZenWindow>()
@@ -483,6 +490,7 @@ export class ResourceGovernor implements Governor {
     }
     const onBattery = safe(() => powerMonitor.isOnBatteryPower(), false)
     this.batteryPercent = safe(() => this.battery.read(now), null)
+    this.hasBattery = safe(() => this.battery.hasBattery(), null)
     return {
       now,
       settings: this.settings,
@@ -753,6 +761,7 @@ export class ResourceGovernor implements Governor {
         cpuCount: input.system.cpuCount,
         onBattery: input.system.onBattery,
         batteryPercent: this.batteryPercent,
+        hasBattery: this.hasBattery,
         energySaver: input.system.energySaver,
         idle: result.idle
       },

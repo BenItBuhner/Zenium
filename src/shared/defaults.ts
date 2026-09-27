@@ -211,6 +211,7 @@ export function emptyResourceSnapshot(): ResourceSnapshot {
       cpuCount: 0,
       onBattery: false,
       batteryPercent: null,
+      hasBattery: null,
       energySaver: false,
       idle: false
     },

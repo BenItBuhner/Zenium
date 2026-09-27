@@ -6041,6 +6041,34 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(off.value).toBe('on-battery')
   })
 
+  it('hides the Energy Saver group on a computer the host knows to have no battery (Chrome’s showBatterySettings_) and shows it where the host cannot tell', () => {
+    const snapshot = (hasBattery: boolean | null): Partial<UIState> => ({
+      resources: {
+        ...emptyResourceSnapshot(),
+        system: { ...emptyResourceSnapshot().system, hasBattery }
+      }
+    })
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const none = perf(DESKTOP_STATE({ energySaver: 'on-battery' }, snapshot(false)), layout)
+      expect(none.model.groups.map((g) => g.id)).toEqual([
+        'memory-saver',
+        'keep-active',
+        'keep-active-add'
+      ])
+      expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
+      // The mode itself is left as it was: nothing is written for a group not drawn.
+      expect(none.patches).toEqual([])
+      // A host that cannot tell (Windows, the tablet, a host before its first reading) shows it,
+      // as one that knows there is a battery does.
+      for (const hasBattery of [null, true]) {
+        const { model } = perf(DESKTOP_STATE({}, snapshot(hasBattery)), layout)
+        expect(model.groups.at(-1)?.id).toBe('energy-saver')
+        expect(findRow(model.groups, 'energy-saver-mode')).not.toBeNull()
+      }
+    }
+    expect(emptyResourceSnapshot().system.hasBattery).toBeNull()
+  })
+
   it('says under the threshold row when the host cannot read the battery level – Windows without a native module, a computer with no battery', () => {
     const snapshot = (batteryPercent: number | null): Partial<UIState> => ({
       resources: {
