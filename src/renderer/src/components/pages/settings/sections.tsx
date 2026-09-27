@@ -520,7 +520,7 @@ function lookSection({
                 kind: 'action',
                 id: 'theme',
                 label: 'Theme',
-                description: `${themeLabel} · ${spaceLabel(activeSpace)} space`,
+                description: `${themeLabel} · ${spaceLabel(activeSpace)} Space`,
                 keywords: ['theme', 'accent', 'colour', 'color', 'gradient', 'preset', 'reset'],
                 layouts: ['desktop', 'tablet'],
                 button: themed ? 'Reset to default' : 'Change…',
@@ -545,7 +545,7 @@ function lookSection({
                 id: 'use-system-accent',
                 label: 'Use system accent colour',
                 description: themed
-                  ? 'Controls take the colour your system uses while the space has the default look.'
+                  ? 'Controls take the colour your system uses while the Space has the default look.'
                   : 'Controls take the colour your system uses.',
                 keywords: ['accent', 'system colour', 'system color', 'follow device colours'],
                 layouts: ['desktop'],
@@ -1610,7 +1610,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
                 id: 'newtab-image-colour',
                 label: "Use the picture's colour",
                 description:
-                  'This space takes the colour your picture is mostly of, and follows a new one.',
+                  'This Space takes the colour your picture is mostly of, and follows a new one.',
                 keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
                 checked: activeSpace?.theme?.fromImage === true,
                 disabled: !image || !accent,
@@ -1642,7 +1642,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'newtab-reset-background',
           label: 'Reset background to default',
-          description: 'The space gradient; an image kept on this device is removed.',
+          description: 'The Space gradient; an image kept on this device is removed.',
           keywords: ['restore', 'theme', 'wallpaper'],
           button: 'Reset',
           disabled: background === DEFAULT_NEW_TAB_SETTINGS.background && !image,
@@ -2479,6 +2479,29 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
             if (domain && !s.unloadExcludedDomains.includes(domain))
               set({ unloadExcludedDomains: [...s.unloadExcludedDomains, domain] })
           }
+        }
+      ]
+    },
+    {
+      // The tab hover card's memory line (settings-29, W8-10; Chrome's "Show tab memory usage",
+      // `browser.hovercard.memory_usage_enabled` – off by default, Chrome 152's effective default
+      // after `MigrateHoverCardMemoryPref`). Chrome seats the switch in
+      // Appearance under "Tab hover preview card" and its Performance page only links there;
+      // the matrix seats the row here, with Chrome's words under Chrome's heading in §9.20's
+      // name for the card. The desktop's alone, as the card is (the tablet chrome mounts none).
+      id: 'hover-card',
+      heading: 'Tab hover card',
+      layouts: ['desktop'],
+      rows: [
+        {
+          kind: 'switch',
+          id: 'hover-card-memory',
+          label: 'Show tab memory usage',
+          description:
+            'The card that appears when you rest the pointer on a tab says how much memory its page is using.',
+          keywords: ['hover card', 'tab hover', 'preview card', 'memory usage', 'memory'],
+          checked: s.hoverCardMemoryUsage,
+          onChange: (v) => set({ hoverCardMemoryUsage: v })
         }
       ]
     },

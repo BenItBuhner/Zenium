@@ -27,7 +27,7 @@ const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: 
   spaces: {
     icon: Layers,
     title: 'Spaces',
-    text: 'Separate tabs by project. Each space has its own colours, pinned tabs and container.'
+    text: 'Separate tabs by project. Each Space has its own colours, pinned tabs and container.'
   },
   compact: {
     icon: PanelLeftClose,
@@ -52,7 +52,7 @@ const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: 
   sync: {
     icon: RefreshCw,
     title: 'Sync',
-    text: 'Keep spaces, folders and pinned tabs identical on every computer, end-to-end encrypted.'
+    text: 'Keep Spaces, folders and pinned tabs identical on every computer, end-to-end encrypted.'
   }
 }
 
@@ -249,7 +249,7 @@ function DesktopOnboarding({
               ))}
             </div>
             <p className="text-[12px] text-[var(--zen-muted)]">
-              Every space can have its own gradient — change it anytime from the palette button in
+              Every Space can have its own gradient — change it anytime from the palette button in
               the sidebar.
             </p>
           </div>
@@ -411,7 +411,7 @@ function DesktopOnboarding({
             <h2 className="text-xl font-semibold">Sync your Spaces across devices</h2>
             <p className="text-[13px] leading-relaxed text-[var(--zen-muted)]">
               Point Zenium at a folder your cloud drive or Syncthing already keeps in sync, choose a
-              passphrase, and your spaces, folders, pinned tabs, Essentials, containers and settings
+              passphrase, and your Spaces, folders, pinned tabs, Essentials, containers and settings
               follow you to every computer. Everything is encrypted before it leaves this device.
             </p>
             <div className="grid grid-cols-2 gap-2">

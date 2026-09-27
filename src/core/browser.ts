@@ -2503,7 +2503,7 @@ export class Browser {
       const ok = await this.platform.dialogs.confirm(
         {
           message: `Delete “${space.name}”?`,
-          detail: `${count} tab${count === 1 ? '' : 's'} in this space will be closed. Essentials are kept.`,
+          detail: `${count} tab${count === 1 ? '' : 's'} in this Space will be closed. Essentials are kept.`,
           okLabel: 'Delete Space',
           cancelLabel: 'Cancel',
           danger: true
@@ -4503,6 +4503,9 @@ export class Browser {
     s.splitEdgeZones = s.splitEdgeZones !== false
     s.useSystemAccent = s.useSystemAccent === true
     s.autoRevokeUnusedPermissions = s.autoRevokeUnusedPermissions !== false
+    // On only by the switch (settings-29): Chrome 152's effective default is off, after
+    // `MigrateHoverCardMemoryPref`; anything but `true` reads off, as `BrowserState.load` reads it.
+    s.hoverCardMemoryUsage = s.hoverCardMemoryUsage === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false

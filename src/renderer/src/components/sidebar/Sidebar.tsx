@@ -361,8 +361,8 @@ function LocalWindowHeader({ state, compact }: { state: UIState; compact: boolea
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          aria-label="Move these tabs to a space…"
-          data-tooltip="Move these tabs to a space…"
+          aria-label="Move these tabs to a Space…"
+          data-tooltip="Move these tabs to a Space…"
           disabled={!canMove}
           onClick={() => setOpen(!open)}
         >
@@ -402,7 +402,7 @@ function MoveTargets({ onPick }: { onPick: (spaceId: string) => void }): JSX.Ele
     }
   }, [])
   if (!spaces.length)
-    return <div className="px-2 py-2 text-[12px] text-[var(--zen-muted)]">No spaces</div>
+    return <div className="px-2 py-2 text-[12px] text-[var(--zen-muted)]">No Spaces</div>
   return (
     <>
       {spaces.map((s) => (
