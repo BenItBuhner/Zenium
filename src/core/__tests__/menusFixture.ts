@@ -318,6 +318,10 @@ export function harness(
               return Promise.resolve(opts.pageScript ? opts.pageScript(code) : true)
             }
           : undefined,
+        // The desktop's view answers for its frame at once (the reader cover's paint handshake,
+        // `TabManager.afterFrame`); the phone's has no word to give. Not a recorded call: the
+        // menus never ask it.
+        frameDrawn: capabilities.windows ? () => Promise.resolve(0) : undefined,
         ...(opts.view ?? {})
       } as unknown as TabView,
       {

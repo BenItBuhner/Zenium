@@ -169,18 +169,31 @@ export interface UncoverOptions {
   /** Lay the window out again so the page is placed and shown where the cover stood (default). */
   relayout?: boolean
   /**
-   * Destroy the cover at once rather than after the page beneath has had a frame to paint (the
-   * page is going anyway: a discard, a close, the window's release).
+   * Destroy the cover at once rather than once the page beneath reports a frame drawn (the page
+   * is going anyway: a discard, a close, the window's release).
    */
   immediate?: boolean
 }
 
 /**
- * How long the reader's cover stays over the page once the page has been asked back – and how
- * long the page stays under a cover that has just loaded – so that the swap falls on a frame
- * where the one in front has painted: neither the window's ground nor a stale picture shows.
+ * The failure ceiling of the cover's paint handshake (design language v2 §11). The swap between
+ * the reader's cover and the page beneath falls on the word of the one coming to the front that
+ * it has drawn a frame (`TabView.frameDrawn`: a double `requestAnimationFrame` in its document)
+ * – the page hides on the cover's word at the entry, the cover goes on the page's at the exit –
+ * and never on a clock: a settle time that wins by twenty milliseconds on one machine loses on
+ * the next (the 80 ms the swap first rested on stood 23–29 ms clear of a 53–58 ms first paint
+ * under software rendering, a margin and not a property). This clock stands only for a document
+ * that never reports – a view hidden before it could draw, a hung renderer, a host with no way
+ * to ask – so that the swap still happens; set well past any first paint, since a ceiling inside
+ * the paint's own range is the same race under another name. 500 ms: nine times the first paint
+ * measured, four times the slowest one argued for (120 ms), and Chromium's own figure for the
+ * same judgement – paint holding gives a new document 500 ms of frames for its first contentful
+ * paint before committing without one; short of the boot holds (`READY_TO_SHOW_FALLBACK_MS`
+ * 2500, `EXTENSION_LAYER_HOLD_MS` 2000), which guard a window with nothing at all to show and
+ * would here leave a stale picture or the ground standing for two seconds on a swap that takes
+ * a tenth of one.
  */
-export const COVER_SETTLE_MS = 80
+export const COVER_REPORT_CEILING_MS = 500
 
 /**
  * Owns the live page for every loaded tab and implements Zen's tab behaviours on top of the pure
@@ -718,8 +731,9 @@ export class TabManager {
    * (the `zen://reader` document), laid out where the page stands while the page stays alive
    * and unmoved beneath it – Chrome's immersive reading mode is the same overlay over the tab's
    * contents. The row shows the reader (its address; its title as the document reports it) and
-   * what it showed before is kept for `uncover`. The page is hidden to the engine once the cover
-   * has painted (`onCoverReady`), so a window resized under the cover never shows its stale
+   * what it showed before is kept for `uncover`. The page is hidden to the engine on the cover's
+   * word that its first frame is drawn (`onCoverReady`; the ceiling `COVER_REPORT_CEILING_MS`
+   * for a cover that never says so), so a window resized under the cover never shows its stale
    * edges. False – and the reader then loads as a navigation of the tab – when the host has no
    * cover (Android: one page per tab), the tab has no live page, or a cover stands already.
    */
@@ -770,9 +784,10 @@ export class TabManager {
    * Take the reader's cover down: the page beneath, never navigated, shows again where it stood
    * – its scroll, its form state, its media and its history untouched; no load and no history
    * entry (Chrome's `CloseUI`). The row's fields go back to the page's (`restore`), the window
-   * lays the page out again (`relayout`), and the cover is destroyed once the page has had a
-   * frame to paint (`COVER_SETTLE_MS`; at once with `immediate`), the keyboard going to the page
-   * as Chrome refocuses its contents. False when no cover stands.
+   * lays the page out again (`relayout`: the page shown beneath the cover still in front), and
+   * the cover is destroyed on the page's word that it has drawn a frame again (`afterFrame`; the
+   * ceiling `COVER_REPORT_CEILING_MS` for a page that never says so; at once with `immediate`),
+   * the keyboard going to the page as Chrome refocuses its contents. False when no cover stands.
    */
   uncover(tabId: string, opts: UncoverOptions = {}): boolean {
     const cover = this.covers.get(tabId)
@@ -827,10 +842,32 @@ export class TabManager {
         page.focus()
     }
     if (win && opts.relayout !== false) win.relayout()
+    // The page is shown by the relayout; the cover stands over it until the page has a frame.
     if (opts.immediate || !page) finish()
-    else setTimeout(finish, COVER_SETTLE_MS)
+    else this.afterFrame(page, finish)
     this.browser.state.commit()
     return true
+  }
+
+  /**
+   * The paint handshake (design language v2 §11): run `then` once `view` reports a frame drawn
+   * with what it holds now – its word through `TabView.frameDrawn` – or at the failure ceiling
+   * (`COVER_REPORT_CEILING_MS`) for a document that never reports (a view hidden before it
+   * could draw, a hung renderer, a host without the ask), whichever comes first and once only.
+   * A rejection (the page gone) is no word either: the ceiling stands, and `then` finds what it
+   * checks for gone. The caller checks the world again in `then` – the cover may have been taken
+   * down or the reader entered again meanwhile.
+   */
+  private afterFrame(view: TabView, then: () => void): void {
+    let done = false
+    const once = (): void => {
+      if (done) return
+      done = true
+      clearTimeout(ceiling)
+      then()
+    }
+    const ceiling = setTimeout(once, COVER_REPORT_CEILING_MS)
+    view.frameDrawn?.().then(once, () => undefined)
   }
 
   /**
@@ -927,9 +964,12 @@ export class TabManager {
 
   /**
    * The reader document is ready: it takes the page's flags and the keyboard (the tab in front
-   * of a focused window), read aloud resumes on it where a reading was in flight, and – a frame
-   * later, the cover painted – the page beneath is hidden to the engine, as a background tab's
-   * is, so that nothing of it shows should the window be resized under the cover.
+   * of a focused window), read aloud resumes on it where a reading was in flight, and – on the
+   * cover's word that its first frame is drawn (`afterFrame`), the article standing in front of
+   * the page – the page beneath is hidden to the engine, as a background tab's is, so that
+   * nothing of it shows should the window be resized under the cover. The page hides on that
+   * word and nothing else: hidden before the cover has a frame, the ground would show between
+   * the two (§11: "a frame of ground between the two is the defect").
    */
   private onCoverReady(tabId: string, cover: TabView): void {
     this.sendPageFlags(tabId)
@@ -943,13 +983,13 @@ export class TabManager {
       this.visibleTabIds(win).includes(tabId)
     )
       cover.focus()
-    setTimeout(() => {
+    this.afterFrame(cover, () => {
       if (this.covers.get(tabId) !== cover || cover.isDestroyed()) return
       // A page hidden already (a tab switched away from under the cover, a page an agent holds
       // on the stage) is left as it is: a second hide would move a staged page again.
       const page = this.pageView(tabId)
       if (page?.isVisible()) page.setVisible(false)
-    }, COVER_SETTLE_MS)
+    })
   }
 
   private eventsFor(tabId: string): TabViewEvents {

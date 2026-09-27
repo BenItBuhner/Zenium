@@ -88,7 +88,7 @@ import { IMAGE_THUMBNAIL_WORLD_ID } from '../../shared/privateWorld'
 import { PrivateWorldRelay } from './privateWorld'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
-import { awaitFirstPaint, hasPainted } from './firstPaint'
+import { awaitFirstPaint, frameDrawn, hasPainted } from './firstPaint'
 import {
   emulatedColorScheme,
   emulatedMediaParams,
@@ -2321,6 +2321,15 @@ export class ElectronTabView implements TabView {
    */
   hasPainted(): Promise<boolean> {
     return hasPainted(this.wc)
+  }
+
+  /**
+   * The document's word that it has drawn a frame with what it holds now (`TabView.frameDrawn`;
+   * `firstPaint.ts`): a double `requestAnimationFrame` through the main frame, never resolving
+   * for a view that draws no frame – the asker (`TabManager.afterFrame`) holds the ceiling.
+   */
+  frameDrawn(): Promise<number> {
+    return frameDrawn(this.wc)
   }
 
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */

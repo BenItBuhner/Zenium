@@ -919,6 +919,20 @@ export interface TabView {
   isVisible(): boolean
   bringToFront(): void
   /**
+   * The document's word that it has drawn a frame with what it holds now (design language v2
+   * §11: a stand-in over a live page comes down, and a page beneath a cover goes, on the word
+   * of the one in front that its first frame is drawn – never on a clock). Resolves once a
+   * frame of the current document has been produced – on Electron a double
+   * `requestAnimationFrame` in the document, the second callback running after the frame the
+   * first one preceded was committed to the compositor – with the document's own clock
+   * (`performance.now()`) as its value, for a log. Never resolves for a document that draws no
+   * frame: a hidden view (its animation frames are paused), a hung renderer, a page that stops
+   * its own animation frames – the asker holds a failure ceiling (`COVER_REPORT_CEILING_MS`)
+   * and treats a rejection (the page gone) as no word either. Hosts with no way to ask leave it
+   * out; the swap then falls on the ceiling alone.
+   */
+  frameDrawn?(): Promise<number>
+  /**
    * Chrome messages (toasts, banners) cover these strips of the view's edges. Hosts whose pages
    * are layered above the chrome clip the page out of the strips – animating the clip so it
    * moves with the message – and hand touches inside them to the chrome. Optional: on Electron

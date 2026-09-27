@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
 import type {
@@ -11,7 +11,7 @@ import type {
   WindowHost
 } from '../platform'
 import { READER_URL_PREFIX } from '../reader'
-import { COVER_SETTLE_MS } from '../tabs'
+import { COVER_REPORT_CEILING_MS } from '../tabs'
 import type { ZenWindow } from '../window'
 import { closeBootTabs } from './bootTab'
 
@@ -19,7 +19,10 @@ import { closeBootTabs } from './bootTab'
  * The reader's exit as Chrome's immersive reading mode has it (reader-30, W8-5): the
  * `zen://reader` document is a cover over the tab's own page, which stays alive beneath it, so
  * leaving the reader is no navigation at all – the page's scroll, form state and history stand
- * as they were, no load, no history entry.
+ * as they were, no load, no history entry. The swap between the two falls on the paint
+ * handshake (design language v2 §11): the page hides on the cover's word that its first frame
+ * is drawn, the cover goes on the page's, and a clock stands only as the failure ceiling for a
+ * document that never reports (`COVER_REPORT_CEILING_MS`).
  */
 
 function memoryIo(files: Record<string, string> = {}): StoreIO {
@@ -50,20 +53,33 @@ interface FakeView {
   url: string
   visible: boolean
   destroyed: boolean
+  /**
+   * Every ask for the document's word that a frame is drawn (`frameDrawn`), unanswered: a test
+   * answers one (`drawn`) or lets it stand (a document that never reports).
+   */
+  frames: Array<{ resolve: (t: number) => void; reject: (reason: Error) => void }>
 }
 
-function fakeView(url: string, events: TabViewEvents): FakeView {
+function fakeView(url: string, events: TabViewEvents, reports = true): FakeView {
   const record: FakeView = {
     view: stub<TabView>(),
     events,
     calls: [],
     url,
     visible: false,
-    destroyed: false
+    destroyed: false,
+    frames: []
   }
   const log = (name: string, ...args: unknown[]): void =>
     void record.calls.push(`${name}(${args.map((a) => JSON.stringify(a)).join(',')})`)
   record.view = stub<TabView>({
+    // A host with no way to ask leaves `frameDrawn` out (the stub would otherwise answer for it).
+    frameDrawn: reports
+      ? () => {
+          log('frameDrawn')
+          return new Promise<number>((resolve, reject) => record.frames.push({ resolve, reject }))
+        }
+      : undefined,
     loadURL: (next) => {
       log('loadURL', next)
       record.url = next
@@ -115,8 +131,12 @@ interface Host {
   covers: Map<string, FakeView>
 }
 
-/** A desktop host with a cover to give (`withCover`), or one page per tab id like the phone's. */
-function fakeHost(withCover: boolean): Host {
+/**
+ * A desktop host with a cover to give (`withCover`), or one page per tab id like the phone's;
+ * its views answer for their frames (`frameDrawn`) unless `reports` is off – a host with no way
+ * to ask, whose swaps fall on the ceiling alone.
+ */
+function fakeHost(withCover: boolean, reports = true): Host {
   const pages = new Map<string, FakeView>()
   const covers = new Map<string, FakeView>()
   const windowHost = (): WindowHost =>
@@ -136,13 +156,13 @@ function fakeHost(withCover: boolean): Host {
     windows: { create: () => windowHost() },
     views: stub<TabViewHost>({
       createView: (tab, events) => {
-        const page = fakeView(tab.url, events)
+        const page = fakeView(tab.url, events, reports)
         pages.set(tab.id, page)
         return page.view
       },
       createCover: withCover
         ? (tab, events) => {
-            const cover = fakeView('', events)
+            const cover = fakeView('', events, reports)
             covers.set(tab.id, cover)
             return cover.view
           }
@@ -173,8 +193,8 @@ interface Scene {
 }
 
 /** A browser with one web tab shown at `RECT`, its page committed and visible. */
-function scene(withCover = true): Scene {
-  const host = fakeHost(withCover)
+function scene(withCover = true, reports = true): Scene {
+  const host = fakeHost(withCover, reports)
   const browser = new Browser(host.platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
@@ -203,8 +223,24 @@ function enterReader(s: Scene): FakeView {
   return cover
 }
 
-const settle = (): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, COVER_SETTLE_MS + 20))
+/** Let the promise reactions of a frame's word land (`afterFrame`'s `then`). */
+const landed = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+/**
+ * The document's word that its frame is drawn: answer the oldest ask on `v` – the cover's at
+ * the entry, the page's at the exit – with its clock, and let the word land.
+ */
+async function drawn(v: FakeView, at = 16.7): Promise<void> {
+  const ask = v.frames.shift()
+  if (!ask) throw new Error(`${v.url || 'the cover'} was not asked for its frame`)
+  ask.resolve(at)
+  await landed()
+}
+
+afterEach(() => vi.useRealTimers())
 
 describe('the reader as a cover over the page (reader-30)', () => {
   it('enters over the page: the reader document is a second view at the tab’s place, the page beneath is never navigated', async () => {
@@ -223,12 +259,15 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.browser.tabs.view(s.tabId)).toBe(cover.view)
     expect(s.browser.tabs.pageView(s.tabId)).toBe(s.page.view)
     expect(s.browser.tabs.viewsOwnedBy(s.win).get(s.tabId)).toBe(cover.view)
-    // The cover was laid out where the page stands and shown; the page hides a frame later,
-    // once the cover has painted, so that nothing of it shows under a resize.
+    // The cover was laid out where the page stands and shown; at its dom-ready it is asked for
+    // its first frame, and the page hides on that word, so that nothing of it shows under a
+    // resize – and nothing of the ground shows between the two.
     expect(cover.calls).toContain(`setBounds(${JSON.stringify(RECT)})`)
     expect(cover.calls).toContain('setVisible(true)')
+    expect(cover.calls).toContain('frameDrawn()')
+    expect(s.page.calls).not.toContain('frameDrawn()')
     expect(s.page.visible).toBe(true)
-    await settle()
+    await drawn(cover)
     expect(s.page.visible).toBe(false)
     // The reader's own navigation is no history: the page's visit is the only one.
     expect(s.browser.history.recent(10).map((e) => e.url)).toEqual([PAGE_URL])
@@ -243,7 +282,7 @@ describe('the reader as a cover over the page (reader-30)', () => {
     tab.favicon = 'https://example.com/icon.png'
     tab.readerable = true
     const cover = enterReader(s)
-    await settle()
+    await drawn(cover)
     s.page.calls.length = 0
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
@@ -257,9 +296,13 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.page.calls).toContain(`setBounds(${JSON.stringify(RECT)})`)
     expect(s.browser.tabs.view(s.tabId)).toBe(s.page.view)
     expect(s.browser.tabs.viewsOwnedBy(s.win).get(s.tabId)).toBe(s.page.view)
-    // The cover stands a frame more over the page's first paint, then goes; the keyboard to the page.
+    // The page, shown, is asked for its frame; the cover stands over it until that word comes,
+    // then goes, the keyboard to the page.
+    expect(s.page.calls.indexOf('frameDrawn()')).toBeGreaterThan(
+      s.page.calls.indexOf('setVisible(true)')
+    )
     expect(cover.destroyed).toBe(false)
-    await settle()
+    await drawn(s.page)
     expect(cover.destroyed).toBe(true)
     expect(s.page.calls).toContain('focus()')
     expect(s.browser.history.recent(10).map((e) => e.url)).toEqual([PAGE_URL])
@@ -284,16 +327,17 @@ describe('the reader as a cover over the page (reader-30)', () => {
   it('a navigation committed beneath the cover closes the reader on the page’s new address (Chrome’s PrimaryPageChanged)', async () => {
     const s = scene()
     const cover = enterReader(s)
-    await settle()
+    await drawn(cover)
     expect(s.page.visible).toBe(false)
     s.page.url = 'https://example.com/next'
     s.page.events.onNavigated('https://example.com/next', false)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
     expect(s.browser.tabs.tab(s.tabId)!.url).toBe('https://example.com/next')
     expect(s.browser.tabs.view(s.tabId)).toBe(s.page.view)
-    // The page shows at once; the cover goes once the page has had its frame.
+    // The page shows at once; the cover goes on the page's word that it has its frame.
     expect(s.page.visible).toBe(true)
-    await settle()
+    expect(cover.destroyed).toBe(false)
+    await drawn(s.page)
     expect(cover.destroyed).toBe(true)
   })
 
@@ -367,11 +411,13 @@ describe('the reader as a cover over the page (reader-30)', () => {
   it('entered again within the exit’s frame: the old cover’s end takes nothing down, the keyboard is the new cover’s, not the page’s', async () => {
     const s = scene()
     const first = enterReader(s)
-    await settle()
-    // Out – the page shows, the old cover stands a frame more – and straight back in.
+    await drawn(first)
+    // Out – the page shows and is asked for its frame, the old cover stands over it meanwhile –
+    // and straight back in.
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
     expect(first.destroyed).toBe(false)
+    expect(s.page.frames).toHaveLength(1)
     const second = enterReader(s)
     expect(second).not.toBe(first)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
@@ -379,40 +425,44 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(second.calls).toContain('focus()')
     s.page.calls.length = 0
     second.calls.length = 0
-    // The frame passes: the old cover is destroyed and says so – the cover that stands is
+    // The page's word comes: the old cover is destroyed and says so – the cover that stands is
     // untouched, and the keyboard the exit would have given the page stays the new cover's.
-    await settle()
+    await drawn(s.page)
     expect(first.destroyed).toBe(true)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
     expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
     expect(second.destroyed).toBe(false)
     expect(s.page.calls).not.toContain('focus()')
-    // The page is hidden beneath the new cover once that has painted.
+    // The page still shows beneath the new cover until that one's word; then it hides.
+    expect(s.page.visible).toBe(true)
+    await drawn(second)
     expect(s.page.visible).toBe(false)
-    // A late word of the old cover – a failure, a crash, its end again – says nothing either.
+    // A late word of the old cover – a failure, a crash, its end again, its frame – says
+    // nothing either.
     first.events.onFailLoad(-105, 'name not resolved', first.url)
     first.events.onCrashed('crashed')
     first.events.onDestroyed()
     first.events.onDomReady()
+    expect(first.frames).toHaveLength(0)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
     expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
     expect(second.calls).toEqual([])
     // The new cover's own exit works as the first one's did.
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
-    await settle()
+    await drawn(s.page)
     expect(second.destroyed).toBe(true)
     expect(s.page.calls).toContain('focus()')
   })
 
-  it('a page hidden already beneath the cover is left as it is once the cover has painted (a staged page is not moved twice)', async () => {
+  it('a page hidden already beneath the cover is left as it is once the cover has drawn (a staged page is not moved twice)', async () => {
     const s = scene()
     // A background tab's page (switched away from, or held on an agent's stage): hidden before
     // the reader opens on it.
     s.page.visible = false
     s.page.calls.length = 0
-    enterReader(s)
-    await settle()
+    const cover = enterReader(s)
+    await drawn(cover)
     expect(s.page.calls.filter((c) => c.startsWith('setVisible('))).toEqual([])
     expect(s.page.visible).toBe(false)
   })
@@ -455,6 +505,90 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.page.calls.some((c) => c.startsWith('loadURL("zen://reader?id='))).toBe(true)
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.page.calls.some((c) => c === `loadURL(${JSON.stringify(PAGE_URL)})`)).toBe(true)
+  })
+})
+
+/**
+ * The paint handshake (design language v2 §11): the swap falls on the word of the document
+ * coming to the front that it has drawn a frame – the cover's at the entry, the page's at the
+ * exit – and on nothing else; a clock stands only as the failure ceiling for a document that
+ * never reports, set well past any first paint (`COVER_REPORT_CEILING_MS`), since a ceiling
+ * inside the paint's own range is the same race under another name.
+ */
+describe('the paint handshake and its failure ceiling', () => {
+  it('the page hides on the cover’s word and nothing else: no clock short of the ceiling moves it, and the word cleared the ceiling', async () => {
+    const s = scene()
+    vi.useFakeTimers()
+    const cover = enterReader(s)
+    expect(cover.frames).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS - 1)
+    expect(s.page.visible).toBe(true)
+    await drawn(cover, 61.4)
+    expect(s.page.visible).toBe(false)
+    // The word came first: the ceiling was cleared with it. A page shown again beneath the
+    // cover meanwhile (a tab switched away and back) is not hidden a second time by a clock.
+    s.page.visible = true
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS * 2)
+    expect(s.page.visible).toBe(true)
+  })
+
+  it('a cover that never reports hides the page at the ceiling – 500 ms, hundreds past a first paint – and not before; its late word is nothing', async () => {
+    expect(COVER_REPORT_CEILING_MS).toBe(500)
+    const s = scene()
+    vi.useFakeTimers()
+    const cover = enterReader(s)
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS - 1)
+    expect(s.page.visible).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(s.page.visible).toBe(false)
+    // The ceiling spoke; the cover's word after it moves nothing (once only).
+    s.page.visible = true
+    await drawn(cover)
+    expect(s.page.visible).toBe(true)
+  })
+
+  it('a word the cover cannot give – its ask rejected, the document gone – is no word: the ceiling stands', async () => {
+    const s = scene()
+    vi.useFakeTimers()
+    const cover = enterReader(s)
+    cover.frames.shift()!.reject(new Error('The page is gone'))
+    await landed()
+    expect(s.page.visible).toBe(true)
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS)
+    expect(s.page.visible).toBe(false)
+  })
+
+  it('the exit rests on the page’s word: the cover stands until it, or goes at the ceiling for a page that never reports – once', async () => {
+    const s = scene()
+    const cover = enterReader(s)
+    await drawn(cover)
+    vi.useFakeTimers()
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.page.visible).toBe(true)
+    expect(s.page.frames).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS - 1)
+    expect(cover.destroyed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(cover.destroyed).toBe(true)
+    expect(s.page.calls.filter((c) => c === 'focus()')).toHaveLength(1)
+    // The page's late word finishes nothing twice: the keyboard is not given again.
+    await drawn(s.page)
+    expect(s.page.calls.filter((c) => c === 'focus()')).toHaveLength(1)
+  })
+
+  it('a host whose views have no word to give (no frameDrawn) swaps on the ceiling alone, at the entry and at the exit', async () => {
+    const s = scene(true, false)
+    vi.useFakeTimers()
+    const cover = enterReader(s)
+    expect(cover.calls).not.toContain('frameDrawn()')
+    expect(s.page.visible).toBe(true)
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS)
+    expect(s.page.visible).toBe(false)
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.page.calls).not.toContain('frameDrawn()')
+    expect(cover.destroyed).toBe(false)
+    await vi.advanceTimersByTimeAsync(COVER_REPORT_CEILING_MS)
+    expect(cover.destroyed).toBe(true)
   })
 })
 
