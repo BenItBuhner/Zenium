@@ -1816,6 +1816,41 @@ describe('the Install-app chip and the Share chip (W8-6)', () => {
     expect(label.classList.contains('font-medium')).toBe(true)
   })
 
+  // The first line's N1 on #589: Chrome's page actions are one size, so every glyph in the
+  // pill's 20 px boxes is 14 (`h-3.5 w-3.5`) – Copy URL's and Share's had been 12 beside the
+  // row's 14s. The 20 px boxes are the `h-5` chips (the labelled Install chip is 20 tall and
+  // wider by its word); the 16s (the site slot's lock, the shield, the star) belong to the
+  // 28 px boxes and are the toolbar-stroke test's above.
+  it('draws every glyph in the pill’s 20 px boxes at one size, 14', () => {
+    const zoomed = tab('https://app.example/some/path', {
+      readerable: true,
+      webApp: app,
+      zoom: 1.25
+    })
+    const s = desktop(zoomed)
+    s.settings = { ...s.settings, pageControls: DEFAULT_PAGE_CONTROLS }
+    const el = render(<NavRow state={s} tab={zoomed} compact={false} />)
+    const boxes = Array.from(el.querySelectorAll<HTMLElement>('[data-pill-chip].h-5'))
+    expect(labels(boxes)).toEqual([
+      'Reader View',
+      'Translate this page',
+      'Boost this site',
+      'Copy URL',
+      'Share this page',
+      'Zoom: 125%',
+      'Install Example App'
+    ])
+    for (const box of boxes) {
+      const svg = box.querySelector('svg')
+      expect(svg, labels([box])[0]!).not.toBeNull()
+      expect(
+        svg!.classList.contains('h-3.5') && svg!.classList.contains('w-3.5'),
+        labels([box])[0]!
+      ).toBe(true)
+      expect(svg!.classList.contains('h-3'), labels([box])[0]!).toBe(false)
+    }
+  })
+
   it('opens the install dialog from the chip, which keeps its pressed fill while the dialog is up and goes once the app is installed', () => {
     const el = render(<NavRow state={desktop(installable)} tab={installable} compact={false} />)
     const chip = el.querySelector<HTMLElement>('[data-install-chip]')!

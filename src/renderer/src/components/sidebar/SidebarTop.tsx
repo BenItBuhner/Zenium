@@ -1049,7 +1049,7 @@ export function NavRow({
                 className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
-                <Copy className="h-3 w-3" />
+                <Copy className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {shareable && (utilityFits.has('share') || shareOpen) && (
@@ -1076,7 +1076,7 @@ export function NavRow({
                   if (!shareOpen) openShareFromChip(tab.id)
                 }}
               >
-                <Share2 className="h-3 w-3" />
+                <Share2 className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {tab && !masked && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
