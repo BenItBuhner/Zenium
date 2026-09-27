@@ -155,7 +155,9 @@ export function GroupList({
             <p className="zen-settings-group-description">{group.description}</p>
           )}
           {group.rows.length === 0 ? (
-            <p className="zen-settings-empty">{group.empty}</p>
+            <p className="zen-settings-empty" data-disabled={group.disabled || undefined}>
+              {group.empty}
+            </p>
           ) : (
             <GroupRows rows={group.rows} ctx={ctx} variant={variant} />
           )}
@@ -677,20 +679,24 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
 }
 
 /**
- * A value row in the radio form (`ValueRow.radios`; §9.14, §10.5): the text block – the label,
- * the description – then under it a `radiogroup` of the picker's radio rows (`RadioOption`)
- * across the row's content width, named by the row's label (`aria-labelledby`), as Chrome's
- * Performance page seats Memory Saver's tiers under its toggle. The keyboard is a native
- * group's: the checked option is the group's one tab stop (roving `tabIndex`; the first option
- * where none is checked) and the arrow keys move the choice to the next or previous option,
- * wrapping, and the focus with it. The row is a column as the stacked field row is
- * (`.zen-settings-stacked-row`, its block's 4 between the text and the list), `data-static`
- * since the options are the targets, and disabled as a dependent row at .4 with its options
- * taking no press (§10.4).
+ * A value row in the radio form (`ValueRow.radios`; §9.14, §10.5): a `radiogroup` of the
+ * picker's radio rows (`RadioOption`) across the row's content width, as Chrome's Performance
+ * page seats Memory Saver's tiers under its toggle. The row's label names the group for
+ * assistive technology alone (`aria-label`; pr-584 N2): the options' own labels are the group's
+ * visible text, drawn as the page's rows are, and a legend over them would be a fourth text
+ * level on a page that has three (§10.4) – Chrome's `cr-radio-group` under the toggle draws
+ * none either. What the row has to say in sight stays: a description (a sentence over the
+ * options) and a search hit's caption, in the text block above the list (its 4 between them,
+ * the stacked field row's). The keyboard is a native group's: the checked option is the group's
+ * one tab stop (roving `tabIndex`; the first option where none is checked) and the arrow keys
+ * move the choice to the next or previous option, wrapping, and the focus with it. The row is a
+ * column as the stacked field row is (`.zen-settings-stacked-row`), `data-static` since the
+ * options are the targets, and disabled as a dependent row at .4 with its options taking no
+ * press (§10.4).
  */
 function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
-  const labelId = `${useId()}-label`
   const group = useRef<HTMLDivElement>(null)
+  const description = row.sheetDescription ?? row.description
   const checkedAt = Math.max(
     0,
     row.options.findIndex((option) => option.value === row.value)
@@ -722,16 +728,16 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
       )}
     >
       <div className="zen-settings-field-block">
-        <RowText
-          label={row.label}
-          labelId={labelId}
-          description={row.sheetDescription ?? row.description}
-          caption={caption}
-        />
+        {(caption || description) && (
+          <span className="zen-settings-row-text">
+            {caption && <span className="zen-settings-caption">{caption}</span>}
+            {description && <span className="zen-settings-description">{description}</span>}
+          </span>
+        )}
         <div
           ref={group}
           role="radiogroup"
-          aria-labelledby={labelId}
+          aria-label={row.label}
           aria-disabled={row.disabled || undefined}
           className="zen-settings-radio-list zen-settings-radios"
           onKeyDown={onKeyDown}
