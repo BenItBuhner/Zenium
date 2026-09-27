@@ -179,7 +179,7 @@ export class GeolocationService {
   /** The page's shim asked. */
   handleMessage(tabId: string, call: unknown): void {
     if (!isGeolocationCall(call)) return
-    if (!this.browser.tabs.view(tabId)) return
+    if (!this.browser.tabs.pageView(tabId)) return
     const key = `${tabId}:${call.id}`
     switch (call.kind) {
       case 'get':
@@ -199,9 +199,10 @@ export class GeolocationService {
 
   private async answer(tabId: string, call: GeolocationCall, first: boolean): Promise<void> {
     const key = `${tabId}:${call.id}`
-    const tab = this.browser.tabs.tab(tabId)
-    if (!tab) return
-    const url = tab.url
+    // The asking page's address: the page's own beneath the reader's cover, whose address the
+    // row carries meanwhile (a watch of the page goes on under the reader).
+    const url = this.browser.tabs.pageUrl(tabId)
+    if (url === undefined) return
     const watching = call.kind === 'watch'
     // The first call may prompt; a watch's later rounds only read the decision, so a dismissed
     // prompt is not asked again every half minute.
@@ -232,17 +233,21 @@ export class GeolocationService {
     }
   }
 
-  /** The answer, to the page that asked – not to a document that has since replaced it. */
+  /**
+   * The answer, to the page that asked – not to a document that has since replaced it, and to
+   * the page itself beneath the reader's cover (the cover is the tab's document in front,
+   * `view`; the asker is the page, `pageView`).
+   */
   private post(
     tabId: string,
     url: string,
     id: string,
     result: GeoPosition | GeolocationErrorCode
   ): void {
-    const tab = this.browser.tabs.tab(tabId)
-    const view = this.browser.tabs.view(tabId)
-    if (!tab || !view || view.isDestroyed()) return
-    if (!sameSite(tab.url, url)) return
+    const pageUrl = this.browser.tabs.pageUrl(tabId)
+    const view = this.browser.tabs.pageView(tabId)
+    if (pageUrl === undefined || !view || view.isDestroyed()) return
+    if (!sameSite(pageUrl, url)) return
     if (typeof result === 'number')
       view.postToPage?.({
         type: 'geolocation',

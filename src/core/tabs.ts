@@ -147,9 +147,11 @@ export interface TabFocusOptions {
 
 /**
  * What a tab showed before the reader's cover went up over its page (`TabManager.cover`), put
- * back when the cover comes down: the row's fields the cover borrows while it stands.
+ * back when the cover comes down: the row's fields the cover borrows while it stands. Read
+ * through `TabManager.coveredPage` by whoever speaks of the page rather than the row while the
+ * cover stands (the extension API's tab record, the services that answer the page).
  */
-interface CoveredPage {
+export interface CoveredPage {
   url: string
   title: string
   favicon: string | null
@@ -337,6 +339,25 @@ export class TabManager {
   /** Whether the reader's cover stands over the tab's page (`cover`). */
   isCovered(tabId: string): boolean {
     return this.covers.has(tabId)
+  }
+
+  /**
+   * The page beneath the reader's cover as the row would show it – its address, title, favicon,
+   * readerability and zoom – while a cover stands; undefined otherwise. The row itself says the
+   * reader (`tab.url`, `tab.title`) meanwhile; whoever speaks of the page reads this instead:
+   * the extension API's tab record and events (Chrome's reading mode is no navigation of the
+   * tab to an extension), the services that answer the page (geolocation, notifications, the
+   * media keys), the site settings that key on the page's address (sound).
+   */
+  coveredPage(tabId: string): Readonly<CoveredPage> | undefined {
+    return this.covered.get(tabId)
+  }
+
+  /** The tab's page's own address: what it shows beneath a cover, else the row's (`tab.url`). */
+  pageUrl(tabId: string): string | undefined {
+    const tab = this.tab(tabId)
+    if (!tab) return undefined
+    return this.covered.get(tabId)?.url ?? tab.url
   }
 
   allViews(): Iterable<[string, TabView]> {
@@ -715,7 +736,15 @@ export class TabManager {
       readerable: tab.readerable,
       zoom: tab.zoom
     })
-    const cover = host.createCover(tab, this.coverEventsFor(tabId), win.host)
+    // The cover's events speak for this cover alone (`coverEventsFor`): the view is not made
+    // yet when they are, so they read it through the binding filled right after.
+    const raised: { cover?: TabView } = {}
+    const cover = host.createCover(
+      tab,
+      this.coverEventsFor(tabId, () => raised.cover),
+      win.host
+    )
+    raised.cover = cover
     cover.setBackgroundColor(this.backgroundFor(url))
     cover.setVisible(false)
     this.covers.set(tabId, cover)
@@ -782,10 +811,13 @@ export class TabManager {
     }
     const finish = (): void => {
       if (!cover.isDestroyed()) cover.destroy()
+      // The keyboard to the page – unless the reader was entered again within the frame and a
+      // new cover stands over it: the keyboard is that cover's (`onCoverReady`).
       if (
         page &&
         !page.isDestroyed() &&
         this.pageView(tabId) === page &&
+        !this.covers.has(tabId) &&
         win &&
         win.alive &&
         !win.contentHidden &&
@@ -808,12 +840,22 @@ export class TabManager {
    * cover's own ends – a link followed in the reader loads in the page beneath (whose commit
    * closes the reader, as Chrome's `PrimaryPageChanged` does), a failure or a crash of the
    * reader document takes the cover down.
+   *
+   * Every end speaks for THIS cover (`own`), not for whichever stands over the tab: a cover
+   * taken down (`uncover`) is destroyed a frame later, and the reader may have been entered
+   * again within that frame – the old cover's `destroyed`, its late failure or crash must not
+   * take the new one down.
    */
-  private coverEventsFor(tabId: string): TabViewEvents {
+  private coverEventsFor(tabId: string, own: () => TabView | undefined): TabViewEvents {
     const base = this.eventsFor(tabId)
     const state = this.browser.state
     let toolbox = false
     const noop = (): void => {}
+    /** Whether the cover these events belong to is the one standing over the tab. */
+    const stands = (): boolean => {
+      const cover = own()
+      return cover !== undefined && this.covers.get(tabId) === cover
+    }
     return {
       ...base,
       onStartLoading: noop,
@@ -827,24 +869,36 @@ export class TabManager {
       onLookalikeNavigation: noop,
       onRequestsBlocked: noop,
       onNavigated: (_url, inPage) => {
-        if (inPage) return
+        if (inPage || !stands()) return
         const tab = this.tab(tabId)
-        const cover = this.covers.get(tabId)
+        const cover = own()
         // The engine's zoom for the reader document (Chromium keeps one per host).
         if (tab && cover) this.browser.pageControls.onNavigated(tab, cover)
         state.commitVolatile()
       },
+      // The row's title is the reader document's while the cover stands (the page's own goes
+      // to `covered.title`, `eventsFor`); no visit carries it and no pinned row wants the
+      // attention dot for it – the reader is the document in front.
+      onTitleUpdated: (title) => {
+        const tab = this.tab(tabId)
+        if (!tab || !stands()) return
+        tab.title = title || this.titleFor(tab.url)
+        state.commit()
+      },
       onWillNavigate: (url) => {
-        if (!this.covers.has(tabId)) return false
+        if (!stands()) return false
+        // The tab's own rule first (MW-23): in an app window a link out of the app's scope
+        // opens in a tab of the browser window behind, and the reader stays over the app's page.
+        if (this.onWillNavigate(tabId, url)) return true
         this.navigate(tabId, url, { transition: 'link' })
         return true
       },
       onFailLoad: (code) => {
-        if (code === -3) return
+        if (code === -3 || !stands()) return
         this.uncover(tabId, { immediate: true })
       },
       onCrashed: (reason) => {
-        if (reason === 'clean-exit') return
+        if (reason === 'clean-exit' || !stands()) return
         this.uncover(tabId, { immediate: true })
       },
       onDevtoolsOpened: (dock) => {
@@ -855,13 +909,18 @@ export class TabManager {
         toolbox = false
         base.onDevtoolsClosed()
       },
-      onDomReady: () => this.onCoverReady(tabId),
+      onDomReady: () => {
+        const cover = own()
+        if (cover && stands()) this.onCoverReady(tabId, cover)
+      },
       onDestroyed: () => {
         if (toolbox) {
           toolbox = false
           base.onDevtoolsClosed()
         }
-        this.onCoverGone(tabId)
+        // The cover went on its own (the host tore it down): the page shows again. An old
+        // cover's end after a re-entry says nothing of the cover that stands now.
+        if (stands()) this.uncover(tabId, { immediate: true })
       }
     }
   }
@@ -872,9 +931,7 @@ export class TabManager {
    * later, the cover painted – the page beneath is hidden to the engine, as a background tab's
    * is, so that nothing of it shows should the window be resized under the cover.
    */
-  private onCoverReady(tabId: string): void {
-    const cover = this.covers.get(tabId)
-    if (!cover) return
+  private onCoverReady(tabId: string, cover: TabView): void {
     this.sendPageFlags(tabId)
     this.browser.readAloud.onPageReady(tabId)
     const win = this.owners.get(tabId)
@@ -888,13 +945,11 @@ export class TabManager {
       cover.focus()
     setTimeout(() => {
       if (this.covers.get(tabId) !== cover || cover.isDestroyed()) return
-      this.pageView(tabId)?.setVisible(false)
+      // A page hidden already (a tab switched away from under the cover, a page an agent holds
+      // on the stage) is left as it is: a second hide would move a staged page again.
+      const page = this.pageView(tabId)
+      if (page?.isVisible()) page.setVisible(false)
     }, COVER_SETTLE_MS)
-  }
-
-  /** The cover went on its own (the host tore it down): the page shows again. */
-  private onCoverGone(tabId: string): void {
-    if (this.covers.has(tabId)) this.uncover(tabId, { immediate: true })
   }
 
   private eventsFor(tabId: string): TabViewEvents {
@@ -1017,6 +1072,15 @@ export class TabManager {
         update((t) => {
           // The sad tab keeps the crashed page's title beside its favicon, as Chrome's does.
           if (this.isSadTab(t)) return
+          // Beneath the reader's cover the row's title is the reader's (the cover's own
+          // `onTitleUpdated`, `coverEventsFor`); the page's new title is kept for what speaks
+          // of the page – the record extensions read, the visit – and comes back with it.
+          const before = this.covered.get(tabId)
+          if (before) {
+            before.title = title || this.titleFor(before.url)
+            if (!this.isPrivate(t)) this.browser.history.updateTitle(before.url, before.title)
+            return
+          }
           const next = title || this.titleFor(t.url)
           // A pinned tab's page changing its title while nobody is looking at it – a mail
           // count, a new message – asks for attention (tabs-11, Chrome's dot on a pinned tab):
@@ -1039,8 +1103,13 @@ export class TabManager {
           // the tab shows it at once, and the records take the cache's content address once
           // the icon is kept, never the kilobytes of the data URL.
           t.favicon = icon
+          // Beneath the reader's cover the row's fields are the reader's: the page's new icon
+          // is what comes back when the cover comes down, and the records' key is the page's
+          // address, not the reader's.
+          const before = this.covered.get(tabId)
+          if (before) before.favicon = icon
           if (this.isPrivate(t)) return
-          const pageUrl = t.url
+          const pageUrl = before?.url ?? t.url
           if (!inline) {
             this.browser.history.updateFavicon(pageUrl, icon)
             this.browser.bookmarks.updateFavicon(pageUrl, icon)
@@ -3026,9 +3095,11 @@ export class TabManager {
   toggleMuteSite(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const site = permissionSite(tab.url)
+    // The site is the page's – the one beneath the reader's cover while it stands.
+    const url = this.covered.get(tabId)?.url ?? tab.url
+    const site = permissionSite(url)
     if (!site) return
-    const wanted: 'allow' | 'deny' = this.siteMuted(tab.url) ? 'allow' : 'deny'
+    const wanted: 'allow' | 'deny' = this.siteMuted(url) ? 'allow' : 'deny'
     const permissions = this.browser.permissions
     permissions.set('sound', site, wanted === permissions.effectiveDefault('sound') ? null : wanted)
   }
@@ -3041,8 +3112,11 @@ export class TabManager {
   followSoundSetting(origin: string | null): void {
     let changed = false
     for (const t of Object.values(this.model.tabs)) {
-      if (origin !== null && permissionSite(t.url) !== origin) continue
-      const muted = this.siteMuted(t.url)
+      // The page's site, beneath a reader cover too: the sound is the page's, and the reader's
+      // address is no site the setting could name (a default's change would unmute it).
+      const url = this.covered.get(t.id)?.url ?? t.url
+      if (origin !== null && permissionSite(url) !== origin) continue
+      const muted = this.siteMuted(url)
       if (t.muted === muted) continue
       t.muted = muted
       this.pageView(t.id)?.setMuted(muted)

@@ -93,10 +93,14 @@ function fakeView(url: string, events: TabViewEvents): FakeView {
     isFocused: () => false,
     focus: () => log('focus'),
     isDestroyed: () => record.destroyed,
+    // As the engine: a page destroyed says so to its events (`ElectronTabView.wire`).
     destroy: () => {
       log('destroy')
       record.destroyed = true
+      record.events.onDestroyed()
     },
+    postToPage: (message) => log('postToPage', message),
+    setMuted: (muted) => log('setMuted', muted),
     setBounds: (rect) => log('setBounds', rect),
     setBackgroundColor: () => undefined
   })
@@ -360,6 +364,87 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
   })
 
+  it('entered again within the exit’s frame: the old cover’s end takes nothing down, the keyboard is the new cover’s, not the page’s', async () => {
+    const s = scene()
+    const first = enterReader(s)
+    await settle()
+    // Out – the page shows, the old cover stands a frame more – and straight back in.
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
+    expect(first.destroyed).toBe(false)
+    const second = enterReader(s)
+    expect(second).not.toBe(first)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
+    expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
+    expect(second.calls).toContain('focus()')
+    s.page.calls.length = 0
+    second.calls.length = 0
+    // The frame passes: the old cover is destroyed and says so – the cover that stands is
+    // untouched, and the keyboard the exit would have given the page stays the new cover's.
+    await settle()
+    expect(first.destroyed).toBe(true)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
+    expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
+    expect(second.destroyed).toBe(false)
+    expect(s.page.calls).not.toContain('focus()')
+    // The page is hidden beneath the new cover once that has painted.
+    expect(s.page.visible).toBe(false)
+    // A late word of the old cover – a failure, a crash, its end again – says nothing either.
+    first.events.onFailLoad(-105, 'name not resolved', first.url)
+    first.events.onCrashed('crashed')
+    first.events.onDestroyed()
+    first.events.onDomReady()
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
+    expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
+    expect(second.calls).toEqual([])
+    // The new cover's own exit works as the first one's did.
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
+    await settle()
+    expect(second.destroyed).toBe(true)
+    expect(s.page.calls).toContain('focus()')
+  })
+
+  it('a page hidden already beneath the cover is left as it is once the cover has painted (a staged page is not moved twice)', async () => {
+    const s = scene()
+    // A background tab's page (switched away from, or held on an agent's stage): hidden before
+    // the reader opens on it.
+    s.page.visible = false
+    s.page.calls.length = 0
+    enterReader(s)
+    await settle()
+    expect(s.page.calls.filter((c) => c.startsWith('setVisible('))).toEqual([])
+    expect(s.page.visible).toBe(false)
+  })
+
+  it('in an app window a link out of the app’s scope followed in the reader opens in the browser window behind; the reader stays over the app’s page (MW-23)', () => {
+    const s = scene()
+    const appWin = s.browser.openAppWindow('https://app.example/dash/')!
+    const appTab = s.browser.tabs.activeTabFor(appWin)!
+    const appPage = s.host.pages.get(appTab.id)!
+    appPage.events.onNavigated('https://app.example/dash/', false)
+    appPage.events.onDomReady()
+    s.browser.reader.open(appTab.id, ARTICLE)
+    const cover = s.host.covers.get(appTab.id)!
+    cover.events.onNavigated(cover.url, false)
+    cover.events.onDomReady()
+    expect(s.browser.tabs.isCovered(appTab.id)).toBe(true)
+    const before = Object.keys(s.browser.state.model.tabs).length
+    // Within the scope: the app's page beneath loads it (its commit closes the reader).
+    expect(cover.events.onWillNavigate('https://app.example/dash/settings')).toBe(true)
+    expect(
+      appPage.calls.some((c) => c.startsWith('loadURL("https://app.example/dash/settings"'))
+    ).toBe(true)
+    expect(Object.keys(s.browser.state.model.tabs)).toHaveLength(before)
+    // Out of it: a tab of the browser window, the app's page untouched, the reader still up.
+    expect(cover.events.onWillNavigate('https://docs.example/help')).toBe(true)
+    expect(appPage.calls.some((c) => c.includes('docs.example'))).toBe(false)
+    expect(cover.calls.some((c) => c.includes('docs.example'))).toBe(false)
+    expect(Object.keys(s.browser.state.model.tabs)).toHaveLength(before + 1)
+    expect(s.browser.tabs.activeTabFor(s.win)?.url).toBe('https://docs.example/help')
+    expect(s.browser.tabs.isCovered(appTab.id)).toBe(true)
+  })
+
   it('a host with one page per tab (the phone) has no cover: the reader loads as a navigation and leaves by one', () => {
     const s = scene(false)
     s.browser.reader.open(s.tabId, ARTICLE)
@@ -370,6 +455,98 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.page.calls.some((c) => c.startsWith('loadURL("zen://reader?id='))).toBe(true)
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.page.calls.some((c) => c === `loadURL(${JSON.stringify(PAGE_URL)})`)).toBe(true)
+  })
+})
+
+/**
+ * Beneath the cover the row says the reader (its address, its title, zoom 1) while the tab's
+ * page goes on living: whoever speaks of the PAGE rather than the row – the extension layer,
+ * the site's sound, the page's answers (notifications, media keys, geolocation) – reads it
+ * through `coveredPage` / `pageUrl` / `pageView`, never through the row or `view`.
+ */
+describe('what speaks of the page beneath the cover', () => {
+  const READER_TITLE = 'Story – Reader View'
+
+  it('coveredPage / pageUrl are the page’s address, title and icon while the cover stands, nothing without one', () => {
+    const s = scene()
+    const tab = s.browser.tabs.tab(s.tabId)!
+    tab.title = 'The Story'
+    tab.favicon = 'https://example.com/icon.png'
+    expect(s.browser.tabs.coveredPage(s.tabId)).toBeUndefined()
+    expect(s.browser.tabs.pageUrl(s.tabId)).toBe(PAGE_URL)
+    const cover = enterReader(s)
+    cover.events.onTitleUpdated(READER_TITLE)
+    expect(tab.url.startsWith(READER_URL_PREFIX)).toBe(true)
+    expect(tab.title).toBe(READER_TITLE)
+    expect(s.browser.tabs.pageUrl(s.tabId)).toBe(PAGE_URL)
+    expect(s.browser.tabs.coveredPage(s.tabId)).toMatchObject({
+      url: PAGE_URL,
+      title: 'The Story',
+      favicon: 'https://example.com/icon.png',
+      zoom: 1
+    })
+    // The page's own title and icon change beneath the cover: what speaks of the page follows
+    // (and the page's visit keeps its title); the row's title stays the reader's, its icon the
+    // site's – the reader document has none of its own, the row wears the page's throughout.
+    s.page.events.onTitleUpdated('The Story, retitled')
+    s.page.events.onFaviconUpdated(['https://example.com/new.png'])
+    expect(tab.title).toBe(READER_TITLE)
+    expect(tab.favicon).toBe('https://example.com/new.png')
+    expect(s.browser.tabs.coveredPage(s.tabId)).toMatchObject({
+      url: PAGE_URL,
+      title: 'The Story, retitled',
+      favicon: 'https://example.com/new.png'
+    })
+    expect(s.browser.history.recent(10)).toMatchObject([
+      { url: PAGE_URL, title: 'The Story, retitled' }
+    ])
+    // The exit hands the row what the page says now.
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.browser.tabs.coveredPage(s.tabId)).toBeUndefined()
+    expect(s.browser.tabs.pageUrl(s.tabId)).toBe(PAGE_URL)
+    expect(tab.title).toBe('The Story, retitled')
+    expect(tab.favicon).toBe('https://example.com/new.png')
+    // A tab that is not one has neither.
+    expect(s.browser.tabs.coveredPage('nope')).toBeUndefined()
+    expect(s.browser.tabs.pageUrl('nope')).toBeUndefined()
+  })
+
+  it('the site’s sound is the page’s: Mute Site under the cover mutes the page’s site, and a sound decision reaches the page beneath', () => {
+    const s = scene()
+    const tab = s.browser.tabs.tab(s.tabId)!
+    enterReader(s)
+    s.page.calls.length = 0
+    // "Mute Site" from the reader's menu names the page's site, not `zen://reader`.
+    s.browser.tabs.toggleMuteSite(s.tabId)
+    expect(s.browser.permissions.resolve('sound', PAGE_URL)).toBe('deny')
+    expect(tab.muted).toBe(true)
+    expect(s.page.calls).toContain('setMuted(true)')
+    // The decision's follow-up runs over every tab: the covered tab keeps the page's answer
+    // (the reader's address is no site; read as the row's, a default would unmute it).
+    s.browser.tabs.followSoundSetting(null)
+    expect(tab.muted).toBe(true)
+    s.browser.tabs.followSoundSetting('https://example.com')
+    expect(tab.muted).toBe(true)
+    // Unmuted again from under the cover: the page hears it.
+    s.browser.tabs.toggleMuteSite(s.tabId)
+    expect(s.browser.permissions.resolve('sound', PAGE_URL)).not.toBe('deny')
+    expect(tab.muted).toBe(false)
+    expect(s.page.calls).toContain('setMuted(false)')
+  })
+
+  it('the page’s answers – a notification status, an OS media key – go to the page beneath, never to the reader document', () => {
+    const s = scene()
+    const cover = enterReader(s)
+    s.page.calls.length = 0
+    cover.calls.length = 0
+    s.browser.webNotifications.handle(s.tabId, { notification: 'query' })
+    s.browser.mediaSession.act(s.tabId, 'pause')
+    const posted = (v: FakeView): string[] => v.calls.filter((c) => c.startsWith('postToPage('))
+    expect(posted(s.page)).toEqual([
+      'postToPage({"type":"notification","action":"status","status":"default"})',
+      'postToPage({"type":"mediaSession","action":"pause"})'
+    ])
+    expect(posted(cover)).toEqual([])
   })
 })
 
