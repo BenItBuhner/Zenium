@@ -3735,48 +3735,59 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun imageList(label: String, tap: String? = null, base: String = BASE): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        fixture("$base/gallery.html?images", factor, 2_500)
-        val before = tabUrls().keys
-        val since = StepEvidence(row)
-        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        if (tap != null) {
-            val steps = JSONArray()
-            poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
-            SystemClock.sleep(scaled(2_000, factor))
-            tapLabel(tap, factor, steps, "menu")
-            extra.put("menu", steps)
-        }
-        var surface = ""
-        var list = JSONObject()
-        val found = poll(scaled(30_000, factor), 700) {
-            val sheet = sheetView()
-            val page = openedPage(before, row)
-            // A page the click (or the menu tap) opened is the listing ahead of a sheet still up.
-            val pageView = page?.let { runCatching { waitForView(it.key) }.getOrNull() }
-            val view: WebView? = pageView ?: sheet
-            if (view != null) {
-                surface = if (pageView != null) "tab ${extensionPath(page!!.value).take(40)}" else "sheet (${sheet!!.context})"
-                list = json(tabEval(view, IMAGE_LIST_REPORT))
-                if (list.optBoolean("pass")) view else null
-            } else null
-        }
-        if (found == null) {
-            // The surface is up without the pictures: read it once more, settled.
-            (openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView())?.let { view ->
-                SystemClock.sleep(scaled(3_000, factor))
-                list = json(tabEval(view, IMAGE_LIST_REPORT))
-                list.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        val gallery = "$base/gallery.html?images"
+        // A gallery under a public-looking name is a unique host HTTPS-only mode (`ask`, the
+        // default) upgrades on the way in – the plain fixture server answers no TLS and the tab
+        // shows the mode's page instead of the pictures – so the row allows it over plaintext
+        // first, as [mediaPopup] does for its sniffer fixtures, and forgets it after ([BASE], the
+        // address, is non-unique and needs nothing).
+        val restorePlaintext = allowPlaintext(listOf(gallery), factor, extra)
+        try {
+            fixture(gallery, factor, 2_500)
+            val before = tabUrls().keys
+            val since = StepEvidence(row)
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            if (tap != null) {
+                val steps = JSONArray()
+                poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+                SystemClock.sleep(scaled(2_000, factor))
+                tapLabel(tap, factor, steps, "menu")
+                extra.put("menu", steps)
             }
-        }
-        extra.put("surface", surface).put("list", list).put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
-        since.record(extra, "atEnd")
-        SystemClock.sleep(800)
-        snap("${entry.optString("slug")}-images")
-        runCatching { coreCall("extension.closePopup", "null") }
-        when {
-            list.optBoolean("pass") -> Grade("P", "$label: its $surface lists ${list.optInt("photos")} of the fixture's pictures (${list.optInt("images")} images shown): \"${list.optString("text").take(80)}\"", extra)
-            surface.isNotEmpty() -> Grade("PARTIAL", "$label: its $surface rendered without the fixture's pictures (${list.optInt("images")} images): \"${list.optString("text").take(120)}\"", extra)
-            else -> Grade("F", "$label: the action click opened no panel, popup or page within ${scaled(30_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(160)})", extra)
+            var surface = ""
+            var list = JSONObject()
+            val found = poll(scaled(30_000, factor), 700) {
+                val sheet = sheetView()
+                val page = openedPage(before, row)
+                // A page the click (or the menu tap) opened is the listing ahead of a sheet still up.
+                val pageView = page?.let { runCatching { waitForView(it.key) }.getOrNull() }
+                val view: WebView? = pageView ?: sheet
+                if (view != null) {
+                    surface = if (pageView != null) "tab ${extensionPath(page!!.value).take(40)}" else "sheet (${sheet!!.context})"
+                    list = json(tabEval(view, IMAGE_LIST_REPORT))
+                    if (list.optBoolean("pass")) view else null
+                } else null
+            }
+            if (found == null) {
+                // The surface is up without the pictures: read it once more, settled.
+                (openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView())?.let { view ->
+                    SystemClock.sleep(scaled(3_000, factor))
+                    list = json(tabEval(view, IMAGE_LIST_REPORT))
+                    list.put("console", JSONArray(consoleOf(view).takeLast(10)))
+                }
+            }
+            extra.put("surface", surface).put("list", list).put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
+            since.record(extra, "atEnd")
+            SystemClock.sleep(800)
+            snap("${entry.optString("slug")}-images")
+            runCatching { coreCall("extension.closePopup", "null") }
+            when {
+                list.optBoolean("pass") -> Grade("P", "$label: its $surface lists ${list.optInt("photos")} of the fixture's pictures (${list.optInt("images")} images shown): \"${list.optString("text").take(80)}\"", extra)
+                surface.isNotEmpty() -> Grade("PARTIAL", "$label: its $surface rendered without the fixture's pictures (${list.optInt("images")} images): \"${list.optString("text").take(120)}\"", extra)
+                else -> Grade("F", "$label: the action click opened no panel, popup or page within ${scaled(30_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(160)})", extra)
+            }
+        } finally {
+            restorePlaintext?.invoke()
         }
     }
 
@@ -7777,18 +7788,34 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * opens `welcome.html` in a tab, whose `#accept-btn` sets `agreement`, `action.setPopup
      * ('index.html')` and closes the tab; the popup then reads the tab's address and shows
      * "Save Page Now" (`#spn-btn`) with archive.org's count of captures (`#wayback-count-msg`),
-     * or "URL not supported" for an address on its excluded list (localhost, 127.0.0.1 – the
-     * fixture's 10.0.2.2 is not on it). The fixture settles, the action is clicked, the welcome
-     * page waited for and accepted from a script, the action clicked again and the popup polled
-     * for the button. `P` on the popup's button enabled for the fixture's address; `PARTIAL`
-     * when the popup came up saying the address is not supported (its check, read); `F` when
-     * the welcome page never opened, the second click opened no popup, or the popup showed
-     * neither.
+     * or "URL not supported" for an address its `excluded_urls` (`scripts/utils.js`) begins
+     * with: `localhost`, `127.0.0.1`, `0.0.0.0`, `192.168.`, `10.` and the browsers' own schemes –
+     * so the fixture's `http://10.0.2.2:8765/` is one (round 22's BEFORE read PARTIAL on both
+     * WebViews for it), and its bare public name `http://10.0.2.2.nip.io:8765/` is one as well.
+     * The fixture goes under [LABELLED_NAME_BASE], allowed over plaintext for the row (a unique
+     * host HTTPS-only mode would upgrade) and forgotten after; a phone's user browses public
+     * names, and the extension's own list stands as it is. The fixture settles, the action is
+     * clicked, the welcome page waited for and accepted from a script, the action clicked again
+     * and the popup polled for the button. `P` on the popup's button enabled for the fixture's
+     * address; `PARTIAL` when the popup came up saying the address is not supported (its check,
+     * read); `F` when the welcome page never opened, the second click opened no popup, or the
+     * popup showed neither.
      */
     private fun waybackMachine(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val (fixtureTab, _) = fixture("page-a.html?wayback", factor, 2_000)
+        val page = "$LABELLED_NAME_BASE/page-a.html?wayback"
+        val restorePlaintext = allowPlaintext(listOf(page), factor, extra)
+        try {
+            return waybackMachineGraded(row, entry, factor, extra, page)
+        } finally {
+            restorePlaintext?.invoke()
+        }
+    }
+
+    /** [waybackMachine]'s reading with the fixture at `page` (allowed over plaintext by the caller). */
+    private fun waybackMachineGraded(row: Row, entry: JSONObject, factor: Double, extra: JSONObject, page: String): Grade {
+        val (fixtureTab, _) = fixture(page, factor, 2_000)
         val since = StepEvidence(row)
         val before = tabUrls().keys
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -12759,6 +12786,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * reading says so.
          */
         private const val PUBLIC_NAME_BASE = "http://10.0.2.2.nip.io:8765"
+        /**
+         * The same server under a public-looking name with a label ahead of the address (nip.io
+         * answers `<label>.<ip>.nip.io` with `<ip>` as it answers `<ip>.nip.io`), for an extension
+         * whose refusal of private addresses is a PREFIX list the bare name begins with as the
+         * address does: Wayback Machine's `excluded_urls` (`scripts/utils.js`) has `10.`, so
+         * `http://10.0.2.2.nip.io:8765/…` is "URL not supported" to its popup as
+         * `http://10.0.2.2:8765/…` is, and this name is not. A unique host to the browser as
+         * [PUBLIC_NAME_BASE] is: allowed over plaintext for the row ([allowPlaintext]).
+         */
+        private const val LABELLED_NAME_BASE = "http://fixture.10.0.2.2.nip.io:8765"
 
         /**
          * The runtime's id for an unsigned zip without a `manifest.key`: SHA-256 of
