@@ -56,6 +56,9 @@ import kotlin.math.abs
  *     header naming it, Name and URL, Cancel | Save splitting the footer, the sheet itself
  *     focused on open so the keyboard waits for the finger), the name retyped and a finger on
  *     Save renames the tile; Remove on another pinned tile takes it off the page and the list.
+ *     NTP-07: the Remove raises the chrome's toast 'Shortcut removed' with Undo alone (v2 §9.33,
+ *     its 8 s Undo clock) – a finger on Undo puts the tile back at the slot it held; a second
+ *     pin's Remove leaves its toast, which a swipe sends off (#72) with the removal standing.
  *  5. NTP-06 reorder by hold-and-drag: a pinned tile held (the lift), carried two slots along
  *     (the others gliding on one spring), and let go writes the order to the shared device list
  *     (`newtab.reorderShortcuts`); the drag is a measured scene (the jank budget, soft). A probe
@@ -464,9 +467,53 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             SystemClock.sleep(600)
             still("tile-renamed")
 
-            // Remove on another pin: off the page and the pinned list.
+            // NTP-07: Remove on a pin raises the chrome's toast 'Shortcut removed' with Undo alone
+            // (v2 §9.33, its 8 s Undo clock); a finger on Undo puts the tile back at the slot it
+            // held. Atlas goes and comes back so step 5 finds the three pins it drags.
+            val atlas = sites[2]
+            val atlasSlot = pinTitles().indexOf(atlas.caption)
+            val atlasTile = awaitTile(atlas.caption, 6_000) ?: error("no tile for ${atlas.caption}")
+            watchToasts()
+            Finger().apply {
+                press(atlasTile.exactCenterX(), atlasTile.exactCenterY())
+                up()
+            }
+            if (waitFor("Remove", 8_000) == null) error("no hold menu on the ${atlas.caption} tile")
+            SystemClock.sleep(800)
+            val atlasRemoved = touchTapLabelExpecting("Remove", "the pin is gone from the list", timeoutMs = 8_000) {
+                pinTitles().none { it == atlas.caption }
+            }
+            val atlasGone = waitForGone(atlas.caption, 6_000)
+            val toastUp = awaitToastSeen(REMOVED_TOAST, 6_000)
+            val toastAction = chromeValue("((document.querySelector('$TOAST_ACTION')||{}).textContent||'').trim()")
+            val toastActions = chromeValue("String(document.querySelectorAll('$TOAST button').length)")
+            finding("  ${atlas.caption} removed from slot $atlasSlot: pins ${pinTitles()}; toast '$REMOVED_TOAST' ${verdict(toastUp)}, its action '$toastAction' ($toastActions button(s))")
+            expect("a finger on Remove takes the ${atlas.caption} tile off the page ($atlasGone) and raises the chrome's toast '$REMOVED_TOAST' with Undo alone (NTP-07)", atlasRemoved && atlasGone && toastUp && toastAction == UNDO_LABEL && toastActions == "1", "tile-removed-toast")
+            // The card's entry spring at rest before the finger lands (TabCloseDemo's lesson: a
+            // touch on a card still carrying `data-moving` reads as a hold and never takes).
+            awaitChrome("document.querySelector('$TOAST')&&!document.querySelector('$TOAST').hasAttribute('data-moving')", 2_000)
+            SystemClock.sleep(400)
+            still("tile-removed-toast")
+            val undone = touchTapLabelExpecting(UNDO_LABEL, "the pin is back on the list at slot $atlasSlot", timeoutMs = 8_000) {
+                pinTitles().indexOf(atlas.caption) == atlasSlot
+            }
+            if (!undone && pinTitles().none { it == atlas.caption }) {
+                // The state reached another way so the recording goes on; the touch fault fails the run.
+                coreInvoke("newtab.undoRemove", JSONObject().put("url", atlas.url).toString())
+            }
+            val atlasBack = awaitTile(atlas.caption, 6_000) != null
+            val toastDown = awaitChrome("!document.querySelector('$TOAST')", 5_000)
+            finding("  Undo touched: pins ${pinTitles()}; the ${atlas.caption} tile back ${verdict(atlasBack)}; the toast down ${verdict(toastDown)}")
+            expect("a finger on the toast's Undo puts the ${atlas.caption} shortcut back at slot $atlasSlot (pins ${pinTitles()}) with its tile on the page, and the toast goes at once", undone && atlasBack && toastDown && pinTitles().indexOf(atlas.caption) == atlasSlot, "tile-undone")
+            SystemClock.sleep(600)
+            still("tile-undone")
+
+            // Remove on another pin: off the page and the pinned list; its toast swiped off
+            // (#72's swipe-dismiss) so the removal stands and step 5's measured drag runs on a
+            // quiet frame.
             val ledger = sites[3]
             val tile = awaitTile(ledger.caption, 6_000) ?: error("no tile for ${ledger.caption}")
+            watchToasts()
             Finger().apply {
                 press(tile.exactCenterX(), tile.exactCenterY())
                 up()
@@ -478,8 +525,27 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             }
             val gone = waitForGone(ledger.caption, 6_000)
             expect("a finger on Remove takes the ${ledger.caption} tile off the page ($gone) and the pinned list (${pinTitles()})", removed && gone, "tile-removed")
-            SystemClock.sleep(800)
+            val secondToast = awaitToastSeen(REMOVED_TOAST, 6_000)
+            awaitChrome("document.querySelector('$TOAST')&&!document.querySelector('$TOAST').hasAttribute('data-moving')", 2_000)
+            SystemClock.sleep(400)
             still("tile-removed")
+            val toastBox = domBox("document.querySelector('$TOAST')")
+            val swipeAt = toastBox?.let { touchPoint(it) }
+            if (secondToast && toastBox != null && swipeAt != null) {
+                // From the card's text, a fling to the right (`TOAST_DIRS` lets it go either way).
+                val startX = toastBox.left + toastBox.width() * 0.25f
+                Finger().apply {
+                    down(startX, swipeAt.y)
+                    moveBy(toastBox.width() * 0.6f, 0f, 160)
+                    up()
+                }
+                val swipedOff = awaitChrome("!document.querySelector('$TOAST')", 4_000)
+                finding("  the ${ledger.caption} toast swiped from ${startX.toInt()},${swipeAt.y.toInt()} by ${(toastBox.width() * 0.6f).toInt()} px: gone ${verdict(swipedOff)}; pins ${pinTitles()}")
+                expect("a swipe sends the '$REMOVED_TOAST' toast off (#72) and the ${ledger.caption} removal stands", swipedOff && pinTitles().none { it == ledger.caption }, "tile-removed-toast-swiped")
+            } else {
+                expect("the ${ledger.caption} removal's toast '$REMOVED_TOAST' is up to be swiped (seen $secondToast, box $toastBox)", false, "tile-removed-toast-swiped")
+            }
+            SystemClock.sleep(600)
         }
     }
 
@@ -1113,6 +1179,13 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         private const val EDIT_URL = "$EDIT_DIALOG input[inputmode=\"url\"]"
         /** A held tile's cell (`tileReorder.ts`: `data-held` while the finger has it). */
         private const val HELD_TILE = "li.zen-ntp-site[data-held]"
+
+        /** The chrome's toast card (`ToastCard`) and its one action button; what the tile's Remove raises (NTP-07). */
+        private const val TOAST = ".zen-message-toast"
+        private const val TOAST_ACTION = ".zen-message-toast .zen-message-button"
+        /** The toast's words for a pin taken off (`NewTabService.remove`, v2 §9.33) and its one action. */
+        private const val REMOVED_TOAST = "Shortcut removed"
+        private const val UNDO_LABEL = "Undo"
 
         /**
          * The pointer probe: passive capture-phase listeners on the window for every pointer,
