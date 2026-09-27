@@ -38,6 +38,18 @@ export interface PdfOutlineItem {
 
 export type PdfFitMode = 'width' | 'page'
 
+/**
+ * The document's form (its AcroForm), as the viewer's form layer sees it: how many fields it
+ * has – 0 for a document with none, when the chrome has no Save to offer – and whether a value
+ * has been changed since the document was opened or a copy last written (`saved` command): the
+ * Save row's gate, as pdf.js's own viewer gates its unsaved-changes warning on the storage's
+ * modified state.
+ */
+export interface PdfFormState {
+  fields: number
+  modified: boolean
+}
+
 /** Where the viewer stands, as it tells the browser after every change. */
 export interface PdfViewerReport {
   /** `password`: the document is encrypted and waits for one (`password` command). */
@@ -58,6 +70,8 @@ export interface PdfViewerReport {
    */
   find: { query: string; current: number; total: number; searching: boolean } | null
   outline: PdfOutlineItem[]
+  /** The document's form fields and whether they hold unsaved changes. */
+  form: PdfFormState
   /** `error`: what went wrong, in the viewer's words. */
   error?: string
   /** `password`: the one given was wrong (as against none given yet). */
@@ -81,6 +95,12 @@ export type PdfViewerCommand =
   | { kind: 'password'; password: string }
   /** Post the current report again (a chrome that attached after the last one). */
   | { kind: 'report' }
+  /**
+   * The host wrote the copy the viewer last handed it (`pdfSaveScript`): the form's values are
+   * saved, so `form.modified` is false until the next edit. Not sent when the write failed –
+   * the edits are still unsaved, and the row stays enabled.
+   */
+  | { kind: 'saved' }
 
 /** Chrome's zoom presets, the steps `zoomBy` moves along. */
 export const PDF_ZOOM_STEPS: readonly number[] = [
@@ -121,6 +141,17 @@ export function pdfCommandScript(command: PdfViewerCommand): string {
   return `(() => { const v = window[${JSON.stringify(PDF_VIEWER_GLOBAL)}]; if (!v || typeof v.command !== 'function') return false; v.command(${JSON.stringify(command)}); return true })()`
 }
 
+/**
+ * The JavaScript that asks the viewer document for the document's bytes with the form's values
+ * written in – pdf.js's incremental save (`saveDocument`), the original bytes when nothing was
+ * changed – as base64: a Promise, which the host's `executeJavaScript` awaits (Electron's does;
+ * Android's `TabWebView.evaluate` posts the settled value back), resolving null when the tab
+ * shows no viewer, no document is open or the save failed. One expression, as `pdfCommandScript`.
+ */
+export function pdfSaveScript(): string {
+  return `(() => { const v = window[${JSON.stringify(PDF_VIEWER_GLOBAL)}]; if (!v || typeof v.save !== 'function') return null; return v.save() })()`
+}
+
 /** The report inside a window message the viewer posted, or null for any other message. */
 export function pdfReportOf(data: unknown): PdfViewerReport | null {
   if (!data || typeof data !== 'object') return null
@@ -130,6 +161,14 @@ export function pdfReportOf(data: unknown): PdfViewerReport | null {
   if (r.state !== 'loading' && r.state !== 'password' && r.state !== 'ready' && r.state !== 'error')
     return null
   if (typeof r.pageCount !== 'number' || typeof r.page !== 'number' || typeof r.zoom !== 'number')
+    return null
+  const form = r.form as Partial<PdfFormState> | undefined
+  if (
+    !form ||
+    typeof form !== 'object' ||
+    typeof form.fields !== 'number' ||
+    typeof form.modified !== 'boolean'
+  )
     return null
   return report as PdfViewerReport
 }

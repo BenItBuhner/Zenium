@@ -26,6 +26,7 @@ const report = (over: Partial<PdfViewerReport> = {}): PdfViewerReport => ({
   title: null,
   find: null,
   outline: [],
+  form: { fields: 0, modified: false },
   ...over
 })
 
