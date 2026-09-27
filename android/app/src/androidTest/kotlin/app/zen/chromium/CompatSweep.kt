@@ -4133,8 +4133,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * request the proxy could not carry for the runner's network (an unknown host, a refused or
      * timed-out connection) is the gate too, `n/m` with the words; a failure of another kind
      * (TLS, a body that never came, a redirect, no permission) stays F with the lines quoted.
+     * A popup without its pass and WITHOUT a line in the record (round 22's Temp Mail on 113:
+     * `proxied []` – a request never made, or one that never met the intercept) has its own
+     * realm read when `apiProbePath` is given ([API_PROBE], R23-4): the popup's resource-timing
+     * entries for the host, the extension's `storage.local` keys, a simple GET and a JSON POST
+     * of the driver's to `https://<apiHost><apiProbePath>` from the popup's document with their
+     * outcomes, and the proxy record read again after them (`apiProbe`, `proxiedAfterProbe`):
+     * the popup's own logic told from the intercept's reach.
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
@@ -4148,6 +4155,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("popup", found)
         val answers = if (apiHost == null) emptyList() else proxied(apiHost).filter { it.startsWith("${row.id} ") }
         if (apiHost != null) extra.put("proxied", JSONArray(answers.takeLast(8)))
+        if (apiHost != null && apiProbePath != null && popup != null && !found.optBoolean("pass") && answers.isEmpty()) {
+            val started = tabEval(popup, API_PROBE.replace("%HOST%", apiHost).replace("%PATH%", apiProbePath))
+            val probe = if (started == "started") poll(scaled(15_000, factor), 500) { tabEval(popup, API_PROBE_READ).takeIf { it != "null" && it.isNotEmpty() }?.let { json(it) } } else null
+            extra.put("apiProbe", probe ?: JSONObject().put("error", "the probe did not start: ${started.take(120)}"))
+            extra.put("proxiedAfterProbe", JSONArray(proxied(apiHost).filter { it.startsWith("${row.id} ") }.takeLast(8)))
+            extra.put("popupConsoleAfterProbe", JSONArray(consoleOf(popup).takeLast(6)))
+        }
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-popup-core")
         runCatching { coreCall("extension.closePopup", "null") }
@@ -7667,7 +7681,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Its popup asks web2.temp-mail.org for a mailbox itself (`newMailbox()`: POST /mailbox, an empty
         // address on any failure, nothing drawn or logged for it); the worker's thirteen `tabs.sendMessage`s
         // to tabs without its content script are Chrome's own lastError texts, counted apart by the host.
-        Row("inojafojbhdpnehkhhfjalgjjobnhomj", "Temp Mail - Disposable Temporary Email", "temp-mail", core = popupMarker("Temp Mail", TEMP_MAIL_ADDRESS, settleMs = 30_000, notMeasurable = Regex("error|failed|try again|unavailable|offline|something went wrong|network", RegexOption.IGNORE_CASE), gate = "temp-mail.org's mailbox API (web2.temp-mail.org)", apiHost = "web2.temp-mail.org")),
+        Row("inojafojbhdpnehkhhfjalgjjobnhomj", "Temp Mail - Disposable Temporary Email", "temp-mail", core = popupMarker("Temp Mail", TEMP_MAIL_ADDRESS, settleMs = 30_000, notMeasurable = Regex("error|failed|try again|unavailable|offline|something went wrong|network", RegexOption.IGNORE_CASE), gate = "temp-mail.org's mailbox API (web2.temp-mail.org)", apiHost = "web2.temp-mail.org", apiProbePath = "/api/v1/mailbox")),
         Row("hkhggnncdpfibdhinjiegagmopldibha", "Checker Plus for Google Calendar", "checker-plus-calendar", account = true, core = popupLogin("Checker Plus for Google Calendar")),
         Row("ggaabchcecdbomdcnbahdfddfikjmphe", "Chrome Capture - Screenshot & GIF", "chrome-capture", core = captureLimit("Chrome Capture", "/record|capture|screenshot|gif|start|full ?page|visible|area/i")),
         Row("kpdjmbiefanbdgnkcikhllpmjnnllbbc", "Save as PDF", "save-as-pdf", core = popupMarker("Save as PDF", SAVE_AS_PDF_POPUP, settleMs = 30_000, notMeasurable = Regex("error|could not|failed|unable|timed? ?out|not (be )?(reach|fetch|download)|refused|unreachable", RegexOption.IGNORE_CASE), gate = "pdfcrowd.com's conversion service (the fixture is the runner's own address, which the service cannot fetch)")),
@@ -15250,6 +15264,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val TEMP_MAIL_ADDRESS =
             "(function(){var e=document.getElementById('email');var v=e?(e.value||e.textContent||e.innerText||'').trim():'';var w=document.getElementById('workplace');" +
                 "return JSON.stringify({pass:/@/.test(v),email:v.slice(0,60),workplace:!!w,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * The popup's own network read of its service (compat round 23's R23-4, `popupMarker`'s
+         * `apiProbePath`): started in the popup's realm, it lists the resource-timing entries the
+         * popup's document made to `%HOST%` (what its own script asked Blink for, whatever became
+         * of it), the extension's `storage.local` keys (Temp Mail's `token` decides `getMailbox()`
+         * against `newMailbox()`), and then makes two requests of its own to `https://%HOST%%PATH%`
+         * – a simple GET (no preflight) and a JSON `POST` (a preflight first) – reporting each
+         * one's status or its `TypeError`; the driver reads the host's proxy record after it. The
+         * result lands in `window.__zenApiProbe` (`API_PROBE_READ`).
+         */
+        private const val API_PROBE =
+            "(function(){var host='%HOST%',path='%PATH%',out={host:host,path:path};window.__zenApiProbe=null;" +
+                "try{out.resources=(performance.getEntriesByType('resource')||[]).filter(function(e){return e.name.indexOf(host)>=0}).slice(0,8).map(function(e){return {name:e.name.slice(0,120),status:e.responseStatus,initiator:e.initiatorType,ms:Math.round(e.duration)}})}catch(e){out.resources=String(e)}" +
+                "function one(k,u,init){return fetch(u,init).then(function(r){out[k]={ok:r.ok,status:r.status,type:r.type}}).catch(function(e){out[k]={error:String(e&&e.name)+': '+String(e&&e.message)}})}" +
+                "function keys(){return new Promise(function(res){try{if(!(window.chrome&&chrome.storage&&chrome.storage.local))return res('no chrome.storage.local');var t=setTimeout(function(){res('get did not answer in 5 s')},5000);chrome.storage.local.get(null,function(v){clearTimeout(t);res(v?Object.keys(v).slice(0,12):String(chrome.runtime&&chrome.runtime.lastError&&chrome.runtime.lastError.message))})}catch(e){res(String(e))}})}" +
+                "var u='https://'+host+path;keys().then(function(k){out.storageKeys=k;return Promise.all([one('get',u),one('post',u,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})])}).then(function(){window.__zenApiProbe=out},function(e){out.error=String(e);window.__zenApiProbe=out});return 'started'})()"
+        private const val API_PROBE_READ = "JSON.stringify(window.__zenApiProbe||null)"
 
         /**
          * Save as PDF's popup states: `.convert` (the button for a page not yet converted),
