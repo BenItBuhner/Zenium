@@ -193,12 +193,15 @@ class ShortcutHelperDemo : DemoHarness("shortcut-helper-demo-state.json", "short
                 missing += group.items.map { "${group.title}: ${it.label}" }
                 continue
             }
+            // Looked for within the group's span: a row's label can be a chord chip's text
+            // elsewhere first ("Home" is Move Tab to Start's key under the tabs group, 100 nodes
+            // before it is the Home row's label under the feature group – run 36287819321).
+            val span = body.subList(minOf(start + 1, next), next)
             for (item in group.items) {
-                val at = body.indexOf(item.label)
-                when {
-                    at < 0 -> missing += "${group.title}: ${item.label}"
-                    at !in (start + 1) until next -> misplaced += "${group.title}: ${item.label} at $at (group $start..$next)"
-                }
+                if (item.label in span) continue
+                val elsewhere = body.indexOf(item.label)
+                if (elsewhere < 0) missing += "${group.title}: ${item.label}"
+                else misplaced += "${group.title}: ${item.label} at $elsewhere (group $start..$next)"
             }
         }
         check("[$scheme] every row the activity lists is in the listing under its group (${expected.sumOf { it.items.size }} rows)", missing.isEmpty() && misplaced.isEmpty(), "missing $missing, misplaced $misplaced")
@@ -331,7 +334,15 @@ class ShortcutHelperDemo : DemoHarness("shortcut-helper-demo-state.json", "short
         // --- chrome://settings: the Settings tab ---------------------------------------------------
         typeAddress("chrome://settings")
         check("chrome://settings typed opens the Settings tab (zenium://settings, the page's tab on the phone)", awaitActiveUrl(SETTINGS_URL, 10_000), "active ${activeTabId()} at ${activeUrl()}, tabs ${tabUrls()}")
-        check("the Settings page is at its landing", awaitTrue(8_000) { settingsSection() == "landing" }, "section '${settingsSection()}'")
+        // The page's own layout goes by its width (PageFrame's TWO_PANE_MIN_WIDTH, 720 px): at
+        // 1280 px the phone chrome holds the two panes with the first section open (§10.5: "a
+        // phone in landscape reaches the two panes inside the phone shell" – run 36287819321 read
+        // the two-pane root here); a narrower window would show the phone layout's landing.
+        check(
+            "the Settings page is drawn: the two-pane layout with a section open at 720 px and over, the phone layout's landing under it",
+            awaitTrue(8_000) { settingsLayoutAndSection().let { (layout, section) -> (layout == "two-pane" && section.isNotEmpty()) || (layout == "phone" && section == "landing") } },
+            "layout and section ${settingsLayoutAndSection()}"
+        )
         check("the version tab stays where it was", VERSION_URL in tabUrls() && tabUrls().size == tabsBefore.size + 1, "tabs ${tabUrls()} (were $tabsBefore)")
         SystemClock.sleep(1_500)
         shot("light-phone-settings")
@@ -426,6 +437,22 @@ class ShortcutHelperDemo : DemoHarness("shortcut-helper-demo-state.json", "short
     private fun tabUrl(tabId: String): String? = coreState().getJSONObject("tabs").optJSONObject(tabId)?.optString("url")
 
     private fun awaitActiveUrl(url: String, timeoutMs: Long = 5_000): Boolean = awaitTrue(timeoutMs) { activeUrl() == url }
+
+    /**
+     * The Settings page's layout and section by its document: `.zen-settings-page`'s `data-layout`
+     * (`two-pane` from 720 px of width, `phone` under it) and the shown root's `data-section` (the
+     * two-pane root's open section; the phone root's, `landing` at the top). Empty strings while
+     * the page is not drawn.
+     */
+    private fun settingsLayoutAndSection(): Pair<String, String> {
+        val read = chromeJsString(
+            "(function(){var p=document.querySelector('.zen-settings-page');if(!p)return '|';" +
+                "var r=p.querySelector('.zen-settings-two-pane,.zen-settings-phone');" +
+                "return String(p.dataset.layout||'')+'|'+String((r&&r.dataset.section)||'')})()"
+        ) ?: "|"
+        val cut = read.indexOf('|')
+        return if (cut < 0) read to "" else read.substring(0, cut) to read.substring(cut + 1)
+    }
 
     /** The Browse space's tabs' URLs in the core's order. */
     private fun tabUrls(): List<String> {
