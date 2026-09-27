@@ -1286,6 +1286,7 @@ export class BrowserState {
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabHiddenModules: this.newTabDevice.hiddenModules,
+      newTabSafetyHubCard: this.newTabDevice.safetyHubCard,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
       updateDot: this.updateDot,
       newTabBackground: this.newTabBackgroundFor(),

@@ -344,6 +344,16 @@ export function pickSafetyHubCard(
 }
 
 /**
+ * The type whose run is on – what the card shows – or null. `pickSafetyHubCard` dismisses every
+ * running type but its winner, so at most one is on; a record that names more (a hand-edited
+ * file) reads by priority.
+ */
+export function activeSafetyHubType(memories: SafetyHubCardMemories): SafetyHubCardType | null {
+  for (const type of SAFETY_HUB_CARD_TYPES) if (memories[type]?.activeSince != null) return type
+  return null
+}
+
+/**
  * `DismissActiveNotificationOfModule` (`magic_stack_bridge.cc:69-86`): the type's run ends now –
  * the button of the Safe Browsing and passwords cards, Safe Browsing switched back on or the
  * compromised count gone while the card is up (`SafetyHubMagicStackMediator.java:136-151`).

@@ -50,11 +50,13 @@ import {
   sanitizeNewTabSettings,
   setModuleHidden,
   setNewTabSection,
+  setSafetyHubCardMemories,
   siteHost,
   toggleNewTabModule,
   unhideSite,
   unpinShortcut
 } from '../shared/newTab'
+import type { SafetyHubCardMemories } from '../shared/safetyHubCard'
 import { createTabRecord, getSpace } from './model'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -777,6 +779,18 @@ export class NewTabService {
   setModuleHidden(id: MagicStackModuleId, hidden: boolean): void {
     if (this.device.hiddenModules.includes(id) === hidden) return
     this.updateDevice((d) => setModuleHidden(d, id, hidden))
+  }
+
+  /**
+   * The Safety check card's memory as the renderer's machine left it (NTP-19,
+   * `shared/safetyHubCard.ts`): replaced whole in this device's new-tab sets, never synced
+   * (Chrome's `safety_hub.menu_notifications` pref is per device). Nothing is written when the
+   * record already reads so.
+   */
+  setSafetyHubCardMemories(memories: SafetyHubCardMemories): void {
+    const next = setSafetyHubCardMemories(this.device, memories)
+    if (next === this.device) return
+    this.updateDevice(() => next)
   }
 
   /**

@@ -13,6 +13,7 @@ import type {
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { UpdateDotRecord } from '../core/updateDot'
+import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
@@ -2764,15 +2765,24 @@ export interface NewTabDeviceState {
    * are. Ids from `MAGIC_STACK_MODULE_IDS` (`shared/newTab.ts`).
    */
   hiddenModules: MagicStackModuleId[]
+  /**
+   * The Safety check card's memory (NTP-19; `shared/safetyHubCard.ts`): per type, the run being
+   * shown and its impressions, the runs so far, when it may show again – Chrome's
+   * `safety_hub.menu_notifications` pref, per device as that is.
+   */
+  safetyHubCard: SafetyHubCardMemories
 }
 
 /**
  * The Magic Stack's modules (NTP-16): the contextual cards the phone's new tab page pages
  * through under its tiles. `continue` is the recently closed tab (Chrome's local tab
  * resumption), `downloads` the last completed download, `bookmarks` the newest bookmark,
- * `default-browser` the "Set Zenium as your default browser" promo (DEF-04).
+ * `safety-hub` the Safety check card (NTP-19: revoked permissions, Safe Browsing off, compromised
+ * passwords – one at a time), `default-browser` the "Set Zenium as your default browser" promo
+ * (DEF-04).
  */
-export type MagicStackModuleId = 'continue' | 'downloads' | 'bookmarks' | 'default-browser'
+export type MagicStackModuleId =
+  'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'default-browser'
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
 export interface NewTabPageShortcut extends NewTabShortcut {
@@ -4588,6 +4598,8 @@ export interface UIState {
   newTabHiddenHosts: string[]
   /** The Magic Stack's modules hidden on this device (NTP-16; the phone's page and its Customise sheet). */
   newTabHiddenModules: MagicStackModuleId[]
+  /** The Safety check card's memory on this device (NTP-19; `NewTabDeviceState.safetyHubCard`). */
+  newTabSafetyHubCard: SafetyHubCardMemories
   /**
    * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
    * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
@@ -5888,6 +5900,12 @@ export interface Commands {
   'newtab.undoRemove': { args: { url: string }; result: boolean }
   /** Hide or show one of the Magic Stack's modules on this device (NTP-16). */
   'newtab.setModuleHidden': { args: { id: MagicStackModuleId; hidden: boolean }; result: void }
+  /**
+   * The Safety check card's memory after an impression or a dismissal (NTP-19): the renderer
+   * runs the machine (`shared/safetyHubCard.ts`) over the published state and writes the record
+   * back whole; the core sanitises and keeps it with the device's other new-tab sets.
+   */
+  'newtab.setSafetyHubCardMemory': { args: { memories: SafetyHubCardMemories }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }

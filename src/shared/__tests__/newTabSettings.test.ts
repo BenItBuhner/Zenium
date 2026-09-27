@@ -316,7 +316,8 @@ describe('device-local sets', () => {
     ).toEqual({
       shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }],
       hiddenHosts: ['b.example'],
-      hiddenModules: []
+      hiddenModules: [],
+      safetyHubCard: {}
     })
   })
 
@@ -332,7 +333,12 @@ describe('device-local sets', () => {
         hiddenHosts: [],
         hiddenModules: ['default-browser', 'x']
       })
-    ).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: ['default-browser'] })
+    ).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: ['default-browser'],
+      safetyHubCard: {}
+    })
   })
 
   it('hides and shows a Magic Stack module; a repeat changes nothing', () => {
@@ -553,18 +559,24 @@ describe('migrateNewTabDevice', () => {
       shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }],
       hiddenHosts: ['a.example']
     }
-    // A v5 document from before the Magic Stack has no hidden modules: none are hidden.
-    expect(migrateNewTabDevice({ newTabDevice: v5 })).toEqual({ ...v5, hiddenModules: [] })
+    // A v5 document from before the Magic Stack has no hidden modules: none are hidden; one
+    // from before the Safety check card has no card memory: nothing has been shown.
+    expect(migrateNewTabDevice({ newTabDevice: v5 })).toEqual({
+      ...v5,
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(migrateNewTabDevice({ newTabDevice: { ...v5, hiddenModules: ['continue'] } })).toEqual({
       ...v5,
-      hiddenModules: ['continue']
+      hiddenModules: ['continue'],
+      safetyHubCard: {}
     })
     expect(
       migrateNewTabDevice({
         newTabShortcuts: v5.shortcuts,
         newTabHiddenHosts: ['WWW.A.example', 'a.example']
       })
-    ).toEqual({ ...v5, hiddenModules: [] })
+    ).toEqual({ ...v5, hiddenModules: [], safetyHubCard: {} })
     expect(migrateNewTabDevice({})).toEqual(emptyNewTabDevice())
   })
 
