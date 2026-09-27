@@ -77,6 +77,12 @@ export interface SystemSample {
   totalMemoryMb: number
   cpuCount: number
   onBattery: boolean
+  /**
+   * Energy Saver is on (`Settings.energySaver` met by the power state – `energySaverActive`,
+   * `energySaver.ts`): the budgets tighten by `batteryFactor`. Not `onBattery` itself: the mode
+   * decides when a battery counts (whenever unplugged, only under 20 %, never).
+   */
+  energySaver: boolean
   /** Seconds since the last user input anywhere on the system. */
   idleSeconds: number
   windowMinimized: boolean
@@ -157,12 +163,12 @@ export function emptyPlannerMemory(): PlannerMemory {
 // Budgets
 // ---------------------------------------------------------------------------
 
-/** Effective budgets (0 = unlimited) after battery tightening. */
+/** Effective budgets (0 = unlimited) after Energy Saver's tightening (W8-2: the mode, not the battery alone). */
 export function deriveBudgets(
   settings: ResourceSettings,
-  system: Pick<SystemSample, 'totalMemoryMb' | 'onBattery'>
+  system: Pick<SystemSample, 'totalMemoryMb' | 'energySaver'>
 ): Record<ResourceKind, Omit<ResourceGauge, 'used'>> {
-  const factor = system.onBattery ? clamp(settings.batteryFactor, 0.25, 1) : 1
+  const factor = system.energySaver ? clamp(settings.batteryFactor, 0.25, 1) : 1
   const memory =
     settings.memoryMb > 0
       ? Math.round(settings.memoryMb)

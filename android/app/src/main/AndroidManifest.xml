@@ -313,13 +313,16 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />
 
         <!-- The Custom Tabs provider service other apps bind before they open a custom tab
-             (CustomTabsConnectionService.kt): warmup, sessions, likely URLs. -->
+             (CustomTabsConnectionService.kt): warmup, sessions, likely URLs. The AuthTab category
+             is what `CustomTabsClient.isAuthTabSupported` looks for: this browser returns an Auth
+             Tab's redirect to its caller (CCT-13, AuthTab.kt). -->
         <service
             android:name=".CustomTabsConnectionService"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="android.support.customtabs.action.CustomTabsService" />
+                <category android:name="androidx.browser.auth.category.AuthTab" />
             </intent-filter>
         </service>
 

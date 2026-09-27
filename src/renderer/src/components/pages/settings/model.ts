@@ -166,13 +166,19 @@ export interface ValueRow extends RowBase {
   /** The picker sheet's description: what the desktop row explained beside its menulist. */
   sheetDescription?: string
   /**
-   * How the desktop draws the choice (§10.4: "a menulist or 2–4 radios on desktop"; §10.5): the
-   * trailing 32 px menulist unless `'radios'` – §9.14's plain radios under the row's text, for a
-   * choice of a few options named in full whose next row hangs on the one picked (Appearance ›
-   * Home page: "Enter custom web address" stands over the Address field it reveals, as Chrome's
-   * radio does). The phone's picker sheet is the same either way.
+   * On the two-pane layout the row is §9.14's plain radio list rather than a menulist: one
+   * radio row per option across the row's content width (the §9.13 picker's rows: the 16
+   * circle, the label, the option's description under it), as Chrome's Performance page lists
+   * Memory Saver's tiers and Energy Saver's two conditions under their toggles (W8-2) and its
+   * Appearance page the Home page's "New Tab page" / "Enter custom web address" under the Home
+   * button's, the Address field stacked under the option that reveals it (W8-3, the lead's Q7
+   * on #572). The row's label names the group for assistive technology alone (pr-584 N2) – the
+   * options are the visible text; a description and a search's caption still stand over them.
+   * For 2–4 options that fit on one screen and whose descriptions ARE the choice (§9.14; more
+   * become a menulist). The phone keeps its value row and picker sheet, which the same options
+   * fill.
    */
-  form?: 'menulist' | 'radios'
+  radios?: boolean
 }
 
 /** A boolean: the whole row toggles the trailing 36 × 20 switch (§10.4). */
@@ -558,6 +564,14 @@ export interface RowGroup {
   rows: SettingsRow[]
   /** The §9.17 one-line empty state, when the group's rows come from a list that is empty. */
   empty?: string
+  /**
+   * The list's control is off (Memory Saver's exceptions while its switch is): the whole group
+   * – heading, description, rows or the empty line – dims as one dependent at §9.30's one .4,
+   * `aria-disabled` on it so the way out (the switch above) gets read (§10.4; pr-584's re-read,
+   * NEW 2, as ruled). The rows still say `disabled` for what it does – no press, no focus – and
+   * take no .4 of their own under the group's.
+   */
+  disabled?: boolean
   /** As a row's `layouts`: the whole group is one shell's (the bookmarks bar's rows). */
   layouts?: readonly FormFactor[]
 }

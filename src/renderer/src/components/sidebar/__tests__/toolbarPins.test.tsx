@@ -62,8 +62,18 @@ function media(over: Partial<MediaState> = {}): MediaState {
   }
 }
 
+/** The governor's snapshot with Energy Saver on: what puts the leaf in the row (W8-2). */
+const SAVING = {
+  resources: { system: { onBattery: true, batteryPercent: 42, energySaver: true } }
+} as unknown as Partial<UIState>
+
 /** Enough of a snapshot for the whole row, the pill and its chips included. */
-function state(t: Tab, settings: Partial<Settings> = {}, entries: MediaState[] = []): UIState {
+function state(
+  t: Tab,
+  settings: Partial<Settings> = {},
+  entries: MediaState[] = [],
+  patch: Partial<UIState> = {}
+): UIState {
   return {
     platform: 'linux',
     capabilities: { windowControls: false, windows: true },
@@ -86,7 +96,8 @@ function state(t: Tab, settings: Partial<Settings> = {}, entries: MediaState[] =
     autofill: { prompts: [], picker: null },
     // The site-information slot (#406) reads the site's blocked permissions from the engine's rules.
     permissionRules: [],
-    media: entries
+    media: entries,
+    ...patch
   } as unknown as UIState
 }
 
@@ -199,6 +210,106 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     expect(toolbarTiering.get().hidden).not.toContain('media')
   })
 
+  it('the Energy Saver leaf (W8-2) is in the row while the governor says the mode is on, ahead of the hub – and its pin folds it away with no menu row', () => {
+    const leaf = (): HTMLElement | null => q('[data-zen-energy-saver-button]')
+    // The mode off (the shipped snapshot, no battery): no leaf, whatever the pin says.
+    render(<NavRow state={state(page, {}, [media()])} tab={page} compact={false} />)
+    expect(leaf()).toBeNull()
+    // On: the leaf, named by Chrome's one line, before the hub's button in the row.
+    render(<NavRow state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />)
+    const button = leaf()!
+    expect(button).not.toBeNull()
+    expect(button.getAttribute('aria-label')).toBe('Energy Saver is on')
+    expect(button.getAttribute('data-tooltip')).toBe('Energy Saver is on')
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-zen-nav-row] > button')]
+    const hub = q('[data-zen-media-hub-button]')!
+    expect(buttons.indexOf(button as HTMLButtonElement)).toBeLessThan(
+      buttons.indexOf(hub as HTMLButtonElement)
+    )
+    // The compact rail draws it too.
+    render(<NavRow state={state(page, {}, [], SAVING)} tab={page} compact />)
+    expect(leaf()).not.toBeNull()
+    // Unpinned: not drawn, and nothing of it on ⋯ – the mode runs on, Settings says so.
+    render(
+      <NavRow
+        state={state(page, { toolbarPins: { 'energy-saver': false } }, [], SAVING)}
+        tab={page}
+        compact={false}
+      />
+    )
+    expect(leaf()).toBeNull()
+    expect(nameOf(q<HTMLButtonElement>('[data-zen-app-menu-button]')!)).not.toMatch(/energy/i)
+    // A control the pins folded is not "hidden at this width".
+    expect(toolbarTiering.get().hidden).not.toContain('energy-saver')
+  })
+
+  it('tiers the leaf by the row’s width on the hub’s rule (L2): folded at the 240 sidebar and published as hidden, back at the 302; where one of the two fits, the leaf stands and the hub folds', () => {
+    const leaf = (): HTMLElement | null => q('[data-zen-energy-saver-button]')
+    const hub = (): HTMLElement | null => q('[data-zen-media-hub-button]')
+    const widths = { row: 240 - 16 }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-zen-nav-row') ? widths.row : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+    try {
+      // The 240 sidebar with back, forward, reload and ⋯: no room for the leaf (it took the
+      // pill from "Settings" to "S…"), none for the hub – both fold, both published, in the
+      // bar's order; the hub keeps its menu row and dot, the leaf has no row (the mode runs on).
+      render(
+        <NavRow key="240" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['energy-saver', 'media'])
+      expect(q('[data-zen-app-menu-button]')!.querySelector('.zen-mhub-dot')).not.toBeNull()
+      // One px short of the leaf's return: still folded.
+      widths.row = 285
+      render(
+        <NavRow key="285" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).toBeNull()
+      // The 302 sidebar (the 286 row): the leaf returns over a pill at the tier's floor; the
+      // hub, counting the leaf among the buttons it makes room against, needs 318 and folds.
+      widths.row = 286
+      render(
+        <NavRow key="286" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).not.toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['media'])
+      // Without media the same width has nothing else to fold.
+      render(
+        <NavRow key="286-quiet" state={state(page, {}, [], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // 32 more: both stand.
+      widths.row = 318
+      render(
+        <NavRow key="318" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+      )
+      expect(leaf()).not.toBeNull()
+      expect(hub()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // The compact rail has no pill to keep: the leaf stays at any width.
+      widths.row = 60
+      render(<NavRow key="compact" state={state(page, {}, [], SAVING)} tab={page} compact />)
+      expect(leaf()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // The mode off at the narrow width: nothing to fold, nothing published.
+      widths.row = 240 - 16
+      render(<NavRow key="240-off" state={state(page, {}, [])} tab={page} compact={false} />)
+      expect(leaf()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+    } finally {
+      rects.mockRestore()
+    }
+  })
+
   it('publishes what the width tier hid of the pinned controls, and clears it as the row leaves', () => {
     // The row at the 240 sidebar: no room for the hub's button (`mediaHubButtonFits`).
     const widths = { row: 240 - 16, pill: 0 }
@@ -271,15 +382,19 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     viewportStore.set({ formFactor: 'tablet' })
     render(
       <NavRow
-        state={state(page, { toolbarPins: { forward: false, star: false, media: false } }, [
-          media()
-        ])}
+        state={state(
+          page,
+          { toolbarPins: { forward: false, star: false, 'energy-saver': false, media: false } },
+          [media()],
+          SAVING
+        )}
         tab={page}
         compact={false}
       />
     )
     expect(forwardButton()).not.toBeNull()
     expect(q('[data-bm-star]')).not.toBeNull()
+    expect(q('[data-zen-energy-saver-button]')).not.toBeNull()
     expect(q('[data-zen-media-hub-button]')).not.toBeNull()
     // Home is a desktop pin too: the tablet's bar never draws it, shown or not.
     expect(homeButton()).toBeNull()
@@ -405,6 +520,61 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
       render(<NavRow key="unpinned" state={state(page)} tab={page} compact={false} />)
       expect(homeButton()).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
+    } finally {
+      rects.mockRestore()
+    }
+  })
+
+  it('with the Energy Saver leaf (W8-2) and the hub beside it the row gives way from the back – Home first back, the leaf counting Home, the hub counting both – one slot (32) apart, published in the bar’s order', () => {
+    const leaf = (): HTMLElement | null => q('[data-zen-energy-saver-button]')
+    const hub = (): HTMLElement | null => q('[data-zen-media-hub-button]')
+    const widths = { row: 240 - 16 }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-zen-nav-row') ? widths.row : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+    try {
+      // Home pinned, the mode on, media playing: three tiered controls over the four always-there
+      // buttons. At the 240 sidebar all three fold, published Home first.
+      const all = (): UIState => state(page, { toolbarPins: { home: true } }, [media()], SAVING)
+      render(<NavRow key="240" state={all()} tab={page} compact={false} />)
+      expect(homeButton()).toBeNull()
+      expect(leaf()).toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['home', 'energy-saver', 'media'])
+      // The 302 sidebar (the 286 row) has one slot: Home, the first in the bar, takes it.
+      widths.row = 286
+      render(<NavRow key="286" state={all()} tab={page} compact={false} />)
+      expect(homeButton()).not.toBeNull()
+      expect(leaf()).toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['energy-saver', 'media'])
+      // 32 more: the leaf, counting Home among the buttons it makes room against, returns; the
+      // hub, counting both, waits.
+      widths.row = 318
+      render(<NavRow key="318" state={all()} tab={page} compact={false} />)
+      expect(homeButton()).not.toBeNull()
+      expect(leaf()).not.toBeNull()
+      expect(hub()).toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual(['media'])
+      // 32 more again: all three stand.
+      widths.row = 350
+      render(<NavRow key="350" state={all()} tab={page} compact={false} />)
+      expect(homeButton()).not.toBeNull()
+      expect(leaf()).not.toBeNull()
+      expect(hub()).not.toBeNull()
+      expect(toolbarTiering.get().hidden).toEqual([])
+      // Home ahead of the leaf, the leaf ahead of the hub: the bar's order.
+      const row = q('[data-zen-nav-row]')!
+      const buttons = [...row.querySelectorAll<HTMLButtonElement>(':scope > button')]
+      expect(buttons.indexOf(homeButton() as HTMLButtonElement)).toBeLessThan(
+        buttons.indexOf(leaf() as HTMLButtonElement)
+      )
+      expect(buttons.indexOf(leaf() as HTMLButtonElement)).toBeLessThan(
+        buttons.indexOf(hub() as HTMLButtonElement)
+      )
     } finally {
       rects.mockRestore()
     }

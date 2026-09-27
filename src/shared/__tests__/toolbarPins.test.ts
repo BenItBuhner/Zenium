@@ -17,7 +17,10 @@ import {
  * one control folded by default – Chrome's `browser.show_home_button` is false until asked.
  */
 describe('toolbarPins (settings-36)', () => {
-  it('lists the optional controls in the bar’s order – Forward, Home, the pill’s chips left to right (the Install-app chip before the star, Chrome’s page-action order; W8-6), the hub', () => {
+  it('lists the optional controls in the bar’s order – Forward, Home, the pill’s chips left to right (the Install-app chip before the star, Chrome’s page-action order; W8-6), the Energy Saver leaf, the hub', () => {
+    // Home ahead of the pill (W8-3): Chrome's toolbar is Back, Forward, Reload, Home, then the
+    // location bar. The leaf ahead of the hub (W8-2): Chrome's toolbar puts its battery saver
+    // button before its media button (`ToolbarView::Init`).
     expect(TOOLBAR_CONTROLS).toEqual([
       'forward',
       'home',
@@ -25,6 +28,7 @@ describe('toolbarPins (settings-36)', () => {
       'translate',
       'install',
       'star',
+      'energy-saver',
       'media'
     ])
     expect(isToolbarControl('install')).toBe(true)
@@ -32,6 +36,7 @@ describe('toolbarPins (settings-36)', () => {
     expect(isToolbarControl('share')).toBe(false)
     expect(isToolbarControl('forward')).toBe(true)
     expect(isToolbarControl('home')).toBe(true)
+    expect(isToolbarControl('energy-saver')).toBe(true)
     // Back, Reload, the pill and the menu are the bar, not its options; downloads is the
     // downloads block's own key.
     for (const never of ['back', 'reload', 'menu', 'pill', 'downloads', 'extensions'])

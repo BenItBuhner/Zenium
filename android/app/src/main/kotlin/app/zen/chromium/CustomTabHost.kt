@@ -35,7 +35,9 @@ class CustomTabHost(
     container: FrameLayout,
     private val fullscreenLayer: FrameLayout,
     override val themeDark: Boolean,
-    override val pageDialogs: Boolean = false
+    override val pageDialogs: Boolean = false,
+    /** The Auth Tab's return (CCT-13), when the caller asked for one; null on every other custom tab. */
+    override val authTab: AuthTab.Return? = null
 ) : PageHost {
     /** The activity the one page reports to: its navigation, title and loading, and its progress. */
     interface Listener {

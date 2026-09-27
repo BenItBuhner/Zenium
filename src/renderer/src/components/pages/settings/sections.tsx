@@ -11,6 +11,7 @@ import type {
   CrashRestoreMode,
   DesktopSiteDefault,
   DownloadSettings,
+  EnergySaverMode,
   FormFactor,
   GlanceTrigger,
   GovernorActionKind,
@@ -27,6 +28,7 @@ import type {
   PermissionRule,
   PhoneBarPosition,
   PinnedCloseBehavior,
+  Platform,
   ResourceEnforcement,
   ResourceProcessProfile,
   ResourceSettings,
@@ -41,7 +43,8 @@ import type {
   UrlbarBehavior,
   WindowSyncMode
 } from '@shared/types'
-import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, ENERGY_SAVER_LOW_BATTERY_PERCENT } from '@shared/types'
+import { defaultEnergySaverMode } from '@core/resources/energySaver'
 import {
   CONTAINER_COLORS,
   CONTAINER_ICONS,
@@ -194,6 +197,7 @@ import {
   type FieldRow,
   type InlineAction,
   type RowGroup,
+  type RowOption,
   type SectionModel,
   type SettingsRow
 } from './model'
@@ -326,6 +330,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   accessibility: accessibilitySection,
   newtab: newTabSection,
   tabs: tabsSection,
+  performance: performanceSection,
   downloads: downloadsSection,
   resources: resourcesSection,
   privacy: privacySection,
@@ -589,10 +594,12 @@ function lookSection({
         // – the Home control's pin (`toolbarPins.home`, the Customise toolbar dialog's Home
         // row), synced as Chrome's is – with its radio under it while on: "New Tab page" or a
         // page of the user's (Chrome's `homepage_is_newtabpage`, `homepage`), the chassis's
-        // value row drawn as §9.14's two radios on the desktop (`form: 'radios'`, §10.4's "2–4
-        // radios on desktop"; the lead's Q7 ruling on #572 – the menulist went), and the
-        // address as a §9.12 field stacked under the second option once a page is chosen – what
-        // was typed fixed up as Chrome's `FixupURL` does at the navigation (`example.com` →
+        // value row drawn as §9.14's two radios on the desktop (`radios: true` – W8-2's radio-
+        // list row, pr-584 R2 / N2: the options on the page's row chassis, the label the group's
+        // name for assistive technology alone, no `--v2-selected` band on the checked one; the
+        // lead's Q7 ruling on #572 – the menulist went), and the address as a §9.12 field
+        // stacked under the second option once a page is chosen – what was typed fixed up as
+        // Chrome's `FixupURL` does at the navigation (`example.com` →
         // `https://example.com/`), a §9.12 line under the field for what is no web address. The
         // setting is the phone's Home group's (`homepage`), so a page chosen here is the phone's
         // Home page too.
@@ -613,7 +620,7 @@ function lookSection({
                 keywords: ['home', 'homepage', 'new tab page', 'custom web address'],
                 layouts: ['desktop'],
                 controlled: homepageControlled,
-                form: 'radios',
+                radios: true,
                 value: homepage.mode === 'url' ? 'url' : 'newtab',
                 sheetDescription: 'Where the Home button goes.',
                 options: [
@@ -662,6 +669,7 @@ function lookSection({
             'reader view',
             'translate',
             'bookmark',
+            'energy saver',
             'media',
             'downloads'
           ],
@@ -1750,10 +1758,9 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
 // Tab Management
 // ---------------------------------------------------------------------------
 
-function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
+function tabsSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
   const windows = state.capabilities.windows
-  const currentSite = currentUnloadSite(state, tab)
   // #129's session rows follow the desktop panel: a crash offer and a "Close N tabs?" question
   // are a windowed host's (Android's runs end by the process going, its pages just come back).
   const sessionRows: SettingsRow[] = windows
@@ -1938,82 +1945,9 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
         }
       ]
     },
-    // The same three keys twice over: Zen's "Tab unloading" rows on the desktop and tablet
-    // shells (the pane's wording, its fields), Edge's sleeping tabs on the phone (CT-22).
-    {
-      id: 'unloading',
-      heading: 'Tab unloading',
-      layouts: ['desktop', 'tablet'],
-      rows: [
-        {
-          kind: 'switch',
-          id: 'unloading-enabled',
-          label: 'Unload inactive tabs',
-          description: 'Frees memory by unloading tabs you have not used for a while.',
-          keywords: ['sleeping tabs', 'memory saver', 'discard', 'inactive'],
-          checked: s.unloadEnabled,
-          onChange: (v) => set({ unloadEnabled: v })
-        },
-        {
-          kind: 'field',
-          id: 'unloading-after',
-          label: 'Unload after',
-          value: String(s.unloadTimeoutMinutes),
-          display: `${s.unloadTimeoutMinutes} minutes`,
-          input: 'number',
-          min: 1,
-          max: 1440,
-          disabled: !s.unloadEnabled,
-          onCommit: (value) => {
-            const n = Number(value)
-            if (!Number.isInteger(n) || n < 1 || n > 1440)
-              return 'Enter a number of minutes from 1 to 1440'
-            set({ unloadTimeoutMinutes: n })
-            return undefined
-          }
-        },
-        {
-          kind: 'field',
-          id: 'unloading-excluded',
-          label: 'Never unload these domains',
-          value: s.unloadExcludedDomains.join(', '),
-          display: s.unloadExcludedDomains.length ? s.unloadExcludedDomains.join(', ') : 'None',
-          input: 'text',
-          placeholder: 'mail.google.com, notion.so',
-          disabled: !s.unloadEnabled,
-          onCommit: (value) => {
-            set({
-              unloadExcludedDomains: value
-                .split(',')
-                .map((d) => d.trim().toLowerCase())
-                .filter(Boolean)
-            })
-            return undefined
-          }
-        },
-        // Chrome's "Add current site" (Performance › Always keep these sites active): the site
-        // Settings was opened from, one press; a dependent row of the switch like the two
-        // fields (§10.4), and laid out at .4 with its reason when there is no site to add.
-        {
-          kind: 'action',
-          id: 'unloading-add-current',
-          label: 'Add current site',
-          description: currentSite.listed
-            ? `${currentSite.listed} is already on the list.`
-            : currentSite.domain
-              ? `${currentSite.domain} – every page of the site stays loaded.`
-              : 'Open a page, then come back to Settings from it.',
-          keywords: ['never unload', 'current site', 'this site', 'keep active'],
-          disabled: !s.unloadEnabled || currentSite.domain === null,
-          button: 'Add',
-          onPress: () => {
-            const domain = currentSite.domain
-            if (domain && !s.unloadExcludedDomains.includes(domain))
-              set({ unloadExcludedDomains: [...s.unloadExcludedDomains, domain] })
-          }
-        }
-      ]
-    },
+    // The same three keys twice over: Chrome's Memory Saver rows under Performance on the
+    // desktop and tablet shells (W8-2, `performanceSection`), Edge's sleeping tabs here on the
+    // phone (CT-22).
     ...sleepingTabsGroups(s, set)
   )
   if (state.capabilities.inactiveTabs) groups.push(...inactiveTabsGroups(s, set))
@@ -2175,6 +2109,350 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
         }
       ]
     }
+  ]
+}
+
+/**
+ * Chrome's Memory Saver tiers (`chrome/browser/performance_manager/policies/
+ * memory_saver_mode_policy.cc`, `GetTimeBeforeDiscard`): a hidden tab is discarded once it has
+ * been inactive for the tier's time – kConservative 6 h, kMedium 4 h (Chrome's default),
+ * kAggressive 2 h – written here to `unloadTimeoutMinutes`, the timer the desktop governor's
+ * discard-after rule and the phone's sleeping-tabs pass both read. Labels and descriptions are
+ * Chrome's (`settings_strings.grdp`), the hours added after them so the row says what it sets.
+ */
+export const MEMORY_SAVER_TIERS: ReadonlyArray<{
+  minutes: number
+  label: string
+  description: string
+}> = [
+  {
+    minutes: 360,
+    label: 'Moderate',
+    description:
+      'Get moderate memory savings. Your tabs become inactive after a longer period of time – 6 hours.'
+  },
+  {
+    minutes: 240,
+    label: 'Balanced (recommended)',
+    description:
+      'Get balanced memory savings. Your tabs become inactive after an optimal period of time – 4 hours.'
+  },
+  {
+    minutes: 120,
+    label: 'Maximum',
+    description:
+      'Get maximum memory savings. Your tabs become inactive after a shorter period of time – 2 hours.'
+  }
+]
+
+/**
+ * The tier radio's options for a stored timeout: Chrome's three, longest first, and a stored
+ * value off them – an existing profile's shipped 20 minutes (a fresh desktop profile starts on
+ * Balanced, `freshPerformanceDefaults`), a timer set in the field this row replaced, the phone
+ * ladder's 30 seconds – listed in its place among them (the phone ladder's rule for an
+ * off-ladder value), so the row never shows a choice the browser is not making and never
+ * rewrites a timer the user did not touch: the migration is the affordance (pr-584 §D (3)).
+ */
+export function memorySaverTierOptions(minutes: number): RowOption[] {
+  const tiers: RowOption[] = MEMORY_SAVER_TIERS.map((tier) => ({
+    value: String(tier.minutes),
+    label: tier.label,
+    description: tier.description
+  }))
+  if (MEMORY_SAVER_TIERS.some((tier) => tier.minutes === minutes)) return tiers
+  const custom: RowOption = {
+    value: String(minutes),
+    label: `Custom – ${sleepTimeoutLabel(minutes)}`,
+    description: 'The timer set before these options; kept until you pick one of them.'
+  }
+  const at = MEMORY_SAVER_TIERS.findIndex((tier) => tier.minutes < minutes)
+  return at === -1 ? [...tiers, custom] : [...tiers.slice(0, at), custom, ...tiers.slice(at)]
+}
+
+/**
+ * Energy Saver's two conditions, Chrome's rows in Chrome's order (`battery_page.html.ts`:
+ * kEnabledBelowThreshold, then kEnabledOnBattery). The threshold row's description is the
+ * host's: where the battery level cannot be read (`batteryPercent` null – Windows without a
+ * native module, a computer without a battery) it says so, since the mode would wait for ever.
+ */
+export function energySaverOptions(
+  platform: Platform,
+  batteryPercent: number | null
+): Array<RowOption & { value: EnergySaverMode }> {
+  const unreadable =
+    batteryPercent === null
+      ? platform === 'win32'
+        ? 'Zenium cannot read the battery level on Windows yet, so this option waits until it can.'
+        : 'No battery level to read on this computer, so this option waits until there is one.'
+      : undefined
+  return [
+    {
+      value: 'low-battery',
+      label: `Turn on only when your battery is at ${ENERGY_SAVER_LOW_BATTERY_PERCENT}% or lower`,
+      description: unreadable
+    },
+    { value: 'on-battery', label: 'Turn on when your computer is unplugged' }
+  ]
+}
+
+/** Cut a typed site down to its host, as the phone's never-sleep Add sheet does. */
+function siteHost(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .split(':')[0]
+}
+
+/**
+ * Chrome's Performance page (chrome://settings/performance; W8-2, settings-69 / -26 / -29) on
+ * the desktop and tablet shells – the phone keeps Edge's sleeping tabs under Tab Management
+ * (CT-22) and never lists this section. Three groups in Chrome's order:
+ *
+ * - Memory Saver: Zen's tab unloading under Chrome's name and its ONE switch (`unloadEnabled`;
+ *   the Resources page's twin switch went, that page links here – one owner, §9.1), Chrome's
+ *   sentence as the description, and its tiers as a radio (`MEMORY_SAVER_TIERS` onto
+ *   `unloadTimeoutMinutes`, a stored value off them listed in place) – a dependent row at .4
+ *   while the switch is off (§10.4).
+ * - Always keep these sites active: `unloadExcludedDomains`, the governor's exceptions (a host,
+ *   a subdomain or a registrable domain matches, `isExcluded`), as §10.5 item rows each with
+ *   the trailing 32 Remove in plain ink, "No sites yet" while empty (§9.17), an Add form (a
+ *   URL cut to its host, the phone sheet's rule) and Chrome's Add current site.
+ * - Energy Saver: `energySaver` as switch + Chrome's two conditions as a radio, and its effect
+ *   – the budget factor the governor applies while the mode is on (`resources.batteryFactor`,
+ *   the row moved here from Resources › Budgets; one setting, one place). The group goes on a
+ *   computer without a battery, as Chrome's Battery Saver section does (pr-584 L5):
+ *   `performance_page_index.ts` hides `<settings-battery-page>` on `showBatterySettings_`, the
+ *   handler's `getDeviceHasBattery` / `device-has-battery-changed` off
+ *   `BatterySaverModeManager::DeviceHasBattery` – a `BatteryStateSampler` count above zero.
+ *   Zenium's host reads it itself (`ResourceSnapshot.system.hasBattery`: Linux's sysfs, macOS's
+ *   pmset); the group is hidden on `false` alone and stays where the host cannot tell (null –
+ *   Windows without a native module, the tablet). Chrome's `has_battery_` starts false and is
+ *   never set on Linux (no `BatteryLevelProvider` there: `_has_battery_provider_impl = is_win ||
+ *   is_mac`), so Chrome on Linux never shows the section; Zenium shows it on a Linux laptop. The
+ *   mode's rule and the leaf's are unchanged: a computer never on battery never turns it on.
+ *   The group is the desktop's alone (`layouts: ['desktop']`): the tablet's Performance page is
+ *   Memory Saver's – its host's governor is the no-op stub and Chrome Android has no Energy
+ *   Saver (pr-584, Android's condition).
+ */
+function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
+  const s = state.settings
+  const r = s.resources
+  const snap = state.resources
+  const off = !s.unloadEnabled
+  const memoryKeywords = [
+    'memory saver',
+    'sleeping tabs',
+    'unload',
+    'discard',
+    'inactive',
+    'tab unloading'
+  ]
+  const siteKeywords = ['never unload', 'keep active', 'exceptions', 'sleeping tabs', 'sites']
+  const energyKeywords = [
+    'energy saver',
+    'battery saver',
+    'battery',
+    'power',
+    'unplugged',
+    'budgets'
+  ]
+  const sites = [...s.unloadExcludedDomains].sort((a, b) => a.localeCompare(b))
+  const currentSite = currentUnloadSite(state, tab)
+  const addSite = (raw: string): void => {
+    const host = siteHost(raw)
+    if (!host || s.unloadExcludedDomains.includes(host)) return
+    set({ unloadExcludedDomains: [...s.unloadExcludedDomains, host] })
+  }
+  const saverOff = s.energySaver === 'off'
+  // The condition the switch lands on, and the off row shows in waiting: the host's fresh-
+  // profile default (`defaultEnergySaverMode` – the 20 % threshold where the level reads,
+  // unplugged on Windows), as Chrome's toggle lands on kEnabledBelowThreshold.
+  const saverDefault = defaultEnergySaverMode(state.platform)
+  const energySaver: RowGroup = {
+    id: 'energy-saver',
+    heading: 'Energy Saver',
+    // The desktop's alone (pr-584, Android's condition): the tablet is the Android host, whose
+    // governor is the no-op stub – the mode would run nowhere – and Chrome Android has no
+    // Energy Saver; the tablet's Performance page is Memory Saver's. The host's no-battery gate
+    // below (`noBattery`) is the desktop's other reading of the same rule.
+    layouts: ['desktop'],
+    rows: [
+      {
+        kind: 'switch',
+        id: 'energy-saver',
+        label: 'Energy Saver',
+        // Chrome's shape ("conserves battery power by limiting background activity and visual
+        // effects") with what Zenium limits, in the user's words – what a background tab feels,
+        // not the governor's budgets that do it (pr-584 N3).
+        description:
+          'Zenium conserves battery power by limiting background activity – background tabs are slowed and unloaded sooner while it is on.',
+        keywords: energyKeywords,
+        checked: !saverOff,
+        onChange: (v) => set({ energySaver: v ? saverDefault : 'off' })
+      },
+      {
+        ...choice<EnergySaverMode>({
+          id: 'energy-saver-mode',
+          label: 'Energy Saver options',
+          keywords: energyKeywords,
+          // Off, the row shows the condition the switch lands on, unchecked-in-waiting.
+          value: saverOff ? saverDefault : s.energySaver,
+          disabled: saverOff,
+          options: energySaverOptions(state.platform, snap.system.batteryPercent),
+          onChange: (v) => set({ energySaver: v })
+        }),
+        radios: true
+      },
+      // Nothing live in the row (the re-read's NEW 3, as the lead ruled): no "is on now" and no
+      // battery reading under the label – Chrome's Performance page carries no state sentence,
+      // the leaf and its bubble say it – so the row stays its one line of 40 whatever the mode
+      // does, and the page does not shift when it flips.
+      choice({
+        id: 'energy-saver-factor',
+        label: 'While Energy Saver is on, shrink the budgets to',
+        keywords: [...energyKeywords, 'shrink', 'factor'],
+        value: String(Math.round(r.batteryFactor * 100)),
+        disabled: saverOff,
+        options: [
+          { value: '100', label: '100% (no change)' },
+          { value: '85', label: '85%' },
+          { value: '70', label: '70%' },
+          { value: '50', label: '50%' },
+          { value: '25', label: '25%' }
+        ],
+        onChange: (v) => set({ resources: { ...r, batteryFactor: Number(v) / 100 } })
+      })
+    ]
+  }
+  // A computer the host knows to have no battery: nothing to save, no group (Chrome's
+  // `showBatterySettings_`); unknown shows.
+  const noBattery = snap.system.hasBattery === false
+  return [
+    {
+      id: 'memory-saver',
+      heading: 'Memory Saver',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'memory-saver',
+          label: 'Memory Saver',
+          // Chrome's three sentences (`IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_SETTING_
+          // DESCRIPTION`) run 214 characters and the row's description holds two lines of 13
+          // (§10.4) – about 190 at the 664 column, where Chrome's clamped mid-sentence (pr-584
+          // N1); the same three facts in two sentences, with room to spare at narrower columns.
+          description:
+            'Zenium frees up memory from inactive tabs so active tabs and other apps have more resources. Inactive tabs become active again when you go back to them.',
+          keywords: memoryKeywords,
+          checked: s.unloadEnabled,
+          onChange: (v) => set({ unloadEnabled: v })
+        },
+        {
+          ...choice({
+            id: 'memory-saver-tier',
+            label: 'Memory Saver options',
+            keywords: memoryKeywords,
+            value: String(s.unloadTimeoutMinutes),
+            disabled: off,
+            options: memorySaverTierOptions(s.unloadTimeoutMinutes),
+            onChange: (v) => set({ unloadTimeoutMinutes: Number(v) })
+          }),
+          radios: true
+        }
+      ]
+    },
+    {
+      id: 'keep-active',
+      heading: 'Always keep these sites active',
+      description: 'Sites you add will always stay active and memory won’t be freed up from them.',
+      // Each site an item row whose one action is Remove: the mouse's trailing 32 button, a plain
+      // secondary running at once with no dialog (§10.5) – a preference removed is plain ink
+      // (§10.4), the danger ink being for what destroys the user's data (§10.5), and the site is
+      // one the user adds again in a press, as the permission rows' Forget is (pr-584 R1); the
+      // finger's sheet (the tablet) holds the same action as its row, as those rows do. With
+      // Memory Saver off the list is one dependent of the switch: this group – heading,
+      // sentence, item rows or the empty line – and the Add rows' group below dim as one at .4,
+      // `aria-disabled` on each (§9.30's one register; the re-read's NEW 2 as the lead ruled).
+      disabled: off,
+      rows: sites.map((domain) => {
+        const remove = (): void =>
+          set({ unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain) })
+        return item(
+          `keep-active:${domain}`,
+          domain,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `keep-active:${domain}:remove`,
+              label: 'Remove',
+              description: 'Pages on the site are unloaded like any other.',
+              button: 'Remove',
+              onPress: remove
+            }
+          ],
+          {
+            keywords: siteKeywords,
+            disabled: off,
+            action: { label: 'Remove', onPress: remove }
+          }
+        )
+      }),
+      empty: 'No sites yet'
+    },
+    {
+      id: 'keep-active-add',
+      heading: null,
+      // The Add rows continue the list above: the same dependent, dimmed with it.
+      disabled: off,
+      rows: [
+        {
+          kind: 'action',
+          id: 'keep-active-add',
+          label: 'Add a site',
+          description: 'Every page of the site stays loaded.',
+          keywords: siteKeywords,
+          disabled: off,
+          button: 'Add…',
+          form: {
+            title: 'Always keep this site active',
+            render: (close) => (
+              <UrlForm
+                id="keep-active-site"
+                label="Site"
+                placeholder="mail.example.com"
+                action="Add"
+                onSubmit={addSite}
+                close={close}
+              />
+            )
+          }
+        },
+        // Chrome's "Add current site": the site Settings was opened from, one press; laid out at
+        // .4 with its reason when there is no site to add (§10.4).
+        {
+          kind: 'action',
+          id: 'keep-active-current',
+          label: 'Add current site',
+          description: currentSite.listed
+            ? `${currentSite.listed} is already on the list.`
+            : currentSite.domain
+              ? `${currentSite.domain} – every page of the site stays loaded.`
+              : 'Open a page, then come back to Settings from it.',
+          keywords: [...siteKeywords, 'current site', 'this site'],
+          disabled: off || currentSite.domain === null,
+          button: 'Add',
+          onPress: () => {
+            const domain = currentSite.domain
+            if (domain && !s.unloadExcludedDomains.includes(domain))
+              set({ unloadExcludedDomains: [...s.unloadExcludedDomains, domain] })
+          }
+        }
+      ]
+    },
+    ...(noBattery ? [] : [energySaver])
   ]
 }
 
@@ -2434,7 +2712,7 @@ const percent = (v: number): string => `${v}%`
  * governor's switch and enforcement, the budgets (the two shares as slider rows), sleeping and
  * unloading, what it never touches, the process profile that needs a relaunch, and its log.
  */
-function resourcesSection({ state, set }: SectionContext): RowGroup[] {
+function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] {
   const r = state.settings.resources
   const snap = state.resources
   const setR = (patch: Partial<ResourceSettings>): void => set({ resources: { ...r, ...patch } })
@@ -2443,8 +2721,10 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
   const totalMb = snap.system.totalMemoryMb
   const percentBudget = totalMb ? Math.round((totalMb * r.memoryPercent) / 100) : 0
   const notes: string[] = []
-  if (snap.system.onBattery)
-    notes.push(`On battery – budgets are tightened to ${Math.round(r.batteryFactor * 100)}%.`)
+  if (snap.system.energySaver)
+    notes.push(
+      `Energy Saver is on – budgets are tightened to ${Math.round(r.batteryFactor * 100)}%.`
+    )
   if (snap.system.idle) notes.push('System idle – hidden pages are frozen.')
   const livePages = snap.tabs.filter((u) => {
     const tab = state.tabs[u.tabId]
@@ -2621,19 +2901,6 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
           max: 65_536,
           unit: 'MB',
           onCommit: (v) => setR({ gpuMemoryMb: v })
-        }),
-        choice({
-          id: 'battery-factor',
-          label: 'On battery, shrink budgets to',
-          value: String(Math.round(r.batteryFactor * 100)),
-          options: [
-            { value: '100', label: '100% (no change)' },
-            { value: '85', label: '85%' },
-            { value: '70', label: '70%' },
-            { value: '50', label: '50%' },
-            { value: '25', label: '25%' }
-          ],
-          onChange: (v) => setR({ batteryFactor: Number(v) / 100 })
         })
       ]
     },
@@ -2641,6 +2908,19 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
       id: 'sleeping',
       heading: 'Sleeping and unloading',
       rows: [
+        // Memory Saver's switch, its tiers, the sites kept active and Energy Saver's battery
+        // factor are Performance's rows (W8-2): one owner, and this page points at it (§9.1)
+        // where its twin switch and its "excluded domains" fact stood.
+        {
+          kind: 'action',
+          id: 'resources-performance',
+          label: 'Memory Saver and Energy Saver',
+          description:
+            'Unloading inactive tabs, the sites always kept active and how far Energy Saver shrinks these budgets are set under Performance.',
+          keywords: ['unload', 'sleeping tabs', 'memory saver', 'battery', 'energy saver'],
+          leaves: 'chevron',
+          onPress: () => navigate('performance')
+        },
         numberRow({
           id: 'freeze-after',
           label: 'Freeze hidden pages after',
@@ -2662,24 +2942,6 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
           max: 1440,
           unit: 'min',
           onCommit: (v) => setR({ idleFreezeMinutes: v })
-        }),
-        {
-          kind: 'switch',
-          id: 'resources-unload',
-          label: 'Unload hidden pages',
-          description: 'Zen’s tab unloading; the same setting as under Tab Management.',
-          checked: state.settings.unloadEnabled,
-          onChange: (v) => set({ unloadEnabled: v })
-        },
-        numberRow({
-          id: 'resources-unload-after',
-          label: 'Unload hidden pages after',
-          value: state.settings.unloadTimeoutMinutes,
-          min: 1,
-          max: 1440,
-          unit: 'min',
-          disabled: !state.settings.unloadEnabled,
-          onCommit: (v) => set({ unloadTimeoutMinutes: v })
         }),
         numberRow({
           id: 'max-loaded',
@@ -2727,15 +2989,6 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
           label: 'Essentials',
           checked: r.protectEssentials,
           onChange: (v) => setR({ protectEssentials: v })
-        },
-        {
-          kind: 'info',
-          id: 'protect-domains',
-          label: 'Excluded domains',
-          description: state.settings.unloadExcludedDomains.length
-            ? state.settings.unloadExcludedDomains.join(', ')
-            : 'None – add them under Tab Management › Never unload these domains.',
-          keywords: state.settings.unloadExcludedDomains
         }
       ]
     },

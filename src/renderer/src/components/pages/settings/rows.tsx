@@ -1,4 +1,10 @@
-import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type {
+  FocusEvent,
+  JSX,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode
+} from 'react'
 import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
@@ -133,11 +139,16 @@ export function GroupList({
         // A group is not a landmark: named by its heading, it would be a `region` – one per
         // group, and the Search section's first group, "Search", would double the pane's own
         // (axe `landmark-unique`, the desktop's #358). `group` keeps the name off the landmarks.
+        // A list whose control is off (`RowGroup.disabled`) is one dependent: the group dims as
+        // a whole – heading, sentence, rows or the empty line – and says `aria-disabled`, so a
+        // reader hears the list is off before its rows and looks up for the way out.
         <section
           key={group.id}
           role="group"
           className="zen-settings-group"
           data-group={group.id}
+          data-disabled={group.disabled || undefined}
+          aria-disabled={group.disabled || undefined}
           aria-label={group.heading ?? undefined}
         >
           {group.heading !== null && (
@@ -581,11 +592,8 @@ function DesktopRowView({
 }): JSX.Element {
   switch (row.kind) {
     case 'value':
-      return row.form === 'radios' ? (
-        <RadioListRow row={row} caption={caption} />
-      ) : (
-        <MenulistRow row={row} caption={caption} />
-      )
+      if (row.radios) return <RadioListRow row={row} caption={caption} />
+      return <MenulistRow row={row} caption={caption} />
     case 'switch':
       return <CheckRow row={row} caption={caption} />
     case 'action':
@@ -728,52 +736,79 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
 }
 
 /**
- * A value row on the desktop drawn as §9.14's plain radios (`ValueRow.form: 'radios'`; §10.4's
- * "2–4 radios on desktop"): the text block – the label, the sheet's description on its lines –
- * then one radio row per option UNDER it in one `radiogroup` the label names, each the shared
- * `RadioOption` (the 16 px circle, the checked one the accent ring round the page-colour dot,
- * the label 15/400 beside it, the whole 32 row the target at §9.14's pitch) pulled to the page's
- * edge as the forms pull theirs, so the circles stand at the label's inset (main.css
- * `.zen-settings-radios-row`) – Chrome's Appearance › Home page radios. Held by an extension or
- * disabled as a dependent row the list takes the row's one .4 (§9.30) and no press: the options
- * are `disabled`, `aria-disabled` keeping their fill off, the checked one still marked. Tab moves
- * between the options, as it does in the forms' radio lists (`RadioOption` has no roving arrow
- * keys; the chassis's).
+ * A value row in the radio form (`ValueRow.radios`; §9.14, §10.5): a `radiogroup` of the
+ * picker's radio rows (`RadioOption`) across the row's content width, as Chrome's Performance
+ * page seats Memory Saver's tiers under its toggle. The row's label names the group for
+ * assistive technology alone (`aria-label`; pr-584 N2): the options' own labels are the group's
+ * visible text, drawn as the page's rows are, and a legend over them would be a fourth text
+ * level on a page that has three (§10.4) – Chrome's `cr-radio-group` under the toggle draws
+ * none either. What the row has to say in sight stays: a description (a sentence over the
+ * options) and a search hit's caption, in the text block above the list (its 4 between them,
+ * the stacked field row's). The keyboard is a native group's: the checked option is the group's
+ * one tab stop (roving `tabIndex`; the first option where none is checked) and the arrow keys
+ * move the choice to the next or previous option, wrapping, and the focus with it. The row is a
+ * column as the stacked field row is (`.zen-settings-stacked-row`), `data-static` since the
+ * options are the targets, and disabled as a dependent row at .4 with its options taking no
+ * press (§10.4).
  */
 function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
-  const labelId = `${useId()}-label`
-  const disabled = row.disabled === true
+  const group = useRef<HTMLDivElement>(null)
+  const description = row.sheetDescription ?? row.description
+  const checkedAt = Math.max(
+    0,
+    row.options.findIndex((option) => option.value === row.value)
+  )
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (row.disabled) return
+    const step =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight'
+        ? 1
+        : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+          ? -1
+          : 0
+    if (step === 0 || row.options.length === 0) return
+    e.preventDefault()
+    const at = (checkedAt + step + row.options.length) % row.options.length
+    const next = row.options[at]
+    if (!next) return
+    if (next.value !== row.value) row.onChange(next.value)
+    group.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[at]?.focus()
+  }
   return (
     <div
       data-row={row.id}
       data-static=""
       data-tone={row.tone}
       className={cn(
-        'zen-settings-row zen-settings-radios-row zen-v2-row',
-        disabled && 'zen-settings-row-disabled'
+        'zen-settings-row zen-settings-stacked-row zen-settings-radios-row zen-v2-row',
+        row.disabled && 'zen-settings-row-disabled'
       )}
     >
       <div className="zen-settings-field-block">
-        <RowText
-          label={row.label}
-          labelId={labelId}
-          description={row.sheetDescription ?? row.description}
-          caption={caption}
-        />
+        {(caption || description) && (
+          <span className="zen-settings-row-text">
+            {caption && <span className="zen-settings-caption">{caption}</span>}
+            {description && <span className="zen-settings-description">{description}</span>}
+          </span>
+        )}
         <div
+          ref={group}
           role="radiogroup"
-          aria-labelledby={labelId}
-          aria-disabled={disabled || undefined}
-          className="zen-settings-radio-list"
+          aria-label={row.label}
+          aria-disabled={row.disabled || undefined}
+          className="zen-settings-radio-list zen-settings-radios"
+          onKeyDown={onKeyDown}
         >
-          {row.options.map((option) => (
+          {row.options.map((option, index) => (
             <RadioOption
               key={option.value}
               label={option.label}
               description={option.description}
               leading={option.leading}
+              font={option.font}
               checked={option.value === row.value}
-              disabled={disabled}
+              tabIndex={index === checkedAt ? 0 : -1}
+              disabled={row.disabled}
               onSelect={() => {
                 if (option.value !== row.value) row.onChange(option.value)
               }}

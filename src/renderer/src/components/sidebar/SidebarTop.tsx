@@ -105,8 +105,10 @@ import { Favicon } from './Favicon'
 import { isZoomed } from '../zoom/bubble'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
+import { EnergySaverButton } from '../energysaver/EnergySaverButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
+import { energySaverLeafFits, energySaverLeafUp } from '@renderer/lib/energySaver'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import { useViewport } from '@renderer/lib/formFactor'
 import {
@@ -353,20 +355,38 @@ export function NavRow({
   // had taken the pill from 96 to 64 and the Settings tab's title to "S…" (the FIRST LINE's F1
   // on #572; §9.29, §10.1). The buttons each makes room against are the ones always in the row
   // (back, forward, reload, ⋯), the puzzle piece while there are extensions and the downloads
-  // button while it is up – and, for the hub, Home while Home's own tier has it up: Home seats
-  // first in the row and is the first back, so with both pinned the hub returns one slot (32)
-  // after Home (the 334 sidebar). The compact column has no pill to keep, so there both stay.
+  // button while it is up – and the tiered controls standing ahead of it in the bar's order
+  // (below): Home seats first in the row and is the first back, so with Home and the hub pinned
+  // the hub returns one slot (32) after Home (the 334 sidebar). The compact column has no pill
+  // to keep, so there they all stay.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
   // Forward folded by its pin leaves the fixed set (the tiers and the extensions' overflow count
   // the buttons actually in the row); a trailing control joins it.
   const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
+  // The buttons the width-tiered controls make room against: the ones always in the row, the
+  // puzzle piece while there are extensions, the downloads button while it is up. Each tiered
+  // control then counts the tiered ones standing ahead of it in the bar's order (W8-3's Home
+  // first, on `otherButtons` alone; the leaf; the hub last), so the row gives way from the back.
   const otherButtons = fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)
   const homeUp = homePinned && (compact || foldingButtonFits(rowWidth, otherButtons))
+  // The Energy Saver leaf (W8-2; Chrome's `BatterySaverButton`): the row's to draw while the
+  // governor says the mode is on and the control is pinned, ahead of the hub as Chrome's stands
+  // ahead of its media button – and tiered by the row's width on the hub's one rule
+  // (`energySaverLeafFits`, pr-584 L2): at the 240 sidebar it took the pill from "Settings" to
+  // "S…", so there it folds, unmounted like the hub's button, and returns at the 302 sidebar
+  // (the 286 row with the four always-there buttons; 32 more a button for the puzzle piece and
+  // the downloads button, and for Home while its own tier has it up). The leaf counts the row's
+  // other buttons and Home, not the hub, while the hub counts the leaf: where the row has room
+  // for one of the two, the leaf stands and the hub folds to its menu row – the leaf has no fold
+  // home, and the mode it speaks for runs on.
+  const saverPinned = energySaverLeafUp(state, pins)
+  const saverUp =
+    saverPinned && (compact || energySaverLeafFits(rowWidth, otherButtons + (homeUp ? 1 : 0)))
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
-    (compact || mediaHubButtonFits(rowWidth, otherButtons + (homeUp ? 1 : 0)))
+    (compact || mediaHubButtonFits(rowWidth, otherButtons + (homeUp ? 1 : 0) + (saverUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
@@ -567,14 +587,16 @@ export function NavRow({
   const boostFits = boosted ? fits.has('boost') : utilityFits.has('boost')
   // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
   // at this width" (settings-36): Home while its pin shows it and the row has no room for it,
-  // the chips present in the pill that did not fit, and the hub's button while media plays and
-  // the row has no room for it – never a control the pins folded, and never one the page has no
-  // chip for. In the bar's order, Home first. From the layout phase, as the hub's own word is.
+  // the chips present in the pill that did not fit, the Energy Saver leaf while the mode is on
+  // and the row has no room for it, and the hub's button while media plays and the row has none
+  // for that – never a control the pins folded, and never one the page has no chip for. In the
+  // bar's order, Home first. From the layout phase, as the hub's own word is.
   const hiddenHome = homePinned && !homeUp
   const hiddenStar = Boolean(tab && starUp && !fits.has('star'))
   const hiddenTranslate = Boolean(translation && !fits.has('translate'))
   const hiddenReader = Boolean(tab && readerUp && !isReader && !fits.has('reader'))
   const hiddenInstall = installUp && !fits.has('install')
+  const hiddenSaver = saverPinned && !saverUp
   const hiddenMedia = mediaPinned && mediaHubVisible(state) && !hubUp
   useLayoutEffect(() => {
     const hidden: ToolbarControl[] = []
@@ -583,10 +605,19 @@ export function NavRow({
     if (hiddenTranslate) hidden.push('translate')
     if (hiddenInstall) hidden.push('install')
     if (hiddenStar) hidden.push('star')
+    if (hiddenSaver) hidden.push('energy-saver')
     if (hiddenMedia) hidden.push('media')
     publishToolbarTiering(hidden)
     return () => publishToolbarTiering([])
-  }, [hiddenHome, hiddenReader, hiddenTranslate, hiddenInstall, hiddenStar, hiddenMedia])
+  }, [
+    hiddenHome,
+    hiddenReader,
+    hiddenTranslate,
+    hiddenInstall,
+    hiddenStar,
+    hiddenSaver,
+    hiddenMedia
+  ])
   return (
     // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
     // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
@@ -1187,14 +1218,21 @@ export function NavRow({
           </span>
         </div>
       )}
+      {saverUp && <EnergySaverButton menuMarks={toolbarMenuMarks('energy-saver', formFactor)} />}
       {hubUp && <MediaHubButton state={state} menuMarks={toolbarMenuMarks('media', formFactor)} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // Home, the media and the downloads buttons join the fixed set while they are in the
-        // row – Home's and the hub's only while the tier has them up, not while they have folded.
-        fixedButtons={fixedButtons + (homeUp ? 1 : 0) + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
+        // Home, the leaf, the media and the downloads buttons join the fixed set while they are
+        // in the row – the tiered ones only while the tier has them up, not while they have folded.
+        fixedButtons={
+          fixedButtons +
+          (homeUp ? 1 : 0) +
+          (saverUp ? 1 : 0) +
+          (hubUp ? 1 : 0) +
+          (downloadsUp ? 1 : 0)
+        }
         compact={compact}
       />
       {trailing}

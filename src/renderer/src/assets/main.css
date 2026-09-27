@@ -11644,6 +11644,22 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
 }
+/*
+ * A list whose control is off (`RowGroup.disabled`; Memory Saver's exceptions while its switch
+ * is) dims as ONE group at the dependent row's .4 – the heading, its sentence, the item rows,
+ * the empty line and the Add rows together, §9.30's one register rather than two in one
+ * dependent list (pr-584's re-read, NEW 2, as the lead ruled it). The deemphasised lines – the
+ * description, the empty line – take the label's ink under the .4 (§9.30 as amended on #299),
+ * so nothing in the group falls below .4 of the text; the rows inside give their own .4 up
+ * under the group's (the reset with the row rule, below). `aria-disabled` rides on the group.
+ */
+.zen-settings-group[data-disabled] {
+  opacity: 0.4;
+}
+.zen-settings-group[data-disabled] .zen-settings-group-description,
+.zen-settings-group[data-disabled] .zen-settings-empty {
+  color: var(--v2-text);
+}
 /* The one line that reports a failure where the rows would be (the viewer's listing refused): §1 status ink. */
 .zen-settings-empty[data-tone='danger'],
 .zen-settings-group-description[data-tone='danger'] {
@@ -11801,6 +11817,14 @@
 .zen-settings-row-disabled .zen-v2-field:disabled,
 .zen-settings-row-disabled .zen-v2-switch:disabled,
 .zen-settings-row-disabled .zen-zoom-slider[data-disabled] {
+  opacity: 1;
+}
+/*
+ * The same once more a level up: a row inside a group that is off as a whole
+ * (`.zen-settings-group[data-disabled]`, the groups' rules above) keeps `disabled` for what it
+ * does and takes no .4 of its own under the group's – .4 of the text, never .16.
+ */
+.zen-settings-group[data-disabled] .zen-settings-row-disabled {
   opacity: 1;
 }
 .zen-settings-row-disabled:active {
@@ -12645,26 +12669,47 @@
   max-width: none;
 }
 /*
- * The radio row (`ValueRow.form: 'radios'`, `rows.tsx`'s `RadioListRow`; §9.14 in a row, §10.4's
- * "a menulist or 2–4 radios on desktop"): the stacked row's column – the text block on its
- * lines, then the §9.14 list UNDER it, 4 below the text as a form's radio list stands under its
- * label (`.zen-settings-field-block`'s gap) – the option rows pulled to the page's edge as the
- * forms pull theirs (`.zen-settings-form .zen-settings-radio-row` above), so each 16 px circle
- * stands at the label's inset and an option's press fill bleeds to the edge (§9.25). Each option
- * is a one-line `.zen-v2-row`, 32 on the desktop – §9.14's pitch, the rows touching – so the row
- * stands 6 + 20 + 20 n + 4 + 32 k + 6 tall for n lines of description and k options (120 with
- * one line and two options). Nothing trails the text, so nothing is seated (§9.18).
+ * The radio-form value row (`ValueRow.radios`, `rows.tsx`'s `RadioListRow`; §9.14, §10.5): the
+ * stacked row's column with the picker's radio rows (`RadioOption`) under the text block, each
+ * its own `.zen-v2-row` – 44 on `--v2-row`, 64 with the option's description – on the PAGE's
+ * row chassis (pr-584 R2): the option bleeds 16 past the text column's two edges as every page
+ * row does (the form's rule above, `margin: 0 -16px`, here for the page's list), so its box is
+ * the page row's 696 and its 16 gutter puts the circle on the column edge where the switch rows'
+ * checkbox stands and the label on the switch labels' edge – one left edge down the group
+ * (§10.4 "Dependent rows: no indent"; Chrome's `cr-row continuation` indent is Chrome's). The
+ * options touch, the row's own fill stays off (`data-static`). The block's 4 stands between the
+ * text and the first option. A disabled group's options keep the dependent row's one .4
+ * (`.zen-settings-row-disabled` on the row, not compounded here) and take no press or fill.
  */
-.zen-settings-radios-row {
-  flex-direction: column;
-  align-items: stretch;
-}
-.zen-settings-radios-row .zen-settings-row-text {
-  flex: none;
-}
-.zen-settings-radios-row .zen-settings-radio-row {
+.zen-settings-radios > .zen-settings-radio-row {
   margin: 0 -16px;
   width: calc(100% + 32px);
+}
+/*
+ * No `--v2-selected` band on the page's checked option (pr-584 L1 / Q6, ruled DROP): the
+ * choice is told by the accent ring and its dot alone (§9.14), as a check row's is by its box –
+ * the band is the picker SHEET's, where the list is the whole sheet and the picked row its one
+ * answer (§9.6), and a band across a page's group reads as a second selection. Under the
+ * pointer and the press the checked row takes the page row's `--v2-fill` like its siblings
+ * (`.zen-v2-row`'s rule, which the band's `:hover` outranked); a disabled group's stay flat.
+ */
+.zen-settings-radios > .zen-settings-radio-row[aria-checked='true'],
+.zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:hover {
+  background: transparent;
+}
+.zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:active:not(:disabled),
+:where(:root[data-hover='hover'])
+  .zen-settings-radios
+  > .zen-settings-radio-row[aria-checked='true']:hover:not(:disabled) {
+  background: var(--v2-fill);
+}
+.zen-settings-radios > .zen-settings-radio-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.zen-settings-radios > .zen-settings-radio-row:disabled:hover,
+.zen-settings-radios > .zen-settings-radio-row:disabled:active {
+  background: transparent;
 }
 /*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,

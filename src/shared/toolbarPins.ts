@@ -16,6 +16,13 @@
  * `downloads.alwaysShowButton` (Chrome's "Always show downloads button"), which the Customise
  * toolbar dialog binds as its Downloads row – one field, wherever it is set.
  *
+ * The Energy Saver leaf (W8-2, `energy-saver`; Chrome's `BatterySaverButton`, which stands in
+ * Chrome's toolbar ahead of the media button and shows only while the mode is on) is the one
+ * control whose fold has no menu row: Chrome's button has none, and the mode runs on whether
+ * the leaf is drawn or not – unpinned, it is simply not drawn, and Settings › Performance, which
+ * holds the switch, says when the mode is on. Chrome's button cannot be unpinned; the lead is
+ * asked whether Zenium's should be (W8-2's LEAD CHECK), and until then it is a pin like the rest.
+ *
  * Read by the desktop chrome's toolbar row alone (`components/sidebar/SidebarTop.tsx`'s
  * `NavRow`, on the desktop form factor; `core/menus.ts` for the folded Forward row): the phone
  * and the tablet keep their own bars, so the field is inert there – Android carries it in its
@@ -26,9 +33,10 @@
  * The optional controls, in the bar's own order: Forward and Home ahead of the pill (Chrome's
  * toolbar: Back, Forward, Reload, Home, then the location bar), then the pill's chips left to
  * right (Reader View, Translate, the Install-app chip, the star – Chrome's page-action order in
- * `page_action/action_ids.h`, the star last), then the hub. The Install chip is a pin as Reader
- * View and Translate are – Chrome's contextual page actions that the house lets fold into the
- * app menu, whose "Install <app>…" row is what runs it then (W8-6).
+ * `page_action/action_ids.h`, the star last), then the leaf and the hub (Chrome's
+ * `ToolbarView::Init`: the battery saver button, then the media button). The Install chip is a
+ * pin as Reader View and Translate are – Chrome's contextual page actions that the house lets
+ * fold into the app menu, whose "Install <app>…" row is what runs it then (W8-6).
  */
 export const TOOLBAR_CONTROLS = [
   'forward',
@@ -37,6 +45,7 @@ export const TOOLBAR_CONTROLS = [
   'translate',
   'install',
   'star',
+  'energy-saver',
   'media'
 ] as const
 

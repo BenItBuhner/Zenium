@@ -2610,6 +2610,13 @@ class TabWebView(
         /** A primary load's navigation through the hook, decided by its scheme (see [webNavigationTaken] for http(s)). */
         private fun navigationTaken(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url
+            // An Auth Tab's redirect (CCT-13) is claimed before any scheme's own path and never
+            // loaded: the host answers the caller and closes. Every other host's `authTab` is the
+            // interface's null, so this is one null read per navigation for them. The frame goes
+            // with the URL – the main frame's alone can be the redirect (AuthTab.claimed) – and
+            // WebView brings no reload, history or app-issued load here (Chrome's chain rules).
+            val auth = host.authTab
+            if (auth != null && auth.claim(url.toString(), request.isForMainFrame)) return true
             return when (url.scheme?.lowercase()) {
                 "http", "https" -> webNavigationTaken(
                     engine = { interceptNavigation(request) },

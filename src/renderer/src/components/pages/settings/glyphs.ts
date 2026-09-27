@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   Accessibility,
+  Activity,
   AppWindow,
   Bot,
   CircleFadingArrowUp,
@@ -40,6 +41,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   compact: PanelLeft,
   newtab: LayoutGrid,
   tabs: Layers,
+  performance: Activity,
   downloads: Download,
   privacy: Shield,
   resources: Gauge,

@@ -43,7 +43,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection } = await import('../sections')
 const { findRow } = await import('../model')
 const { DialogStack } = await import('../dialogs')
-const { DOWNLOADS_UNCHECKED, HIDDEN_AT_THIS_WIDTH, HOME_UNCHECKED } =
+const { DOWNLOADS_UNCHECKED, ENERGY_SAVER_ROW, HIDDEN_AT_THIS_WIDTH, HOME_UNCHECKED } =
   await import('../CustomizeToolbarForm')
 
 type Ctx = Parameters<typeof buildSection>[1]
@@ -333,6 +333,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'toolbar-control:translate',
       'toolbar-control:install',
       'toolbar-control:star',
+      'toolbar-control:energy-saver',
       'toolbar-control:media',
       'toolbar-control:downloads'
     ])
@@ -343,6 +344,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'Translate',
       'Install app',
       'Bookmark this page',
+      'Energy Saver',
       'Media',
       'Downloads'
     ])
@@ -390,7 +392,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
 
   it('checked is in the bar: the default bar has every box checked but Home (Chrome ships it hidden) and Downloads, whose key is the downloads block’s', () => {
     const { h } = openDialog(state())
-    for (const control of ['forward', 'reader', 'translate', 'star', 'media'])
+    for (const control of ['forward', 'reader', 'translate', 'star', 'energy-saver', 'media'])
       expect(box(h, control).checked, control).toBe(true)
     expect(box(h, 'home').checked).toBe(false)
     expect(box(h, 'downloads').checked).toBe(false)
@@ -441,6 +443,8 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       translate: null,
       install: 'Shows on pages that can be installed.',
       star: null,
+      // The leaf (W8-2): a control the mode has to earn, its line says when it shows.
+      'energy-saver': ENERGY_SAVER_ROW,
       media: 'Shows while media plays.',
       downloads: DOWNLOADS_UNCHECKED
     })
@@ -456,6 +460,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
           translate: false,
           install: false,
           star: false,
+          'energy-saver': false,
           media: false
         },
         downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: true }
@@ -468,11 +473,17 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     // full stop – the width line, on the pinned controls the tier has folded, included.
     const narrow = openDialog(state())
     act(() =>
-      toolbarTiering.set({ hidden: ['forward', 'reader', 'translate', 'install', 'star', 'media'] })
+      toolbarTiering.set({
+        hidden: ['forward', 'reader', 'translate', 'install', 'star', 'energy-saver', 'media']
+      })
     )
     const atWidth = lines(narrow.h)
     expect(atWidth.forward).toBe(HIDDEN_AT_THIS_WIDTH)
     expect(atWidth.downloads).toBe(DOWNLOADS_UNCHECKED)
+    // The leaf is tiered by the row's width as the hub's button is (L2): the width line while
+    // the mode is on and the 240 row has folded it; its own line at rest.
+    expect(atWidth['energy-saver']).toBe(HIDDEN_AT_THIS_WIDTH)
+    expect(atRest['energy-saver']).toBe(ENERGY_SAVER_ROW)
     for (const line of [...Object.values(atWidth), ...Object.values(atRest)]) {
       if (line !== null) expect(line, line).toMatch(/[a-z]\.$/)
     }
