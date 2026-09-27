@@ -128,15 +128,41 @@ clean quit takes the entry back. No runner restarts: the scenario emits the even
 app from the main process and reads what Windows would run off the registry (`win-restart.ps1`);
 the toggle is set on for the run and put back as it was, the entry deleted at the end.
 
-| step                     | reads                                                                                                                                                                                                                                              | confirmed by                         |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `toggle-on`              | `RestartApps` before the run (restored at the end), then set to 1; a leftover entry of an earlier run removed                                                                                                                                      | the OS's registry                    |
-| `session-end-registers`  | `session-end` `{reasons:['shutdown']}` on the main window: this profile's RunOnce value holds `<exe> "--user-data-dir=<profile>" --restore-last-session` (the running executable, the profile the app resolved); the `[zen] restart:` line says so | the app's handler, the OS's registry |
-| `clean-quit-unregisters` | `will-quit` on the app: the value gone (the app stays up – the emit is the quit's event alone)                                                                                                                                                     | the app's handler, the OS's registry |
-| `toggle-off-skips`       | `RestartApps` = 0, `session-end` again: no value; the line says the toggle is off                                                                                                                                                                  | the app's handler, the OS's registry |
-| `close-app-skips`        | `RestartApps` = 1, `session-end` `{reasons:['close-app']}` (the Restart Manager closing the app for an installer, which restarts it itself): no value; the line says no sign-in follows                                                            | the app's handler, the OS's registry |
-| `registration-survives`  | `session-end` `{reasons:['logoff']}` registers again; the process is ended the way Windows ends it after `WM_ENDSESSION` (`taskkill /F`): the value stands – what the next sign-in would run                                                       | the OS's registry                    |
-| `cleanup`                | the value deleted; the toggle put back                                                                                                                                                                                                             | the OS's registry                    |
+| step                     | reads                                                                                                                                                                                                                                                                                                                 | confirmed by                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `toggle-on`              | `RestartApps` before the run (restored at the end), then set to 1; a leftover entry of an earlier run removed                                                                                                                                                                                                         | the OS's registry                    |
+| `session-end-registers`  | `session-end` `{reasons:['shutdown']}` on the main window: this profile's RunOnce value holds `<exe> "--user-data-dir=<profile>" --restore-last-session` (the running executable, the profile the app resolved); the `[zen] restart:` line says so – the key read to the budget, stamped from the app's write (below) | the app's handler, the OS's registry |
+| `clean-quit-unregisters` | `will-quit` on the app: the value gone (the app stays up – the emit is the quit's event alone); read to the budget as well                                                                                                                                                                                            | the app's handler, the OS's registry |
+| `toggle-off-skips`       | `RestartApps` = 0, `session-end` again: no value; the line says the toggle is off                                                                                                                                                                                                                                     | the app's handler, the OS's registry |
+| `close-app-skips`        | `RestartApps` = 1, `session-end` `{reasons:['close-app']}` (the Restart Manager closing the app for an installer, which restarts it itself): no value; the line says no sign-in follows                                                                                                                               | the app's handler, the OS's registry |
+| `registration-survives`  | `session-end` `{reasons:['logoff']}` registers again; the process is ended the way Windows ends it after `WM_ENDSESSION` (`taskkill /F`): the value stands – what the next sign-in would run – read to the budget after the process's end, stamped from the app's write                                               | the OS's registry                    |
+| `cleanup`                | the value deleted; the toggle put back                                                                                                                                                                                                                                                                                | the OS's registry                    |
+
+Every read of the key is timed to a budget (W8-F10; `restart-scenario.mjs` `pollRunOnce`). The
+app's handler runs inside the emit – the write is a synchronous `reg.exe add` – so the
+main-process emit (`emitSessionEnd`, `emitWillQuit`) returns the app's clock either side of it,
+and the key is then read (`win-restart.ps1`, a PowerShell spawn: 300–1000 ms on the arm64 leg)
+every 500 ms until it agrees with the step, to 20 s from the poll's start, each read stamped from
+the handler's return; `registration-survives` polls the same way after `taskkill`, where one read
+500 ms after the kill used to be the whole reading. On the windows-arm64 legs (the slow
+Intel-emulated runner, 2026-09-27) the value the app said it had written read back missing –
+`session-end-registers` for the whole of its 10 s with the `[zen] restart:` line saying registered
+(run 36319202354), `registration-survives` 500 ms after the process's end having read present
+before it (run 36329961432). A key that never agrees fails after the budget with the readers'
+wording first, then the app's word, the reads (those that agree collapsed into spans) and two
+`reg.exe query` cross-reads – the harness's and, while the app is up, the app's own from inside its
+process (`appRegQuery`) – so a write that raced the reads tells from one the PowerShell reader
+never sees:
+
+    HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce\Zenium.afce3647 is missing;
+    the app's session-end (shutdown) handler returned at 12:39:13.951Z after 51 ms;
+    reads +0.4s…+19.8s ×22 missing; reg query: harness missing, app present
+
+The step's detail carries `emitted` (the clock), `reads` and `cross` with the values; the green
+path's log line says how long after the app's write the entry was read. No step's criteria
+changed – the value must hold the exact command, the log its wording – and the pure parts
+(`runOnceVerdict`, `formatRunOnceReads`, `describeEmit`, `regQueryState`, `runOnceMissMessage`)
+are `restart-scenario.test.mjs`'s.
 
 What no runner confirms: the sign-in itself (RunOnce processed by the shell at the user's next
 sign-in, the app up with `--restore-last-session`), and that Windows delivers `WM_ENDSESSION`
@@ -406,6 +432,34 @@ through its DOM, the profile's through `state.json` – never a log line.
 The session's end goes over the local MCP server – the soak's `HttpClient` from
 `scripts/mcp-soak.mjs`, the same HTTP path a real agent takes – not a test-only command. The
 pure parts (the seeded document, the verdicts) are `agent-space-scenario.test.mjs`'s.
+
+## The new tab's caret (`boot` / `new-tab-fixture`)
+
+The onboarding's end leaves a new tab with its URL bar up in new-tab mode, and `boot`'s
+`new-tab-fixture` step requires that bar's field to hold the keyboard as the harness finds it
+before it types the fixture's address (the caret the user would see; a regression of the chrome
+letting the field go for the new tab's view – 2026-09-22, three times – is this one step). The
+field is read through the app, not the screen: `Session.keyboardOwner` asks the main process
+which `webContents` has the keyboard (`webContents.isFocused()`) and the chrome page for its
+`document.activeElement`, and the field owns the keyboard when the answer is `chrome:urlbar-input`
+(`URLBAR_FIELD_OWNER`). The bar taking the keyboard back from the new tab's view is an IPC round
+trip away (`lib/panes.ts` `pageTookKeyboard` → `focus.chrome`), and on the windows-arm64 legs
+(the slow Intel-emulated runner) it took longer than the fixed 3 s the harness used to allow –
+"the URL bar found up had no caret: the keyboard was none for the 3097 ms before the harness
+focused the field" on 2026-09-27 (runs 36328985977, 36311508944). The read is now
+a poll (`Session.urlbarCaret`, W8-F10): the owner every 250 ms to a 10 s budget
+(`CARET_BUDGET_MS`, `CARET_POLL_EVERY_MS`), each poll stamped, done at the first read that says
+the field. A caret that does not come still fails after the budget, with the same wording, the
+polls (`navigation.mjs` `formatCaretTrace`, readings that agree collapsed into spans) and the
+case for the verdict in the step's detail – the main process's view of the keyboard with the
+field's own focus and selection, the hook's keyboard moves and the chrome's focus trace – and
+the step's own screenshot as the still:
+
+    the URL bar found up had no caret: the keyboard was tab:2 for the 10012 ms before the
+    harness focused the field; polls +0.0s none; +0.3s…+10.0s ×40 tab:2
+
+The green path's detail carries `caret.ms` (when the field had the keyboard) and the trace;
+`caretVerdict` and the trace's line are `navigation.test.mjs`'s.
 
 ## Teardown
 
