@@ -283,7 +283,10 @@ describe('the wide layout shows the dialog’s form', () => {
     const host = render(<ClearBrowsingDataForm close={close} />)
     await settle()
 
-    expect(row(host, 'clear-data-range')?.getAttribute('aria-label')).toBe('Time range, Last hour')
+    // On the wide layout the range is the desktop's menulist (W8-12), not the finger's value row.
+    expect(
+      row(host, 'clear-data-range')?.querySelector('.zen-settings-menulist')?.textContent
+    ).toBe('Last hour')
     expect(typeOrder(host)).toEqual(['history', 'cookies', 'cache'])
     expect(row(host, 'clear-data-type:tabs')).toBeNull()
 

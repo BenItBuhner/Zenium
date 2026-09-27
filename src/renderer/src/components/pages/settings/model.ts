@@ -179,6 +179,13 @@ export interface ValueRow extends RowBase {
    * fill.
    */
   radios?: boolean
+  /**
+   * A busy form's row (§9.30; the Delete browsing data form while it deletes): the value stays
+   * in place at full ink – busy is not disabled – and the desktop's menulist opens nothing
+   * (`V2Menulist`'s `readOnly`, `aria-readonly`), as the dialog's own `ChoiceRow` refuses. The
+   * phone's row is pressed through `RowContext.open`, which the form refuses while busy.
+   */
+  readOnly?: boolean
 }
 
 /** A boolean: the whole row toggles the trailing 36 × 20 switch (§10.4). */
