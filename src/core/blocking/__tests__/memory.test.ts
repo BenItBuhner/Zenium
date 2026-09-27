@@ -4,7 +4,7 @@ import v8 from 'node:v8'
 import vm from 'node:vm'
 import { describe, expect, test } from 'vitest'
 import type { StoreIO } from '../../platform'
-import { connectivityProbesRuleSet } from '../connectivityProbes'
+import { CONNECTIVITY_PROBES, connectivityProbesRuleSet } from '../connectivityProbes'
 import { RuleEngine } from '../engine'
 import {
   BUILTIN_RULE_SETS,
@@ -41,9 +41,13 @@ import {
  * - what the first `decide` adds – the desktop's path: the table the matcher reads and the
  *   per-set index over it.
  *
- * Plus the build time and the desktop matcher's rate over 100 000 synthetic requests. Numbers,
- * not assertions: they are printed for the record and go in the pull request; the assertions
- * pin the set's shape. `ZEN_RULES=<n>` scales the census set down for a quick run.
+ * Plus the build time, the desktop matcher's rate over 100 000 synthetic requests and – the proof
+ * that a change of the table's shape changed no decision – an FNV-1a hash over every decision of
+ * that corpus, against the service defaults alone and with the census set, from `decide` and
+ * (over a sample) `decideLinear`: the same corpus on two heads must print the same hashes.
+ * Numbers, not assertions: they are printed for the record and go in the pull request; the
+ * assertions pin the set's shape and `decide` = `decideLinear` over the sample. `ZEN_RULES=<n>`
+ * scales the census set down for a quick run; `ZEN_REQUESTS=<n>` the corpus.
  */
 
 /** V8's collector, exposed at run time (vitest does not start node with `--expose-gc`). */
@@ -162,10 +166,19 @@ const REQUEST_TYPES: readonly ResourceType[] = [
   'main_frame'
 ]
 
+/** The documents the site exceptions of `serviceDefaults` except. */
+const EXCEPTED_SITES = [
+  'https://news.example',
+  'https://shop.example',
+  'http://intranet.example:8080'
+]
+
 /**
- * `count` requests a page load mix produces against the census set: half to the hosts its
- * urlFilters name, a share to the hosts rule's domains, the rest to unrelated sites; documents
- * from the site pool the initiator lists draw on.
+ * `count` requests a page load mix produces: to the hosts the census set's urlFilters name, to
+ * the hosts rule's domains, to other census domains, to unrelated sites, plus what the service
+ * defaults decide on – `http://` navigations (the https-only upgrade), requests under an
+ * excepted document (`allowAllRequests`) and the connectivity probes; documents from the site
+ * pool the initiator lists draw on. Seeded: the same corpus on every run.
  */
 function syntheticRequests(count: number, census: number): RequestContext[] {
   const random = mulberry32(7)
@@ -177,22 +190,64 @@ function syntheticRequests(count: number, census: number): RequestContext[] {
     const u = int(100)
     const syllable = censusSyllable(random)
     let url: string
-    if (u < 50)
+    let type = REQUEST_TYPES[int(REQUEST_TYPES.length)]!
+    let document: string | undefined
+    if (u < 45)
       url = `https://${censusDomain(int(24_000))}/${syllable}/${censusSyllable(random)}${int(census)}.js`
-    else if (u < 65) url = `https://${censusDomain(1_000_000 + int(hostsRule))}/${syllable}.png`
-    else if (u < 85)
+    else if (u < 60) url = `https://${censusDomain(1_000_000 + int(hostsRule))}/${syllable}.png`
+    else if (u < 78)
       url = `https://${censusDomain(int(540_000))}/${syllable}/${censusSyllable(random)}`
-    else url = `https://www.site${int(1_000)}.example/${syllable}/${censusSyllable(random)}.css`
-    const type = REQUEST_TYPES[int(REQUEST_TYPES.length)]!
+    else if (u < 88)
+      url = `https://www.site${int(1_000)}.example/${syllable}/${censusSyllable(random)}.css`
+    else if (u < 92) {
+      url = `http://www.site${int(1_000)}.example/${syllable}`
+      type = 'main_frame'
+    } else if (u < 97) {
+      url = `https://${censusDomain(int(24_000))}/${syllable}.js`
+      document = `${EXCEPTED_SITES[int(EXCEPTED_SITES.length)]!}/${syllable}`
+    } else {
+      const probe = CONNECTIVITY_PROBES[int(CONNECTIVITY_PROBES.length)]!
+      url = `https://${probe}${int(2) === 0 ? '' : '?x=1'}`
+      type = int(2) === 0 ? 'xmlhttprequest' : 'main_frame'
+    }
     const ctx: RequestContext = { url, type, method: int(20) === 0 ? 'POST' : 'GET' }
     if (type !== 'main_frame') {
-      const document = `https://${censusDomain(int(sitePool))}/`
+      document ??= `https://${censusDomain(int(sitePool))}/`
       ctx.initiator = document
       ctx.documentUrl = document
     }
     out.push(ctx)
   }
   return out
+}
+
+/** FNV-1a (32 bits) over `text`, continued from `hash`. */
+function fnv1a(hash: number, text: string): number {
+  let h = hash
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+const hex = (hash: number): string => `0x${hash.toString(16).padStart(8, '0')}`
+
+/** Decide every request; the hash of every decision and how many were not plain allows. */
+function decideAll(
+  engine: RuleEngine,
+  requests: readonly RequestContext[],
+  linear = false
+): { hash: number; notAllowed: number; ms: number } {
+  let hash = 2166136261
+  let notAllowed = 0
+  const start = performance.now()
+  for (const ctx of requests) {
+    const decision = linear ? engine.decideLinear(ctx) : engine.decide(ctx)
+    if (decision.action !== 'allow' || decision.matched || decision.needsHeaders) notAllowed++
+    hash = fnv1a(hash, JSON.stringify(decision))
+  }
+  return { hash, notAllowed, ms: performance.now() - start }
 }
 
 interface Readings {
@@ -272,29 +327,25 @@ describe("the core's compiled rule table", () => {
     expect(m.compiled).toBeGreaterThan((count * 9) / 10)
     expect(m.biggest).toBe(Math.max(1, Math.round((HOSTS_RULE_DOMAINS * count) / CENSUS_RULES)))
 
-    // The desktop matcher's rate: the service defaults plus the census set, indexed, over the
-    // synthetic mix; the linear scan over a sample for reference.
+    // The desktop matcher's rate and the decisions' hash: the service defaults alone, then with
+    // the census set, indexed, over the synthetic corpus; the linear scan over a sample for
+    // reference (and as the oracle `decide` must agree with).
+    const requests = syntheticRequests(Number(process.env['ZEN_REQUESTS']) || 100_000, count)
     const engine = new RuleEngine()
     const structured = serviceDefaults(engine)
+    engine.buildIndexes()
+    for (let i = 0; i < 2_000; i++) engine.decide(requests[i]!)
+    const defaults = decideAll(engine, requests)
     const census = censusEngineSet(count)
     engine.setRuleSet(census.set)
     engine.buildIndexes()
-    const requests = syntheticRequests(Number(process.env['ZEN_REQUESTS']) || 100_000, count)
-    let decided = 0
-    let blocked = 0
     for (let i = 0; i < 2_000; i++) engine.decide(requests[i]!)
-    const decideStart = performance.now()
-    for (const ctx of requests) {
-      const decision = engine.decide(ctx)
-      decided++
-      if (decision.action !== 'allow') blocked++
-    }
-    const decideMs = performance.now() - decideStart
+    const all = decideAll(engine, requests)
     const linearSample = requests.slice(0, 200)
-    const linearStart = performance.now()
-    for (const ctx of linearSample) engine.decideLinear(ctx)
-    const linearMs = performance.now() - linearStart
+    const linear = decideAll(engine, linearSample, true)
     for (const ctx of linearSample) expect(engine.decide(ctx)).toEqual(engine.decideLinear(ctx))
+    const rate = (r: { ms: number }, n: number): string =>
+      `${Math.round((n / r.ms) * 1000)} requests/s`
 
     const lines = [
       `=== the core's compiled rule table: ${m.compiled} census rules (of ${count} generated) through the translator + the service defaults (${BUNDLED.length} bundled text lists, ${structured} builtin rules); node ${process.version}${gc ? '' : ', no collector exposed: the numbers include garbage'} ===`,
@@ -304,7 +355,8 @@ describe("the core's compiled rule table", () => {
       `DESKTOP PATH – added by the first decide (buildIndexes: the table the matcher reads + the index): ${mb(m.indexBytes)} = ${perRule(m.indexBytes, m.compiled)}; build ${ms(m.indexMs)}`,
       `DESKTOP PATH – total beyond the Rule[]: ${mb(m.phoneBytes + m.indexBytes)} = ${perRule(m.phoneBytes + m.indexBytes, m.compiled)}`,
       `everything let go: ${mb(after)}`,
-      `decide: ${decided} requests in ${ms(decideMs)} = ${Math.round((decided / decideMs) * 1000)} requests/s (${blocked} not allowed); decideLinear over ${linearSample.length}: ${Math.round((linearSample.length / linearMs) * 1000)} requests/s`
+      `decide over ${requests.length} requests, service defaults alone: ${rate(defaults, requests.length)} (${ms(defaults.ms)}; ${defaults.notAllowed} decided by a rule), decisions ${hex(defaults.hash)}`,
+      `decide over ${requests.length} requests, defaults + census set: ${rate(all, requests.length)} (${ms(all.ms)}; ${all.notAllowed} decided by a rule), decisions ${hex(all.hash)}; decideLinear over ${linearSample.length}: ${rate(linear, linearSample.length)}, decisions ${hex(linear.hash)}`
     ]
     console.info(lines.join('\n'))
   }, 900_000)
