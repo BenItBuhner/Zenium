@@ -12,7 +12,10 @@ import { emptyUpdateStatus, type UpdateStatus } from '@shared/updates'
  * The dot on the bar's Menu button while an update is downloaded and waiting (TB-12): the 6 px
  * accent dot the desktop's ⋯ wears (`SidebarTop`, shortcuts-menus-101), Chrome's badge on its
  * ⋮ for the "Update Chrome" row – on the phone's ⋯ for the 'ready' phase alone, at the glyph's
- * corner, the button's name saying it for the tree; nothing for the other phases.
+ * corner, the button's name saying it for the tree; nothing for the other phases. Chrome
+ * Android's cadence (`core/updateDot.ts`): the dot clears once the app menu has been opened for
+ * the waiting version (`UIState.updateDot.seenVersion`, the core's record) and returns for
+ * another version's `ready`; the menu's row stays meanwhile.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
@@ -21,10 +24,22 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { BarButton } = await import('../BarButton')
 const { BAR_ITEMS } = await import('../barItems')
 
-function state(phase: UpdateStatus['phase']): UIState {
+function state(phase: UpdateStatus['phase'], seenVersion: string | null = null): UIState {
+  const withRelease = phase !== 'idle' && phase !== 'checking'
   const updates: UpdateStatus = {
     ...emptyUpdateStatus('1.2.3', { os: 'android', arch: 'arm64', kind: 'apk' }),
     phase,
+    release: withRelease
+      ? {
+          version: '2.0.0',
+          tag: 'v2.0.0',
+          prerelease: false,
+          publishedAt: '2026-09-24T09:00:00Z',
+          releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          asset: null
+        }
+      : null,
     downloadedPath: phase === 'ready' ? '/data/zenium-2.0.0.apk' : null
   }
   return {
@@ -34,31 +49,39 @@ function state(phase: UpdateStatus['phase']): UIState {
     spaces: [],
     activeSpaceId: 'space',
     settings: { ...DEFAULT_SETTINGS },
-    updates
+    updates,
+    updateDot: { seenVersion }
   } as unknown as UIState
 }
 
 let root: Root | null = null
 let mount: HTMLElement | null = null
 
-function render(phase: UpdateStatus['phase']): HTMLButtonElement {
+function mountButton(s: UIState): HTMLButtonElement {
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
   act(() => {
-    root!.render(
-      <BarButton id="menu" ctx={{ state: state(phase), tab: null, overviewOpen: false }} />
-    )
+    root!.render(<BarButton id="menu" ctx={{ state: s, tab: null, overviewOpen: false }} />)
   })
   return mount.querySelector('button')!
 }
 
-afterEach(() => {
+function render(
+  phase: UpdateStatus['phase'],
+  seenVersion: string | null = null
+): HTMLButtonElement {
+  return mountButton(state(phase, seenVersion))
+}
+
+function unmount(): void {
   act(() => root?.unmount())
   mount?.remove()
   root = null
   mount = null
-})
+}
+
+afterEach(unmount)
 
 describe('the update dot on the bar’s Menu button (TB-12)', () => {
   it('wears the accent dot at the ⋯ glyph’s corner and says so in its name while the update is downloaded and waiting', () => {
@@ -91,9 +114,34 @@ describe('the update dot on the bar’s Menu button (TB-12)', () => {
       expect(button.querySelector('[data-testid="update-ready-dot"]'), phase).toBeNull()
       expect(button.querySelector('.zen-mhub-dot'), phase).toBeNull()
       expect(button.querySelector('svg'), phase).not.toBeNull()
-      act(() => root?.unmount())
-      mount?.remove()
+      unmount()
     }
+  })
+
+  it('takes the dot off once the app menu has been opened for the waiting version – the core’s record – and puts it back for another version', () => {
+    // The menu opened for 2.0.0: no dot, the plain name.
+    let button = render('ready', '2.0.0')
+    expect(button.getAttribute('aria-label')).toBe('Menu')
+    expect(button.querySelector('[data-testid="update-ready-dot"]')).toBeNull()
+    expect(button.querySelector('svg')).not.toBeNull()
+    unmount()
+    // The record names another version (the one before this download): the dot, a state change.
+    button = render('ready', '1.9.0')
+    expect(button.getAttribute('aria-label')).toBe('Menu, update ready')
+    expect(button.querySelector('[data-testid="update-ready-dot"]')).not.toBeNull()
+    unmount()
+    // Nothing seen yet: the dot.
+    button = render('ready', null)
+    expect(button.querySelector('[data-testid="update-ready-dot"]')).not.toBeNull()
+    unmount()
+    // A snapshot without the record at all fails open: the plain ready dot.
+    button = mountButton({ ...state('ready'), updateDot: undefined } as unknown as UIState)
+    expect(button.getAttribute('aria-label')).toBe('Menu, update ready')
+    unmount()
+    // A seen record changes nothing for a phase that never shows the dot.
+    button = render('available', '1.9.0')
+    expect(button.getAttribute('aria-label')).toBe('Menu')
+    expect(button.querySelector('[data-testid="update-ready-dot"]')).toBeNull()
   })
 
   it('the editor names the item Menu whatever the phase: the dot is the bar’s, the name the tree’s', () => {
@@ -104,6 +152,9 @@ describe('the update dot on the bar’s Menu button (TB-12)', () => {
     expect(BAR_ITEMS.menu.name?.({ state: state('idle'), tab: null, overviewOpen: false })).toBe(
       'Menu'
     )
+    expect(
+      BAR_ITEMS.menu.name?.({ state: state('ready', '2.0.0'), tab: null, overviewOpen: false })
+    ).toBe('Menu')
   })
 
   it('seats the dot against the glyph in the stylesheet: 2 out from the glyph’s box on the phone, 8 in on the tablet’s 40 button', () => {

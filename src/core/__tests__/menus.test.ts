@@ -356,6 +356,42 @@ describe('the app menu', () => {
       ])
     })
 
+    it("records the waiting version as seen when the phone's or the tablet's menu opens (TB-12: the menu button's dot clears, the row stays), once per version, and nothing while no update waits", () => {
+      for (const formFactor of ['phone', 'tablet'] as const) {
+        const h = harness(ANDROID, formFactor)
+        const { state } = h.browser
+        const commit = vi.spyOn(state, 'commit')
+        // No update, one found, one downloading: the menu opens, nothing is recorded.
+        appMenu(h)
+        expect(state.updateDot, formFactor).toEqual({ seenVersion: null })
+        for (const phase of ['available', 'downloading'] as const) {
+          updater(h, phase)
+          appMenu(h)
+          expect(state.updateDot, `${formFactor} ${phase}`).toEqual({ seenVersion: null })
+        }
+        expect(commit, formFactor).not.toHaveBeenCalled()
+        // Downloaded and waiting: the open shows the row and records the version, one commit.
+        updater(h, 'ready')
+        expect(appMenu(h), formFactor).toContain('Update Zenium')
+        expect(state.updateDot, formFactor).toEqual({ seenVersion: '2.0.0' })
+        expect(commit, formFactor).toHaveBeenCalledTimes(1)
+        // A second open: the row still there (it stays while the update waits), no second write.
+        expect(appMenu(h), formFactor).toContain('Update Zenium')
+        expect(state.updateDot, formFactor).toEqual({ seenVersion: '2.0.0' })
+        expect(commit, formFactor).toHaveBeenCalledTimes(1)
+      }
+    })
+
+    it("leaves the desktop's open as it was: its ⋯ reads the plain phase until W8-F3, so the open records nothing", () => {
+      const h = harness(DESKTOP)
+      const { state } = h.browser
+      const commit = vi.spyOn(state, 'commit')
+      updater(h, 'ready')
+      expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: null })
+      expect(commit).not.toHaveBeenCalled()
+    })
+
     it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Media Controls… row folded too, 22 / 5 (741 px) and the Update row first', () => {
       const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
       const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })

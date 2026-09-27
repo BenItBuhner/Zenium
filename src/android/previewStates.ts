@@ -17,6 +17,7 @@ import type {
 import type { Browser } from '@core/browser'
 import { fileSources } from '@core/import/sources'
 import { READER_URL_PREFIX } from '@core/reader'
+import { emptyUpdateDotRecord, markUpdateMenuOpened } from '@core/updateDot'
 import type { ClearOnExitType, SiteDataList } from '@shared/siteData'
 import { isCertificateError } from '@shared/siteInfo'
 import type { UpdateStatus } from '@shared/updates'
@@ -258,7 +259,8 @@ const QR_HAND_OFF_SETTLE_MS = 700
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
  * `sync=<variant>` for Settings › Sync (see `seedSync`), `updates=<phase>` (the updater with a
  * release `available`, `downloading` or `ready` – downloaded and waiting, the phase the menu
- * button's dot and the app menu's Update Zenium row key on, TB-12; see `seedUpdates`),
+ * button's dot and the app menu's Update Zenium row key on, TB-12 – or `ready-seen`, the menu
+ * already opened for that version: the dot cleared, the row kept; see `seedUpdates`),
  * `translate=<status>` (the active page
  * `offered` for translation, `translated`, `translating` or `error`, or `idle` for none; the bar
  * stays down unless `&bar`; see `seedTranslate`), `readerTranslate=<status>` (Reader View's
@@ -2157,10 +2159,16 @@ function unseedSync(): void {
 /** The updater's phases a preview can stand in (`updates=<phase>`); anything else is no seed. */
 const PREVIEW_UPDATE_PHASES = ['available', 'downloading', 'ready'] as const
 type PreviewUpdatePhase = (typeof PREVIEW_UPDATE_PHASES)[number]
+/**
+ * The seed: a phase, and whether the app menu has already been opened for the waiting version
+ * (`ready-seen` – the menu button's dot cleared, the row still there, TB-12).
+ */
+type PreviewUpdates = { phase: PreviewUpdatePhase; seen: boolean }
 
-function parsePreviewUpdates(value: string | null): PreviewUpdatePhase | null {
+function parsePreviewUpdates(value: string | null): PreviewUpdates | null {
+  if (value === 'ready-seen') return { phase: 'ready', seen: true }
   return (PREVIEW_UPDATE_PHASES as readonly string[]).includes(value ?? '')
-    ? (value as PreviewUpdatePhase)
+    ? { phase: value as PreviewUpdatePhase, seen: false }
     : null
 }
 
@@ -2207,11 +2215,17 @@ let updatesSeed: (() => void) | null = null
  * carries it for the menu button's dot and Settings › Updates, and `install` – the row's pick –
  * says so in a toast and does nothing else, the stand-in host having no APK to hand the system.
  * Every other call goes to the real updater. The status is pushed once on the seed, so a chrome
- * already drawn picks the phase up.
+ * already drawn picks the phase up. The dot's per-version record (`BrowserState.updateDot`) is
+ * set with the seed too – nothing seen, or the fixture's version seen for `ready-seen` – so a
+ * preview profile that opened the menu in an earlier shot does not carry its record into this
+ * one.
  */
-function seedUpdates(phase: PreviewUpdatePhase, browser: Browser): void {
+function seedUpdates({ phase, seen }: PreviewUpdates, browser: Browser): void {
   unseedUpdates(browser)
   const real = browser.updates
+  browser.state.updateDot = seen
+    ? markUpdateMenuOpened(updatesFixture(real.status(), phase), emptyUpdateDotRecord())
+    : emptyUpdateDotRecord()
   const standIn = new Proxy(real, {
     get: (target, key) => {
       if (key === 'status') return (): UpdateStatus => updatesFixture(real.status(), phase)

@@ -97,6 +97,7 @@ import {
   splitViewSubmenu
 } from './menuBar'
 import { isSendableUrl } from './sync/sendTab'
+import { markUpdateMenuOpened } from './updateDot'
 import {
   folderTabs,
   isPrivateFolder,
@@ -3729,6 +3730,10 @@ export class Menus {
       this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
       return
     }
+    // The touch layouts' menu-button dot clears on the menu's open for the waiting version
+    // (TB-12, Chrome Android's ⋮ badge; `updateDot.ts`). The desktop's ⋯ keeps its plain read of
+    // the phase until W8-F3 wires it to the same record, so its open records nothing yet.
+    if (win.formFactor !== 'desktop') this.markUpdateMenuOpened()
 
     // --- The items, each once; the two layouts below put them in their order. ----------------
     const newTab: MenuItemTemplate = {
@@ -4420,9 +4425,13 @@ export class Menus {
    * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. Every
    * host's (TB-12): the tablet's menu opens on it the same way, and the phone seats it as the
    * first text row under its icon row, where Chrome's Android menu has "Update Chrome"
-   * (`TabbedAppMenuPropertiesDelegate.populatePageModeMenu`) – Chrome keys that row on the
-   * update being AVAILABLE, Play doing the download after the pick; Zenium's host downloads the
-   * APK itself, so the row keeps the desktop's rule and shows once the install is possible.
+   * (`TabbedAppMenuPropertiesDelegate.populatePageModeMenu`). THE DEVIATION FROM CHROME
+   * ANDROID, by design: Chrome's row shows on `UPDATE_AVAILABLE` because Play downloads AFTER
+   * the pick; Zenium downloads the APK itself, so its row shows once the update is downloaded
+   * and installable – `ready` – one rule across hosts, the pick always able to install. The row
+   * stays as long as the update waits, however often the menu opens; the dot on the touch
+   * layouts' menu buttons clears once the menu has been opened for the version
+   * (`markUpdateMenuOpened`, `updateDot.ts`) and returns for another version's `ready`.
    * Settings › Updates stays every host's full surface; the updater's phases are the host's to
    * drive.
    */
@@ -4433,6 +4442,20 @@ export class Menus {
       { label: 'Update Zenium', click: () => void this.browser.updates.install() },
       { type: 'separator' }
     ]
+  }
+
+  /**
+   * The app menu opened on a touch layout: the waiting update's version becomes the one seen
+   * (`BrowserState.updateDot`, this device's, persisted with the profile), and the phone bar's ⋮
+   * and the tablet's menu button drop their dot. Nothing waiting, or the version already seen:
+   * no write, no commit.
+   */
+  private markUpdateMenuOpened(): void {
+    const { state, updates } = this.browser
+    const next = markUpdateMenuOpened(updates.status(), state.updateDot)
+    if (next === state.updateDot) return
+    state.updateDot = next
+    state.commit()
   }
 
   /**
