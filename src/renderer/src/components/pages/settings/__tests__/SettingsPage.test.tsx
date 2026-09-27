@@ -84,6 +84,7 @@ const DESKTOP: HostCapabilities = {
   printPreview: true,
   savePageFormats: true,
   pdfViewer: false,
+  pdfPrint: false,
   translate: true,
   voiceSearch: false,
   screenCapture: true,

@@ -58,6 +58,7 @@ const ELECTRON: HostCapabilities = {
   printPreview: true,
   savePageFormats: true,
   pdfViewer: false,
+  pdfPrint: false,
   agents: true,
   agentSkills: true,
   updates: true,

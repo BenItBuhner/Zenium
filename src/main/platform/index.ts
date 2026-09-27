@@ -160,6 +160,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   savePageFormats: true,
   // Chromium's PDF viewer draws PDFs in the page itself.
   pdfViewer: false,
+  // Chromium's viewer prints its own document; no PDF hand-off to a system print flow.
+  pdfPrint: false,
   agents: true,
   // Claude Code, Cursor and Codex run beside the browser: the skill installs into their folders.
   agentSkills: true,
