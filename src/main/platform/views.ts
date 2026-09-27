@@ -1648,6 +1648,21 @@ export class ElectronTabView implements TabView {
    * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
    * under the cover). The page hidden by a tab switch, a chrome page tab or a move between
    * windows (no cover on) is hidden as before.
+   *
+   * A page whose background throttling is off – an agent session's, the user looking at the
+   * tab as the session prepared it (`setBackgroundThrottling(false)`) – is hidden with the
+   * throttling on for the hide and off again after it. Electron's
+   * `allow_disabling_blink_scheduler_throttling_per_renderview` patch takes every
+   * page-visibility update as `visible` while throttling is off, so a plain hide would leave
+   * the page reading `visible` to its scripts (`document.visibilityState`, `visibilitychange`)
+   * until its next navigation – on the stage or hidden in the window – where Chrome's tab
+   * switched from reads `hidden`. With the throttling on the hide reaches the page; the
+   * throttling off again shows the widget as painting once more (Electron's
+   * `SetBackgroundThrottling` shows a hidden widget on any call) and touches nothing the page
+   * reads. Measured (Electron 44, Linux) with the whole sequence in one task: `hidden` on the
+   * stage at once, `hidden` in the window and on the stage a prepare later, the frames flowing
+   * either way; the plain hide `visible`. The `throttling` setting stands as the session last
+   * said it.
    */
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
@@ -1670,8 +1685,11 @@ export class ElectronTabView implements TabView {
       this.park()
     } else {
       if (this.parked !== null) this.unpark()
+      const held = !this.throttling && !this.wc.isDestroyed()
+      if (held) this.wc.setBackgroundThrottling(true)
       this.view.setVisible(false)
       this.enterStage()
+      if (held) this.wc.setBackgroundThrottling(false)
     }
     if (flipped) {
       this.refreshHangWatch()
@@ -2658,10 +2676,10 @@ export class ElectronTabView implements TabView {
    * state again). Measured on a staged page (Electron 44, Linux): `document.visibilityState`
    * `hidden` through any number of frame subscriptions, `visible` from the first `capturePage`
    * on, with or without `stayHidden`, and after every later update. A frame changes nothing
-   * about the page. The same patch bounds what the stage keeps: a page hidden while its
-   * throttling is off – the user looked at the agent's tab and switched away – reads `visible`
-   * on the stage until it navigates. Its captures take turns (`stagedTurn`): one frame
-   * subscription per page.
+   * about the page. The same patch would have a page hidden while its throttling is off – the
+   * user looked at the agent's tab and switched away – read `visible` on the stage until it
+   * navigates; the hide puts the throttling on for its moment (`setVisible`). Its captures take
+   * turns (`stagedTurn`): one frame subscription per page.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     if (this.wc.isDestroyed()) return null

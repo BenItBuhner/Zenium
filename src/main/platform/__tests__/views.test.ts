@@ -2165,6 +2165,68 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(engine(view).visible).toBe(false)
   })
 
+  /**
+   * The words a view's hide gives the engine, in order: the page's `setBackgroundThrottling`
+   * (`throttling on` / `off`) and the engine view's `setVisible` (`shown` / `hidden`).
+   */
+  const engineLog = (view: ElectronTabView): string[] => {
+    const log: string[] = []
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    Object.assign(wc, {
+      setBackgroundThrottling: (allowed: boolean) => {
+        log.push(`throttling ${allowed ? 'on' : 'off'}`)
+      }
+    })
+    const engineView = view.view as unknown as { setVisible(visible: boolean): void }
+    const setVisible = engineView.setVisible.bind(engineView)
+    engineView.setVisible = (visible: boolean): void => {
+      log.push(visible ? 'shown' : 'hidden')
+      setVisible(visible)
+    }
+    return log
+  }
+
+  it('hides a page whose throttling is off with the throttling on for the hide and off again after it, onto the stage or hidden in the window, and a page whose throttling is on plainly', () => {
+    const { create } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    const log = engineLog(view)
+    // The session prepared the tab while the user looked at it: throttling off, not driven hidden.
+    view.setBackgroundThrottling(false)
+    view.setAgentDriven(false)
+    expect(log).toEqual(['throttling off'])
+    log.length = 0
+    // The user switches tabs: the hide within the throttling, the view hidden in the window.
+    view.setVisible(false)
+    expect(log).toEqual(['throttling on', 'hidden', 'throttling off'])
+    expect(stages).toHaveLength(0)
+    expect(engine(view).visible).toBe(false)
+    log.length = 0
+    // The session's next prepare stages it, with no word on the throttling.
+    view.setAgentDriven(true)
+    expect(staged()!.children).toEqual([view.view])
+    expect(log).toEqual(['shown'])
+    log.length = 0
+    // Back in front and away again, driven now: onto the stage within the throttling.
+    view.setVisible(true)
+    expect(log).toEqual(['hidden', 'shown'])
+    log.length = 0
+    view.setVisible(false)
+    expect(log).toEqual(['throttling on', 'hidden', 'shown', 'throttling off'])
+    expect(staged()!.children).toEqual([view.view])
+    expect(stages).toHaveLength(2)
+    // The session let go (throttling on again): the plain hide, as a page no agent holds.
+    view.setVisible(true)
+    view.setBackgroundThrottling(true)
+    view.setAgentDriven(false)
+    log.length = 0
+    view.setVisible(false)
+    expect(log).toEqual(['hidden'])
+    expect(view.isVisible()).toBe(false)
+    expect(stages).toHaveLength(2)
+  })
+
   it('leaves a page parked under a chrome cover where it is, and stages it once the cover lifts without the layout showing it', () => {
     const { window, create } = setup()
     const view = create()
