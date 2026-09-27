@@ -45,7 +45,7 @@ import { readingListToggle } from './readingListToggle'
  * Back instead and steps to the form, as Chrome's back climbs out of its picker onto the edit
  * page. Focus moves to the dialog itself as it opens,
  * not into a field (§9.22: the keyboard would come up with the sheet); stepping into the pane
- * puts it on the checked folder, stepping back puts it on the sheet again.
+ * puts it on the checked folder, stepping back on the Folder row that opened the pane.
  *
  * A request for a node that has not reached the renderer yet (the star's event can overtake
  * the state push) keeps the sheet open with its fields waiting; only a node that was here and
@@ -85,6 +85,28 @@ export function BookmarkEditSheet({
   useBackSurface(
     pane === 'folder' ? { name: 'bookmark-edit-folder', onCommit: () => setPane('form') } : null
   )
+  // The sheet's own focus pass runs as it opens; a pane change swaps its content from under the
+  // focused control, so the focus is moved by hand: into the pane onto the checked folder (a
+  // picker's first focus, the list scrolled to show it), back onto the Folder row that opened
+  // the pane (§9.24: focus returns to the control that opened what has gone).
+  const content = useRef<HTMLDivElement>(null)
+  const shownPane = useRef(pane)
+  useEffect(() => {
+    if (shownPane.current === pane) return
+    shownPane.current = pane
+    const root = content.current
+    if (!root) return
+    if (pane === 'folder') {
+      const radio =
+        root.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ??
+        root.querySelector<HTMLElement>('[role="radio"]')
+      radio?.focus()
+    } else {
+      root
+        .querySelector<HTMLElement>('[data-testid="bookmark-folder"]')
+        ?.focus({ preventScroll: true })
+    }
+  }, [pane])
 
   useEffect(() => {
     if (gone) closeBookmarkEditor()
@@ -172,30 +194,32 @@ export function BookmarkEditSheet({
         handleLabel={pane === 'folder' ? 'Resize folder list' : 'Resize editor'}
         sheetRef={sheet}
       >
-        {pane === 'folder' ? (
-          <BookmarkFolderList
-            rows={targets}
-            checked={checked}
-            current={node ? node.parentId : null}
-            onPick={pick}
-          />
-        ) : (
-          <EditorForm
-            node={node}
-            draft={draft}
-            onDraft={setDraft}
-            parentId={parentId}
-            folderRow={
-              canPickFolder
-                ? { label: folderLabel, title: parentTitle, open: () => setPane('folder') }
-                : null
-            }
-            folder={folder}
-            waiting={waiting}
-            readingList={readingListToggle(state, node)}
-            dismiss={(then) => sheet.current?.dismiss(then)}
-          />
-        )}
+        <div ref={content} className="contents">
+          {pane === 'folder' ? (
+            <BookmarkFolderList
+              rows={targets}
+              checked={checked}
+              current={node ? node.parentId : null}
+              onPick={pick}
+            />
+          ) : (
+            <EditorForm
+              node={node}
+              draft={draft}
+              onDraft={setDraft}
+              parentId={parentId}
+              folderRow={
+                canPickFolder
+                  ? { label: folderLabel, title: parentTitle, open: () => setPane('folder') }
+                  : null
+              }
+              folder={folder}
+              waiting={waiting}
+              readingList={readingListToggle(state, node)}
+              dismiss={(then) => sheet.current?.dismiss(then)}
+            />
+          )}
+        </div>
       </PhoneSheet>
       {naming && (
         <NewFolderSheet

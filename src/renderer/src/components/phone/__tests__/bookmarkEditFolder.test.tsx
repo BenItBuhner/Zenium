@@ -364,6 +364,28 @@ describe("the bookmark editor's Folder row (HB-16)", () => {
     expect(currentTitles()).toEqual(['Work'])
   })
 
+  it('moves the focus onto the checked folder as the pane opens and back onto the Folder row as it closes', async () => {
+    await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
+    act(() => folderRow()!.click())
+    await settle()
+    const checked = radios().find((r) => r.getAttribute('aria-checked') === 'true')!
+    expect(document.activeElement).toBe(checked)
+
+    act(() => button('Back').click())
+    await settle()
+    expect(document.activeElement).toBe(folderRow())
+
+    act(() => folderRow()!.click())
+    await settle()
+    act(() =>
+      radios()
+        .find((r) => radioTitle(r) === 'Home')!
+        .click()
+    )
+    await settle()
+    expect(document.activeElement).toBe(folderRow())
+  })
+
   it('takes the system back in the pane as the header’s Back – the form comes back with the editor still up – and from the form as the sheet’s dismissal', async () => {
     await show(stateOf(), { id: 'jira', parentId: 'work', type: 'url' })
     act(() => folderRow()!.click())
