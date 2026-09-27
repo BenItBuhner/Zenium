@@ -6,7 +6,7 @@ import type { Tab, UIState } from '@shared/types'
 import type { SiteInfoSnapshot } from '@shared/siteInfo'
 
 /*
- * The site-information popover's two confirmations – "Clear site data?" one level in from the
+ * The site-information popover's two confirmations – "Delete site data?" one level in from the
  * overview, "Clear cookies?" one in from the cookies level (components/siteControls/
  * SiteInfoPopover.tsx `ConfirmLevel`) – wear the confirmation primitive's keyboard (§9.22 as
  * amended on #392; `useConfirmKeyboard`, W4-14): the level holds its container as it comes, no
@@ -188,10 +188,10 @@ afterEach(async () => {
 })
 
 describe('the site-information popover’s confirmations', () => {
-  it('"Clear site data?" holds its container as it comes – no verb preselected – with Cancel then the danger verb, no primary; Tab enters at Cancel, Shift+Tab at the verb; Enter from the container is inert', async () => {
+  it('"Delete site data?" holds its container as it comes – no verb preselected – with Cancel then the danger verb, no primary; Tab enters at Cancel, Shift+Tab at the verb; Enter from the container is inert', async () => {
     await open()
     expect(popover()!.dataset.level).toBe('overview')
-    const opener = buttonNamed('Clear site data')
+    const opener = buttonNamed('Delete site data')
     expect(opener.hasAttribute('data-danger')).toBe(true)
     act(() => opener.focus())
     click(opener)
@@ -205,8 +205,8 @@ describe('the site-information popover’s confirmations', () => {
     const [cancel, verb] = [...d.querySelectorAll<HTMLButtonElement>('button')]
     expect(d.querySelectorAll('button')).toHaveLength(2)
     expect(cancel.textContent).toBe('Cancel')
-    expect(verb.textContent).toBe('Clear site data')
-    expect(verb.getAttribute('aria-label')).toBe('Confirm clear site data')
+    expect(verb.textContent).toBe('Delete site data')
+    expect(verb.getAttribute('aria-label')).toBe('Confirm delete site data')
     expect(verb.classList.contains('zen-v2-button')).toBe(true)
     expect(verb.hasAttribute('data-danger')).toBe(true)
     expect(d.querySelector('[data-primary]')).toBeNull()
@@ -226,9 +226,9 @@ describe('the site-information popover’s confirmations', () => {
     expect(onDismiss).not.toHaveBeenCalled()
   })
 
-  it('Escape is one hop back to the overview with the focus on "Clear site data", the popover staying up; the next Escape is the popover’s', async () => {
+  it('Escape is one hop back to the overview with the focus on "Delete site data", the popover staying up; the next Escape is the popover’s', async () => {
     await open()
-    click(buttonNamed('Clear site data'))
+    click(buttonNamed('Delete site data'))
     await settle()
     expect(document.activeElement).toBe(level('clear-data'))
     pressEscape()
@@ -237,19 +237,19 @@ describe('the site-information popover’s confirmations', () => {
     expect(popover()).not.toBeNull()
     expect(popover()!.dataset.level).toBe('overview')
     expect(onDismiss).not.toHaveBeenCalled()
-    expect(document.activeElement).toBe(buttonNamed('Clear site data'))
+    expect(document.activeElement).toBe(buttonNamed('Delete site data'))
     pressEscape()
     expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 
   it('Cancel’s button goes back the same way; "Clear cookies?" returns to the cookies level’s "Clear cookies"', async () => {
     await open()
-    click(buttonNamed('Clear site data'))
+    click(buttonNamed('Delete site data'))
     await settle()
     click(buttonNamed('Cancel'))
     await settle()
     expect(popover()!.dataset.level).toBe('overview')
-    expect(document.activeElement).toBe(buttonNamed('Clear site data'))
+    expect(document.activeElement).toBe(buttonNamed('Delete site data'))
 
     // Into the cookies level, then its confirmation.
     const cookiesRow = [
@@ -311,7 +311,7 @@ describe('the site-information popover’s confirmations', () => {
     const onFocusIn = (e: FocusEvent): void => {
       if (e.target) landings.push(e.target)
     }
-    const opener = buttonNamed('Clear site data')
+    const opener = buttonNamed('Delete site data')
     act(() => opener.focus())
     document.addEventListener('focusin', onFocusIn)
     try {
@@ -325,7 +325,7 @@ describe('the site-information popover’s confirmations', () => {
       pressEscape()
       await settle()
       expect(popover()!.dataset.level).toBe('overview')
-      const back = buttonNamed('Clear site data')
+      const back = buttonNamed('Delete site data')
       expect(document.activeElement).toBe(back)
       expect(landings).toEqual([back])
 
@@ -377,7 +377,7 @@ describe('the site-information popover’s confirmations', () => {
 
     // Opened from the focused verb (the keyboard's path; the mouse's too, Chromium focusing a
     // button on mousedown): recorded as the level is pushed.
-    const opener = buttonNamed('Clear site data')
+    const opener = buttonNamed('Delete site data')
     click(opener)
     await settle()
     expect(document.activeElement).toBe(level('clear-data'))
@@ -386,7 +386,7 @@ describe('the site-information popover’s confirmations', () => {
     pressEscape()
     await settle()
     expect(popover()!.dataset.level).toBe('overview')
-    const back = buttonNamed('Clear site data')
+    const back = buttonNamed('Delete site data')
     expect(back).not.toBe(opener)
     expect(document.activeElement).toBe(back)
     expect(document.activeElement).not.toBe(decoyVerb)

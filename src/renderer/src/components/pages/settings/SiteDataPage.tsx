@@ -27,9 +27,9 @@ const ORIGIN_ROW = 'site-data-origin:'
  * page's paragraph and one heading, "Sites", with the count as the heading's aside and the cap's
  * and the sizes-unavailable lines under it (§9.17, §9.18), each origin a §10.4 item row – the
  * host, then its cookies, size and permissions and the policy's word for it – opening an item
- * sheet whose one row, "Clear site data", is the danger action row with its confirmation sheet
+ * sheet whose one row, "Delete site data", is the danger action row with its confirmation sheet
  * (§10.4: a destructive action is never an inline button on a phone; page → item sheet → prompt
- * is depth two from a page, §9.24). "Clear all site data" is the page's action row in the danger
+ * is depth two from a page, §9.24). "Delete all site data" is the page's action row in the danger
  * ink under the paragraph, in reach before the list runs, with its own confirmation (§9.23). A
  * row whose clear the engine refused stays with the failure line in the danger ink; a cleared
  * row leaves the list and its sheet, the row gone, leaves with it. The confirmations are
@@ -152,7 +152,7 @@ export function SiteDataPage(): JSX.Element {
 /**
  * One origin as an item row (§10.4): the host over its storage line – or the failure line in
  * the danger ink when its clear was refused – opening the sheet titled with the host, the
- * storage line as its paragraph, and "Clear site data" as its one row: the danger action, busy
+ * storage line as its paragraph, and "Delete site data" as its one row: the danger action, busy
  * while the engine clears (§9.30), prompting first.
  */
 function originItem(

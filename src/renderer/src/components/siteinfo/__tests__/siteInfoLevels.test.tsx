@@ -8,7 +8,7 @@ import type { SiteInfo } from '@shared/siteInfo'
 /*
  * The phone site-information sheet's levels, rendered on the chassis (W5-17): the slide paints
  * the pane arriving with its content from its first frame and measures the sheet on the level it
- * shows (seed 51); and "Clear cookies?" / "Clear site data?" are levels of the sheet wearing the
+ * shows (seed 51); and "Clear cookies?" / "Delete site data?" are levels of the sheet wearing the
  * §9.23 confirmation's keyboard contract exactly (§10.4, the design lead's seed-55 ruling): the
  * level's container takes the focus on entry, Tab reaches Cancel then the danger verb, Enter is
  * inert on the destructive question, Escape is one hop back to the row that opened it.
@@ -586,24 +586,24 @@ describe('the confirmations as levels (seed 55, §10.4, §9.22, §9.23)', () => 
     expect(pane('clear-cookies').hidden).toBe(true)
   })
 
-  it('"Clear site data?" is the same level from the root, with its own words, back to its row on Cancel', async () => {
+  it('"Delete site data?" is the same level from the root, with its own words (the Delete family’s, W8-11), back to its row on Cancel', async () => {
     await open()
-    const clear = byText('Clear site data')
+    const clear = byText('Delete site data')
     clear.focus()
     click(clear)
     const level = pane('clear-data')
     expect(active()).toBe(level)
     expect(level.getAttribute('role')).toBe('alertdialog')
     expect(document.getElementById(level.getAttribute('aria-labelledby')!)!.textContent).toBe(
-      'Clear site data?'
+      'Delete site data?'
     )
     expect(document.getElementById(level.getAttribute('aria-describedby')!)!.textContent).toBe(
-      'Removes the cookies, stored data and permissions of github.com, then reloads the page.'
+      'Deletes the cookies, stored data and permissions of github.com, then reloads the page.'
     )
     const [cancel, verb] = [...level.querySelectorAll<HTMLButtonElement>('button')]
     expect(cancel!.textContent).toBe('Cancel')
-    expect(verb!.getAttribute('aria-label')).toBe('Confirm clear all site data')
-    expect(sheet().getAttribute('aria-label')).toBe('Clear site data?')
+    expect(verb!.getAttribute('aria-label')).toBe('Confirm delete site data')
+    expect(sheet().getAttribute('aria-label')).toBe('Delete site data?')
     expect(sheet().querySelector('.zen-sheet-header')).toBeNull()
     key('Enter')
     expect(commands()).not.toContain('site.clearData')

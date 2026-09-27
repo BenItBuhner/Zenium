@@ -32,7 +32,7 @@ import { useSiteDataListing } from './useSiteDataListing'
  * the row in the danger ink (§10.5, §9.21: the row grows around it, which a two-line row already
  * does), the §9.30 busy button while the engine clears, the row leaving the list when it has (no
  * motion on a layout property), staying with the failure line in the danger ink when it has
- * not. Clear all stands in the dialog's footer (`SheetFooter`: §9.20's list-body footer – a
+ * not. "Delete all data" stands in the dialog's footer (`SheetFooter`: §9.20's list-body footer – a
  * hairline in the gutter, the buttons at 12), in reach at the foot of the longest list, and
  * prompts first (§9.23 – the page's rule for a destructive page action, even where Chrome
  * clears at once): the prompt is §9.20's 320 notice over this dialog, which it covers. Clearing
@@ -156,7 +156,7 @@ function OriginRow({
         <V2Button
           variant="danger"
           busy={busy}
-          aria-label={`${SITE_DATA_TEXT.viewer.clear} ${label}`}
+          aria-label={`${SITE_DATA_TEXT.viewer.clear} for ${label}`}
           onClick={onClear}
         >
           {SITE_DATA_TEXT.viewer.clear}

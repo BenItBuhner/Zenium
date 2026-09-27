@@ -108,7 +108,7 @@ const COOKIE_FOLD = 6
  * spend §9.24's one depth on a question the sheet can ask itself).
  */
 type LevelId = 'main' | 'connection' | 'cookies' | 'permissions' | ConfirmLevel
-/** The confirmation levels: Clear cookies, one level in from the cookies; Clear site data, from the root. */
+/** The confirmation levels: Clear cookies, one level in from the cookies; Delete site data, from the root. */
 type ConfirmLevel = 'clear-cookies' | 'clear-data'
 /** The detail levels with a §9.16 header – the title and the back control. A confirmation carries none (§9.23). */
 type TitledLevel = 'connection' | 'cookies' | 'permissions'
@@ -1096,7 +1096,7 @@ function SheetMainRows({
             <span className="zen-sheet-item-glyph" data-tone="danger">
               <Trash2 />
             </span>
-            <span className="min-w-0 flex-1 truncate">Clear site data</span>
+            <span className="min-w-0 flex-1 truncate">Delete site data</span>
           </button>
         </>
       )}
@@ -1301,7 +1301,7 @@ interface ConfirmWords {
 }
 
 /**
- * "Clear cookies?" and "Clear site data?" as levels of the sheet (§10.4, the design lead's
+ * "Clear cookies?" and "Delete site data?" as levels of the sheet (§10.4, the design lead's
  * ruling on W5-17): one level in from the row that asks, a title block with the question and
  * what it does over the two actions splitting the footer (§9.11), no header (§9.23). The pane
  * wears the §9.23 confirmation's keyboard contract exactly, on the primitive's own hook
@@ -1396,10 +1396,12 @@ function confirmWords(kind: 'cookies' | 'data', site: string, count: number): Co
         confirmLabel: 'Confirm clear cookies'
       }
     : {
-        title: 'Clear site data?',
-        detail: `Removes the cookies, stored data and permissions of ${where}, then reloads the page.`,
-        action: 'Clear site data',
-        confirmLabel: 'Confirm clear all site data'
+        // The Delete family's verb (W8-11): Chrome's `IDS_SETTINGS_SITE_SETTINGS_SITE_DELETE_STORAGE_DIALOG_TITLE`
+        // "Delete site data?" over the house line, its verb along.
+        title: 'Delete site data?',
+        detail: `Deletes the cookies, stored data and permissions of ${where}, then reloads the page.`,
+        action: 'Delete site data',
+        confirmLabel: 'Confirm delete site data'
       }
 }
 
@@ -1666,7 +1668,9 @@ function useActions(
     clearData: () =>
       act('data', async () => {
         await cmd('site.clearData', { tabId: tab.id })
-        pushToast(`Cleared everything ${site.site || 'this site'} stored`)
+        // Names the data, not the site (W8-11): Chrome's compound from
+        // `IDS_SETTINGS_SITE_SETTINGS_COOKIE_REMOVE_SITE`, said as done.
+        pushToast('Site data and permissions deleted')
         refreshSiteInfo()
       }),
     resetPermission: (permission?: string) =>

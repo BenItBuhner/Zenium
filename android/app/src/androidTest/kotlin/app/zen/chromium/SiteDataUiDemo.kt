@@ -34,8 +34,8 @@ import kotlin.math.roundToInt
  *    (the header stage relays a never-site's documents without them); the sheet's cookies level
  *    reading "Never allow · Listed as 127.0.0.1" and its picker moving the site to "Clear on
  *    exit"; the allow list's Add and the pattern row's Remove; the site-data page (§10.2, the
- *    #322 ruling (a)) with the site's item sheet and its "Clear site data" prompt (the cookies
- *    gone from the jar, the row from the page), Clear all's prompt cancelled, the back to the
+ *    #322 ruling (a)) with the site's item sheet and its "Delete site data" prompt (the cookies
+ *    gone from the jar, the row from the page), Delete all's prompt cancelled, the back to the
  *    section; the on-exit type "Browsing history" switched on; the page holding its cookies
  *    again, the jar flushed to disk, and the app sent home – the pending-clear marker written by
  *    the core on the way.
@@ -1034,8 +1034,8 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         activateTab(DEMO_TAB)
 
         // 10. The viewer: a §10.2 drill-in page (#322 (a)) – the two origins as item rows, the
-        //     demo site's item sheet with "Clear site data" and its prompt (the cookies gone from
-        //     the jar, the row gone from the page), Clear all's prompt cancelled, the back to the
+        //     demo site's item sheet with "Delete site data" and its prompt (the cookies gone from
+        //     the jar, the row gone from the page), Delete all's prompt cancelled, the back to the
         //     section. No row carries an inline button (§10.4).
         //     Every state here is read by the chrome document (`data-page`, the page's rows, the
         //     sheets), never the accessibility tree: on the emulator the tree trails a drill-in
@@ -1067,7 +1067,8 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                 claim("no row on the page carries an inline button (§10.4)", chromeValue("String(document.querySelectorAll('[data-testid=\"site-data-page\"] button:not([data-row])').length)") == "0")
                 shot("19-viewer-page")
                 beat()
-                // The item sheet: the host as its title, the storage line, Clear site data as its one row.
+                // The item sheet: the host as its title, the storage line, Delete site data as its one row
+                // (the Delete family's words since W8-11; the rows' `clear` handles stay).
                 val clearRow = "$originRow:clear"
                 if (tapPageRow(originRow) { sheetCount() == 1 && chromeHas("[data-row=${JSONObject.quote(clearRow)}]") }) {
                     awaitSheetsSettled()
@@ -1076,14 +1077,14 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                     shot("20-viewer-item-sheet")
                     beat()
                     // Its prompt: the title block and two buttons, the container focused (§9.20, §9.22).
-                    if (tapPageRow(clearRow) { sheetCount() == 2 && topSheetTitled("Clear data for") }) {
+                    if (tapPageRow(clearRow) { sheetCount() == 2 && topSheetTitled("Delete data for") }) {
                         awaitSheetsSettled()
                         SystemClock.sleep(400)
                         note("  prompt: ${topSheetText()} ; ${chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];if(!d)return '';return 'focus='+(document.activeElement===d?'container':(document.activeElement&&document.activeElement.tagName))+' labelledby='+Boolean(d.getAttribute('aria-labelledby'))+' describedby='+Boolean(d.getAttribute('aria-describedby'))})()")}")
                         claim("the prompt focuses its container, not a button", chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];return String(!!d&&document.activeElement===d)})()") == "true")
                         shot("21-viewer-item-prompt")
                         beat()
-                        if (tapSheetButton("Clear site data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
+                        if (tapSheetButton("Delete site data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
                             awaitNoSheet(8_000)
                             awaitSettled(6_000) { !chromeHas(originRowSelector) }
                             SystemClock.sleep(800)
@@ -1095,15 +1096,15 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                             closeSheets()
                         }
                     } else {
-                        note("  the item sheet's Clear site data row did not open its prompt")
+                        note("  the item sheet's Delete site data row did not open its prompt")
                         closeSheets()
                     }
                 } else {
                     note("  the demo site's item row did not open its sheet")
                     closeSheets()
                 }
-                // Clear all: the page's action row in the danger ink, its prompt cancelled.
-                if (tapPageRow("site-data-clear-all") { sheetCount() == 1 && topSheetTitled("Clear all site data?") }) {
+                // Delete all site data: the page's action row in the danger ink, its prompt ("Delete all data?") cancelled.
+                if (tapPageRow("site-data-clear-all") { sheetCount() == 1 && topSheetTitled("Delete all data?") }) {
                     awaitSheetsSettled()
                     SystemClock.sleep(400)
                     note("  clear-all prompt: ${topSheetText()}")
@@ -1113,7 +1114,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                         claim("Cancel kept the control site's cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
                     }
                 } else {
-                    note("  the Clear all site data row did not open its prompt")
+                    note("  the Delete all site data row did not open its prompt")
                 }
                 awaitNoSheet()
                 SystemClock.sleep(400)
