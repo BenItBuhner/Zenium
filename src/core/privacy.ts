@@ -13,7 +13,8 @@ import {
   type RevokedSitePermissions,
   type SafetyCheckResult,
   type SafetyCheckRow,
-  type SafetyState
+  type SafetyState,
+  type Tab
 } from '../shared/types'
 import type { UpdateStatus } from '../shared/updates'
 import { contentSetting } from '../shared/contentSettings'
@@ -24,7 +25,8 @@ import type { ZenWindow } from './window'
 
 export { UNUSED_PERMISSION_MS }
 
-const HOUR_MS = 3_600_000
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 
 /** Chrome's "Last 4 weeks". */
@@ -33,9 +35,15 @@ const MONTH_MS = 28 * DAY_MS
 /** Safety check: a site with this many granted permissions is worth a look. */
 export const MANY_PERMISSIONS = 3
 
-/** Where a browsing-data range starts, given the moment it is measured from. */
+/**
+ * Where a browsing-data range starts, given the moment it is measured from (Chrome's
+ * `CalculateBeginDeleteTime`, `browsing_data_utils.cc`: 15 minutes, 1 hour, 24 hours, 7 days,
+ * 4 weeks, or the beginning of time).
+ */
 export function rangeStart(range: BrowsingDataRange, now: number): number {
   switch (range) {
+    case '15min':
+      return now - 15 * MINUTE_MS
     case 'hour':
       return now - HOUR_MS
     case 'day':
@@ -69,16 +77,35 @@ export class PrivacyService {
     private readonly now: () => number = Date.now
   ) {}
 
-  /** How much of each type the range holds, in the order the dialog lists them. */
+  /**
+   * How much of each type the range holds, in the order the dialog lists them; the phone's
+   * `tabs` row last (the desktop dialog reads the rows by type and lists no Tabs row).
+   */
   async counts(range: BrowsingDataRange): Promise<BrowsingDataCount[]> {
     const now = this.now()
     const from = rangeStart(range, now)
     const engine = await this.engineCounts()
-    return BROWSING_DATA_ADVANCED.map((type) => this.countOf(type, from, engine))
+    return [...BROWSING_DATA_ADVANCED, 'tabs' as const].map((type) =>
+      this.countOf(type, range, from, engine)
+    )
+  }
+
+  /**
+   * The tabs Quick Delete closes for the range at this moment (HB-07 / MOT-24), as ids in the
+   * overview's order – what the chrome runs its motion on before it asks for the clear.
+   */
+  tabsInRange(range: BrowsingDataRange): string[] {
+    return this.tabsOf(range, rangeStart(range, this.now())).map((tab) => tab.id)
+  }
+
+  /** The range's tabs: every tab for "All time" (Chrome's ALL_TIME), else those navigated since `from`. */
+  private tabsOf(range: BrowsingDataRange, from: number): Tab[] {
+    return this.browser.tabs.tabsNavigatedSince(range === 'all' ? null : from)
   }
 
   private countOf(
     type: BrowsingDataType,
+    range: BrowsingDataRange,
     from: number,
     engine: EngineDataCounts | null
   ): BrowsingDataCount {
@@ -104,6 +131,8 @@ export class PrivacyService {
         return count(type, b.permissions.rules().length, 'permissions', false)
       case 'recentlyClosed':
         return count(type, b.state.recentlyClosed.length, 'entries', false)
+      case 'tabs':
+        return count(type, this.tabsOf(range, from).length, 'tabs', true)
     }
   }
 
@@ -187,6 +216,14 @@ export class PrivacyService {
     if (chosen.has('recentlyClosed')) {
       b.session.clearRecentlyClosed()
       cleared.push('recentlyClosed')
+    }
+    if (chosen.has('tabs')) {
+      // Last, once the data is gone, as Chrome closes Quick Delete's tabs after the deletion
+      // finished: the range's tabs AS THEY STAND NOW – `tabsInRange` a moment earlier named
+      // the same set, give or take a tab that navigated in between – with no undo and no
+      // "Recently closed" entry.
+      b.tabs.closeUnrecorded(this.tabsOf(range, from).map((tab) => tab.id))
+      cleared.push('tabs')
     }
     b.state.commitVolatile()
     return { status: 'ok', value: { cleared } }

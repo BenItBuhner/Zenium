@@ -3344,6 +3344,7 @@ export class Browser {
       'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
+      'privacy.tabsInRange': ({ range }) => this.privacy.tabsInRange(range),
       'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
       'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
         this.protection.setThirdPartyCookiesPrivate(mode, win),
