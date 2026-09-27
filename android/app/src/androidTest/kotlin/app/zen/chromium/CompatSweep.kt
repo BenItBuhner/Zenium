@@ -3954,9 +3954,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * of the tab's address, Boxel Rebound's game canvas): the popup opens, `expr` (a
      * `JSON.stringify` of `{pass, ...}`) is polled in it. A popup whose text matches
      * `platformLimit` is the platform's refusal, `n/a` with `limitNote` (Distill's "The OPFS is
-     * not available": its store wants SharedArrayBuffer).
+     * not available": its store wants SharedArrayBuffer). A popup whose reading is its service's
+     * answer that it shows nothing of names the service's host in `apiHost` (Temp Mail's
+     * `web2.temp-mail.org`: `newMailbox()` resolves an empty address on any failed `POST /mailbox`,
+     * no word drawn, none logged): the host's CORS-proxy log for that host – the answers the
+     * runtime served the extension's pages, "id METHOD status url" – goes into the row's
+     * `proxied`, and a popup without its pass whose every answer from the host is a refusal (no
+     * 2xx) is the gate, `n/m` with the statuses; one answered 2xx that still reads nothing, or one
+     * whose request never reached the proxy, stays F with that said (the runtime's, to read).
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = ""): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
@@ -3968,6 +3975,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
         }
         extra.put("popup", found)
+        val answers = if (apiHost == null) emptyList() else proxied(apiHost).filter { it.startsWith("${row.id} ") }
+        if (apiHost != null) extra.put("proxied", JSONArray(answers.takeLast(8)))
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-popup-core")
         runCatching { coreCall("extension.closePopup", "null") }
@@ -3975,13 +3984,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Scribbr's "something went wrong" from its citation API): the gate, not the runtime.
         val refused = popup != null && !found.optBoolean("pass") && notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
         val limited = popup != null && !found.optBoolean("pass") && platformLimit != null && platformLimit.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
+        val statuses = answers.mapNotNull { proxyStatus(it) }
+        val apiRefused = popup != null && !found.optBoolean("pass") && apiHost != null && statuses.isNotEmpty() && statuses.none { it in 200..299 }
+        val apiRead = when {
+            apiHost == null || popup == null || found.optBoolean("pass") -> ""
+            answers.isEmpty() -> "; no request of the extension's to $apiHost reached the host's proxy"
+            else -> "; $apiHost answered ${statuses.joinToString("/")} through the host's proxy"
+        }
         when {
             found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
             refused -> Grade("n/m", "$label: popup renders and answers with $gate's refusal (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
+            apiRefused -> Grade("n/m", "$label: popup renders and $gate refused every request the runtime carried for it (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(90) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
             limited -> Grade("n/a", "$label: popup renders and reports the platform's refusal (\"${extra.optString("popupText").take(100)}\"; probe ${JSONObject(found.toString()).apply { remove("console"); remove("text") }.toString().take(160)}): $limitNote", extra)
-            else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}", extra)
+            else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}$apiRead", extra)
         }
     }
+
+    /** The status of a CORS-proxy log line ("id METHOD status url"), null for a line of another shape. */
+    private fun proxyStatus(line: String): Int? = line.split(' ').getOrNull(2)?.toIntOrNull()
 
     /**
      * An effect the action click leaves on the fixture page (Turn Off the Lights' overlay over
@@ -7462,7 +7482,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("jpefmbpcbebpjpmelobfakahfdcgcmkl", "Adblock for YouTube", "adblock-for-youtube-easylist", core = youtubeAdRules("Adblock for YouTube", Regex("doubleclick\\.net|googlesyndication\\.com|googleadservices\\.com|google-analytics\\.com|yieldlove|adnxs", RegexOption.IGNORE_CASE))),
         Row("eojdckfcadamkapabechhbnkleligand", "L.O.C", "loc", core = serviceBacked("L.O.C", "its worker's whole reachable surface is the `externally_connectable` channel loc.dev / lnmai.com's pages open to it (`runtime.onMessageExternal`; Facebook and Messenger host access for their requests); no popup, no options, no content script")),
         Row("caacbgbklghmpodbdafajbgdnegacfmo", "Gradient Sentry Node", "gradient-sentry-node", account = true, core = popupLogin("Gradient Sentry Node")),
-        Row("inojafojbhdpnehkhhfjalgjjobnhomj", "Temp Mail - Disposable Temporary Email", "temp-mail", core = popupMarker("Temp Mail", TEMP_MAIL_ADDRESS, settleMs = 30_000, notMeasurable = Regex("error|failed|try again|unavailable|offline|something went wrong|network", RegexOption.IGNORE_CASE), gate = "temp-mail.org's mailbox API (web2.temp-mail.org)")),
+        // Its popup asks web2.temp-mail.org for a mailbox itself (`newMailbox()`: POST /mailbox, an empty
+        // address on any failure, nothing drawn or logged for it); the worker's thirteen `tabs.sendMessage`s
+        // to tabs without its content script are Chrome's own lastError texts, counted apart by the host.
+        Row("inojafojbhdpnehkhhfjalgjjobnhomj", "Temp Mail - Disposable Temporary Email", "temp-mail", core = popupMarker("Temp Mail", TEMP_MAIL_ADDRESS, settleMs = 30_000, notMeasurable = Regex("error|failed|try again|unavailable|offline|something went wrong|network", RegexOption.IGNORE_CASE), gate = "temp-mail.org's mailbox API (web2.temp-mail.org)", apiHost = "web2.temp-mail.org")),
         Row("hkhggnncdpfibdhinjiegagmopldibha", "Checker Plus for Google Calendar", "checker-plus-calendar", account = true, core = popupLogin("Checker Plus for Google Calendar")),
         Row("ggaabchcecdbomdcnbahdfddfikjmphe", "Chrome Capture - Screenshot & GIF", "chrome-capture", core = captureLimit("Chrome Capture", "/record|capture|screenshot|gif|start|full ?page|visible|area/i")),
         Row("kpdjmbiefanbdgnkcikhllpmjnnllbbc", "Save as PDF", "save-as-pdf", core = popupMarker("Save as PDF", SAVE_AS_PDF_POPUP, settleMs = 30_000, notMeasurable = Regex("error|could not|failed|unable|timed? ?out|not (be )?(reach|fetch|download)|refused|unreachable", RegexOption.IGNORE_CASE), gate = "pdfcrowd.com's conversion service (the fixture is the runner's own address, which the service cannot fetch)")),
@@ -11609,6 +11632,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun decisions(): List<String> {
         var list: List<String> = emptyList()
         instrumentation.runOnMainSync { list = synchronized(host.extensions.decisions) { host.extensions.decisions.toList() } }
+        return list
+    }
+
+    /**
+     * The host's CORS-proxy log lines ("id METHOD status url") whose URL carries `fragment` – the
+     * answers the runtime served an extension page's fetches to a host its permissions cover (kept
+     * while the host runs debug, as the sweep does; a 3xx it could not follow and a network failure
+     * leave no line, the WebView then trying itself).
+     */
+    private fun proxied(fragment: String): List<String> {
+        var list: List<String> = emptyList()
+        instrumentation.runOnMainSync { list = host.extensions.proxiedMatching(fragment) }
         return list
     }
 
