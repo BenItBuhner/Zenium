@@ -149,6 +149,11 @@ export interface ApiHost {
   window(): ZenWindow
   attached(id: string): AttachedExtension | undefined
   allAttached(): AttachedExtension[]
+  /**
+   * Every install the store holds, attached or not (`chrome.management.getAll` lists a
+   * disabled extension too, `enabled: false`, as Chrome does); empty without a store.
+   */
+  installed(): readonly ExtensionRecord[]
   /** `scripting.registerContentScripts` state; setting it re-plans the extension's units. */
   registered(id: string): RegisteredContentScript[]
   setRegistered(id: string, scripts: RegisteredContentScript[]): Promise<void>
@@ -2236,15 +2241,49 @@ export class ExtensionApi {
         url: extensionUrl(e.record.id, path)
       }))
     })
+    // An install the store holds without an attached runtime – one the user disabled, or one
+    // an update keeps disabled until its new warnings are accepted – is still an extension to
+    // `chrome.management` (Chrome lists it with `enabled: false` and a `disabledReason`; the
+    // desktop's `describe` does too). Answering attached extensions only left an extension
+    // manager (Extensity) with a list of itself beside disabled installs (compat round 21).
+    const fromRecord = (r: ExtensionRecord): Record<string, unknown> => {
+      const pending = (r.pendingWarnings?.length ?? 0) > 0
+      return {
+        id: r.id,
+        name: r.name,
+        shortName: r.name,
+        description: r.description,
+        version: r.version,
+        mayDisable: true,
+        mayEnable: !pending,
+        enabled: false,
+        disabledReason: pending ? 'permissions_increase' : 'unknown',
+        isApp: false,
+        type: 'extension',
+        installType: r.source === 'unpacked' ? 'development' : 'normal',
+        permissions: [...r.permissions],
+        hostPermissions: [...r.hostPermissions],
+        icons: []
+      }
+    }
     switch (method) {
       case 'getSelf':
         return info(ext)
-      case 'getAll':
-        return this.host.allAttached().map(info)
+      case 'getAll': {
+        const attached = this.host.allAttached()
+        const listed = attached.map(info)
+        const running = new Set(attached.map((e) => e.record.id))
+        for (const record of this.host.installed())
+          if (!running.has(record.id)) listed.push(fromRecord(record))
+        return listed
+      }
       case 'get': {
-        const target = this.host.attached(String(args[0]))
-        if (!target) throw new Error(`Failed to find extension with id ${String(args[0])}.`)
-        return info(target)
+        const id = String(args[0])
+        const target = this.host.attached(id)
+        if (target) return info(target)
+        const record = this.host.installed().find((r) => r.id === id)
+        if (record) return fromRecord(record)
+        throw new Error(`Failed to find extension with id ${id}.`)
       }
       case 'uninstallSelf':
         void this.host.uninstall(ext.record.id)

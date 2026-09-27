@@ -1414,6 +1414,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     return [...this.extensions.values()]
   }
 
+  installed(): readonly ExtensionRecord[] {
+    return this.store?.records() ?? []
+  }
+
   registered(id: string): RegisteredContentScript[] {
     return this.data.registered[id] ?? []
   }

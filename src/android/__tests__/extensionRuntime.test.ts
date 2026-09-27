@@ -2684,6 +2684,97 @@ describe('AndroidExtensionRuntime: runtime.requestUpdateCheck', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.management over the store', () => {
+  it("lists the store's disabled installs beside the running extensions – enabled false with Chrome's reason – and answers get for them (Extensity's empty list, compat round 21)", async () => {
+    const h = harness()
+    const self = record(h)
+    await h.runtime.attach(self)
+    backgroundUp(h, 'bg1')
+    // Without a store the list is the attached extensions alone.
+    const alone = await call(h, 'bg1', 'management', 'getAll', [])
+    expect((alone.result as Array<{ id: string }>).map((e) => e.id)).toEqual([ID])
+
+    const ID3 = 'cccccccccccccccccccccccccccccccc'
+    const off = record(
+      h,
+      { id: ID2, path: PATH.replace(ID, ID2), enabled: false },
+      manifest({
+        name: 'Switched off',
+        description: 'disabled by the user',
+        version: '2.3.4',
+        permissions: ['tabs'],
+        host_permissions: ['https://other.example/*']
+      })
+    )
+    const held = record(
+      h,
+      {
+        id: ID3,
+        source: 'unpacked',
+        path: PATH.replace(ID, ID3),
+        enabled: false,
+        pendingWarnings: ['Read your browsing history']
+      },
+      manifest({ name: 'Held by an update' })
+    )
+    const records = [self, off, held]
+    h.runtime.store = {
+      record: (id) => records.find((r) => r.id === id),
+      records: () => records,
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' })
+    }
+    const all = await call(h, 'bg1', 'management', 'getAll', [])
+    const list = all.result as Array<Record<string, unknown>>
+    // The running extension once (from its runtime, not its record again), then the store's rest.
+    expect(list.map((e) => [e.id, e.enabled])).toEqual([
+      [ID, true],
+      [ID2, false],
+      [ID3, false]
+    ])
+    expect(list[1]).toEqual({
+      id: ID2,
+      name: 'Switched off',
+      shortName: 'Switched off',
+      description: 'disabled by the user',
+      version: '2.3.4',
+      mayDisable: true,
+      mayEnable: true,
+      enabled: false,
+      disabledReason: 'unknown',
+      isApp: false,
+      type: 'extension',
+      installType: 'normal',
+      permissions: ['tabs'],
+      hostPermissions: ['https://other.example/*'],
+      icons: []
+    })
+    // An install an update keeps disabled until its warnings are accepted: Chrome's reason, and
+    // the extension cannot enable it itself.
+    expect(list[2]).toMatchObject({
+      id: ID3,
+      name: 'Held by an update',
+      enabled: false,
+      disabledReason: 'permissions_increase',
+      mayEnable: false,
+      installType: 'development'
+    })
+    // `get` answers a disabled install by id; an id the store never saw stays Chrome's error.
+    const got = await call(h, 'bg1', 'management', 'get', [ID2])
+    expect(got.ok).toBe(true)
+    expect(got.result).toMatchObject({ id: ID2, enabled: false, version: '2.3.4' })
+    const missing = await call(h, 'bg1', 'management', 'get', ['dddddddddddddddddddddddddddddddd'])
+    expect(missing.ok).toBe(false)
+    expect(missing.error).toBe(
+      'Failed to find extension with id dddddddddddddddddddddddddddddddd.'
+    )
+    // `getSelf` is the runtime's own reading, unchanged.
+    const me = await call(h, 'bg1', 'management', 'getSelf', [])
+    expect(me.result).toMatchObject({ id: ID, enabled: true, name: 'Runtime test' })
+  })
+})
+
 describe('AndroidExtensionRuntime: runtime.onUpdateAvailable and the idle word to the store', () => {
   function storeOf(h: Harness): string[] {
     const idle: string[] = []
