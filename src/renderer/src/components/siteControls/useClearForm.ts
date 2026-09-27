@@ -78,6 +78,36 @@ export interface ClearFormOptions {
   types?: (mode: ClearMode) => readonly BrowsingDataType[]
   /** The types checked when the form opens. */
   initialChecked?: readonly BrowsingDataType[]
+  /**
+   * How a submit clears: `privacy.clearBrowsingData` with the form's arguments by default. The
+   * phone's Quick Delete runs its tab motion around the command (`quickDeleteClear`, MOT-24)
+   * and may take the form down before it is through – `dismiss` is the form's `onDone`, which
+   * runs once however many times it is called – with the outcome the form then reports as it
+   * reports the command's own: the toast on `ok`, the passphrase field or the error else.
+   */
+  clear?: (args: ClearArgs, dismiss: () => void) => Promise<ClearOutcome>
+}
+
+/** What a submit sends. */
+export interface ClearArgs {
+  range: BrowsingDataRange
+  types: BrowsingDataType[]
+  passphrase?: string
+}
+
+export type ClearOutcome = ReauthOutcome<ClearBrowsingDataResult>
+
+const clearWithCommand = (args: ClearArgs): Promise<ClearOutcome> =>
+  cmd('privacy.clearBrowsingData', args)
+
+/** `fn`, run on the first call alone. */
+function once(fn: () => void): () => void {
+  let ran = false
+  return () => {
+    if (ran) return
+    ran = true
+    fn()
+  }
 }
 
 function modeTypes(mode: ClearMode): readonly BrowsingDataType[] {
@@ -167,10 +197,11 @@ export function useClearForm(onDone: () => void, options: ClearFormOptions = {})
   )
   const selected = types.filter((t) => form.checked.has(t) && !unavailable.has(t))
 
+  const clear = options.clear ?? clearWithCommand
   const submit = useCallback((): void => {
     if (form.busy || selected.length === 0) return
     setForm((f) => ({ ...f, busy: true, error: null }))
-    const args = {
+    const args: ClearArgs = {
       range: form.range,
       types: selected,
       ...(form.passphrase !== null ? { passphrase: form.passphrase } : {})
@@ -182,13 +213,15 @@ export function useClearForm(onDone: () => void, options: ClearFormOptions = {})
     // range already remembered is not written again (Chrome's `PrefService` drops an equal value).
     if (remembers && args.range !== rememberedRange())
       run('settings.update', { clearBrowsingDataRange: args.range })
-    cmd('privacy.clearBrowsingData', args).then(
-      (outcome: ReauthOutcome<ClearBrowsingDataResult>) => {
+    // The form closes once, whether the clear took it down on its way or `ok` does now.
+    const done = once(onDone)
+    clear(args, done).then(
+      (outcome: ClearOutcome) => {
         switch (outcome.status) {
           case 'ok':
             // The toast names the period the form cleared, in the picker's words.
             pushToast(clearedToast(args.range, outcome.value.cleared))
-            onDone()
+            done()
             return
           case 'passphrase':
             // The field appears on the first ask; a refused passphrase leaves it empty (§9.30)
@@ -221,7 +254,7 @@ export function useClearForm(onDone: () => void, options: ClearFormOptions = {})
         setForm((f) => ({ ...f, busy: false, error: 'That did not work. Try again.' }))
       }
     )
-  }, [form.busy, form.range, form.passphrase, selected, remembers, onDone])
+  }, [form.busy, form.range, form.passphrase, selected, remembers, onDone, clear])
 
   // A busy form takes no edits (§9.30): the values stay as they are until the clear is done.
   const edit = (change: (f: ClearFormState) => ClearFormState): void => {

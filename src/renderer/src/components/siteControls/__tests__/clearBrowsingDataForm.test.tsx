@@ -219,15 +219,23 @@ describe('the phone form is Quick Delete (HB-07)', () => {
     click(host.querySelector('[data-testid="clear-data-submit"]'))
     await settle()
 
-    expect(invoke).toHaveBeenCalledWith('privacy.clearBrowsingData', {
-      range: '15min',
-      types: ['history', 'cookies', 'cache', 'tabs']
-    })
+    // Chrome's order (MOT-24, `quickDeleteClear`): the data goes first, the tabs once the
+    // switcher's wipe is through – two clears, the tabs' last, the period's tabs read between.
+    const clears = invoke.mock.calls
+      .filter(([name]) => name === 'privacy.clearBrowsingData')
+      .map(([, args]) => args)
+    expect(clears).toEqual([
+      { range: '15min', types: ['history', 'cookies', 'cache'] },
+      { range: '15min', types: ['tabs'] }
+    ])
+    expect(invoke).toHaveBeenCalledWith('privacy.tabsInRange', { range: '15min' })
     // "Last 15 minutes deleted" – the period from the one range list, never the types.
     expect(uiStore.get().toasts.map((t) => t.message)).toEqual([
       clearedToast('15min', ['history', 'cookies', 'cache', 'tabs'])
     ])
     expect(uiStore.get().toasts[0]?.message).toBe('Last 15 minutes deleted')
+    // The form went down before the switcher, once (the runner's dismiss and the form's `ok`
+    // are the one close).
     expect(close).toHaveBeenCalledTimes(1)
   })
 
