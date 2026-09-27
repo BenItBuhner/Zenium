@@ -3139,7 +3139,16 @@ function takeStep(step: PreviewStep): void {
       const target = strip?.children[step.page - 1]
       if (!strip || !first || !target) return
       strip.scrollLeft = target.getBoundingClientRect().left - first.getBoundingClientRect().left
+      return
     }
+    case 'toast':
+      // A message raised at this point of the walk, on a still's clock like `toast=`'s: after a
+      // sheet's step it is born while that sheet stands and lifts above it (§9.33, PhoneMessages);
+      // before one it keeps the seat under the sheet.
+      pushToast(step.text, 'info', {
+        action: step.action ? { label: step.action, onPick: () => undefined } : undefined,
+        duration: 600_000
+      })
   }
 }
 
