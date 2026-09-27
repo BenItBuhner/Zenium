@@ -3890,10 +3890,12 @@ export class Menus {
       this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
       return
     }
-    // The touch layouts' menu-button dot clears on the menu's open for the waiting version
-    // (TB-12, Chrome Android's ⋮ badge; `updateDot.ts`). The desktop's ⋯ keeps its plain read of
-    // the phase until W8-F3 wires it to the same record, so its open records nothing yet.
-    if (win.formFactor !== 'desktop') this.markUpdateMenuOpened()
+    // The menu button's dot clears on the menu's open for the waiting version, on every host
+    // (TB-12, Chrome Android's ⋮ badge; `updateDot.ts`; W8-F3 for the desktop's ⋯, the lead's
+    // ruling: one cadence across layouts). Chrome DESKTOP's badge never clears on the open – it
+    // persists by severity until the relaunch (`app_menu_icon_controller.cc`); Zenium leaves
+    // that edge and takes Android's (`MenuButtonMediator.onMenuVisibilityChanged`).
+    this.markUpdateMenuOpened()
 
     // --- The items, each once; the two layouts below put them in their order. ----------------
     const newTab: MenuItemTemplate = {
@@ -4663,9 +4665,12 @@ export class Menus {
    * ANDROID, by design: Chrome's row shows on `UPDATE_AVAILABLE` because Play downloads AFTER
    * the pick; Zenium downloads the APK itself, so its row shows once the update is downloaded
    * and installable – `ready` – one rule across hosts, the pick always able to install. The row
-   * stays as long as the update waits, however often the menu opens; the dot on the touch
-   * layouts' menu buttons clears once the menu has been opened for the version
-   * (`markUpdateMenuOpened`, `updateDot.ts`) and returns for another version's `ready`.
+   * stays as long as the update waits, however often the menu opens; the dot on every host's
+   * menu button clears once the menu has been opened for the version (`markUpdateMenuOpened`,
+   * `updateDot.ts`) and returns for another version's `ready`. Chrome desktop keys its row AND
+   * its badge on one predicate (`AppMenuModel::Build` reads
+   * `AppMenuIconController::GetTypeAndSeverity`), so both stand until the relaunch; Zenium's row
+   * is the phase's and its dot the phase's and the record's – the row outlives the dot.
    * Settings › Updates stays every host's full surface; the updater's phases are the host's to
    * drive.
    */
@@ -4679,10 +4684,10 @@ export class Menus {
   }
 
   /**
-   * The app menu opened on a touch layout: the waiting update's version becomes the one seen
-   * (`BrowserState.updateDot`, this device's, persisted with the profile), and the phone bar's ⋮
-   * and the tablet's menu button drop their dot. Nothing waiting, or the version already seen:
-   * no write, no commit.
+   * The app menu opened: the waiting update's version becomes the one seen
+   * (`BrowserState.updateDot`, this device's, persisted with the profile), and the menu button
+   * drops its dot – the phone bar's ⋮, the tablet's and the desktop's ⋯ alike. Nothing waiting,
+   * or the version already seen: no write, no commit.
    */
   private markUpdateMenuOpened(): void {
     const { state, updates } = this.browser

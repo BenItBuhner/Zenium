@@ -247,25 +247,26 @@ describe('the app menu', () => {
   })
 
   describe("Chrome's Update row at the menu's head (shortcuts-menus-101)", () => {
-    /** The updater driven to `phase`, a 2.0.0 release found (downloaded when `ready`). */
+    /** The updater driven to `phase`, a `version` (2.0.0) release found (downloaded when `ready`). */
     const updater = (
       h: Harness,
-      phase: 'available' | 'ready' | 'downloading' | 'up-to-date'
+      phase: 'available' | 'ready' | 'downloading' | 'up-to-date',
+      version = '2.0.0'
     ): void => {
       const status = h.browser.updates.status()
       vi.spyOn(h.browser.updates, 'status').mockReturnValue({
         ...status,
         phase,
         release: {
-          version: '2.0.0',
-          tag: 'v2.0.0',
+          version,
+          tag: `v${version}`,
           prerelease: false,
           publishedAt: '2026-09-24T00:00:00Z',
-          releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
-          notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          releaseUrl: `https://github.com/BenItBuhner/Zenium/releases/tag/v${version}`,
+          notesUrl: `https://github.com/BenItBuhner/Zenium/releases/tag/v${version}`,
           asset: null
         },
-        downloadedPath: phase === 'ready' ? '/tmp/zenium-2.0.0.AppImage' : null
+        downloadedPath: phase === 'ready' ? `/tmp/zenium-${version}.AppImage` : null
       })
     }
 
@@ -399,13 +400,38 @@ describe('the app menu', () => {
       }
     })
 
-    it("leaves the desktop's open as it was: its ⋯ reads the plain phase until W8-F3, so the open records nothing", () => {
+    it("records the waiting version as seen when the desktop's menu opens too (W8-F3: one cadence on every host – the ⋯'s dot clears, the row stays), once per version, one commit; a second open writes nothing", () => {
       const h = harness(DESKTOP)
       const { state } = h.browser
       const commit = vi.spyOn(state, 'commit')
+      // Downloaded and waiting: the open shows the row at the head and records the version.
       updater(h, 'ready')
       expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: '2.0.0' })
+      expect(commit).toHaveBeenCalledTimes(1)
+      // A second open: the row still at the head (it stays while the update waits), no write.
+      expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: '2.0.0' })
+      expect(commit).toHaveBeenCalledTimes(1)
+      // Another version downloaded after the first was seen: its open records the new one –
+      // the dot came back for it by construction (`updateDotShows`), and goes again here.
+      updater(h, 'ready', '2.1.0')
+      expect(appMenu(h)[0]).toBe('Update Zenium')
+      expect(state.updateDot).toEqual({ seenVersion: '2.1.0' })
+      expect(commit).toHaveBeenCalledTimes(2)
+    })
+
+    it("records nothing on the desktop while no update waits: no update, one found (`available`), one downloading – the menu opens, the record and the commit count stand", () => {
+      const h = harness(DESKTOP)
+      const { state } = h.browser
+      const commit = vi.spyOn(state, 'commit')
+      appMenu(h)
       expect(state.updateDot).toEqual({ seenVersion: null })
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        updater(h, phase)
+        appMenu(h)
+        expect(state.updateDot, phase).toEqual({ seenVersion: null })
+      }
       expect(commit).not.toHaveBeenCalled()
     })
 
