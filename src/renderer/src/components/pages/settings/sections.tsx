@@ -3221,11 +3221,14 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
  * (`siteControls/settingsRows`) at the delete-browsing-data, site-settings and safety-check
  * positions, the site-data program's (`siteDataRows.tsx`, which carries the third-party cookie
  * setting and its related sites from `protectionRows.tsx`) at the cookies position, the
- * protection program's at the safe-browsing position. The groups no card names follow in their
- * standing order: the request engine's Tracking prevention (`tracking.tsx`), then Preload pages
- * (PS-43), HTTPS-only, Secure DNS and Privacy signals from `protectionRows.tsx`, and the
- * private-tab lock (INC-05) last. The phone's plain list – no cards – reads in the same order.
- * The remembered per-site answers are Security's (`securitySection`).
+ * protection program's at the safe-browsing position. A group no card names follows the card
+ * it is kin to, as Chrome's page holds them (the #650 lead check): the request engine's
+ * Tracking prevention (`tracking.tsx`) and Privacy signals after Cookies – Chrome's
+ * cookies-and-ad-privacy stretch – and HTTPS-only with Secure DNS after Safe Browsing – both
+ * rows of Chrome's Security page. Preload pages (PS-43) is Chrome's Performance › Speed row and
+ * its seat is another slice's question, so it stays after Safety check for now; the private-tab
+ * lock (INC-05) is last, Chrome's seat for it. The phone's plain list – no cards – reads in the
+ * same order. The remembered per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
@@ -3233,14 +3236,14 @@ function privacySection(ctx: SectionContext): RowGroup[] {
     ...privacyHubGroups(ctx),
     ...clearDataGroups(ctx),
     ...siteDataGroups(ctx),
-    ...safeBrowsingGroups(state, set),
-    ...siteSettingsGroups(ctx),
-    ...safetyCheckGroups(ctx),
     ...trackingGroups(ctx),
-    ...preloadGroups(state, set),
+    ...signalsGroups(state, set),
+    ...safeBrowsingGroups(state, set),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),
-    ...signalsGroups(state, set),
+    ...siteSettingsGroups(ctx),
+    ...safetyCheckGroups(ctx),
+    ...preloadGroups(state, set),
     ...privateLockGroups(ctx)
   ]
 }
