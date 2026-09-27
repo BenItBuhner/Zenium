@@ -1,13 +1,16 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { errorPageStyle } from '../../zenPages'
 import { GAME_MOUNTED_ATTRIBUTE, gameMarkupHtml } from '../page'
 import { GAME_BEST_CALLBACK, GAME_MESSAGE_KEY } from '../bridge'
 import { MS_PER_FRAME, OBSTACLE_TYPES, PLAYER_X, START_HINTS, type Obstacle } from '../logic'
 import {
   CARD_RADIUS,
+  LAST_INPUT_ATTRIBUTE,
   RADIUS_INNER_TOKEN,
   cardScoreText,
   isOtherControl,
+  lastInputKindOf,
   meterBestText,
   mountGame,
   mountGames,
@@ -19,6 +22,7 @@ import {
   windowBestScoreHost,
   type BestScoreHost,
   type GameHandle,
+  type LastInputEvent,
   type StageContext
 } from '../runtime'
 
@@ -194,8 +198,12 @@ function mount(extra: Partial<Parameters<typeof mountGame>[1]> = {}): {
   const host = fakeHost()
   const handle = mountGame(root, { ...deps, best: host, ...extra })!
   expect(handle).not.toBeNull()
+  mounted.push(handle)
   return { root, handle, ctx: contexts[contexts.length - 1]!, host }
 }
+
+/** The runtimes the tests mounted, unmounted after each (`afterEach`). */
+const mounted: GameHandle[] = []
 
 function key(
   type: 'keydown' | 'keyup',
@@ -260,6 +268,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Every mount's document listeners go with its test (a second `destroy()` is a no-op).
+  for (const handle of mounted.splice(0)) handle.destroy()
   vi.unstubAllGlobals()
   canvasProto.getContext = originalGetContext
   document.body.innerHTML = ''
@@ -674,5 +684,80 @@ describe('the pointer', () => {
     const again = root.querySelector<HTMLButtonElement>('[data-zen-game-again]')!
     expect(down(again, 3, 10).defaultPrevented).toBe(false)
     expect(handle.state.phase).toBe('over')
+  })
+})
+
+describe('the ring (§1, A11Y-09): the keyboard’s alone', () => {
+  it('keeps the root’s last input by the chrome’s rule – a press is a touch, a navigating key the keyboard – so the served stylesheet’s coarse-pointer suppressor stands the region’s ring down under a finger and never the chord’s twin', () => {
+    const html = document.documentElement
+    html.removeAttribute(LAST_INPUT_ATTRIBUTE)
+    const { root, handle } = mount({ device: 'touch' })
+    const canvas = root.querySelector('canvas')!
+    const reload = document.querySelector<HTMLButtonElement>('#reload')!
+    const press = (target: Element): void => {
+      target.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          pointerId: 1,
+          button: 0,
+          clientY: 100,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    }
+    // A finger's press focuses the region and says `touch` on the root in the same frame: the
+    // press is cancelled, so Chromium's own bookkeeping never hears a pointer focus – the root
+    // is what the suppressor reads.
+    press(canvas)
+    expect(document.activeElement).toBe(root)
+    expect(html.getAttribute(LAST_INPUT_ATTRIBUTE)).toBe('touch')
+    // The game's Space and Enter say nothing (a soft keyboard sends them); a navigating key –
+    // the arrows are the game's too – says the keyboard, seen at capture even from another
+    // control's handler.
+    key('keydown', 'Space', document, { key: ' ' })
+    expect(html.getAttribute(LAST_INPUT_ATTRIBUTE)).toBe('touch')
+    key('keydown', 'Enter', reload, { key: 'Enter' })
+    expect(html.getAttribute(LAST_INPUT_ATTRIBUTE)).toBe('touch')
+    key('keydown', 'ArrowUp', document, { key: 'ArrowUp' })
+    expect(html.getAttribute(LAST_INPUT_ATTRIBUTE)).toBe('keyboard')
+    // A press anywhere – another control's included – is the next touch.
+    press(reload)
+    expect(html.getAttribute(LAST_INPUT_ATTRIBUTE)).toBe('touch')
+    key('keydown', 'Tab', reload, { key: 'Tab' })
+    expect(html.getAttribute(LAST_INPUT_ATTRIBUTE)).toBe('keyboard')
+    // The rule, event by event (the chrome's `inputKindOf` is held to the same answers in
+    // lib/__tests__/lastInput.test.ts – shared code imports nothing of the renderer).
+    const answers: [LastInputEvent, 'touch' | 'keyboard' | null][] = [
+      [{ type: 'pointerdown' }, 'touch'],
+      [{ type: 'keydown', key: 'Tab' }, 'keyboard'],
+      [{ type: 'keydown', key: 'ArrowDown' }, 'keyboard'],
+      [{ type: 'keydown', key: 'Escape' }, 'keyboard'],
+      [{ type: 'keydown', key: 'F5' }, 'keyboard'],
+      [{ type: 'keydown', key: 'l', ctrlKey: true }, 'keyboard'],
+      [{ type: 'keydown', key: 'Control', ctrlKey: true }, null],
+      [{ type: 'keydown', key: ' ' }, null],
+      [{ type: 'keydown', key: 'Enter' }, null],
+      [{ type: 'keydown', key: 'a' }, null],
+      [{ type: 'keydown', key: 'Tab', isComposing: true }, null],
+      [{ type: 'keyup', key: 'Tab' }, null]
+    ]
+    for (const [e, kind] of answers) expect(lastInputKindOf(e), JSON.stringify(e)).toBe(kind)
+    // Unmounted, the runtime's two capture listeners go with it (other tests' `mountGames`
+    // runtimes still listen on this document, so the removal is read from the call).
+    const removed = vi.spyOn(document, 'removeEventListener')
+    handle.destroy()
+    expect(removed).toHaveBeenCalledWith('keydown', expect.any(Function), true)
+    expect(removed).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+    removed.mockRestore()
+    // The served stylesheet carries the region's ring with both triggers, and the suppressor
+    // on `:focus-visible` alone – the chrome's form, on the region.
+    const css = errorPageStyle()
+    expect(css).toContain(
+      '.zen-game:focus-visible,\n.zen-game[data-keyboard-focus]:focus {\n  outline: 2px solid var(--v2-ring);'
+    )
+    expect(css).toContain(
+      ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible {\n  outline: none;\n}"
+    )
+    expect(css).not.toMatch(/data-input[^{]*\[data-keyboard-focus\]/)
   })
 })

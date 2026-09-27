@@ -1266,6 +1266,13 @@
  * `zenPages.ts` restates the theme's tokens under that attribute (`gameStageThemeStyle`), so the
  * hint, the card and the stage's palette flip while the page around them keeps its colours; the
  * night's sky is the runtime's rounded box on the canvas (§9.31's inner box), not a rule here.
+ * The ring is the keyboard's alone (§1, A11Y-09): the runtime cancels the press and focuses the
+ * region itself, so Chromium records no pointer-made focus and `:focus-visible` reads the
+ * script's focus as the keyboard's – it rang under a finger (#607's night stills). The
+ * coarse-pointer suppressor below is the chrome's own form (the legacy buttons', further down)
+ * on the region: it stands the ring down unless the keyboard is what the user drives with
+ * (`data-input='keyboard'` on the root, which the runtime keeps in the served documents as
+ * lib/lastInput.ts does in the chrome), and never touches the pane chord's twin.
  */
 .zen-game {
   position: relative;
@@ -1282,6 +1289,9 @@
   outline: 2px solid var(--v2-ring);
   outline-offset: 4px;
   border-radius: var(--v2-radius-inner);
+}
+:root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible {
+  outline: none;
 }
 .zen-game-stage {
   display: block;

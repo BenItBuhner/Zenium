@@ -160,7 +160,57 @@ const PARALLAX_RATE = 0.3
 const METER_RIGHT_PAD = 8
 const METER_BASELINE = 20
 
-/** The page-family focus outline the region draws is the stylesheet's; the stage draws none. */
+/**
+ * The page-family focus outline the region draws is the stylesheet's; the stage draws none. The
+ * ring is the keyboard's alone (§1, A11Y-09): `onPointerDown` cancels the press and focuses the
+ * region itself, so Chromium never records a pointer-made focus and its `:focus-visible`
+ * heuristic reads the script's focus as the keyboard's – the ring painted under a finger (#607's
+ * night stills). The stylesheet's coarse-pointer suppressor stands the region's ring down unless
+ * the keyboard is what the user drives with
+ * (`:root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible`,
+ * the chrome's own form), and the root's `data-input` is what tells it. The chrome keeps that
+ * attribute itself (`lib/lastInput.ts`); the served documents – `zen://game`, the no-connection
+ * page – run none of the chrome, so the runtime keeps it there by the chrome's rule, to the
+ * letter (`runtime.test.ts` holds the two to the same answers): a pointer down is a touch; a key
+ * down is the keyboard when it navigates – Tab, the arrows, Home / End / Page, Escape, the
+ * function keys, a shortcut with Ctrl, Alt or Meta held; a character, Enter, Space, Backspace, a
+ * lone modifier and composition say nothing, and the attribute keeps its last value.
+ */
+export const LAST_INPUT_ATTRIBUTE = 'data-input'
+
+const NAVIGATION_KEYS = new Set([
+  'Tab',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Escape'
+])
+
+/** What `keydown` and `pointerdown` carry that decides the last input. */
+export interface LastInputEvent {
+  type: string
+  key?: string
+  ctrlKey?: boolean
+  altKey?: boolean
+  metaKey?: boolean
+  isComposing?: boolean
+}
+
+/** The input an event stands for, by the chrome's rule (`inputKindOf` in `lib/lastInput.ts`). */
+export function lastInputKindOf(event: LastInputEvent): 'touch' | 'keyboard' | null {
+  if (event.type === 'pointerdown') return 'touch'
+  if (event.type !== 'keydown' || event.isComposing) return null
+  const key = event.key ?? ''
+  if (NAVIGATION_KEYS.has(key) || /^F\d{1,2}$/.test(key)) return 'keyboard'
+  const modifier = key === 'Control' || key === 'Alt' || key === 'Meta' || key === 'Shift'
+  if ((event.ctrlKey || event.altKey || event.metaKey) && !modifier) return 'keyboard'
+  return null
+}
 
 /** The page's theme, as the page's root carries it (`errorPageAttributesScript`). */
 export type PageTheme = 'light' | 'dark'
@@ -634,6 +684,15 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
     else if (code === DOWN_KEY) releaseDown(state)
   }
 
+  // The root's last input, as the chrome keeps it (`LAST_INPUT_ATTRIBUTE`): at capture, so a
+  // handler that stops the event still counts, and before the region's own `pointerdown` below
+  // focuses it – the suppressor reads `touch` in the same frame the focus lands.
+  const onInput = (e: Event): void => {
+    const kind = lastInputKindOf(e as LastInputEvent)
+    if (kind && document.documentElement.getAttribute(LAST_INPUT_ATTRIBUTE) !== kind)
+      document.documentElement.setAttribute(LAST_INPUT_ATTRIBUTE, kind)
+  }
+
   const onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || isOtherControl(e.target, root)) return
     e.preventDefault()
@@ -683,6 +742,8 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
   fit()
   const stopListening = host?.read(onBest)
 
+  document.addEventListener('keydown', onInput, true)
+  document.addEventListener('pointerdown', onInput, true)
   document.addEventListener('keydown', onKeyDown)
   document.addEventListener('keyup', onKeyUp)
   root.addEventListener('pointerdown', onPointerDown)
@@ -703,6 +764,8 @@ export function mountGame(root: HTMLElement, deps: GameRuntimeDeps = {}): GameHa
       frame = 0
       showNight(false)
       stopListening?.()
+      document.removeEventListener('keydown', onInput, true)
+      document.removeEventListener('pointerdown', onInput, true)
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('keyup', onKeyUp)
       root.removeEventListener('pointerdown', onPointerDown)
