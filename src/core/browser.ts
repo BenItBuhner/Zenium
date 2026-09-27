@@ -3828,6 +3828,8 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.undoRemove': ({ url }) => this.newTab.undoRemove(url),
       'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
+      'newtab.setSafetyHubCardMemory': ({ memories }) =>
+        this.newTab.setSafetyHubCardMemories(memories),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),

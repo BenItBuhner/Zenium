@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { NewTabShortcut, Tab, UIState } from '@shared/types'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { emptyPasswordsStatus } from '@shared/defaults'
 import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { BLANK_URL } from '@shared/url'
@@ -76,6 +77,9 @@ function stateWith(pins: readonly NewTabShortcut[]): UIState {
     newTabShortcuts: pins,
     newTabHiddenHosts: [],
     newTabHiddenModules: [],
+    newTabSafetyHubCard: {},
+    revokedUnusedPermissions: [],
+    passwords: emptyPasswordsStatus(),
     recentlyClosed: [],
     downloads: [],
     bookmarks: [],
