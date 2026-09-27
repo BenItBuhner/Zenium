@@ -2159,7 +2159,7 @@ describe('the section model', () => {
       'privacy',
       state({ permissionRules: rules, permissionDefaults: { camera: 'deny' } } as Partial<UIState>)
     )
-    expect(row(stored, 'sites:camera').description).toBe('Sites cannot use camera')
+    expect(row(stored, 'sites:camera').description).toBe('Sites cannot use your camera')
     const cameraSite = row(stored, 'sites:camera:https://meet.example:camera')
     expect(cameraSite).toMatchObject({
       kind: 'item',
