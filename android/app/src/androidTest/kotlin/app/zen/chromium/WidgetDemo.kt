@@ -108,7 +108,8 @@ import kotlin.math.roundToInt
  *    launcher's cell with the host's padding kept, the card read against the quick actions
  *    widget's surface role (opaque, no hairline on Android 12+) and the glyph's indigo and ink
  *    found on it, a still (`widget-<theme>-game.png`); a finger on the face (a new tab on
- *    `zen://game` sent by another app, the stage's label in the tree), and the COLD landing with
+ *    `zen://game` sent by another app, the stage up – its label in the tree, or the document's
+ *    own word of the mounted region where the WebView exposes no node for it), and the COLD landing with
  *    the same frame read as the others.
  *
  * Every check is a finding line (`widget-findings.txt`); one that fails fails the run at the end,
@@ -1389,7 +1390,8 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
      * edge for the absent hairline (Android 12+), the glyph's indigo found on the card (the mark's
      * brand colour, lifted for the dark theme); a still (`widget-<theme>-game.png`); then a finger
      * on the face with Zenium in front – a new tab on `zen://game` sent by another app, Roll's
-     * document up (the stage's label in the tree) – and the COLD landing (the WID-07 rule), the
+     * document up (the stage's label in the tree, or the document's word of the mounted region) –
+     * and the COLD landing (the WID-07 rule), the
      * browser's task removed and the widget's own `PendingIntent` sent: every frame read for the
      * previous tab's page, which must never paint.
      */
@@ -1505,7 +1507,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         SystemClock.sleep(150)
         hideOverlay()
         val landed = gameLanded(12_000)
-        expect("the face lands in a new tab on $GAME_URL with Roll's stage up ($landed)", landed == GAME_STAGED)
+        expect("the face lands in a new tab on $GAME_URL with Roll's stage up ($landed)", landed in GAME_STAGED_WORDS)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
         val tab = activeCoreTab()
         expect("the game's tab is a new tab another app sent (fromIntent)", tab?.optString("id") != before && tab?.optBoolean("fromIntent") == true)
@@ -1516,19 +1518,41 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         showOverlay()
     }
 
-    /** A tab on `zen://game` active and sent by another app, Roll's stage in the tree: the game landing's word. */
+    /**
+     * A tab on `zen://game` active and sent by another app, Roll's stage up: the game landing's
+     * word. The stage is read two ways, the tree first – the region's label (`role="application"`,
+     * `page.ts`'s `GAME_ARIA_LABEL`), what TalkBack would say – and then the document's own word
+     * ([gameStageMounted]: the runtime's mounted mark on the region, the canvas inside it). The
+     * profiles leg's Chromium snapshot WebView (156 on the AOSP image) drew the stage in the first
+     * run and exposed no node for it within 8 s while the API 34 image's WebView did; a stage the
+     * document says is mounted and drawn is up whichever way the tree reads, and the word says which.
+     */
     private fun gameLanded(timeoutMs: Long): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         if (!awaitChromeUp(timeoutMs)) return null
         while (SystemClock.uptimeMillis() < deadline) {
             val tab = activeCoreTab()
             if (tab?.optString("url") == GAME_URL && tab.optBoolean("fromIntent")) {
-                val staged = waitFor({ it.startsWith(GAME_STAGE_LABEL) }, 8_000) != null
-                return if (staged) GAME_STAGED else "Roll's tab on $GAME_URL, the stage not read in the tree"
+                if (waitFor({ it.startsWith(GAME_STAGE_LABEL) }, 8_000) != null) return GAME_STAGED
+                return if (awaitTrue(4_000) { gameStageMounted() }) GAME_STAGED_BY_DOCUMENT else "Roll's tab on $GAME_URL, the stage not read in the tree nor mounted by the document's word"
             }
             SystemClock.sleep(100)
         }
         return null
+    }
+
+    /** The shown tab's document says Roll's region is mounted (the runtime's mark) and its canvas is in it. */
+    private fun gameStageMounted(): Boolean {
+        val done = ArrayBlockingQueue<String>(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            if (view == null) {
+                done.offer("")
+            } else {
+                view.evaluateJavascript(GAME_STAGE_MOUNTED_JS) { value -> done.offer(value ?: "") }
+            }
+        }
+        return done.poll(5, TimeUnit.SECONDS) == "true"
     }
 
     // --- what an intent started ------------------------------------------------------------------
@@ -2105,7 +2129,12 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         /** Roll's page and its stage's label as `shared/game/page.ts` writes them (the region's aria-label, read from its start). */
         private const val GAME_URL = "zen://game"
         private const val GAME_STAGE_LABEL = "Roll, an offline game"
-        private const val GAME_STAGED = "Roll's tab on zen://game, the stage up"
+        private const val GAME_STAGED = "Roll's tab on zen://game, the stage up (read in the tree)"
+        private const val GAME_STAGED_BY_DOCUMENT = "Roll's tab on zen://game, the stage up (the document's word; not read in the tree)"
+        private val GAME_STAGED_WORDS = setOf(GAME_STAGED, GAME_STAGED_BY_DOCUMENT)
+        /** The document's word: the region carries the runtime's mounted mark (`page.ts`) and its canvas is inside. */
+        private const val GAME_STAGE_MOUNTED_JS =
+            "(function(){var g=document.querySelector('.zen-game[data-zen-game-mounted]');return !!(g&&g.querySelector('canvas'))})()"
         /**
          * The game widget's measures (`values/dimens.xml`): the platform's one-cell minimum the info
          * declares, the glyph's box; and the cell handed to the provider – a launcher's 1×1 on a 412 dp
