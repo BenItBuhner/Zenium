@@ -440,9 +440,10 @@ describe('a popover that closed by itself leaves no swallowed press behind (W8-F
     )
     rerender(<Chrome onClick={onClick} />)
     expect(openPopoverCount()).toBe(0)
-    // The reset (`tab.setZoom null`) is a `zoom.changed`: `showZoomBubble` raises the step's own
-    // bubble – a notice that opened by itself, with no chip to hang from (the chip left with the
-    // zoom) and holding no focus.
+    // The reset (`tab.setZoom null`, as the F7 drive invoked it – Ctrl+0's and the menu's path,
+    // not the bubble's own Reset, which since W8-F12 raises no bubble) is a `zoom.changed`:
+    // `showZoomBubble` raises the step's own bubble – a notice that opened by itself, with no
+    // chip to hang from (the chip left with the zoom) and holding no focus.
     rerender(
       <Chrome onClick={onClick}>
         <Popover key="reset" name="zoom" onDismiss={resetBubble} />

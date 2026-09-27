@@ -2837,12 +2837,33 @@ export function menuAloneOverContent(ui: UiState): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * The tab whose bubble pressed Reset, until the `zoom.changed` that answers it. Reset takes the
+ * page to its default zoom, where the pill's zoom chip goes (§9.29), so that change ends the
+ * bubble with its chip instead of raising it again over nothing to hang from (§9.20).
+ */
+let resetByBubble: string | null = null
+
+/** The bubble's Reset: the page back to its default zoom, the bubble ending with its chip. */
+export function resetZoomFromBubble(tabId: string): void {
+  resetByBubble = tabId
+  run('tab.setZoom', { tabId, delta: null })
+}
+
+/**
  * A page was zoomed (`zoom.changed`): the bubble comes up for it over a picture of the page –
  * the live view gives way under chrome that overlaps it, as under the star bubble – and, while
  * it is up, takes a fresh picture at every step so the page is seen at its new zoom. The
  * keyboard is left where it is: a zoom step opens the bubble as feedback, not as a place to be.
+ * The one change that raises no bubble is the one the bubble's own Reset asked for: at the
+ * default the chip is gone (§9.29) and a bubble kept up would hang from nothing (§9.20) –
+ * Reset ends the bubble with its chip, and Chrome's clocked notice after the change is not owed.
  */
 export async function showZoomBubble(tabId: string, factor: number): Promise<void> {
+  if (resetByBubble === tabId) {
+    resetByBubble = null
+    closeZoomBubble()
+    return
+  }
   const bubbleFor = (id: string): UiState['zoomBubble'] => {
     const open = uiStore.get().zoomBubble
     return open && open.tabId === id ? open : null
