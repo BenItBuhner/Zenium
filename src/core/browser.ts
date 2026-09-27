@@ -1685,16 +1685,27 @@ export class Browser {
 
   /**
    * A toast in `win`'s chrome (the focused window's without one); `action`, when given, is its
-   * one trailing action – the command the chrome runs on the pick (§9.33's action clock). A
-   * toast without one is sent as it always was.
+   * one trailing action – the command the chrome runs on the pick (§9.33's action clock), and
+   * `duration` its clock in ms where the kind's default is not the rule's (§9.33's 8 s for an
+   * Undo). A toast without either is sent as it always was.
    */
   toast(
     message: string,
     kind: 'info' | 'error' = 'info',
     win?: ZenWindow,
-    action?: ToastAction
+    action?: ToastAction,
+    duration?: number
   ): void {
-    this.emit('toast', action ? { message, kind, action } : { message, kind }, win)
+    this.emit(
+      'toast',
+      {
+        message,
+        kind,
+        ...(action ? { action } : {}),
+        ...(duration !== undefined ? { duration } : {})
+      },
+      win
+    )
   }
 
   /**
@@ -3804,6 +3815,7 @@ export class Browser {
         void this.newTab.updateShortcut(id, title, url),
       'newtab.removeShortcut': ({ id }) => void this.newTab.removeShortcut(id),
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
+      'newtab.undoRemove': ({ url }) => this.newTab.undoRemove(url),
       'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
