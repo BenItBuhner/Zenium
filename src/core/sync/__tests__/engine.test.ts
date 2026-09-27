@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ReadingListEntry, Settings } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
+import { DEFAULT_READER_PREFERENCES, type ReaderPreferences } from '../../../shared/reader'
 import { READING_LIST_CAP, compareReadAge, isUnread } from '../../../shared/readingList'
 import { FOLDER_LOST_MESSAGE } from '../engine'
 import {
@@ -1182,6 +1183,83 @@ describe('the settings record merges per key, as Chrome Sync treats preferences'
     expect(settingsKeyTime(mine, 'searchEngines')).toBe(theirs.modified)
     expect(settingsKeyTime(mine, 'searchEngineId')).toBe(theirs.modified)
     expect(mine.modified).toBe(theirs.modified)
+  }, 30_000)
+
+  it("a peer's reader preferences from an older build land completed through the sanitiser and re-publish at the PEER's time: the peer ties and keeps its own, nothing bounces, and a later edit on either side wins normally", async () => {
+    const [a, b] = (await inSync('Desk (Linux)', 'Pixel 9')) as [Device, Device]
+    // The phone runs a build before two of the fields existed: its object holds the fields the
+    // defaults hold minus two (an older build's, before and after the next field is added), and
+    // the user picks a size and a font there – an edit stamped at its commit (`onLocalChange`).
+    const { spacing: _spacing, syllables: _syllables, ...older } = DEFAULT_READER_PREFERENCES
+    void _spacing
+    void _syllables
+    const phonesOwn = { ...older, fontSize: 14, font: 'mono' as const }
+    const completed = { ...DEFAULT_READER_PREFERENCES, fontSize: 14, font: 'mono' as const }
+    await settle()
+    settingsOf(b).reader = phonesOwn as ReaderPreferences
+    b.browser.state.commit()
+    await settle()
+    await b.engine.syncNow()
+    const phone = await settingsRecord(b)
+    const edit = settingsKeyTime(phone, 'reader')
+    expect(edit).toBeGreaterThan(0)
+    expect((phone.data as Settings).reader).toEqual(phonesOwn)
+
+    // The desktop's round: the phone's key is newer and differs, so it wins and lands through
+    // the sanitiser – the two fields it lacks at the defaults. The re-snapshot after the apply
+    // (`stamp: null`) sees the key's hash moved – the completed object is not the phone's – and
+    // KEEPS the phone's time: the key was noticed, not made here (`diffSettings`, `stamp ?? kept`).
+    await a.engine.syncNow()
+    expect(settingsOf(a).reader).toEqual(completed)
+    expect(a.browser.reader.preferences()).toEqual(completed)
+    const desk = await settingsRecord(a)
+    expect((desk.data as Settings).reader).toEqual(completed)
+    expect(settingsKeyTime(desk, 'reader')).toBe(edit)
+    // The metadata's entry for the key: this device's own hash (the completed object's) at the
+    // PHONE's time – the whole of the argument in one entry.
+    a.engine.flushSync()
+    const entry = (JSON.parse(a.io.files['sync.json']!) as { meta: MetaMap }).meta[
+      SETTINGS_RECORD_ID
+    ]!.keys!.reader!
+    expect(entry).toEqual({ hash: hashData(completed), modified: edit })
+    // The state broadcast the apply deferred finds the key's hash already its own: no stamp.
+    await settle()
+    await a.engine.syncNow()
+    expect(await settingsRecord(a)).toEqual(desk)
+
+    // The phone's round: the desktop's copy of the key carries the phone's own time – a tie, and
+    // ties keep the local – so the phone keeps its shorter object and its record stands. Another
+    // round each: nothing bounces between the two builds' normal forms.
+    await b.engine.syncNow()
+    expect(settingsOf(b).reader).toEqual(phonesOwn)
+    expect(await settingsRecord(b)).toEqual(phone)
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    expect(await settingsRecord(a)).toEqual(desk)
+    expect(await settingsRecord(b)).toEqual(phone)
+
+    // A later real edit on the desktop – stamped at its commit, newer than the phone's – wins
+    // there: the phone takes the desktop's object at the desktop's time.
+    await settle()
+    a.browser.reader.setPreferences({ theme: 'sepia' })
+    await settle()
+    await a.engine.syncNow()
+    const desktopEdit = settingsKeyTime(await settingsRecord(a), 'reader')
+    expect(desktopEdit).toBeGreaterThan(edit)
+    await b.engine.syncNow()
+    expect(settingsOf(b).reader).toEqual({ ...completed, theme: 'sepia' })
+    expect(settingsKeyTime(await settingsRecord(b), 'reader')).toBe(desktopEdit)
+
+    // And a later edit on the phone wins on the desktop the same way.
+    await settle()
+    b.browser.reader.setPreferences({ width: 'wide' })
+    await settle()
+    await b.engine.syncNow()
+    const phoneEdit = settingsKeyTime(await settingsRecord(b), 'reader')
+    expect(phoneEdit).toBeGreaterThan(desktopEdit)
+    await a.engine.syncNow()
+    expect(settingsOf(a).reader).toEqual({ ...completed, theme: 'sepia', width: 'wide' })
+    expect(settingsKeyTime(await settingsRecord(a), 'reader')).toBe(phoneEdit)
   }, 30_000)
 
   it("a metadata from before per-key merge gains its per-key entries at the boot seed – every key at the record's time, the record's time and hash untouched – and nothing goes out for it", async () => {

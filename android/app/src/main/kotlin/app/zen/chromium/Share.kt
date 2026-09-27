@@ -235,6 +235,33 @@ class Share(private val host: Host, private val io: Executor) {
     }
 
     /**
+     * A picture the browser made itself – a screenshot's gallery row (`Screenshots.share`) – on
+     * the share sheet, named `title` on the sheet's clip. Below Android 14 it takes the panel with
+     * a small copy of itself for the preview, as Chrome 152's screenshot Share does there
+     * (`ScreenshotShareSheetMediator.showThirdPartyShareSheet` hands the picture to
+     * `ShareDelegateImpl.share`, whose sharing hub stands in for the system sheet below 14); on
+     * Android 14 and later the system sheet, with no link of the browser's own (a screenshot has
+     * no page, so no action row). `tabId` is the tab it was taken from: a private tab's picture
+     * shared through the panel records nothing, as the tab's own share would not.
+     */
+    fun sharePicture(content: Uri, title: String, tabId: String?, reply: (Any?) -> Unit) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = activity.contentResolver.getType(content) ?: "image/png"
+            putExtra(Intent.EXTRA_STREAM, content)
+            clipData = ClipData.newUri(activity.contentResolver, title, content)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (!panelStandsIn()) {
+            launchChooser(send, null, tabId, reply)
+            return
+        }
+        io.execute {
+            val preview = runCatching { previewDataUrl(content) }.getOrNull()
+            main.post { openPanel(send, ShareHistory.TYPE_IMAGE, panelPreview(PANEL_IMAGE, title, null, null, null, preview, false), null, tabId, false, reply) }
+        }
+    }
+
+    /**
      * The system sheet for `send`. Zenium's own action row (Android 14) goes with a link of the
      * browser's own (`url`); a page's awaited share gets the plain sheet – a Copy link there would
      * end the page's promise as a dismissal. With `awaitOutcome` the sheet is started for a

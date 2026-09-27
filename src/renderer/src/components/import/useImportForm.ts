@@ -28,9 +28,19 @@ export interface ImportForm {
   selected: ImportKind[]
   /** The running or finished import, when this dialog started it (or found it running). */
   progress: ImportProgress | null
+  /**
+   * Firefox's primary password as typed, '' by default (most profiles have none): sent with the
+   * run when the source is Firefox and its passwords are checked. It stays while the form is up,
+   * so a run that failed on it is corrected rather than typed again; it is dropped with a change
+   * of browser or profile (it was that profile's) and dies with the dialog.
+   */
+  primaryPassword: string
+  /** Whether the form asks for it: a Firefox source with its passwords checked. */
+  asksPrimaryPassword: boolean
   pickGroup(key: string): void
   pickProfile(id: string): void
   toggle(kind: ImportKind, on: boolean): void
+  setPrimaryPassword(value: string): void
   submit(): void
   /** Back to the form after a result, the sources probed again. */
   again(): void
@@ -58,6 +68,7 @@ export function useImportForm(
   )
   const [sourceId, setSourceId] = useState<string | null>(preselect)
   const [checked, setChecked] = useState<ReadonlySet<ImportKind>>(new Set())
+  const [primaryPassword, setPrimaryPassword] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const probe = useRef(0)
 
@@ -110,17 +121,22 @@ export function useImportForm(
     [source, checked]
   )
 
+  const asksPrimaryPassword = source?.browser === 'firefox' && checked.has('passwords')
+
   const submit = useCallback((): void => {
     if (!source || selected.length === 0 || submitted) return
     setSubmitted(true)
-    void cmd('import.run', { source: source.id, kinds: selected }).then((finished) => {
+    // The primary password travels only when it has a value: the empty default is the engine's
+    // own, and other sources never see the argument.
+    const password = asksPrimaryPassword && primaryPassword !== '' ? { primaryPassword } : {}
+    void cmd('import.run', { source: source.id, kinds: selected, ...password }).then((finished) => {
       // A file pick the user cancelled is no result: the form comes back as it was.
       if (!finished || (finished.status === 'cancelled' && reportedKinds(finished).length === 0)) {
         run('import.dismiss', undefined)
         setSubmitted(false)
       }
     })
-  }, [source, selected, submitted])
+  }, [source, selected, submitted, asksPrimaryPassword, primaryPassword])
 
   const again = useCallback((): void => {
     run('import.dismiss', undefined)
@@ -150,11 +166,18 @@ export function useImportForm(
     checked,
     selected,
     progress,
+    primaryPassword,
+    asksPrimaryPassword,
+    setPrimaryPassword,
     pickGroup: (key) => {
       setGroupKey(key)
       setSourceId(null)
+      setPrimaryPassword('')
     },
-    pickProfile: setSourceId,
+    pickProfile: (id) => {
+      setSourceId(id)
+      setPrimaryPassword('')
+    },
     toggle: (kind, on) => {
       if (on) unchecked.current.delete(kind)
       else unchecked.current.add(kind)

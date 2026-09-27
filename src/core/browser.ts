@@ -3813,7 +3813,8 @@ export class Browser {
         this.menus.showReadingListContextMenu(id, anchor, win),
 
       'import.sources': () => this.imports.sources(),
-      'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
+      'import.run': ({ source, kinds, primaryPassword }, win) =>
+        this.imports.run(source, kinds, win, { primaryPassword }),
       'import.cancel': () => this.imports.cancel(),
       'import.dismiss': () => this.imports.dismiss(),
 
