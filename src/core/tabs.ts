@@ -361,9 +361,16 @@ export class TabManager {
     return view && !view.isDestroyed() ? view : undefined
   }
 
-  /** Whether the reader's cover stands over the tab's page (`cover`). */
+  /**
+   * Whether the reader's cover stands over the tab's page (`cover`): the reading `view()` and
+   * the layout (`viewsOwnedBy`, `viewsOf`) go by. A cover the host tore down on its own is
+   * standing no more from the instant it is destroyed, its `destroyed` still on its way
+   * (`coverEventsFor`'s `onDestroyed` takes it down for good, `uncover(immediate)`) – so no
+   * reading of the tab says "covered" while the document in front is the page.
+   */
   isCovered(tabId: string): boolean {
-    return this.covers.has(tabId)
+    const cover = this.covers.get(tabId)
+    return cover !== undefined && !cover.isDestroyed()
   }
 
   /**
@@ -854,14 +861,18 @@ export class TabManager {
    * word that its first frame is drawn (`onCoverReady`; the ceiling `COVER_REPORT_CEILING_MS`
    * for a cover that never says so), so a window resized under the cover never shows its stale
    * edges. False – and the reader then loads as a navigation of the tab – when the host has no
-   * cover (Android: one page per tab), the tab has no live page, or a cover stands already.
+   * cover (Android: one page per tab), the tab has no live page, or a cover stands already. A
+   * cover the host tore down whose `destroyed` is still on its way stands no more (`isCovered`):
+   * it is taken down here first, the row's fields back to the page's, so the new cover keeps
+   * the page's fields and not the old reader's.
    */
   cover(tabId: string, url: string): boolean {
     const host = this.browser.platform.views
     const tab = this.tab(tabId)
     const page = this.pageView(tabId)
     const win = this.owners.get(tabId)
-    if (!host.createCover || !tab || !page || !win || this.covers.has(tabId)) return false
+    if (!host.createCover || !tab || !page || !win || this.isCovered(tabId)) return false
+    if (this.covers.has(tabId)) this.uncover(tabId, { immediate: true, relayout: false })
     this.covered.set(tabId, {
       url: tab.url,
       title: tab.title,

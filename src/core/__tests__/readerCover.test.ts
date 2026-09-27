@@ -558,6 +558,40 @@ describe('the reader as a cover over the page (reader-30)', () => {
     s.browser.reader.toggle(s.tabId, s.win)
     expect(s.page.calls.some((c) => c === `loadURL(${JSON.stringify(PAGE_URL)})`)).toBe(true)
   })
+
+  it('a cover the host tore down stands no more from the instant it is destroyed, its end still on its way: isCovered, view, the layout and a re-entry agree, and the late end says nothing of the new cover', () => {
+    const s = scene()
+    const tab = s.browser.tabs.tab(s.tabId)!
+    tab.title = 'The Story'
+    const first = enterReader(s)
+    first.events.onTitleUpdated('Story – Reader View')
+    // The host's teardown: the view reads destroyed before its `destroyed` reaches the core.
+    first.destroyed = true
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
+    expect(s.browser.tabs.view(s.tabId)).toBe(s.page.view)
+    expect(s.browser.tabs.viewsOwnedBy(s.win).get(s.tabId)).toBe(s.page.view)
+    for (const views of [s.browser.tabs.viewsOf(s.tabId), s.browser.tabs.allViewsOwnedBy(s.win)]) {
+      expect(views).toHaveLength(1)
+      expect(views[0]).toBe(s.page.view)
+    }
+    // The reader entered again in that instant: the torn-down cover is taken down first, so
+    // the new cover keeps the page's fields – the row's address and title come back to the
+    // page's at its exit, not to the old reader's.
+    s.browser.reader.open(s.tabId, ARTICLE)
+    const second = s.host.covers.get(s.tabId)!
+    expect(second).not.toBe(first)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
+    expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
+    expect(s.browser.tabs.coveredPage(s.tabId)).toMatchObject({ url: PAGE_URL, title: 'The Story' })
+    // The old cover's end arrives late: nothing of the cover that stands now.
+    first.events.onDestroyed()
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(true)
+    expect(s.browser.tabs.view(s.tabId)).toBe(second.view)
+    s.browser.reader.toggle(s.tabId, s.win)
+    expect(s.browser.tabs.isCovered(s.tabId)).toBe(false)
+    expect(tab.url).toBe(PAGE_URL)
+    expect(tab.title).toBe('The Story')
+  })
 })
 
 /**
