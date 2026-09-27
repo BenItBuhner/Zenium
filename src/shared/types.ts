@@ -15,6 +15,7 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 import type { UpdateDotRecord } from '../core/updateDot'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
+import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
 import type {
   PreloadPagesLevel,
   PrivacySettings,
@@ -3143,6 +3144,14 @@ export interface Settings {
   pageControls: PageControlsSettings
   /** The bookmarks bar above the content frame: always, only on the new tab page, or never. */
   bookmarksBar: BookmarksBarMode
+  /**
+   * The phone's bookmarks panel (HB-13, `shared/bookmarkRows.ts`): how a folder's rows and
+   * search results are ordered (Chrome's `BookmarkRowSortOrder`, `manual` by default) and
+   * whether a row is an image tile or the favicon (Chrome's `BookmarkRowDisplayPref`,
+   * `visual` by default). Device-local, as Chrome keeps both in SharedPreferences.
+   */
+  bookmarkRowSortOrder: BookmarkRowSortOrder
+  bookmarkRowDisplay: BookmarkRowDisplay
   /**
    * Which built-in key table the user's overrides sit on. New profiles follow Chrome; a profile
    * from before the setting existed keeps the Zen set when it had customised bindings.

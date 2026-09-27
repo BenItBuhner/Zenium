@@ -256,7 +256,9 @@ describe('collectLocal', () => {
       'unloadEnabled',
       'unloadTimeoutMinutes',
       'touchpadSwipeToNavigate',
-      'hoverCardMemoryUsage'
+      'hoverCardMemoryUsage',
+      'bookmarkRowSortOrder',
+      'bookmarkRowDisplay'
     ])
     expect(data).not.toHaveProperty('sidebarExpandOnHover')
     expect(data).not.toHaveProperty('onboardingDone')
