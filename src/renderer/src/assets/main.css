@@ -9583,20 +9583,16 @@
   left: var(--zen-padding);
   right: var(--zen-padding);
 }
-/* `--zen-message-foot`: what the frame's bottom edge stands over the inset by – the bar band
-   on the bar's edge, the gutter elsewhere; the lifted toast frame below rides it. */
 :root[data-form-factor='phone'] .zen-message-frame[data-edge='bottom'] {
-  --zen-message-foot: var(--zen-phone-band);
   top: calc(var(--zen-inset-top) + var(--zen-padding));
-  bottom: calc(var(--zen-inset-bottom) + var(--zen-message-foot));
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-phone-band));
 }
 :root[data-form-factor='phone'] .zen-message-frame[data-edge='top'] {
-  --zen-message-foot: var(--zen-padding);
   top: calc(var(--zen-inset-top) + var(--zen-phone-band));
-  bottom: calc(var(--zen-inset-bottom) + var(--zen-message-foot));
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-padding));
 }
 :root[data-form-factor='phone'][data-bar-away] .zen-message-frame[data-edge='bottom'] {
-  --zen-message-foot: var(--zen-padding);
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-padding));
 }
 :root[data-form-factor='phone'][data-bar-away] .zen-message-frame[data-edge='top'] {
   top: calc(var(--zen-inset-top) + var(--zen-padding));
@@ -9627,7 +9623,17 @@
  * so its box at p = 0 is the normal seat's box, and at the landing, when the host seats it
  * normally again, the re-seat moves nothing: `--zen-recede` is 0 on the frame from the registry
  * clearing it to the host's re-seat (the property's initial value), and the box is the same.
+ * `--zen-message-foot` is what the normal seat's bottom edge stands over the inset by – the bar
+ * band on the bar's edge, the gutter elsewhere – said on the lifted frame alone; the normal
+ * seat's rules above are #202's, unchanged.
  */
+:root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge='bottom'] {
+  --zen-message-foot: var(--zen-phone-band);
+}
+:root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge='top'],
+:root[data-form-factor='phone'][data-bar-away] .zen-message-frame[data-lifted][data-edge='bottom'] {
+  --zen-message-foot: var(--zen-padding);
+}
 :root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge] {
   bottom: var(--zen-inset-bottom);
   transform: translate3d(0, calc(var(--zen-message-foot) * (var(--zen-recede, 0) - 1)), 0);
