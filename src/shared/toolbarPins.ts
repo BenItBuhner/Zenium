@@ -26,14 +26,18 @@
  */
 
 /**
- * The optional controls, in the bar's own order: Forward, then the pill's chips left to right,
- * then the leaf and the hub (Chrome's `ToolbarView::Init`: the battery saver button, then the
- * media button).
+ * The optional controls, in the bar's own order: Forward, then the pill's chips left to right
+ * (Reader View, Translate, the Install-app chip, the star – Chrome's page-action order in
+ * `page_action/action_ids.h`, the star last), then the leaf and the hub (Chrome's
+ * `ToolbarView::Init`: the battery saver button, then the media button). The Install chip is a
+ * pin as Reader View and Translate are – Chrome's contextual page actions that the house lets
+ * fold into the app menu, whose "Install <app>…" row is what runs it then (W8-6).
  */
 export const TOOLBAR_CONTROLS = [
   'forward',
   'reader',
   'translate',
+  'install',
   'star',
   'energy-saver',
   'media'

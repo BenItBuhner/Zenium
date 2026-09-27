@@ -304,6 +304,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'toolbar-control:forward',
       'toolbar-control:reader',
       'toolbar-control:translate',
+      'toolbar-control:install',
       'toolbar-control:star',
       'toolbar-control:energy-saver',
       'toolbar-control:media',
@@ -313,6 +314,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'Forward',
       'Reader View',
       'Translate',
+      'Install app',
       'Bookmark this page',
       'Energy Saver',
       'Media',
@@ -404,6 +406,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       forward: null,
       reader: 'Shows on pages with an article.',
       translate: null,
+      install: 'Shows on pages that can be installed.',
       star: null,
       // The leaf (W8-2): a control the mode has to earn, its line says when it shows.
       'energy-saver': ENERGY_SAVER_ROW,
@@ -419,6 +422,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
           forward: false,
           reader: false,
           translate: false,
+          install: false,
           star: false,
           'energy-saver': false,
           media: false
@@ -434,7 +438,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     const narrow = openDialog(state())
     act(() =>
       toolbarTiering.set({
-        hidden: ['forward', 'reader', 'translate', 'star', 'energy-saver', 'media']
+        hidden: ['forward', 'reader', 'translate', 'install', 'star', 'energy-saver', 'media']
       })
     )
     const atWidth = lines(narrow.h)
