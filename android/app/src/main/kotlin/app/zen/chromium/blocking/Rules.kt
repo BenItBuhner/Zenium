@@ -266,12 +266,37 @@ class DnrRule(
         /** [hasDomainOf] for a host given as a string (tests and one-off callers). */
         fun hasDomainOf(host: String, domains: Set<String>): Boolean = hasDomainOf(Domains.suffixesOf(host), domains)
 
-        private fun strings(o: JSONObject, key: String): Set<String>? {
+        /**
+         * A domain list of the condition as a lowercase set; null when absent or empty. A list
+         * of one domain is a singleton set (16 bytes to a `HashSet`'s ~180: `$domain=` lists of
+         * one site are the common case); a list over [SortedDomainSet.THRESHOLD] is a sorted
+         * array (a hosts file folded into one rule). With `intern`, the strings of the lists in
+         * between and the sets themselves are the read's shared instances: rules of one set and
+         * of every set compiled in the same read that name the same domain, or the same list,
+         * hold one copy. A big list is not interned: its domains are its own (uBlock Origin
+         * Lite's folds repeat 6 % of theirs), and the read's table would grow by the list for
+         * nothing.
+         */
+        private fun strings(o: JSONObject, key: String, intern: Interner?): Set<String>? {
             val arr = o.optJSONArray(key) ?: return null
-            val out = HashSet<String>(arr.length() * 2)
-            for (i in 0 until arr.length()) out.add(arr.optString(i).lowercase())
-            return if (out.isEmpty()) null else out
+            val n = arr.length()
+            if (n == 0) return null
+            if (n > SortedDomainSet.THRESHOLD) {
+                val out = ArrayList<String>(n)
+                for (i in 0 until n) out.add(arr.optString(i).lowercase())
+                return SortedDomainSet.of(out)
+            }
+            val set: Set<String> = if (n == 1) {
+                java.util.Collections.singleton(interned(arr.optString(0).lowercase(), intern))
+            } else {
+                val out = HashSet<String>(n * 2)
+                for (i in 0 until n) out.add(interned(arr.optString(i).lowercase(), intern))
+                if (out.size == 1) java.util.Collections.singleton(out.first()) else out
+            }
+            return intern?.set(set) ?: set
         }
+
+        private fun interned(s: String, intern: Interner?): String = intern?.string(s) ?: s
 
         private fun typeMask(o: JSONObject, key: String): Int {
             val arr = o.optJSONArray(key) ?: return 0
@@ -280,8 +305,12 @@ class DnrRule(
             return mask
         }
 
-        /** Compile a rule of a set with `setPriority`; null when the rule cannot be evaluated. */
-        fun parse(o: JSONObject, setPriority: Int): DnrRule? {
+        /**
+         * Compile a rule of a set with `setPriority`; null when the rule cannot be evaluated.
+         * `intern` is the read's [Interner] when the rule is one of a set being read (its domain
+         * strings, domain sets and hostnames then share instances with the read's other rules).
+         */
+        fun parse(o: JSONObject, setPriority: Int, intern: Interner? = null): DnrRule? {
             val actionObj = o.optJSONObject("action") ?: return null
             val action = RuleAction.fromDnrName(actionObj.optString("type")) ?: return null
             val c = o.optJSONObject("condition") ?: JSONObject()
@@ -295,7 +324,7 @@ class DnrRule(
             val pattern: UrlPattern? = when {
                 c.has("regexFilter") && !c.isNull("regexFilter") -> UrlPattern.regex(c.optString("regexFilter"), caseSensitive) ?: return null
                 c.optString("urlFilter").isNotEmpty() ->
-                    UrlPattern.parse(c.optString("urlFilter"), caseSensitive, allowRegex = false) ?: return null
+                    UrlPattern.parse(c.optString("urlFilter"), caseSensitive, allowRegex = false, intern = intern) ?: return null
                 else -> null
             }
             val redirect = actionObj.optJSONObject("redirect")
@@ -314,17 +343,17 @@ class DnrRule(
                 redirectUrl = redirect?.optString("url")?.takeIf { it.isNotEmpty() },
                 regexSubstitution = redirect?.optString("regexSubstitution")?.takeIf { it.isNotEmpty() },
                 pattern = pattern,
-                initiatorDomains = strings(c, "initiatorDomains"),
-                excludedInitiatorDomains = strings(c, "excludedInitiatorDomains"),
-                requestDomains = strings(c, "requestDomains"),
-                excludedRequestDomains = strings(c, "excludedRequestDomains"),
-                topDomains = strings(c, "topDomains"),
-                excludedTopDomains = strings(c, "excludedTopDomains"),
+                initiatorDomains = strings(c, "initiatorDomains", intern),
+                excludedInitiatorDomains = strings(c, "excludedInitiatorDomains", intern),
+                requestDomains = strings(c, "requestDomains", intern),
+                excludedRequestDomains = strings(c, "excludedRequestDomains", intern),
+                topDomains = strings(c, "topDomains", intern),
+                excludedTopDomains = strings(c, "excludedTopDomains", intern),
                 excludedNonUniqueHosts = c.optBoolean("excludedNonUniqueHosts", false),
                 typeMask = typeMask(c, "resourceTypes"),
                 excludedTypeMask = typeMask(c, "excludedResourceTypes"),
-                methods = strings(c, "requestMethods"),
-                excludedMethods = strings(c, "excludedRequestMethods"),
+                methods = strings(c, "requestMethods", intern),
+                excludedMethods = strings(c, "excludedRequestMethods", intern),
                 domainType = domainType,
                 tabIds = c.optJSONArray("tabIds")?.let { ints(it) },
                 excludedTabIds = c.optJSONArray("excludedTabIds")?.let { ints(it) },
@@ -368,18 +397,48 @@ class CompiledRules private constructor(val rules: List<DnrRule>, val fingerprin
             return CompiledRules(rules, fingerprint)
         }
 
-        /** Compiles the `rules` array of a set with `priority`; rules that cannot be evaluated are left out. */
-        fun parse(arr: JSONArray?, priority: Int, fingerprint: String? = null): CompiledRules {
+        /**
+         * Compiles the `rules` array of a set with `priority`; rules that cannot be evaluated are
+         * left out. `intern` shares the rules' domain strings and sets ([Interner]).
+         */
+        fun parse(arr: JSONArray?, priority: Int, fingerprint: String? = null, intern: Interner? = null): CompiledRules {
             val rules = ArrayList<DnrRule>(arr?.length() ?: 0)
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val rule = arr.optJSONObject(i) ?: continue
-                    DnrRule.parse(rule, priority)?.let { rules.add(it) }
+                    DnrRule.parse(rule, priority, intern)?.let { rules.add(it) }
                 }
             }
             return of(rules, fingerprint)
         }
     }
+}
+
+/**
+ * One read's table of the strings and domain sets its rules share: a domain named by many
+ * rules (`initiatorDomains`, `requestDomains`, … of EasyList-derived sets repeat the same few
+ * thousand sites), a `||host^` hostname, and whole domain lists of equal content (one
+ * `$domain=` list expanded into many filter lines) are held once across the rules of a set and
+ * across the sets compiled in the same read – an extension's several rulesets, two ad blockers
+ * installed together. The table lives for the read and is dropped with it: what it cost is the
+ * duplicates it kept from existing, nothing is retained for its own sake. Sets are keyed by
+ * content (`Set.equals`), so a singleton and a `HashSet` of one domain are one entry.
+ */
+class Interner {
+    private val strings = HashMap<String, String>()
+    private val sets = HashMap<Set<String>, Set<String>>()
+
+    /** The shared instance of `s`. */
+    fun string(s: String): String = strings.putIfAbsent(s, s) ?: s
+
+    /** The shared instance of a set of `set`'s content (`set` itself when it is the first). */
+    fun set(set: Set<String>): Set<String> = sets.putIfAbsent(set, set) ?: set
+
+    /** Distinct strings seen (diagnostics). */
+    val stringCount: Int get() = strings.size
+
+    /** Distinct sets seen (diagnostics). */
+    val setCount: Int get() = sets.size
 }
 
 /**

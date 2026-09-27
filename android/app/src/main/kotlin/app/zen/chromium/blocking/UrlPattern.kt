@@ -201,9 +201,11 @@ class UrlPattern private constructor(
         /**
          * Parse a pattern; null when it is an invalid regular expression. ABP filters write
          * regular expressions as `/…/`; a declarativeNetRequest `urlFilter` never is one
-         * (`allowRegex = false`), it has `regexFilter` for that.
+         * (`allowRegex = false`), it has `regexFilter` for that. `intern` (a rule set read's
+         * [Interner]) lets patterns of one read share the hostname string of `||host^` and
+         * `||host/path` filters.
          */
-        fun parse(pattern: String, caseSensitive: Boolean = false, allowRegex: Boolean = true): UrlPattern? {
+        fun parse(pattern: String, caseSensitive: Boolean = false, allowRegex: Boolean = true, intern: Interner? = null): UrlPattern? {
             var text = pattern
             if (allowRegex && text.length > 2 && text.startsWith("/") && text.endsWith("/")) {
                 return regex(text.substring(1, text.length - 1), caseSensitive)
@@ -230,7 +232,7 @@ class UrlPattern private constructor(
             if (!host) return UrlPattern(Kind.PLAIN, text, "", false, left, right, null, null, null, caseSensitive)
             var i = 0
             while (i < text.length && isHostChar(text[i])) i++
-            val hostPart = text.substring(0, i)
+            val hostPart = text.substring(0, i).let { intern?.string(it) ?: it }
             val rest = text.substring(i)
             val pureHost = hostPart.isNotEmpty() && !hostPart.endsWith(".") && !hostPart.startsWith(".") &&
                 !hostPart.contains("..") && (rest.isEmpty() || (rest == "^" && !right))

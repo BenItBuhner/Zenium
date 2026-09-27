@@ -15,12 +15,21 @@ package app.zen.chromium.blocking
  * against the request's document as well as the request, which the request's own tokens say
  * nothing about. The index is a superset filter: every visited rule is still put through
  * [DnrRule.matches].
+ *
+ * A rule that selects by `requestDomains` alone with a list over [BIG_LIST] domains – a hosts
+ * file folded into one rule, 108 K domains in the round-21 extension's – is not spread over the
+ * host map (an entry per domain, as much again as the list itself) but kept on its own
+ * ([bigHostRules]) and asked for each request whether one of the host's label suffixes is in its
+ * list: the same candidates as the map would yield, at log2(n) string comparisons per suffix
+ * ([SortedDomainSet]) for the few rules that big.
  */
 class RuleIndex(rules: List<DnrRule>) {
     /** hostname → DnrRule or Array<DnrRule>. */
     private val hosts = HashMap<String, Any>()
     /** initiator domain → DnrRule or Array<DnrRule>, for rules whose only selector is `initiatorDomains`. */
     private val initiators = HashMap<String, Any>()
+    /** Rules whose only selector is a `requestDomains` list over [BIG_LIST], in the set's order. */
+    private val bigHostRules: Array<DnrRule>
     private val buckets: HashMap<Int, Array<DnrRule>>
 
     /**
@@ -41,6 +50,7 @@ class RuleIndex(rules: List<DnrRule>) {
         val allowAllRules = ArrayList<DnrRule>()
         val tokenCandidates = ArrayList<DnrRule>()
         val loose = ArrayList<DnrRule>()
+        val big = ArrayList<DnrRule>()
         for (rule in rules) {
             if (rule.action == RuleAction.ALLOW_ALL_REQUESTS) {
                 allowAllRules.add(rule)
@@ -49,7 +59,7 @@ class RuleIndex(rules: List<DnrRule>) {
             val pattern = rule.pattern
             when {
                 pattern != null && pattern.isHostnameOnly -> addHost(hosts, pattern.hostname, rule)
-                pattern == null || pattern.matchesEveryUrl -> byDomainsOrLoose(rule, loose)
+                pattern == null || pattern.matchesEveryUrl -> byDomainsOrLoose(rule, loose, big)
                 else -> tokenCandidates.add(rule)
             }
         }
@@ -66,7 +76,7 @@ class RuleIndex(rules: List<DnrRule>) {
             val t = tokens[i]
             val rule = tokenCandidates[i]
             if (t.isEmpty()) {
-                byDomainsOrLoose(rule, loose)
+                byDomainsOrLoose(rule, loose, big)
                 continue
             }
             var best = t[0]
@@ -83,6 +93,7 @@ class RuleIndex(rules: List<DnrRule>) {
         }
         buckets = HashMap(building.size)
         for ((k, v) in building) buckets[k] = v.toTypedArray()
+        bigHostRules = big.toTypedArray()
         val groups = LinkedHashMap<Int, ArrayList<DnrRule>>()
         for (rule in loose) groups.getOrPut(rule.typeMask) { ArrayList() }.add(rule)
         wildcard = groups.map { (mask, list) -> TypeGroup(mask, list.toTypedArray()) }.toTypedArray()
@@ -91,14 +102,16 @@ class RuleIndex(rules: List<DnrRule>) {
     }
 
     /**
-     * A rule without a usable URL token: under each of its request domains, else under each of
-     * its initiator domains (a rule that names the sites it applies on can only meet requests of
-     * their documents), else in the wildcard list.
+     * A rule without a usable URL token: under each of its request domains (or, over [BIG_LIST]
+     * of them, on its own in `big`), else under each of its initiator domains (a rule that names
+     * the sites it applies on can only meet requests of their documents), else in the wildcard
+     * list.
      */
-    private fun byDomainsOrLoose(rule: DnrRule, loose: ArrayList<DnrRule>) {
+    private fun byDomainsOrLoose(rule: DnrRule, loose: ArrayList<DnrRule>, big: ArrayList<DnrRule>) {
         val domains = rule.requestDomains
         val sites = rule.initiatorDomains
         when {
+            domains != null && domains.size > BIG_LIST -> big.add(rule)
             domains != null -> for (domain in domains) addHost(hosts, domain, rule)
             sites != null -> for (site in sites) addHost(initiators, site, rule)
             else -> loose.add(rule)
@@ -119,8 +132,11 @@ class RuleIndex(rules: List<DnrRule>) {
     /** Rules that had no hostname, site or token to index them by (tested for every request of their types). */
     val wildcardCount: Int get() = wildcard.sumOf { it.rules.size }
 
-    /** Hostnames the map indexes (`||host^` rules and `requestDomains` entries). */
+    /** Hostnames the map indexes (`||host^` rules and `requestDomains` entries of lists up to [BIG_LIST]). */
     val hostCount: Int get() = hosts.size
+
+    /** Rules kept on their own for a `requestDomains` list over [BIG_LIST]. */
+    val bigHostRuleCount: Int get() = bigHostRules.size
 
     /** Initiator domains the second map indexes (`initiatorDomains` entries of rules with no other selector). */
     val initiatorCount: Int get() = initiators.size
@@ -134,6 +150,9 @@ class RuleIndex(rules: List<DnrRule>) {
         if (hosts.isNotEmpty()) {
             // The request's suffixes are computed once and shared with the rules' domain conditions.
             for (key in req.hostSuffixes) visitUnder(hosts, key, visit)
+        }
+        for (rule in bigHostRules) {
+            if (DnrRule.hasDomainOf(req.hostSuffixes, rule.requestDomains!!)) visit(rule)
         }
         // A navigation has no initiator: `initiatorDomains` rules never match it (`DnrRule.matches`).
         if (initiators.isNotEmpty() && req.type != ResourceType.MAIN_FRAME) {
@@ -159,5 +178,16 @@ class RuleIndex(rules: List<DnrRule>) {
             is DnrRule -> visit(hit)
             is Array<*> -> for (item in hit) visit(item as DnrRule)
         }
+    }
+
+    companion object {
+        /**
+         * A `requestDomains`-only rule with more domains than this is looked up in its own list
+         * rather than spread over the host map. Each such rule costs a request as many binary
+         * searches as its host has labels; uBlock Origin Lite's sets have three lists this size
+         * (its easylist and easyprivacy hostname folds, 48 868 and 43 095, and a regional one of
+         * 15 100) and the round-21 extension a fourth, the 108 195-domain hosts file.
+         */
+        const val BIG_LIST = 8_192
     }
 }

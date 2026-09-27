@@ -576,9 +576,39 @@ const SETTINGS_KEY_GROUPS: Readonly<Record<string, string>> = {
   restoreSession: 'startup'
 }
 
+/**
+ * The renamed keys this build never publishes (`collectLocal` holds their successors alone; an
+ * old peer's copy is folded at apply). One leaves this device's record by the build's hand, not
+ * the user's: at the upgrade that stopped publishing it (`restoreSession`, mirrored beside
+ * `startup` from 0.4.83 to 0.5.5 and retired 2026-09-26), or at the re-snapshot after an old
+ * peer's key won and was folded into its successor. `diffSettings` and `seedSettingsMeta` treat
+ * the departure alike: no stamp on the group, and the group's time – its newest member's, the
+ * retired key counted – stands, the successor taking the retired key's later time
+ * (`retiredKeyTimes`); else the old peer's switch that won once would win every round.
+ */
+const RETIRED_SETTINGS_KEYS: ReadonlySet<string> = new Set(['newTabPhone', 'restoreSession'])
+
 /** The composite group a settings key merges under: its own name unless it is a member. */
 export function settingsKeyGroup(key: string): string {
   return SETTINGS_KEY_GROUPS[key] ?? key
+}
+
+/**
+ * Per group, the newest time of the retired keys (`RETIRED_SETTINGS_KEYS`) `previous` holds
+ * that `present` no longer carries: the floor the group's surviving members keep when the
+ * retired key leaves. Empty when none left.
+ */
+function retiredKeyTimes(
+  previous: Record<string, KeyMeta>,
+  present: ReadonlySet<string>
+): Map<string, number> {
+  const floors = new Map<string, number>()
+  for (const [key, entry] of Object.entries(previous)) {
+    if (!RETIRED_SETTINGS_KEYS.has(key) || present.has(key)) continue
+    const group = settingsKeyGroup(key)
+    floors.set(group, Math.max(floors.get(group) ?? 0, entry.modified))
+  }
+  return floors
 }
 
 export function isSettingsRecord(id: string, type: RecordType): boolean {
@@ -654,8 +684,9 @@ function settingsRecord(
  * or, when the diff only notices (`stamp` null), each member keeps its own time and a member the
  * metadata did not know takes 0 (`DiffLocalOptions.stamp`: made, not noticed). A key the object
  * no longer holds loses its entry and the record simply lacks it, which says nothing to a peer
- * (the `menuOrder` precedent: a reset travels as an explicit value, `[]`). The record's
- * `modified` is the newest key's.
+ * (the `menuOrder` precedent: a reset travels as an explicit value, `[]`); a retired key's
+ * departure (`RETIRED_SETTINGS_KEYS`) stamps no one and leaves its time to its group. The
+ * record's `modified` is the newest key's.
  *
  * An entry without `keys` speaks for the record whole. Unchanged, every key stands at the
  * record's time with its value's hash from here on – the boot seed's migration for an entry the
@@ -696,18 +727,22 @@ function diffSettings(
   } else {
     const previous = prev.keys
     const hashes = new Map(entries.map(([key, value]) => [key, hashData(value)] as const))
+    const gone = Object.keys(previous).filter((key) => !hashes.has(key))
+    if (gone.length) changed = true
+    // A retired key's departure (`RETIRED_SETTINGS_KEYS`) is the build's, not an edit of its
+    // group: the record is republished without it, no member is stamped, and the group's time
+    // stands – a survivor takes the retired key's time when that is the later.
     const removed = new Set(
-      Object.keys(previous)
-        .filter((key) => !hashes.has(key))
-        .map(settingsKeyGroup)
+      gone.filter((key) => !RETIRED_SETTINGS_KEYS.has(key)).map(settingsKeyGroup)
     )
-    if (removed.size) changed = true
+    const floors = retiredKeyTimes(previous, new Set(hashes.keys()))
     for (const [group, members] of groupsOf(hashes.keys())) {
       const moved =
         removed.has(group) || members.some((key) => previous[key]?.hash !== hashes.get(key))
       if (moved) changed = true
+      const floor = floors.get(group) ?? 0
       for (const key of members) {
-        const kept = previous[key]?.modified ?? 0
+        const kept = Math.max(previous[key]?.modified ?? 0, floor)
         keys[key] = { hash: hashes.get(key)!, modified: moved ? (stamp ?? kept) : kept }
       }
     }
@@ -728,8 +763,9 @@ function diffSettings(
  * a key that succeeds a retired one (`startup` after `restoreSession`) is the same edit under a
  * new name, so the edit's time travels with the rename and an old peer's older switch cannot
  * beat this device's later choice – else at 0, a key no one edited never beats a peer's; and
- * drops a key the build no longer holds. The record's `modified` stands. Returns `prev` itself
- * when nothing differs.
+ * drops a key the build no longer holds – a retired key (`RETIRED_SETTINGS_KEYS`) leaving its
+ * later time to its group's survivors, as `diffSettings` does. The record's `modified` stands.
+ * Returns `prev` itself when nothing differs.
  */
 export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
   const entries = settingsEntries(data)
@@ -741,16 +777,18 @@ export function seedSettingsMeta(prev: RecordMeta, data: unknown): RecordMeta {
     return { ...prev, hash, keys }
   }
   let changed = prev.hash !== hash
+  const floors = retiredKeyTimes(prev.keys, new Set(entries.map(([key]) => key)))
   for (const [key, value] of entries) {
     const before = prev.keys[key]
     const valueHash = hashData(value)
-    if (before && before.hash === valueHash) {
+    const floor = floors.get(settingsKeyGroup(key)) ?? 0
+    if (before && before.hash === valueHash && before.modified >= floor) {
       keys[key] = before
       continue
     }
     keys[key] = {
       hash: valueHash,
-      modified: before ? before.modified : inheritedKeyTime(prev.keys, key)
+      modified: Math.max(before ? before.modified : inheritedKeyTime(prev.keys, key), floor)
     }
     changed = true
   }
@@ -1020,18 +1058,19 @@ export function collectLocal(
     // so the reset reaches the peers as an edit of the key, where a key the record lacks says
     // nothing to `apply`.
     const rest = withoutDeviceLocalSettings(src.settings)
-    const data: SettingsData & { restoreSession?: boolean } = {
+    const data: SettingsData = {
       ...rest,
       compactMode: { ...rest.compactMode, sidebarPersistent: false }
     }
-    // The 0.4.x `restoreSession` switch rides beside its successor `startup` for one release –
-    // mirrored here, in the same group, so an edit stamps both and a peer on the old build still
-    // hears this device's choice (a new peer prefers `startup`, `apply` folds the switch for an
-    // old one). Coarse on purpose: `pages` reads as on, as the phone boots it (continue). Comes
-    // off in 0.4.84, the release after the one that retires the key. Only a settings object that
-    // holds `startup` mirrors it: a profile from before the key (the golden fixtures) sends the
-    // record its build sent, switch and all, and manufactures no edit.
-    if (rest.startup) data.restoreSession = rest.startup.mode !== 'newTab'
+    // The 0.4.x `restoreSession` switch rode beside its successor `startup` for one release
+    // (0.4.83, mirrored in the same group so an edit stamped both and a peer on the old build
+    // still heard this device's choice); the mirror came off 2026-09-26 (v0.5.5 out), so the
+    // record carries `startup` alone. The wire's READ side keeps the rename: an old peer's switch
+    // is still weighed against `startup` (`SETTINGS_KEY_GROUPS`, `winningSettings`) and folded at
+    // apply. The key's departure from this device's record is no edit of `startup`
+    // (`RETIRED_SETTINGS_KEYS`: no stamp, the group's time stands). A profile from before the key
+    // (the golden fixtures) still sends the record its build sent, switch and all: `...rest`
+    // spreads what the settings hold.
     out.set(SETTINGS_RECORD_ID, { type: 'settings', data })
     if (src.siteData) out.set(SITE_DATA_RECORD_ID, { type: 'site-data', data: src.siteData })
   }
