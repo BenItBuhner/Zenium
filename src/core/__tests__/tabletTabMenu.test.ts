@@ -3,8 +3,9 @@ import { ANDROID, DESKTOP, deepItem, labels, pageHarness } from './menusFixture'
 
 /**
  * TABLET-05's menu clause (Chrome Android 152's strip tab menu, `TabContextMenuCoordinator.java`
- * l.678-729 at `152.0.7977.89`; the row's six: Close, Close others, New tab to the right, Add
- * to group, Move to window, Reopen closed). The tablet's row opens ONE menu from a right-click
+ * l.678-729 at `152.0.7977.89`; the row's five: Close, Close others, New tab to the right, Add
+ * to group, Move to window – and Reopen closed tab, which Chrome seats in the strip's empty-space
+ * menu, `TabStripContextMenuCoordinator.java` l.203-232). The tablet's row opens ONE menu from a right-click
  * and from a released long-press alike (`TabItem.tsx`'s `contextmenu`, `useTabTouch.ts` →
  * `tab.contextMenu`): `showTabContextMenu`. These pins hold that menu to Chrome's rows the
  * tablet can honour, worded for a strip that runs DOWN (Chrome's own "New tab below" / "Close
@@ -85,7 +86,7 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     )
   })
 
-  it('carries Reopen Closed Tab on every row – greyed with nothing closed, live once a tab has gone', () => {
+  it("carries Reopen Closed Tab from a row's menu, last in it – greyed with nothing closed, live once a tab has gone", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const before = h.shown()
@@ -104,5 +105,14 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(menu).toEqual(
       expect.arrayContaining(['Share', 'Share > Share…', 'Duplicate Tab', 'Pin Tab', 'Mute Site'])
     )
+  })
+
+  it("opens the same menu through the row's command (`useTabTouch.ts` → `tab.contextMenu` → `showTabContextMenu`)", () => {
+    const h = tablet()
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    const direct = labels(h.shown())
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+    expect(labels(h.shown())).toEqual(direct)
+    expect(direct[direct.length - 1]).toBe('Reopen Closed Tab')
   })
 })
