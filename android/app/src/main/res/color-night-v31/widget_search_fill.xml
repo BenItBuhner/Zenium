@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's dark fill in Material You's colours on Android 12+ (WID-03; see
+     res/color-v31/widget_search_fill.xml): Chrome's colorSurfaceContainerHigh in the dark scheme,
+     the neutral variant palette at tone 17 (MDC 1.12.0 values-v31/tokens.xml:48 →
+     color-v31/m3_ref_palette_dynamic_neutral_variant17.xml:18) – system_neutral2_600 re-lit to
+     L* 17 – at Chrome's 0.9 over the wallpaper, the alpha on the fill alone. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:alpha="0.9"
+        android:color="@android:color/system_neutral2_600"
+        android:lStar="17" />
+</selector>
