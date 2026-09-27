@@ -2090,6 +2090,9 @@ function siteHost(raw: string): string {
  *   never set on Linux (no `BatteryLevelProvider` there: `_has_battery_provider_impl = is_win ||
  *   is_mac`), so Chrome on Linux never shows the section; Zenium shows it on a Linux laptop. The
  *   mode's rule and the leaf's are unchanged: a computer never on battery never turns it on.
+ *   The group is the desktop's alone (`layouts: ['desktop']`): the tablet's Performance page is
+ *   Memory Saver's – its host's governor is the no-op stub and Chrome Android has no Energy
+ *   Saver (pr-584, Android's condition).
  */
 function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
   const s = state.settings
@@ -2124,6 +2127,11 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
   const energySaver: RowGroup = {
     id: 'energy-saver',
     heading: 'Energy Saver',
+    // The desktop's alone (pr-584, Android's condition): the tablet is the Android host, whose
+    // governor is the no-op stub – the mode would run nowhere – and Chrome Android has no
+    // Energy Saver; the tablet's Performance page is Memory Saver's. The host's no-battery gate
+    // below (`noBattery`) is the desktop's other reading of the same rule.
+    layouts: ['desktop'],
     rows: [
       {
         kind: 'switch',

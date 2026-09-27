@@ -6290,27 +6290,59 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     return { ...c, model }
   }
 
-  it('draws Chrome’s three groups in Chrome’s order: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
-    for (const layout of ['desktop', 'tablet'] as const) {
-      const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }), layout)
+  it('draws Chrome’s three groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
+    const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }))
+    expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['memory-saver', 'Memory Saver'],
+      ['keep-active', 'Always keep these sites active'],
+      ['keep-active-add', null],
+      ['energy-saver', 'Energy Saver']
+    ])
+    expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
+      ['switch', 'memory-saver'],
+      ['value', 'memory-saver-tier'],
+      ['item', 'keep-active:mail.example.com'],
+      ['action', 'keep-active:mail.example.com:remove'],
+      ['action', 'keep-active-add'],
+      ['action', 'keep-active-current'],
+      ['switch', 'energy-saver'],
+      ['value', 'energy-saver-mode'],
+      ['value', 'energy-saver-factor']
+    ])
+    for (const group of model.groups) expect(groupShows(group)).toBe(true)
+  })
+
+  it('gives the tablet Memory Saver alone – the Energy Saver group is the desktop’s (`layouts`), whatever the host says of a battery (Android’s condition on pr-584)', () => {
+    const snapshot = (hasBattery: boolean | null): Partial<UIState> => ({
+      resources: {
+        ...emptyResourceSnapshot(),
+        system: { ...emptyResourceSnapshot().system, hasBattery }
+      }
+    })
+    // The gate is the shell's, not the battery's: a host that reports a battery keeps the group
+    // on the desktop and still has none on the tablet.
+    expect(perf(DESKTOP_STATE({}, snapshot(true))).model.groups.at(-1)?.id).toBe('energy-saver')
+    // The tablet reports null (`emptyResourceSnapshot`); a true or a false changes nothing there.
+    for (const hasBattery of [null, true, false]) {
+      const { model, patches } = perf(
+        DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }, snapshot(hasBattery)),
+        'tablet'
+      )
       expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
         ['memory-saver', 'Memory Saver'],
         ['keep-active', 'Always keep these sites active'],
-        ['keep-active-add', null],
-        ['energy-saver', 'Energy Saver']
+        ['keep-active-add', null]
       ])
-      expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
-        ['switch', 'memory-saver'],
-        ['value', 'memory-saver-tier'],
-        ['item', 'keep-active:mail.example.com'],
-        ['action', 'keep-active:mail.example.com:remove'],
-        ['action', 'keep-active-add'],
-        ['action', 'keep-active-current'],
-        ['switch', 'energy-saver'],
-        ['value', 'energy-saver-mode'],
-        ['value', 'energy-saver-factor']
+      expect(allRows(model.groups).map((r) => r.id)).toEqual([
+        'memory-saver',
+        'memory-saver-tier',
+        'keep-active:mail.example.com',
+        'keep-active:mail.example.com:remove',
+        'keep-active-add',
+        'keep-active-current'
       ])
-      for (const group of model.groups) expect(groupShows(group)).toBe(true)
+      expect(allRows(model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
+      expect(patches).toEqual([])
     }
   })
 
@@ -6499,30 +6531,29 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(off.value).toBe('on-battery')
   })
 
-  it('hides the Energy Saver group on a computer the host knows to have no battery (Chrome’s showBatterySettings_) and shows it where the host cannot tell', () => {
+  it('hides the Energy Saver group on a desktop the host knows to have no battery (Chrome’s showBatterySettings_) and shows it where the host cannot tell', () => {
     const snapshot = (hasBattery: boolean | null): Partial<UIState> => ({
       resources: {
         ...emptyResourceSnapshot(),
         system: { ...emptyResourceSnapshot().system, hasBattery }
       }
     })
-    for (const layout of ['desktop', 'tablet'] as const) {
-      const none = perf(DESKTOP_STATE({ energySaver: 'on-battery' }, snapshot(false)), layout)
-      expect(none.model.groups.map((g) => g.id)).toEqual([
-        'memory-saver',
-        'keep-active',
-        'keep-active-add'
-      ])
-      expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
-      // The mode itself is left as it was: nothing is written for a group not drawn.
-      expect(none.patches).toEqual([])
-      // A host that cannot tell (Windows, the tablet, a host before its first reading) shows it,
-      // as one that knows there is a battery does.
-      for (const hasBattery of [null, true]) {
-        const { model } = perf(DESKTOP_STATE({}, snapshot(hasBattery)), layout)
-        expect(model.groups.at(-1)?.id).toBe('energy-saver')
-        expect(findRow(model.groups, 'energy-saver-mode')).not.toBeNull()
-      }
+    const none = perf(DESKTOP_STATE({ energySaver: 'on-battery' }, snapshot(false)))
+    expect(none.model.groups.map((g) => g.id)).toEqual([
+      'memory-saver',
+      'keep-active',
+      'keep-active-add'
+    ])
+    expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
+    // The mode itself is left as it was: nothing is written for a group not drawn.
+    expect(none.patches).toEqual([])
+    // A desktop host that cannot tell (Windows without a native module, a host before its first
+    // reading) shows it, as one that knows there is a battery does. The tablet is the shell's
+    // gate above, whatever its host says.
+    for (const hasBattery of [null, true]) {
+      const { model } = perf(DESKTOP_STATE({}, snapshot(hasBattery)))
+      expect(model.groups.at(-1)?.id).toBe('energy-saver')
+      expect(findRow(model.groups, 'energy-saver-mode')).not.toBeNull()
     }
     expect(emptyResourceSnapshot().system.hasBattery).toBeNull()
   })
