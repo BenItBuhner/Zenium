@@ -8,6 +8,7 @@ import {
   WIKTIONARY_DEFINITION_ENDPOINT,
   definitionLanguageOf,
   isDefinableTerm,
+  normalizeTerm,
   parseDefinitionResponse,
   stripHtml,
   wiktionaryPageUrl
@@ -57,7 +58,38 @@ describe('isDefinableTerm', () => {
     expect(isDefinableTerm('example.org/docs')).toBe(false)
     expect(isDefinableTerm('https://example.org')).toBe(false)
     expect(isDefinableTerm('@someone')).toBe(false)
+    expect(isDefinableTerm('#foam')).toBe(false)
     expect(isDefinableTerm('a'.repeat(81))).toBe(false)
+  })
+
+  it('takes a word with the stop or the quotes a drag took along, as the bare word', () => {
+    expect(isDefinableTerm('foam.')).toBe(true)
+    expect(isDefinableTerm('\u201cfoam\u201d')).toBe(true)
+    expect(isDefinableTerm('\u2026')).toBe(false)
+    expect(isDefinableTerm('...')).toBe(false)
+  })
+})
+
+describe('normalizeTerm', () => {
+  it('folds whitespace and drops the punctuation at the ends, keeping what is inside a word', () => {
+    expect(normalizeTerm('  quantum \n foam ')).toBe('quantum foam')
+    expect(normalizeTerm('foam.')).toBe('foam')
+    expect(normalizeTerm('\u201cfoam\u201d')).toBe('foam')
+    expect(normalizeTerm('(quantum foam),')).toBe('quantum foam')
+    expect(normalizeTerm("'foam'")).toBe('foam')
+    expect(normalizeTerm('\u00abfoam\u00bb!?')).toBe('foam')
+    expect(normalizeTerm("rock 'n' roll")).toBe("rock 'n' roll")
+    expect(normalizeTerm('well-being')).toBe('well-being')
+    expect(normalizeTerm("foam's")).toBe("foam's")
+  })
+
+  it("keeps an address's, a path's and a mention's marks, and a symbol", () => {
+    expect(normalizeTerm('#foam')).toBe('#foam')
+    expect(normalizeTerm('@someone')).toBe('@someone')
+    expect(normalizeTerm('/usr/bin/')).toBe('/usr/bin/')
+    expect(normalizeTerm('https://example.org')).toBe('https://example.org')
+    expect(normalizeTerm('C++')).toBe('C++')
+    expect(normalizeTerm('\u2026')).toBe('')
   })
 })
 

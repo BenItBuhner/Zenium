@@ -1340,8 +1340,9 @@ export class Menus {
     // Define surface (`define.show`) – over the selection's box on the desktop, in a sheet on
     // the phone. The mini menu's chip in this pass; the phone's toolbar item and the menu's stay
     // off until the surface that shows the answer is in (4b), so no item stands with nothing
-    // behind it.
-    if (isDefinableTerm(selection)) {
+    // behind it. Not for an address (`example.com` is one word with letters): the selection
+    // that reads as a link is offered as one above, not as a word.
+    if (!asUrl && isDefinableTerm(selection)) {
       actions.push({
         id: 'define',
         label: 'Define',

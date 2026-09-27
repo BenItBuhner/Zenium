@@ -37,8 +37,10 @@ function finite(value: unknown): value is number {
 
 /**
  * The report out of the page's message: `text` a string within the cap (whitespace folded and
- * trimmed again – the page did, but a page is not trusted), `rect` four finite numbers or null,
- * `isEditable` a boolean (false when missing). Null for anything else.
+ * trimmed again – the page did, but a page is not trusted), `rect` four finite numbers or null –
+ * `x` and `y` may be negative, a box scrolled partly off the viewport's top or left is placed
+ * from where it is – `isEditable` a boolean (false when missing; the chrome reads it to keep the
+ * menu off a text field's selection). Null for anything else.
  */
 export function parseSelectionReport(raw: unknown): SelectionReport | null {
   if (!raw || typeof raw !== 'object') return null
@@ -81,13 +83,15 @@ export class SelectionMenuService {
   /**
    * The page of `tabId` reported its selection (`PageMessage` `selection`): a non-empty report
    * from the top document of the tab on screen becomes the model; an empty one (the selection
-   * went) clears it. Anything malformed is dropped.
+   * went) clears it. Anything malformed is dropped, and so is a report the host did not place:
+   * the host stamps `frameId` from the sender frame, and only the top document's `0` will do –
+   * a missing stamp is not the top document's.
    */
   onSelection(tabId: string, message: Pick<PageMessage, 'selection' | 'frameId'>): void {
     if (!this.available) return
     const report = parseSelectionReport(message.selection)
     if (!report) return
-    if ((message.frameId ?? 0) !== 0) return
+    if (message.frameId !== 0) return
     if (!report.text) {
       this.clear(tabId)
       return

@@ -132,9 +132,13 @@ describe('the selection menu model', () => {
     expect(model(h)).toBeNull()
     report(h, 'quantum foam', { frameId: 7 })
     expect(model(h)).toBeNull()
+    // One the host did not stamp with its frame is not the top document's either.
+    report(h, 'quantum foam', { frameId: undefined })
+    expect(model(h)).toBeNull()
     // A frame's report leaves a standing model alone too: it is another document's selection.
     report(h, 'quantum foam')
     report(h, 'other words', { frameId: 7 })
+    report(h, 'other words', { frameId: undefined })
     expect(model(h)?.text).toBe('quantum foam')
     // The phone's page script never posts one; a forged one costs the capability check alone.
     const phone = pageHarness(ANDROID, { formFactor: 'phone' })
@@ -225,6 +229,17 @@ describe('the selection menu\u2019s chips', () => {
     expect(send).toHaveBeenCalledWith('define.show', {
       tabId: h.tabId,
       term: 'Quantum foam',
+      rect: RECT
+    })
+    // The stop and the quotes a drag took along go: the surface is asked for the bare word.
+    report(h, '\u201cfoam.\u201d')
+    expect(chips(h)).toContain('define')
+    expect(
+      h.browser.handleCommand(h.win, 'selectionMenu.run', { tabId: h.tabId, id: 'define' })
+    ).toBe(true)
+    expect(send).toHaveBeenLastCalledWith('define.show', {
+      tabId: h.tabId,
+      term: 'foam',
       rect: RECT
     })
     report(h, 'quantum foam')

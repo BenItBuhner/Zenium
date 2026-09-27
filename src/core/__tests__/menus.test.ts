@@ -4244,6 +4244,17 @@ describe('the selection toolbar', () => {
     expect(phone.browser.menus.runSelectionMenuAction(phone.tabId, 'copy', 'foam', null)).toBe(
       false
     )
+    // An address is a link, not a word (`example.com` is one word with letters): no Define where
+    // the selection is offered as a link. The stop a drag took along with the word is no bar:
+    // the chip stands for the bare word.
+    expect(
+      desktop.browser.menus
+        .selectionMenuActions(desktop.tabId, 'example.com', null)
+        .map((a) => a.id)
+    ).toEqual(['copy'])
+    expect(desktop.browser.menus.selectionMenuActions(desktop.tabId, 'foam.', null)).toContainEqual(
+      { id: 'define', title: 'Define' }
+    )
   })
 
   it('on the phone lists Search <engine> then Share for text, and nothing for blank text or a gone tab', () => {

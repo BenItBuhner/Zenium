@@ -42,15 +42,29 @@ export const DEFINE_MAX_TEXT_CHARS = 400
 /** How many answers the cache holds before the oldest goes. */
 export const DEFINE_CACHE_MAX_ENTRIES = 200
 
-/** The term as it is looked up and cached: whitespace folded, trimmed. */
+/**
+ * Punctuation at either end of a selection, which a drag or a Shift+End takes along with the
+ * word (`foam.`, `“foam”`, `(quantum foam),`) and which no dictionary entry carries. An
+ * address's, a path's and a mention's marks (`/`, `\`, `:`, `@`, `#`) are not stripped, so
+ * `isDefinableTerm` still sees them; symbols are not either – `C++` is a term.
+ */
+const EDGE_PUNCTUATION = /^(?:(?![/\\:@#])\p{P})+|(?:(?![/\\:@#])\p{P})+$/gu
+
+/**
+ * The term as it is looked up and cached: whitespace folded, trimmed, the punctuation at its
+ * ends dropped (`EDGE_PUNCTUATION`; inner apostrophes and hyphens stay – `rock 'n' roll`,
+ * `well-being`).
+ */
 export function normalizeTerm(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
+  return text.replace(/\s+/g, ' ').trim().replace(EDGE_PUNCTUATION, '').trim()
 }
 
 /**
  * Whether selected text is a term to define: one to three words with a letter in them, no
  * longer than `DEFINE_MAX_TERM_CHARS`, and not an address, a path or a mention (`/`, `:`, `@`,
- * `#` inside it), which a dictionary has nothing for.
+ * `#` inside it), which a dictionary has nothing for. An address without those marks
+ * (`example.com`) is a link, not a word: `Menus.selectionMenuActions` offers Define only where
+ * `selectionUrl` reads none.
  */
 export function isDefinableTerm(text: string): boolean {
   const term = normalizeTerm(text)
