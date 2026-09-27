@@ -38,7 +38,11 @@ import kotlin.math.roundToInt
  *    the hooks are live, so an empty log means "nothing was seen", not "nothing was hooked".
  *    It also listens on `__zenPageBridge` (`addEventListener('message')`, as the page script
  *    does – nothing is clobbered) and notes the TYPE of each protocol message the host sent it
- *    (`window.__bridgeLog`), and it keeps what its frame posts up (`window.__frameLog`).
+ *    (`window.__bridgeLog`) – scanning each payload for B's and D's host strings
+ *    (`window.__bridgeLeaks`: the bridge is the one channel the hooks cannot see) – and it keeps
+ *    what its frame posts up (`window.__frameLog`). After the search the driver also sweeps the
+ *    document's Resource Timing: every subresource the top context fetched however it was made,
+ *    the hook-agnostic backstop to the log.
  *  - B `127.0.0.2`: the FRAME document and its image (same-origin to the frame: no CORS needed)
  *    – and the b3 frame, whose image is D's. The frame notes the protocol messages it gets and
  *    posts their types to its parent; it says `loaded WxH` once its image has.
@@ -74,7 +78,7 @@ import kotlin.math.roundToInt
  * Findings in `image-search-owner-findings.txt` (one `OK` or `FAIL` per claim; a claim that does
  * not hold fails the run at the end). The seeded profile is the tab-group drivers'
  * (`tab-groups-demo-state.json`) with the engine patched in. Driven by
- * `android-image-search-owner-demo.yml` and by the nightly sweep's phone-d shard
+ * `android-image-search-owner-demo.yml` and by the nightly sweep's phone-a shard
  * (`.github/nightly-drivers/image-search-owner.json`). See [GroupsDemoBase] and [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
@@ -194,6 +198,12 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         finding("the host: ${webViewPackage()}")
         finding("fixture sites: frame ${frameSite.selfCheck()}; engine ${engine.selfCheck()}; far ${farSite.selfCheck()}")
         finding("the default engine as the core holds it: ${describeEngine()}")
+        // Loud here, not as a "registry none" that reads like the product losing the race.
+        check(
+            "the tab's frame-owner registry is readable by reflection (the field TabWebView.imageOwner, ImageOwner.frameCount – the two names the Kotlin half keeps)",
+            imageOwnerField != null,
+            "TabWebView.imageOwner ${if (imageOwnerField == null) "not found: the field was renamed – a harness break, edit imageOwnerField" else "found"}"
+        )
         finding("warm-up done: ${describeSpace()}")
     }
 
@@ -219,7 +229,7 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         } else {
             awaitUntil(15_000) { pageJs(v.tabId, "!!(function(){var i=document.getElementById('demo-image');return i&&i.complete&&i.naturalWidth>0})()") == "true" }
         }
-        check("${v.id}: the page and its image are loaded", loaded, if (v.framed) "frame said ${frameLog(v.tabId)}" else "the top image is not complete")
+        check("${v.id}: the page and its image are loaded", loaded, if (v.framed) "frame said ${frameLog(v.tabId)}" else "the top image complete $loaded")
         val pinged = awaitUntil(10_000) { hookLog(v.tabId).any { it.contains(PING_URL) } && server.hits(PING_PATH) >= 1 }
         val logBefore = hookLog(v.tabId)
         check("${v.id}: the top document's hooks are live – its own ping went through them and reached the server", pinged, "log $logBefore, ping hits ${server.hits(PING_PATH)}")
@@ -232,7 +242,10 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         val sampledWords = sampled?.let { "; sampled through the load: ${it.joinToString(" → ")}" } ?: ""
         if (v.framed) {
             val frameLoads = frameSite.hits(v.framePath ?: "")
-            finding("  B served ${v.framePath} $frameLoads time(s) – the frame's document loaded ${if (frameLoads == 1) "once" else "more than once"}; ${server.hits(v.url.removePrefix(ORIGIN))} load(s) of the top document")
+            // The base's warm-up self-checks the server with one GET of `/` (head()): not a load of HOME.
+            val topPath = v.url.removePrefix(ORIGIN)
+            val topLoads = server.hits(topPath) - if (topPath == "/") 1 else 0
+            finding("  B served ${v.framePath} $frameLoads time(s) – the frame's document loaded ${if (frameLoads == 1) "once" else "more than once"}; $topLoads load(s) of the top document by the WebView${if (topPath == "/") " (the harness's own self-check GET of / not counted)" else ""}")
             finding("  the tab's frame-owner registry before the hold: ${registry ?: "none"} sub-frame(s)$sampledWords")
             check(
                 "${v.id}: the frame is in the tab's registry before the hold (ImageOwner.frameCount 1: its hello was kept past the document's onPageStarted)",
@@ -317,14 +330,27 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         check("${v.id} (b3): no upload was posted", engine.hits(UPLOAD_PATH) == uploadsBefore, "upload hits ${engine.hits(UPLOAD_PATH)}, before $uploadsBefore")
     }
 
-    /** (b): the top document's log, read after the search: nothing of the frame's origin. */
+    /**
+     * (b): the top document's words, read after the search – nothing of the frame's origin in
+     * three places. The hooks' log (§7.3's letter); the document's Resource Timing (every
+     * subresource the top context fetched however it was made – `setAttribute('src')`, `srcset`,
+     * `innerHTML`, a preload, a CSS `url()` – the hook-agnostic backstop; the fixture's own
+     * `<iframe src=B>` entry is skipped, and the frame's subresources sit in the frame's own
+     * timeline); and the protocol messages the top frame's bridge received (the one channel the
+     * host opens into the top world by design: §2.1's option B has the question carry hashes,
+     * never the address, and the thumbnail ask goes to the owner alone).
+     */
     private fun topLog(v: Variant) {
         val log = hookLog(v.tabId)
         val title = pageTitle(v.tabId)
         val coreTitle = coreState().getJSONObject("tabs").optJSONObject(v.tabId)?.optString("title")
+        val resources = resourceEntries(v.tabId)
+        val leaks = bridgeLeaks(v.tabId)
         finding("  the top document's log after the search (${log.size}): $log")
         finding("  the top document's title: '$title'; the core's title for the tab: '$coreTitle'")
+        finding("  the top document's resource entries (${resources.size}; its own <iframe> entry skipped): $resources")
         val foreign = log.filter { it.contains(FRAME_HOST) || it.contains(FAR_HOST) }
+        val foreignResources = resources.filter { it.contains(FRAME_HOST) || it.contains(FAR_HOST) }
         if (v.framed) {
             check(
                 "${v.id} (b): the top document's log names NO URL of the frame's origin ${frameSite.origin}${if (v.upload) "" else " nor of the far image's ${farSite.origin}"} – the hooked fetch / Image / XHR / arrayBuffer saw nothing of the framed image",
@@ -336,6 +362,16 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
             finding("  (b2) the owner is the top document itself: its hooks saw ${log.filter { it.contains(IMAGE_PATH) }.size} request(s) of its image (the owner reads its own <img> off the canvas, no request; a read of its own address would be its own business)")
             check("${v.id} (b2): the log holds the ping and nothing of another origin", log.isNotEmpty() && foreign.isEmpty(), "foreign $foreign, log $log")
         }
+        check(
+            "${v.id} (b): the top document's Resource Timing lists no fetch of B ${frameSite.origin} or D ${farSite.origin}, however it was made (setAttribute, srcset, innerHTML, a preload, a CSS url()) – the hook-agnostic backstop to the log",
+            resources.isNotEmpty() && foreignResources.isEmpty(),
+            "foreign $foreignResources, entries $resources"
+        )
+        check(
+            "${v.id} (b): no protocol message the top frame's bridge received carried a host string of B or D – the question names hashes, never the address (§2.1 option B), and the thumbnail ask went to the owner alone",
+            leaks.isEmpty(),
+            "leaks $leaks; the bridge saw ${bridgeLog(v.tabId)}"
+        )
     }
 
     /**
@@ -387,6 +423,19 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
 
     /** `window.__frameLog`: what the frame posted to its parent (`loaded WxH`, then message types). */
     private fun frameLog(tabId: String): List<String> = pageStrings(tabId, "window.__frameLog")
+
+    /** `window.__bridgeLeaks`: `type host` for each protocol message to the top frame whose payload carried B's or D's host string. */
+    private fun bridgeLeaks(tabId: String): List<String> = pageStrings(tabId, "window.__bridgeLeaks")
+
+    /**
+     * The top document's Resource Timing entries as `initiatorType name`, its own `<iframe>`
+     * entry skipped (the frame's document is legitimately B's; the frame's subresources are in
+     * the frame's timeline, not this one).
+     */
+    private fun resourceEntries(tabId: String): List<String> = pageStrings(
+        tabId,
+        "performance.getEntriesByType('resource').filter(function(e){return e.initiatorType!=='iframe'}).map(function(e){return e.initiatorType+' '+e.name})"
+    )
 
     private fun pageStrings(tabId: String, expression: String): List<String> {
         val raw = pageJs(tabId, "JSON.stringify($expression||null)")
@@ -472,7 +521,13 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
         private const val SAMPLE_MS = 40L
         /** [RegistryWatch]'s "no sample yet" (a registry reads null, 0 or more). */
         private const val SENTINEL = -2
-        /** `TabWebView.imageOwner`, the orchestrator made on the first sub-frame hello or request (null when the field is not found). */
+        /**
+         * `TabWebView.imageOwner`, the orchestrator made on the first sub-frame hello or request
+         * (null when the field is not found). The driver's coupling to the Kotlin half is two
+         * names: this field's, a string (a rename fails the warm-up's claim, loudly), and
+         * [ImageOwner.frameCount], compile-time (a rename fails the androidTest compile). #605
+         * and the registry's document-boundary fix (W6-S16) keep both.
+         */
         private val imageOwnerField: java.lang.reflect.Field? by lazy {
             runCatching { TabWebView::class.java.getDeclaredField("imageOwner").apply { isAccessible = true } }.getOrNull()
         }
@@ -520,9 +575,9 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
                     )
             )
 
-        /** The part names of a multipart body, for the findings. */
+        /** The part names of a multipart body, for the findings (`; name="…"` – not a File part's `filename="…"`). */
         private fun partNames(body: String): List<String> =
-            Regex("name=\"([^\"]+)\"").findAll(body).map { it.groupValues[1] }.toList()
+            Regex("; name=\"([^\"]+)\"").findAll(body).map { it.groupValues[1] }.toList()
 
         /** The value of the text part `name` of a multipart body; null when there is none. */
         private fun partValue(body: String, name: String): String? {
@@ -554,14 +609,17 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
          * The hooks of §7.3, installed before anything else in the document: every URL that
          * `fetch`, `Image` (`HTMLImageElement.prototype.src`), `XMLHttpRequest.prototype.open`
          * and `Response.prototype.arrayBuffer` / `blob` see goes to the title and `__hookLog`;
-         * the bridge's protocol messages are noted by type; the frame's words are kept; the
-         * document's own ping through the hooks proves them live. No `$` in the script: it is
-         * a Kotlin template.
+         * the bridge's protocol messages are noted by type – and each payload is scanned for B's
+         * and D's host strings (`__bridgeLeaks`; a hit is noted in the log too, so (b) fails on
+         * it): the bridge is the one channel the host opens into the top world by design, and
+         * the one the hooks cannot see; the frame's words are kept; the document's own ping
+         * through the hooks proves them live. The script is a Kotlin template: its only `$`s
+         * are the two hosts.
          */
         private const val HOOKS = """
             (function(){
-              var log=[],types=[],frame=[];
-              window.__hookLog=log;window.__bridgeLog=types;window.__frameLog=frame;
+              var log=[],types=[],frame=[],leaks=[],hosts=['$FRAME_HOST','$FAR_HOST'];
+              window.__hookLog=log;window.__bridgeLog=types;window.__frameLog=frame;window.__bridgeLeaks=leaks;
               function note(kind,u){try{u=String(u)}catch(e){u='?'}log.push(kind+' '+u);document.title='LOG '+log.length+': '+log.join(' | ')}
               var F=window.fetch;window.fetch=function(input,init){note('fetch',(input&&input.url)||input);return F.apply(this,arguments)};
               var O=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){note('xhr',u);return O.apply(this,arguments)};
@@ -571,7 +629,7 @@ class ImageSearchOwnerDemo : GroupsDemoBase("image-search-owner", "image-search-
               if(d&&d.set){Object.defineProperty(HTMLImageElement.prototype,'src',{configurable:true,enumerable:d.enumerable,get:d.get,set:function(v){note('img.src',v);return d.set.call(this,v)}})}
               var I=window.Image;window.Image=function(w,h){note('Image','constructed');return new I(w,h)};window.Image.prototype=I.prototype;
               var b=window.__zenPageBridge;
-              if(b&&typeof b.addEventListener==='function'){b.addEventListener('message',function(e){var t='?';try{t=JSON.parse(e.data).type||'?'}catch(x){}types.push(t)})}
+              if(b&&typeof b.addEventListener==='function'){b.addEventListener('message',function(e){var t='?',s='';try{t=JSON.parse(e.data).type||'?'}catch(x){}try{s=String(e.data)}catch(x){}types.push(t);for(var i=0;i<hosts.length;i++){if(s.indexOf(hosts[i])>=0){leaks.push(t+' '+hosts[i]);note('bridge '+t,hosts[i])}}})}
               window.addEventListener('message',function(e){if(e.data&&typeof e.data.zenDemoFrame==='string')frame.push(e.data.zenDemoFrame)});
               window.addEventListener('load',function(){fetch(location.origin+'/ping').catch(function(){})});
             })();

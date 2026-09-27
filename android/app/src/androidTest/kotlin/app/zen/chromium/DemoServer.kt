@@ -74,7 +74,11 @@ class DemoServer(
 
     val origin: String get() = "http://$address:$port"
 
-    /** How many requests `path` has answered so far (404s included). */
+    /**
+     * How many requests `path` has answered so far (404s included). A request is counted once its
+     * headers, method and body are recorded, so a driver that saw the count rise reads that
+     * request's record ([lastHeader], [lastMethod], [lastBody]), never the one before.
+     */
     fun hits(path: String): Int = requests[path]?.get() ?: 0
 
     /** How many responses to a cut path have died so far. */
@@ -153,8 +157,9 @@ class DemoServer(
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
             // A body left unread when the socket closes goes back as a reset, which the WebView
             // reports over the response it already has: read it (a form's fields) and drop it,
-            // or keep it for a path in `keepBodies`.
-            val kept = if (path in keepBodies) StringBuilder(minOf(contentLength, BODY_CAP)) else null
+            // or keep it for a path in `keepBodies`. A negative or garbage Content-Length (a
+            // malformed client; the WebView sends none) reads as no body, never as a capacity.
+            val kept = if (path in keepBodies) StringBuilder(contentLength.coerceIn(0, BODY_CAP)) else null
             var unread = contentLength
             val scratch = CharArray(4096)
             while (unread > 0) {
@@ -163,10 +168,12 @@ class DemoServer(
                 unread -= n
                 if (kept != null && kept.length < BODY_CAP) kept.append(scratch, 0, minOf(n, BODY_CAP - kept.length))
             }
-            requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
+            // The record first, the count last: a driver that polls `hits` and sees it rise then
+            // reads THIS request's headers, method and body, not the request before.
             lastHeaders[path] = headers
             lastMethods[path] = method
             if (kept != null) lastBodies[path] = kept.toString().toByteArray(Charsets.ISO_8859_1)
+            requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
             delays[path]?.let { Thread.sleep(it) }
             val out = it.getOutputStream()
             redirects[path]?.let { location ->
