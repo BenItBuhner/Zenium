@@ -33,10 +33,16 @@ import java.util.concurrent.TimeUnit
  *    asks `getSupportedFormats()`, runs `detect(img)`, then does the same for `FaceDetector` and
  *    `TextDetector` where the WebView exposes them - every outcome caught and recorded on
  *    `window.__shape`, so a promise that rejects is heard, not lost;
- *  - the checks: the process is the same one afterwards and the WebView still answers; on a
- *    device without Play services `detect()` rejects with `NotSupportedError` and
- *    `getSupportedFormats()` resolves `[]`; on a device with Play services `detect()` resolves
- *    (nothing to find in the pattern) - either is a PASS, an unexpected error or a death is not;
+ *  - the checks: the process is the same one afterwards and the WebView still answers. On a
+ *    device WITHOUT `com.google.android.gms` (the AOSP images the nightly's `tablet-webview` shard
+ *    boots) the outcome is pinned exactly: the provider is not created, the pipe closes, so
+ *    `getSupportedFormats()` resolves `[]` (empty, nothing else) and `detect()` rejects
+ *    `NotSupportedError: Barcode Detection not implemented.` - that message and not the "service
+ *    unavailable" one, because the page calls `detect()` in the same synchronous run as the
+ *    constructor, before the disconnect task can reach Blink, so the request is pending when the
+ *    pipe closes. On a device WITH Play services `detect()` resolves (nothing to find in the
+ *    pattern) or, should the module be unusable, rejects `NotSupportedError` - either passes there;
+ *    an unexpected error or a death does not anywhere;
  *  - the same again on a second page of the same origin (the pipe is bound anew per page);
  *  - the manifest value as the package manager hands it to the client (`metaData.getInt`), the
  *    WebView package and version, and the image, in `shape-detection-findings.txt`.
@@ -134,17 +140,27 @@ class ShapeDetectionDemo : DemoHarness("shape-detection-demo-state.json", "shape
             val formats = step.optJSONArray("formats")
             val formatsError = step.optString("formatsError", "")
             if (step.has("formats") || formatsError.isNotEmpty()) {
-                val ok = formats != null && formatsError.isEmpty()
-                finding("    $name.getSupportedFormats(): ${if (ok) formats.toString() else formatsError} ${verdict(ok)}")
+                // Without GMS the provider is never created: the statics' pipe closes and Blink
+                // resolves with the empty list - exactly `[]`, not "some array".
+                val ok = formats != null && formatsError.isEmpty() && (gmsPresent || formats.length() == 0)
+                val shown = if (formats != null && formatsError.isEmpty()) formats.toString() else formatsError
+                val expectation = if (gmsPresent) "an array" else "exactly [] (no GMS)"
+                finding("    $name.getSupportedFormats(): $shown - expected $expectation ${verdict(ok)}")
             }
             val constructed = step.optBoolean("constructed", false)
             finding("    new $name(): ${if (constructed) "constructed" else "threw"} ${verdict(constructed)}")
             val resolved = step.optString("detect", "")
             val error = step.optString("detectError", "")
-            val ok = resolved.isNotEmpty() || error.startsWith("NotSupportedError")
+            val ok = if (gmsPresent) {
+                resolved.isNotEmpty() || error.startsWith("NotSupportedError")
+            } else {
+                error == NO_GMS_DETECT_ERROR
+            }
             val note = when {
                 resolved.isNotEmpty() -> "$resolved (a detector behind Play services)"
-                error.startsWith("NotSupportedError") -> "rejected $error (no Play services: the provider is not created and the pipe closes; the page's catch heard it)"
+                !gmsPresent && error == NO_GMS_DETECT_ERROR -> "rejected $error (no GMS: the provider is not created and the pipe closes on the pending request; the page's catch heard it)"
+                !gmsPresent && error.isNotEmpty() -> "rejected $error - expected exactly \"$NO_GMS_DETECT_ERROR\" without GMS"
+                error.startsWith("NotSupportedError") -> "rejected $error (Play services present but the detector unusable)"
                 error.isNotEmpty() -> "rejected $error"
                 else -> "neither resolved nor rejected"
             }
@@ -171,10 +187,20 @@ class ShapeDetectionDemo : DemoHarness("shape-detection-demo-state.json", "shape
         runCatching { WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } }.getOrNull()
             ?: "(unknown)"
 
+    /**
+     * Whether `com.google.android.gms` is installed - the package the WebView's provider is built
+     * on. Absent, the outcome is fully determined (no provider, the pipe closes) and pinned exactly;
+     * present, the detector's own answer is accepted as it comes.
+     */
+    private val gmsPresent: Boolean by lazy {
+        runCatching { app.packageManager.getPackageInfo("com.google.android.gms", 0) }.isSuccess
+    }
+
     private fun playServicesPresence(): String {
         val gms = runCatching { app.packageManager.getPackageInfo("com.google.android.gms", 0).versionName }.getOrNull()
         val vending = runCatching { app.packageManager.getPackageInfo("com.android.vending", 0).versionName }.getOrNull()
-        return "com.google.android.gms ${gms ?: "absent"}, com.android.vending ${vending ?: "absent"}"
+        val pin = if (gmsPresent) "the Play branch: detect() may resolve" else "no GMS: [] and \"$NO_GMS_DETECT_ERROR\" pinned exactly"
+        return "com.google.android.gms ${gms ?: "absent"}, com.android.vending ${vending ?: "absent"} ($pin)"
     }
 
     /** What `GooglePlayServicesUtilLight` reads: the int under the key on our ApplicationInfo, 0 when absent. */
@@ -276,5 +302,13 @@ class ShapeDetectionDemo : DemoHarness("shape-detection-demo-state.json", "shape
     companion object {
         private const val PORT = 18131
         private const val ORIGIN = "http://127.0.0.1:$PORT"
+        /**
+         * What the page records (`e.name + ': ' + e.message`) when the provider is never created:
+         * Blink's `BarcodeDetector::OnConnectionError` rejecting the request pending on the pipe
+         * (`barcode_detector.cc`). The page calls `detect()` in the constructor's own synchronous
+         * run, so the request is always pending when the disconnect task arrives - never the
+         * "Barcode detection service unavailable." a call after the disconnect would get.
+         */
+        private const val NO_GMS_DETECT_ERROR = "NotSupportedError: Barcode Detection not implemented."
     }
 }

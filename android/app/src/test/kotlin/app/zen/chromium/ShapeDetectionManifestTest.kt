@@ -21,7 +21,7 @@ import java.io.File
 class ShapeDetectionManifestTest {
     private companion object {
         const val NAME = "com.google.android.gms.version"
-        /** play-services-basement's GOOGLE_PLAY_SERVICES_VERSION_CODE, unchanged since 17.x. */
+        /** play-services-basement's GOOGLE_PLAY_SERVICES_VERSION_CODE, unchanged since 15.0.0 (2018). */
         const val GOOGLE_PLAY_SERVICES_VERSION_CODE = "12451000"
     }
 

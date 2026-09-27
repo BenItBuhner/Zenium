@@ -163,9 +163,11 @@
           provider is not created and the page's detect() rejects with NotSupportedError; with Play
           the detector works. The value is GOOGLE_PLAY_SERVICES_VERSION_CODE, an integer literal
           the client compares against - we do not depend on play-services-basement, so it is spelled
-          out here (it has been 12451000 since play-services-basement 17.x, incl. the 18.10.0 Chromium
-          152 builds against). aapt2 stores a numeric android:value as an int, which is the type the
-          client reads (metaData.getInt). Covered by ShapeDetectionManifestTest.
+          out here (it has been 12451000 since play-services-basement 15.0.0 (2018), through the
+          18.10.0 Chromium 152 builds against and 18.12.0; any OTHER integer trips the client's
+          "incorrect manifest value" throw, the same death). aapt2 stores a numeric android:value as
+          an int, which is the type the client reads (metaData.getInt). Covered by
+          ShapeDetectionManifestTest.
         -->
         <meta-data android:name="com.google.android.gms.version" android:value="12451000" />
 
