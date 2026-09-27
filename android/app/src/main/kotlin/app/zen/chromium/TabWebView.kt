@@ -760,15 +760,19 @@ class TabWebView(
      * Whether a drag in from `edge` may become a history navigation right now: with no other
      * transition moving the page, and, for a finger on the screen, only with the system's three
      * navigation buttons (in gesture mode the edges are the system's); a `touchpad` two-finger
-     * swipe (GN-23) meets no system gesture and arms in either mode. A drag from the right needs
-     * an entry ahead. A drag from the left is always one, as Chrome's `NavigationHandler.canNavigate`
-     * has it ("navigating back is considered always possible – actual navigation, closing tab, or
-     * exiting app"): with no entry behind (the one [goBack] lands on, [backIndex]) the chrome's
-     * machine performs its back at the tab's root on the release – the tab closed to its opener or
-     * the previous tab, the page starting over, the window minimized – and captions the bubble
-     * 'Close tab' / 'Close Zenium' while the drag is armed (`lib/historyNav.ts`, `lib/back.ts`).
+     * swipe (GN-23) meets no system gesture and arms in either mode, but only while Settings →
+     * Accessibility's "Swipe between pages using a touchpad" is on (Chrome's
+     * `touchpad_swipe_to_navigate` gate in `OnOverscrolled`; the finger's drag is not its). A drag
+     * from the right needs an entry ahead. A drag from the left is always one, as Chrome's
+     * `NavigationHandler.canNavigate` has it ("navigating back is considered always possible –
+     * actual navigation, closing tab, or exiting app"): with no entry behind (the one [goBack]
+     * lands on, [backIndex]) the chrome's machine performs its back at the tab's root on the
+     * release – the tab closed to its opener or the previous tab, the page starting over, the
+     * window minimized – and captions the bubble 'Close tab' / 'Close Zenium' while the drag is
+     * armed (`lib/historyNav.ts`, `lib/back.ts`).
      */
     fun historyNavEligible(edge: HistoryNavClassifier.Edge, touchpad: Boolean = false): Boolean {
+        if (touchpad && !host.touchpadSwipeToNavigate) return false
         if ((!touchpad && !host.threeButtonNavigation) || backTransition != null) return false
         return when (edge) {
             HistoryNavClassifier.Edge.LEFT -> true
@@ -780,10 +784,14 @@ class TabWebView(
         val (phase, payload) = when (event) {
             is HistoryNavClassifier.Nav.Start -> "start" to json("edge" to if (event.edge == HistoryNavClassifier.Edge.LEFT) "left" else "right")
             is HistoryNavClassifier.Nav.Move -> "move" to json("travel" to event.travel.toDouble(), "time" to event.time)
-            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time)
+            // `force`: a touchpad swipe let go faster than Chrome's fling threshold navigates whatever its travel.
+            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time, "force" to event.force)
             is HistoryNavClassifier.Nav.Cancel -> "cancel" to json("time" to event.time)
         }
-        if (event !is HistoryNavClassifier.Nav.Move) Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})")
+        if (event !is HistoryNavClassifier.Nav.Move) {
+            val force = if (event is HistoryNavClassifier.Nav.Release && event.force) " (forced by the fling)" else ""
+            Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})$force")
+        }
         host.historyNavEvent(tabId, phase, payload)
     }
 

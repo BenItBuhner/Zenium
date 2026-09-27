@@ -482,4 +482,133 @@ class HistoryNavClassifierTest {
         assertTrue("a forward drag still needs a forward entry", "HistoryNavClassifier.Edge.RIGHT -> canGoForward()" in eligible)
         assertFalse("the history's depth is no part of the back drag's answer", "canGoBack()" in eligible)
     }
+
+    // --- the fling that forces the navigation (Chrome's FORCE_ACTIVATION) -------------------------
+
+    /** A touchpad swipe that has taken over, pulling in from `side`, `travel` px in – short of the 96 dp threshold at this density. */
+    private fun draggingSwipe(c: HistoryNavClassifier, side: Edge = Edge.LEFT, travel: Float = 30f) {
+        val sign = if (side == Edge.LEFT) 1f else -1f
+        assertEquals(Step.FORWARD, touchpadSwipe(c, sign * 60f))
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(side)), c.overscrolledX(side))
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(travel, 20L)), c.move(540f + sign * (60f + travel), 600f, 20L))
+    }
+
+    @Test
+    fun theFlingsThresholdIsChromesInPhysicalPixelsPerSecond() {
+        // `kMinFlingVelocityForForceActivation` (`ui/android/overscroll_refresh.cc`): 1788 px/s, one
+        // number on every device; `EventForwarder.MAX_FLING_VELOCITY`: the cap it is measured under.
+        assertEquals(1788f, HistoryNavClassifier.FORCE_ACTIVATION_VELOCITY)
+        assertEquals(8000f, HistoryNavClassifier.MAX_FLING_VELOCITY)
+    }
+
+    @Test
+    fun aTouchpadSwipeLetGoFastEnoughForcesTheNavigationShortOfTheThreshold() {
+        val c = classifier()
+        draggingSwipe(c)
+        // Well short of the threshold (30 px of 240 at this density), moving right at 2000 px/s.
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), c.up(30L, velocityX = 2000f))
+        assertEquals(State.IDLE, c.state)
+
+        // The threshold is exclusive: exactly 1788 px/s is not over it.
+        val at = classifier()
+        draggingSwipe(at)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), at.up(30L, velocityX = 1788f))
+        val just = classifier()
+        draggingSwipe(just)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), just.up(30L, velocityX = 1788.5f))
+
+        // A slower release is the travel's alone (the chrome's machine reads the threshold).
+        val slow = classifier()
+        draggingSwipe(slow)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), slow.up(30L, velocityX = 1200f))
+        // The default: no velocity known, nothing forced – the release the earlier tests read.
+        val none = classifier()
+        draggingSwipe(none)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), none.up(30L))
+    }
+
+    @Test
+    fun theFlingMustHeadIntoThePageTheWayTheSwipePulls() {
+        // Pulling in from the right (a forward): the velocity that counts is leftward, `-velocity.x`
+        // (Chrome's `GetVelocityInActiveActionDirection`).
+        val forward = classifier()
+        draggingSwipe(forward, Edge.RIGHT)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), forward.up(30L, velocityX = -2000f))
+        val forwardBack = classifier()
+        draggingSwipe(forwardBack, Edge.RIGHT)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), forwardBack.up(30L, velocityX = 2000f))
+
+        // Pulling in from the left, let go flicking back towards the edge: not forced.
+        val back = classifier()
+        draggingSwipe(back)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), back.up(30L, velocityX = -3000f))
+    }
+
+    @Test
+    fun aFingersDragIsNeverForcedAndNorIsASwipeThatNeverTookOver() {
+        // The finger's edge drag, flicked fast: Chrome forces the touchpad's action alone
+        // (`active_action.device == kTouchpad`); the finger's release reads the threshold.
+        val finger = classifier()
+        dragFromLeft(finger, 30f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(20f, 20L)), finger.move(70f, 600f, 20L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), finger.up(30L, velocityX = 5000f))
+
+        // A swipe still the WebView's (no overscroll came back) lifts as the WebView's, however fast.
+        val watching = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(watching, 60f))
+        assertEquals(State.WATCHING, watching.state)
+        assertEquals(Step.FORWARD, watching.up(30L, velocityX = 5000f))
+        assertEquals(State.IDLE, watching.state)
+    }
+
+    // --- the host's side: the switch and the velocity, pinned in the source ---------------------------
+
+    @Test
+    fun theAccessibilitySwitchGatesTheTouchpadSwipeAloneAtTheDown() {
+        // Settings → Accessibility → "Swipe between pages using a touchpad" (Chrome's
+        // `settings.a11y.touchpad_overscroll_history_navigation`, on by default) is one guard line
+        // in `TabWebView.historyNavEligible`, for the touchpad-sourced swipe alone, ahead of the
+        // finger's own rule (3-button mode), so the finger's edge drag never reads it.
+        val tabWebView = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/TabWebView.kt").readText()
+        val guard = "if (touchpad && !host.touchpadSwipeToNavigate) return false"
+        assertEquals(1, Regex(Regex.escape(guard)).findAll(tabWebView).count())
+        val fingerRule = "if ((!touchpad && !host.threeButtonNavigation) || backTransition != null) return false"
+        assertTrue(tabWebView.indexOf(guard) in 0 until tabWebView.indexOf(fingerRule))
+        // The release carries the fling's word to the chrome's machine.
+        assertTrue(tabWebView.contains("\"release\" to json(\"time\" to event.time, \"force\" to event.force)"))
+
+        // The host mirrors the chrome's setting (on until it says otherwise) on the same bridge
+        // path as the pull-to-refresh's, and the interface's default keeps a chrome-less host on.
+        val host = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/Host.kt").readText()
+        assertTrue(host.contains("override var touchpadSwipeToNavigate = true"))
+        assertTrue(host.contains("\"chrome.setTouchpadSwipeToNavigate\" -> {"))
+        assertTrue(host.contains("touchpadSwipeToNavigate = args.bool(\"enabled\", true)"))
+        val pageHost = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/PageHost.kt").readText()
+        assertTrue(pageHost.contains("val touchpadSwipeToNavigate: Boolean get() = true"))
+        // The chrome sends it from the settings, as it sends the pull-to-refresh's.
+        val boot = File(repoRoot(), "src/android/boot.ts").readText()
+        assertTrue(boot.contains("bridge.send('chrome.setTouchpadSwipeToNavigate', { enabled })"))
+    }
+
+    @Test
+    fun theGestureMeasuresTheSwipesVelocityAsChromiumDoes() {
+        // A `VelocityTracker` over the touchpad swipe's events alone, the up added, read under
+        // Chromium's cap (`EventForwarder.onTrackpadScrollEvent`), and handed to the classifier's up.
+        val gesture = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/HistoryNavGesture.kt").readText()
+        assertTrue(gesture.contains("if (touchpad) velocity = VelocityTracker.obtain().also { it.addMovement(event) }"))
+        assertTrue(gesture.contains("velocity?.addMovement(event)"))
+        assertTrue(gesture.contains("tracker.computeCurrentVelocity(1000, HistoryNavClassifier.MAX_FLING_VELOCITY)"))
+        assertTrue(gesture.contains("classifier.up(event.eventTime, releaseVelocityX(event))"))
+        // Recycled with the touch, whichever way it ended.
+        assertTrue(gesture.contains("velocity?.recycle()"))
+    }
+
+    private fun repoRoot(): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            if (File(dir, "package.json").isFile && File(dir, "android").isDirectory) return dir
+            dir = dir.parentFile
+        }
+        error("not inside the repository")
+    }
 }

@@ -4,6 +4,7 @@ import android.os.Build
 import android.util.Log
 import android.view.Display
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import app.zen.chromium.HistoryNavClassifier.Edge
 import app.zen.chromium.HistoryNavClassifier.Nav
@@ -18,6 +19,10 @@ import app.zen.chromium.PullGestureClassifier.Disposition
  * carries out what it decides – which events the WebView sees (with synthetic cancels and downs
  * where the drag takes the finger over or gives it back) and which become `historyNav` events
  * for the chrome, whose `lib/historyNav.ts` draws the arrow bubble and navigates on the release.
+ * A touchpad swipe's release carries its velocity too, measured as Chromium's `EventForwarder`
+ * measures a touchpad fling (a `VelocityTracker` over the swipe's events, `computeCurrentVelocity(1000,
+ * 8000)`), for the fling that forces the navigation short of the threshold (Chrome's
+ * `kMinFlingVelocityForForceActivation`; the classifier decides, the chrome's machine commits).
  *
  * Touch distances are device pixels here and CSS pixels on the bridge. The wrapper sits ahead
  * of the pull-to-refresh in the view's touch chain: [forward] is the pull's `onTouchEvent`, so
@@ -39,6 +44,11 @@ class HistoryNavGesture(
     private var last: MotionEvent? = null
     /** Tells a stale probe answer (from an earlier touch) from the current one. */
     private var probeSeq = 0
+    /**
+     * The touchpad swipe's velocity, for the fling that forces the navigation (Chromium's
+     * `EventForwarder` tracks its touchpad events alone); none for a finger, whose drag is never forced.
+     */
+    private var velocity: VelocityTracker? = null
 
     val dragging: Boolean get() = classifier.state == HistoryNavClassifier.State.DRAGGING
 
@@ -47,6 +57,7 @@ class HistoryNavGesture(
             MotionEvent.ACTION_DOWN -> {
                 remember(event)
                 val touchpad = isTouchpadSwipe(event)
+                if (touchpad) velocity = VelocityTracker.obtain().also { it.addMovement(event) }
                 val step = classifier.down(
                     event.x, event.y, view.width.toFloat(),
                     canBack = view.historyNavEligible(Edge.LEFT, touchpad),
@@ -59,6 +70,8 @@ class HistoryNavGesture(
             MotionEvent.ACTION_POINTER_DOWN -> classifier.pointerDown(event.eventTime)
             MotionEvent.ACTION_MOVE -> {
                 remember(event)
+                // The tracker reads the batched samples off the event itself.
+                velocity?.addMovement(event)
                 // A MOVE the input pipeline batched to the frame carries the finger's earlier
                 // positions as history: each is a sample of its own here, so the drag's motion
                 // is the finger's path and not one step per frame. The chrome's machine clamps
@@ -75,7 +88,7 @@ class HistoryNavGesture(
             }
             MotionEvent.ACTION_UP -> {
                 logRefusal()
-                classifier.up(event.eventTime)
+                classifier.up(event.eventTime, releaseVelocityX(event))
             }
             MotionEvent.ACTION_CANCEL -> {
                 logRefusal()
@@ -159,6 +172,18 @@ class HistoryNavGesture(
     }
 
     /**
+     * A touchpad swipe's horizontal velocity at its release, as Chromium's `EventForwarder`
+     * measures a touchpad fling: the up added, `computeCurrentVelocity(1000, MAX_FLING_VELOCITY)`,
+     * physical px/s – the unit Chrome's force-activation threshold is in. 0 for a finger.
+     */
+    private fun releaseVelocityX(up: MotionEvent): Float {
+        val tracker = velocity ?: return 0f
+        tracker.addMovement(up)
+        tracker.computeCurrentVelocity(1000, HistoryNavClassifier.MAX_FLING_VELOCITY)
+        return tracker.xVelocity
+    }
+
+    /**
      * Whether `event` (a down) opens a touchpad's two-finger swipe rather than a finger's touch:
      * the classifier's test on the event's buttons and – from API 29, where it exists – its
      * classification (before that nothing is classified, and no touch is the swipe).
@@ -205,6 +230,8 @@ class HistoryNavGesture(
     private fun forget() {
         last?.recycle()
         last = null
+        velocity?.recycle()
+        velocity = null
     }
 
     companion object {

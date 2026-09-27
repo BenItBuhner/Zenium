@@ -399,6 +399,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Settings → Look and Feel → Pull to refresh, mirrored by the chrome (on until it says otherwise). */
     override var pullToRefresh = true
         private set
+    /**
+     * Settings → Accessibility → "Swipe between pages using a touchpad", mirrored by the chrome
+     * (on until it says otherwise); read at each touchpad swipe's down (`TabWebView.historyNavEligible`).
+     */
+    override var touchpadSwipeToNavigate = true
+        private set
     /** The core's word on the pages' forms script (`view.forms` config), kept for new documents. */
     override var formsEnabled = true
         private set
@@ -1306,6 +1312,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
                 for (view in tabs.all()) view.applyPullToRefreshMode()
+                reply(null)
+            }
+            // Nothing to apply per view: the swipe reads the switch at its down.
+            "chrome.setTouchpadSwipeToNavigate" -> {
+                touchpadSwipeToNavigate = args.bool("enabled", true)
                 reply(null)
             }
             // The bar that hides on scroll says where it is (per frame while it moves) or that it

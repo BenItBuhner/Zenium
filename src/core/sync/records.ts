@@ -362,6 +362,11 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   older peers keep trading the keys among themselves, as `sidebarExpandOnHover`'s did. The
  *   keep-active hosts (`unloadExcludedDomains`) stay synced: Chrome syncs its exceptions list
  *   (`performance_tuning.tab_discarding.exceptions`, `syncer::PREFERENCES`).
+ * - `touchpadSwipeToNavigate`: Android's Settings › Accessibility › "Swipe between pages using
+ *   a touchpad" (GN-23 / A11Y-14) – Chrome registers its twin
+ *   (`settings.a11y.touchpad_overscroll_history_navigation`, `prefs_tab_helper.cc`) Android-only
+ *   and without `SYNCABLE_PREF`: the device with the touchpad decides, and a phone's or a
+ *   desktop's record has no say. No migration, as above: the key never joins a record.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -370,7 +375,8 @@ export const DEVICE_LOCAL_SETTINGS = [
   'useSystemAccent',
   'energySaver',
   'unloadEnabled',
-  'unloadTimeoutMinutes'
+  'unloadTimeoutMinutes',
+  'touchpadSwipeToNavigate'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

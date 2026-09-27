@@ -556,6 +556,51 @@ describe('HistoryNavMachine', () => {
       expect(hiding[i].hide).toBeGreaterThanOrEqual(hiding[i - 1].hide)
   })
 
+  it("the host's forced release (Chrome's fling force-activation) navigates short of the threshold, the disc completing its growth as it leaves", () => {
+    // A touchpad swipe let go faster than 1788 px/s: the host says `force`, and the release
+    // commits as one past the threshold does – no arming first (Chrome's haptic fires in
+    // `pull()`, and a fling's release reaches none), so nothing ticks.
+    const h = harness()
+    drag(h, 40)
+    expect(h.machine.state.armed).toBe(false)
+    settle()
+    const partGrown = h.machine.current.grow
+    expect(partGrown).toBeGreaterThan(0.3)
+    expect(partGrown).toBeLessThan(0.5)
+    h.machine.dispatch('t1', 'release', { time: now, force: true })
+    expect(h.navigated).toEqual([['t1', 'left']])
+    expect(h.machine.state).toEqual({ tabId: 't1', edge: 'left', phase: 'navigating', armed: true })
+    // Never `dragging` and armed: the one armed state is the navigation's.
+    expect(h.states.filter((s) => s.armed)).toEqual([
+      { tabId: 't1', edge: 'left', phase: 'navigating', armed: true }
+    ])
+    const standing = h.machine.current.offset
+    expect(standing).toBeCloseTo(bubbleOffset(40), 9)
+    settle()
+    expect(h.machine.state.phase).toBe('idle')
+    // The disc stayed where the swipe left it and grew on to full while `hide` ran to 1.
+    const hiding = h.frames.filter((f) => f.hide > 0 && f.hide < 1)
+    expect(hiding.length).toBeGreaterThan(2)
+    for (const f of hiding) expect(f.offset).toBeCloseTo(standing, 9)
+    for (let i = 1; i < hiding.length; i++)
+      expect(hiding[i].grow).toBeGreaterThanOrEqual(hiding[i - 1].grow - 1e-9)
+    expect(hiding[hiding.length - 1].grow).toBeGreaterThan(partGrown)
+
+    // Without the word the same release springs home: `force` is the host's alone to say.
+    const plain = harness()
+    drag(plain, 40)
+    plain.machine.dispatch('t1', 'release', { time: now, force: false })
+    expect(plain.machine.state.phase).toBe('settling')
+    settle()
+    expect(plain.navigated).toEqual([])
+    // Forced past the threshold it is the ordinary commit, once.
+    const past = harness()
+    drag(past, 120)
+    past.machine.dispatch('t1', 'release', { time: now, force: true })
+    expect(past.navigated).toEqual([['t1', 'left']])
+    expect(past.machine.state.phase).toBe('navigating')
+  })
+
   it('a cancel while armed runs the growth back with the return', () => {
     const h = harness()
     drag(h, 120)

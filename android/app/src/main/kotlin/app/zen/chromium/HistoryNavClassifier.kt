@@ -25,10 +25,12 @@ import kotlin.math.abs
  * `OnOverscrolled`): it needs no edge – it arms from anywhere on the page, in either
  * navigation-bar mode – and its side is the one it pulls the page in from, settled at activation
  * from the overscroll the page reports for that side. The cone, the page's veto and its
- * `overscroll-behavior-x` say are the same.
+ * `overscroll-behavior-x` say are the same. A swipe let go fast enough in its direction
+ * navigates whatever its travel (Chrome's `GetActivationStatus`, [FORCE_ACTIVATION_VELOCITY]):
+ * the caller hands [up] the release's horizontal velocity, and the finger's drag never forces.
  *
  * Distances are in whatever unit the caller uses for the touches, [touchSlop] and [edgeWidth]
- * (device pixels on Android).
+ * (device pixels on Android); the velocity is in the same unit per second.
  */
 class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: Float) {
     enum class State {
@@ -50,7 +52,11 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         data class Start(val edge: Edge) : Nav()
         /** The finger's travel since the drag began, positive into the page (away from its edge). */
         data class Move(val travel: Float, val time: Long) : Nav()
-        data class Release(val time: Long) : Nav()
+        /**
+         * The finger lifted. `force`: a touchpad swipe let go faster than [FORCE_ACTIVATION_VELOCITY]
+         * in its direction – the chrome navigates whatever the travel (Chrome's FORCE_ACTIVATION).
+         */
+        data class Release(val time: Long, val force: Boolean = false) : Nav()
         data class Cancel(val time: Long) : Nav()
     }
 
@@ -166,11 +172,24 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         }
     }
 
-    fun up(time: Long): Step {
+    /**
+     * The finger lifted, moving at `velocityX` along the page (positive rightwards, the touches'
+     * unit per second; the caller's velocity tracker, 0 when it has none). A touchpad swipe
+     * released faster than [FORCE_ACTIVATION_VELOCITY] into the page forces the navigation.
+     */
+    fun up(time: Long, velocityX: Float = 0f): Step {
         val was = state
         state = State.IDLE
-        return if (was == State.DRAGGING) Step(Disposition.CONSUME, Nav.Release(time)) else Step.FORWARD
+        return if (was == State.DRAGGING) Step(Disposition.CONSUME, Nav.Release(time, force = forces(velocityX))) else Step.FORWARD
     }
+
+    /**
+     * Chrome's `OverscrollRefresh::GetActivationStatus` (`overscroll_refresh.cc`): FORCE_ACTIVATION
+     * when the active action is the touchpad's and the fling's velocity in its direction
+     * (`GetVelocityInActiveActionDirection`: `velocity.x` pulling in from the left, `-velocity.x`
+     * from the right) is over the threshold. A finger's drag is never forced, whatever its speed.
+     */
+    private fun forces(velocityX: Float): Boolean = touchpad && inward(velocityX) > FORCE_ACTIVATION_VELOCITY
 
     /** The system took the touch away (a notification shade, a window change). */
     fun cancel(time: Long): Step {
@@ -269,6 +288,19 @@ class HistoryNavClassifier(private val touchSlop: Float, private val edgeWidth: 
         const val WEIGHT_ANGLE_30 = 1.73f
         /** Chrome's `kDefaultNavigationEdgeWidth`: how far in from a side a drag may begin (dp). */
         const val EDGE_WIDTH_DP = 24f
+        /**
+         * Chrome's `kMinFlingVelocityForForceActivation` (`ui/android/overscroll_refresh.cc`): a
+         * touchpad swipe let go faster than this in its direction navigates whatever its travel.
+         * Physical pixels per second, one fixed number on every device (Chrome derived it once,
+         * "1100 dp … about 1788 pixel" at a scale of 1.625, and compares it with the velocity
+         * `EventForwarder.java` measures in physical px/s), as [up]'s velocity is here.
+         */
+        const val FORCE_ACTIVATION_VELOCITY = 1788f
+        /**
+         * Chrome's `EventForwarder.MAX_FLING_VELOCITY`: the cap the release's velocity is
+         * measured under (`VelocityTracker.computeCurrentVelocity(1000, 8000)`), px/s.
+         */
+        const val MAX_FLING_VELOCITY = 8000f
 
         /** `MotionEvent.CLASSIFICATION_NONE` (API 29; the value for an event nothing classified). */
         const val CLASSIFICATION_NONE = 0

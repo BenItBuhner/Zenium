@@ -1217,7 +1217,37 @@ function accessibilitySection(ctx: SectionContext): RowGroup[] {
   if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
   if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
   if (ctx.state.capabilities.caretBrowsing) groups.push(caretBrowsingGroup(ctx))
+  // Last, where Chrome Android's Accessibility page ends with it.
+  if (ctx.state.platform === 'android') groups.push(touchpadSwipeGroup(ctx))
   return groups
+}
+
+/**
+ * The touchpad swipe's switch (GN-23 / A11Y-14), Android's alone: Chrome Android's Settings ›
+ * Accessibility ends with "Swipe between pages using a touchpad" (`accessibility_preferences.xml`
+ * `touchpad_overscroll_history_navigation`; the strings are `browser_ui_strings.grd`'s), shown on
+ * every layout – phone, tablet and a desktop-windowed DeX session, which is where the touchpad
+ * is. Gated by the platform, not `layouts`: `classifyViewport` gives an Android session with a
+ * hovering pointer the desktop layout, and a layout pin would hide the row from the very
+ * device that has a touchpad. The desktop has no touchpad swipe and never sees the row. The
+ * host reads the switch at each swipe's down (`boot.ts` `syncTouchpadSwipeToNavigate`).
+ */
+function touchpadSwipeGroup({ state, set }: SectionContext): RowGroup {
+  return {
+    id: 'touchpad',
+    heading: 'Touchpad',
+    rows: [
+      {
+        kind: 'switch',
+        id: 'touchpad-swipe-navigate',
+        label: 'Swipe between pages using a touchpad',
+        description: 'Navigate back and forth by swiping with two fingers on the touchpad',
+        keywords: ['trackpad', 'two fingers', 'back', 'forward', 'history', 'gesture'],
+        checked: state.settings.touchpadSwipeToNavigate !== false,
+        onChange: (v) => set({ touchpadSwipeToNavigate: v })
+      }
+    ]
+  }
 }
 
 /**

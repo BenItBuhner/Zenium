@@ -64,6 +64,14 @@ export interface HistoryNavEventPayload {
   travel?: number
   /** Timestamp of the touch sample, ms on any monotonic clock. */
   time?: number
+  /**
+   * `release` only: the host force-activates the navigation whatever the motion – Chrome's
+   * FORCE_ACTIVATION (`overscroll_refresh.cc`, `kMinFlingVelocityForForceActivation`): a
+   * touchpad swipe let go faster than 1788 px/s in its direction. The release commits as one
+   * past the threshold does (`SideSlideLayout.willNavigate`), with no arming haptic: Chrome's
+   * fires in `pull()`, and a fling's release reaches none.
+   */
+  force?: boolean
 }
 
 export interface HistoryNavState {
@@ -413,7 +421,7 @@ export class HistoryNavMachine {
         return
       case 'release':
         if (this.tabId !== tabId || this.phase !== 'dragging') return
-        this.release()
+        this.release(payload?.force === true)
         return
       case 'cancel':
         if (this.tabId !== tabId || this.phase !== 'dragging') return
@@ -473,9 +481,18 @@ export class HistoryNavMachine {
     this.captionTo(captionShown(this.armed, this.closeTarget) ? 1 : 0)
   }
 
-  private release(): void {
-    if (releaseNavigates(this.motion)) this.commit()
-    else this.retract()
+  /** `force`: the host's fling force-activation – the release navigates whatever the motion. */
+  private release(force: boolean): void {
+    if (force) {
+      // Let go short of the threshold the disc is part-grown: it completes its growth (the
+      // release is the threshold met, by speed) as it leaves on the exit fade where it stands.
+      this.growTo(1)
+      this.commit()
+    } else if (releaseNavigates(this.motion)) {
+      this.commit()
+    } else {
+      this.retract()
+    }
   }
 
   private commit(): void {

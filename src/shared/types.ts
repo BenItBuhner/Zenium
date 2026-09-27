@@ -2950,6 +2950,15 @@ export interface Settings {
   /** Touch hosts: drag down from the top of a page to reload it. */
   pullToRefresh: boolean
   /**
+   * Android: a touchpad's two-finger swipe across a page goes back or forward (GN-23 / A11Y-14;
+   * Settings › Accessibility › "Swipe between pages using a touchpad"). Chrome's
+   * `settings.a11y.touchpad_overscroll_history_navigation`: on by default, Android-only, kept
+   * on the device (not a synced pref) – so a device-local setting here (`core/sync/records.ts`).
+   * The finger's edge drag is not this switch's. Absent in profiles from before it existed
+   * (read as true). The desktop has no such setting and no row for it.
+   */
+  touchpadSwipeToNavigate: boolean
+  /**
    * Phone layout: the bar slides off its edge as the page scrolls down and back as it scrolls
    * up (`lib/barHide.ts`). Absent in profiles from before it existed (read as true).
    */
