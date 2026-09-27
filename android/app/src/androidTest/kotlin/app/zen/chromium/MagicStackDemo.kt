@@ -11,8 +11,6 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
@@ -43,8 +41,9 @@ import kotlin.math.abs
  *     memory before the finger lands. Review opens Settings on the Safety check group in a new
  *     tab (`zen://settings/privacy?group=safety-check`, the group the landing) and does not end
  *     the run – Chrome's Review is a look, not a fix (`SafetyHubMagicStackMediator.java`) – the
- *     settings tab closed, the page is back with the card still in the stack, the strip swiped
- *     home for the steps after.
+ *     new tab page made active again in front of the Settings tab (left open: closed, it would
+ *     head the recently closed list the Continue card reads, and step 8 restores the seeded
+ *     tab), the card still in the stack, the strip swiped home for the steps after.
  *  4. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
  *     rows; Hide This (a measured scene, `magic-stack-hide`) writes the device's hidden set,
  *     fades the card out over 120 ms and glides the cards after it into the gap on the FLIP
@@ -404,9 +403,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
      * the window family's; the image's WebView 113 knows neither `corner-shape` nor `text-wrap:
      * balance`, so the squircle and the balanced title are the device's, noted here from
      * `CSS.supports`), the memory read from the core before and after the finger. Review opens
-     * the Settings tab; the tab is closed through the core (`tab.close`) and the new tab page
-     * made active again, the strip swiped home for the Hide This step, which wants the Continue
-     * card in view.
+     * the Settings tab; Settings is the chrome document's own page (`SettingsPage.tsx`, as the
+     * new tab page is), so its landing is read there. The new tab page is then made active
+     * again (`tab.activate`) with the Settings tab left open behind it – closed, it would head
+     * the recently closed list the Continue card reads, and step 8 restores the seeded tab – and
+     * the strip swiped home for the Hide This step, which wants the Continue card in view.
      */
     private fun theSafetyCheckCard() {
         step("3. The Safety check card: the seeded revoked permission gives Chrome's low-priority type alone, fourth in the stack – the page's tile with the check, 'Removed permissions for 1 site', no summary, one filled Review named 'Review Safety check'; Review opens Settings on the Safety check group in a new tab and does not end the run") {
@@ -455,8 +456,8 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val settingsTab = activeCoreTab()?.takeIf { it.optString("url").startsWith(SAFETY_SETTINGS_URL) }?.optString("id").orEmpty()
             finding("  ${describeActive()} (tabs were $tabsBefore)")
             expect("Review opens Settings on the Safety check group in a new tab in front ($SAFETY_SETTINGS_URL)", opened && settingsTab.isNotEmpty(), "safety-review-opens")
-            val landed = settingsTab.isNotEmpty() && awaitPage(settingsTab, SAFETY_LANDED_JS, 10_000)
-            finding("  the settings page: ${if (settingsTab.isEmpty()) "no tab" else pageJs(settingsTab, SAFETY_LANDING_JS)}")
+            val landed = settingsTab.isNotEmpty() && awaitChrome(SAFETY_LANDED_JS, 10_000)
+            finding("  the settings page: ${if (settingsTab.isEmpty()) "no tab" else chromeValue(SAFETY_LANDING_JS)}")
             expect("the page lands on the Safety check group – the group marked as the landing, its top in the viewport's upper part, its heading 'Safety check'", landed, "safety-landing")
             SystemClock.sleep(800)
             still("safety-review-settings")
@@ -464,13 +465,13 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             finding("  the memory after Review: $after")
             expect("Review does not end the run – Chrome's Review is a look, not a fix; the two asks' buttons dismiss, this one does not (activeSince ${after?.opt("activeSince")}, runs ${after?.optInt("runs")})", after != null && !after.isNull("activeSince") && after.optInt("runs") == 0, "safety-review-keeps-run")
 
-            if (settingsTab.isNotEmpty() && settingsTab != ntpTabId) coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(settingsTab)}}")
-            SystemClock.sleep(1_200)
+            // The Settings tab stays open behind the page: `tab.close` would seat it at the head of
+            // the recently closed list, which the Continue card reads and step 8 restores from.
             if (ntpTabId.isNotEmpty()) ensureActive(ntpTabId)
             val back = awaitChrome("document.querySelectorAll('.zen-mstack-card').length===${expected.size}", 8_000)
             SystemClock.sleep(600)
             val ids = cardIds()
-            expect("the settings tab closed, the new tab page is back with its ${expected.size} cards, the Safety check card still among them ($ids)", back && activeUrl() == BLANK_URL && ids == expected, "safety-back")
+            expect("the new tab page is active again in front of the Settings tab with its ${expected.size} cards, the Safety check card still among them ($ids; ${describeActive()})", back && activeUrl() == BLANK_URL && ids == expected && tabCount() == tabsBefore + 1, "safety-back")
             var home = geometry()
             var swipes = 0
             while (home.optInt("selected") > 0 && swipes < expected.size) {
@@ -745,35 +746,6 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
         Log.w(tag, "gave up waiting for $url")
         return false
-    }
-
-    // --- a page tab ------------------------------------------------------------------------------
-
-    /** Evaluate in the tab `tabId`'s page (the Settings tab Review opens); the value as text, as [chromeValue] gives the chrome's ("" when the tab or its answer is missing). */
-    private fun pageJs(tabId: String, code: String): String {
-        var raw: String? = null
-        val latch = CountDownLatch(1)
-        instrumentation.runOnMainSync {
-            val view = (activity as MainActivity).host.tabs.get(tabId)
-            if (view == null) latch.countDown()
-            else view.evaluateJavascript(code) { value ->
-                raw = value
-                latch.countDown()
-            }
-        }
-        latch.await(10, TimeUnit.SECONDS)
-        val text = raw ?: return ""
-        return runCatching { JSONTokener(text).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
-    }
-
-    /** Poll the tab's page until the expression `code` is true there; false when it is not in time. */
-    private fun awaitPage(tabId: String, code: String, timeoutMs: Long): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (pageJs(tabId, "String(!!($code))") == "true") return true
-            SystemClock.sleep(250)
-        }
-        return pageJs(tabId, "String(!!($code))") == "true"
     }
 
     // --- the chrome ------------------------------------------------------------------------------
@@ -1071,10 +1043,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val SCROLL_TO_SAFETY_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip'),c=document.querySelector('.zen-mstack-card[data-cell=\"safety-hub\"]');if(!s||!c)return 'no card';s.scrollTo({left:c.offsetLeft-s.offsetLeft});return 'scrolled'})()"
         /** The recovery for the swipes home: the strip scrolled to its start. */
         private const val SCROLL_HOME_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return 'no strip';s.scrollTo({left:0});return 'scrolled'})()"
-        /** In the Settings tab: the Safety check group is the landing (`SettingsPage.tsx` marks the group `?group=` lands `data-landing`), its top in the viewport's upper part. */
+        /** On the Settings page (the chrome document's, with the Settings tab active): the Safety check group is the landing (`SettingsPage.tsx` marks the group `?group=` lands `data-landing`), its top in the viewport's upper part. */
         private const val SAFETY_LANDED_JS = "(function(){var g=document.querySelector('.zen-settings-group[data-group=\"safety-check\"]');if(!g||!g.hasAttribute('data-landing'))return false;" +
             "var r=g.getBoundingClientRect();return r.height>0&&r.top>=-1&&r.top<window.innerHeight*0.5})()"
-        /** In the Settings tab: the landing's account – the page's mark, the group's box and heading, the viewport. */
+        /** On the Settings page: the landing's account – the page's mark, the group's box and heading, the viewport. */
         private const val SAFETY_LANDING_JS = "(function(){var p=document.querySelector('.zen-settings-page'),g=document.querySelector('.zen-settings-group[data-group=\"safety-check\"]');" +
             "var h=g?g.querySelector('.zen-v2-heading,h2,h3'):null;var r=g?g.getBoundingClientRect():null;" +
             "return JSON.stringify({page:!!p,pageLanding:!!(p&&p.hasAttribute('data-landing')),group:!!g,groupLanding:!!(g&&g.hasAttribute('data-landing')),heading:h?h.textContent.trim():null," +

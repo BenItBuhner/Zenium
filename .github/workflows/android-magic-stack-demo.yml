@@ -11,10 +11,11 @@ name: Android Magic Stack demo
 # scene, magic-stack-swipe) and a swipe back pages back; the Safety check card (NTP-19, W6-E9:
 # Chrome's Safety Hub module, its low-priority type from the seed's one revoked record) swiped
 # to, its face read against Chrome's and the gate's numbers, Review opening Settings on the
-# Safety check group in a new tab without ending the card's run, the tab closed and the strip
-# swiped home; a card's ⋮ opens the shared local menu titled by the module, Hide This (a measured
-# scene, magic-stack-hide, a probe on the strip recording the 120 ms fade and the siblings' glide
-# into the gap) writes the device's hidden set; Customise opens the "Cards" sheet of switch rows
+# Safety check group in a new tab without ending the card's run, the page made active again in
+# front of the Settings tab and the strip swiped home; a card's ⋮ opens the shared local menu
+# titled by the module, Hide This (a measured scene, magic-stack-hide, a probe on the strip
+# recording the 120 ms fade and the siblings' glide into the gap) writes the device's hidden set;
+# Customise opens the "Cards" sheet of switch rows
 # and a switch brings the card back; every switch off leaves the page without the stack; the gear
 # sheet's Cards row is the way back when no ⋮ is left, swapping the sheets; one card back stands
 # alone at full width without dots; the Continue card's row restores the closed tab. The driver
