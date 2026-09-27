@@ -15,6 +15,7 @@ import {
 } from '../../shared/types'
 import type { SiteInfoSnapshot } from '../../shared/siteInfo'
 import { Browser } from '../browser'
+import { coarseVisitTime } from '../permissions'
 import {
   MANY_PERMISSIONS,
   UNUSED_PERMISSION_MS,
@@ -278,7 +279,12 @@ describe('permission prompts through the chrome', () => {
     await expect(decision).resolves.toBe(true)
     expect(f.browser.state.snapshot(f.win).permissionPrompts).toEqual([])
     expect(f.browser.permissions.rules()).toEqual([
-      { origin: 'https://cam.example', permission: 'camera', decision: 'allow' }
+      {
+        origin: 'https://cam.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: coarseVisitTime(Date.now())
+      }
     ])
     // Remembered: the next request is answered without a prompt.
     await expect(
@@ -510,7 +516,7 @@ function safetyInput(patch: Partial<SafetyCheckInput> = {}): SafetyCheckInput {
     safeBrowsing: { configured: false, enabled: null },
     passwords: null,
     rules: [],
-    lastVisitByOrigin: new Map(),
+    revoked: [],
     notificationsShown: [],
     extensions: null,
     ...patch
@@ -533,28 +539,46 @@ describe('safety check', () => {
 
   it('flags sites with many permissions and sites not visited for two months', () => {
     const now = 1_000_000_000_000
+    // The clock is the rule's own coarse visit stamp (PS-41), not the history's last visit: a
+    // site whose grants carry none (an allow from before the clock, unvisited since) is not
+    // flagged, as a site without a history row was not.
     const rules: PermissionRule[] = [
       { origin: 'https://busy.example', permission: 'camera', decision: 'allow' },
       { origin: 'https://busy.example', permission: 'microphone', decision: 'allow' },
       { origin: 'https://busy.example', permission: 'geolocation', decision: 'allow' },
-      { origin: 'https://old.example', permission: 'geolocation', decision: 'allow' },
-      { origin: 'https://fine.example', permission: 'camera', decision: 'allow' },
+      {
+        origin: 'https://old.example',
+        permission: 'geolocation',
+        decision: 'allow',
+        lastVisitedAt: now - UNUSED_PERMISSION_MS - 1
+      },
+      {
+        origin: 'https://fine.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: now - 1000
+      },
+      // The site's newest stamp counts: one grant visited lately keeps the site off the list.
+      {
+        origin: 'https://mixed.example',
+        permission: 'camera',
+        decision: 'allow',
+        lastVisitedAt: now - UNUSED_PERMISSION_MS - 1
+      },
+      {
+        origin: 'https://mixed.example',
+        permission: 'microphone',
+        decision: 'allow',
+        lastVisitedAt: now - 1000
+      },
       // Content rows and refusals are not capabilities a site holds.
       { origin: 'https://ads.example', permission: 'popups', decision: 'allow' },
       { origin: 'https://no.example', permission: 'camera', decision: 'deny' }
     ]
-    const result = composeSafetyCheck(
-      safetyInput({
-        now,
-        rules,
-        lastVisitByOrigin: new Map([
-          ['https://old.example', now - UNUSED_PERMISSION_MS - 1],
-          ['https://fine.example', now - 1000]
-        ])
-      })
-    )
+    const result = composeSafetyCheck(safetyInput({ now, rules }))
     expect(result.permissions.state).toBe('info')
-    expect(result.permissions.grantedSites).toBe(3)
+    expect(result.permissions.grantedSites).toBe(4)
+    expect(result.permissions.revoked).toEqual([])
     expect(result.permissions.review).toEqual([
       {
         origin: 'https://busy.example',

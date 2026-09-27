@@ -10,6 +10,7 @@ import {
   type PasswordsStatus,
   type PermissionRule,
   type ReauthOutcome,
+  type RevokedSitePermissions,
   type SafetyCheckResult,
   type SafetyCheckRow,
   type SafetyState
@@ -17,8 +18,11 @@ import {
 import type { UpdateStatus } from '../shared/updates'
 import { contentSetting } from '../shared/contentSettings'
 import type { Browser } from './browser'
+import { UNUSED_PERMISSION_MS } from './permissions'
 import type { EngineDataCounts } from './platform'
 import type { ZenWindow } from './window'
+
+export { UNUSED_PERMISSION_MS }
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
@@ -28,8 +32,6 @@ const MONTH_MS = 28 * DAY_MS
 
 /** Safety check: a site with this many granted permissions is worth a look. */
 export const MANY_PERMISSIONS = 3
-/** Safety check: a granted permission on a site not visited for this long is unused (Chrome: 60 days). */
-export const UNUSED_PERMISSION_MS = 60 * DAY_MS
 
 /** Where a browsing-data range starts, given the moment it is measured from. */
 export function rangeStart(range: BrowsingDataRange, now: number): number {
@@ -208,23 +210,22 @@ export class PrivacyService {
     return result
   }
 
-  /** Safety check over the live services; the composition itself is pure (`composeSafetyCheck`). */
+  /**
+   * Safety check over the live services; the composition itself is pure (`composeSafetyCheck`).
+   * The unused-sites sweep runs first, so "Check now" reads a fresh revoked list and rules the
+   * sweep has just taken are not flagged as well (Chrome's Safety Hub reads its daily sweep's
+   * result; running the sweep at the check is Zenium's).
+   */
   safetyCheck(): SafetyCheckResult {
     const b = this.browser
-    const lastVisit = new Map<string, number>()
-    for (const entry of b.history.recent(Number.MAX_SAFE_INTEGER)) {
-      const origin = originOf(entry.url)
-      if (!origin) continue
-      const seen = lastVisit.get(origin)
-      if (seen === undefined || seen < entry.lastVisit) lastVisit.set(origin, entry.lastVisit)
-    }
+    b.unusedPermissions.run(this.now())
     return composeSafetyCheck({
       now: this.now(),
       updates: b.state.capabilities.updates ? b.updates.status() : null,
       safeBrowsing: readSafeBrowsingSetting(b.state.settings),
       passwords: b.state.capabilities.passwords ? b.passwords.status() : null,
       rules: b.permissions.rules(),
-      lastVisitByOrigin: lastVisit,
+      revoked: b.permissions.revokedUnused(),
       notificationsShown: b.permissions.activity('notifications'),
       extensions: b.state.capabilities.extensions ? b.extensions.list() : null
     })
@@ -246,15 +247,6 @@ async function quiet(promise: Promise<unknown> | undefined): Promise<void> {
     await promise
   } catch {
     // Best effort: an engine that fails to clear one kind must not stop the rest.
-  }
-}
-
-function originOf(url: string): string | null {
-  try {
-    const origin = new URL(url).origin
-    return origin === 'null' ? null : origin
-  } catch {
-    return null
   }
 }
 
@@ -294,8 +286,10 @@ export interface SafetyCheckInput {
   safeBrowsing: SafeBrowsingReading
   /** Null when the host has no password manager. */
   passwords: PasswordsStatus | null
+  /** Every per-site answer, each `allow` the sweep can reach carrying its own `lastVisitedAt`. */
   rules: PermissionRule[]
-  lastVisitByOrigin: Map<string, number>
+  /** The unused-sites sweep's revoked list as it stands. */
+  revoked: RevokedSitePermissions[]
   notificationsShown: Array<{ origin: string; count: number }>
   /** Null when the host runs no extensions. */
   extensions: ExtensionInfo[] | null
@@ -308,7 +302,7 @@ export function composeSafetyCheck(input: SafetyCheckInput): SafetyCheckResult {
     updates: updatesRow(input.updates),
     safeBrowsing: safeBrowsingRow(input.safeBrowsing),
     passwords: passwordsRow(input.passwords),
-    permissions: permissionsRow(input.rules, input.lastVisitByOrigin, input.now),
+    permissions: permissionsRow(input.rules, input.revoked, input.now),
     notifications: notificationsRow(input.rules, input.notificationsShown),
     extensions: extensionsRow(input.extensions)
   }
@@ -412,28 +406,48 @@ function isCapability(permission: string): boolean {
   return group === 'permissions' || group === 'additional'
 }
 
+/**
+ * The Site permissions row. A site is `unused` when the newest visit stamp among its granted
+ * capabilities (`PermissionRule.lastVisitedAt`, the sweep's own clock – the history's last visit
+ * no longer counts: it went with a history clear, and a site with no history row had none) is
+ * older than 60 days; with the sweep on, what it reaches is revoked before this composes, so the
+ * flag names what the sweep leaves alone – sites allowed again (`keepGranted`) and, with the
+ * sweep off, every unused grant. A site whose grants carry no stamp is not flagged, as before.
+ */
 function permissionsRow(
   rules: PermissionRule[],
-  lastVisit: Map<string, number>,
+  revoked: RevokedSitePermissions[],
   now: number
 ): SafetyCheckResult['permissions'] {
-  const granted = new Map<string, string[]>()
+  const granted = new Map<string, PermissionRule[]>()
   for (const rule of rules) {
     if (rule.decision !== 'allow' || !isCapability(rule.permission)) continue
     const list = granted.get(rule.origin) ?? []
-    list.push(rule.permission)
+    list.push(rule)
     granted.set(rule.origin, list)
   }
   const review: SafetyCheckResult['permissions']['review'] = []
-  for (const [origin, permissions] of granted) {
-    const seen = lastVisit.get(origin)
+  for (const [origin, list] of granted) {
+    const permissions = list.map((rule) => rule.permission)
+    let seen: number | undefined
+    for (const rule of list)
+      if (rule.lastVisitedAt !== undefined && (seen === undefined || rule.lastVisitedAt > seen))
+        seen = rule.lastVisitedAt
     if (seen !== undefined && now - seen > UNUSED_PERMISSION_MS)
       review.push({ origin, permissions, reason: 'unused' })
     else if (permissions.length >= MANY_PERMISSIONS)
       review.push({ origin, permissions, reason: 'many' })
   }
   review.sort((a, b) => b.permissions.length - a.permissions.length || cmp(a.origin, b.origin))
-  const base = { grantedSites: granted.size, review }
+  const base = {
+    grantedSites: granted.size,
+    review,
+    revoked: revoked.map(({ origin, permissions, revokedAt }) => ({
+      origin,
+      permissions: [...permissions],
+      revokedAt
+    }))
+  }
   if (granted.size === 0) return { ...row('safe', 'No site holds extra permissions'), ...base }
   if (review.length === 0)
     return {

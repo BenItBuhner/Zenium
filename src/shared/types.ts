@@ -3142,6 +3142,15 @@ export interface Settings {
    */
   preloadPages: PreloadPagesLevel
   /**
+   * Chrome's "Automatically remove permissions from unused sites" (PS-41,
+   * `safety_hub.unused_site_permissions_revocation.enabled`, on by default): the daily sweep
+   * takes the ask-default permissions a site was allowed but not visited for 60 days, into a
+   * 30-day revoked list the Safety check reviews. Off: no sweep; the visit clock keeps running
+   * and the list already made stays. Its own synced key, as Chrome's pref; a profile from before
+   * it reads on (`applyPersisted`), and a peer's record without it says nothing about it.
+   */
+  autoRevokeUnusedPermissions: boolean
+  /**
    * The new tab page, both platforms' (`shared/newTab.ts`): whether it opens (desktop), its
    * layout preset and sections, what its grid shows, what it paints behind. The user's shortcuts
    * and removed hosts are device-local (`NewTabDeviceState`), not here.
@@ -4020,6 +4029,33 @@ export interface PermissionRule {
   origin: string
   permission: string
   decision: 'allow' | 'deny'
+  /**
+   * The unused-sites clock of an `allow` the sweep can reach (PS-41; Chrome's `last_visited`):
+   * set when the user allows, refreshed by every page visit to the site, floored to the week
+   * (`coarseVisitTime`) so the file keeps no visit log. Absent on a refusal, on a row the sweep
+   * never touches, and on an allow from before the clock that no visit has stamped since.
+   */
+  lastVisitedAt?: number
+  /**
+   * The user allowed the site again after the sweep took the permission (Chrome's
+   * `autorevocation_bypassed_by_user`): no later sweep touches this rule.
+   */
+  keepGranted?: true
+}
+
+/**
+ * Permissions the unused-sites sweep took from one site (PS-41; Chrome's
+ * `REVOKED_UNUSED_SITE_PERMISSIONS`): one record per site, kept 30 days for the Safety check's
+ * review, gone at `expiresAt` or when the user changes any of the site's answers.
+ */
+export interface RevokedSitePermissions {
+  origin: string
+  /** The stored, qualified names (`openExternal:zoommtg`), so an "Allow again" restores each as it was. */
+  permissions: string[]
+  /** Unix milliseconds. */
+  revokedAt: number
+  /** `revokedAt` + 30 days. */
+  expiresAt: number
 }
 
 /** The user's answer to a permission prompt; `dismiss` refuses this request without remembering. */
@@ -4211,10 +4247,15 @@ export interface SafetyCheckResult {
     /** When the last full checkup finished on this device; null when it never ran. */
     checkedAt: number | null
   }
-  /** Sites holding several granted permissions, or granted ones not visited for weeks. */
+  /**
+   * Sites holding several granted permissions, or granted ones whose site was not visited for
+   * weeks (the rules' own `lastVisitedAt`), and the permissions the unused-sites sweep took
+   * (PS-41): the revoked list as it stands after the sweep this check ran first.
+   */
   permissions: SafetyCheckRow & {
     grantedSites: number
     review: Array<{ origin: string; permissions: string[]; reason: 'many' | 'unused' }>
+    revoked: Array<{ origin: string; permissions: string[]; revokedAt: number }>
   }
   /** Sites allowed to send notifications, busiest first (`shown` counts this session). */
   notifications: SafetyCheckRow & { sites: Array<{ origin: string; shown: number }> }
@@ -4515,6 +4556,11 @@ export interface UIState {
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
   permissionRules: PermissionRule[]
+  /**
+   * Permissions the unused-sites sweep took (PS-41), the newest revocation first: the Safety
+   * check's review reads it, and every change of the list is pushed.
+   */
+  revokedUnusedPermissions: RevokedSitePermissions[]
   /**
    * The effective default of every content-settings catalogue row (Settings › Site settings):
    * the user's choice where there is one, else the catalogue's. Keyed by the row's id.
@@ -6556,6 +6602,20 @@ export interface Commands {
   }
   /** Forget every decision of a site (Settings' per-site list). */
   'permissions.resetOrigin': { args: { origin: string }; result: void }
+  /**
+   * The Safety check's review of the permissions the unused-sites sweep took (PS-41). "Allow
+   * again": every permission in the site's record is allowed once more, marked `keepGranted` so
+   * no later sweep takes it, and the record goes; its Undo puts the answers back the way the
+   * sweep left them and the record back with its old times.
+   */
+  'permissions.regrantRevoked': { args: { origin: string }; result: void }
+  'permissions.undoRegrantRevoked': { args: { origin: string }; result: void }
+  /**
+   * "Got it": the whole list goes (the permissions stay revoked); the records are returned so
+   * the chrome's Undo can put them back as they were with `restoreRevokedList`.
+   */
+  'permissions.acknowledgeRevoked': { args: void; result: RevokedSitePermissions[] }
+  'permissions.restoreRevokedList': { args: { records: RevokedSitePermissions[] }; result: void }
   /** Answer a pending HTTP authentication or client-certificate prompt (null cancels). */
   'security.respond': {
     args: { id: string; response: SecurityPromptResponse | null }
