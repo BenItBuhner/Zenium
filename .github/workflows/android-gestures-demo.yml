@@ -12,6 +12,10 @@ name: Android gestures demo
 # findings (PASS / FAIL lines) fail the run. Dispatch-only, like the other demos; the build, the
 # emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (W6-D26): one run of the GN-23 / A11Y-14 scenes on this branch; removed before review.
+  push:
+    branches:
+      - cursor/android-touchpad-swipe-switch-fling-9271
   workflow_dispatch:
     inputs:
       api-level:
@@ -65,3 +69,24 @@ jobs:
       timeout-minutes: 45
       artifact-name: android-gestures-demo-second-boot
       artifact-path: artifacts/android-gestures-demo/
+
+  # TEMPORARY (W6-D26): the Accessibility page's stills on the tablet profile (the `settings`
+  # scenes alone), for the lead's read of the row on both form factors; removed with the trigger.
+  record-tablet:
+    name: Gestures demo, the Accessibility row on the tablet profile
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.GesturesDemo
+        DEMO_DIR=gestures-demo
+        DEMO_OUT=artifacts/android-gestures-demo-tablet
+        DEMO_VIDEO=android-gestures-demo-tablet.mp4
+        DEMO_DISPLAY=1280x800@160
+        DEMO_SCENES=settings
+        DEMO_ARGS=-e holdBackgroundWork true
+      timeout-minutes: 45
+      artifact-name: android-gestures-demo-tablet
+      artifact-path: artifacts/android-gestures-demo-tablet/
