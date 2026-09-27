@@ -21,24 +21,27 @@ import org.junit.runner.RunWith
  * climbs: Mango (Gamma's page) · the folder Work · apple (Delta's page) · the folder arts · Zebra
  * (Alpha's page), all under Mobile bookmarks – the panel opens straight inside its only root.
  *
- *  A. THE MENU: the header's "Sort and view options" button raises the sheet – eight radio rows
- *     in Chrome's words (Sort by manual order · newest · oldest · last opened · A to Z · Z to A;
- *     Visual view · Compact view), "Sort by manual order" and "Visual view" checked (Chrome's
- *     defaults, `BookmarkUiPrefs`).
+ *  A. THE MENU: the list opens in Compact view (the default – a stated deviation from Chrome's
+ *     VISUAL, design language v2 §9.29); the header's "Sort and view options" button raises the
+ *     sheet – eight radio rows, Chrome's words in the phone menus' Title Case (Sort by Manual
+ *     Order · Newest · Oldest · Last Opened · A to Z · Z to A; Visual View · Compact View),
+ *     "Sort by Manual Order" and "Compact View" checked.
  *  B. THE ORDERS: each row under a finger writes the pref, says Chrome's announcement through the
  *     live region and re-orders the list – manual order the model's own, folders and pages as
  *     stored (Chrome's `sortByStoredPref` returns it untouched); every other order folders first,
  *     then the key, Chrome's `sortCompare` (A to Z case-insensitive: apple before Mango before
  *     Zebra). The manual → A to Z re-sort is sampled per animation frame until it has rendered
  *     and settled: the rows GLIDE (translate transforms on the cells, §11) rather than cut.
- *  C. THE VIEW: "Compact view" drops the tiles for the lead glyph on the two-line row; "Visual
- *     view" puts the tiles back (the favicon or the folder glyph on each; a page image where an
- *     open tab shows the page).
+ *  C. THE VIEW: "Visual View" stands every row on a tile (the favicon or the folder glyph at the
+ *     tile's 32 on each; a page image where an open tab shows the page) in place of the compact
+ *     row's lead.
  *  D. LAST OPENED: a real touch on apple's row opens its page in the current tab (the core stamps
- *     `dateLastUsed`, the panel leaves); the panel reopened and sorted by last opened puts apple
- *     first among the pages, the folders still first.
- *  E. DARK: the device's night mode on – the Visual list, the menu and Compact view again for
- *     the record; the device left light for the next driver.
+ *     `dateLastUsed`, the panel leaves); the panel reopened keeps the picked order and view (the
+ *     prefs persist) and, sorted by last opened, puts apple first among the pages, the folders
+ *     still first.
+ *  E. DARK: the device's night mode on – the Visual list and the menu for the record, then
+ *     "Compact View" drops the tiles for the lead glyph again; the device left light for the
+ *     next driver.
  *
  * Stills `bookmarks-sort-view-NN-<state>.png`; findings in `bookmarks-sort-view-findings.txt`
  * (one `OK` or `FAIL` per claim; a claim that does not hold fails the run at the end). The seeded
@@ -92,7 +95,7 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
         create("Zebra", ALPHA_URL)
         val rows = mobileRows()
         check("seed: the five stand in manual order as made", rows == MANUAL, "rows $rows")
-        check("seed: the prefs start at Chrome's defaults – manual order, Visual view", sortPref() == "manual" && displayPref() == "visual", "sort '${sortPref()}' display '${displayPref()}'")
+        check("seed: the prefs start at the defaults – manual order, Compact view (the stated deviation from Chrome's VISUAL, v2 §9.29)", sortPref() == "manual" && displayPref() == "compact", "sort '${sortPref()}' display '${displayPref()}'")
     }
 
     private fun create(title: String, url: String?) {
@@ -109,16 +112,16 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
         section("A. the header's Sort and view options button and its sheet")
         ensureForeground()
         if (!openPanel("A")) return
-        still("visual")
-        check("A: the list stands in manual order, every row a Visual tile", listTitles() == MANUAL && tiles() == MANUAL.size && leads() == 0, "titles ${listTitles()}, tiles ${tiles()}, leads ${leads()}")
+        still("compact")
+        check("A: the list stands in manual order, every row the compact lead – no tile (Compact the default)", listTitles() == MANUAL && tiles() == 0 && leads() == MANUAL.size, "titles ${listTitles()}, tiles ${tiles()}, leads ${leads()}")
         if (!openSortView("A")) return
         val rows = textsOf(SHEET_ITEM)
         finding("  rows as found (${rows.size}): $rows")
         check("A: the sheet is titled 'Sort and view options' (Chrome's `sort_and_view_options`)", textOf(SHEET_TITLE) == MENU_TITLE, "title '${textOf(SHEET_TITLE)}'")
-        check("A: eight radio rows in Chrome's words – the six orders, then Visual view · Compact view", rows == ORDER_ROWS + VIEW_ROWS, "rows $rows")
+        check("A: eight radio rows in Title Case – the six orders, then Visual View · Compact View", rows == ORDER_ROWS + VIEW_ROWS, "rows $rows")
         check("A: every row is a menuitemradio", jsNumber("document.querySelectorAll('$SHEET_ITEM[role=\"menuitemradio\"]').length").toInt() == rows.size, "radios ${jsNumber("document.querySelectorAll('$SHEET_ITEM[role=\"menuitemradio\"]').length")}")
         val checked = checkedRows()
-        check("A: 'Sort by manual order' and 'Visual view' are checked – Chrome's defaults", checked == listOf("Sort by manual order", "Visual view"), "checked $checked")
+        check("A: 'Sort by Manual Order' and 'Compact View' are checked – the defaults", checked == listOf("Sort by Manual Order", "Compact View"), "checked $checked")
         still("sort-menu")
     }
 
@@ -126,13 +129,13 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
 
     private fun theOrders() {
         section("B. each order under a finger: the pref, the announcement, the list; the manual → A to Z glide")
-        pick("B", "Sort by newest", "newest", "Sorting by newest", NEWEST)
-        pick("B", "Sort by oldest", "oldest", "Sorting by oldest", OLDEST)
+        pick("B", "Sort by Newest", "newest", "Sorting by newest", NEWEST)
+        pick("B", "Sort by Oldest", "oldest", "Sorting by oldest", OLDEST)
         pick("B", "Sort by Z to A", "z-a", "Sorting from Z to A", Z_A)
-        pick("B", "Sort by manual order", "manual", "Sorting by manual order", MANUAL)
+        pick("B", "Sort by Manual Order", "manual", "Sorting by manual order", MANUAL)
         // The big re-sort, sampled per animation frame while it runs.
         pick("B", "Sort by A to Z", "a-z", "Sorting from A to Z", A_Z, sampleGlide = true)
-        check("B: the checked row follows the pref", openSortView("B") && checkedRows() == listOf("Sort by A to Z", "Visual view"), "checked ${checkedRows()}")
+        check("B: the checked row follows the pref", openSortView("B") && checkedRows() == listOf("Sort by A to Z", "Compact View"), "checked ${checkedRows()}")
         back()
         awaitDomGone(SHEET, SHEET_WAIT)
         SystemClock.sleep(600)
@@ -238,32 +241,27 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
     // --- C. the view -----------------------------------------------------------------------------------------
 
     private fun theView() {
-        section("C. Compact view, then Visual view again")
+        section("C. Visual View: the tiles in place of the compact leads")
         if (!openSortView("C")) return
         val mark = saidMark()
-        val compact = pickView("Compact view", "compact")
-        check("C: a touch on 'Compact view' writes bookmarkRowDisplay 'compact'", compact, "display '${displayPref()}'")
-        awaitDomGone(SHEET, SHEET_WAIT)
-        val compactRows = awaitUntil(PICK_WAIT) { attrOf(LIST, "data-display") == "compact" && tiles() == 0 && leads() == A_Z.size }
-        check("C: the rows drop their tiles for the lead glyph – a folder or favicon at the row's lead, no picture", compactRows, "display '${attrOf(LIST, "data-display")}', tiles ${tiles()}, leads ${leads()}")
-        check("C: the order is kept across the view switch", listTitles() == A_Z, "titles ${listTitles()}")
-        check("C: the live region says 'Showing compact view'", awaitUntil(SAID_WAIT) { saidSince(mark, "Showing compact view") }, "said ${saidList(mark)}")
-        SystemClock.sleep(900)
-        still("compact")
-
-        if (!openSortView("C")) return
-        check("C: the sheet's checked rows read the state – A to Z, Compact view", checkedRows() == listOf("Sort by A to Z", "Compact view"), "checked ${checkedRows()}")
-        val again = saidMark()
-        val visual = pickView("Visual view", "visual")
-        check("C: a touch on 'Visual view' writes bookmarkRowDisplay 'visual'", visual, "display '${displayPref()}'")
+        val visual = pickView("Visual View", "visual")
+        check("C: a touch on 'Visual View' writes bookmarkRowDisplay 'visual'", visual, "display '${displayPref()}'")
         awaitDomGone(SHEET, SHEET_WAIT)
         val visualRows = awaitUntil(PICK_WAIT) { attrOf(LIST, "data-display") == "visual" && tiles() == A_Z.size && leads() == 0 }
-        check("C: every row carries its tile again", visualRows, "display '${attrOf(LIST, "data-display")}', tiles ${tiles()}, leads ${leads()}")
+        check("C: every row stands on a tile – the compact leads gone", visualRows, "display '${attrOf(LIST, "data-display")}', tiles ${tiles()}, leads ${leads()}")
+        check("C: the order is kept across the view switch", listTitles() == A_Z, "titles ${listTitles()}")
         val pictures = jsNumber("document.querySelectorAll('$LIST .zen-list-picture > .zen-list-page').length").toInt()
         val marks = jsNumber("document.querySelectorAll('$LIST .zen-list-picture > .zen-list-mark').length").toInt()
-        finding("  tiles carrying a page image: $pictures (an open tab showing the page); carrying the favicon or folder glyph: $marks")
+        val markPx = jsNumber("(function(){var m=document.querySelector('$LIST .zen-list-picture > .zen-list-mark');return m?Math.round(m.getBoundingClientRect().width):0})()").toInt()
+        finding("  tiles carrying a page image: $pictures (an open tab showing the page); carrying the favicon or folder glyph: $marks, the glyph box $markPx CSS px wide")
         check("C: each tile carries either the page image or the favicon / folder glyph", pictures + marks == A_Z.size, "pictures $pictures, marks $marks")
-        check("C: the live region says 'Showing visual view'", awaitUntil(SAID_WAIT) { saidSince(again, "Showing visual view") }, "said ${saidList(again)}")
+        check("C: the tile's glyph box is the tile's 32, not the row's 20 (v2 §9.29)", marks == 0 || markPx == 32, "glyph box $markPx px")
+        check("C: the live region says 'Showing visual view'", awaitUntil(SAID_WAIT) { saidSince(mark, "Showing visual view") }, "said ${saidList(mark)}")
+        SystemClock.sleep(900)
+        still("visual")
+        check("C: the sheet's checked rows read the state – A to Z, Visual View", openSortView("C") && checkedRows() == listOf("Sort by A to Z", "Visual View"), "checked ${checkedRows()}")
+        back()
+        awaitDomGone(SHEET, SHEET_WAIT)
         SystemClock.sleep(600)
     }
 
@@ -289,13 +287,13 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
         still("opened-from-row")
 
         if (!openPanel("D")) return
-        check("D: reopened, the panel keeps the A to Z order and the Visual view (the prefs persist)", listTitles() == A_Z && attrOf(LIST, "data-display") == "visual", "titles ${listTitles()}, display '${attrOf(LIST, "data-display")}'")
+        check("D: reopened, the panel keeps the A to Z order and the Visual view (the prefs persist; neither is the default)", listTitles() == A_Z && attrOf(LIST, "data-display") == "visual", "titles ${listTitles()}, display '${attrOf(LIST, "data-display")}'")
         if (!openSortView("D")) return
         val mark = saidMark()
-        touchUntil("Sort by last opened", { textRect(SHEET_ITEM, "Sort by last opened") }, { !inDom(SHEET_ITEM) || sortPref() == "last-opened" }, waitMs = PICK_WAIT)
+        touchUntil("Sort by Last Opened", { textRect(SHEET_ITEM, "Sort by Last Opened") }, { !inDom(SHEET_ITEM) || sortPref() == "last-opened" }, waitMs = PICK_WAIT)
         val wrote = awaitUntil(PICK_WAIT) { sortPref() == "last-opened" }
-        if (!wrote) touchFault("a touch on 'Sort by last opened' did not take: the pref is '${sortPref()}'")
-        check("D: a touch on 'Sort by last opened' writes bookmarkRowSortOrder 'last-opened'", wrote, "pref '${sortPref()}'")
+        if (!wrote) touchFault("a touch on 'Sort by Last Opened' did not take: the pref is '${sortPref()}'")
+        check("D: a touch on 'Sort by Last Opened' writes bookmarkRowSortOrder 'last-opened'", wrote, "pref '${sortPref()}'")
         awaitDomGone(SHEET, SHEET_WAIT)
         val ordered = awaitUntil(PICK_WAIT) { listTitles().let { it.size == 5 && it.take(2).toSet() == FOLDERS && it[2] == "apple" } }
         check("D: sorted by last opened, the folders still lead and apple heads the pages (the two never opened trail, by id)", ordered, "titles ${listTitles()}")
@@ -319,9 +317,12 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
         still("visual-dark")
         if (!openSortView("E")) return
         still("sort-menu-dark")
-        val compact = pickView("Compact view", "compact")
+        val mark = saidMark()
+        val compact = pickView("Compact View", "compact")
+        check("E: a touch on 'Compact View' writes bookmarkRowDisplay 'compact'", compact, "display '${displayPref()}'")
         awaitDomGone(SHEET, SHEET_WAIT)
-        check("E: Compact view on the dark scheme", compact && awaitUntil(PICK_WAIT) { tiles() == 0 && leads() == 5 }, "tiles ${tiles()}, leads ${leads()}")
+        check("E: the rows drop their tiles for the lead glyph – a folder or favicon at the row's lead, no picture (Compact on the dark scheme)", awaitUntil(PICK_WAIT) { attrOf(LIST, "data-display") == "compact" && tiles() == 0 && leads() == 5 }, "display '${attrOf(LIST, "data-display")}', tiles ${tiles()}, leads ${leads()}")
+        check("E: the live region says 'Showing compact view'", awaitUntil(SAID_WAIT) { saidSince(mark, "Showing compact view") }, "said ${saidList(mark)}")
         SystemClock.sleep(900)
         still("compact-dark")
         back()
@@ -406,8 +407,8 @@ class BookmarksDemo : GroupsDemoBase("bookmarks-sort-view", handshakeDir = "book
         /** The glide sampler's ceiling; it ends earlier once the re-order has rendered and the rows stand still. */
         private const val SAMPLE_CAP_MS = 15_000L
 
-        private val ORDER_ROWS = listOf("Sort by manual order", "Sort by newest", "Sort by oldest", "Sort by last opened", "Sort by A to Z", "Sort by Z to A")
-        private val VIEW_ROWS = listOf("Visual view", "Compact view")
+        private val ORDER_ROWS = listOf("Sort by Manual Order", "Sort by Newest", "Sort by Oldest", "Sort by Last Opened", "Sort by A to Z", "Sort by Z to A")
+        private val VIEW_ROWS = listOf("Visual View", "Compact View")
 
         // MANUAL as made (the model's order untouched); the rest Chrome's sortCompare over the seed:
         // folders first, then the key; ties by id (none here).

@@ -162,10 +162,11 @@
    * an 80 start image at radius 16 on a row of 80). Here a square of the two-line row's own
    * height (64) at the card radius (8, the squircle – section 2), so the row grows to 88 around
    * it (9.21). It shows the page's card picture covering it from the top where an open tab has
-   * one, else the favicon (a 20 mark, as any row's) centred on a card-toned tile with the
-   * hairline (Chrome's `fetchImageForBookmarkWithFaviconFallback`); a folder's glyph stands the
-   * same way. The text centres on the tile, as Chrome's does, and so does the checkbox while
-   * rows are picked – beside the picture, never over it (9.6).
+   * one, else the favicon at the tile's 32 (9.29: a 64 tile takes a 32 icon, never the row's 20)
+   * centred on a card-toned tile with the hairline (Chrome's
+   * `fetchImageForBookmarkWithFaviconFallback`); a folder's glyph stands the same way. The text
+   * centres on the tile, as Chrome's does, and so does the checkbox while rows are picked –
+   * beside the picture, never over it (9.6).
    */
   .zen-list-picture {
     display: flex;
@@ -186,10 +187,12 @@
     object-fit: cover;
     object-position: top;
   }
+  /* The tile's icon box: 32 on the 64 tile (9.29's tile rule; the new tab page's 64 tile draws
+     its 32 icon the same way), the favicon filling it, the glyph drawn at 32. */
   .zen-list-picture > .zen-list-mark {
     display: flex;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
+    width: 32px;
+    height: 32px;
     align-items: center;
     justify-content: center;
   }

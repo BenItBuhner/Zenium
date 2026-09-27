@@ -26,13 +26,13 @@ const bookmark = (url?: string): BookmarkNode => ({
 })
 
 describe("Chrome 152's words (android_chrome_strings.grd)", () => {
-  it('names the submenu, the six orders, the two views and their announcements verbatim', () => {
+  it('names the submenu and the announcements verbatim, and the six orders and two views as Title Case menu items (v2 §9.1)', () => {
     expect(SORT_VIEW_MENU_TITLE).toBe('Sort and view options')
     expect(SORT_ORDER_LABELS).toEqual({
-      manual: 'Sort by manual order',
-      newest: 'Sort by newest',
-      oldest: 'Sort by oldest',
-      'last-opened': 'Sort by last opened',
+      manual: 'Sort by Manual Order',
+      newest: 'Sort by Newest',
+      oldest: 'Sort by Oldest',
+      'last-opened': 'Sort by Last Opened',
       'a-z': 'Sort by A to Z',
       'z-a': 'Sort by Z to A'
     })
@@ -44,7 +44,7 @@ describe("Chrome 152's words (android_chrome_strings.grd)", () => {
       'a-z': 'Sorting from A to Z',
       'z-a': 'Sorting from Z to A'
     })
-    expect(DISPLAY_LABELS).toEqual({ visual: 'Visual view', compact: 'Compact view' })
+    expect(DISPLAY_LABELS).toEqual({ visual: 'Visual View', compact: 'Compact View' })
     expect(DISPLAY_ANNOUNCEMENTS).toEqual({
       visual: 'Showing visual view',
       compact: 'Showing compact view'
@@ -61,15 +61,15 @@ describe('the menu’s rows', () => {
     )
     expect(items.map((i) => (i === MENU_GAP ? '-' : `${i.label}${i.checked ? ' *' : ''}`))).toEqual(
       [
-        'Sort by manual order',
-        'Sort by newest',
-        'Sort by oldest *',
-        'Sort by last opened',
+        'Sort by Manual Order',
+        'Sort by Newest',
+        'Sort by Oldest *',
+        'Sort by Last Opened',
         'Sort by A to Z',
         'Sort by Z to A',
         '-',
-        'Visual view',
-        'Compact view *'
+        'Visual View',
+        'Compact View *'
       ]
     )
     expect(items.filter((i) => i !== MENU_GAP).every((i) => i.type === 'radio')).toBe(true)
@@ -81,10 +81,10 @@ describe('the menu’s rows', () => {
     const items = sortViewMenuItems({ sortOrder: 'manual', display: 'visual' }, onSort, onDisplay)
     const row = (label: string): { onSelect: () => void } =>
       items.find((i) => i !== MENU_GAP && i.label === label) as { onSelect: () => void }
-    row('Sort by last opened').onSelect()
-    row('Sort by manual order').onSelect()
-    row('Compact view').onSelect()
-    row('Visual view').onSelect()
+    row('Sort by Last Opened').onSelect()
+    row('Sort by Manual Order').onSelect()
+    row('Compact View').onSelect()
+    row('Visual View').onSelect()
     expect(onSort.mock.calls).toEqual([['last-opened']])
     expect(onDisplay.mock.calls).toEqual([['compact']])
   })

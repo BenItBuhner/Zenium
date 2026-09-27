@@ -524,13 +524,16 @@ function BookmarkNodeRow({
       <EllipsisVertical className="h-5 w-5" strokeWidth={1.75} />
     </PhoneIconButton>
   ) : null
+  // The row's lead is the row's 20 glyph; a tile's glyph is the tile's 32 (v2 §9.29: a 64 tile
+  // takes a 32 icon, never the row's 20). The favicon fills its `.zen-list-mark` box either way.
+  const glyph = visual ? 'h-8 w-8' : 'h-5 w-5'
   const mark = folder ? (
-    <Folder className="h-5 w-5" strokeWidth={1.75} />
+    <Folder className={glyph} strokeWidth={1.75} />
   ) : (
     <RowFavicon
       src={node.favicon}
       page={node.url ?? null}
-      fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
+      fallback={<Globe className={`zen-list-standin ${glyph}`} strokeWidth={1.75} />}
     />
   )
   // Chrome's visual row (`ImprovedBookmarkRowCoordinator`): the page's image, else the favicon on

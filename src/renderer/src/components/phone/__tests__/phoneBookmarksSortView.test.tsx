@@ -11,11 +11,12 @@ import { createBookmarkRoots, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@s
  * The phone bookmarks panel's "Sort and view options" against Chrome 152 (HB-13;
  * `BookmarkUiPrefs`, `bookmark_toolbar_menu_improved.xml`, `ImprovedBookmarkQueryHandler.
  * sortByStoredPref`, `ImprovedBookmarkRowCoordinator`): the header's button hangs Chrome's six
- * orders and two views as radio rows with Chrome's words, the current ones checked; a pick
+ * orders and two views as radio rows in Title Case (v2 §9.1), the current ones checked; a pick
  * writes the device-local setting and announces Chrome's line; the order applies to a folder's
  * rows and to search results, folders first, the id breaking ties; the Visual row is a tile
  * showing an open tab's card picture (never a private tab's) or the favicon on a card, the
- * Compact row the plain favicon row. Rendered for real in happy-dom, the core stubbed.
+ * Compact row the plain favicon row – and the default, a stated deviation from Chrome's Visual
+ * (v2 §9.29). Rendered for real in happy-dom, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -274,21 +275,21 @@ const leads = (): string[] =>
 // --- the menu ----------------------------------------------------------------------------------
 
 describe('the header’s Sort and view options (Chrome’s sort_submenu)', () => {
-  it('hangs the six orders then the two views as radio rows in Chrome’s words, manual order and the visual view checked by default', async () => {
+  it('hangs the six orders then the two views as Title Case radio rows, manual order and the compact view checked by default', async () => {
     await show()
     expect(sortViewButton()).not.toBeNull()
     await openSortView()
     expect(uiStore.get().menu?.title).toBe('Sort and view options')
     expect(menu()).toEqual([
-      { label: 'Sort by manual order', type: 'radio', checked: true },
-      { label: 'Sort by newest', type: 'radio', checked: false },
-      { label: 'Sort by oldest', type: 'radio', checked: false },
-      { label: 'Sort by last opened', type: 'radio', checked: false },
+      { label: 'Sort by Manual Order', type: 'radio', checked: true },
+      { label: 'Sort by Newest', type: 'radio', checked: false },
+      { label: 'Sort by Oldest', type: 'radio', checked: false },
+      { label: 'Sort by Last Opened', type: 'radio', checked: false },
       { label: 'Sort by A to Z', type: 'radio', checked: false },
       { label: 'Sort by Z to A', type: 'radio', checked: false },
       { label: '-', type: 'separator', checked: false },
-      { label: 'Visual view', type: 'radio', checked: true },
-      { label: 'Compact view', type: 'radio', checked: false }
+      { label: 'Visual View', type: 'radio', checked: false },
+      { label: 'Compact View', type: 'radio', checked: true }
     ])
   })
 
@@ -305,21 +306,21 @@ describe('the header’s Sort and view options (Chrome’s sort_submenu)', () =>
       menu()!
         .filter((i) => i.checked)
         .map((i) => i.label)
-    ).toEqual(['Sort by A to Z', 'Visual view'])
-    await pick('Compact view')
+    ).toEqual(['Sort by A to Z', 'Compact View'])
+    await pick('Visual View')
     expect(of('settings.update')).toEqual([
       { bookmarkRowSortOrder: 'a-z' },
-      { bookmarkRowDisplay: 'compact' }
+      { bookmarkRowDisplay: 'visual' }
     ])
-    expect(announcerStore.get().text).toBe('Showing compact view')
+    expect(announcerStore.get().text).toBe('Showing visual view')
   })
 
   it('a pick of the checked row writes nothing', async () => {
     await show()
     await openSortView()
-    await pick('Sort by manual order')
+    await pick('Sort by Manual Order')
     await openSortView()
-    await pick('Visual view')
+    await pick('Compact View')
     expect(of('settings.update')).toEqual([])
   })
 
@@ -393,13 +394,17 @@ describe('the orders (ImprovedBookmarkQueryHandler.sortByStoredPref)', () => {
 // --- the views ---------------------------------------------------------------------------------
 
 describe('the views (BookmarkRowDisplayPref)', () => {
-  it('the visual view stands every row on a tile – the open tab’s card picture where one is on the page, the favicon or folder glyph on a card otherwise', async () => {
-    await show()
+  it('the visual view stands every row on a tile – the open tab’s card picture where one is on the page, the favicon or folder glyph at the tile’s 32 on a card otherwise', async () => {
+    await show(stateOf({ bookmarkRowDisplay: 'visual' }))
     await tap('Mobile bookmarks')
     expect(document.querySelector('.zen-phone-list')?.getAttribute('data-display')).toBe('visual')
     expect(rows().every((r) => r.hasAttribute('data-picture'))).toBe(true)
     // No picture of the open tab yet: every tile shows its mark.
     expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:mark', 'tile:mark'])
+    // The tile's glyph is the tile's 32 (v2 §9.29: a 64 tile takes a 32 icon), not the row's 20.
+    const tileGlyph = rowByTitle('Work').querySelector('.zen-list-picture > .zen-list-mark > svg')
+    expect(tileGlyph?.classList.contains('h-8')).toBe(true)
+    expect(tileGlyph?.classList.contains('h-5')).toBe(false)
     // The chrome captured the open tab (example.com/fruit; the bookmark names it with a fragment).
     act(() => rememberThumbnail('ex', 'data:image/png;base64,AAAA'))
     await settle()
@@ -410,24 +415,31 @@ describe('the views (BookmarkRowDisplayPref)', () => {
   })
 
   it('never shows a private tab’s picture', async () => {
-    await show(stateOf({}, [tab('secret', 'https://example.com/fruit', PRIVATE_CONTAINER_ID)]))
+    await show(
+      stateOf({ bookmarkRowDisplay: 'visual' }, [
+        tab('secret', 'https://example.com/fruit', PRIVATE_CONTAINER_ID)
+      ])
+    )
     act(() => rememberThumbnail('secret', 'data:image/png;base64,BBBB'))
     await tap('Mobile bookmarks')
     expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:mark', 'tile:mark'])
   })
 
-  it('the compact view is the plain favicon row, no tile; the switch is a cut (a new FLIP epoch) and back again', async () => {
-    await show(stateOf({ bookmarkRowDisplay: 'compact' }))
+  it('the compact view – the default – is the plain favicon row with the row’s 20 glyph, no tile; the switch is a cut (a new FLIP epoch) and back again', async () => {
+    await show()
     await tap('Mobile bookmarks')
     expect(document.querySelector('.zen-phone-list')?.getAttribute('data-display')).toBe('compact')
     expect(rows().some((r) => r.hasAttribute('data-picture'))).toBe(false)
     expect(leads()).toEqual(['lead', 'lead', 'lead', 'lead', 'lead'])
+    expect(rowByTitle('Work').querySelector('.zen-list-lead svg')?.classList.contains('h-5')).toBe(
+      true
+    )
     await push(stateOf({ bookmarkRowDisplay: 'visual' }))
     expect(leads()).toEqual(['tile:mark', 'tile:mark', 'tile:mark', 'tile:mark', 'tile:mark'])
   })
 
   it('while rows are picked the checkbox leads and the tile stays beside it, never under it (9.6)', async () => {
-    await show()
+    await show(stateOf({ bookmarkRowDisplay: 'visual' }))
     await tap('Mobile bookmarks')
     await select('Zebra')
     const row = rowByTitle('Zebra')

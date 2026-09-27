@@ -6,7 +6,10 @@ import type { BookmarkNode } from './types'
  * `BookmarkRowSortOrder` (MANUAL default) and `BookmarkRowDisplayPref` (VISUAL default), both
  * kept in the device's SharedPreferences (`Chrome.Bookmarks.BookmarkRowSortOrder`,
  * `Chrome.Bookmarks.BookmarkRowDisplay`) and never synced – so both are `DEVICE_LOCAL_SETTINGS`
- * here. The model (`./bookmarks`) is the shared-services program's and is only read.
+ * here. One stated deviation: the display's default is COMPACT, not Chrome's VISUAL (design
+ * language v2 §9.29 – a taller row carrying the same favicon is not a view; Visual becomes the
+ * default the day the tile has pictures to show). The model (`./bookmarks`) is the
+ * shared-services program's and is only read.
  */
 
 /** Chrome's six orders, `BookmarkRowSortOrder` in the menu's order. */
@@ -25,8 +28,13 @@ export const DEFAULT_BOOKMARK_ROW_SORT_ORDER: BookmarkRowSortOrder = 'manual'
 /** Chrome's `BookmarkRowDisplayPref`: `VISUAL` (an image tile) or `COMPACT` (the favicon). */
 export type BookmarkRowDisplay = 'visual' | 'compact'
 export const BOOKMARK_ROW_DISPLAYS: readonly BookmarkRowDisplay[] = ['visual', 'compact']
-/** Chrome's `BookmarkUiPrefs.getBookmarkRowDisplayPref` default: `VISUAL`. */
-export const DEFAULT_BOOKMARK_ROW_DISPLAY: BookmarkRowDisplay = 'visual'
+/**
+ * The default display: `compact` – a STATED DEVIATION from Chrome's `VISUAL`
+ * (`BookmarkUiPrefs.getBookmarkRowDisplayPref`), by v2 §9.29: Zenium has no page-image service,
+ * so a visual tile mostly carries the favicon the compact row already shows. Also the
+ * sanitiser's fallback and `DEFAULT_SETTINGS.bookmarkRowDisplay`.
+ */
+export const DEFAULT_BOOKMARK_ROW_DISPLAY: BookmarkRowDisplay = 'compact'
 
 /** A stored order, or the default for a profile from before the key or a hand-edited one. */
 export function sanitizeBookmarkRowSortOrder(value: unknown): BookmarkRowSortOrder {

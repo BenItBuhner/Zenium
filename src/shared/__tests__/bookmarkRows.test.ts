@@ -118,13 +118,13 @@ describe("Chrome's bookmark row orders (ImprovedBookmarkQueryHandler.sortByStore
 })
 
 describe("the two prefs (Chrome's BookmarkUiPrefs)", () => {
-  it("read Chrome's defaults for a profile from before them or a value that is none of Chrome's", () => {
+  it("read the defaults for a profile from before them or a value that is none of Chrome's – manual order, and compact (the stated deviation from Chrome's VISUAL, v2 §9.29)", () => {
     expect(sanitizeBookmarkRowSortOrder(undefined)).toBe('manual')
     expect(sanitizeBookmarkRowSortOrder('by-colour')).toBe('manual')
     expect(sanitizeBookmarkRowSortOrder(3)).toBe('manual')
-    expect(sanitizeBookmarkRowDisplay(undefined)).toBe('visual')
-    expect(sanitizeBookmarkRowDisplay('list')).toBe('visual')
-    expect(sanitizeBookmarkRowDisplay(null)).toBe('visual')
+    expect(sanitizeBookmarkRowDisplay(undefined)).toBe('compact')
+    expect(sanitizeBookmarkRowDisplay('list')).toBe('compact')
+    expect(sanitizeBookmarkRowDisplay(null)).toBe('compact')
   })
 
   it('keep every one of the stored values', () => {
@@ -136,8 +136,8 @@ describe("the two prefs (Chrome's BookmarkUiPrefs)", () => {
     }
   })
 
-  it("are Chrome's defaults in DEFAULT_SETTINGS (device-local: see records.test.ts)", () => {
+  it('are the defaults in DEFAULT_SETTINGS (device-local: see records.test.ts)', () => {
     expect(DEFAULT_SETTINGS.bookmarkRowSortOrder).toBe('manual')
-    expect(DEFAULT_SETTINGS.bookmarkRowDisplay).toBe('visual')
+    expect(DEFAULT_SETTINGS.bookmarkRowDisplay).toBe('compact')
   })
 })

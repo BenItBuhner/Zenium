@@ -11,19 +11,20 @@ import { MENU_GAP, type LocalMenuItem } from './ui'
 /**
  * The phone bookmarks panel's "Sort and view options" (HB-13): Chrome 152's submenu behind the
  * manager's toolbar (`bookmark_toolbar_menu_improved.xml`: the `sort_opts` radio group, then
- * the `view_opts` radio group) with its words verbatim (`android_chrome_strings.grd`,
+ * the `view_opts` radio group) with its words (`android_chrome_strings.grd`,
  * `IDS_SORT_SUBMENU`, `IDS_SORT_BY_*`, `IDS_VISUAL_VIEW`, `IDS_COMPACT_VIEW`) and the
  * announcements it makes on a pick (`IDS_SORT_BY_*_ANNOUNCEMENT`, `IDS_*_VIEW_ANNOUNCEMENT`).
- * Radio rows are sentence case as Chrome's are (v2 §9.1).
+ * The rows are menu items and take Title Case as the phone's menus do (v2 §9.1); the sheet's
+ * title and the announcements are sentences and keep Chrome's sentence case.
  */
 
 export const SORT_VIEW_MENU_TITLE = 'Sort and view options'
 
 export const SORT_ORDER_LABELS: Readonly<Record<BookmarkRowSortOrder, string>> = {
-  manual: 'Sort by manual order',
-  newest: 'Sort by newest',
-  oldest: 'Sort by oldest',
-  'last-opened': 'Sort by last opened',
+  manual: 'Sort by Manual Order',
+  newest: 'Sort by Newest',
+  oldest: 'Sort by Oldest',
+  'last-opened': 'Sort by Last Opened',
   'a-z': 'Sort by A to Z',
   'z-a': 'Sort by Z to A'
 }
@@ -38,8 +39,8 @@ export const SORT_ORDER_ANNOUNCEMENTS: Readonly<Record<BookmarkRowSortOrder, str
 }
 
 export const DISPLAY_LABELS: Readonly<Record<BookmarkRowDisplay, string>> = {
-  visual: 'Visual view',
-  compact: 'Compact view'
+  visual: 'Visual View',
+  compact: 'Compact View'
 }
 
 export const DISPLAY_ANNOUNCEMENTS: Readonly<Record<BookmarkRowDisplay, string>> = {
