@@ -279,11 +279,13 @@ class NewTabPage {
    * it is let in WHOLE – the theme, the field with its glyph, the greeting and the grid as
    * applied above, in one paint – once its icons are in hand: each tile's `zen://favicon/<hash>`
    * and the field's engine favicon decoded, or `ICON_WAIT_MS` at most, so no tile draws a letter
-   * that then turns into its icon (a slot whose icon is late stays empty until it comes). Then,
-   * on the next frame so the fill is laid out first, the root's attribute comes off and the
-   * document's opacity runs 0 → 1 on the language's 120 ms fade – a cut under reduced motion,
-   * the stylesheet's rule (`newTabPage.ts`). Once: a later push changes the page in place, as
-   * it always did.
+   * that then turns into its icon: a tile whose icon is late at the cap is let in with its seat
+   * EMPTY – its `<img>` stays put, untouched by the cap, and paints the icon when it lands (an
+   * arrival into an empty seat, not a swap); the letter is the failed icon's alone (the `<img>`'s
+   * `error`, `renderTile`). Then, on the next frame so the fill is laid out first, the root's
+   * attribute comes off and the document's opacity runs 0 → 1 on the language's 120 ms fade –
+   * the same fade under reduced motion (§11.3), the stylesheet's rules (`newTabPage.ts`). Once: a
+   * later push changes the page in place, as it always did.
    */
   private reveal(): void {
     if (!this.awaitingState) return

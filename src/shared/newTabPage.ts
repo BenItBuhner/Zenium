@@ -337,13 +337,20 @@ export const NEW_TAB_AWAIT_STATE_ATTR = 'data-await-state'
  * chrome, so the frame's ground shows through where the page will be, and nothing of the shell
  * (the field in the wrong scheme, the grid before its tiles) is ever painted – and comes in
  * WHOLE on the language's 120 ms opacity fade once the script lets it (the fill applied, the
- * icons decoded). Under reduced motion the page's remover above makes the change a cut:
- * `transition-property: none !important` on every element, the root among them. Appended to the
- * document only where the attribute is set (`newTabPageHtml`); the desktop's document is as it was.
+ * icons decoded). Under reduced motion the arrival stays that fade (§11.3: fades stay and springs
+ * go – a fade is not a cut): the page's remover above takes every transition, the root's among
+ * them, so the root's fade is re-declared under the query, `!important` past the remover (`:root`
+ * outranks `*` at equal importance), in the one form the §11.3 guard admits – opacity alone, one
+ * segment, 120 ms written out, the page's own easing (as its Undo toast's kept fade). Nothing else
+ * on the page transitions there. Appended to the document only where the attribute is set
+ * (`newTabPageHtml`); the desktop's document is as it was.
  */
 export const NEW_TAB_AWAIT_STATE_STYLE = `
   :root { transition: opacity 120ms var(--zen-ease); }
   :root[${NEW_TAB_AWAIT_STATE_ATTR}] { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    :root { transition: opacity 120ms var(--zen-ease) !important; }
+  }
 `
 
 /** Lucide-style glyphs (stroke 1.5; sized by the stylesheet) inlined so the page needs no assets. */

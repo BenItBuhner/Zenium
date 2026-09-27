@@ -737,6 +737,47 @@ describe("zen://newtab: the awaiting document comes in whole (NTP-35, the tablet
     expect(AWAIT_STATE_CAP_MS).toBe(5000)
   })
 
+  it("a tile whose icon is late at the cap is let in EMPTY and fills when its icon lands – an arrival into an empty seat, not a swap; the letter is the failed icon's alone", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const decode = decodeByHand()
+    const h = mountAwaiting()
+    h.push(state({ shortcutsMode: 'my-shortcuts', shortcuts: shortcuts.slice(0, 2) }))
+    await vi.advanceTimersByTimeAsync(0)
+    const [one, two] = icons()
+    decode.settle(one)
+    // Two's answer has not come by the icons' cap: the page is let in with its seat empty – the
+    // `<img>` in place, its source kept, nothing drawn for it.
+    await vi.advanceTimersByTimeAsync(ICON_WAIT_MS)
+    runFrames()
+    expect(awaiting()).toBe(false)
+    expect(letters()).toEqual([])
+    expect(icons()).toHaveLength(2)
+    expect(icons()[1]).toBe(two)
+    expect(two.isConnected).toBe(true)
+    expect(two.getAttribute('src')).toBe(shortcuts[1].favicon)
+    // The icon lands after the reveal: the same `<img>`, in the same seat, is what paints it –
+    // the page swaps nothing, replaces nothing, and never drew a letter for it.
+    decode.settle(two)
+    two.dispatchEvent(new Event('load'))
+    await vi.advanceTimersByTimeAsync(0)
+    runFrames()
+    expect(icons()).toHaveLength(2)
+    expect(icons()[1]).toBe(two)
+    expect(two.isConnected).toBe(true)
+    expect(letters()).toEqual([])
+    expect(marks()).toEqual([
+      LANDING_MARKS.ready,
+      LANDING_MARKS.state,
+      LANDING_MARKS.icons,
+      LANDING_MARKS.in
+    ])
+    // Only the store's own word that there is no icon draws the letter, before or after the reveal.
+    two.dispatchEvent(new Event('error'))
+    expect(letters()).toEqual(['T'])
+    expect(icons()).toHaveLength(1)
+    expect(icons()[0]).toBe(one)
+  })
+
   it('a state that never comes: the shell is let in at the cap rather than staying the ground', async () => {
     // The clock alone is faked: the frames stay the test's own hand.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
