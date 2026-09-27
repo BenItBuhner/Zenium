@@ -142,6 +142,10 @@ function harness(
     tabs: {
       allViews: () => views.entries(),
       view: (id: string) => views.get(id),
+      // The media is the tab's page's (`pageView`, `pageUrl`): the one beneath a reader cover
+      // too, which no tab here has.
+      pageView: (id: string) => views.get(id),
+      pageUrl: (id: string) => tabs.get(id)?.url,
       tab: (id: string) => tabs.get(id),
       isPrivate: (tab: { id: string }) => privateTabs.has(tab.id),
       visibleTabIds: (win: FakeWindow) => [...win.visible],

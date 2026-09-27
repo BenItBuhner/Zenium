@@ -267,7 +267,9 @@ function world(): World {
     model: {
       zenTab: (tabId: number) => pages.get(tabId)?.tab,
       webContentsOf: (tab: Tab) => [...pages.values()].find((p) => p.tab === tab)?.wc,
-      chromeTab: (tab: Tab) => ({ id: Number(tab.id.slice(4)), url: tab.url, active: true })
+      chromeTab: (tab: Tab) => ({ id: Number(tab.id.slice(4)), url: tab.url, active: true }),
+      // The tab's address as extensions see it (the page's beneath a reader cover; none here).
+      urlOf: (tab: Tab) => tab.url
     },
     store: {
       userScripts: (extensionId: string) => stored.get(extensionId) ?? null,

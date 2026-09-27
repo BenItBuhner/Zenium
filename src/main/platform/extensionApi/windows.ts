@@ -48,8 +48,8 @@ export class WindowsApi {
     return this.host.model
   }
 
-  private urlsFor(ext: LoadedExtension): (tab: { url: string }) => boolean {
-    return (tab) => this.host.canSeeTab(ext, tab.url)
+  private urlsFor(ext: LoadedExtension): (tab: Tab) => boolean {
+    return (tab) => this.host.canSeeTab(ext, this.model.urlOf(tab))
   }
 
   private queryOptions(options: unknown): WindowQueryOptions {

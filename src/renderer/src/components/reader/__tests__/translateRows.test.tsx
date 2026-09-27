@@ -18,7 +18,7 @@ import {
   readerTranslateTarget,
   readerTranslateWorking
 } from '@renderer/lib/readerTranslate'
-import { DEFAULT_READER_PREFERENCES } from '@shared/reader'
+import { DEFAULT_READER_PREFERENCES, type ReaderPreferences } from '@shared/reader'
 import { Rows, TranslateRow } from '../ReaderPreferencesPanel'
 
 /*
@@ -419,7 +419,10 @@ describe('the panel’s order', () => {
       '—',
       'Line focus',
       'Lines in focus',
-      'Syllables'
+      'Syllables',
+      '—',
+      'Links',
+      'Images'
     ])
     // The head's action rows carry their glyphs together (§10.4's mixing rule within the
     // group): the leading slot is each row's first child. The setting rows carry none: their
@@ -450,6 +453,65 @@ describe('the panel’s order', () => {
     expect(outline(el).slice(0, 3)).toEqual(['Translate', '—', 'Text size'])
   })
 
+  it('Links and Images are switch rows on the saved preferences, each patching its own key (reader-12)', () => {
+    desktop()
+    const patches: Array<Partial<ReaderPreferences>> = []
+    const el = render(
+      <Rows
+        prefs={{ ...DEFAULT_READER_PREFERENCES, images: false }}
+        onChange={(patch) => void patches.push(patch)}
+        onListen={null}
+        translate={null}
+      />
+    )
+    const links = row(el, 'links')
+    const images = row(el, 'images')
+    expect(links.getAttribute('role')).toBe('switch')
+    expect(images.getAttribute('role')).toBe('switch')
+    // The rows read the saved preferences: links on, images off.
+    expect(links.getAttribute('aria-checked')).toBe('true')
+    expect(images.getAttribute('aria-checked')).toBe('false')
+    // Each press asks for the opposite of its own key alone (the preferences record is the
+    // core's; the page follows the patch as any other).
+    act(() => links.click())
+    act(() => images.click())
+    expect(patches).toEqual([{ links: false }, { images: true }])
+    // One-line rows, the label alone as Chrome's "Links" / "Images": a description each would
+    // put the popover over §9.20's 60 % ceiling at 1600 × 1000 and scroll it by a hair.
+    for (const switchRow of [links, images]) {
+      expect(switchRow.querySelectorAll('.line-clamp-2')).toHaveLength(0)
+      expect(switchRow.textContent).toMatch(/^(Links|Images)$/)
+    }
+  })
+
+  it('a peer’s record from before the two toggles reads as both on: absence is not off', () => {
+    desktop()
+    // A settings merge lands an older device's seven-field `reader` object as it came.
+    const sevenField = {
+      fontSize: 18,
+      font: 'serif',
+      theme: 'auto',
+      width: 'normal',
+      lineFocus: 0,
+      spacing: 'normal',
+      syllables: false
+    } as unknown as ReaderPreferences
+    const patches: Array<Partial<ReaderPreferences>> = []
+    const el = render(
+      <Rows
+        prefs={sevenField}
+        onChange={(patch) => void patches.push(patch)}
+        onListen={null}
+        translate={null}
+      />
+    )
+    expect(row(el, 'links').getAttribute('aria-checked')).toBe('true')
+    expect(row(el, 'images').getAttribute('aria-checked')).toBe('true')
+    // A press from there asks for off, as from any record that reads on.
+    act(() => row(el, 'links').click())
+    expect(patches).toEqual([{ links: false }])
+  })
+
   it('without the engine the type rows run straight into the aids’ hairline', () => {
     desktop()
     const el = render(
@@ -469,7 +531,10 @@ describe('the panel’s order', () => {
       '—',
       'Line focus',
       'Lines in focus',
-      'Syllables'
+      'Syllables',
+      '—',
+      'Links',
+      'Images'
     ])
   })
 })

@@ -68,7 +68,8 @@ let lastLineFocus: ReaderLineFocus = 3
  * the reader document offers (v2 §10.1 – the document itself draws no toolbar): read aloud's
  * start, the text size on its ladder with A− / A+, the font, the colour theme, the column
  * width and the text spacing, then the immersive-reader extras – line focus with its band size
- * and syllables – one setting for every reader page. On a mouse a 400 px popover under the
+ * and syllables – and last Chrome's Reading mode content toggles, Links and Images (reader-12),
+ * one setting for every reader page. On a mouse a 400 px popover under the
  * pill's chip (v2 draft §9.20) – rows with trailing controls (§9.21) under a title block (§9.23);
  * on a phone the shared bottom sheet with its 48 header (§9.16), a control panel that draws its
  * controls (§9.13). Every change goes through `reader.setPreferences`, which saves it and pushes
@@ -103,6 +104,8 @@ export function ReaderPreferencesPanel({
     prefs.spacing,
     prefs.lineFocus,
     prefs.syllables,
+    prefs.links,
+    prefs.images,
     translation?.status ?? '',
     translation?.target ?? '',
     translation?.showOriginal ?? ''
@@ -156,10 +159,14 @@ export function ReaderPreferencesPanel({
  * a menulist row each for the font, the colour theme, the column width and the spacing (§9.13,
  * a sheet of radio rows under a finger); then the extras: line focus as a switch row (§10.4)
  * with the band size a dependent menulist row – laid out at .4 while the focus is off – and
- * syllables as a switch row. #265's rule for the phone sheet holds with the one head row: the
- * peek shows the live type rows whole above the fold (the 44 head rows and the hairline before
- * Text spacing's bottom edge stay inside the 412 × 915 phone's peek), the set-once aids after
- * the hairline. Exported for the order's test.
+ * syllables as a switch row; then, behind a hairline of their own, the article's content as
+ * Chrome's Reading mode Settings menu ends its toolbar with it (reader-12): Links and Images as
+ * one-line switch rows – the label alone, as Chrome's – off drawing the links as plain text and
+ * hiding the pictures; with a description each the popover would pass §9.20's 60 % ceiling at
+ * 1600 × 1000 and scroll by a hair (the first line's read of #587). #265's rule for the
+ * phone sheet holds with the one head row: the peek shows the live type rows whole above the
+ * fold (the 44 head rows and the hairline before Text spacing's bottom edge stay inside the
+ * 412 × 915 phone's peek), the set-once aids after the hairline. Exported for the order's test.
  */
 export function Rows({
   prefs,
@@ -271,6 +278,20 @@ export function Rows({
         checked={prefs.syllables}
         onChange={(syllables) => onChange({ syllables })}
         data-reader-pref="syllables"
+      />
+      <Separator />
+      {/* On unless off: a peer's record from before the two toggles carries neither. */}
+      <SwitchRow
+        label="Links"
+        checked={prefs.links !== false}
+        onChange={(links) => onChange({ links })}
+        data-reader-pref="links"
+      />
+      <SwitchRow
+        label="Images"
+        checked={prefs.images !== false}
+        onChange={(images) => onChange({ images })}
+        data-reader-pref="images"
       />
     </div>
   )

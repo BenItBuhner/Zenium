@@ -1,7 +1,9 @@
 import type { ReaderArticle } from './reader'
 import {
   LINE_FOCUS_MASK_CLASS,
+  READER_IMAGES_ATTRIBUTE,
   READER_LINE_FOCUS_ATTRIBUTE,
+  READER_LINKS_ATTRIBUTE,
   READER_SPACING_ATTRIBUTE,
   READER_SYLLABLES_ATTRIBUTE,
   SYLLABLE_MARK_CLASS,
@@ -31,7 +33,10 @@ export interface ReaderShown {
  * The page's typography follows `data-theme` / `data-font` / `data-width` on the root and the
  * `--font-size` variable; `data-theme='auto'` follows the browser's colour scheme through the
  * page's own media query (the `zen://` document is rendered with `color-scheme: light dark`, so
- * the host's forced scheme reaches it). The document carries no toolbar of its own: a `zen://`
+ * the host's forced scheme reaches it). Chrome's Links and Images toggles (reader-12) are the
+ * root's `data-links="off"` / `data-images="off"`: links off are the article's text as text
+ * (no colour, no underline, no click), images off hide the article's pictures, figures and
+ * video. The document carries no toolbar of its own: a `zen://`
  * document is chrome (v2 §10.1), and its preferences – the text, the extras, read aloud – live
  * in the pill chip's Text preferences popover and sheet, the one home for them.
  */
@@ -67,6 +72,8 @@ const STYLE = `
   ::highlight(${READ_ALOUD_WORD_HIGHLIGHT}) { background-color: rgba(255, 149, 0, 0.6); }
   :root[data-theme='dark'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); }
   @media (prefers-color-scheme: dark) { :root[data-theme='auto'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); } }
+  :root[${READER_LINKS_ATTRIBUTE}='off'] article a { color: inherit; text-decoration: none; pointer-events: none; cursor: text; }
+  :root[${READER_IMAGES_ATTRIBUTE}='off'] article :is(img, picture, video, figure, svg) { display: none; }
   :root[data-spacing='wide'] article { letter-spacing: 0.06em; word-spacing: 0.16em; line-height: 1.9; }
   :root[data-spacing='wider'] article { letter-spacing: 0.12em; word-spacing: 0.32em; line-height: 2.15; }
   .${SYLLABLE_MARK_CLASS}::before { content: '\\00B7'; color: var(--muted); opacity: 0.8; }
@@ -90,6 +97,10 @@ const SCRIPT = `
     root.setAttribute(${JSON.stringify(READER_LINE_FOCUS_ATTRIBUTE)}, String(state.lineFocus || 0));
     root.setAttribute(${JSON.stringify(READER_SPACING_ATTRIBUTE)}, state.spacing || 'normal');
     root.setAttribute(${JSON.stringify(READER_SYLLABLES_ATTRIBUTE)}, String(state.syllables === true));
+    if (state.links === false) root.setAttribute(${JSON.stringify(READER_LINKS_ATTRIBUTE)}, 'off');
+    else root.removeAttribute(${JSON.stringify(READER_LINKS_ATTRIBUTE)});
+    if (state.images === false) root.setAttribute(${JSON.stringify(READER_IMAGES_ATTRIBUTE)}, 'off');
+    else root.removeAttribute(${JSON.stringify(READER_IMAGES_ATTRIBUTE)});
   }
   window.zenReaderApply = (prefs) => { Object.assign(state, prefs); render(); };
   window.zenReaderShow = (units, title, lang) => {
@@ -142,6 +153,10 @@ export function readerPage(
     `${READER_LINE_FOCUS_ATTRIBUTE}="${prefs.lineFocus}"`,
     `${READER_SPACING_ATTRIBUTE}="${prefs.spacing}"`,
     `${READER_SYLLABLES_ATTRIBUTE}="${prefs.syllables}"`,
+    // Off is the one word that turns them off: a record without the two (a peer's, from
+    // before reader-12) reads on.
+    prefs.links !== false ? '' : `${READER_LINKS_ATTRIBUTE}="off"`,
+    prefs.images !== false ? '' : `${READER_IMAGES_ATTRIBUTE}="off"`,
     `data-prefs="${escapeHtml(JSON.stringify(prefs))}"`,
     `style="--font-size: ${prefs.fontSize}px"`
   ]

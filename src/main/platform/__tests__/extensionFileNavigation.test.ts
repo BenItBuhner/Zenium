@@ -32,6 +32,7 @@ function world(): World {
     zenTab: (id: number) => (id === 7 ? tab : undefined),
     chromeTabId: () => 7,
     chromeTab: (t: Tab) => ({ id: 7, url: t.url }),
+    urlOf: (t: Tab) => t.url,
     windowOfTab: () => win,
     tabsInWindow: () => [tab],
     lastFocusedWindow: () => win,

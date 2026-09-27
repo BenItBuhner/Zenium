@@ -3,7 +3,11 @@ import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { readerPage, type ReaderShown } from './readerPage'
-import { readerPreferencesPatch, type ReaderPreferences } from '../shared/reader'
+import {
+  readerPreferencesPatch,
+  sanitizeReaderPreferences,
+  type ReaderPreferences
+} from '../shared/reader'
 import { renderArticleHtml, splitArticleHtml, type ArticleSplit } from './translate/articleHtml'
 
 export const READER_URL_PREFIX = 'zen://reader'
@@ -64,6 +68,51 @@ export interface RawArticle {
   lang?: string | null
   dir?: string | null
 }
+
+/** What `SELECTED_MARKUP_SCRIPT` reads out of the page: the selection as the reader's article. */
+interface SelectedMarkup {
+  content: string
+  length: number
+  siteName: string | null
+  lang: string | null
+  dir: string | null
+}
+
+/**
+ * The page's selection as markup for the reader document (`ReaderService.openSelection`): every
+ * range's contents cloned – partial blocks and all, so the structure the selection cuts across
+ * (paragraphs, lists, headings) stands – with `href` and `src` made absolute against the page
+ * (a `srcset` of relative candidates goes; the `src` stands for the picture) and the page's
+ * site name, language and direction beside it. Null without a selection.
+ */
+const SELECTED_MARKUP_SCRIPT = `(() => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const box = document.createElement('div');
+  for (let i = 0; i < sel.rangeCount; i++) box.appendChild(sel.getRangeAt(i).cloneContents());
+  const absolute = (el, attr) => {
+    const value = el.getAttribute(attr);
+    if (!value) return;
+    try { el.setAttribute(attr, new URL(value, document.baseURI).href); } catch { el.removeAttribute(attr); }
+  };
+  for (const a of box.querySelectorAll('a[href]')) absolute(a, 'href');
+  for (const el of box.querySelectorAll('img[src], video[src], source[src]')) absolute(el, 'src');
+  for (const el of box.querySelectorAll('video[poster]')) absolute(el, 'poster');
+  for (const el of box.querySelectorAll('[srcset]')) el.removeAttribute('srcset');
+  const text = box.textContent || '';
+  if (!text.trim()) return null;
+  const block = box.querySelector('p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, blockquote, pre, table, figure, section, article');
+  const content = block ? box.innerHTML : '<p>' + box.innerHTML + '</p>';
+  const site = document.querySelector('meta[property="og:site_name"]');
+  const root = document.documentElement;
+  return {
+    content,
+    length: text.length,
+    siteName: (site && site.getAttribute('content')) || null,
+    lang: root.lang || null,
+    dir: root.dir || null
+  };
+})()`
 
 /**
  * Firefox's Reader View for Zen: Mozilla's Readability runs inside the page, the extracted
@@ -148,9 +197,14 @@ export class ReaderService {
     void view.executeJavaScript(call).catch(() => undefined)
   }
 
-  /** The text preferences every reader page is rendered with (Settings, persisted). */
+  /**
+   * The text preferences every reader page is rendered with (Settings, persisted), read
+   * through the sanitiser: a peer on an older build syncs its seven-field record over the
+   * setting whole (`sync/apply.ts` lands the settings record key by key), and the fields it
+   * lacks – Links and Images (reader-12) – read as their defaults, on, not as off.
+   */
   preferences(): ReaderPreferences {
-    return this.browser.state.settings.reader
+    return sanitizeReaderPreferences(this.browser.state.settings.reader)
   }
 
   /**
@@ -212,6 +266,9 @@ export class ReaderService {
 
   /** Called on `dom-ready`: ask the page whether it looks like an article. */
   async detect(tabId: string): Promise<void> {
+    // The reader's cover stands: the document in front is the article, and the page beneath
+    // keeps the answer it gave (it comes back with the cover down).
+    if (this.browser.tabs.isCovered(tabId)) return
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     const src = this.source('Readability-readerable.js')
@@ -236,11 +293,18 @@ export class ReaderService {
     }
   }
 
-  /** Enter Reader View for a page, or leave it when already reading. */
+  /**
+   * Enter Reader View for a page, or leave it when already reading. Leaving takes the reader's
+   * cover down (reader-30): the page beneath shows again as it was – its scroll kept, no load,
+   * no history entry, as closing Chrome's reading mode overlay does. A reader loaded as a
+   * navigation of the tab (the phone, whose host has one page per tab) goes back by loading
+   * the page.
+   */
   toggle(tabId: string, win: ZenWindow): void {
     const tab = this.browser.tabs.tab(tabId)
     if (!tab) return
     if (this.isReaderUrl(tab.url)) {
+      if (this.browser.tabs.uncover(tabId)) return
       const original = this.originalUrl(tab.url)
       if (original) this.browser.tabs.navigate(tabId, original)
       return
@@ -280,9 +344,45 @@ export class ReaderService {
   }
 
   /**
+   * "Open Selection in Reader View" (reader-02, Chrome's "Open in reading mode" on a selection):
+   * the selected text's own markup, read out of the page – the frame the selection is in where
+   * the host addresses frames – is the article, rendered by the reader document as any article
+   * is (Chrome's reading mode renders the selection's nodes the same way; the distiller is not
+   * asked). Links and images take their absolute addresses, since the reader document has
+   * another base; a run of bare text becomes a paragraph. Nothing happens on a page without a
+   * selection or one that is gone. The article's title is the page's, as Chrome's is.
+   */
+  async openSelection(tabId: string, win: ZenWindow, frameId?: number): Promise<void> {
+    const tab = this.browser.tabs.tab(tabId)
+    const view = this.browser.tabs.view(tabId)
+    if (!tab || !view || this.isReaderUrl(tab.url)) return
+    let raw: SelectedMarkup | null = null
+    try {
+      raw = (await view.executeJavaScript(SELECTED_MARKUP_SCRIPT, frameId)) as SelectedMarkup | null
+    } catch {
+      raw = null
+    }
+    if (!raw || !raw.content.trim()) {
+      this.browser.toast('Select some text to open in Reader View.', 'info', win)
+      return
+    }
+    if (this.browser.tabs.tab(tabId) !== tab) return
+    this.open(tabId, {
+      siteName: raw.siteName,
+      content: raw.content,
+      length: raw.length,
+      lang: raw.lang,
+      dir: raw.dir
+    })
+  }
+
+  /**
    * Show an article already extracted from the tab's page in Reader View: the page script's
-   * result here, or a host's own extraction (the preview host stands one in). The tab goes to
-   * `zen://reader?id=…&url=…`, which renders it with the saved text preferences.
+   * result here, a selection's own markup (`openSelection`), or a host's own extraction (the
+   * preview host stands one in). The reader document `zen://reader?id=…&url=…` renders it with
+   * the saved text preferences – as a cover over the tab's page where the host has one
+   * (`TabManager.cover`: the page stays alive beneath, reader-30), else as a navigation of
+   * the tab.
    */
   open(tabId: string, raw: RawArticle): void {
     const tab = this.browser.tabs.tab(tabId)
@@ -306,7 +406,8 @@ export class ReaderService {
     // Keep memory bounded: articles are only needed while their tab shows them.
     if (this.articles.size > 40) this.articles.delete(this.articles.keys().next().value as string)
     const params = new URLSearchParams({ id, url: tab.url })
-    this.browser.tabs.navigate(tabId, `${READER_URL_PREFIX}?${params.toString()}`)
+    const readerUrl = `${READER_URL_PREFIX}?${params.toString()}`
+    if (!this.browser.tabs.cover(tabId, readerUrl)) this.browser.tabs.navigate(tabId, readerUrl)
   }
 }
 

@@ -70,7 +70,7 @@ function world(store: Map<string, PersistedMenuItem[]>): World {
     loaded,
     allLoaded: () => Object.keys(MANIFESTS).map(loaded),
     canSeeTab: () => true,
-    model: { chromeTab: (tab: Tab) => ({ id: 1, url: tab.url }) },
+    model: { chromeTab: (tab: Tab) => ({ id: 1, url: tab.url }), urlOf: (tab: Tab) => tab.url },
     dispatch: (extensionId: string, _ns: string, event: string, args: unknown[]) =>
       dispatched.push({ extensionId, event, args }),
     browser: {

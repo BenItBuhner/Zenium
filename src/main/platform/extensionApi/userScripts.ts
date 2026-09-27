@@ -581,7 +581,10 @@ export class UserScriptsApi {
       documentLifecycle: 'active'
     }
     const tab = this.host.model.zenTab(wc.id)
-    if (tab) sender.tab = this.host.model.chromeTab(tab, this.host.canSeeTab(extension, tab.url))
+    if (tab) {
+      const url = this.host.model.urlOf(tab)
+      sender.tab = this.host.model.chromeTab(tab, this.host.canSeeTab(extension, url))
+    }
     return sender
   }
 

@@ -161,7 +161,7 @@ export class CommandsApi {
       return
     }
     const tab = active
-      ? this.host.model.chromeTab(active, this.host.canSeeTab(ext, active.url))
+      ? this.host.model.chromeTab(active, this.host.canSeeTab(ext, this.host.model.urlOf(active)))
       : undefined
     const args: unknown[] = tab ? [command.name, tab] : [command.name]
     this.host.dispatch(ext.id, 'commands', 'onCommand', args, { wake: true })

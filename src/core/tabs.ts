@@ -98,6 +98,7 @@ import type { ImagePost } from '../shared/imageUpload'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
+import { readerArticleId } from './reader'
 import type { FaviconFetcher } from './favicons'
 import {
   defer,
@@ -145,6 +146,56 @@ export interface TabFocusOptions {
 }
 
 /**
+ * What a tab showed before the reader's cover went up over its page (`TabManager.cover`), put
+ * back when the cover comes down: the row's fields the cover borrows while it stands. Read
+ * through `TabManager.coveredPage` by whoever speaks of the page rather than the row while the
+ * cover stands (the extension API's tab record, the services that answer the page).
+ */
+export interface CoveredPage {
+  url: string
+  title: string
+  favicon: string | null
+  readerable: boolean
+  zoom: number
+}
+
+/** How the reader's cover comes down (`TabManager.uncover`). */
+export interface UncoverOptions {
+  /**
+   * Put the tab's fields back to the page beneath (default). Off when the page is the one
+   * moving on – a navigation committing beneath the cover writes its own fields next.
+   */
+  restore?: boolean
+  /** Lay the window out again so the page is placed and shown where the cover stood (default). */
+  relayout?: boolean
+  /**
+   * Destroy the cover at once rather than once the page beneath reports a frame drawn (the page
+   * is going anyway: a discard, a close, the window's release).
+   */
+  immediate?: boolean
+}
+
+/**
+ * The failure ceiling of the cover's paint handshake (design language v2 §11). The swap between
+ * the reader's cover and the page beneath falls on the word of the one coming to the front that
+ * it has drawn a frame (`TabView.frameDrawn`: a double `requestAnimationFrame` in its document)
+ * – the page hides on the cover's word at the entry, the cover goes on the page's at the exit –
+ * and never on a clock: a settle time that wins by twenty milliseconds on one machine loses on
+ * the next (the 80 ms the swap first rested on stood 23–29 ms clear of a 53–58 ms first paint
+ * under software rendering, a margin and not a property). This clock stands only for a document
+ * that never reports – a view hidden before it could draw, a hung renderer, a host with no way
+ * to ask – so that the swap still happens; set well past any first paint, since a ceiling inside
+ * the paint's own range is the same race under another name. 500 ms: nine times the first paint
+ * measured, four times the slowest one argued for (120 ms), and Chromium's own figure for the
+ * same judgement – paint holding gives a new document 500 ms of frames for its first contentful
+ * paint before committing without one; short of the boot holds (`READY_TO_SHOW_FALLBACK_MS`
+ * 2500, `EXTENSION_LAYER_HOLD_MS` 2000), which guard a window with nothing at all to show and
+ * would here leave a stale picture or the ground standing for two seconds on a swap that takes
+ * a tenth of one.
+ */
+export const COVER_REPORT_CEILING_MS = 500
+
+/**
  * Owns the live page for every loaded tab and implements Zen's tab behaviours on top of the pure
  * model. Pages are created through the host's `TabViewHost`; everything else is platform neutral.
  *
@@ -155,6 +206,16 @@ export interface TabFocusOptions {
 export class TabManager {
   private readonly views = new Map<string, TabView>()
   private readonly owners = new Map<string, ZenWindow>()
+  /**
+   * Reader covers (`cover`): a second live page over a tab's own, the `zen://reader` document,
+   * while the page stays alive and unmoved beneath it (Chrome's immersive reading mode is the
+   * same overlay). `view()` answers with the cover while one stands – it is the document in
+   * front, the one find, zoom, read aloud and the page menu address – and `pageView()` with the
+   * page; the tab's navigation (back, forward, reload, the stack) is the page's throughout.
+   */
+  private readonly covers = new Map<string, TabView>()
+  /** What the tab showed before its cover went up, put back when the cover comes down. */
+  private readonly covered = new Map<string, CoveredPage>()
   /**
    * Tabs whose current load is an https:// upgrade – of typed input without a scheme, or of an
    * http:// navigation HTTPS-only mode's rule upgraded – keyed to the plaintext URL to fall back
@@ -268,10 +329,48 @@ export class TabManager {
     return tabId ? this.model.tabs[tabId] : undefined
   }
 
-  /** The live view of a tab, if it is loaded and not destroyed. */
+  /**
+   * The live view of a tab, if it is loaded and not destroyed: the document in front – the
+   * reader's cover while one stands (`cover`), else the tab's own page. What find, zoom, read
+   * aloud, the page menu and the keyboard address; the tab's navigation is `pageView`'s.
+   */
   view(tabId: string): TabView | undefined {
+    const cover = this.covers.get(tabId)
+    if (cover && !cover.isDestroyed()) return cover
+    return this.pageView(tabId)
+  }
+
+  /**
+   * The tab's own page, if it is loaded and not destroyed – the document beneath a cover, the
+   * one the tab's back/forward stack, its address and its load belong to.
+   */
+  pageView(tabId: string): TabView | undefined {
     const view = this.views.get(tabId)
     return view && !view.isDestroyed() ? view : undefined
+  }
+
+  /** Whether the reader's cover stands over the tab's page (`cover`). */
+  isCovered(tabId: string): boolean {
+    return this.covers.has(tabId)
+  }
+
+  /**
+   * The page beneath the reader's cover as the row would show it – its address, title, favicon,
+   * readerability and zoom – while a cover stands; undefined otherwise. The row itself says the
+   * reader (`tab.url`, `tab.title`) meanwhile; whoever speaks of the page reads this instead:
+   * the extension API's tab record and events (Chrome's reading mode is no navigation of the
+   * tab to an extension), the services that answer the page (geolocation, notifications, the
+   * media keys), the site settings that key on the page's address (sound).
+   */
+  coveredPage(tabId: string): Readonly<CoveredPage> | undefined {
+    return this.covered.get(tabId)
+  }
+
+  /** The tab's page's own address: what it shows beneath a cover, else the row's (`tab.url`). */
+  pageUrl(tabId: string): string | undefined {
+    const tab = this.tab(tabId)
+    if (!tab) return undefined
+    return this.covered.get(tabId)?.url ?? tab.url
   }
 
   allViews(): Iterable<[string, TabView]> {
@@ -283,11 +382,17 @@ export class TabManager {
     return this.owners.get(tabId)
   }
 
+  /**
+   * The view each of `win`'s pages is laid out as: the cover of a covered tab (the page
+   * beneath it keeps its place off screen until the cover comes down), else the page.
+   */
   viewsOwnedBy(win: ZenWindow): Map<string, TabView> {
     const out = new Map<string, TabView>()
     for (const [tabId, owner] of this.owners) {
-      const view = this.views.get(tabId)
-      if (owner === win && view) out.set(tabId, view)
+      if (owner !== win) continue
+      const cover = this.covers.get(tabId)
+      const view = cover && !cover.isDestroyed() ? cover : this.views.get(tabId)
+      if (view) out.set(tabId, view)
     }
     return out
   }
@@ -355,7 +460,7 @@ export class TabManager {
   ): TabView | undefined {
     const tab = this.tab(tabId)
     if (!tab) return undefined
-    const existing = this.view(tabId)
+    const existing = this.pageView(tabId)
     if (existing) return existing
     if (this.browser.pages.isChromePage(tab)) {
       // A chrome page is drawn by the chrome: there is nothing to load and never a view.
@@ -363,7 +468,7 @@ export class TabManager {
       return undefined
     }
     if (opts.background) {
-      return this.browser.governor.requestLoad(tabId, win?.id) ? this.view(tabId) : undefined
+      return this.browser.governor.requestLoad(tabId, win?.id) ? this.pageView(tabId) : undefined
     }
     this.browser.governor.makeRoomFor(tabId)
     return this.load(tabId, win)
@@ -373,7 +478,7 @@ export class TabManager {
   load(tabId: string, win?: ZenWindow): TabView | undefined {
     const tab = this.tab(tabId)
     if (!tab) return undefined
-    const existing = this.view(tabId)
+    const existing = this.pageView(tabId)
     if (existing) return existing
     if (this.browser.pages.isChromePage(tab)) {
       tab.discarded = false
@@ -398,6 +503,18 @@ export class TabManager {
         url = BLANK_URL
       }
       tab.url = url
+    }
+    // A tab put away while its reader stood over the page (a relaunch with the cover up): the
+    // article went with the session, and the address the tab wakes on is the page the reader
+    // was of – whose stack, below, is the one recorded – not the reader's own, which would show
+    // the article gone. A reader document whose article the service still holds (the phone's
+    // reader is a navigation of the tab; a discarded tab waking within the session) loads as
+    // it was.
+    const articleId = readerArticleId(url)
+    if (articleId !== null && !this.browser.reader.article(articleId)) {
+      url = this.browser.reader.originalUrl(url) ?? BLANK_URL
+      tab.url = url
+      tab.readerable = false
     }
     const snapshot =
       this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
@@ -457,7 +574,7 @@ export class TabManager {
 
   /** The tab's back/forward stack (URLs and titles) with the current entry marked. */
   navigationEntries(tabId: string): NavigationSnapshot {
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (view) return view.navigationEntries()
     const pending = this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
     if (pending) return pending
@@ -472,7 +589,7 @@ export class TabManager {
    * tab comes back with it – and with each entry's page state, its scroll position – after an
    * unload, a relaunch or a crash. Private tabs leave nothing behind.
    */
-  rememberNavigation(tabId: string, view: TabView | undefined = this.view(tabId)): void {
+  rememberNavigation(tabId: string, view: TabView | undefined = this.pageView(tabId)): void {
     const tab = this.tab(tabId)
     if (!tab || !view || view.isDestroyed() || this.isPrivate(tab)) return
     // A host without a stack to report (a page still blank) leaves the record alone.
@@ -490,7 +607,7 @@ export class TabManager {
 
   /** Jump to an entry of the back/forward stack (the long-press list on the back button). */
   goToIndex(tabId: string, index: number): void {
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!view) {
       const tab = this.tab(tabId)
       if (!tab) return
@@ -528,15 +645,25 @@ export class TabManager {
    * dimmed preview). Returns true when the owner changed.
    */
   claim(tabId: string, win: ZenWindow): boolean {
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!view) return false
     const owner = this.owners.get(tabId)
     if (owner === win) return false
-    if (owner) view.detach()
+    // The reader's cover moves with the page it stands over, and joins the window after it so
+    // that it is the one in front there too.
+    const cover = this.covers.get(tabId)
+    if (owner) {
+      view.detach()
+      cover?.detach()
+    }
     this.owners.set(tabId, win)
     // Hidden until the window's layout positions it, so it never flashes at stale bounds.
     view.setVisible(false)
     view.attachTo(win.host)
+    if (cover) {
+      cover.setVisible(false)
+      cover.attachTo(win.host)
+    }
     // Another window may mean another `display-mode` (an app window's page moving to a browser window).
     view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
     win.relayout()
@@ -595,6 +722,276 @@ export class TabManager {
     return url.startsWith('zen://') ? '#00000000' : '#ffffff'
   }
 
+  // ---------------------------------------------------------------------------
+  // The reader's cover (reader-30)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Raise the reader's cover over the tab's page: a second live page of the tab loading `url`
+   * (the `zen://reader` document), laid out where the page stands while the page stays alive
+   * and unmoved beneath it – Chrome's immersive reading mode is the same overlay over the tab's
+   * contents. The row shows the reader (its address; its title as the document reports it) and
+   * what it showed before is kept for `uncover`. The page is hidden to the engine on the cover's
+   * word that its first frame is drawn (`onCoverReady`; the ceiling `COVER_REPORT_CEILING_MS`
+   * for a cover that never says so), so a window resized under the cover never shows its stale
+   * edges. False – and the reader then loads as a navigation of the tab – when the host has no
+   * cover (Android: one page per tab), the tab has no live page, or a cover stands already.
+   */
+  cover(tabId: string, url: string): boolean {
+    const host = this.browser.platform.views
+    const tab = this.tab(tabId)
+    const page = this.pageView(tabId)
+    const win = this.owners.get(tabId)
+    if (!host.createCover || !tab || !page || !win || this.covers.has(tabId)) return false
+    this.covered.set(tabId, {
+      url: tab.url,
+      title: tab.title,
+      favicon: tab.favicon,
+      readerable: tab.readerable,
+      zoom: tab.zoom
+    })
+    // The cover's events speak for this cover alone (`coverEventsFor`): the view is not made
+    // yet when they are, so they read it through the binding filled right after.
+    const raised: { cover?: TabView } = {}
+    const cover = host.createCover(
+      tab,
+      this.coverEventsFor(tabId, () => raised.cover),
+      win.host
+    )
+    raised.cover = cover
+    cover.setBackgroundColor(this.backgroundFor(url))
+    cover.setVisible(false)
+    this.covers.set(tabId, cover)
+    tab.url = url
+    // The reader document zooms on its own, as any page that is not a web page does; the
+    // site's factor is the page's and comes back with it.
+    tab.zoom = 1
+    this.browser.pageControls.onViewCreated(tab, cover)
+    this.browser.caretBrowsing.onViewCreated(cover)
+    // The find bar's matches were the page's.
+    for (const w of this.browser.allWindows())
+      if (w.findResult?.tabId === tabId) w.findResult = null
+    // Read aloud of the page stops here and resumes from the article's top once the reader
+    // document is ready – the reader switch it makes for a reader loaded as a navigation.
+    this.browser.readAloud.onNavigated(tabId, false)
+    cover.loadURL(url)
+    win.relayout()
+    this.browser.state.commit()
+    return true
+  }
+
+  /**
+   * Take the reader's cover down: the page beneath, never navigated, shows again where it stood
+   * – its scroll, its form state, its media and its history untouched; no load and no history
+   * entry (Chrome's `CloseUI`). The row's fields go back to the page's (`restore`), the window
+   * lays the page out again (`relayout`: the page shown beneath the cover still in front), and
+   * the cover is destroyed on the page's word that it has drawn a frame again (`afterFrame`; the
+   * ceiling `COVER_REPORT_CEILING_MS` for a page that never says so; at once with `immediate`),
+   * the keyboard going to the page as Chrome refocuses its contents. False when no cover stands.
+   */
+  uncover(tabId: string, opts: UncoverOptions = {}): boolean {
+    const cover = this.covers.get(tabId)
+    const before = this.covered.get(tabId)
+    if (!cover || !before) return false
+    this.covers.delete(tabId)
+    this.covered.delete(tabId)
+    const tab = this.tab(tabId)
+    const page = this.pageView(tabId)
+    const win = this.owners.get(tabId)
+    for (const w of this.browser.allWindows())
+      if (w.findResult?.tabId === tabId) w.findResult = null
+    if (tab && opts.restore !== false) {
+      // The page's own word on its address where it has one (it may have moved within its
+      // document under the cover: `before.url` followed, but the page knows best).
+      const pageUrl = page?.getURL() ?? ''
+      tab.url = pageUrl && !this.browser.reader.isReaderUrl(pageUrl) ? pageUrl : before.url
+      tab.title = page?.getTitle() || before.title
+      tab.favicon = before.favicon
+      tab.readerable = before.readerable
+      tab.zoom = before.zoom
+      if (page) {
+        tab.canGoBack = page.canGoBack()
+        tab.canGoForward = page.canGoForward()
+        // The page's own zoom again (the site's factor).
+        this.browser.pageControls.onNavigated(tab, page)
+      }
+      tab.bookmarked = this.browser.bookmarks.has(tab.url)
+      // Read aloud of the article stops; a reading in flight resumes from the page's top, the
+      // reader switch a reader left by navigation makes. The article's translation goes with
+      // its document; the page's own, alive beneath, stands.
+      this.browser.readAloud.onNavigated(tabId, false)
+      this.browser.translate.onNavigated(tabId)
+      // The page is ready already; a page on its way out (`immediate`) reads nothing.
+      if (page && !opts.immediate) this.browser.readAloud.onPageReady(tabId)
+    }
+    const finish = (): void => {
+      if (!cover.isDestroyed()) cover.destroy()
+      // The keyboard to the page – unless the reader was entered again within the frame and a
+      // new cover stands over it: the keyboard is that cover's (`onCoverReady`).
+      if (
+        page &&
+        !page.isDestroyed() &&
+        this.pageView(tabId) === page &&
+        !this.covers.has(tabId) &&
+        win &&
+        win.alive &&
+        !win.contentHidden &&
+        win.host.isFocused() &&
+        this.visibleTabIds(win).includes(tabId)
+      )
+        page.focus()
+    }
+    if (win && opts.relayout !== false) win.relayout()
+    // The page is shown by the relayout; the cover stands over it until the page has a frame.
+    if (opts.immediate || !page) finish()
+    else this.afterFrame(page, finish)
+    this.browser.state.commit()
+    return true
+  }
+
+  /**
+   * The paint handshake (design language v2 §11): run `then` once `view` reports a frame drawn
+   * with what it holds now – its word through `TabView.frameDrawn` – or at the failure ceiling
+   * (`COVER_REPORT_CEILING_MS`) for a document that never reports (a view hidden before it
+   * could draw, a hung renderer, a host without the ask), whichever comes first and once only.
+   * A rejection (the page gone) is no word either: the ceiling stands, and `then` finds what it
+   * checks for gone. The caller checks the world again in `then` – the cover may have been taken
+   * down or the reader entered again meanwhile.
+   */
+  private afterFrame(view: TabView, then: () => void): void {
+    let done = false
+    const once = (): void => {
+      if (done) return
+      done = true
+      clearTimeout(ceiling)
+      then()
+    }
+    const ceiling = setTimeout(once, COVER_REPORT_CEILING_MS)
+    view.frameDrawn?.().then(once, () => undefined)
+  }
+
+  /**
+   * The cover's events: the tab's own where the cover is the document in front (the keyboard,
+   * the page menu, find, zoom, the toolbox, windows it opens), nothing where they would speak
+   * for the tab's navigation (the throbber, the commit, the favicon, the history), and the
+   * cover's own ends – a link followed in the reader loads in the page beneath (whose commit
+   * closes the reader, as Chrome's `PrimaryPageChanged` does), a failure or a crash of the
+   * reader document takes the cover down.
+   *
+   * Every end speaks for THIS cover (`own`), not for whichever stands over the tab: a cover
+   * taken down (`uncover`) is destroyed a frame later, and the reader may have been entered
+   * again within that frame – the old cover's `destroyed`, its late failure or crash must not
+   * take the new one down.
+   */
+  private coverEventsFor(tabId: string, own: () => TabView | undefined): TabViewEvents {
+    const base = this.eventsFor(tabId)
+    const state = this.browser.state
+    let toolbox = false
+    const noop = (): void => {}
+    /** Whether the cover these events belong to is the one standing over the tab. */
+    const stands = (): boolean => {
+      const cover = own()
+      return cover !== undefined && this.covers.get(tabId) === cover
+    }
+    return {
+      ...base,
+      onStartLoading: noop,
+      onStopLoading: noop,
+      onProgress: noop,
+      onStartNavigation: noop,
+      onRedirected: noop,
+      onFaviconUpdated: noop,
+      onUpgraded: noop,
+      onUnsafeNavigation: noop,
+      onLookalikeNavigation: noop,
+      onRequestsBlocked: noop,
+      onNavigated: (_url, inPage) => {
+        if (inPage || !stands()) return
+        const tab = this.tab(tabId)
+        const cover = own()
+        // The engine's zoom for the reader document (Chromium keeps one per host).
+        if (tab && cover) this.browser.pageControls.onNavigated(tab, cover)
+        state.commitVolatile()
+      },
+      // The row's title is the reader document's while the cover stands (the page's own goes
+      // to `covered.title`, `eventsFor`); no visit carries it and no pinned row wants the
+      // attention dot for it – the reader is the document in front.
+      onTitleUpdated: (title) => {
+        const tab = this.tab(tabId)
+        if (!tab || !stands()) return
+        tab.title = title || this.titleFor(tab.url)
+        state.commit()
+      },
+      onWillNavigate: (url) => {
+        if (!stands()) return false
+        // The tab's own rule first (MW-23): in an app window a link out of the app's scope
+        // opens in a tab of the browser window behind, and the reader stays over the app's page.
+        if (this.onWillNavigate(tabId, url)) return true
+        this.navigate(tabId, url, { transition: 'link' })
+        return true
+      },
+      onFailLoad: (code) => {
+        if (code === -3 || !stands()) return
+        this.uncover(tabId, { immediate: true })
+      },
+      onCrashed: (reason) => {
+        if (reason === 'clean-exit' || !stands()) return
+        this.uncover(tabId, { immediate: true })
+      },
+      onDevtoolsOpened: (dock) => {
+        toolbox = true
+        base.onDevtoolsOpened(dock)
+      },
+      onDevtoolsClosed: () => {
+        toolbox = false
+        base.onDevtoolsClosed()
+      },
+      onDomReady: () => {
+        const cover = own()
+        if (cover && stands()) this.onCoverReady(tabId, cover)
+      },
+      onDestroyed: () => {
+        if (toolbox) {
+          toolbox = false
+          base.onDevtoolsClosed()
+        }
+        // The cover went on its own (the host tore it down): the page shows again. An old
+        // cover's end after a re-entry says nothing of the cover that stands now.
+        if (stands()) this.uncover(tabId, { immediate: true })
+      }
+    }
+  }
+
+  /**
+   * The reader document is ready: it takes the page's flags and the keyboard (the tab in front
+   * of a focused window), read aloud resumes on it where a reading was in flight, and – on the
+   * cover's word that its first frame is drawn (`afterFrame`), the article standing in front of
+   * the page – the page beneath is hidden to the engine, as a background tab's is, so that
+   * nothing of it shows should the window be resized under the cover. The page hides on that
+   * word and nothing else: hidden before the cover has a frame, the ground would show between
+   * the two (§11: "a frame of ground between the two is the defect").
+   */
+  private onCoverReady(tabId: string, cover: TabView): void {
+    this.sendPageFlags(tabId)
+    this.browser.readAloud.onPageReady(tabId)
+    const win = this.owners.get(tabId)
+    if (
+      win &&
+      win.alive &&
+      !win.contentHidden &&
+      win.host.isFocused() &&
+      this.visibleTabIds(win).includes(tabId)
+    )
+      cover.focus()
+    this.afterFrame(cover, () => {
+      if (this.covers.get(tabId) !== cover || cover.isDestroyed()) return
+      // A page hidden already (a tab switched away from under the cover, a page an agent holds
+      // on the stage) is left as it is: a second hide would move a staged page again.
+      const page = this.pageView(tabId)
+      if (page?.isVisible()) page.setVisible(false)
+    })
+  }
+
   private eventsFor(tabId: string): TabViewEvents {
     const state = this.browser.state
     const update = (fn: (tab: Tab) => void, volatile = false): void => {
@@ -604,7 +1001,8 @@ export class TabManager {
       if (volatile) state.commitVolatile()
       else state.commit()
     }
-    const view = (): TabView | undefined => this.view(tabId)
+    // The page's own events speak of the page, cover or no cover over it.
+    const view = (): TabView | undefined => this.pageView(tabId)
     const ownerWindow = (): ZenWindow => this.windowFor(tabId)
 
     return {
@@ -667,6 +1065,19 @@ export class TabManager {
           t.progress = loadProgressAfter(t, progress)
         }, true),
       onNavigated: (url, inPage, details) => {
+        const before = this.covered.get(tabId)
+        if (before && inPage) {
+          // The page moved within its own document beneath the reader (a script's pushState):
+          // the address it comes back to moves with it; the reader stays up, as Chrome's does
+          // over a fragment change.
+          before.url = url
+          this.rememberNavigation(tabId)
+          return
+        }
+        // A new document committing beneath the reader closes it (Chrome's `PrimaryPageChanged`):
+        // a link followed in the reader, a reload, back – the page is the one moving on, and its
+        // commit writes the row's fields next.
+        if (before) this.uncover(tabId, { restore: false })
         if (!inPage) this.browser.blocking.onNavigated(tabId)
         const v = view()
         this.browser.popups.onNavigated(tabId, inPage)
@@ -701,6 +1112,15 @@ export class TabManager {
         update((t) => {
           // The sad tab keeps the crashed page's title beside its favicon, as Chrome's does.
           if (this.isSadTab(t)) return
+          // Beneath the reader's cover the row's title is the reader's (the cover's own
+          // `onTitleUpdated`, `coverEventsFor`); the page's new title is kept for what speaks
+          // of the page – the record extensions read, the visit – and comes back with it.
+          const before = this.covered.get(tabId)
+          if (before) {
+            before.title = title || this.titleFor(before.url)
+            if (!this.isPrivate(t)) this.browser.history.updateTitle(before.url, before.title)
+            return
+          }
           const next = title || this.titleFor(t.url)
           // A pinned tab's page changing its title while nobody is looking at it – a mail
           // count, a new message – asks for attention (tabs-11, Chrome's dot on a pinned tab):
@@ -723,8 +1143,13 @@ export class TabManager {
           // the tab shows it at once, and the records take the cache's content address once
           // the icon is kept, never the kilobytes of the data URL.
           t.favicon = icon
+          // Beneath the reader's cover the row's fields are the reader's: the page's new icon
+          // is what comes back when the cover comes down, and the records' key is the page's
+          // address, not the reader's.
+          const before = this.covered.get(tabId)
+          if (before) before.favicon = icon
           if (this.isPrivate(t)) return
-          const pageUrl = t.url
+          const pageUrl = before?.url ?? t.url
           if (!inline) {
             this.browser.history.updateFavicon(pageUrl, icon)
             this.browser.bookmarks.updateFavicon(pageUrl, icon)
@@ -838,6 +1263,9 @@ export class TabManager {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
         if (!tab) return
+        // The page under the reader went: the cover comes down first, so that the sad tab
+        // stands for the page's address, and the unload of a page out of sight is the page's.
+        if (this.covers.has(tabId)) this.uncover(tabId, { immediate: true })
         // The renderer took every frame's capture with it.
         this.clearCaptureState(tabId)
         // The user ended the renderer from the "Page unresponsive" prompt (`exitUnresponsive`):
@@ -1062,7 +1490,7 @@ export class TabManager {
    */
   private stayedOnPage(tabId: string): void {
     const tab = this.tab(tabId)
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!tab || !view || view.isDestroyed()) return
     const url = view.getURL()
     this.pendingTransition.delete(tabId)
@@ -1278,7 +1706,7 @@ export class TabManager {
    * the refused navigation never committed there, so the step lands on the page before it.
    */
   leaveErrorPage(tabId: string): void {
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!view) return
     const failed = this.errorPageTargets(tabId)
     const { entries, index } = view.navigationEntries()
@@ -1367,7 +1795,7 @@ export class TabManager {
    */
   handleCertificateInterstitial(tabId: string, action: InterstitialAction, url: string): boolean {
     const tab = this.tab(tabId)
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     const error = tab?.certificateError
     if (!tab || !view || !error || error.bypassed || error.url !== url) return false
     if (action === 'back') {
@@ -1389,7 +1817,7 @@ export class TabManager {
     void mirrored
       .catch(() => undefined)
       .then(() => {
-        if (this.view(tabId) === view && !view.isDestroyed())
+        if (this.pageView(tabId) === view && !view.isDestroyed())
           this.navigate(tabId, error.url, { transition: 'reload' })
       })
     return true
@@ -1397,8 +1825,9 @@ export class TabManager {
 
   sendPageFlags(tabId: string): void {
     const tab = this.tab(tabId)
-    const view = this.view(tabId)
-    if (!tab || !view) return
+    const page = this.pageView(tabId)
+    const cover = this.covers.get(tabId)
+    if (!tab || (!page && !cover)) return
     const owner = this.owners.get(tabId)
     const linksToSplitPane = this.linksToSplitPane(tab)
     const flags: PageFlags = {
@@ -1408,7 +1837,8 @@ export class TabManager {
       linksToSplitPane
     }
     this.splitLinkFlags.set(tabId, linksToSplitPane)
-    view.sendPageFlags(flags)
+    page?.sendPageFlags(flags)
+    if (cover && !cover.isDestroyed()) cover.sendPageFlags(flags)
   }
 
   broadcastPageFlags(): void {
@@ -1594,6 +2024,9 @@ export class TabManager {
   destroyView(tabId: string): void {
     const view = this.views.get(tabId)
     if (!view) return
+    // The reader's cover goes with the page it stood over; the row's fields are the page's
+    // again first, so that the tab wakes on the page, its stack recorded (`discard`).
+    this.uncover(tabId, { relayout: false, immediate: true })
     this.views.delete(tabId)
     // The page goes with its element in fullscreen (a close from the core or the host, a
     // discard): the windows it covered come back now. The host's own leave on the tear-down, if
@@ -1643,7 +2076,7 @@ export class TabManager {
     // A chrome page tab holds no page: there is nothing to unload and it never reads as pending.
     if (!tab || this.browser.pages.isChromePage(tab)) return
     // What the page held, for the sleeping row's "memory saved" line; read while it still runs.
-    const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
+    const saved = this.pageView(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
     else delete tab.sleepSavedMb
     // Asleep again: the last wake's leaf is over (`load` writes the next one).
@@ -1678,7 +2111,7 @@ export class TabManager {
   private thawForNavigation(tabId: string): void {
     this.browser.pageDialogs.cancelForTab(tabId)
     const tab = this.tab(tabId)
-    if (!tab || !this.view(tabId) || !tab.frozen) return
+    if (!tab || !this.pageView(tabId) || !tab.frozen) return
     void this.browser.governor.thaw(tabId)
     tab.frozen = false
   }
@@ -1864,7 +2297,7 @@ export class TabManager {
    */
   attachView(view: TabView, tabId: string, win: ZenWindow): TabViewEvents | undefined {
     const tab = this.tab(tabId)
-    if (!tab || this.view(tabId) || view.isDestroyed()) return undefined
+    if (!tab || this.pageView(tabId) || view.isDestroyed()) return undefined
     this.browser.platform.views.retargetView?.(view, tabId)
     view.attachTo(win.host)
     view.setBackgroundColor(this.backgroundFor(tab.url))
@@ -1894,6 +2327,8 @@ export class TabManager {
   private onViewGone(tabId: string): void {
     const view = this.views.get(tabId)
     if (!view) return
+    // A cover over a page that went on its own goes with it.
+    this.uncover(tabId, { relayout: false, immediate: true })
     const owner = this.owners.get(tabId)
     this.views.delete(tabId)
     this.owners.delete(tabId)
@@ -1939,7 +2374,7 @@ export class TabManager {
    * Its back/forward stack is kept for a reload or "Recently closed" either way.
    */
   async confirmUnload(tabId: string, keepTab = false): Promise<boolean> {
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     const tab = this.tab(tabId)
     if (!view || !tab || !view.confirmUnload || view.isDestroyed()) return true
     // A page waiting in one of its own dialogs cannot run its handlers; the close dismisses it.
@@ -1955,7 +2390,7 @@ export class TabManager {
       }
       // Only an explicit "stay" keeps the page (a host that answers nothing does not object).
       const leave = (await view.confirmUnload()) !== false
-      if (!leave && this.view(tabId) === view) this.pendingNavigation.delete(tabId)
+      if (!leave && this.pageView(tabId) === view) this.pendingNavigation.delete(tabId)
       return leave
     } finally {
       this.unloadChecks.delete(tabId)
@@ -2252,6 +2687,8 @@ export class TabManager {
     }
     const space = getSpace(m, tab.spaceId)
     const index = sectionIndexOf(m, tab)
+    // A tab closed in the reader is remembered as the page the reader was of.
+    this.uncover(tabId, { relayout: false, immediate: true })
     // The back/forward stack has to be read while the page still exists.
     const closed = this.captureClosed(tab, index, Date.now())
     // Closing the tab the user never switched away from since it opened returns to its opener
@@ -2415,7 +2852,7 @@ export class TabManager {
    */
   private captureClosed(tab: Tab, index: number, closedAt: number): ClosedTabEntry | null {
     if (this.isPrivate(tab)) return null
-    const view = this.view(tab.id)
+    const view = this.pageView(tab.id)
     const navigation = view
       ? view.navigationEntries()
       : (this.pendingNavigation.get(tab.id) ?? null)
@@ -2510,7 +2947,7 @@ export class TabManager {
     else this.httpsUpgraded.delete(tabId)
     this.pendingTransition.set(tabId, opts.transition ?? 'typed')
     tab.url = this.lookalikeHold(tabId, url)
-    const hadView = this.view(tabId) !== undefined
+    const hadView = this.pageView(tabId) !== undefined
     this.thawForNavigation(tabId)
     const view = this.ensureLoaded(tabId)
     if (!view) return
@@ -2543,7 +2980,7 @@ export class TabManager {
       this.browser.pages.popSection(tabId)
       return
     }
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!view?.canGoBack()) return
     this.thawForNavigation(tabId)
     view.goBack()
@@ -2554,7 +2991,7 @@ export class TabManager {
       this.browser.pages.forward(tabId)
       return
     }
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!view?.canGoForward()) return
     this.thawForNavigation(tabId)
     view.goForward()
@@ -2612,7 +3049,7 @@ export class TabManager {
       this.browser.state.commit()
       return
     }
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     if (!view) return
     this.thawForNavigation(tabId)
     if (tab.url.startsWith(ERROR_URL_PREFIX)) {
@@ -2627,7 +3064,7 @@ export class TabManager {
   }
 
   stop(tabId: string): void {
-    this.view(tabId)?.stop()
+    this.pageView(tabId)?.stop()
   }
 
   /**
@@ -2675,7 +3112,7 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab) return
     tab.muted = !tab.muted
-    this.view(tabId)?.setMuted(tab.muted)
+    this.pageView(tabId)?.setMuted(tab.muted)
     this.browser.state.commit()
   }
 
@@ -2698,9 +3135,11 @@ export class TabManager {
   toggleMuteSite(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const site = permissionSite(tab.url)
+    // The site is the page's – the one beneath the reader's cover while it stands.
+    const url = this.covered.get(tabId)?.url ?? tab.url
+    const site = permissionSite(url)
     if (!site) return
-    const wanted: 'allow' | 'deny' = this.siteMuted(tab.url) ? 'allow' : 'deny'
+    const wanted: 'allow' | 'deny' = this.siteMuted(url) ? 'allow' : 'deny'
     const permissions = this.browser.permissions
     permissions.set('sound', site, wanted === permissions.effectiveDefault('sound') ? null : wanted)
   }
@@ -2713,11 +3152,14 @@ export class TabManager {
   followSoundSetting(origin: string | null): void {
     let changed = false
     for (const t of Object.values(this.model.tabs)) {
-      if (origin !== null && permissionSite(t.url) !== origin) continue
-      const muted = this.siteMuted(t.url)
+      // The page's site, beneath a reader cover too: the sound is the page's, and the reader's
+      // address is no site the setting could name (a default's change would unmute it).
+      const url = this.covered.get(t.id)?.url ?? t.url
+      if (origin !== null && permissionSite(url) !== origin) continue
+      const muted = this.siteMuted(url)
       if (t.muted === muted) continue
       t.muted = muted
-      this.view(t.id)?.setMuted(muted)
+      this.pageView(t.id)?.setMuted(muted)
       changed = true
     }
     if (changed) this.browser.state.commit()
@@ -2925,7 +3367,7 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab) return undefined
     const id = newId('tab')
-    const view = this.view(tabId)
+    const view = this.pageView(tabId)
     const history = view
       ? view.navigationEntries()
       : (this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId))
@@ -2933,7 +3375,9 @@ export class TabManager {
     return this.createTab(
       {
         id,
-        url: tab.url,
+        // A tab read in the reader duplicates as the page the reader is of (the cover is no
+        // navigation of the tab's, as Chrome's reading mode is none).
+        url: this.covered.get(tabId)?.url ?? tab.url,
         spaceId: win.activeSpace().id,
         containerId: tab.containerId,
         active: true,
@@ -4298,6 +4742,10 @@ export class TabManager {
   releaseWindow(win: ZenWindow, quitting: boolean): void {
     const m = this.model
     if (win.glance) this.closeGlance(win)
+    // The reader's covers in this window come down: the pages move on or are remembered as
+    // themselves, never as the reader document over them.
+    for (const tabId of [...this.covers.keys()])
+      if (this.owners.get(tabId) === win) this.uncover(tabId, { relayout: false, immediate: true })
     const others = this.browser
       .allWindows()
       .filter((w) => w !== win && w.kind === 'synced' && w.alive)
@@ -4447,7 +4895,7 @@ export class TabManager {
    */
   noteFormEdited(tabId: string): void {
     const tab = this.tab(tabId)
-    if (!tab || tab.formEdited || !this.view(tabId)) return
+    if (!tab || tab.formEdited || !this.pageView(tabId)) return
     tab.formEdited = true
   }
 
@@ -4491,7 +4939,7 @@ export class TabManager {
   /** One loaded page as the sleep policies read it, or null if the tab or its view is gone. */
   private sleepCandidate(id: string, visible: Set<string>): SleepCandidate | null {
     const tab = this.tab(id)
-    if (!tab || !this.view(id)) return null
+    if (!tab || !this.pageView(id)) return null
     return {
       id,
       url: tab.url,

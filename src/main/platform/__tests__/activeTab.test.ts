@@ -26,7 +26,9 @@ function fakeHost(): ApiHost {
           ids.set(t.id, id)
         }
         return id
-      }
+      },
+      // The tab's address as extensions see it (the page's beneath a reader cover; none here).
+      urlOf: (t: Tab) => t.url
     }
   } as unknown as ApiHost
 }

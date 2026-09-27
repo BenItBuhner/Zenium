@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
-import { DEFAULT_READER_PREFERENCES } from '../../shared/reader'
+import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
+import {
+  DEFAULT_READER_PREFERENCES,
+  READER_IMAGES_ATTRIBUTE,
+  READER_LINKS_ATTRIBUTE,
+  type ReaderPreferences
+} from '../../shared/reader'
 import { Browser } from '../browser'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
-import { READER_URL_PREFIX, sanitizeArticleHtml } from '../reader'
+import { READER_URL_PREFIX, readerArticleId, sanitizeArticleHtml } from '../reader'
+import { readerPage } from '../readerPage'
 import type { ZenWindow } from '../window'
 
 /** In-memory documents; `state.json` is what the settings round-trip through. */
@@ -49,6 +55,8 @@ function fakePlatform(io: StoreIO): Platform & { scripts: Map<string, string[]> 
         })
     },
     views: stub<TabViewHost>({
+      // One page per tab, as on the phone: the reader loads as a navigation of the tab.
+      createCover: undefined,
       createView: (tab) => {
         const record: string[] = []
         scripts.set(tab.id, record)
@@ -89,7 +97,19 @@ function start(io = memoryIo()): {
   return { browser, platform, win, io }
 }
 
-const READER_URL = `${READER_URL_PREFIX}?id=article-1&url=${encodeURIComponent('https://example.com/a')}`
+const PAGE_URL = 'https://example.com/a'
+
+/**
+ * A tab reading `PAGE_URL` in Reader View: the article held by the service and the tab on the
+ * reader document's own address (a bare `zen://reader` address whose article the service does
+ * not hold wakes on the page instead – `TabManager.load`).
+ */
+function readerTab(browser: Browser, win: ZenWindow, active: boolean): Tab {
+  const tab = browser.tabs.createTab({ url: PAGE_URL, active }, win)
+  browser.reader.open(tab.id, { title: 'A', content: '<p>a</p>', length: 1 })
+  expect(tab.url.startsWith(`${READER_URL_PREFIX}?id=`)).toBe(true)
+  return tab
+}
 
 /** The preferences a `zenReaderApply` call handed the page, or null for a script that is not one. */
 function applied(script: string): Record<string, unknown> | null {
@@ -100,8 +120,8 @@ function applied(script: string): Record<string, unknown> | null {
 describe('reader text preferences in the browser', () => {
   it('saves a change and pushes it to every open reader page, not to the web pages', async () => {
     const { browser, platform, win, io } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
-    const second = browser.tabs.createTab({ url: READER_URL, active: false }, win)
+    const reader = readerTab(browser, win, true)
+    const second = readerTab(browser, win, false)
     const web = browser.tabs.createTab({ url: 'https://example.com/', active: false }, win)
     expect(browser.reader.preferences()).toEqual(DEFAULT_READER_PREFERENCES)
 
@@ -121,7 +141,7 @@ describe('reader text preferences in the browser', () => {
 
   it('ignores a patch with nothing valid in it and one that changes nothing', () => {
     const { browser, platform, win } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
+    const reader = readerTab(browser, win, true)
     browser.handleCommand(win, 'reader.setPreferences', { fontSize: 13, font: 'comic' })
     browser.handleCommand(win, 'reader.setPreferences', { theme: 'auto' })
     expect(browser.reader.preferences()).toEqual(DEFAULT_READER_PREFERENCES)
@@ -130,7 +150,7 @@ describe('reader text preferences in the browser', () => {
 
   it('renders a reader page with the saved preferences and follows a settings patch', () => {
     const { browser, platform, win } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
+    const reader = readerTab(browser, win, true)
     browser.handleCommand(win, 'settings.update', { reader: { width: 'narrow', fontSize: 15 } })
     expect(browser.reader.preferences()).toEqual({
       ...DEFAULT_READER_PREFERENCES,
@@ -159,6 +179,101 @@ describe('reader text preferences in the browser', () => {
       theme: 'dark',
       width: 'wide'
     })
+  })
+})
+
+describe('the Links and Images toggles (reader-12)', () => {
+  it('render as root attributes of the reader document only while off, and reach an open reader as a patch', () => {
+    const { browser, platform, win } = start()
+    const tab = readerTab(browser, win, true)
+    const id = readerArticleId(tab.url)!
+    const html = (): string => browser.reader.pageHtml(id) ?? ''
+    // On by default: the document carries neither attribute (the stylesheet's off rules sleep).
+    expect(browser.reader.preferences()).toMatchObject({ links: true, images: true })
+    expect(html()).not.toContain(`${READER_LINKS_ATTRIBUTE}="off"`)
+    expect(html()).not.toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    // The document's own rules for the two states.
+    expect(html()).toContain(`:root[${READER_LINKS_ATTRIBUTE}='off'] article a`)
+    expect(html()).toContain(`:root[${READER_IMAGES_ATTRIBUTE}='off'] article`)
+
+    browser.handleCommand(win, 'reader.setPreferences', { links: false })
+    expect(html()).toContain(`${READER_LINKS_ATTRIBUTE}="off"`)
+    expect(html()).not.toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    browser.handleCommand(win, 'reader.setPreferences', { images: false })
+    expect(html()).toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    // Each change went to the open reader page as the whole preferences record.
+    const pushes = platform.scripts.get(tab.id)!.map(applied).filter(Boolean)
+    expect(pushes).toEqual([
+      { ...DEFAULT_READER_PREFERENCES, links: false },
+      { ...DEFAULT_READER_PREFERENCES, links: false, images: false }
+    ])
+    // Back on: the attributes go.
+    browser.handleCommand(win, 'reader.setPreferences', { links: true, images: true })
+    expect(html()).not.toContain('="off"')
+  })
+
+  it('are saved with the reader preferences and come back on the next start', async () => {
+    const { browser, win, io } = start()
+    browser.handleCommand(win, 'reader.setPreferences', { links: false, images: false })
+    await new Promise((r) => setImmediate(r))
+    await browser.state.flush()
+    expect(JSON.parse(io.files['state.json']).settings.reader).toMatchObject({
+      links: false,
+      images: false
+    })
+    const { browser: reloaded } = start(memoryIo({ ...io.files }))
+    expect(reloaded.reader.preferences()).toMatchObject({ links: false, images: false })
+    // A stored value that is not a boolean reads as the default.
+    const { browser: odd } = start(
+      memoryIo({
+        'state.json': JSON.stringify({
+          version: 2,
+          settings: { reader: { links: 'no', images: 0 } },
+          tabs: [],
+          spaces: []
+        })
+      })
+    )
+    expect(odd.reader.preferences()).toMatchObject({ links: true, images: true })
+  })
+
+  it('a peer’s record from before the two toggles reads as both on: the reader document carries neither attribute', () => {
+    const { browser, win } = start()
+    const tab = readerTab(browser, win, true)
+    const id = readerArticleId(tab.url)!
+    // A settings merge lands the whole `reader` object of an older device as it came
+    // (`sync/apply.ts`), seven fields and no `links` / `images` – not through `settings.update`.
+    const sevenField = {
+      fontSize: 20,
+      font: 'sans',
+      theme: 'dark',
+      width: 'wide',
+      lineFocus: 0,
+      spacing: 'normal',
+      syllables: false
+    }
+    Object.assign(browser.state.settings, { reader: sevenField })
+    expect(browser.reader.preferences()).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 20,
+      font: 'sans',
+      theme: 'dark',
+      width: 'wide'
+    })
+    const html = browser.reader.pageHtml(id) ?? ''
+    expect(html).not.toContain(`${READER_LINKS_ATTRIBUTE}="off"`)
+    expect(html).not.toContain(`${READER_IMAGES_ATTRIBUTE}="off"`)
+    expect(html).not.toContain('="off"')
+    // The document's renderer on its own reads the record the same way: off is the one word
+    // that turns a toggle off, absence is on.
+    const article = browser.reader.article(id)!
+    const raw = readerPage(
+      article,
+      sevenField as unknown as ReaderPreferences,
+      browser.reader.shown(article)
+    )
+    expect(raw).not.toContain('="off"')
+    expect(raw).toContain(`:root[${READER_LINKS_ATTRIBUTE}='off'] article a`)
   })
 })
 
