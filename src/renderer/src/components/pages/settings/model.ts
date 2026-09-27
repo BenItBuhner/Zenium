@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { InternalPageQuery, InternalPageSection } from '@shared/internalPages'
 import { matchesQuery } from '@shared/internalPages'
-import type { FormFactor } from '@shared/types'
+import type { FormFactor, OverlayKind } from '@shared/types'
 import type { Anchor } from '@renderer/lib/anchor'
 
 /**
@@ -236,6 +236,17 @@ export interface ActionRow extends RowBase {
    * (`aria-haspopup="dialog"`).
    */
   prompts?: boolean
+  /**
+   * The desktop's `button` opens this overlay hanging from itself (§9.20: the theme row's Change…
+   * hangs the picker, `openThemePicker(spaceId, anchor)` → `UiState.overlay` with an
+   * `overlayAnchor`): the button says so (`aria-haspopup="dialog"`) and carries `aria-expanded`
+   * for as long as that overlay is open from an anchor, so the chassis's
+   * `[aria-haspopup][aria-expanded='true']` paints the anchor's pressed fill while its popover
+   * hangs there (main.css beside the primitive). The same overlay open at its seat – from a
+   * menu, the palette, a shortcut – expands no button: the fill is the anchor's, and a seated
+   * panel has none. Only with `button`; the phone never reads it.
+   */
+  popover?: OverlayKind
   /** A sheet holding a small form (add a route, create a container) instead of a plain press. */
   form?: FormSheet
   /**

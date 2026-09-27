@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import type { InternalPageQuery } from '@shared/internalPages'
 import { V2Button, V2IconButton } from '../../extensions/v2'
@@ -519,6 +520,40 @@ function pressAction(
 }
 
 /**
+ * The desktop action button that hangs a popover from itself (`ActionRow.popover`, §9.20 – the
+ * theme row's Change…): the anchor of a dialog popup (`aria-haspopup="dialog"`) whose state is
+ * `aria-expanded` – true while its overlay is open from an anchor, false while it is not – so
+ * the chassis's `[aria-haspopup][aria-expanded='true']` keeps the pressed fill on it for as long
+ * as the popover hangs there (main.css beside the primitive; the icon button's rule in
+ * extensions.css is the same rule for the same reason). Its own component, since only it reads
+ * the ui store: a row that opens nothing subscribes to nothing. The overlay open at its seat
+ * instead – the space menu's, the palette's – expands no button: the fill is the anchor's.
+ */
+function PopoverActionButton({
+  row,
+  ctx,
+  dismissSheet
+}: {
+  row: ActionRow
+  ctx: RowContext
+  dismissSheet: SheetDismiss
+}): JSX.Element {
+  const open = uiStore.use((s) => s.overlay === row.popover && s.overlayAnchor !== null)
+  return (
+    <V2Button
+      variant={row.destructive ? 'danger' : 'secondary'}
+      busy={row.busy}
+      disabled={row.disabled}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
+    >
+      {row.button}
+    </V2Button>
+  )
+}
+
+/**
  * A model row in the desktop vocabulary. Info and custom rows are the phone's, and so is an item
  * row unless it carries its one `action`, which then trails it as a button in place of a dialog,
  * or its `menu`, the 28 ⋯ over its sheet's actions; a value row trails a menulist, a switch row
@@ -549,15 +584,19 @@ function DesktopRowView({
       if (row.button && !row.leaves) {
         return (
           <ControlRow row={row} caption={caption} description={row.description}>
-            <V2Button
-              variant={row.destructive ? 'danger' : 'secondary'}
-              busy={row.busy}
-              disabled={row.disabled}
-              aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
-              onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
-            >
-              {row.button}
-            </V2Button>
+            {row.popover ? (
+              <PopoverActionButton row={row} ctx={ctx} dismissSheet={dismissSheet} />
+            ) : (
+              <V2Button
+                variant={row.destructive ? 'danger' : 'secondary'}
+                busy={row.busy}
+                disabled={row.disabled}
+                aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
+                onClick={(e) => pressAction(row, ctx, dismissSheet, anchorOf(e.currentTarget))}
+              >
+                {row.button}
+              </V2Button>
+            )}
           </ControlRow>
         )
       }
