@@ -323,8 +323,13 @@ export interface FieldRow extends RowBase {
   value: string
   /** The row's description for the value (the value itself when absent). */
   display?: string
-  /** `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`). */
-  input: 'text' | 'number' | 'url'
+  /**
+   * `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`).
+   * `password`: a masked field (`type="password"`, the passphrase form's) for a value that is
+   * a secret to keep hidden – a server's app password – never one to read back; the row shows
+   * its `display` in the value's place and the search never reads the value (`rowText`).
+   */
+  input: 'text' | 'number' | 'url' | 'password'
   /**
    * The desktop row's form. `inline` (the default, §9.21): the field trails the text block at
    * its width – 160 for text, 96 for a number – with a refused commit's validation line under
@@ -347,6 +352,11 @@ export interface FieldRow extends RowBase {
    * and shows it), `undefined` accepts and closes the sheet.
    */
   onCommit(value: string): string | undefined | Promise<string | undefined>
+}
+
+/** The `<input type>` a field row's kind takes – the three field renderers ask it the same way. */
+export function fieldInputType(row: FieldRow): 'number' | 'password' | 'text' {
+  return row.input === 'number' ? 'number' : row.input === 'password' ? 'password' : 'text'
 }
 
 /**
@@ -629,7 +639,8 @@ export function currentOptionLabel(row: ValueRow): string {
 export function rowText(row: SettingsRow): string {
   const parts = [row.label, row.description ?? '', ...(row.keywords ?? [])]
   if (row.kind === 'value') parts.push(...row.options.map((o) => o.label))
-  if (row.kind === 'field') parts.push(row.display ?? row.value)
+  if (row.kind === 'field')
+    parts.push(row.input === 'password' ? (row.display ?? '') : (row.display ?? row.value))
   if (row.kind === 'slider') parts.push(row.format(row.value))
   return parts.join(' ')
 }

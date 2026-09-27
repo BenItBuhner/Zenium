@@ -1,4 +1,11 @@
-import type { SyncScope, SyncStatus, SyncTransportKind, WebDavSyncCredentials } from '@shared/types'
+import type {
+  SyncScope,
+  SyncStatus,
+  SyncTransportKind,
+  WebDavProbe,
+  WebDavSyncCredentials
+} from '@shared/types'
+import { DEFAULT_WEBDAV_FOLDER } from '@core/sync/webdav'
 import { cmd } from './api'
 import { createStore } from './store'
 import { browserStore, forgetToast, uiStore } from './ui'
@@ -21,6 +28,11 @@ export const SYNC_PASSPHRASE_MIN = 8
 export const SYNC_COPY = {
   intro:
     'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync and a passphrase: everything is encrypted on this device before it is written, so the folder only ever holds ciphertext.',
+  // The same paragraph on a host that can also reach a WebDAV server (ID-32): the server is
+  // named beside the folder, and the closing clause holds for both – ciphertext is all either
+  // ever holds.
+  introServer:
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync – or a WebDAV server such as Nextcloud – and a passphrase: everything is encrypted on this device before it is written, so the folder only ever holds ciphertext.',
   folder: 'Sync folder',
   folderUnset: 'Choose a folder that your cloud drive keeps in sync.',
   device: 'This device',
@@ -28,6 +40,49 @@ export const SYNC_COPY = {
   turnOn: 'Turn on sync',
   turnOnHint: 'Create the passphrase every device will share.',
   turnOnNeedsFolder: 'Choose a sync folder first.',
+  turnOnNeedsServer: 'Fill in the server address, user name and app password first.',
+  // The transport choice (ID-32): where the encrypted records go. A value row on the phone
+  // (§9.13's picker, the current option as the row's line) and §9.14's two radios on the
+  // desktop; each option's second line is what makes it the choice.
+  transport: 'Sync through',
+  transportFolder: 'A folder on this device',
+  transportFolderHint: 'Shared through your own cloud drive',
+  transportWebDav: 'A WebDAV server',
+  transportWebDavHint: 'Nextcloud and others',
+  // The server form's rows (§9.12 fields in rows; the phone's one-field sheets). The address is
+  // the DAV root as Nextcloud's own manual gives it for third-party clients
+  // (`remote.php/dav/files/USERNAME/`); the app password is the one its Security settings make,
+  // never the account's own – the manual's rule for every WebDAV client.
+  server: 'Server address',
+  serverHint: 'For Nextcloud: https://cloud.example.com/remote.php/dav/files/USERNAME/',
+  serverInvalid: 'Enter an address that starts with https:// or http://',
+  username: 'User name',
+  usernameHint: 'Your account on the server.',
+  appPassword: 'App password',
+  appPasswordHint:
+    'Create one under Security in the server’s personal settings – never the account’s own password.',
+  appPasswordSet: '••••••••',
+  serverFolder: 'Folder',
+  serverFolderHint: 'Where the zenium-sync folder is kept on the server.',
+  serverRootFolder: 'The top level of your files',
+  // Test connection: an action row that reports its result in its description (§9.33: the ink
+  // alone, no glyph) and is §9.30's busy row while the server is asked. The three sentences
+  // are uncontracted; the fourth is for an address that answers, but not as a WebDAV server.
+  test: 'Test connection',
+  testHint: 'Reaches the server with these details; nothing is written yet.',
+  testing: 'Connecting…',
+  connected: 'Connected.',
+  refused: 'The server refused the sign-in.',
+  unreachable: 'The server could not be reached.',
+  notWebDav: 'The address did not answer as a WebDAV server.',
+  testAction: 'Test',
+  // Connected through a server: the group's heading, and the rows that name the server in use.
+  whereFolder: 'Folder and device',
+  whereServer: 'Server and device',
+  serverInUse: 'WebDAV server',
+  authRefused: 'The server refused the sign-in',
+  authRefusedHint: 'Enter a new app password to keep syncing.',
+  appPasswordAgainHint: 'The one the server takes now; the old one is forgotten.',
   passphraseTitle: 'Create a passphrase',
   passphraseDescription:
     'Zenium uses your passphrase to encrypt your data. Anyone who has your passphrase can read your encrypted data. Zenium can’t recover your data if you forget your passphrase.',
@@ -135,12 +190,155 @@ function midSentence(age: string): string {
 }
 
 /**
- * The folder the phone's setup rows have chosen but not set up yet (`sync.chooseFolder` ran,
- * `sync.setup` has not): the page is rebuilt from the browser state on every render and the
- * engine knows nothing of a folder until setup, so the draft lives here between the rows.
- * Cleared once sync is on, or turned off.
+ * Test connection's state (ID-32): nothing asked yet, the server being asked (§9.30's busy
+ * row), or the last answer – kept until a detail of the form changes, since the answer was to
+ * those details.
  */
-export const syncSetupStore = createStore<{ folder: string | null }>({ folder: null }, 'syncSetup')
+export type SyncProbeState =
+  { state: 'idle' } | { state: 'busy' } | { state: 'done'; probe: WebDavProbe }
+
+/**
+ * What the setup rows have collected but not set up yet (`sync.setup` has not run): the page is
+ * rebuilt from the browser state on every render and the engine knows nothing of a folder or a
+ * server until setup, so the draft lives here between the rows – the folder `sync.chooseFolder`
+ * returned, the transport picked, the server's details with the app password typed for it (in
+ * this process's memory alone, never a store on disk; the engine keeps it in the host's secret
+ * store once setup has run), and Test connection's answer. Cleared once sync is on, or turned
+ * off (`clearSyncSetup`).
+ */
+export interface SyncSetupDraft {
+  folder: string | null
+  transport: SyncTransportKind
+  webdav: WebDavSyncCredentials
+  probe: SyncProbeState
+}
+
+/** The folder the server form starts with (the engine's default, written as a folder). */
+export const WEBDAV_FOLDER_DEFAULT = `${DEFAULT_WEBDAV_FOLDER}/`
+
+export function emptySyncSetup(): SyncSetupDraft {
+  return {
+    folder: null,
+    transport: 'folder',
+    webdav: { url: '', username: '', password: '', folder: WEBDAV_FOLDER_DEFAULT },
+    probe: { state: 'idle' }
+  }
+}
+
+export const syncSetupStore = createStore<SyncSetupDraft>(emptySyncSetup(), 'syncSetup')
+
+/** Back to the empty draft: sync is on (the app password has gone to the engine) or turned off. */
+export function clearSyncSetup(): void {
+  syncSetupStore.set(emptySyncSetup())
+}
+
+/**
+ * A detail of the server form changed: the draft takes it and the last test's answer no longer
+ * applies (it answered the details before), so the row is back to its hint.
+ */
+export function editWebDavDraft(patch: Partial<WebDavSyncCredentials>): void {
+  const { webdav } = syncSetupStore.get()
+  syncSetupStore.set({ webdav: { ...webdav, ...patch }, probe: { state: 'idle' } })
+}
+
+/**
+ * Why an address cannot be a server's, or nothing: a URL with an http or https scheme. The
+ * form's other details are free text; an empty address is not refused here (the row is simply
+ * not filled in yet – Test connection and Turn on sync wait on it), so a field the user clears
+ * carries no error.
+ */
+export function webDavAddressProblem(url: string): string | undefined {
+  const trimmed = url.trim()
+  if (trimmed === '') return undefined
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return undefined
+  } catch {
+    // Not a URL at all: the sentence below.
+  }
+  return SYNC_COPY.serverInvalid
+}
+
+/** The server form has what a connection needs: a valid address, a user name and an app password. */
+export function webDavDraftComplete(webdav: WebDavSyncCredentials): boolean {
+  return (
+    webdav.url.trim() !== '' &&
+    webDavAddressProblem(webdav.url) === undefined &&
+    webdav.username.trim() !== '' &&
+    webdav.password !== ''
+  )
+}
+
+/** The credentials as the engine takes them: trimmed, the folder as typed (the engine splits it). */
+export function webDavCredentials(webdav: WebDavSyncCredentials): WebDavSyncCredentials {
+  return {
+    url: webdav.url.trim(),
+    username: webdav.username.trim(),
+    password: webdav.password,
+    folder: webdav.folder.trim()
+  }
+}
+
+/**
+ * Test connection: the engine reaches the DAV root once with the form's details (PROPFIND
+ * `Depth: 0` – nothing is created) and the row reports the answer. The row is busy while it
+ * runs; a second press while busy does nothing; an answer to details that have since changed is
+ * dropped (the edit put the row back to idle, and the answer was to the old details).
+ */
+export async function testWebDavConnection(): Promise<void> {
+  const draft = syncSetupStore.get()
+  if (draft.probe.state === 'busy' || !webDavDraftComplete(draft.webdav)) return
+  const asked = draft.webdav
+  syncSetupStore.set({ probe: { state: 'busy' } })
+  let probe: WebDavProbe
+  try {
+    probe = await cmd('sync.testWebDav', webDavCredentials(asked))
+  } catch {
+    probe = { ok: false, kind: 'unavailable', status: 0 }
+  }
+  if (syncSetupStore.get().webdav !== asked) return
+  syncSetupStore.set({ probe: { state: 'done', probe } })
+}
+
+/**
+ * The Test connection row's line for its state: the hint before any test, "Connecting…" while
+ * one runs, then the answer – connected; the sign-in refused (401 / 403); the server not
+ * reached (a network failure, a timeout, a 5xx); or an address that answered, but not as a
+ * WebDAV server (a web page's 200 or 405 to PROPFIND, a 404 where the root should be, a
+ * redirect – the host's fetch follows none, so an `http://` address a server bounces to
+ * `https://` lands here and wants the https address typed).
+ */
+export function probeLine(state: SyncProbeState): string {
+  if (state.state === 'idle') return SYNC_COPY.testHint
+  if (state.state === 'busy') return SYNC_COPY.testing
+  if (state.probe.ok) return SYNC_COPY.connected
+  if (state.probe.kind === 'auth') return SYNC_COPY.refused
+  if (state.probe.kind === 'unavailable') return SYNC_COPY.unreachable
+  return SYNC_COPY.notWebDav
+}
+
+/**
+ * The server folder as the connected page names it: the folder as the engine reads it (empty,
+ * dot and parent segments dropped, one trailing slash), or the account's top level for none.
+ */
+export function webDavFolderLine(folder: string): string {
+  const segments = folder
+    .split(/[\\/]+/)
+    .map((s) => s.trim())
+    .filter((s) => s !== '' && s !== '.' && s !== '..')
+  return segments.length === 0 ? SYNC_COPY.serverRootFolder : `${segments.join('/')}/`
+}
+
+/** The server as the connected page names it: the account on the host ("alice on cloud.example.com"). */
+export function webDavServerLine(webdav: { url: string; username: string }): string {
+  let host = webdav.url.trim()
+  try {
+    host = new URL(webdav.url).host || host
+  } catch {
+    // Not a URL: the address as it was kept.
+  }
+  return `${webdav.username} on ${host}`
+}
 
 /**
  * Turn sync on with what the form collected, and answer as a form does: `null` when sync is on,

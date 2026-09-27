@@ -19,7 +19,7 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } = await import('../syncForms')
-const { syncSetupStore } = await import('@renderer/lib/syncSetup')
+const { emptySyncSetup, syncSetupStore } = await import('@renderer/lib/syncSetup')
 const { browserStore, pushToast, uiStore } = await import('@renderer/lib/ui')
 
 const TREE = 'content://com.android.externalstorage.documents/tree/primary%3AZenium'
@@ -197,6 +197,94 @@ describe('the passphrase form', () => {
     expect(close).not.toHaveBeenCalled()
     expect(el.textContent).toContain('Sync could not be turned on')
   })
+
+  it('over a WebDAV server (ID-32) it sends sync.setup through the server – the transport, the details and the app password, no folder – and, sync on, clears the whole draft so the typed password leaves this process', async () => {
+    const webdav = {
+      url: 'https://cloud.example.com/remote.php/dav/files/alice/',
+      username: 'alice',
+      password: 'app-pass',
+      folder: 'Zenium/'
+    }
+    syncSetupStore.set({ folder: null, transport: 'webdav', webdav })
+    let finish: (value: null) => void = () => undefined
+    invoke.mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          finish = resolve
+        })
+    )
+    const close = vi.fn()
+    const el = render(
+      createElement(SyncPassphraseForm, {
+        folder: '',
+        webdav,
+        deviceName: 'Work laptop',
+        scope: defaultScope(),
+        close
+      })
+    )
+    // The same two secret fields and the same checks stand in front of the server.
+    expect(el.querySelectorAll('input[type="password"]')).toHaveLength(2)
+    const [first, second] = Array.from(el.querySelectorAll<HTMLInputElement>('input'))
+    type(first!, 'short')
+    type(second!, 'short')
+    act(() => button(el, 'Turn on sync').click())
+    expect(invoke).not.toHaveBeenCalled()
+    type(first!, 'correct horse battery')
+    type(second!, 'correct horse battery')
+    act(() => button(el, 'Turn on sync').click())
+    expect(invoke).toHaveBeenCalledWith('sync.setup', {
+      folder: '',
+      transport: 'webdav',
+      webdav,
+      passphrase: 'correct horse battery',
+      deviceName: 'Work laptop',
+      scope: defaultScope()
+    })
+    expect(
+      el.querySelector('[data-testid="sync-passphrase-form"]')?.getAttribute('aria-busy')
+    ).toBe('true')
+    // Until the engine answers, the draft – the password in it – is still the form's.
+    expect(syncSetupStore.get().webdav.password).toBe('app-pass')
+    syncOn(true)
+    finish(null)
+    await settle()
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+  })
+
+  it('over a WebDAV server, a refusal keeps the draft – the details are not retyped – and the form shows the reason as with a folder', async () => {
+    const webdav = {
+      url: 'https://cloud.example.com/remote.php/dav/files/alice/',
+      username: 'alice',
+      password: 'app-pass',
+      folder: 'Zenium/'
+    }
+    syncSetupStore.set({ folder: null, transport: 'webdav', webdav })
+    invoke.mockImplementationOnce(async () => {
+      pushToast('The server refused the sign-in', 'error')
+      return null
+    })
+    const close = vi.fn()
+    const el = render(
+      createElement(SyncPassphraseForm, {
+        folder: '',
+        webdav,
+        deviceName: 'Work laptop',
+        scope: defaultScope(),
+        close
+      })
+    )
+    const [first, second] = Array.from(el.querySelectorAll<HTMLInputElement>('input'))
+    type(first!, 'correct horse battery')
+    type(second!, 'correct horse battery')
+    act(() => button(el, 'Turn on sync').click())
+    await settle()
+    expect(close).not.toHaveBeenCalled()
+    expect(el.textContent).toContain('The server refused the sign-in')
+    expect(first!.getAttribute('aria-invalid')).toBe('true')
+    expect(syncSetupStore.get()).toMatchObject({ transport: 'webdav', webdav })
+  })
 })
 
 describe('the merge question', () => {
@@ -239,5 +327,21 @@ describe('Turn off sync', () => {
     expect(invoke).toHaveBeenCalledWith('sync.disconnect', { wipeRemote: true })
     expect(close).toHaveBeenCalledTimes(1)
     expect(syncSetupStore.get().folder).toBeNull()
+  })
+
+  it('clears the whole setup draft with it – a server drafted but never set up, its typed app password with it (ID-32)', () => {
+    syncSetupStore.set({
+      transport: 'webdav',
+      webdav: {
+        url: 'https://cloud.example.com/',
+        username: 'alice',
+        password: 'app-pass',
+        folder: 'Zenium/'
+      },
+      probe: { state: 'done', probe: { ok: true } }
+    })
+    const el = render(createElement(SyncDisconnectForm, { close: vi.fn() }))
+    act(() => button(el, 'Turn off').click())
+    expect(syncSetupStore.get()).toEqual(emptySyncSetup())
   })
 })

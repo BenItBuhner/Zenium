@@ -21,6 +21,7 @@ import { Slider } from '../../ui/slider'
 import {
   controlledRuns,
   currentOptionLabel,
+  fieldInputType,
   groupShows,
   itemMenuItems,
   type ActionRow,
@@ -1343,7 +1344,7 @@ function InlineField({
           row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
           row.secret && 'zen-settings-field-secret'
         )}
-        type={row.input === 'number' ? 'number' : 'text'}
+        type={fieldInputType(row)}
         inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
         min={row.min}
         max={row.max}

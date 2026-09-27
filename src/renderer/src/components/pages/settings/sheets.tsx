@@ -15,7 +15,7 @@ import type {
   SettingsRow,
   ValueRow
 } from './model'
-import { findRow, optionGroups } from './model'
+import { fieldInputType, findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
 import {
   SheetDismissContext,
@@ -452,7 +452,7 @@ function FieldSheet({
             ref={input}
             id={id}
             className={cn('zen-settings-input zen-v2-field', row.secret && 'zen-settings-secret')}
-            type={row.input === 'number' ? 'number' : 'text'}
+            type={fieldInputType(row)}
             inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
             min={row.min}
             max={row.max}
