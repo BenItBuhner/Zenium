@@ -178,9 +178,10 @@ const SNAPSHOT_JPEG_QUALITY = 90
 const PARK_CORNERS = 4
 
 /**
- * A staged page's frame (`stagedFrame`): how long a frame of its renderer's is waited for before
- * the widget is shown as painting once more (`setBackgroundThrottling`, the same un-hide the
- * session's prepare does), and how long after that before the capture gives up.
+ * A staged page's frame (`stagedFrame`): the widget is shown as painting before the frame is
+ * asked for (`setBackgroundThrottling`, the same un-hide the session's prepare does – a
+ * navigation undoes it), then how long a frame of its renderer's is waited for before it is
+ * shown as painting once more, and how long after that before the capture gives up.
  */
 const STAGED_FRAME_FIRST_MS = 800
 const STAGED_FRAME_RETRY_MS = 2000
@@ -2730,11 +2731,15 @@ export class ElectronTabView implements TabView {
   /**
    * One frame of a staged page's renderer, as `capturePage` paints: the whole widget in device
    * pixels, from the engine's frame subscription (the viz video capturer asks the renderer for
-   * its current frame at once, so a page that changes nothing still answers). A renderer that
-   * shows nothing for `STAGED_FRAME_FIRST_MS` – a widget whose un-hide a navigation undid – is
-   * shown as painting again (`setBackgroundThrottling`, with the setting as it stands) and
-   * waited for once more; null when it still shows nothing, or the view left the stage
-   * meanwhile. The subscription is ended off its own callback.
+   * its current frame at once, so a page that changes nothing still answers). The widget is
+   * shown as painting first (`setBackgroundThrottling` with the setting as it stands: Electron
+   * gives a hidden widget `WasShown` on the call, the page's own state untouched – the un-hide
+   * the session's prepare does, which a navigation since undoes; a hidden widget answers no
+   * frame, and un-hidden it answers within a frame or two rather than after a wait). A renderer
+   * that still shows nothing for `STAGED_FRAME_FIRST_MS` – a navigation committed after the
+   * un-hide – is shown as painting once more and waited for `STAGED_FRAME_RETRY_MS`; null when
+   * it still shows nothing, or the view left the stage meanwhile. The subscription is ended off
+   * its own callback.
    */
   private stagedFrame(): Promise<Electron.NativeImage | null> {
     const wc = this.wc

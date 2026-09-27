@@ -2411,7 +2411,7 @@ describe('a hidden page an agent drives and the stage', () => {
     expect(fakes.log).toEqual(['begin', 'end', 'begin', 'end'])
   })
 
-  it('shows a staged renderer that paints nothing as painting once more, with the throttling as it stands, and answers null when it still paints nothing', async () => {
+  it('shows a staged renderer as painting before asking for its frame, with the throttling as it stands, once more when it paints nothing, and answers null when it still paints nothing', async () => {
     vi.useFakeTimers()
     try {
       const { create } = setup()
@@ -2421,10 +2421,15 @@ describe('a hidden page an agent drives and the stage', () => {
       view.setAgentDriven(true)
       fakes.throttling.length = 0
       const pending = view.capture({ mode: 'viewport', format: 'jpeg' })
-      await vi.advanceTimersByTimeAsync(799)
-      expect(fakes.throttling).toEqual([])
-      await vi.advanceTimersByTimeAsync(1)
+      await vi.advanceTimersByTimeAsync(0)
+      // The un-hide comes before the subscription: a navigation since the session's prepare
+      // hid the widget again, and a hidden widget answers no frame.
       expect(fakes.throttling).toEqual([false])
+      expect(fakes.log).toEqual(['begin'])
+      await vi.advanceTimersByTimeAsync(799)
+      expect(fakes.throttling).toEqual([false])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fakes.throttling).toEqual([false, false])
       await vi.advanceTimersByTimeAsync(1999)
       expect(fakes.log).toEqual(['begin'])
       await vi.advanceTimersByTimeAsync(1)
