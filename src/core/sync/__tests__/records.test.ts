@@ -251,30 +251,28 @@ describe('collectLocal', () => {
         .toolbarPins
     ).toEqual({ home: true })
     const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
-    // Every other key, plus the retired switch mirrored beside `startup` for a release.
-    expect(Object.keys(data)).toEqual([
-      ...Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key)),
-      'restoreSession'
-    ])
+    // Every other key, and no key the settings lack (the retired `restoreSession` mirror is gone).
+    expect(Object.keys(data)).toEqual(
+      Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key))
+    )
     // The helper copies: the device's own settings keep their values.
     expect(withoutDeviceLocalSettings(src.settings)).not.toBe(src.settings)
     expect(src.settings.sidebarExpandOnHover).toBe(false)
     expect(src.settings.onboardingDone).toBe(true)
   })
 
-  it('mirrors the 0.4.x restoreSession switch beside startup for one release – on unless the mode is newTab – stamped with it as one item; a profile from before the key sends its record as it was', () => {
+  it('publishes startup alone – the 0.4.x restoreSession switch mirrored beside it for one release is retired – whatever the mode; an edit of the mode stamps startup and no other key; a profile from before the key sends its record as it was', () => {
     const src = sources()
     const data = (): Record<string, unknown> =>
       collectLocal(src, defaultScope()).get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
     expect(src.settings).not.toHaveProperty('restoreSession')
     expect(data().startup).toEqual({ mode: 'continue', pages: [] })
-    expect(data().restoreSession).toBe(true)
+    expect(data()).not.toHaveProperty('restoreSession')
     src.settings.startup = { mode: 'newTab', pages: [] }
-    expect(data().restoreSession).toBe(false)
-    // `pages` reads as on: the phone boots it as continue.
+    expect(data()).not.toHaveProperty('restoreSession')
     src.settings.startup = { mode: 'pages', pages: ['https://zen.test/'] }
-    expect(data().restoreSession).toBe(true)
-    // An edit of the mode stamps the switch with it: the two are one item to a peer.
+    expect(data()).not.toHaveProperty('restoreSession')
+    // An edit of the mode stamps `startup` – the group of the retired switch – and nothing else.
     src.settings.startup = { mode: 'continue', pages: [] }
     const seeded = diffLocal({}, collectLocal(src, defaultScope()), 1000)
     const migrated = diffLocal(seeded.meta, collectLocal(src, defaultScope()), 2000)
@@ -282,10 +280,10 @@ describe('collectLocal', () => {
     const edited = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 3000)
     const keys = edited.meta[SETTINGS_RECORD_ID]!.keys!
     expect(keys.startup!.modified).toBe(3000)
-    expect(keys.restoreSession!.modified).toBe(3000)
+    expect(keys).not.toHaveProperty('restoreSession')
     expect(keys.colorScheme!.modified).toBe(0)
-    // The switch alone changing cannot happen: it is derived. A settings object from a build
-    // before `startup` (the golden fixtures) has no mode to mirror and sends the switch it holds.
+    // A settings object from a build before `startup` (the golden fixtures) holds the switch
+    // itself and sends the record its build sent, switch and all: nothing is added or taken.
     const old = { ...src.settings, restoreSession: true } as Record<string, unknown>
     delete old.startup
     const asBefore = collectLocal(
@@ -934,6 +932,105 @@ describe('the settings record, key by key', () => {
     const dropped = seedSettingsMeta(migrated, { x: 'x1' })
     expect(dropped.keys).toEqual({ x: entry(hashData('x1'), 10) })
     expect(dropped.modified).toBe(10)
+  })
+
+  it('the retired mirror leaving this device’s record at the upgrade is no edit of startup: diffLocal stamps nothing, the record goes out without the key at its old times, and the round’s mode is the same', () => {
+    const src = sources()
+    src.settings.startup = { mode: 'newTab', pages: [] }
+    // The metadata the mirroring build left: `startup` and the switch stamped together at 3000
+    // (one item), every other key at 0 – and the record hash of the data WITH the switch.
+    const withMirror = collectLocal(src, defaultScope())
+    const mirrored = withMirror.get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
+    withMirror.set(SETTINGS_RECORD_ID, {
+      type: 'settings',
+      data: { ...mirrored, restoreSession: false }
+    })
+    const seeded = diffLocal({}, withMirror, 1000)
+    const migrated = diffLocal(seeded.meta, withMirror, 2000)
+    const before = migrated.meta[SETTINGS_RECORD_ID]!
+    before.keys!.startup!.modified = 3000
+    before.keys!.restoreSession!.modified = 3000
+    before.modified = 3000
+    // This build's first diff, in the subscriber's mode (stamped `now`): the switch is gone,
+    // `startup` keeps 3000 – not 9000 – and the record leaves at 3000 without the key.
+    const upgraded = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 9000)
+    expect(upgraded.changed).toBe(true)
+    const keys = upgraded.meta[SETTINGS_RECORD_ID]!.keys!
+    expect(keys.startup).toEqual(entry(hashData({ mode: 'newTab', pages: [] }), 3000))
+    expect(keys).not.toHaveProperty('restoreSession')
+    expect(keys.colorScheme!.modified).toBe(0)
+    expect(upgraded.meta[SETTINGS_RECORD_ID]!.modified).toBe(3000)
+    const published = upgraded.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(published.modified).toBe(3000)
+    expect(published.data).not.toHaveProperty('restoreSession')
+    expect(published.keys).not.toHaveProperty('startup')
+    // The round's mode (`stamp: null`) reads the same, and the diff after it is quiet.
+    const noticed = diffLocal(migrated.meta, collectLocal(src, defaultScope()), 9000, {
+      stamp: null
+    })
+    expect(noticed.meta[SETTINGS_RECORD_ID]!.keys!.startup!.modified).toBe(3000)
+    expect(noticed.meta[SETTINGS_RECORD_ID]!.keys).not.toHaveProperty('restoreSession')
+    const quiet = diffLocal(upgraded.meta, collectLocal(src, defaultScope()), 9500)
+    expect(quiet.changed).toBe(false)
+    // A key the user removes still stamps its group (the `menuOrder` rule is untouched): only a
+    // RETIRED key leaves without a word.
+    const peerless = diffLocal(upgraded.meta, collectLocal(src, defaultScope()), 9600)
+    src.settings.searchEngines = [engine('kagi') as unknown as SearchEngine]
+    const added = diffLocal(peerless.meta, collectLocal(src, defaultScope()), 9700)
+    expect(added.meta[SETTINGS_RECORD_ID]!.keys!.searchEngineId!.modified).toBe(9700)
+  })
+
+  it('an old peer’s switch that won once does not win every round after the retirement: the successor inherits the retired key’s time when it leaves at the re-snapshot (and at the boot seed)', () => {
+    const NEWTAB = { mode: 'newTab', pages: [] }
+    const CONTINUE = { mode: 'continue', pages: [] }
+    // This device's `startup` at 10; the phone (a 0.4.x build) flipped its switch on at 20.
+    const mine: MetaMap = { [SETTINGS_RECORD_ID]: meta(10, { startup: NEWTAB, x: 'x1' }) }
+    const phone = record(20, { restoreSession: true, x: 'x1' })
+    const won = winningRemote(mine, new Map([[SETTINGS_RECORD_ID, phone]]))
+    expect(won).toEqual([{ ...settings(), modified: 20, data: { restoreSession: true } }])
+    // The apply folds the switch into `startup`; the entry holds the switch at the peer's 20.
+    const merged: MetaMap = { ...mine, ...metaFromRemote(won, mine) }
+    expect(merged[SETTINGS_RECORD_ID]!.keys!.restoreSession!.modified).toBe(20)
+    // The re-snapshot (`stamp: null`): this build publishes no switch, so it leaves the entry –
+    // and `startup`, folded to the phone's choice, stands at 20, the group's time, not at 10.
+    const after = diffLocal(
+      merged,
+      new Map([[SETTINGS_RECORD_ID, { type: 'settings', data: { startup: CONTINUE, x: 'x1' } }]]),
+      30,
+      { stamp: null }
+    )
+    const keys = after.meta[SETTINGS_RECORD_ID]!.keys!
+    expect(keys.startup).toEqual(entry(hashData(CONTINUE), 20))
+    expect(keys).not.toHaveProperty('restoreSession')
+    expect(keys.x!.modified).toBe(10)
+    // Next round: the phone's same switch at 20 has nothing newer to say – no second win.
+    expect(winningRemote(after.meta, new Map([[SETTINGS_RECORD_ID, phone]]))).toEqual([])
+    // A later flip on the phone still wins, as it should.
+    const later = record(21, { restoreSession: false, x: 'x1' })
+    expect(winningRemote(after.meta, new Map([[SETTINGS_RECORD_ID, later]]))).toEqual([
+      { ...settings(), modified: 21, data: { restoreSession: false } }
+    ])
+    // The boot seed reads the departure the same way: a metadata that still holds the switch at
+    // 20 beside `startup` at 10 (the mirroring build's) seeds `startup` at 20 when the switch
+    // is gone from the build's record – and never raises the group above what it was.
+    const closed = meta(
+      20,
+      { startup: CONTINUE, restoreSession: true, x: 'x1' },
+      {
+        startup: 10,
+        restoreSession: 20,
+        x: 10
+      }
+    )
+    const seeded = seedSettingsMeta(closed, { startup: CONTINUE, x: 'x1' })
+    expect(seeded.keys).toEqual({
+      startup: entry(hashData(CONTINUE), 20),
+      x: entry(hashData('x1'), 10)
+    })
+    expect(seeded.modified).toBe(20)
+    expect(
+      winningRemote({ [SETTINGS_RECORD_ID]: seeded }, new Map([[SETTINGS_RECORD_ID, phone]]))
+    ).toEqual([])
   })
 })
 

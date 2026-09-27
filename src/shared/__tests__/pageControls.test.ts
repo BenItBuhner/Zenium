@@ -84,6 +84,36 @@ describe('per-site maps', () => {
     expect(siteKey(`https://${id}.ext.zenium.invalid/options.html`)).toBeNull()
   })
 
+  it('keys an IP-host page by its host – lower-cased, the port off, the brackets of an IPv6 kept – as Chrome keys its per-origin settings; the non-web pages stay null', () => {
+    // A loopback dev server, a LAN device, a public address: each a site of its own.
+    expect(siteKey('http://127.0.0.1:8787/dark.html')).toBe('127.0.0.1')
+    expect(siteKey('http://127.0.0.1/')).toBe('127.0.0.1')
+    expect(siteKey('https://192.168.1.5:8443/admin')).toBe('192.168.1.5')
+    expect(siteKey('http://10.0.0.1')).toBe('10.0.0.1')
+    expect(siteKey('http://[::1]:3000/')).toBe('[::1]')
+    expect(siteKey('http://[::1]/')).toBe('[::1]')
+    expect(siteKey('http://[2001:DB8::1]/x')).toBe('[2001:db8::1]')
+    // The URL parser's normal form: an octal or decimal IPv4 reads as the dotted address.
+    expect(siteKey('http://0177.0.0.1/')).toBe('127.0.0.1')
+    expect(siteKey('http://2130706433/')).toBe('127.0.0.1')
+    // Two ports of one address are one site; a host under a domain keys by the domain.
+    expect(siteKey('http://127.0.0.1:9000/')).toBe(siteKey('http://127.0.0.1:8787/'))
+    expect(siteKey('http://127.0.0.1.nip.io/')).toBe('nip.io')
+    // Still null: the chrome's own pages, files, an extension's page, an address that does not parse.
+    for (const url of [
+      'about:blank',
+      'zen://settings',
+      'zenium://settings/privacy',
+      'file:///tmp/x.html',
+      'chrome-extension://dbepggeogbaibhgnhhndojpepiihcmeb/options.html',
+      'http://[fe80::1%25eth0]/',
+      'http://',
+      ''
+    ]) {
+      expect(siteKey(url), url).toBeNull()
+    }
+  })
+
   it("keys zoom by host, as Chrome's zoom levels are, and looks it up exactly", () => {
     expect(zoomSiteKey('https://en.wikipedia.org/wiki/Zen')).toBe('en.wikipedia.org')
     expect(zoomSiteKey('HTTP://Mail.Google.com:8080/x')).toBe('mail.google.com')
@@ -150,6 +180,37 @@ describe('dark theme for sites', () => {
     const off = settings({ darkenSiteExceptions: { 'example.com': true } })
     expect(resolveDarkening(off, 'https://example.com/')).toBe(true)
     expect(resolveDarkening(off, 'https://other.com/')).toBe(false)
+  })
+
+  it('reaches an IP-host page: a loopback dev server is darkened under the switch, excepted under its address, and the rules the phone gets carry the address', () => {
+    const on = settings({ darkenSites: true })
+    expect(resolveDarkening(on, 'http://127.0.0.1:8787/dark.html')).toBe(true)
+    expect(resolveDarkening(on, 'http://[::1]:3000/')).toBe(true)
+    expect(resolveDarkening(on, 'https://192.168.1.5:8443/')).toBe(true)
+    // The exception is under the host: every port of the address, and no other address.
+    const excepted = settings({
+      darkenSites: true,
+      darkenSiteExceptions: { '127.0.0.1': false, '[::1]': false }
+    })
+    expect(resolveDarkening(excepted, 'http://127.0.0.1:8787/dark.html')).toBe(false)
+    expect(resolveDarkening(excepted, 'http://127.0.0.1:9000/')).toBe(false)
+    expect(resolveDarkening(excepted, 'http://[::1]/')).toBe(false)
+    expect(resolveDarkening(excepted, 'http://127.0.0.2/')).toBe(true)
+    expect(resolveDarkening(excepted, 'https://example.com/')).toBe(true)
+    // Off by default, an address can be the one site darkened.
+    const only = settings({ darkenSiteExceptions: { '192.168.1.5': true } })
+    expect(resolveDarkening(only, 'https://192.168.1.5:8443/')).toBe(true)
+    expect(resolveDarkening(only, 'https://192.168.1.6/')).toBe(false)
+    expect(resolvePageControls(excepted, 'http://127.0.0.1:8787/', phone).darken).toBe(false)
+    expect(pageRulesFor(excepted, phone).darken).toEqual({
+      default: true,
+      sites: { '127.0.0.1': false, '[::1]': false }
+    })
+    // The stored key is what a page's own address resolves to: the round trip is exact.
+    const key = siteKey('http://127.0.0.1:8787/dark.html')!
+    expect(
+      resolveDarkening(settings({ darkenSiteExceptions: { [key]: true } }), 'http://127.0.0.1/')
+    ).toBe(true)
   })
 })
 
