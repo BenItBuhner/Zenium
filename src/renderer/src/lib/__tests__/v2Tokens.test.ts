@@ -1856,18 +1856,23 @@ describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
   })
 })
 
-describe('a dependent list’s empty line (§9.30; pr-584’s re-read, NEW 2)', () => {
-  it('dims at the dependent row’s one .4 in the label’s ink, as a disabled row’s description does', () => {
-    const rule = block('.zen-settings-empty[data-disabled]')
-    expect(rule).toMatch(/color: var\(--v2-text\);/)
-    expect(rule).toMatch(/opacity: 0\.4;/)
-    // The same numbers the disabled row itself takes.
-    expect(block('.zen-settings-row-disabled')).toMatch(/opacity: 0\.4;/)
+describe('a dependent list dims as one group (§9.30, §10.4; pr-584’s re-read, NEW 2 as ruled)', () => {
+  it('the group takes the dependent row’s one .4; its deemphasised lines the label’s ink under it; the rows inside give up their own .4 so nothing compounds', () => {
+    expect(block('.zen-settings-group[data-disabled]')).toMatch(/^\s*opacity: 0\.4;\s*$/m)
     expect(
       block(
-        '.zen-settings-row-disabled .zen-settings-description,\n.zen-settings-row-disabled .zen-settings-summary'
+        '.zen-settings-group[data-disabled] .zen-settings-group-description,\n.zen-settings-group[data-disabled] .zen-settings-empty'
       )
-    ).toMatch(/color: var\(--v2-text\);/)
+    ).toMatch(/^\s*color: var\(--v2-text\);\s*$/m)
+    // The row's own .4 (the rule the page's dependent rows take, found at its line start – the
+    // group's descendant rule above it names the same class) is reset under the group's: one
+    // register, .4 of the text, never .16 (#297's compounding).
+    expect(block('\n.zen-settings-row-disabled')).toMatch(/opacity: 0\.4;/)
+    expect(block('.zen-settings-group[data-disabled] .zen-settings-row-disabled')).toMatch(
+      /^\s*opacity: 1;\s*$/m
+    )
+    // The empty line carries no rule of its own any more: the group is the one that dims.
+    expect(css).not.toContain('.zen-settings-empty[data-disabled]')
   })
 })
 

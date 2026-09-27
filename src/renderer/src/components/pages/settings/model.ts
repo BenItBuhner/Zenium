@@ -533,9 +533,11 @@ export interface RowGroup {
   /** The §9.17 one-line empty state, when the group's rows come from a list that is empty. */
   empty?: string
   /**
-   * The list's control is off (Memory Saver's exceptions while its switch is): the empty state
-   * dims with the rows it stands in for, at the dependent row's one .4 and in the label's ink
-   * under it (§9.30, §10.4; pr-584's re-read, NEW 2). The rows say `disabled` for themselves.
+   * The list's control is off (Memory Saver's exceptions while its switch is): the whole group
+   * – heading, description, rows or the empty line – dims as one dependent at §9.30's one .4,
+   * `aria-disabled` on it so the way out (the switch above) gets read (§10.4; pr-584's re-read,
+   * NEW 2, as ruled). The rows still say `disabled` for what it does – no press, no focus – and
+   * take no .4 of their own under the group's.
    */
   disabled?: boolean
   /** As a row's `layouts`: the whole group is one shell's (the bookmarks bar's rows). */

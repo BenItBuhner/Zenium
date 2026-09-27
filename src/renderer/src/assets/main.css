@@ -11576,14 +11576,20 @@
   line-height: var(--v2-line-body);
 }
 /*
- * The empty line of a list whose control is off (`RowGroup.disabled`; Memory Saver's exceptions
- * while its switch is): it dims with the rows it stands in for, at the dependent row's one .4
- * and – as a disabled row's description does (§9.30 as amended on #299) – in the label's ink,
- * so nothing under the .4 falls below .4 of the text (pr-584's re-read, NEW 2).
+ * A list whose control is off (`RowGroup.disabled`; Memory Saver's exceptions while its switch
+ * is) dims as ONE group at the dependent row's .4 – the heading, its sentence, the item rows,
+ * the empty line and the Add rows together, §9.30's one register rather than two in one
+ * dependent list (pr-584's re-read, NEW 2, as the lead ruled it). The deemphasised lines – the
+ * description, the empty line – take the label's ink under the .4 (§9.30 as amended on #299),
+ * so nothing in the group falls below .4 of the text; the rows inside give their own .4 up
+ * under the group's (the reset with the row rule, below). `aria-disabled` rides on the group.
  */
-.zen-settings-empty[data-disabled] {
-  color: var(--v2-text);
+.zen-settings-group[data-disabled] {
   opacity: 0.4;
+}
+.zen-settings-group[data-disabled] .zen-settings-group-description,
+.zen-settings-group[data-disabled] .zen-settings-empty {
+  color: var(--v2-text);
 }
 /* The one line that reports a failure where the rows would be (the viewer's listing refused): §1 status ink. */
 .zen-settings-empty[data-tone='danger'],
@@ -11732,6 +11738,14 @@
 .zen-settings-row-disabled .zen-v2-field:disabled,
 .zen-settings-row-disabled .zen-v2-switch:disabled,
 .zen-settings-row-disabled .zen-zoom-slider[data-disabled] {
+  opacity: 1;
+}
+/*
+ * The same once more a level up: a row inside a group that is off as a whole
+ * (`.zen-settings-group[data-disabled]`, the groups' rules above) keeps `disabled` for what it
+ * does and takes no .4 of its own under the group's – .4 of the text, never .16.
+ */
+.zen-settings-group[data-disabled] .zen-settings-row-disabled {
   opacity: 1;
 }
 .zen-settings-row-disabled:active {

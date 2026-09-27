@@ -138,11 +138,16 @@ export function GroupList({
         // A group is not a landmark: named by its heading, it would be a `region` – one per
         // group, and the Search section's first group, "Search", would double the pane's own
         // (axe `landmark-unique`, the desktop's #358). `group` keeps the name off the landmarks.
+        // A list whose control is off (`RowGroup.disabled`) is one dependent: the group dims as
+        // a whole – heading, sentence, rows or the empty line – and says `aria-disabled`, so a
+        // reader hears the list is off before its rows and looks up for the way out.
         <section
           key={group.id}
           role="group"
           className="zen-settings-group"
           data-group={group.id}
+          data-disabled={group.disabled || undefined}
+          aria-disabled={group.disabled || undefined}
           aria-label={group.heading ?? undefined}
         >
           {group.heading !== null && (
@@ -155,9 +160,7 @@ export function GroupList({
             <p className="zen-settings-group-description">{group.description}</p>
           )}
           {group.rows.length === 0 ? (
-            <p className="zen-settings-empty" data-disabled={group.disabled || undefined}>
-              {group.empty}
-            </p>
+            <p className="zen-settings-empty">{group.empty}</p>
           ) : (
             <GroupRows rows={group.rows} ctx={ctx} variant={variant} />
           )}

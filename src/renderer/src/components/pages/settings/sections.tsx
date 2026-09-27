@@ -2232,8 +2232,9 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
       // (§10.4), the danger ink being for what destroys the user's data (§10.5), and the site is
       // one the user adds again in a press, as the permission rows' Forget is (pr-584 R1); the
       // finger's sheet (the tablet) holds the same action as its row, as those rows do. With
-      // Memory Saver off the list is a dependent of the switch: its rows and its empty line dim
-      // as one (§9.30; the re-read's NEW 2).
+      // Memory Saver off the list is one dependent of the switch: this group – heading,
+      // sentence, item rows or the empty line – and the Add rows' group below dim as one at .4,
+      // `aria-disabled` on each (§9.30's one register; the re-read's NEW 2 as the lead ruled).
       disabled: off,
       rows: sites.map((domain) => {
         const remove = (): void =>
@@ -2264,6 +2265,8 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
     {
       id: 'keep-active-add',
       heading: null,
+      // The Add rows continue the list above: the same dependent, dimmed with it.
+      disabled: off,
       rows: [
         {
           kind: 'action',

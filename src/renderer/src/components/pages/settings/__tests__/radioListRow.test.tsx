@@ -172,29 +172,54 @@ describe('the two-pane radio form (§9.14, §10.5; pr-584 N2)', () => {
   })
 })
 
-describe('a dependent list’s empty line (§9.17, §9.30; pr-584’s re-read, NEW 2)', () => {
-  const list = (disabled: boolean): RowGroup => ({
+describe('a dependent list dims as one group (§9.17, §9.30, §10.4; pr-584’s re-read, NEW 2 as ruled)', () => {
+  const list = (disabled: boolean, rows: RowGroup['rows'] = []): RowGroup => ({
     id: 'keep-active',
     heading: 'Always keep these sites active',
     description: 'Sites you add will always stay active.',
-    rows: [],
+    rows,
     empty: 'No sites yet',
     disabled
   })
 
-  it('dims with the rows it stands in for while the list’s control is off, and stands at rest while it is on', () => {
+  it('the group carries the dim and says aria-disabled while the list’s control is off – heading, sentence and empty line inside it, none marked on its own – and stands at rest while it is on', () => {
     const off = render(<GroupList groups={[list(true)]} ctx={ctx} variant="desktop" />)
-    const dimmed = off.querySelector<HTMLElement>('.zen-settings-empty')!
-    expect(dimmed.textContent).toBe('No sites yet')
-    expect(dimmed.hasAttribute('data-disabled')).toBe(true)
-    // The heading and the description are the lead's question, not this hunk's: unmarked.
+    const group = off.querySelector<HTMLElement>('[data-group="keep-active"]')!
+    expect(group.getAttribute('role')).toBe('group')
+    expect(group.hasAttribute('data-disabled')).toBe(true)
+    expect(group.getAttribute('aria-disabled')).toBe('true')
+    // One register: the parts under the group take no mark of their own.
+    const empty = group.querySelector<HTMLElement>('.zen-settings-empty')!
+    expect(empty.textContent).toBe('No sites yet')
+    expect(empty.hasAttribute('data-disabled')).toBe(false)
+    expect(group.querySelector('.zen-settings-heading')?.textContent).toBe(
+      'Always keep these sites active'
+    )
     expect(
-      off.querySelector('.zen-settings-group-description')!.hasAttribute('data-disabled')
+      group.querySelector('.zen-settings-group-description')!.hasAttribute('data-disabled')
     ).toBe(false)
     act(() => root?.unmount())
     const on = render(<GroupList groups={[list(false)]} ctx={ctx} variant="desktop" />)
-    expect(
-      on.querySelector<HTMLElement>('.zen-settings-empty')!.hasAttribute('data-disabled')
-    ).toBe(false)
+    const rested = on.querySelector<HTMLElement>('[data-group="keep-active"]')!
+    expect(rested.hasAttribute('data-disabled')).toBe(false)
+    expect(rested.hasAttribute('aria-disabled')).toBe(false)
+  })
+
+  it('the rows inside a dimmed group keep `disabled` for what it does – no press – and the group’s attribute stands over them', () => {
+    const onChange = vi.fn()
+    const el = render(
+      <GroupList
+        groups={[list(true, [tierRow({ disabled: true }, onChange)])]}
+        ctx={ctx}
+        variant="desktop"
+      />
+    )
+    const group = el.querySelector<HTMLElement>('[data-group="keep-active"]')!
+    expect(group.getAttribute('aria-disabled')).toBe('true')
+    const row = group.querySelector<HTMLElement>('[data-row="memory-saver-tier"]')!
+    expect(row.classList.contains('zen-settings-row-disabled')).toBe(true)
+    expect(radios(el).every((o) => o.disabled)).toBe(true)
+    act(() => radios(el)[0].click())
+    expect(onChange).not.toHaveBeenCalled()
   })
 })
