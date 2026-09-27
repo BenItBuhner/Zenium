@@ -5,6 +5,7 @@ import {
   Download,
   House,
   Languages,
+  MonitorDown,
   SquarePlay,
   Star
 } from 'lucide-react'
@@ -87,6 +88,7 @@ export function CustomizeToolbarForm({
     controlRow('home', 'Home', <House />, HOME_UNCHECKED),
     controlRow('reader', 'Reader View', <BookOpenText />, 'Shows on pages with an article.'),
     controlRow('translate', 'Translate', <Languages />),
+    controlRow('install', 'Install app', <MonitorDown />, 'Shows on pages that can be installed.'),
     controlRow('star', 'Bookmark this page', <Star />),
     controlRow('media', 'Media', <SquarePlay />, 'Shows while media plays.'),
     {

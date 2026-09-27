@@ -25,9 +25,20 @@
 /**
  * The optional controls, in the bar's own order: Forward and Home ahead of the pill (Chrome's
  * toolbar: Back, Forward, Reload, Home, then the location bar), then the pill's chips left to
- * right, then the hub.
+ * right (Reader View, Translate, the Install-app chip, the star – Chrome's page-action order in
+ * `page_action/action_ids.h`, the star last), then the hub. The Install chip is a pin as Reader
+ * View and Translate are – Chrome's contextual page actions that the house lets fold into the
+ * app menu, whose "Install <app>…" row is what runs it then (W8-6).
  */
-export const TOOLBAR_CONTROLS = ['forward', 'home', 'reader', 'translate', 'star', 'media'] as const
+export const TOOLBAR_CONTROLS = [
+  'forward',
+  'home',
+  'reader',
+  'translate',
+  'install',
+  'star',
+  'media'
+] as const
 
 export type ToolbarControl = (typeof TOOLBAR_CONTROLS)[number]
 

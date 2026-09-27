@@ -331,6 +331,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'toolbar-control:home',
       'toolbar-control:reader',
       'toolbar-control:translate',
+      'toolbar-control:install',
       'toolbar-control:star',
       'toolbar-control:media',
       'toolbar-control:downloads'
@@ -340,6 +341,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       'Home',
       'Reader View',
       'Translate',
+      'Install app',
       'Bookmark this page',
       'Media',
       'Downloads'
@@ -437,6 +439,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
       home: HOME_UNCHECKED,
       reader: 'Shows on pages with an article.',
       translate: null,
+      install: 'Shows on pages that can be installed.',
       star: null,
       media: 'Shows while media plays.',
       downloads: DOWNLOADS_UNCHECKED
@@ -451,6 +454,7 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
           home: true,
           reader: false,
           translate: false,
+          install: false,
           star: false,
           media: false
         },
@@ -463,7 +467,9 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     // One convention per list (§9.1): every line the rows can carry is a sentence with its
     // full stop – the width line, on the pinned controls the tier has folded, included.
     const narrow = openDialog(state())
-    act(() => toolbarTiering.set({ hidden: ['forward', 'reader', 'translate', 'star', 'media'] }))
+    act(() =>
+      toolbarTiering.set({ hidden: ['forward', 'reader', 'translate', 'install', 'star', 'media'] })
+    )
     const atWidth = lines(narrow.h)
     expect(atWidth.forward).toBe(HIDDEN_AT_THIS_WIDTH)
     expect(atWidth.downloads).toBe(DOWNLOADS_UNCHECKED)

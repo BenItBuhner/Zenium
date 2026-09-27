@@ -193,6 +193,17 @@ vi.mock('electron', async () => {
     inspectElement(x: number, y: number): void {
       this.inspected.push([x, y])
     }
+    /** Every editing command sent to the page's focused frame (`cut`, `copy`, `paste`), in order. */
+    readonly edits: string[] = []
+    cut(): void {
+      this.edits.push('cut')
+    }
+    copy(): void {
+      this.edits.push('copy')
+    }
+    paste(): void {
+      this.edits.push('paste')
+    }
     /** Events sent to the main frame's widget (`sendInputEvent`, the fallback path). */
     readonly widgetEvents: Array<Record<string, unknown>> = []
     /** The renderer's OS process; a test moves the page to another renderer by changing it. */
@@ -532,6 +543,25 @@ describe('ElectronTabViewHost', () => {
 
     expect(host.tabIdForWebContents(wc)).toBeUndefined()
     expect(host.viewForWebContents(wc)).toBeUndefined()
+  })
+
+  it('sends Cut, Copy and Paste to the page’s focused frame as asked (the app menu’s Find and Edit ▸ rows, W8-1), and drops them once the page is gone', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const tab = { id: 'tab_1', containerId: 'default' } as Tab
+    const view = host.createView(tab, noEvents, detachedWindow)
+    const wc = (view as unknown as { webContents: { edits: string[]; close(): void } }).webContents
+    const editCommand = view.editCommand
+    expect(editCommand).toBeDefined()
+    if (!editCommand) return
+
+    editCommand.call(view, 'copy')
+    editCommand.call(view, 'cut')
+    editCommand.call(view, 'paste')
+    expect(wc.edits).toEqual(['copy', 'cut', 'paste'])
+
+    wc.close()
+    expect(() => editCommand.call(view, 'paste')).not.toThrow()
+    expect(wc.edits).toEqual(['copy', 'cut', 'paste'])
   })
 
   it('gives a page its first document only once the startup hold opens – loadURL and restoreNavigation alike, in order, a destroyed page’s dropped (services pass 10, the extension layer’s first publish)', async () => {
