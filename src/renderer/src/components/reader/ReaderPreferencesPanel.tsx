@@ -161,7 +161,9 @@ export function ReaderPreferencesPanel({
  * with the band size a dependent menulist row – laid out at .4 while the focus is off – and
  * syllables as a switch row; then, behind a hairline of their own, the article's content as
  * Chrome's Reading mode Settings menu ends its toolbar with it (reader-12): Links and Images as
- * switch rows, off drawing the links as plain text and hiding the pictures. #265's rule for the
+ * one-line switch rows – the label alone, as Chrome's – off drawing the links as plain text and
+ * hiding the pictures; with a description each the popover would pass §9.20's 60 % ceiling at
+ * 1600 × 1000 and scroll by a hair (the first line's read of #587). #265's rule for the
  * phone sheet holds with the one head row: the peek shows the live type rows whole above the
  * fold (the 44 head rows and the hairline before Text spacing's bottom edge stay inside the
  * 412 × 915 phone's peek), the set-once aids after the hairline. Exported for the order's test.
@@ -280,14 +282,12 @@ export function Rows({
       <Separator />
       <SwitchRow
         label="Links"
-        description="Off shows the article’s links as plain text"
         checked={prefs.links}
         onChange={(links) => onChange({ links })}
         data-reader-pref="links"
       />
       <SwitchRow
         label="Images"
-        description="Off hides the article’s pictures and video"
         checked={prefs.images}
         onChange={(images) => onChange({ images })}
         data-reader-pref="images"

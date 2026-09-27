@@ -476,9 +476,12 @@ describe('the panel’s order', () => {
     act(() => links.click())
     act(() => images.click())
     expect(patches).toEqual([{ links: false }, { images: true }])
-    // The description says what off does, in sentence case (§9.1).
-    expect(el.textContent).toContain('Off shows the article’s links as plain text')
-    expect(el.textContent).toContain('Off hides the article’s pictures and video')
+    // One-line rows, the label alone as Chrome's "Links" / "Images": a description each would
+    // put the popover over §9.20's 60 % ceiling at 1600 × 1000 and scroll it by a hair.
+    for (const switchRow of [links, images]) {
+      expect(switchRow.querySelectorAll('.line-clamp-2')).toHaveLength(0)
+      expect(switchRow.textContent).toMatch(/^(Links|Images)$/)
+    }
   })
 
   it('without the engine the type rows run straight into the aids’ hairline', () => {
