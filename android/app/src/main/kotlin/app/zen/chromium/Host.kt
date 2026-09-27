@@ -486,6 +486,53 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             disarm
         }
     )
+    /**
+     * NTP-35, the second half of #563's mitigation (1): the boot's served new tab page is placed a
+     * frame AFTER READY. While the gate is closed the placement ops of a view that serves it –
+     * `view.setBounds`, `view.setVisible`, the `view.shown` ask behind the batch – are held in
+     * their order and applied once the frame after `chrome.ready` is drawn ([BootPlacementHold]
+     * has the rule and the why; [releaseBootHoldAfterReadyFrame] arms the frame). Every other
+     * view, and every view once the gate is open, takes its path unchanged: the read is one
+     * boolean ([TabWebView.servesNewTabPage]), which no view of the phone's ever sets.
+     */
+    private val bootHold = BootPlacementHold()
+    private var bootHoldDeadline: Runnable? = null
+
+    private fun heldAtBoot(tabId: String): Boolean = bootHold.holds(tabs.get(tabId)?.servesNewTabPage == true)
+
+    /** Hold `op` for the boot's served view; the first hold arms the deadline a chrome that never says READY runs into. */
+    private fun holdAtBoot(tabId: String, op: () -> Unit) {
+        if (!bootHold.hold(tabId, op)) return
+        val deadline = Runnable {
+            bootHoldDeadline = null
+            val applied = bootHold.release()
+            Log.w(TAG, "boot hold: no frame after READY within ${BootPlacementHold.DEADLINE_MS} ms of the first held placement; $applied ops applied")
+        }
+        bootHoldDeadline = deadline
+        main.postDelayed(deadline, BootPlacementHold.DEADLINE_MS)
+    }
+
+    /**
+     * `chrome.ready` heard: the held placement lands with the frame after READY's (the chrome's
+     * visual-state callback for the frame carrying the DOM as it stood at READY – the frame
+     * MainActivity marks and reports fully drawn from). A boot with no served view – the phone's,
+     * a tablet's restored page – opens the gate here, nothing to wait a frame for.
+     */
+    private fun releaseBootHoldAfterReadyFrame() {
+        if (bootHold.open) return
+        if (bootHold.heldCount == 0 && tabs.all().none { it.servesNewTabPage }) {
+            bootHold.release()
+            return
+        }
+        chrome.postVisualStateCallback(BOOT_HOLD_FRAME, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                bootHoldDeadline?.let { main.removeCallbacks(it) }
+                bootHoldDeadline = null
+                val applied = bootHold.release()
+                if (applied > 0) Log.i(StartupSplash.TAG, "boot hold: the served page's placement applied after the READY frame ($applied ops)")
+            }
+        })
+    }
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -1121,13 +1168,29 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "view.focus" -> { tab?.requestFocus(); reply(null) }
             "view.focusEdge" -> { tab?.focusEdge(args.str("edge", "first")); reply(null) }
-            "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
+            // The boot's served new tab page: its first placement, and the ask behind it, are held
+            // until the frame after READY ([bootHold], NTP-35); every other view's applies at once.
+            "view.setBounds" -> {
+                val tabId = args.str("tabId")
+                val rect = args.obj("rect")
+                if (heldAtBoot(tabId)) holdAtBoot(tabId) { tabs.setBounds(tabId, rect) } else tabs.setBounds(tabId, rect)
+                reply(null)
+            }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
-            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            "view.setVisible" -> {
+                val tabId = args.str("tabId")
+                val visible = args.bool("visible")
+                if (heldAtBoot(tabId)) holdAtBoot(tabId) { setTabVisible(tabId, visible) } else setTabVisible(tabId, visible)
+                reply(null)
+            }
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
-            "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
+            "view.shown" -> {
+                val tabId = args.str("tabId")
+                if (heldAtBoot(tabId)) holdAtBoot(tabId) { placementAnswer.answer(tabId) { shown -> reply(shown) } }
+                else placementAnswer.answer(tabId) { shown -> reply(shown) }
+            }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             // `saveAs`: the menu's Save Link As… / Save Image As… – that one download asks where it
             // goes, whatever the setting (HB-40; `Downloads.bind`).
@@ -1176,6 +1239,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // the PR body).
                 coreUp = true
                 if (windowUp()) memoryPressure.start()
+                // The served page's held placement lands with the frame after READY's (NTP-35).
+                releaseBootHoldAfterReadyFrame()
             }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             // The chrome asks for the bridge's asynchronous channel once its boot is answered
@@ -2625,6 +2690,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
+        bootHoldDeadline?.let { main.removeCallbacks(it) }
+        bootHoldDeadline = null
         restoredPictures.releaseAll("host destroyed")
         if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
         connectivity.stop()
@@ -2671,6 +2738,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private const val TAG = "ZenHost"
         /** The storage's refusals: a write from a destroyed or superseded host (`Storage.close`, `Storage.Lease`). */
         private const val STORAGE_TAG = "ZenStorage"
+        /** The one visual-state request of the boot hold ([releaseBootHoldAfterReadyFrame]); the id is the callback's, nothing reads it. */
+        private const val BOOT_HOLD_FRAME = 2L
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"

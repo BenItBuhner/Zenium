@@ -105,7 +105,11 @@ function hasHistory(browser: Browser, tab: Tab): boolean {
  * which held the mark for as long as that frame took (#563's round-2 pair: `ready → frame`
  * 3.1–3.5 s on the CI emulator against main's 40 ms). READY on the tablet is then what it is on
  * a boot with no tab (main's tablet): the theme's paint and the insets; the slot shows the
- * chrome's card until the view's first frame lands. Nothing else orders on the mark: the core's
+ * chrome's card until the view's first frame lands. The host is the other half of that rule:
+ * it holds the served view's first placement (`view.setBounds`, `view.setVisible`, the
+ * `view.shown` ask) until the frame after `chrome.ready` is drawn (`Host.kt`,
+ * `BootPlacementHold`), so the page's first frame follows the mark by construction and never
+ * races it on the host's main thread. Nothing else orders on the mark: the core's
  * own chrome-ready (`ZenWindow.onChromeReady` – the fresh tab's reveal and the served page's
  * state behind it) is the renderer's connection, not this post, and the served page loads
  * inside `browser.start()`, before the arm, so it is the restore's to the host either way
