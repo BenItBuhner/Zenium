@@ -44,6 +44,7 @@ import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.math.roundToInt
@@ -76,6 +77,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val rows = JSONArray()
     private val memory = MemorySampler()
     private val mainThread = MainThreadWatch()
+    private val pageDialogs = PageDialogWatch()
     private var shots = 0
     private var fixtureTab = ""
     private var worlds = false
@@ -186,12 +188,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         else keptRegistry = File(app.filesDir, "zen/extensions.json").takeIf { it.isFile }?.readText()
         memory.start()
         mainThread.start()
+        pageDialogs.start()
         try {
             runDemo()
         } finally {
+            pageDialogs.stop()
             mainThread.stop()
             memory.stop()
             results.put("mainThreadWatch", mainThread.report())
+            results.put("pageDialogsPressedUnderWaits", pageDialogs.pressed.get())
             results.put("appProcessMemory", memory.report())
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
@@ -3893,6 +3898,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val extra = JSONObject()
         val (_, fixtureView) = fixture("audio.html?recorder", factor, 2_000)
         extra.put("page", json(tabEval(fixtureView, "JSON.stringify({getDisplayMedia:typeof (navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia),getUserMedia:typeof (navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)})")))
+        // The web Permissions API as the fixture's document reads it, beside the recorder page's own
+        // read below: the page alerted "'permissions' is not available" on the 113 BEFORE (its
+        // `navigator.permissions.query({name:"microphone"})` in `app.start`), and the two readings
+        // tell the WebView's realm from the extension page's.
+        extra.put("permissionsApiInTab", permissionsApiRead(fixtureView))
         val before = tabUrls().keys
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         val opened = poll(scaled(30_000, factor), 700) { openedPage(before, row) }
@@ -3902,6 +3912,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val view = waitForView(opened.key)
             page = pollExpr(view, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:text.length>20,buttons:document.querySelectorAll('button, [role=button]').length,text:"), scaled(25_000, factor))
             page.put("url", opened.value).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            page.put("permissionsApi", permissionsApiRead(view))
             capture = captureShape(view, factor)
             showTab(opened.key)
             SystemClock.sleep(scaled(2_000, factor))
@@ -3910,7 +3921,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-recorder")
         runCatching { coreCall("extension.closePopup", "null") }
         val shape = capture.optString("desktopCapture") == "object" && capture.optString("chooseDesktopMedia") == "function"
-        val note = "page ${if (opened == null) "never opened" else "${extensionPath(opened.value).take(40)}: \"${page.optString("text").take(80)}\" (${page.optInt("buttons")} buttons)"}; desktopCapture: ${capture.toString().take(160)}"
+        val permissions = page.optJSONObject("permissionsApi")?.let { "; navigator.permissions in its page: ${it.toString().take(200)}" }.orEmpty()
+        val note = "page ${if (opened == null) "never opened" else "${extensionPath(opened.value).take(40)}: \"${page.optString("text").take(80)}\" (${page.optInt("buttons")} buttons)"}; desktopCapture: ${capture.toString().take(160)}$permissions"
         return when {
             opened == null -> Grade("F", "Screen Recorder: the action click opened no page within ${scaled(30_000, factor) / 1000} s: $note", extra)
             !page.optBoolean("pass") -> Grade("F", "Screen Recorder: its page stayed blank: $note", extra)
@@ -11412,7 +11424,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val maxMs = if (short) CORE_STALLED_ROW_READ_MS else CORE_READ_MAX_MS
         if (short) stallOf(entry!!).let { it.put("shortReads", it.optInt("shortReads") + 1) }
         try {
-            return coreInvokeUnderStall(name, args, baseMs = minOf(CORE_READ_BASE_MS, maxMs), maxMs = maxMs, onStall = coreStallOnRow(name))
+            return pageDialogs.underWait { coreInvokeUnderStall(name, args, baseMs = minOf(CORE_READ_BASE_MS, maxMs), maxMs = maxMs, onStall = coreStallOnRow(name)) }
         } catch (e: IllegalStateException) {
             if (entry != null && e.message?.contains("timed out after") == true) {
                 stallOf(entry).let { it.put("timedOut", it.optInt("timedOut") + 1).put("lastTimedOut", name) }
@@ -11682,8 +11694,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 latch.countDown()
             }
         }
-        latch.await(timeoutSeconds, TimeUnit.SECONDS)
+        // A page's dialog parks the renderer and with it this answer: the page-dialog watch presses it meanwhile.
+        pageDialogs.underWait { latch.await(timeoutSeconds, TimeUnit.SECONDS) }
         return value
+    }
+
+    /**
+     * The web Permissions API in `view`'s document ([PERMISSIONS_API_READ]): whether
+     * `navigator.permissions` is there, what `query({name:'microphone'})` does at once (a promise
+     * back, or a throw with its name and message) and how the promise settled, polled for up to
+     * 3 s (`settled`: `fulfilled <state>`, `rejected <name>: <message>`, `threw`, or `pending`).
+     */
+    private fun permissionsApiRead(view: WebView): JSONObject {
+        val read = json(tabEval(view, PERMISSIONS_API_READ))
+        read.put("settled", pollExpr(view, PERMISSIONS_API_STATE, 3_000).optString("state"))
+        return read
     }
 
     /** Poll a JSON-returning expression until its `pass` is true, for up to `timeoutMs`; the last reading either way. */
@@ -12342,16 +12367,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * sheet carries one and is left alone) whose texts carry the title line – the host's
      * `page_dialog_title_*` strings, every one ending in the same word ("says"), or its
      * beforeunload pair – and whose buttons are read as [dismissDialog] reads a dialog's: Cancel
-     * when the sheet has it (a confirm's OK runs the page's positive path), OK / Leave / Reload
-     * otherwise. The sheet's buttons are `TextView`s announced as buttons, so the same node test
-     * finds them.
+     * when the sheet has it (a confirm's OK runs the page's positive path), OK otherwise; the
+     * beforeunload pair's Leave / Reload first, since the sweep's `tab.close` is what raised it and
+     * a Cancel would keep the tab and raise it again. The sheet's buttons are `TextView`s announced
+     * as buttons, so the same node test finds them. Called by [dismissDialog]'s callers and, under
+     * the sweep's waits, by the [PageDialogWatch] thread (its reads are the accessibility tree's
+     * and its writes the evidence the waiting sweep thread does not touch meanwhile).
      */
     private fun dismissPageDialogSheet(): String? {
         val titleTail = app.getString(R.string.page_dialog_title_site).substringAfter("%1\$s")
-        val titles = listOf(
-            R.string.page_dialog_title_embedded_no_site, R.string.page_dialog_title_no_site,
-            R.string.page_dialog_leave_title, R.string.page_dialog_reload_title
-        ).map(app::getString)
+        val leaving = listOf(R.string.page_dialog_leave_title, R.string.page_dialog_reload_title).map(app::getString)
+        val titles = listOf(R.string.page_dialog_title_embedded_no_site, R.string.page_dialog_title_no_site).map(app::getString) + leaving
+        val goes = listOf(R.string.page_dialog_leave, R.string.page_dialog_reload).map(app::getString)
         for (window in extraWindows()) {
             val root = window.root ?: continue
             val texts = ArrayList<String>()
@@ -12367,7 +12394,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
             }
             if (webView || texts.none { it.endsWith(titleTail) || it in titles }) continue
-            val button = dialogButton(buttons.map { it.text?.toString()?.trim().orEmpty() })?.let(buttons::get) ?: continue
+            val labels = buttons.map { it.text?.toString()?.trim().orEmpty() }
+            val go = if (texts.any { it in leaving }) labels.indexOfFirst { label -> goes.any { it.equals(label, ignoreCase = true) } }.takeIf { it >= 0 } else null
+            val button = go?.let(buttons::get) ?: dialogButton(labels)?.let(buttons::get) ?: continue
             val text = "page dialog sheet: ${texts.joinToString(" | ").take(300)} || pressed: ${button.text?.toString()?.trim().orEmpty()}"
             dialogsDismissed.put(text)
             snap("page-dialog-dismissed")
@@ -12517,6 +12546,62 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * on its side once the process has been silent in logcat for five minutes
      * (android-ext-compat-sweep.sh).
      */
+    /**
+     * A page's dialog pressed away while the sweep waits on the renderer it parked. A page's
+     * `alert()`, `confirm()` or `prompt()` holds its renderer's main thread in the dialog's
+     * synchronous IPC until the dialog answers, and Android WebView runs every WebView of the
+     * process – the chrome's included – in that one renderer: a core read ([coreRead], whose poll
+     * is the harness's [coreInvokeUnderStall], untouched) finds the chrome silent, a [tabEval] on
+     * any view finds its answer held, and neither presses a thing. Round 22's 113 BEFORE (run
+     * 36285609473): Screen Recorder's page alerted 550 ms after it opened, the row's
+     * `app.getState` ran out its whole 120 s allowance and the cleanup's [chromeAnswers] was the
+     * first to meet the sheet, five minutes on. This watch runs beside those waits: while one is
+     * under way ([underWait]) it looks every [PAGE_DIALOG_WATCH_MS] for the browser's own
+     * page-dialog sheet and presses it as [dismissPageDialogSheet] does – that sheet alone (an
+     * install sheet or a permission prompt is the row's own to answer) and only under a wait, when
+     * the sweep thread is inside a latch or the harness's poll and touches neither the screen nor
+     * the evidence, so the two never tap or write together. No row reads a page's dialog on purpose.
+     */
+    private inner class PageDialogWatch {
+        private var thread: Thread? = null
+        @Volatile private var running = false
+        @Volatile private var waiting = false
+        /** How many sheets the watch pressed (results.json's `pageDialogsPressedUnderWaits`). */
+        val pressed = AtomicInteger()
+
+        /** `block` with the watch awake for its duration. */
+        fun <T> underWait(block: () -> T): T {
+            waiting = true
+            try {
+                return block()
+            } finally {
+                waiting = false
+            }
+        }
+
+        fun start() {
+            running = true
+            thread = Thread {
+                while (running) {
+                    SystemClock.sleep(PAGE_DIALOG_WATCH_MS)
+                    if (!running || !waiting) continue
+                    val text = runCatching { dismissPageDialogSheet() }.getOrNull() ?: continue
+                    pressed.incrementAndGet()
+                    Log.w(TAG, "PAGE DIALOG pressed away under a wait: $text")
+                }
+            }.apply {
+                isDaemon = true
+                name = "CompatSweep page-dialog watch"
+                start()
+            }
+        }
+
+        fun stop() {
+            running = false
+            thread?.join(PAGE_DIALOG_WATCH_MS + 1_000)
+        }
+    }
+
     private inner class MainThreadWatch {
         private var thread: Thread? = null
         @Volatile private var running = false
@@ -12903,6 +12988,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val FRAME_PROBE_FRAMES = 4
         private const val FRAME_PROBE_TIMEOUT_MS = 8_000L
         /** The main thread not answering this long is a hang (the longest stalls the runs' `Davey!` frames show are two or three seconds): [MainThreadWatch]. */
+        /** How often the page-dialog watch looks while a wait is under way ([PageDialogWatch]). */
+        private const val PAGE_DIALOG_WATCH_MS = 2_000L
         private const val HANG_MAIN_THREAD_MS = 90_000L
         /** A stall that lasts is dumped again this often (the sweep script's own silence watch fires at five minutes). */
         private const val HANG_DUMP_AGAIN_MS = 300_000L
@@ -14513,6 +14600,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val NIGHT_EYE_DARK =
             "(function(){var h=document.documentElement;var mode=h.getAttribute('nighteye');var css=!!document.getElementById('nighteyedefaultcss');var bg=document.body?getComputedStyle(document.body).backgroundColor:'';var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(bg);var lum=m?Math.round(0.2126*m[1]+0.7152*m[2]+0.0722*m[3]):255;" +
                 "return JSON.stringify({pass:mode==='dark'||mode==='filtered'||(css&&mode!=='disabled'&&lum<100),mode:mode,css:css,bg:bg,lum:lum,styles:document.querySelectorAll('style[id*=\"nighteye\"], link[id*=\"nighteye\"]').length})})()"
+
+        /**
+         * The web Permissions API as a page's script meets it: `'permissions' in navigator`, the
+         * types, and `navigator.permissions.query({name:'microphone'})` run once – the promise's
+         * settling parked on `window.__zenPermState` for [PERMISSIONS_API_STATE] to read; a
+         * synchronous throw named in `threw` (the branch Screen Recorder's `app.start` alerts on).
+         */
+        private const val PERMISSIONS_API_READ =
+            "(function(){var r={inNavigator:'permissions' in navigator,type:typeof navigator.permissions,query:typeof (navigator.permissions&&navigator.permissions.query)};" +
+                "try{var p=navigator.permissions.query({name:'microphone'});r.returns=Object.prototype.toString.call(p);window.__zenPermState='pending';" +
+                "Promise.resolve(p).then(function(s){window.__zenPermState='fulfilled '+(s&&s.state)},function(e){window.__zenPermState='rejected '+(e&&e.name)+': '+(e&&e.message)})}" +
+                "catch(e){r.threw=(e&&e.name)+': '+(e&&e.message);window.__zenPermState='threw'}return JSON.stringify(r)})()"
+
+        /** How [PERMISSIONS_API_READ]'s query settled: pass once it is no longer pending. */
+        private const val PERMISSIONS_API_STATE =
+            "JSON.stringify({pass:typeof window.__zenPermState==='string'&&window.__zenPermState!=='pending',state:String(window.__zenPermState)})"
 
         /** Temp Mail's popup: the mailbox address drawn into `#email` (an `@` in it, from web2.temp-mail.org's API), the `#workplace` around it. */
         private const val TEMP_MAIL_ADDRESS =
