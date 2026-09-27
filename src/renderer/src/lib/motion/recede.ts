@@ -185,6 +185,10 @@ function sameFrame(a: RecedeLayerFrame | null, b: RecedeLayerFrame): boolean {
 const pageListeners = new Set<(page: number) => void>()
 let lastPage = 0
 
+/** Who hears the stack's depth as it changes (`subscribeRecedeDepth`), and what they last heard. */
+const depthListeners = new Set<(depth: number) => void>()
+let lastDepth = 0
+
 /** The surfaces registered by their components (`registerRecedeSurface`). */
 const surfaces = new Set<HTMLElement>()
 /** The `[data-recede-surface]` elements found when a sheet last registered. */
@@ -244,6 +248,13 @@ function publish(): void {
   if (page !== lastPage) {
     lastPage = page
     for (const listener of Array.from(pageListeners)) listener(page)
+  }
+  // The depth after the page: a sheet registering at 0 or releasing at 0 moves the depth and
+  // not the page, and whoever seats by the depth (the phone's toasts, §9.33) reads the page's
+  // value off the surfaces as they now carry it.
+  if (stack.length !== lastDepth) {
+    lastDepth = stack.length
+    for (const listener of Array.from(depthListeners)) listener(stack.length)
   }
 }
 
@@ -310,6 +321,20 @@ export function registerRecedeSurface(el: HTMLElement): () => void {
 /** Sheets on the stack right now (the page recedes while it is not empty). */
 export function recedeDepth(): number {
   return stack.length
+}
+
+/**
+ * Hear the stack's depth whenever it changes: a sheet registering (its mount, before its rise)
+ * or releasing (its unmount, once its leave has landed). For chrome that seats by whether a
+ * sheet stands rather than by how far the page has receded – the phone's message frame, which
+ * lifts a toast a sheet's act raised above the sheet for as long as one stands (§9.33). Told
+ * only of a change, after the page's listeners; the returned function unsubscribes.
+ */
+export function subscribeRecedeDepth(listener: (depth: number) => void): () => void {
+  depthListeners.add(listener)
+  return () => {
+    depthListeners.delete(listener)
+  }
 }
 
 /** The page's recede right now: what `--zen-recede` says. */
