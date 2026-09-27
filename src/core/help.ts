@@ -4,19 +4,32 @@ import type { ZenWindow } from './window'
 
 /**
  * Google's Safe Browsing report form, Chrome's Help › Report an unsafe site… target
- * (`IDC_REPORT_UNSAFE_SITE`, `feedback::ReportUnsafeSiteDialog`): Chrome opens a dialog of its
- * own that posts to it; Zenium has no such dialog and opens the form itself, the page's address
- * filled in (services' word on #578).
+ * (`IDC_REPORT_UNSAFE_SITE`, `HelpMenuModel::Build`; shortcuts-menus-123): Chrome opens a WebUI
+ * feedback dialog of its own that pre-fills the tab's address and screenshot and posts to it;
+ * Zenium has no such dialog and opens the form itself, the page's address in its `url` query
+ * (services' word on #578). The form is a public page and needs no key, so the rows show whether
+ * or not Safe Browsing is on – Chrome's own row hides with Safe Browsing off and in Incognito.
  */
 export const REPORT_UNSAFE_SITE_FORM = 'https://safebrowsing.google.com/safebrowsing/report_phish/'
 
 /**
- * The report form for `url`, or null when there is no page to report: the form takes a web
- * address, so a `zen://` page, a blank tab, a file or no tab at all has none. The Help rows read
- * it for their state – a menu that hides rows hides theirs, the menu bar greys its (§9.30).
+ * The report form for `url`, or null when the page has no address the form can take: only an
+ * http(s) page has one, so a `zen://` or `chrome://` page, a blank tab, a `file:`, `data:`,
+ * `blob:`, `javascript:` or `ftp:` address, an empty or unparsable one, or no tab at all answers
+ * null. Chrome gates nothing on the scheme – its dialog lets the user type another address –
+ * the one difference in the row's showing. The Help rows of both menus read it for their state
+ * and grey the row rather than hide it, the menu keeping its shape (§9.17, §9.30; the lead's
+ * ruling on #588).
  */
 export function reportUnsafeSiteUrl(url: string | null | undefined): string | null {
-  if (!url || !/^https?:\/\//i.test(url)) return null
+  if (!url) return null
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
   return `${REPORT_UNSAFE_SITE_FORM}?url=${encodeURIComponent(url)}`
 }
 

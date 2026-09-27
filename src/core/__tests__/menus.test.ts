@@ -31,7 +31,8 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
-import { unsafeSiteReportUrl } from '../unsafeSiteReport'
+import { reportUnsafeSiteUrl } from '../help'
+import { bindingFor, toAccelerator } from '../../shared/shortcuts'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 import {
@@ -1148,6 +1149,25 @@ describe('the app menu', () => {
     expect(opened).toEqual([])
     deepItem(h.shown(), 'Report an Issue…').click?.()
     expect(opened).toEqual([ISSUES_URL])
+    // Report an Issue… names the key table's `help.reportIssue`, so Chrome's chord shows after
+    // it here as in the menu bar's Help menu (the lead's ruling 5 on #588) – the table's
+    // binding, never a second truth: Alt+Shift+I in the Chrome preset, nothing in Zen's. No
+    // other Help row names an action of the table (Chrome's ⇧⌘/ is its help page's), so none
+    // shows a chord.
+    const report = deepItem(h.shown(), 'Report an Issue…')
+    expect(report.action).toBe('help.reportIssue')
+    expect(report.accelerator).toBe('Alt+Shift+I')
+    expect(report.accelerator).toBe(
+      toAccelerator(bindingFor(h.browser.state.shortcuts, 'help.reportIssue'))
+    )
+    for (const row of help.filter((i) => i.type !== 'separator' && i.label !== 'Report an Issue…'))
+      expect(row.accelerator, row.label).toBeUndefined()
+    h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
+    appMenu(h)
+    expect(deepItem(h.shown(), 'Report an Issue…').action).toBe('help.reportIssue')
+    expect(deepItem(h.shown(), 'Report an Issue…').accelerator).toBeUndefined()
+    deepItem(h.shown(), 'Report an Issue…').click?.()
+    expect(opened).toEqual([ISSUES_URL, ISSUES_URL])
     // About is a row that acts now – the About page (Settings › About: the version, the
     // update row, the legal pages), not a disabled version line; the version is the page's.
     const about = deepItem(h.shown(), 'About Zenium')
@@ -1194,7 +1214,7 @@ describe('the app menu', () => {
       expect(report.url).toBe(
         `https://safebrowsing.google.com/safebrowsing/report_phish/?url=${encodeURIComponent(PAGE_URL)}`
       )
-      expect(report.url).toBe(unsafeSiteReportUrl(PAGE_URL))
+      expect(report.url).toBe(reportUnsafeSiteUrl(PAGE_URL))
       expect(report.openerTabId).toBe(page.id)
       expect(report.containerId).toBe(page.containerId)
       // The form is a page of the browser's, as Chrome's help centre is – not the system browser's.
@@ -1244,7 +1264,7 @@ describe('the app menu', () => {
       appMenu(h)
       deepItem(h.shown(), reportRow).click?.()
       const report = h.browser.tabs.activeTabFor(h.win)!
-      expect(report.url).toBe(unsafeSiteReportUrl('https://example.com/p'))
+      expect(report.url).toBe(reportUnsafeSiteUrl('https://example.com/p'))
       expect(report.containerId).toBe(PRIVATE_CONTAINER_ID)
       expect(report.openerTabId).toBe(privatePage.id)
     })
