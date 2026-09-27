@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type {
+  HostCapabilities,
+  NavigationSnapshot,
+  Platform as PlatformOs,
+  Tab
+} from '../../shared/types'
 import { Browser } from '../browser'
 import type {
   AppHost,
@@ -58,6 +63,8 @@ interface FakeView {
    * answers one (`drawn`) or lets it stand (a document that never reports).
    */
   frames: Array<{ resolve: (t: number) => void; reject: (reason: Error) => void }>
+  /** Every stack the page was told to replay (`restoreNavigation`), in order. */
+  restored: NavigationSnapshot[]
 }
 
 function fakeView(url: string, events: TabViewEvents, reports = true): FakeView {
@@ -68,7 +75,8 @@ function fakeView(url: string, events: TabViewEvents, reports = true): FakeView 
     url,
     visible: false,
     destroyed: false,
-    frames: []
+    frames: [],
+    restored: []
   }
   const log = (name: string, ...args: unknown[]): void =>
     void record.calls.push(`${name}(${args.map((a) => JSON.stringify(a)).join(',')})`)
@@ -93,6 +101,12 @@ function fakeView(url: string, events: TabViewEvents, reports = true): FakeView 
     reload: (ignoreCache) => log('reload', ignoreCache),
     stop: () => log('stop'),
     navigationEntries: () => ({ entries: [{ url: record.url, title: '' }], index: 0 }),
+    restoreNavigation: (snapshot) => {
+      log('restoreNavigation', snapshot.index)
+      record.restored.push(snapshot)
+      record.url = snapshot.entries[snapshot.index]?.url ?? record.url
+      return Promise.resolve()
+    },
     hasDocument: () => true,
     isCurrentlyAudible: () => false,
     getZoom: () => 1,
@@ -903,5 +917,107 @@ describe('readerability across the page’s navigations', () => {
       s.page.events.onNavigated('https://example.com/elsewhere', false)
       expect(tab.readerable).toBe(false)
     }
+  })
+})
+
+/**
+ * A tab put away on a reader address whose article the service no longer holds – a relaunch
+ * with the reader up, on either host – wakes on the page the reader was of, and its stack says
+ * where that page was: the desktop's cover was no navigation, so the stack's current entry is
+ * the page's own (moved on by a `pushState` beneath the cover, maybe) and the stack is replayed
+ * whole; a reader that was a navigation of the tab (the phone's, a session from before the
+ * cover) left its own entry on top, and that entry goes rather than the page going on above it
+ * – Back never lands on "article gone". A reader whose article the service holds loads as it was.
+ */
+describe('waking on a reader address whose article is gone', () => {
+  const GONE = `${READER_URL_PREFIX}?${new URLSearchParams({ id: 'article_gone', url: PAGE_URL })}`
+  const MOVED = `${PAGE_URL}#part-2`
+
+  /** A tab put away on `url` with `snapshot` as its recorded stack, woken. */
+  function wake(s: Scene, url: string, snapshot: NavigationSnapshot): { tab: Tab; page: FakeView } {
+    const tab = s.browser.tabs.createTab({ url, active: false, load: false }, s.win)
+    s.browser.tabs.setPendingNavigation(tab.id, snapshot)
+    expect(s.browser.tabs.load(tab.id, s.win)).toBeDefined()
+    return { tab, page: s.host.pages.get(tab.id)! }
+  }
+
+  it('the desktop’s cover was no navigation: the tab wakes on the stack’s current entry – the page as a pushState beneath the cover left it – and the stack is replayed whole, the host’s serialisation with it', () => {
+    const s = scene()
+    const entries = [
+      { url: OTHER_URL, title: 'Elsewhere' },
+      { url: MOVED, title: 'Story', pageState: 'scrolled' }
+    ]
+    const { tab, page } = wake(s, GONE, { entries, index: 1, hostState: 'the-engine’s-own' })
+    expect(tab.url).toBe(MOVED)
+    expect(tab.readerable).toBe(false)
+    expect(page.restored).toEqual([{ entries, index: 1, hostState: 'the-engine’s-own' }])
+    expect(page.calls.filter((c) => c.startsWith('loadURL('))).toEqual([])
+  })
+
+  it('a reader that was a navigation of the tab left its entry on top of the page it was of: the entry goes, the page beneath is the current one, forward entries stay, the serialisation of the old list stays behind', () => {
+    for (const withCover of [true, false]) {
+      const s = scene(withCover)
+      const { tab, page } = wake(s, GONE, {
+        entries: [
+          { url: OTHER_URL, title: 'Elsewhere' },
+          { url: PAGE_URL, title: 'Story', pageState: 'scrolled' },
+          { url: GONE, title: 'Story' },
+          { url: `${PAGE_URL}/next`, title: 'Next' }
+        ],
+        index: 2,
+        hostState: 'the-old-list’s'
+      })
+      expect(tab.url).toBe(PAGE_URL)
+      expect(page.restored).toEqual([
+        {
+          entries: [
+            { url: OTHER_URL, title: 'Elsewhere' },
+            { url: PAGE_URL, title: 'Story', pageState: 'scrolled' },
+            { url: `${PAGE_URL}/next`, title: 'Next' }
+          ],
+          index: 1
+        }
+      ])
+      expect(page.calls.filter((c) => c.startsWith('loadURL('))).toEqual([])
+    }
+  })
+
+  it('a reader entry with another page beneath it is replaced by the page it was of, in its place', () => {
+    const s = scene(false)
+    const { tab, page } = wake(s, GONE, {
+      entries: [
+        { url: OTHER_URL, title: 'Elsewhere' },
+        { url: GONE, title: 'Story' }
+      ],
+      index: 1,
+      hostState: 'the-old-list’s'
+    })
+    expect(tab.url).toBe(PAGE_URL)
+    expect(page.restored).toEqual([
+      {
+        entries: [
+          { url: OTHER_URL, title: 'Elsewhere' },
+          { url: PAGE_URL, title: tab.title }
+        ],
+        index: 1
+      }
+    ])
+  })
+
+  it('a reader address whose article the service holds – a tab put to sleep within the session – loads as it was, its stack whole', () => {
+    const s = scene(false)
+    s.browser.reader.open(s.tabId, ARTICLE)
+    const readerUrl = s.browser.tabs.tab(s.tabId)!.url
+    expect(readerUrl.startsWith(`${READER_URL_PREFIX}?id=`)).toBe(true)
+    const entries = [
+      { url: PAGE_URL, title: 'Story' },
+      { url: readerUrl, title: 'Story' }
+    ]
+    s.browser.tabs.discard(s.tabId)
+    s.browser.tabs.setPendingNavigation(s.tabId, { entries, index: 1, hostState: 'the-list’s' })
+    expect(s.browser.tabs.load(s.tabId, s.win)).toBeDefined()
+    const page = s.host.pages.get(s.tabId)!
+    expect(s.browser.tabs.tab(s.tabId)!.url).toBe(readerUrl)
+    expect(page.restored).toEqual([{ entries, index: 1, hostState: 'the-list’s' }])
   })
 })

@@ -572,7 +572,8 @@ export class TabManager {
     // reader is a navigation of the tab; a discarded tab waking within the session) loads as
     // it was.
     const articleId = readerArticleId(url)
-    if (articleId !== null && !this.browser.reader.article(articleId)) {
+    const articleGone = articleId !== null && !this.browser.reader.article(articleId)
+    if (articleGone) {
       url = this.browser.reader.originalUrl(url) ?? BLANK_URL
       tab.url = url
       tab.readerable = false
@@ -583,15 +584,47 @@ export class TabManager {
       // A reopened, restored or unloaded tab: give it its back/forward stack (and, through the
       // entries' page state, its scroll position) back instead of a bare load.
       this.pendingNavigation.delete(tabId)
-      const index = Math.min(Math.max(snapshot.index, 0), snapshot.entries.length - 1)
-      if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
+      let entries = snapshot.entries
+      let index = Math.min(Math.max(snapshot.index, 0), entries.length - 1)
+      let hostState = snapshot.hostState
+      if (articleGone) {
+        // The reader's article gone, the stack – not the reader address – says where the tab was.
+        // The desktop's cover was no navigation: the current entry is the page's own (moved on
+        // by a `pushState` beneath the cover, maybe – the address the reader was opened on is
+        // then behind), and the tab wakes on it, stack whole. A reader that was a navigation of
+        // the tab (the phone's; a desktop session from before the cover) left its own entry on
+        // top: that entry goes – dropped where the page it was of is the entry beneath (the
+        // reader was entered from it), replaced by the page otherwise – so Back never lands on
+        // "article gone". The host's serialisation described the list with the reader in it
+        // and stays behind.
+        const current = entries[index]
+        if (readerArticleId(current.url) === null) {
+          url = current.url
+          tab.url = url
+        } else {
+          const beneath = index > 0 ? entries[index - 1] : undefined
+          if (beneath && (beneath.url === url || url === BLANK_URL)) {
+            entries = [...entries.slice(0, index), ...entries.slice(index + 1)]
+            index -= 1
+            url = beneath.url
+            tab.url = url
+          } else {
+            entries = [
+              ...entries.slice(0, index),
+              { url, title: tab.title },
+              ...entries.slice(index + 1)
+            ]
+          }
+          hostState = undefined
+        }
+      }
+      if (url === '' || url === BLANK_URL || url === entries[index].url) {
         this.pendingTransition.set(tabId, 'restored')
         // The host's own serialisation of the stack rides along: the list is the one it describes.
         // After a relaunch it is not in memory but in the tab's `navigation/` document, which
         // hands it over for this very list only.
-        const whole: NavigationSnapshot = { entries: snapshot.entries, index }
-        const hostState =
-          snapshot.hostState ?? this.browser.state.navigationState.hostStateFor(tabId, whole)
+        const whole: NavigationSnapshot = { entries, index }
+        hostState ??= this.browser.state.navigationState.hostStateFor(tabId, whole)
         if (hostState !== undefined) whole.hostState = hostState
         void view.restoreNavigation(whole)
       } else {
@@ -599,7 +632,7 @@ export class TabManager {
         // page goes on top of the stack and the forward entries go, as in Chrome (the host's
         // serialisation described the old list and stays behind).
         void view.restoreNavigation({
-          entries: [...snapshot.entries.slice(0, index + 1), { url, title: tab.title }],
+          entries: [...entries.slice(0, index + 1), { url, title: tab.title }],
           index: index + 1
         })
       }
