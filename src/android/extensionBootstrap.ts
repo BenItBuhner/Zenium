@@ -63,6 +63,7 @@ import {
   type SpeechLink
 } from './extensionSpeechSynthesis'
 import { installUrlOrigin, scopedUrlClass } from './extensionUrlOrigin'
+import { withdrawShapeDetection } from './extensionShapeDetection'
 import { completeChromeObject } from '@shared/chromeObject'
 
 /**
@@ -507,6 +508,12 @@ declare const __zenExtBoot: Boot
     const workerGlobal =
       context === 'background' && workerScript ? workerSelf(realWindow) : undefined
     const engine = makeEngine(ext, context, frame, realWindow, false, workerGlobal)
+    // The Shape Detection API's constructors, whose detectors the WebView binds through Google
+    // Play services in the app's process – a bind that killed the app on a WebView whose check of
+    // the app's manifest threw (extensionShapeDetection.ts). Not on the MV3 worker page: its
+    // realm's shape is the worker's own.
+    const shapeDetection =
+      context === 'background' && workerScript ? [] : withdrawShapeDetection(realWindow)
     // An extension page open as a tab shares its main world with every other document-start
     // copy of this script whose origin rule covers it – the units over `*` of this extension
     // (a `world: "MAIN"` group on a WebView with isolated worlds, every group without them) and
@@ -539,12 +546,15 @@ declare const __zenExtBoot: Boot
       for (const [ep, running] of engines) flow[ep] = running.flow
       const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills'> & {
         page: EngineContextKind
+        /** The Shape Detection interfaces this page's realm had and let go (none on the worker page). */
+        shapeDetection: string[]
       } = {
         frame: frame.url,
         world: 'page',
         page: context,
         flow,
-        polyfills
+        polyfills,
+        shapeDetection
       }
       Object.defineProperty(g, '__zenExtStats', {
         value: pageStats,

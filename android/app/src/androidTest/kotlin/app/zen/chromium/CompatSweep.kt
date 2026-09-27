@@ -7637,6 +7637,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (popup != null) {
             hit = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", control))).takeIf { it.has("x") } } ?: JSONObject()
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            // The realm the popup's library reads: the Shape Detection constructors the bootstrap
+            // let go (round 22's crash class – the WebView's bind of `BarcodeDetector` through Google
+            // Play services killed the app on the 156 lane) and whether the barcode one is still there.
+            extra.put("shapeDetection", json(tabEval(popup, "JSON.stringify({withdrawn:(window.__zenExtStats&&window.__zenExtStats.shapeDetection)||null,barcodeDetector:'BarcodeDetector' in window})")))
             if (hit.has("x")) {
                 val point = screenPoint(popup, hit)
                 if (point != null && onScreen("$label: the control")) {
