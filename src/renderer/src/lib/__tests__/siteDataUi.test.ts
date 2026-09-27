@@ -122,7 +122,9 @@ describe('the lists', () => {
     expect(ui.siteDataPatternDescription('allow', false)).toBeUndefined()
     expect(ui.siteDataPatternDescription('block', true)).toBeUndefined()
     // The never list's line speaks the Delete verb (W8-11): "What a site stored is deleted when it is added".
-    expect(ui.siteDataListDescription('block', false)).toContain('What a site stored is deleted when it is added')
+    expect(ui.siteDataListDescription('block', false)).toContain(
+      'What a site stored is deleted when it is added'
+    )
   })
 
   it('find the list holding a pattern as typed, in the grammar’s canonical form', () => {

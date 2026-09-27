@@ -38,7 +38,10 @@ Object.assign(window, {
 const pushToast = vi.fn<(message: string, kind?: string, opts?: unknown) => number>(() => 1)
 vi.mock('@renderer/lib/ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@renderer/lib/ui')>()
-  return { ...actual, pushToast: (...args: Parameters<typeof actual.pushToast>) => pushToast(...args) }
+  return {
+    ...actual,
+    pushToast: (...args: Parameters<typeof actual.pushToast>) => pushToast(...args)
+  }
 })
 
 const { PasswordsPanel } = await import('../PasswordsPanel')

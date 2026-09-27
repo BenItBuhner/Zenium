@@ -331,7 +331,9 @@ describe('the verb’s remainder (W8-11): the site-data viewer, History’s pair
       // The house line's verb goes along ("Deletes …, then reloads the page").
       expect(
         literals.some(
-          (l) => rel(l.file) === file && /^Deletes (the )?cookies, stored data and permissions of/.test(l.text)
+          (l) =>
+            rel(l.file) === file &&
+            /^Deletes (the )?cookies, stored data and permissions of/.test(l.text)
         )
       ).toBe(true)
     }
@@ -368,7 +370,8 @@ describe('the verb’s remainder (W8-11): the site-data viewer, History’s pair
     // The question is read inside a `finding(...)` line whose quotes nest; the words are there.
     expect(
       literals.some(
-        (l) => rel(l.file) === `${KT}HistoryBookmarksDemo.kt` && l.text.includes('Delete all history?')
+        (l) =>
+          rel(l.file) === `${KT}HistoryBookmarksDemo.kt` && l.text.includes('Delete all history?')
       )
     ).toBe(true)
     expect(find(`${KT}PrimitivesPass4Demo.kt`, 'Delete history')).toBe(true)
