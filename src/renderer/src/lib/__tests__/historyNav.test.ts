@@ -569,7 +569,13 @@ describe('HistoryNavMachine', () => {
     expect(partGrown).toBeLessThan(0.5)
     h.machine.dispatch('t1', 'release', { time: now, force: true })
     expect(h.navigated).toEqual([['t1', 'left']])
-    expect(h.machine.state).toEqual({ tabId: 't1', edge: 'left', phase: 'navigating', armed: true, closeTarget: 'none' })
+    expect(h.machine.state).toEqual({
+      tabId: 't1',
+      edge: 'left',
+      phase: 'navigating',
+      armed: true,
+      closeTarget: 'none'
+    })
     // Never `dragging` and armed: the one armed state is the navigation's.
     expect(h.states.filter((s) => s.armed)).toEqual([
       { tabId: 't1', edge: 'left', phase: 'navigating', armed: true, closeTarget: 'none' }
