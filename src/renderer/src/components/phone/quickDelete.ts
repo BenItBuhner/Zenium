@@ -1,10 +1,4 @@
-import type {
-  BrowsingDataRange,
-  BrowsingDataType,
-  ClearBrowsingDataResult,
-  ReauthOutcome,
-  Rect
-} from '@shared/types'
+import type { BrowsingDataRange, BrowsingDataType, Rect } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { browserStore } from '@renderer/lib/browserStore'
 import { openOverview, stageStore } from '@renderer/lib/gestures/stage'
@@ -20,6 +14,7 @@ import {
   type Departure
 } from './departureStore'
 import { exitProgressAt } from './exitSpring'
+import type { ClearArgs, ClearOutcome } from '../siteControls/useClearForm'
 
 /**
  * Quick Delete's tab motion on the phone (matrix MOT-24 / HB-07; Chrome 152.0.7977.89's
@@ -57,15 +52,6 @@ import { exitProgressAt } from './exitSpring'
  * at once on the commit (the brief's ruling; §11.3's 120 ms fade is a one-line fold here). The
  * tablet's form has no Tabs row (#624), so this never runs there; the seam is layout-agnostic.
  */
-
-/** What the form sends, and what the phone's clear takes. */
-export interface ClearArgs {
-  range: BrowsingDataRange
-  types: BrowsingDataType[]
-  passphrase?: string
-}
-
-export type ClearOutcome = ReauthOutcome<ClearBrowsingDataResult>
 
 /**
  * How long the wipe takes from the grid's bottom edge to its top: the one constant of the
