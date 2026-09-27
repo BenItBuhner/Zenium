@@ -232,8 +232,11 @@
 //                harness – Chrome's menus in Chrome's order with the Tab menu between Bookmarks
 //                and Window; the Tab menu's rows, order, the Chrome preset's chords and the
 //                enabled states with a new tab page in front and then a site page with a tab
-//                below it; Pin Tab / Unpin Tab and Mute Site / Unmute Site picked through the
-//                items' own click and read back; the Help menu's rows under the help role; About
+//                below it, its direction rows flipped to the Right and back with the strip's
+//                layout; Pin Tab / Unpin Tab and Mute Site / Unmute Site picked through the
+//                items' own click and read back; the Help menu's rows under the help role –
+//                Report an Issue… on Chrome's chord, Report an Unsafe Site… greyed on the new
+//                tab page and enabled on the site page; About
 //                Zenium an enabled row of the application menu opening Settings › About. Off
 //                macOS the one step reads that no application menu is set (macOS jobs judge
 //                the bar; the Windows unpacked leg and the Linux job the absence)

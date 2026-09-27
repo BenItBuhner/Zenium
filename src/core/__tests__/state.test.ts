@@ -667,6 +667,97 @@ describe('settings.menuOrder on load', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Energy Saver's mode (W8-2, settings-26; Chrome's local-state battery_saver_mode.state)
+// ---------------------------------------------------------------------------
+
+describe('Settings.energySaver (W8-2)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.energySaver
+    else settings.energySaver = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships as on-battery – the budgets shrank on battery before the mode had a name – and a profile from before the key reads it', () => {
+    expect(DEFAULT_SETTINGS.energySaver).toBe('on-battery')
+    expect(stored(undefined).settings.energySaver).toBe('on-battery')
+  })
+
+  it('keeps a stored mode, and reads anything that is none of the three as the default', () => {
+    expect(stored('off').settings.energySaver).toBe('off')
+    expect(stored('low-battery').settings.energySaver).toBe('low-battery')
+    expect(stored('on-battery').settings.energySaver).toBe('on-battery')
+    for (const bad of ['always', 20, true, null, { mode: 'off' }]) {
+      expect(stored(bad).settings.energySaver, JSON.stringify(bad)).toBe('on-battery')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Settings › Performance on a fresh profile (W8-2; pr-584 §D (2)(3)): Chrome's defaults for a
+// profile written for the first time, an existing profile keeping what it had.
+// ---------------------------------------------------------------------------
+
+describe('Performance defaults – a fresh desktop profile vs an existing one (W8-2)', () => {
+  const on = (platform: Platform, disk: string | null = null): BrowserState => {
+    const s = new BrowserState(fakeIo(disk), platform, {} as HostCapabilities, '0.0')
+    s.load()
+    return s
+  }
+  /** A v6 profile of the shipped defaults with no Energy Saver key: every real pre-W8-2 profile. */
+  const existing = (): string => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    delete settings.energySaver
+    return legacyProfile(6, { settings: settings as unknown as Persisted['settings'] })
+  }
+
+  it('gives a fresh desktop profile Chrome’s defaults – Memory Saver at Balanced (4 hours), Energy Saver at the 20% threshold where the host reads a battery level, on-battery on Windows, where it cannot yet', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      expect(on(platform).settings.unloadTimeoutMinutes, platform).toBe(240)
+      expect(on(platform).settings.energySaver, platform).toBe('low-battery')
+    }
+    expect(on('win32').settings.unloadTimeoutMinutes).toBe(240)
+    expect(on('win32').settings.energySaver).toBe('on-battery')
+    // The phone's fresh profile is not a desktop's: Edge's 20 minutes, beside the 240 above.
+    expect(on('android').settings.unloadTimeoutMinutes).toBe(20)
+    // The defaults are in the profile's first write, so a later launch reads them as stored.
+    const io = fakeIo()
+    const s = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
+    s.load()
+    s.flushSync()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as Persisted
+    expect(written.settings.unloadTimeoutMinutes).toBe(240)
+    expect(written.settings.energySaver).toBe('low-battery')
+    // And the launch after reads a profile, not a fresh one: what it holds stands.
+    expect(on('win32', io.writes[io.writes.length - 1]).settings.energySaver).toBe('low-battery')
+  })
+
+  it('leaves the phone on the shipped defaults – 20 minutes on Edge’s ladder, and the mode it never reads', () => {
+    expect(on('android').settings.unloadTimeoutMinutes).toBe(DEFAULT_SETTINGS.unloadTimeoutMinutes)
+    expect(on('android').settings.energySaver).toBe(DEFAULT_SETTINGS.energySaver)
+    expect(DEFAULT_SETTINGS.unloadTimeoutMinutes).toBe(20)
+    expect(DEFAULT_SETTINGS.energySaver).toBe('on-battery')
+  })
+
+  it('keeps an existing profile’s timer and mode on every desktop host – the shipped 20 minutes stand (the page lists them as Custom – 20 minutes) and a profile from before the mode’s key reads on-battery', () => {
+    for (const platform of ['linux', 'darwin', 'win32'] as const) {
+      const s = on(platform, existing())
+      expect(s.settings.unloadTimeoutMinutes, platform).toBe(20)
+      expect(s.settings.energySaver, platform).toBe('on-battery')
+    }
+    // A stored choice stands too, whatever the host's fresh default.
+    const chosen = structuredClone(DEFAULT_SETTINGS)
+    chosen.unloadTimeoutMinutes = 120
+    chosen.energySaver = 'off'
+    const s = on('win32', legacyProfile(6, { settings: chosen }))
+    expect(s.settings.unloadTimeoutMinutes).toBe(120)
+    expect(s.settings.energySaver).toBe('off')
+  })
+})
+
 describe('the update dot’s seen record on load and on the write (TB-12)', () => {
   /** A profile carrying `updateDot` as given (any shape – the sanitiser's input). */
   const stored = (updateDot: unknown): BrowserState =>

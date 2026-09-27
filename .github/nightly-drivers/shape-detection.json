@@ -1,0 +1,10 @@
+{
+  "id": "shape-detection",
+  "class": "ShapeDetectionDemo",
+  "shard": "tablet-webview",
+  "mirrors": "android-shape-detection-demo.yml:record",
+  "dir": "shape-detection-demo",
+  "timeout": 600,
+  "estimate": 3,
+  "note": "A page constructing a BarcodeDetector must not kill the app (W6-D31): the WebView's shape-detection binding runs the Play services client's manifest check, which threw across the JNI boundary on the in-process GPU thread. The crash needs the Chromium snapshot WebView (the images' WebView 113 did not show it) and no form factor - the driver taps by the page's own geometry and asserts nothing about layout - so it rides the tablet-webview shard (pixel_tablet 1280x800@160), which has the room the webview shard has not (67 of 68 minutes); its own workflow's job records the phone, pixel_6. On the AOSP image detect() rejects NotSupportedError; the process lives."
+}

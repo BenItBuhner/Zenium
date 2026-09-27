@@ -1811,6 +1811,71 @@ describe('the Settings drill-in pane (§10.2)', () => {
   })
 })
 
+describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
+  it('bleed 16 past the text column like every page row, so the circle stands on the column edge and the label on the switch labels’ edge', () => {
+    // The form's rule and the page's are one geometry: `margin: 0 -16px` and the row grown by
+    // both gutters, the row's own 16 padding then putting the circle where a check row's box is.
+    const bleed = (selector: string): string[] =>
+      block(selector).match(/^ {2}[a-z-]+:[^;]+;/gm) ?? []
+    expect(bleed('.zen-settings-radios > .zen-settings-radio-row')).toEqual([
+      '  margin: 0 -16px;',
+      '  width: calc(100% + 32px);'
+    ])
+    expect(
+      bleed('.zen-settings-form .zen-settings-radio-row,\n.zen-settings-form .zen-v2-check-row')
+    ).toEqual(['  margin: 0 -16px;', '  width: calc(100% + 32px);'])
+    // The page's list carries the class the rule keys on (rows.tsx's `RadioListRow`).
+    const rows = readFileSync(
+      fileURLToPath(new URL('../../components/pages/settings/rows.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(rows).toMatch(/className="zen-settings-radio-list zen-settings-radios"/)
+  })
+
+  it('draw no `--v2-selected` band on the checked option (pr-584 L1 / Q6): the accent ring and dot tell the choice; the pointer’s fill is the page row’s', () => {
+    // The band is the picker sheet's (§9.6); on the page the checked row is flat at rest and
+    // under a touch's sticky `:hover`, and takes `--v2-fill` under a hovering pointer or a press
+    // like its siblings – its rule outranks the primitive's `:hover` band (0,4,0) by an
+    // attribute and `:not(:disabled)`.
+    expect(
+      block(
+        ".zen-settings-radios > .zen-settings-radio-row[aria-checked='true'],\n.zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:hover"
+      )
+    ).toMatch(/^\s*background: transparent;\s*$/m)
+    const pointer = block(
+      ".zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:active:not(:disabled),\n:where(:root[data-hover='hover'])\n  .zen-settings-radios\n  > .zen-settings-radio-row[aria-checked='true']:hover:not(:disabled)"
+    )
+    expect(pointer).toMatch(/background: var\(--v2-fill\)/)
+    expect(pointer).not.toMatch(/--v2-selected/)
+    // A disabled group's checked option stays flat too: no band at .4 either.
+    expect(
+      block(
+        '.zen-settings-radios > .zen-settings-radio-row:disabled:hover,\n.zen-settings-radios > .zen-settings-radio-row:disabled:active'
+      )
+    ).toMatch(/background: transparent/)
+  })
+})
+
+describe('a dependent list dims as one group (§9.30, §10.4; pr-584’s re-read, NEW 2 as ruled)', () => {
+  it('the group takes the dependent row’s one .4; its deemphasised lines the label’s ink under it; the rows inside give up their own .4 so nothing compounds', () => {
+    expect(block('.zen-settings-group[data-disabled]')).toMatch(/^\s*opacity: 0\.4;\s*$/m)
+    expect(
+      block(
+        '.zen-settings-group[data-disabled] .zen-settings-group-description,\n.zen-settings-group[data-disabled] .zen-settings-empty'
+      )
+    ).toMatch(/^\s*color: var\(--v2-text\);\s*$/m)
+    // The row's own .4 (the rule the page's dependent rows take, found at its line start – the
+    // group's descendant rule above it names the same class) is reset under the group's: one
+    // register, .4 of the text, never .16 (#297's compounding).
+    expect(block('\n.zen-settings-row-disabled')).toMatch(/opacity: 0\.4;/)
+    expect(block('.zen-settings-group[data-disabled] .zen-settings-row-disabled')).toMatch(
+      /^\s*opacity: 1;\s*$/m
+    )
+    // The empty line carries no rule of its own any more: the group is the one that dims.
+    expect(css).not.toContain('.zen-settings-empty[data-disabled]')
+  })
+})
+
 describe('the fullscreen hint palette', () => {
   /** The value a token is declared with in the first `selector {` block after `from`. */
   const value = (selector: string, from: number, name: string): string => {

@@ -231,7 +231,12 @@ function customised(h: Harness): { pinned: string; essential: string } {
     startup: { mode: 'pages', pages: ['https://news.example/'] },
     homepage: { mode: 'url', url: 'https://home.example/' },
     searchEngineId: 'duckduckgo',
-    newTab: { ...DEFAULT_NEW_TAB_SETTINGS, enabled: false, preset: 'custom', background: 'none' }
+    newTab: { ...DEFAULT_NEW_TAB_SETTINGS, enabled: false, preset: 'custom', background: 'none' },
+    // Settings › Performance's keys (W8-2), which the sentence does not name: kept.
+    energySaver: 'low-battery',
+    unloadEnabled: false,
+    unloadTimeoutMinutes: 120,
+    unloadExcludedDomains: ['mail.example.com']
   })
   browser.handleCommand(win, 'newtab.addShortcut', { title: 'News', url: 'https://news.example/' })
   const pinned = browser.tabs.createTab({ url: 'https://pinned.example/', active: false }, win)
@@ -324,6 +329,15 @@ describe('settings.reset', () => {
     // Bookmarks and history are not touched.
     expect(browser.bookmarks.all().map((b) => b.url)).toContain('https://kept.example/')
     expect(browser.history.recent(10).map((e) => e.url)).toContain('https://visited.example/')
+    // Nor is Settings › Performance (W8-2): Memory Saver's switch, tier and exceptions and
+    // Energy Saver's mode are not in the sentence, and Chrome's resetter leaves its
+    // `performance_tuning.*` prefs alone too.
+    expect(settings).toMatchObject({
+      energySaver: 'low-battery',
+      unloadEnabled: false,
+      unloadTimeoutMinutes: 120,
+      unloadExcludedDomains: ['mail.example.com']
+    })
     // The chrome is told once, in §9.33's plain toast, with nothing to act on.
     expect(sent.filter((e) => e.name === 'toast').map((e) => e.payload)).toEqual([
       { message: SETTINGS_RESET_TOAST, kind: 'info' }
@@ -337,6 +351,8 @@ describe('settings.reset', () => {
     expect(persisted.startup).toEqual(DEFAULT_SETTINGS.startup)
     expect(persisted.homepage).toEqual(DEFAULT_HOMEPAGE)
     expect(persisted.searchEngineId).toBe('google')
+    expect(persisted.energySaver).toBe('low-battery')
+    expect(persisted.unloadTimeoutMinutes).toBe(120)
     expect(JSON.parse(io.files['permissions.json']).decisions).toEqual({})
     // No choice screen is owed outside the EEA.
     expect(browser.state.snapshot(win).searchChoice.required).toBe(false)

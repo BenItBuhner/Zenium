@@ -15,12 +15,23 @@ import {
  * (`NavRow`) and the dialog writes (`CustomizeToolbarForm`).
  */
 describe('toolbarPins (settings-36)', () => {
-  it('lists the optional controls in the bar’s order – Forward, the pill’s chips left to right (the Install-app chip before the star, Chrome’s page-action order; W8-6), the hub', () => {
-    expect(TOOLBAR_CONTROLS).toEqual(['forward', 'reader', 'translate', 'install', 'star', 'media'])
+  it('lists the optional controls in the bar’s order – Forward, the pill’s chips left to right (the Install-app chip before the star, Chrome’s page-action order; W8-6), the Energy Saver leaf, the hub', () => {
+    // The leaf ahead of the hub (W8-2): Chrome's toolbar puts its battery saver button before
+    // its media button (`ToolbarView::Init`).
+    expect(TOOLBAR_CONTROLS).toEqual([
+      'forward',
+      'reader',
+      'translate',
+      'install',
+      'star',
+      'energy-saver',
+      'media'
+    ])
     expect(isToolbarControl('install')).toBe(true)
     // The Share chip is a hover-only utility with Copy URL and Boost, not a pin.
     expect(isToolbarControl('share')).toBe(false)
     expect(isToolbarControl('forward')).toBe(true)
+    expect(isToolbarControl('energy-saver')).toBe(true)
     // Back, Reload, the pill and the menu are the bar, not its options; downloads is the
     // downloads block's own key.
     for (const never of ['back', 'reload', 'menu', 'pill', 'downloads', 'extensions', 'home'])
