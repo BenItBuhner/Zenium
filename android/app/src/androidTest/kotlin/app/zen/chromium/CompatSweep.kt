@@ -32,6 +32,7 @@ import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
+import app.zen.chromium.ext.SweepScreenGuard
 import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11508,6 +11509,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /** One core read under the row's stall allowance (see [coreCall]); the row marked stalled out when the read ran out its allowance. */
     private fun coreRead(name: String, args: String): String {
+        // A destroyed activity answers no core read – the host's WebViews went with it (the AOSP
+        // lane, round 22's AFTER, Adblock's row: the system destroyed the stopped activity and six
+        // reads each waited out their allowance on it). The row ends here instead.
+        if (activity.isDestroyed) throw IllegalStateException("$name: the browser's activity is destroyed; no core read can answer")
         val entry = rowEntry
         val short = rowStalledOut && entry != null
         val maxMs = if (short) CORE_STALLED_ROW_READ_MS else CORE_READ_MAX_MS
@@ -11911,6 +11916,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val result = chromeJs("window.__sweep === undefined ? 'gone' : (window.__sweep[$token] !== undefined ? window.__sweep[$token] : null)")
             if (result.isEmpty()) {
                 silent++
+                // A destroyed activity (its WebViews gone with it) answers nothing until the deadline: the call fails now.
+                if (activity.isDestroyed) error("$command: the browser's activity is destroyed after ${SystemClock.uptimeMillis() - started} ms; the chrome cannot answer")
                 if (silent == 1 || silent % 10 == 0) Log.w(TAG, "$command: the chrome did not answer a poll ($silent so far)")
                 // A page's dialog blocks the renderer the chrome shares: press it away and poll again.
                 dismissDialog()?.let { Log.w(TAG, "$command: a dialog pressed away: $it") }
@@ -11954,7 +11961,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         val still = button.rect == lastRect
                         lastRect = button.rect
                         if (still && (taps == 0 || SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS)) {
-                            if (onScreen("$command: the prompt's button")) {
+                            // Where the last finger went, before another goes there: one the
+                            // system's Recents button took opened Overview over the still-resumed
+                            // browser (the AOSP lane, round 22's AFTER, Adblock's row) – a second
+                            // finger at the same point goes to the launcher's Recents view. Overview
+                            // is left with BACK and the command answers the prompt instead.
+                            val after = if (taps > 0) screenReading() else SweepScreenGuard.Reading.BrowserOnTop
+                            if (!SweepScreenGuard.mayTapAgain(taps, after)) {
+                                Log.w(TAG, "$command: the tap on the prompt's button left $after; the prompt goes through the command: ${button.detail}")
+                                snap("prompt-tap-opened-overview")
+                                if (after is SweepScreenGuard.Reading.OverviewOver) leaveOverview("$command: the prompt's button", after)
+                                else onScreen("$command: the prompt's button")
+                                answered = true
+                                promptsAnsweredByCommand++
+                                lastPromptFallback = JSONObject().put("reason", "tap opened Overview").put("over", after.toString()).put("button", button.detail)
+                                answerPrompts(pending)
+                            } else if (onScreen("$command: the prompt's button")) {
                                 taps++
                                 tappedAt = SystemClock.uptimeMillis()
                                 onDialog(button.rect)
@@ -12346,21 +12368,114 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * The browser's activity is the one on screen (resumed) before a finger goes down. A tap the
-     * system's navigation took hands the screen to the launcher or to Overview; the fingers that
-     * follow then start other apps or swipe the browser's task away (the run before this check
-     * lost fourteen rows' taps to the launcher and then the activity itself), while the chrome's
-     * JS keeps answering from the background and grades pages nobody can see. The singleTask
-     * activity is brought back with its own intent; false when it has been destroyed.
+     * The browser's activity is the one on screen (resumed, and its window the topmost app
+     * window) before a finger goes down. A tap the system's navigation took hands the screen to
+     * the launcher or to Overview; the fingers that follow then start other apps or swipe the
+     * browser's task away (the run before this check lost fourteen rows' taps to the launcher and
+     * then the activity itself), while the chrome's JS keeps answering from the background and
+     * grades pages nobody can see. The stage alone is not enough: Android launches Overview as a
+     * transient task over the still-RESUMED browser (round 22's AFTER 156 second boot, Adblock's
+     * row – the finger meant for the prompt's button went to SystemUI's Recents button, the next
+     * to the launcher's Recents view, and the system destroyed the stopped activity fourteen
+     * seconds on), so the window list is read beside it ([SweepScreenGuard]): the launcher's
+     * window over the browser's is left with BACK ([leaveOverview]), another app's by bringing
+     * the singleTask activity back with its own intent ([bringBack]), as a paused or stopped
+     * activity always was; false when it has been destroyed.
      */
     private fun onScreen(context: String): Boolean {
-        var stage: Stage? = null
-        instrumentation.runOnMainSync { stage = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) }
-        if (stage == Stage.RESUMED) return true
+        val stage = lifecycleStage()
         if (stage == Stage.DESTROYED) {
             Log.e(TAG, "$context: the browser's activity is destroyed")
             return false
         }
+        if (stage == Stage.RESUMED) {
+            return when (val reading = screenReading()) {
+                SweepScreenGuard.Reading.BrowserOnTop, SweepScreenGuard.Reading.BrowserAbsent -> true
+                is SweepScreenGuard.Reading.OverviewOver -> leaveOverview(context, reading)
+                is SweepScreenGuard.Reading.OtherAppOver -> bringBack(context, "RESUMED under ${reading.packageName}")
+            }
+        }
+        return bringBack(context, stage.toString())
+    }
+
+    /** The activity's lifecycle stage, read on the main thread as the monitor wants. */
+    private fun lifecycleStage(): Stage? {
+        var stage: Stage? = null
+        instrumentation.runOnMainSync { stage = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) }
+        return stage
+    }
+
+    /**
+     * The browser's place among the application windows on screen, from the accessibility window
+     * list (the launcher's Overview is an application window of its own over the browser's; the
+     * bars are system windows). [SweepScreenGuard.Reading.BrowserAbsent] when the list cannot be read.
+     */
+    private fun screenReading(): SweepScreenGuard.Reading {
+        val windows = runCatching { ui.windows }.getOrNull() ?: return SweepScreenGuard.Reading.BrowserAbsent
+        return SweepScreenGuard.read(
+            windows.map { SweepScreenGuard.Window(it.type, it.root?.packageName?.toString(), it.layer) },
+            app.packageName
+        )
+    }
+
+    /**
+     * Overview (the launcher's window over the resumed browser) left with BACK – Launcher3's
+     * Overview hands BACK to the running task –, at most [SweepScreenGuard.MAX_BACKS] presses,
+     * each given the return animation's time; never another finger where the last one went. What
+     * was over the browser and what the presses left is kept in `screenRestored`. True when the
+     * browser is resumed and on top afterwards.
+     */
+    private fun leaveOverview(context: String, first: SweepScreenGuard.Reading.OverviewOver): Boolean {
+        Log.w(TAG, "$context: ${first.packageName} draws over the resumed browser (Overview); leaving it with BACK")
+        snap("overview-over-browser")
+        var reading: SweepScreenGuard.Reading = first
+        var backs = 0
+        var restored = false
+        loop@ while (true) {
+            when (val exit = SweepScreenGuard.exit(reading, backs, relaunched = false)) {
+                SweepScreenGuard.Exit.Done -> {
+                    restored = true
+                    break@loop
+                }
+                SweepScreenGuard.Exit.PressBack -> {
+                    backs++
+                    pressBackRaw()
+                    val deadline = SystemClock.uptimeMillis() + 3_000
+                    do {
+                        SystemClock.sleep(250)
+                        reading = screenReading()
+                    } while (reading is SweepScreenGuard.Reading.OverviewOver && SystemClock.uptimeMillis() < deadline)
+                }
+                SweepScreenGuard.Exit.Relaunch -> {
+                    restored = bringBack(context, "RESUMED under ${(reading as SweepScreenGuard.Reading.OtherAppOver).packageName}")
+                    break@loop
+                }
+                is SweepScreenGuard.Exit.GiveUp -> {
+                    Log.e(TAG, "$context: ${exit.reason}")
+                    break@loop
+                }
+            }
+        }
+        if (restored) {
+            // The return may pause and resume the browser; the surface settles after it.
+            val stage = lifecycleStage()
+            if (stage != Stage.RESUMED) restored = stage != Stage.DESTROYED && bringBack(context, "$stage after Overview")
+            else SystemClock.sleep(1_000)
+        }
+        screenRestored.put(JSONObject().put("at", context).put("stage", "RESUMED").put("over", first.packageName).put("backs", backs).put("restored", restored))
+        Log.w(TAG, "$context: the browser is ${if (restored) "back on top" else "still under $reading"} after $backs BACK press(es)")
+        return restored
+    }
+
+    /** BACK through the UiAutomation, without [onScreen]'s check (it is what [onScreen] presses to leave Overview). */
+    private fun pressBackRaw() {
+        val now = SystemClock.uptimeMillis()
+        ui.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0), true)
+        ui.injectInputEvent(KeyEvent(now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0), true)
+    }
+
+    /** The singleTask activity brought back with its own intent (`stage` names what it was); true when it is resumed and on top within ten seconds. */
+    private fun bringBack(context: String, stage: String): Boolean {
         Log.w(TAG, "$context: the browser is not on screen ($stage); bringing it back")
         snap("browser-off-screen")
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
@@ -12370,11 +12485,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var back = false
         while (!back && SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(250)
-            instrumentation.runOnMainSync { back = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) == Stage.RESUMED }
+            back = lifecycleStage() == Stage.RESUMED && screenReading().let { it == SweepScreenGuard.Reading.BrowserOnTop || it == SweepScreenGuard.Reading.BrowserAbsent }
         }
         // The sheet or page that was up settles after the return.
         if (back) SystemClock.sleep(1_000)
-        screenRestored.put(JSONObject().put("at", context).put("stage", stage.toString()).put("restored", back))
+        screenRestored.put(JSONObject().put("at", context).put("stage", stage).put("restored", back))
         Log.w(TAG, "$context: the browser is ${if (back) "back on screen" else "still not on screen"}")
         return back
     }
@@ -12407,6 +12522,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * text kept as evidence, and the chrome asked again; three silent polls and it is given up.
      */
     private fun chromeAnswers(): Boolean {
+        if (activity.isDestroyed) {
+            Log.e(TAG, "the browser's activity is destroyed: the chrome cannot answer")
+            return false
+        }
         for (attempt in 1..3) {
             if (chromeJs("'ok'").isNotEmpty()) return true
             val dialog = dismissDialog()
