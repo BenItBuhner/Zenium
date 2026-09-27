@@ -699,6 +699,8 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Release channel',
     'Verification'
   ],
+  // Chrome's System page: the one row that opens the OS's proxy panel.
+  system: ["Open your computer's proxy settings"],
   about: ['Zenium', 'Check for updates', 'Engine', 'Upstream project']
 }
 
@@ -808,6 +810,8 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // Chrome's System (the computer's proxy settings), before its Reset settings.
+      'System',
       // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
       'Reset Settings',
       'About'

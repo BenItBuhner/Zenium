@@ -360,6 +360,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
+      // Chrome's System page (the computer's proxy settings), the desktop platforms alone.
+      'System',
       // settings-70: Chrome's "Reset settings" at the foot of its list (W7-6).
       'Reset Settings',
       '|',
@@ -867,7 +869,7 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
     return s
   }
 
-  it('opens the drill-in with the site’s group on screen: "Block on <host>" scrolled to the top', () => {
+  it('opens the drill-in with the site’s group on screen: "Block on <host>" scrolled to the top (`?site=` lands the group, its row first in it)', () => {
     viewport(TWO_PANE_MIN_WIDTH - 1, false)
     const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
     const el = mountPage(fromSheet('zen://settings/privacy?site=https%3A%2F%2Fnews.example'))
@@ -878,6 +880,9 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
     expect(target).toBe(row.closest('[data-group]'))
     expect(target.getAttribute('data-group')).toBe('tracking-exceptions')
     expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    // The landed element carries the mark; the row inside it does not.
+    expect(target.hasAttribute('data-landing')).toBe(true)
+    expect(row.hasAttribute('data-landing')).toBe(false)
     scrolled.mockRestore()
   })
 
@@ -988,19 +993,24 @@ describe('a section asked for one of its rows (zen://settings/<section>?row=<id>
   /** A phone that syncs (`ANDROID` has no sync engine; the row asked for is Sync's). */
   const SYNCING_PHONE: HostCapabilities = { ...ANDROID, sync: true }
 
-  it("opens Sync with the row's group on screen: the History page's Open sync settings row lands on the Open tabs switch", () => {
+  it("opens Sync with the row itself on screen: the History page's Open sync settings row lands on the Open tabs switch – `?row=` lands the row, not its group (the lead's L2 on #578)", () => {
     viewport(TWO_PANE_MIN_WIDTH - 1, false)
     const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
     const el = mountPage(
       state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
     )
-    const row = el.querySelector('[data-row="sync-scope:openTabs"]')!
+    const row = el.querySelector<HTMLElement>('[data-row="sync-scope:openTabs"]')!
     expect(row.textContent).toContain('Open tabs')
     expect(scrolled).toHaveBeenCalledTimes(1)
     const target = scrolled.mock.instances[0] as Element
-    expect(target).toBe(row.closest('[data-group]'))
-    expect(target.getAttribute('data-group')).toBe('sync-scope')
+    expect(target).toBe(row)
     expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    // The mark sits on the row that landed, and on nothing above it.
+    expect(row.hasAttribute('data-landing')).toBe(true)
+    const group = row.closest<HTMLElement>('[data-group]')!
+    expect(group.getAttribute('data-group')).toBe('sync-scope')
+    expect(group.hasAttribute('data-landing')).toBe(false)
+    expect(el.querySelectorAll('.zen-settings-page [data-landing]')).toHaveLength(1)
     scrolled.mockRestore()
   })
 
@@ -1030,18 +1040,22 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
   }
 
   /*
-   * happy-dom lays nothing out, so the column and the landed group take the desktop's #356
-   * geometry at a 1000 px window: the content column's viewport 944 tall, 1113 of content –
-   * 169 of scroll, the number the desktop measured – and Sync's Open tabs group (`sync-scope`)
+   * happy-dom lays nothing out, so the column and the landing take the desktop's #356 geometry
+   * at a 1000 px window: the content column's viewport 944 tall, 1113 of content – 169 of
+   * scroll, the number the desktop measured – and Sync's Open tabs group (`sync-scope`)
    * starting 521 down the content, so that scrolled as far as the content allowed it stopped at
-   * 352, mid-page. The desktop's column has the sticky find field's box as its scroll padding
-   * (`main.css`'s declaration, pinned below; the stylesheet in `layout` carries its value:
-   * 16 + 32 + 8 – a landed group lands flush under the field, the #553 lead check's N1); the
-   * phone's column none. `scrollIntoView({ block: 'start' })` scrolls as Chrome would: to the
-   * group's top less the padding, and no further than the content allows.
+   * 352, mid-page; the Open tabs switch's row inside it is modelled 148 further down (the
+   * group's heading and two rows – a model, not a measurement). The desktop's column has the
+   * sticky find field's box as its scroll padding (`main.css`'s declaration, pinned below; the
+   * stylesheet in `layout` carries its value: 16 + 32 + 8 – a landing lands flush under the
+   * field, the #553 lead check's N1); the phone's column none. `scrollIntoView({ block:
+   * 'start' })` scrolls as Chrome would: to the landed element's top less the padding, and no
+   * further than the content allows. `?row=` lands the row (the lead's L2 on #578), `?group=`
+   * the group.
    */
   const VIEWPORT = 944
   const GROUP_TOP = 521
+  const ROW_TOP = GROUP_TOP + 148
   const INSET = 56
 
   function layout(content: number): () => void {
@@ -1070,6 +1084,9 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
       const column = this.closest<HTMLElement>('.zen-settings-content, .zen-settings-scroll')
       if (this.getAttribute('data-group') === 'sync-scope' && column) {
         return { ...rect.call(this), top: GROUP_TOP - column.scrollTop }
+      }
+      if (this.getAttribute('data-row') === 'sync-scope:openTabs' && column) {
+        return { ...rect.call(this), top: ROW_TOP - column.scrollTop }
       }
       return rect.call(this)
     })
@@ -1100,32 +1117,67 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
     }
   }
 
-  /** Where the landed group's top sits from the column's top, after the landing. */
-  function landed(el: HTMLElement): { page: HTMLElement; column: HTMLElement; groupTop: number } {
+  /** Where the Open tabs row's and its group's tops sit from the column's top, after the landing. */
+  function landed(el: HTMLElement): {
+    page: HTMLElement
+    column: HTMLElement
+    row: HTMLElement
+    group: HTMLElement
+    rowTop: number
+    groupTop: number
+  } {
     const page = el.querySelector<HTMLElement>('.zen-settings-page')!
     const group = el.querySelector<HTMLElement>('[data-group="sync-scope"]')!
+    const row = el.querySelector<HTMLElement>('[data-row="sync-scope:openTabs"]')!
     const column = group.closest<HTMLElement>('.zen-settings-content, .zen-settings-scroll')!
+    const columnTop = column.getBoundingClientRect().top
     return {
       page,
       column,
-      groupTop: group.getBoundingClientRect().top - column.getBoundingClientRect().top
+      row,
+      group,
+      rowTop: row.getBoundingClientRect().top - columnTop,
+      groupTop: group.getBoundingClientRect().top - columnTop
     }
   }
 
-  it('the desktop column pads its end by what the group lacks, and the group lands flush under the find field – the column’s top for scrolled content (N1)', () => {
+  it('`?row=`: the desktop column pads its end by what the row lacks, and the row lands flush under the find field – the column’s top for scrolled content (N1 applied to the row, L2)', () => {
     const restore = layout(1113)
     try {
       viewport(TWO_PANE_MIN_WIDTH)
       const el = mountPage(
         state(DESKTOP, 'linux', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
       )
-      const { page, column, groupTop } = landed(el)
+      const { page, column, row, group, rowTop, groupTop } = landed(el)
       expect(parseFloat(getComputedStyle(column).scrollPaddingTop)).toBe(INSET)
+      expect(page.hasAttribute('data-landing')).toBe(true)
+      // 669 − 56 + 944 − 1113: the 444 the row would stop short of the field's edge.
+      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('444px')
+      expect(column.scrollTop).toBe(ROW_TOP - INSET)
+      expect(rowTop).toBe(INSET)
+      // The group's heading has scrolled under the field: the row is the landing, not the group.
+      expect(groupTop).toBe(GROUP_TOP - ROW_TOP + INSET)
+      expect(row.hasAttribute('data-landing')).toBe(true)
+      expect(group.hasAttribute('data-landing')).toBe(false)
+    } finally {
+      restore()
+    }
+  })
+
+  it('`?group=`: the group lands flush under the find field the same way, its heading against the line (unchanged – the hub cards’ landing, #553)', () => {
+    const restore = layout(1113)
+    try {
+      viewport(TWO_PANE_MIN_WIDTH)
+      const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/sync?group=sync-scope'))
+      const { page, column, row, group, rowTop, groupTop } = landed(el)
       expect(page.hasAttribute('data-landing')).toBe(true)
       // 521 − 56 + 944 − 1113: the 296 the group stopped short of the field's edge (at 352).
       expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('296px')
-      expect(column.scrollTop).toBe(465)
+      expect(column.scrollTop).toBe(GROUP_TOP - INSET)
       expect(groupTop).toBe(INSET)
+      expect(rowTop).toBe(ROW_TOP - GROUP_TOP + INSET)
+      expect(group.hasAttribute('data-landing')).toBe(true)
+      expect(row.hasAttribute('data-landing')).toBe(false)
     } finally {
       restore()
     }
@@ -1138,18 +1190,19 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
       const el = mountPage(
         state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
       )
-      const { page, column, groupTop } = landed(el)
+      const { page, column, rowTop } = landed(el)
       expect(column.classList.contains('zen-settings-scroll')).toBe(true)
       expect(page.hasAttribute('data-landing')).toBe(true)
-      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('352px')
-      expect(column.scrollTop).toBe(GROUP_TOP)
-      expect(groupTop).toBe(0)
+      // 669 + 944 − 1113: the phone's column has no scroll padding to land under.
+      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('500px')
+      expect(column.scrollTop).toBe(ROW_TOP)
+      expect(rowTop).toBe(0)
     } finally {
       restore()
     }
   })
 
-  it('a group that reaches the top on its own is not padded for; a section without a landing keeps its end', () => {
+  it('a row that reaches the top on its own is not padded for; a section without a landing keeps its end', () => {
     const restore = layout(3000)
     try {
       viewport(TWO_PANE_MIN_WIDTH)
@@ -1158,18 +1211,20 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
       )
       expect(asked.page.hasAttribute('data-landing')).toBe(true)
       expect(asked.page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('')
-      expect(asked.groupTop).toBe(INSET)
+      expect(asked.rowTop).toBe(INSET)
       act(() => root!.unmount())
       root = null
       const plain = landed(mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/sync')))
       expect(plain.page.hasAttribute('data-landing')).toBe(false)
       expect(plain.page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('')
+      expect(plain.row.hasAttribute('data-landing')).toBe(false)
+      expect(plain.group.hasAttribute('data-landing')).toBe(false)
     } finally {
       restore()
     }
   })
 
-  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box – a landed group lands flush under it (N1)', () => {
+  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box – a landing (the row, the group) lands flush under it (N1)', () => {
     // The field's box: the control between the two paddings the column names and the field
     // reads (`.zen-settings-find`), so the scroll padding and the field's padding cannot drift;
     // no air rides on it (the #553 lead check's N1 – the section's 32 stays its layout gap).
@@ -1335,6 +1390,100 @@ describe('a section asked for one of its groups (zen://settings/<section>?group=
     expect(dialog).not.toBeNull()
     // One name for one thing: the card reads as the dialog it opens is titled today.
     expect(dialog!.textContent).toContain('Clear browsing data')
+  })
+})
+
+describe('a section asked to open one of its rows’ forms (zen://settings/<section>?open=<id>; the toolbar button’s Customise Toolbar…, W8-1)', () => {
+  const ASKED = 'zen://settings/look?row=customize-toolbar&open=customize-toolbar'
+  const DIALOG = '[data-dialog="form:customize-toolbar"]'
+  const navigations = (): unknown[][] =>
+    invoke.mock.calls.filter(([name]) => name === 'page.navigate')
+
+  /** Re-render the mounted page with the state the core answers with: the address as rewritten. */
+  function answer(s: UIState): void {
+    act(() =>
+      root!.render(
+        createElement(
+          FrameDialogHost,
+          null,
+          createElement(SettingsPage, { state: s, tab: s.tabs.settings! })
+        )
+      )
+    )
+  }
+
+  it('opens the row’s form dialog over Look and Feel as its button would, landing on the row itself, and spends the address: page.navigate rewrites the entry without `open`, keeping `row`; Done returns the focus to the row’s button (§9.22)', async () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountHosted(state(DESKTOP, 'linux', {}, ASKED))
+    const dialog = el.querySelector<HTMLElement>(DIALOG)
+    expect(dialog).not.toBeNull()
+    expect(dialog!.textContent).toContain('Customise toolbar')
+    // `?row=` did its part too: the row itself came to the column's top, marked as the landing
+    // (L2: the row, not its group), the dialog open over the page it stands on.
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    const landedRow = scrolled.mock.instances[0] as HTMLElement
+    expect(landedRow.getAttribute('data-row')).toBe('customize-toolbar')
+    expect(landedRow.hasAttribute('data-landing')).toBe(true)
+    expect(landedRow.closest('[data-group]')!.hasAttribute('data-landing')).toBe(false)
+    // The dialog took the focus as it opened (§9.22); nothing of the page held it before.
+    expect(dialog!.contains(document.activeElement)).toBe(true)
+    expect(navigations()).toEqual([
+      [
+        'page.navigate',
+        {
+          tabId: 'settings',
+          section: 'look',
+          subpage: null,
+          query: { row: 'customize-toolbar' },
+          replace: true
+        }
+      ]
+    ])
+    // The core's answer – the tab at the spent address – leaves the dialog up and asks nothing more.
+    answer(state(DESKTOP, 'linux', {}, 'zen://settings/look?row=customize-toolbar'))
+    expect(el.querySelector(DIALOG)).not.toBeNull()
+    expect(navigations()).toHaveLength(1)
+    // Asked again (the menu row pressed once more): the address is new to the tab, and the
+    // dialog – closed meanwhile by its Done – opens again.
+    const done = [...el.querySelectorAll<HTMLButtonElement>(`${DIALOG} button`)].find(
+      (b) => b.textContent === 'Done'
+    )!
+    expect(done).toBeDefined()
+    act(() => done.click())
+    await settle()
+    expect(el.querySelector(`${DIALOG}:not([data-leaving])`)).toBeNull()
+    // Done hands the focus to the landed row's own button – the control that would have opened
+    // the dialog by hand (§9.22, one hop; `SheetRequest.from`).
+    const button = landedRow.querySelector<HTMLButtonElement>('button')!
+    expect(button.textContent).toBe('Customise…')
+    expect(document.activeElement).toBe(button)
+    answer(state(DESKTOP, 'linux', {}, ASKED))
+    expect(el.querySelector(`${DIALOG}:not([data-leaving])`)).not.toBeNull()
+    expect(navigations()).toHaveLength(2)
+    scrolled.mockRestore()
+  })
+
+  it('a row without a form, a row the section does not have, or an id that is not one opens nothing and spends nothing', () => {
+    for (const url of [
+      'zen://settings/look?open=show-forward-button',
+      'zen://settings/look?open=no-such-row',
+      'zen://settings/look?open=%22%5D%2C%20*'
+    ]) {
+      const el = mountHosted(state(DESKTOP, 'linux', {}, url))
+      expect(el.querySelector('[data-dialog]')).toBeNull()
+      expect(navigations()).toEqual([])
+      act(() => root!.unmount())
+      root = null
+    }
+  })
+
+  it('the phone layout has no such row, and opens nothing', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountHosted(state(ANDROID, 'android', {}, ASKED))
+    expect(el.querySelector('.zen-settings-phone')).not.toBeNull()
+    expect(el.querySelector('[data-dialog]')).toBeNull()
+    expect(el.querySelector('[data-row="customize-toolbar"]')).toBeNull()
+    expect(navigations()).toEqual([])
   })
 })
 
