@@ -1754,7 +1754,10 @@ export class Browser {
   onNavigated(tabId: string, inPage = false): void {
     const tab = this.tabs.tab(tabId)
     if (tab) {
-      tab.readerable = false
+      // A new document answers for itself at its dom-ready (`onPageReady` → `reader.detect`);
+      // a move within the same document (`pushState`, a hash) keeps the answer, as Chrome keeps
+      // a page's distillability across same-document navigations.
+      if (!inPage) tab.readerable = false
       this.webApps.onNavigated(tabId, tab.url, inPage)
       this.webNotifications.onNavigated(tabId, tab.url, inPage)
     }

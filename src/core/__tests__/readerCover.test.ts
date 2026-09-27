@@ -372,3 +372,27 @@ describe('the reader as a cover over the page (reader-30)', () => {
     expect(s.page.calls.some((c) => c === `loadURL(${JSON.stringify(PAGE_URL)})`)).toBe(true)
   })
 })
+
+/**
+ * Whether the page reads as an article (`tab.readerable`, the Reader View chip) is the
+ * document's answer, given at its dom-ready: a move within the same document keeps it, a new
+ * document starts without one until it answers – Chrome keeps a page's distillability across
+ * same-document navigations. The same `Browser.onNavigated` serves the phone's host.
+ */
+describe('readerability across the page’s navigations', () => {
+  it('an in-page navigation keeps the answer, a committed one clears it until the next dom-ready', () => {
+    for (const withCover of [true, false]) {
+      const s = scene(withCover)
+      const tab = s.browser.tabs.tab(s.tabId)!
+      tab.readerable = true
+      // A `pushState` and a hash change: the same document, moved within.
+      s.page.events.onNavigated(`${PAGE_URL}/chapter-2`, true)
+      expect(tab.readerable).toBe(true)
+      s.page.events.onNavigated(`${PAGE_URL}/chapter-2#notes`, true)
+      expect(tab.readerable).toBe(true)
+      // A new document commits: nothing is known of it yet.
+      s.page.events.onNavigated('https://example.com/elsewhere', false)
+      expect(tab.readerable).toBe(false)
+    }
+  })
+})
