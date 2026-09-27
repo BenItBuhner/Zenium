@@ -112,9 +112,10 @@ textarea.zen-v2-field {
   }
 }
 /*
- * The picker's document (`?surface=autofill`): a transparent page whose one panel sits inside
- * the 8 px margin the surface leaves for its shadow (`PICKER_SURFACE_PAD`). The panel takes the
- * document's height less that margin, so a long list scrolls inside it.
+ * The picker in the popup surface's document (`?surface=popup`, `PickerSurface`): a transparent
+ * page whose one panel sits inside the 8 px margin the surface leaves for its shadow
+ * (`PICKER_SURFACE_PAD`). The panel takes the document's height less that margin, so a long list
+ * scrolls inside it.
  */
 .zen-v2-af-surface {
   position: fixed;
@@ -126,9 +127,12 @@ textarea.zen-v2-field {
 .zen-v2-af-surface > .zen-v2-af-popover {
   max-height: 100%;
 }
-/* The picker's document draws no page of its own: the window's page shows through its margin. */
-:root[data-chrome-surface='autofill'],
-:root[data-chrome-surface='autofill'] body {
+/*
+ * The popup surface's document (the picker's and the mini menu's, `PopupSurface`) draws no page
+ * of its own: the window's page shows through its margin.
+ */
+:root[data-chrome-surface='popup'],
+:root[data-chrome-surface='popup'] body {
   background: transparent;
 }
 /* A notice in the picker (the unlock step, the passphrase-setup notice): a column, no scroll of its own. */

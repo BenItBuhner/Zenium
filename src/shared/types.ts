@@ -6820,8 +6820,8 @@ export interface Commands {
     result: ReauthOutcome<null>
   }
   /**
-   * The desktop picker's document (`?surface=autofill`) reports the height its content wants;
-   * the core sizes and places the popup surface from it (`placePickerSurface`).
+   * The desktop picker's document (`?surface=popup`, `PickerSurface`) reports the height its
+   * content wants; the core sizes and places the popup surface from it (`placePickerSurface`).
    */
   'autofill.surfaceSize': { args: { id: string; height: number }; result: void }
   /**

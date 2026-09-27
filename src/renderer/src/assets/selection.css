@@ -1,0 +1,50 @@
+/*
+ * The selection surfaces (CT-39: Edge's mini menu, Chrome for Android's selection menu) on the
+ * v2 draft (design-language-v2-draft.md §1–§3, §6, §9): the mini menu over a text selection
+ * (`components/selection/MiniMenu.tsx`, drawn in the popup surface's document the desktop host
+ * floats over the page, `PopupSurface`) and the Define surface its chip opens
+ * (`components/selection/DefinePopover.tsx`: a §9.20 popover on the desktop, a §9.13 sheet on
+ * the phone). Every value is a `--v2-*` token from main.css; motion is the chassis's (`.zen-
+ * animate-pop`, the button's 120 ms).
+ *
+ * The controls are the shared primitives (§9.34): `.zen-v2-button` with the glyph rule and the
+ * hover fill extensions.css gives it, the `.zen-v2-panel` chrome (the fill, the hairline, radius
+ * 8, the panel shadow), the title block and the popover's and sheet's bodies the translate
+ * surfaces' chassis draws (`.zen-translate-panel-body`, `.zen-translate-sheet-body`,
+ * `SelectionSurface`). Nothing here restates any of them: what follows is this program's own
+ * layout – the pill and the Define body – and modifiers on the primitives, unlayered beside
+ * them as §9.34 asks, never a copy. Imported by main.css with the other stylesheets at its head.
+ */
+
+/* --- The mini menu (§9.20's floating toolbar) ---------------------------------------------- */
+
+/*
+ * The pill's document: transparent, the pill inside the 8 px margin the core leaves around it
+ * for its shadow (`MINI_MENU_SURFACE_PAD`). The surface is the core's estimate of the pill's size
+ * until the pill has told it what it measured (`selectionMenu.surfaceSize`), so the margin clips
+ * for the frame a wider pill takes to be measured, and nothing here scrolls.
+ */
+.zen-mini-menu-surface {
+  position: fixed;
+  inset: 0;
+  padding: 8px;
+  background: transparent;
+  overflow: hidden;
+}
+/*
+ * The pill is the screenshot toolbar's pose (`.zen-capture-toolbar`, §9.20): a panel of the
+ * page family at 6 padding – the 32 control + 12, 44 tall inside its hairlines – with its chips
+ * 8 apart, each the button primitive with a 16 glyph 8 before the label (extensions.css's gap
+ * and glyph rules; §9.34: nothing added beside them). It sizes itself to its chips
+ * (`max-content`) whatever the document's width, so the box it reports is its own and not the
+ * estimate's, and takes no selection of its own – the page's is the one that stands.
+ */
+.zen-mini-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  padding: 6px;
+  cursor: default;
+  user-select: none;
+}
