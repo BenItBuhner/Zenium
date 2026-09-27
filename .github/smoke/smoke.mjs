@@ -7981,10 +7981,11 @@ async function main() {
         scenarioRestartRegistration({
           freshProfile,
           runScenario,
-          waitFor,
           delay,
           log,
           ps,
+          // For the `reg.exe query` cross-read when a RunOnce read comes up short (W8-F10).
+          sh,
           isWin: IS_WIN
         }),
       [PRIVATE_TASKBAR_SCENARIO]: () =>
