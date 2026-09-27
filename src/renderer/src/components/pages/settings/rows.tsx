@@ -749,11 +749,15 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
  * move the choice to the next or previous option, wrapping, and the focus with it. The row is a
  * column as the stacked field row is (`.zen-settings-stacked-row`), `data-static` since the
  * options are the targets, and disabled as a dependent row at .4 with its options taking no
- * press (§10.4).
+ * press (§10.4). With nothing of its own in sight – no description, no caption – the row is
+ * `data-bare`: its options and nothing else, so the row pad a text row keeps above and below
+ * goes (pr-584's NEW 1, W8-10) and the options stand off the row before as they stand off one
+ * another (§10.3, rows 0 apart) instead of the legend's pad further.
  */
 function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
   const group = useRef<HTMLDivElement>(null)
   const description = row.sheetDescription ?? row.description
+  const text = Boolean(caption || description)
   const checkedAt = Math.max(
     0,
     row.options.findIndex((option) => option.value === row.value)
@@ -778,6 +782,7 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
     <div
       data-row={row.id}
       data-static=""
+      data-bare={text ? undefined : ''}
       data-tone={row.tone}
       className={cn(
         'zen-settings-row zen-settings-stacked-row zen-settings-radios-row zen-v2-row',
@@ -785,7 +790,7 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
       )}
     >
       <div className="zen-settings-field-block">
-        {(caption || description) && (
+        {text && (
           <span className="zen-settings-row-text">
             {caption && <span className="zen-settings-caption">{caption}</span>}
             {description && <span className="zen-settings-description">{description}</span>}
