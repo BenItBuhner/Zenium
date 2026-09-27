@@ -458,7 +458,9 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
     // The row's 282 draws a 126 pill: the flex share 122 and the 4 the pill takes of its
     // neighbours' slots (`PILL_BLEED`, W8-F7's 100 pill at 240).
     expect(foldingButtonReturnRow(always)).toBe(282)
-    expect(foldingButtonReturnRow(always) - (always + 1) * 32 + PILL_BLEED).toBe(FOLDING_BUTTON_PILL)
+    expect(foldingButtonReturnRow(always) - (always + 1) * 32 + PILL_BLEED).toBe(
+      FOLDING_BUTTON_PILL
+    )
     expect(foldingButtonReturnRow(always) + 16).toBe(298)
     expect(foldingButtonFits(240 - 16, always)).toBe(false)
     expect(foldingButtonFits(298 - 16 - 1, always)).toBe(false)

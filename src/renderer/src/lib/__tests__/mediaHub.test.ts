@@ -100,7 +100,8 @@ describe('mediaHubButtonFits (the §9.29 tier)', () => {
   /** Back, forward, reload and ⋯: the buttons the row always has. */
   const always = 4
   /** The pill the row draws: its flex share and the 4 it takes of its neighbours' slots. */
-  const pill = (sidebar: number, buttons: number): number => row(sidebar) - buttons * slot + PILL_BLEED
+  const pill = (sidebar: number, buttons: number): number =>
+    row(sidebar) - buttons * slot + PILL_BLEED
 
   it('folds at the 240 sidebar, stays folded at 266 where the star returns, and returns at 298 with the star', () => {
     expect(mediaHubButtonFits(row(240), always)).toBe(false)
