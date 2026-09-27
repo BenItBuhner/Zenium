@@ -525,7 +525,9 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             awaitChrome("document.querySelector('$TOAST')&&!document.querySelector('$TOAST').hasAttribute('data-moving')", 2_000)
             SystemClock.sleep(400)
             still("tile-removed-toast")
-            val undone = touchSoonExpecting(UNDO_LABEL, "document.querySelector('$TOAST_ACTION')", "the pin is back on the list at slot $atlasSlot", timeoutMs = 6_000) {
+            // The toast's Undo is on §9.33's 8 s clock: the tree gets 1.5 s to list the button, else
+            // the finger lands on the DOM's box (`treeMs`).
+            val undone = touchControlExpecting(UNDO_LABEL, "document.querySelector('$TOAST_ACTION')", "the pin is back on the list at slot $atlasSlot", timeoutMs = 6_000, treeMs = 1_500) {
                 pinTitles().indexOf(atlas.caption) == atlasSlot
             }
             if (!undone && pinTitles().none { it == atlas.caption }) {
@@ -844,22 +846,6 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
 
     /** The tiles as the page draws them, in order ([TILE_ORDER_JS]) – the DOM's word, ahead of the tree's. */
     private fun drawnTitles(): List<String> = chromeValue(TILE_ORDER_JS).split(',').filter { it.isNotEmpty() }
-
-    /**
-     * [touchControlExpecting] for a control on a clock (the toast's Undo inside §9.33's 8 s): the
-     * tree gets `treeMs` to list it, else the finger lands on the DOM's box, and `took` is then
-     * awaited as there – a touch that went in and did not take is a [touchFault].
-     */
-    private fun touchSoonExpecting(label: String, domJs: String, effect: String, treeMs: Long = 1_500, timeoutMs: Long = 6_000, took: () -> Boolean): Boolean {
-        if (!touchControl(label, domJs, treeMs = treeMs)) return false
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (took()) return true
-            SystemClock.sleep(150)
-        }
-        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
-        return false
-    }
 
     private fun summarise(topSites: String): String = runCatching {
         val list = JSONArray(topSites)

@@ -1018,6 +1018,31 @@ describe('NewTabService: my shortcuts and most visited', () => {
       expect(f.browser.state.newTabDevice.hiddenHosts).toEqual(['a.example'])
     })
 
+    it("Undo gives the restore's word: a grid filled in between, or the url pinned again by hand, refuses the pin (the host unhidden all the same); a site's Undo is the unhide's", () => {
+      const f = fixture()
+      const svc = f.browser.newTab
+      const device = (): { shortcuts: { url: string }[]; hiddenHosts: string[] } =>
+        f.browser.state.newTabDevice
+      svc.pin('https://a.example/', 'A')
+      svc.remove('https://a.example/')
+      for (let i = 0; i < 8; i++) svc.pin(`https://s${i}.example/`, `S${i}`)
+      expect(device().shortcuts).toHaveLength(8)
+      expect(svc.undoRemove('https://a.example/')).toBe(false)
+      expect(device().shortcuts.map((s) => s.url)).not.toContain('https://a.example/')
+      expect(device().hiddenHosts).toEqual([])
+      // Pinned again by hand between the removal and the Undo: nothing left to put back.
+      svc.remove('https://s0.example/')
+      svc.pin('https://s0.example/', 'S0 again')
+      expect(svc.undoRemove('https://s0.example/')).toBe(false)
+      expect(device().shortcuts.filter((s) => s.url === 'https://s0.example/')).toHaveLength(1)
+      // A most visited site unhidden another way first: Undo has nothing to do.
+      f.browser.history.visit('https://www.news.example/a', 'News', null)
+      svc.remove('https://www.news.example/a')
+      svc.unhideSite('https://www.news.example/a')
+      expect(svc.undoRemove('https://www.news.example/a')).toBe(false)
+      expect(device().hiddenHosts).toEqual([])
+    })
+
     it('a removal that changes nothing – the host hidden already, no address – raises nothing', () => {
       const f = fixture()
       const svc = f.browser.newTab
