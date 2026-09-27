@@ -531,7 +531,11 @@ describe('the section model', () => {
     expect(look.groups.find((g) => g.id === 'site-exceptions')?.empty).toBe('No exceptions yet')
 
     const access = section('accessibility')
-    expect(access.groups.map((g) => g.heading)).toEqual(['Page zoom', 'Sites with their own zoom'])
+    expect(access.groups.map((g) => g.heading)).toEqual([
+      'Page zoom',
+      'Sites with their own zoom',
+      'Touchpad'
+    ])
     expect(row(access, 'default-zoom').kind).toBe('custom')
     expect(row(access, 'zoom-os-font').label).toBe('Include system font size')
     expect(row(access, 'force-zoom').label).toBe('Force enable zoom')
@@ -2732,21 +2736,85 @@ describe('Accessibility › Read aloud on a host with a speech engine', () => {
     buildSection(ACCESSIBILITY, context(s, false, {}, voices).ctx)
 
   it('stays off without the engine, and adds its two groups after the zoom groups with it', () => {
-    expect(section('accessibility').groups.map((g) => g.id)).toEqual(['zoom', 'site-zooms'])
+    expect(section('accessibility').groups.map((g) => g.id)).toEqual([
+      'zoom',
+      'site-zooms',
+      'touchpad'
+    ])
     const model = build(speaking(), VOICES)
     expect(model.groups.map((g) => g.id)).toEqual([
       'zoom',
       'site-zooms',
       'read-aloud',
-      'read-aloud-voices'
+      'read-aloud-voices',
+      'touchpad'
     ])
     expect(model.groups.map((g) => g.heading)).toEqual([
       'Page zoom',
       'Sites with their own zoom',
       'Read aloud',
-      'Voices'
+      'Voices',
+      'Touchpad'
     ])
     for (const group of model.groups) expect(groupShows(group)).toBe(true)
+  })
+
+  it('ends, on Android alone, with the touchpad swipe’s switch in Chrome’s words, on every layout (GN-23 / A11Y-14)', () => {
+    // Chrome Android's Accessibility page ends with "Swipe between pages using a touchpad"
+    // (`accessibility_preferences.xml` `touchpad_overscroll_history_navigation`; the strings are
+    // `browser_ui_strings.grd`'s), on by default (`settings.a11y.touchpad_overscroll_history_navigation`).
+    const access = section('accessibility')
+    const group = access.groups[access.groups.length - 1]!
+    expect(group.id).toBe('touchpad')
+    expect(group.layouts).toBeUndefined()
+    const swipe = row(access, 'touchpad-swipe-navigate')
+    expect(swipe).toMatchObject({
+      kind: 'switch',
+      label: 'Swipe between pages using a touchpad',
+      description: 'Navigate back and forth by swiping with two fingers on the touchpad.',
+      checked: true
+    })
+    expect(swipe.layouts).toBeUndefined()
+    expect(DEFAULT_SETTINGS.touchpadSwipeToNavigate).toBe(true)
+    // The switch writes the one key; a profile from before it existed reads as on.
+    const c = context(state())
+    const written = buildSection(ACCESSIBILITY, c.ctx)
+    const r = row(written, 'touchpad-swipe-navigate')
+    if (r.kind !== 'switch') throw new Error('not a switch')
+    r.onChange(false)
+    expect(c.patches).toEqual([{ touchpadSwipeToNavigate: false }])
+    const legacy = state({}, { touchpadSwipeToNavigate: undefined as unknown as boolean })
+    expect(row(section('accessibility', legacy), 'touchpad-swipe-navigate')).toMatchObject({
+      checked: true
+    })
+    const off = section('accessibility', state({}, { touchpadSwipeToNavigate: false }))
+    expect(row(off, 'touchpad-swipe-navigate')).toMatchObject({ checked: false })
+
+    // Every Android layout keeps the row – Chrome shows it on phone and tablet alike, and an
+    // Android session with a hovering pointer (DeX, a trackpad) is the desktop layout here
+    // (`classifyViewport`), the very place the touchpad is: a `layouts` pin would hide it there.
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
+      const model = buildSection(ACCESSIBILITY, { ...context(state()).ctx, formFactor: layout })
+      expect(
+        allRows(model.groups).map((x) => x.id),
+        layout
+      ).toContain('touchpad-swipe-navigate')
+    }
+    // The desktop platform has no touchpad swipe and no row: the shared builder gains nothing there.
+    const desktop = state({
+      platform: 'linux',
+      capabilities: { ...ANDROID, pageControls: false, readAloud: true }
+    })
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
+      const model = buildSection(ACCESSIBILITY, {
+        ...context(desktop, false, {}, VOICES).ctx,
+        formFactor: layout
+      })
+      expect(
+        model.groups.map((g) => g.id),
+        layout
+      ).toEqual(['read-aloud', 'read-aloud-voices'])
+    }
   })
 
   it('is the whole category on a desktop without page controls, and lists the category there', () => {

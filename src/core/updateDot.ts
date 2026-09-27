@@ -12,11 +12,15 @@ import type { UpdateStatus } from '../shared/updates'
  * A pure module, shared by every host: the record itself is `BrowserState.updateDot` – device-
  * local (the `privateDevice` shape: replaced whole, persisted with the profile in `state.json`,
  * never synced – what this device's menu has shown is this device's), surfaced to the renderer as
- * `UIState.updateDot`. The touch layouts read `updateDotShows` through the renderer's
- * `lib/about.ts` `updateDotAt` (the phone bar's ⋮, the tablet toolbar's menu button) and
- * `Menus.showAppMenu` writes `markUpdateMenuOpened` as the menu opens on those layouts; the
- * desktop's ⋯ keeps its read of the plain phase (`updateReadyAt`) until W8-F3 wires it to this
- * record.
+ * `UIState.updateDot`. Every layout reads `updateDotShows` through the renderer's `lib/about.ts`
+ * `updateDotAt` (the phone bar's ⋮, the tablet toolbar's menu button, the desktop's ⋯ since
+ * W8-F3) and `Menus.showAppMenu` writes `markUpdateMenuOpened` as the menu opens on every host.
+ * Chrome DESKTOP's own cadence is the edge left (`app_menu_icon_controller.cc`,
+ * `upgrade_detector.cc`): its badge is a pure function of the detector's annoyance stage –
+ * green at 2 days, yellow at 4, red at 7 on the stable channel – never cleared by the menu's
+ * open, gone only at the relaunch; the lead ruled Zenium takes Android's clear-on-open on every
+ * host, keyed by version and persisted (Android's badge is per process: any state change with an
+ * update available brings it back, `MenuButtonMediator.updateStateChanged`).
  */
 
 /** What the menu was last opened for: the waiting update's version, or nothing seen yet. */

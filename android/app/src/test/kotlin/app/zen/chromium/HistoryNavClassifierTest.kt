@@ -269,7 +269,8 @@ class HistoryNavClassifierTest {
         assertEquals(Step.FORWARD, handedBack.move(150f, 600f, 30L))
         assertNull(handedBack.refusal())
 
-        // A tap at the edge, a drag out over the edge, a touch away from the edges, a touchpad swipe.
+        // A tap at the edge, a drag out over the edge, a touch away from the edges, a touchpad
+        // swipe that took over, a two-finger scroll.
         val tap = classifier()
         assertEquals(Step.FORWARD, tap.down(20f, 600f, width, canBack = true, canForward = true))
         assertEquals(Step.FORWARD, tap.move(24f, 603f, 10L))
@@ -283,9 +284,41 @@ class HistoryNavClassifierTest {
         assertEquals(Step.FORWARD, middle.move(700f, 600f, 10L))
         assertNull(middle.refusal())
         val pad = classifier()
-        assertEquals(Step.FORWARD, pad.down(540f, 600f, width, canBack = true, canForward = true, touchpad = true))
-        assertEquals(Step.FORWARD, pad.move(700f, 600f, 10L))
+        assertEquals(Step.FORWARD, touchpadSwipe(pad, 60f))
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(Edge.LEFT)), pad.overscrolledX(Edge.LEFT))
         assertNull(pad.refusal())
+        val scroll = classifier()
+        assertEquals(Step.FORWARD, scroll.down(540f, 600f, width, canBack = true, canForward = true, touchpad = true))
+        assertEquals(Step.FORWARD, scroll.move(548f, 760f, 10L))
+        assertNull(scroll.refusal())
+    }
+
+    @Test
+    fun aRefusedTouchpadSwipeNamesItsCauseAtTheLift() {
+        // Settings › Accessibility's switch off: `TabWebView.historyNavEligible` gives the down no
+        // way to go either side (the host's `eligible=false` line GesturesDemo reads for A11Y-14).
+        val off = classifier()
+        assertEquals(Step.FORWARD, off.down(540f, 600f, width, canBack = false, canForward = false, touchpad = true))
+        assertEquals(State.PASSTHROUGH, off.state)
+        assertEquals(Step.FORWARD, off.move(700f, 602f, 10L))
+        assertEquals("touchpad swipe from the LEFT: eligible=false page=unanswered overscroll=false", off.refusal())
+
+        // The switch on, the WebView never reporting the overscroll (a selection took the swipe,
+        // a page that scrolls sideways): the cause is the report's absence, not the switch.
+        val silent = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(silent, 160f))
+        assertEquals("touchpad swipe from the LEFT: eligible=true page=true overscroll=false", silent.refusal())
+
+        // Pulling in from the right with nothing ahead.
+        val nowhere = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(nowhere, -160f, canForward = false))
+        assertEquals("touchpad swipe from the RIGHT: eligible=false page=true overscroll=false", nowhere.refusal())
+
+        // Within the slop, nothing to say.
+        val still = classifier()
+        assertEquals(Step.FORWARD, still.down(540f, 600f, width, canBack = false, canForward = false, touchpad = true))
+        assertEquals(Step.FORWARD, still.move(544f, 600f, 10L))
+        assertNull(still.refusal())
     }
 
     // --- a touchpad's two-finger swipe (GN-23 / A11Y-14) ------------------------------------------
@@ -481,5 +514,209 @@ class HistoryNavClassifierTest {
         assertTrue("a back drag is eligible whatever the history", "HistoryNavClassifier.Edge.LEFT -> true" in eligible)
         assertTrue("a forward drag still needs a forward entry", "HistoryNavClassifier.Edge.RIGHT -> canGoForward()" in eligible)
         assertFalse("the history's depth is no part of the back drag's answer", "canGoBack()" in eligible)
+    }
+
+    // --- the fling that forces the navigation (Chrome's FORCE_ACTIVATION) -------------------------
+
+    /** A touchpad swipe that has taken over, pulling in from `side`, `travel` px in – short of the 96 dp threshold at this density. */
+    private fun draggingSwipe(c: HistoryNavClassifier, side: Edge = Edge.LEFT, travel: Float = 30f) {
+        val sign = if (side == Edge.LEFT) 1f else -1f
+        assertEquals(Step.FORWARD, touchpadSwipe(c, sign * 60f))
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Nav.Start(side)), c.overscrolledX(side))
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(travel, 20L)), c.move(540f + sign * (60f + travel), 600f, 20L))
+    }
+
+    @Test
+    fun theFlingsThresholdIsChromesInPhysicalPixelsPerSecond() {
+        // `kMinFlingVelocityForForceActivation` (`ui/android/overscroll_refresh.cc`): 1788 px/s, one
+        // number on every device; `EventForwarder.MAX_FLING_VELOCITY`: the cap it is measured under.
+        assertEquals(1788f, HistoryNavClassifier.FORCE_ACTIVATION_VELOCITY)
+        assertEquals(8000f, HistoryNavClassifier.MAX_FLING_VELOCITY)
+    }
+
+    @Test
+    fun aTouchpadSwipeLetGoFastEnoughForcesTheNavigationShortOfTheThreshold() {
+        val c = classifier()
+        draggingSwipe(c)
+        // Well short of the threshold (30 px of 240 at this density), moving right at 2000 px/s.
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), c.up(30L, velocityX = 2000f))
+        assertEquals(State.IDLE, c.state)
+
+        // The threshold is exclusive: exactly 1788 px/s is not over it.
+        val at = classifier()
+        draggingSwipe(at)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), at.up(30L, velocityX = 1788f))
+        val just = classifier()
+        draggingSwipe(just)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), just.up(30L, velocityX = 1788.5f))
+
+        // A slower release is the travel's alone (the chrome's machine reads the threshold).
+        val slow = classifier()
+        draggingSwipe(slow)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), slow.up(30L, velocityX = 1200f))
+        // The default: no velocity known, nothing forced – the release the earlier tests read.
+        val none = classifier()
+        draggingSwipe(none)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), none.up(30L))
+    }
+
+    @Test
+    fun theFlingMustHeadIntoThePageTheWayTheSwipePulls() {
+        // Pulling in from the right (a forward): the velocity that counts is leftward, `-velocity.x`
+        // (Chrome's `GetVelocityInActiveActionDirection`).
+        val forward = classifier()
+        draggingSwipe(forward, Edge.RIGHT)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true)), forward.up(30L, velocityX = -2000f))
+        // Flicked the other way, back out of the page: not forced – and, at that speed, disallowed.
+        val forwardBack = classifier()
+        draggingSwipe(forwardBack, Edge.RIGHT)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = true)), forwardBack.up(30L, velocityX = 2000f))
+
+        // Pulling in from the left, let go flicking back towards the edge: not forced (disallowed).
+        val back = classifier()
+        draggingSwipe(back)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = true)), back.up(30L, velocityX = -3000f))
+    }
+
+    // --- the fling back out of the page that disallows it (Chrome's DISALLOW_ACTIVATION) ----------
+
+    @Test
+    fun theDisallowsThresholdIsChromesMinFlingVelocityForActivation() {
+        // `kMinFlingVelocityForActivation` (`ui/android/overscroll_refresh.cc:27`): -500 px/s;
+        // `GetActivationStatus` (`:272-276`) allows a velocity over it and disallows one at or under.
+        assertEquals(-500f, HistoryNavClassifier.DISALLOW_VELOCITY)
+    }
+
+    @Test
+    fun aTouchpadSwipeFlungBackOutOfThePageIsDisallowedWhateverItsTravel() {
+        // Past the threshold (250 px of 240 at this density), let go flicking back towards the
+        // left edge at 600 px/s: disallowed – the chrome's machine retracts instead of navigating.
+        val c = classifier()
+        draggingSwipe(c, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = true)), c.up(30L, velocityX = -600f))
+        assertEquals(State.IDLE, c.state)
+
+        // The rule is inclusive at -500 (`velocity > -500` allows): exactly -500 disallows, -499 not.
+        val at = classifier()
+        draggingSwipe(at, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = true)), at.up(30L, velocityX = -500f))
+        val just = classifier()
+        draggingSwipe(just, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = false)), just.up(30L, velocityX = -499f))
+
+        // Still, or drifting on into the page under the force threshold: the travel's alone.
+        val still = classifier()
+        draggingSwipe(still, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), still.up(30L, velocityX = 0f))
+        val drifting = classifier()
+        draggingSwipe(drifting, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), drifting.up(30L, velocityX = 300f))
+
+        // Short of the threshold the word is the same; the machine retracted anyway.
+        val short = classifier()
+        draggingSwipe(short)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = true)), short.up(30L, velocityX = -600f))
+    }
+
+    @Test
+    fun theDisallowReadsTheDirectionTheSwipePullsAndNeverMeetsTheForce() {
+        // Pulling in from the right (a forward): back out of the page is rightward, `+velocity.x`.
+        val forward = classifier()
+        draggingSwipe(forward, Edge.RIGHT, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, disallow = true)), forward.up(30L, velocityX = 500f))
+        val forwardIn = classifier()
+        draggingSwipe(forwardIn, Edge.RIGHT, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L)), forwardIn.up(30L, velocityX = -300f))
+        // One fling, one direction: a forced release is never disallowed, a disallowed one never forced.
+        val forced = classifier()
+        draggingSwipe(forced, travel = 250f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = true, disallow = false)), forced.up(30L, velocityX = 2000f))
+    }
+
+    @Test
+    fun aFingersDragIsNeverDisallowed() {
+        // Chrome's rule is written for both devices, but a finger's release reaches it at zero
+        // velocity (`OnScrollEnd(gfx::Vector2dF())`, `overscroll_controller_android.cc:376-378`):
+        // the finger flicked back towards the edge at 5000 px/s navigates as its travel says.
+        val finger = classifier()
+        dragFromLeft(finger, 30f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(20f, 20L)), finger.move(70f, 600f, 20L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false, disallow = false)), finger.up(30L, velocityX = -5000f))
+    }
+
+    @Test
+    fun aFingersDragIsNeverForcedAndNorIsASwipeThatNeverTookOver() {
+        // The finger's edge drag, flicked fast: Chrome forces the touchpad's action alone
+        // (`active_action.device == kTouchpad`); the finger's release reads the threshold.
+        val finger = classifier()
+        dragFromLeft(finger, 30f)
+        assertEquals(Step(Disposition.CONSUME, Nav.Move(20f, 20L)), finger.move(70f, 600f, 20L))
+        assertEquals(Step(Disposition.CONSUME, Nav.Release(30L, force = false)), finger.up(30L, velocityX = 5000f))
+
+        // A swipe still the WebView's (no overscroll came back) lifts as the WebView's, however fast.
+        val watching = classifier()
+        assertEquals(Step.FORWARD, touchpadSwipe(watching, 60f))
+        assertEquals(State.WATCHING, watching.state)
+        assertEquals(Step.FORWARD, watching.up(30L, velocityX = 5000f))
+        assertEquals(State.IDLE, watching.state)
+    }
+
+    // --- the host's side: the switch and the velocity, pinned in the source ---------------------------
+
+    @Test
+    fun theAccessibilitySwitchGatesTheTouchpadSwipeAloneAtTheDown() {
+        // Settings → Accessibility → "Swipe between pages using a touchpad" (Chrome's
+        // `settings.a11y.touchpad_overscroll_history_navigation`, on by default) is one guard line
+        // in `TabWebView.historyNavEligible`, for the touchpad-sourced swipe alone, ahead of the
+        // finger's own rule (3-button mode), so the finger's edge drag never reads it.
+        val tabWebView = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/TabWebView.kt").readText()
+        val guard = "if (touchpad && !host.touchpadSwipeToNavigate) return false"
+        assertEquals(1, Regex(Regex.escape(guard)).findAll(tabWebView).count())
+        val fingerRule = "if ((!touchpad && !host.threeButtonNavigation) || backTransition != null) return false"
+        assertTrue(tabWebView.indexOf(guard) in 0 until tabWebView.indexOf(fingerRule))
+        // The release carries the fling's two words to the chrome's machine.
+        assertTrue(tabWebView.contains("\"release\" to json(\"time\" to event.time, \"force\" to event.force, \"disallow\" to event.disallow)"))
+
+        // The host mirrors the chrome's setting (on until it says otherwise) on the same bridge
+        // path as the pull-to-refresh's, and the interface's default keeps a chrome-less host on.
+        val host = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/Host.kt").readText()
+        assertTrue(host.contains("override var touchpadSwipeToNavigate = true"))
+        assertTrue(host.contains("\"chrome.setTouchpadSwipeToNavigate\" -> {"))
+        assertTrue(host.contains("touchpadSwipeToNavigate = args.bool(\"enabled\", true)"))
+        val pageHost = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/PageHost.kt").readText()
+        assertTrue(pageHost.contains("val touchpadSwipeToNavigate: Boolean get() = true"))
+        // The chrome sends it from the settings, as it sends the pull-to-refresh's.
+        val boot = File(repoRoot(), "src/android/boot.ts").readText()
+        assertTrue(boot.contains("bridge.send('chrome.setTouchpadSwipeToNavigate', { enabled })"))
+    }
+
+    @Test
+    fun theGestureMeasuresTheSwipesVelocityAsChromiumDoes() {
+        // A `VelocityTracker` over the touchpad swipe's events alone, the up added, read under
+        // Chromium's cap (`EventForwarder.onTrackpadScrollEvent`), and handed to the classifier's up.
+        val gesture = File(repoRoot(), "android/app/src/main/kotlin/app/zen/chromium/HistoryNavGesture.kt").readText()
+        // Which down is the touchpad's is the one shared test's (`TouchpadSwipe.kt`, the
+        // pull-to-refresh's too), not a private twin's.
+        assertTrue(gesture.contains("val touchpad = event.isTouchpadSwipe()"))
+        assertFalse(gesture.contains("fun isTouchpadSwipe("))
+        val obtain = "velocity = if (touchpad) VelocityTracker.obtain().also { it.addMovement(event) } else null"
+        assertTrue(gesture.contains(obtain))
+        assertTrue(gesture.contains("velocity?.addMovement(event)"))
+        assertTrue(gesture.contains("tracker.computeCurrentVelocity(1000, HistoryNavClassifier.MAX_FLING_VELOCITY)"))
+        assertTrue(gesture.contains("classifier.up(event.eventTime, releaseVelocityX(event))"))
+        // Recycled with the touch, whichever way it ended – and, at a down, before the next is
+        // obtained, so a tracker still held (a touch whose end never came) never leaks.
+        val recycle = "velocity?.recycle()"
+        assertEquals(2, Regex(Regex.escape(recycle)).findAll(gesture).count())
+        assertTrue(gesture.indexOf(recycle) in 0 until gesture.indexOf(obtain))
+    }
+
+    private fun repoRoot(): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            if (File(dir, "package.json").isFile && File(dir, "android").isDirectory) return dir
+            dir = dir.parentFile
+        }
+        error("not inside the repository")
     }
 }

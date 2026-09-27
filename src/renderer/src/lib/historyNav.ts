@@ -64,6 +64,26 @@ export interface HistoryNavEventPayload {
   travel?: number
   /** Timestamp of the touch sample, ms on any monotonic clock. */
   time?: number
+  /**
+   * `release` only: the host force-activates the navigation whatever the motion – Chrome's
+   * FORCE_ACTIVATION (`overscroll_refresh.cc:265-269`, `kMinFlingVelocityForForceActivation`):
+   * a touchpad swipe let go faster than 1788 px/s in its direction. The release commits as one
+   * past the threshold does (`SideSlideLayout.willNavigate`) and leaves `armed` as the drag left
+   * it: Chrome's arming feedback fires in `pull()`, and a release reaches none – `SideSlideLayout
+   * .release()` neither taps nor tints. The hosts key their tap and tint on the frame's `armed`
+   * rising edge, so a release short of the threshold must not raise it.
+   */
+  force?: boolean
+  /**
+   * `release` only: the host disallows the navigation whatever the motion – Chrome's
+   * DISALLOW_ACTIVATION (`overscroll_refresh.cc:27, :272-276`, `kMinFlingVelocityForActivation`):
+   * a touchpad swipe let go flung back out of the page at 500 px/s or faster (`velocity > -500`
+   * allows; exactly -500 disallows). The touchpad alone reaches it – a finger's release carries
+   * no velocity (`overscroll_controller_android.cc:376-378`). The release retracts as one short
+   * of the threshold does; Chrome's `SideSlideLayout.release()` fades its arrow in place
+   * (`:428-445`), Zenium's disc runs home on its return spring.
+   */
+  disallow?: boolean
 }
 
 export interface HistoryNavState {
@@ -413,7 +433,7 @@ export class HistoryNavMachine {
         return
       case 'release':
         if (this.tabId !== tabId || this.phase !== 'dragging') return
-        this.release()
+        this.release(payload?.force === true, payload?.disallow === true)
         return
       case 'cancel':
         if (this.tabId !== tabId || this.phase !== 'dragging') return
@@ -473,15 +493,34 @@ export class HistoryNavMachine {
     this.captionTo(captionShown(this.armed, this.closeTarget) ? 1 : 0)
   }
 
-  private release(): void {
-    if (releaseNavigates(this.motion)) this.commit()
-    else this.retract()
+  /**
+   * `force`: the host's fling force-activation – the release navigates whatever the motion.
+   * `disallow`: the host's fling disallow – the release retracts whatever the motion (Chrome's
+   * `SideSlideLayout.release()`: `willNavigate()` and DISALLOW hide the arrow, nothing navigates).
+   * The two never arrive together: a fling has one direction.
+   */
+  private release(force: boolean, disallow: boolean): void {
+    if (force) {
+      // Let go short of the threshold the disc is part-grown: it completes its growth (the
+      // release is the threshold met, by speed) as it leaves on the exit fade where it stands.
+      this.growTo(1)
+      this.commit(true)
+    } else if (releaseNavigates(this.motion) && !disallow) {
+      this.commit()
+    } else {
+      this.retract()
+    }
   }
 
-  private commit(): void {
+  /**
+   * `forced`: the release is the host's force-activation – `armed` stays as the drag left it
+   * (false short of the threshold). The hosts fire their arming tap and tint on the frame's
+   * `armed` rising edge, and Chrome's `SideSlideLayout.release()` has neither.
+   */
+  private commit(forced = false): void {
     const tabId = this.tabId
     if (!tabId) return
-    this.setPhase('navigating', true, this.closeTarget)
+    this.setPhase('navigating', forced ? this.armed : true, this.closeTarget)
     this.options.navigate(tabId, this.edge)
     // The growth is heading for full already (the motion is past the threshold) and runs on to
     // it; the disc leaves on the exit fade where it stands (v2 §11.9), the spring resting both.
