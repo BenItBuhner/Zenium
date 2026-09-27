@@ -12560,6 +12560,24 @@
   margin: 0 -16px;
   width: calc(100% + 32px);
 }
+/*
+ * No `--v2-selected` band on the page's checked option (pr-584 L1 / Q6, ruled DROP): the
+ * choice is told by the accent ring and its dot alone (§9.14), as a check row's is by its box –
+ * the band is the picker SHEET's, where the list is the whole sheet and the picked row its one
+ * answer (§9.6), and a band across a page's group reads as a second selection. Under the
+ * pointer and the press the checked row takes the page row's `--v2-fill` like its siblings
+ * (`.zen-v2-row`'s rule, which the band's `:hover` outranked); a disabled group's stay flat.
+ */
+.zen-settings-radios > .zen-settings-radio-row[aria-checked='true'],
+.zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:hover {
+  background: transparent;
+}
+.zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:active:not(:disabled),
+:where(:root[data-hover='hover'])
+  .zen-settings-radios
+  > .zen-settings-radio-row[aria-checked='true']:hover:not(:disabled) {
+  background: var(--v2-fill);
+}
 .zen-settings-radios > .zen-settings-radio-row:disabled {
   cursor: default;
   opacity: 1;

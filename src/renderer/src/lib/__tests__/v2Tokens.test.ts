@@ -1831,6 +1831,29 @@ describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
     )
     expect(rows).toMatch(/className="zen-settings-radio-list zen-settings-radios"/)
   })
+
+  it('draw no `--v2-selected` band on the checked option (pr-584 L1 / Q6): the accent ring and dot tell the choice; the pointer’s fill is the page row’s', () => {
+    // The band is the picker sheet's (§9.6); on the page the checked row is flat at rest and
+    // under a touch's sticky `:hover`, and takes `--v2-fill` under a hovering pointer or a press
+    // like its siblings – its rule outranks the primitive's `:hover` band (0,4,0) by an
+    // attribute and `:not(:disabled)`.
+    expect(
+      block(
+        ".zen-settings-radios > .zen-settings-radio-row[aria-checked='true'],\n.zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:hover"
+      )
+    ).toMatch(/^\s*background: transparent;\s*$/m)
+    const pointer = block(
+      ".zen-settings-radios > .zen-settings-radio-row[aria-checked='true']:active:not(:disabled),\n:where(:root[data-hover='hover'])\n  .zen-settings-radios\n  > .zen-settings-radio-row[aria-checked='true']:hover:not(:disabled)"
+    )
+    expect(pointer).toMatch(/background: var\(--v2-fill\)/)
+    expect(pointer).not.toMatch(/--v2-selected/)
+    // A disabled group's checked option stays flat too: no band at .4 either.
+    expect(
+      block(
+        '.zen-settings-radios > .zen-settings-radio-row:disabled:hover,\n.zen-settings-radios > .zen-settings-radio-row:disabled:active'
+      )
+    ).toMatch(/background: transparent/)
+  })
 })
 
 describe('the fullscreen hint palette', () => {
