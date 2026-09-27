@@ -1,5 +1,6 @@
 import type { HistoryVisitKey, HistoryVisitsEvent, ImportedVisit } from '../history'
 import { RETENTION_MS } from '../history'
+import { wireFavicon } from './records'
 
 /**
  * The `history` record (ID-13 / HB-48): browsing history synced through the folder as one
@@ -220,20 +221,47 @@ export function isEntry(e: unknown): e is HistoryEntry {
   }
 }
 
-/** Read a page another device wrote; null for garbage. Unknown entries are dropped, not fatal. */
+/**
+ * A visit entry as read from another device's page: the entry itself while its favicon may
+ * travel (`wireFavicon`), else a copy without the icon – a peer's build may have sent a `data:`
+ * URL's bytes or its cache's own address, neither of which this device's history should hold
+ * (`HistoryService.importVisits` takes the icon as it comes).
+ */
+function readVisitEntry(entry: HistoryEntry): HistoryEntry {
+  if (entry.type !== 'visit' || entry.visit.favicon === undefined) return entry
+  if (wireFavicon(entry.visit.favicon)) return entry
+  const { favicon: _home, ...visit } = entry.visit
+  void _home
+  return { type: 'visit', visit }
+}
+
+/**
+ * Read a page another device wrote; null for garbage. Unknown entries are dropped, not fatal;
+ * a visit's favicon that may not travel (`wireFavicon`) is left out of the visit.
+ */
 export function readHistoryPage(data: unknown): HistoryPage | null {
   if (!data || typeof data !== 'object') return null
   const r = data as Partial<HistoryPage>
   if (r.v !== 1 || typeof r.seq !== 'number' || !Array.isArray(r.entries)) return null
-  return { v: 1, seq: r.seq, sealed: r.sealed === true, entries: r.entries.filter(isEntry) }
+  return {
+    v: 1,
+    seq: r.seq,
+    sealed: r.sealed === true,
+    entries: r.entries.filter(isEntry).map(readVisitEntry)
+  }
 }
 
-/** A visit in the wire shape: only the fields with a value (`title` absent, not empty). */
+/**
+ * A visit in the wire shape: only the fields with a value (`title` absent, not empty), the
+ * favicon only as an `http(s)` address (`wireFavicon`; the model's `exported` already keeps a
+ * `data:` icon home – the engine's rule holds whatever the model hands it).
+ */
 function wireVisit(v: ImportedVisit): ImportedVisit {
   const out: ImportedVisit = { url: v.url, at: v.at }
   if (v.title) out.title = v.title
   if (v.transition && v.transition !== 'link') out.transition = v.transition
-  if (v.favicon) out.favicon = v.favicon
+  const favicon = wireFavicon(v.favicon)
+  if (favicon) out.favicon = favicon
   if (v.redirectSource) out.redirectSource = true
   if (v.redirectedFrom && v.redirectedFrom.length > 0) out.redirectedFrom = v.redirectedFrom.slice()
   return out
