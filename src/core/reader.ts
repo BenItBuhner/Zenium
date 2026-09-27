@@ -65,6 +65,51 @@ export interface RawArticle {
   dir?: string | null
 }
 
+/** What `SELECTED_MARKUP_SCRIPT` reads out of the page: the selection as the reader's article. */
+interface SelectedMarkup {
+  content: string
+  length: number
+  siteName: string | null
+  lang: string | null
+  dir: string | null
+}
+
+/**
+ * The page's selection as markup for the reader document (`ReaderService.openSelection`): every
+ * range's contents cloned – partial blocks and all, so the structure the selection cuts across
+ * (paragraphs, lists, headings) stands – with `href` and `src` made absolute against the page
+ * (a `srcset` of relative candidates goes; the `src` stands for the picture) and the page's
+ * site name, language and direction beside it. Null without a selection.
+ */
+const SELECTED_MARKUP_SCRIPT = `(() => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const box = document.createElement('div');
+  for (let i = 0; i < sel.rangeCount; i++) box.appendChild(sel.getRangeAt(i).cloneContents());
+  const absolute = (el, attr) => {
+    const value = el.getAttribute(attr);
+    if (!value) return;
+    try { el.setAttribute(attr, new URL(value, document.baseURI).href); } catch { el.removeAttribute(attr); }
+  };
+  for (const a of box.querySelectorAll('a[href]')) absolute(a, 'href');
+  for (const el of box.querySelectorAll('img[src], video[src], source[src]')) absolute(el, 'src');
+  for (const el of box.querySelectorAll('video[poster]')) absolute(el, 'poster');
+  for (const el of box.querySelectorAll('[srcset]')) el.removeAttribute('srcset');
+  const text = box.textContent || '';
+  if (!text.trim()) return null;
+  const block = box.querySelector('p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, blockquote, pre, table, figure, section, article');
+  const content = block ? box.innerHTML : '<p>' + box.innerHTML + '</p>';
+  const site = document.querySelector('meta[property="og:site_name"]');
+  const root = document.documentElement;
+  return {
+    content,
+    length: text.length,
+    siteName: (site && site.getAttribute('content')) || null,
+    lang: root.lang || null,
+    dir: root.dir || null
+  };
+})()`
+
 /**
  * Firefox's Reader View for Zen: Mozilla's Readability runs inside the page, the extracted
  * article is rendered by the `zen://reader` page with the usual typography controls.
@@ -287,6 +332,39 @@ export class ReaderService {
       return
     }
     this.open(tabId, raw)
+  }
+
+  /**
+   * "Open Selection in Reader View" (reader-02, Chrome's "Open in reading mode" on a selection):
+   * the selected text's own markup, read out of the page – the frame the selection is in where
+   * the host addresses frames – is the article, rendered by the reader document as any article
+   * is (Chrome's reading mode renders the selection's nodes the same way; the distiller is not
+   * asked). Links and images take their absolute addresses, since the reader document has
+   * another base; a run of bare text becomes a paragraph. Nothing happens on a page without a
+   * selection or one that is gone. The article's title is the page's, as Chrome's is.
+   */
+  async openSelection(tabId: string, win: ZenWindow, frameId?: number): Promise<void> {
+    const tab = this.browser.tabs.tab(tabId)
+    const view = this.browser.tabs.view(tabId)
+    if (!tab || !view || this.isReaderUrl(tab.url)) return
+    let raw: SelectedMarkup | null = null
+    try {
+      raw = (await view.executeJavaScript(SELECTED_MARKUP_SCRIPT, frameId)) as SelectedMarkup | null
+    } catch {
+      raw = null
+    }
+    if (!raw || !raw.content.trim()) {
+      this.browser.toast('Select some text to open in Reader View.', 'info', win)
+      return
+    }
+    if (this.browser.tabs.tab(tabId) !== tab) return
+    this.open(tabId, {
+      siteName: raw.siteName,
+      content: raw.content,
+      length: raw.length,
+      lang: raw.lang,
+      dir: raw.dir
+    })
   }
 
   /**

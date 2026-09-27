@@ -377,7 +377,13 @@ export function harness(
             : {})
         })
     },
-    views: stub<TabViewHost>({ createView: () => recordingView() }),
+    // The desktop host puts the reader's cover over a page (`createCover`, W8-5); the phone's
+    // has none and its reader is a navigation – explicit, since the stub would answer for the
+    // optional method.
+    views: stub<TabViewHost>({
+      createView: () => recordingView(),
+      createCover: capabilities.windows ? () => recordingView() : undefined
+    }),
     menus,
     dialogs: stub<DialogHost>(
       opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }

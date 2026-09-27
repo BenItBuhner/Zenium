@@ -31,6 +31,7 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { readerArticleId } from '../reader'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 import {
@@ -3192,6 +3193,7 @@ describe('the page context menu', () => {
       'Copy',
       'Search Google for “quantum foam”',
       'Copy Link to Highlight',
+      'Open Selection in Reader View',
       '-',
       'Boosts',
       'Inspect Element'
@@ -3219,6 +3221,110 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Search Google for “example.org/docs”')
     h.click('Go to example.org/docs')
     expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://example.org/docs')
+  })
+
+  describe('Open Selection in Reader View (reader-02)', () => {
+    const SELECTED = { content: '<p>hello <b>world</b></p>', length: 11 }
+    /** The page answers the selection script with `markup`, and every other script with true. */
+    const selectionScript =
+      (markup: unknown) =>
+      (code: string): unknown =>
+        code.includes('getSelection()') ? markup : true
+
+    it('seats the row after Copy Link to Highlight and before Translate Selection on the desktop alone', () => {
+      const h = pageHarness(DESKTOP, { translate: true })
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
+        'Copy',
+        'Search Google for “quantum foam”',
+        'Copy Link to Highlight',
+        'Open Selection in Reader View',
+        'Translate Selection'
+      ])
+      // The phone's page menu stands as it was; its toolbar has no reader item (Chrome's has none).
+      const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+      expect(phone.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+        'Open Selection in Reader View'
+      )
+      expect(
+        phone.browser.menus.selectionToolbar(phone.tabId, 'quantum foam').map((i) => i.id)
+      ).not.toContain('reader')
+      expect(phone.browser.menus.runSelectionAction(phone.tabId, 'reader', 'quantum foam')).toBe(
+        false
+      )
+    })
+
+    it('is gated like Chrome’s: the page’s own selection, a normal window, not while reading', () => {
+      const h = pageHarness()
+      // A text field's selection: the editing group's tail carries the search, not the reader.
+      expect(
+        h.menu(
+          pageParams({ selectionText: 'quantum foam', isEditable: true, editFlags: ALL_EDITS })
+        )
+      ).not.toContain('Open Selection in Reader View')
+      // A popup's toolbar-only chrome (Chrome's `IsNormalBrowser`): no row.
+      const popup = h.browser.createWindow({
+        kind: 'synced',
+        from: h.win,
+        chrome: 'popup',
+        bounds: { x: 0, y: 0, width: 400, height: 300 }
+      })
+      const inPopup = h.browser.tabs.createTab({ url: PAGE_URL, active: true }, popup)
+      h.browser.menus.showPageContextMenu(
+        inPopup.id,
+        pageParams({ selectionText: 'quantum foam' }),
+        popup
+      )
+      expect(topLabels(h.shown())).not.toContain('Open Selection in Reader View')
+      // Reading already: the reader document's own selection has no reader to open.
+      h.browser.tabs.tab(h.tabId)!.url =
+        'zen://reader?id=article_1&url=https%3A%2F%2Fexample.com%2Farticle'
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+        'Open Selection in Reader View'
+      )
+    })
+
+    it('reads the selection’s markup out of the clicked frame and opens the reader on it, over the page', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: selectionScript(SELECTED) })
+      h.menu(pageParams({ selectionText: 'hello world', frameId: 3 }))
+      h.viewCalls.length = 0
+      h.click('Open Selection in Reader View')
+      await settle()
+      // The selection script ran in the frame the click landed in, through the page's own world.
+      expect(
+        h.viewCalls.some(
+          (c) => c.startsWith('executeJavaScript(3:') && c.includes('getSelection()')
+        )
+      ).toBe(true)
+      // The reader stands over the page as a cover (reader-30): the page was never navigated.
+      const tab = h.browser.tabs.tab(h.tabId)!
+      expect(tab.url.startsWith('zen://reader?id=')).toBe(true)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(true)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL("zen://reader'))).toBe(true)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL("https://'))).toBe(false)
+      // The article is the selection's own markup, titled as the page is, with its address.
+      const article = h.browser.reader.article(readerArticleId(tab.url)!)
+      expect(article?.content).toBe(SELECTED.content)
+      expect(article?.length).toBe(SELECTED.length)
+      expect(article?.url).toBe(PAGE_URL)
+      expect(article?.title).toBe(tab.title)
+      // Leaving the reader uncovers the page: its address back, no load of it.
+      h.viewCalls.length = 0
+      expect(h.browser.tabs.uncover(h.tabId)).toBe(true)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(false)
+      expect(h.browser.tabs.tab(h.tabId)!.url).toBe(PAGE_URL)
+      expect(h.viewCalls.some((c) => c.startsWith('loadURL('))).toBe(false)
+    })
+
+    it('says so in a toast when the page has no selection to read by the time the row runs', async () => {
+      const h = pageHarness(DESKTOP, { pageScript: selectionScript(null) })
+      h.menu(pageParams({ selectionText: 'hello world' }))
+      h.toasts.length = 0
+      h.click('Open Selection in Reader View')
+      await settle()
+      expect(h.toasts.map((t) => t.message)).toEqual(['Select some text to open in Reader View.'])
+      expect(h.browser.tabs.tab(h.tabId)!.url).toBe(PAGE_URL)
+      expect(h.browser.tabs.isCovered(h.tabId)).toBe(false)
+    })
   })
 
   it('gives a text field the editing group and nothing else', () => {
