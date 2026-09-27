@@ -844,6 +844,10 @@ export class BrowserState {
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
     this.settings.splitEdgeZones = data.settings?.splitEdgeZones !== false
+    // Accessibility's "Swipe between pages using a touchpad" (Android; Chrome's
+    // `settings.a11y.touchpad_overscroll_history_navigation`): the same read – on until the
+    // profile says off, and anything but a boolean reads on.
+    this.settings.touchpadSwipeToNavigate = data.settings?.touchpadSwipeToNavigate !== false
     // The rail's Expand on hover (tabs-03; W5-17): on by default since v6. A profile from before
     // v6 was written whole by a build whose default was off, so its `false` is that default's
     // write-back and not a choice – it reads on (a stored `true` was a choice and reads on too).
