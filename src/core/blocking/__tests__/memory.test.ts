@@ -1,4 +1,10 @@
 // eslint-disable-next-line no-restricted-imports
+import fs from 'node:fs'
+// eslint-disable-next-line no-restricted-imports
+import os from 'node:os'
+// eslint-disable-next-line no-restricted-imports
+import path from 'node:path'
+// eslint-disable-next-line no-restricted-imports
 import v8 from 'node:v8'
 // eslint-disable-next-line no-restricted-imports
 import vm from 'node:vm'
@@ -42,6 +48,13 @@ import {
  *   copy of the rules (extensions' condition: it must not grow);
  * - what the first `decide` adds – the desktop's path: the table the matcher reads and the
  *   per-set index over it.
+ *
+ * And a fourth, the phone's path with the engine as the only holder of the rules (the census set
+ * handed over in a frame of its own, the store on a folder of the disk so the heap holds no copy
+ * of the document): everything retained for the set once its document is written – the `Rule[]`
+ * itself when the engine keeps it, ~0 when it lets it go and reads the document back
+ * (`RuleEngine.rulesPersisted`) – then the cost of `rulesOf` reading it back, whether that read
+ * is kept, and what a first decision after the drop adds.
  *
  * Plus the build time, the desktop matcher's rate over 100 000 synthetic requests and – the proof
  * that a change of the table's shape changed no decision – an FNV-1a hash over every decision of
@@ -344,10 +357,16 @@ async function measure(count: number, settled: Settle, base: Mem): Promise<Readi
     biggest = Math.max(biggest, rule.condition.requestDomains?.length ?? 0)
   const rulesBytes = settled().total - base.total
 
-  // The phone's path: a store attached, the set document written on `setRuleSet`, no `decide`.
+  // A store attached and the set document written on `setRuleSet`, no `decide` – the phone's
+  // path, read with the `Rule[]` held here: what `setRuleSet` keeps beyond it. The desktop's
+  // text matcher is installed first, as the desktop installs Ghostery's before its sets load: an
+  // engine that decides keeps its rules, so the desktop reading below builds from them as the
+  // desktop does (an engine that never decides lets them go once the document is confirmed –
+  // `measurePhone` reads that path with the engine as the only holder).
   const io = discardingIo()
   let store: RuleSetStore | null = new RuleSetStore(io)
   let engine: RuleEngine | null = new RuleEngine()
+  engine.setTextMatcher({ match: () => null })
   store.attach(engine)
   serviceDefaults(engine)
   await store.whenSettled()
@@ -397,6 +416,119 @@ async function measure(count: number, settled: Settle, base: Mem): Promise<Readi
   }
 }
 
+/** A store IO on a folder of the disk, as the phone's is: the heap holds no copy of a document. */
+function diskIo(dir: string): StoreIO {
+  const at = (name: string): string => path.join(dir, name)
+  return {
+    readSync: (name) => {
+      try {
+        return fs.readFileSync(at(name), 'utf8')
+      } catch {
+        return null
+      }
+    },
+    write: async (name, text) => {
+      await fs.promises.mkdir(path.dirname(at(name)), { recursive: true })
+      await fs.promises.writeFile(at(name), text)
+    },
+    writeSync: (name, text) => {
+      fs.mkdirSync(path.dirname(at(name)), { recursive: true })
+      fs.writeFileSync(at(name), text)
+    },
+    exists: (name) => fs.existsSync(at(name)),
+    remove: async (name) => {
+      await fs.promises.rm(at(name), { force: true })
+    }
+  }
+}
+
+/**
+ * The census set generated and handed to `engine` in a frame of its own: once this returns,
+ * nothing but the engine (and the store it notified) can hold the rules.
+ */
+function hand(engine: RuleEngine, count: number): { id: string; compiled: number; setMs: number } {
+  const census = censusEngineSet(count)
+  const start = performance.now()
+  engine.setRuleSet(census.set)
+  return {
+    id: census.set.id,
+    compiled: census.set.rules?.length ?? 0,
+    setMs: performance.now() - start
+  }
+}
+
+/** `rulesOf` in a frame of its own: what it returned is gone with the frame, the numbers stay. */
+function readBack(engine: RuleEngine, id: string): { readMs: number; readCount: number } {
+  const start = performance.now()
+  const rules = engine.rulesOf(id)
+  return { readMs: performance.now() - start, readCount: rules?.length ?? 0 }
+}
+
+interface PhoneReadings {
+  compiled: number
+  setMs: number
+  /**
+   * Retained for the set by the engine and the store once its document is written – the
+   * `Rule[]` included, when the engine keeps it; the summary and the store's entry otherwise.
+   */
+  retained: number
+  documentBytes: number
+  /** `rulesOf` after the document is written: its cost and how many rules it returned. */
+  readMs: number
+  readCount: number
+  /** Retained once what `rulesOf` returned is let go again: a read the engine does not keep leaves `retained` as it was. */
+  afterRead: number
+  /** Added by a first decision after the document is written: the table, the index and – when the engine had let them go – the rules read back for the build. */
+  decided: number
+  decideMs: number
+}
+
+/**
+ * The phone's path with the engine as the only holder of the rules: the store on the disk, the
+ * census set handed over in `hand`'s frame, the document written and confirmed, and the reading
+ * taken with no other reference to the rules alive.
+ */
+async function measurePhone(count: number, settled: Settle): Promise<PhoneReadings> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zenium-blocking-memory-'))
+  try {
+    const store = new RuleSetStore(diskIo(dir))
+    const engine = new RuleEngine()
+    store.attach(engine)
+    serviceDefaults(engine)
+    await store.whenSettled()
+    const base = settled()
+    const handed = hand(engine, count)
+    // The document's write lands on the disk and the store confirms it: what is left in the heap
+    // is what the engine keeps of the set.
+    await store.whenSettled()
+    const retained = settled().total - base.total
+    expect(engine.tableOf(handed.id)).toBeNull()
+    expect(engine.indexOf(handed.id)).toBeNull()
+    const documentBytes = fs.statSync(path.join(dir, store.documentPathFor(handed.id))).size
+    const { readMs, readCount } = readBack(engine, handed.id)
+    const afterRead = settled().total - base.total
+    const decideStart = performance.now()
+    engine.buildIndexes()
+    const decideMs = performance.now() - decideStart
+    const decided = settled().total - base.total - afterRead
+    expect(engine.tableOf(handed.id)?.size).toBe(handed.compiled)
+    store.detach()
+    return {
+      compiled: handed.compiled,
+      setMs: handed.setMs,
+      retained,
+      documentBytes,
+      readMs,
+      readCount,
+      afterRead,
+      decided,
+      decideMs
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 describe("the core's compiled rule table", () => {
   test('bytes retained per rule on the phone path and the desktop path, the build time and the matcher rate', async () => {
     const count = Number(process.env['ZEN_RULES']) || CENSUS_RULES
@@ -409,6 +541,9 @@ describe("the core's compiled rule table", () => {
     const base = settled()
     const m = await measure(count, settled, base)
     const after = settled().total - base.total
+    const p = await measurePhone(count, settled)
+    expect(p.compiled).toBe(m.compiled)
+    expect(p.readCount).toBe(m.compiled)
     expect(m.compiled).toBeGreaterThan((count * 9) / 10)
     expect(m.biggest).toBe(Math.max(1, Math.round((HOSTS_RULE_DOMAINS * count) / CENSUS_RULES)))
     // The phone condition in bytes: what `setRuleSet` retains beyond the `Rule[]` once the
@@ -458,6 +593,9 @@ describe("the core's compiled rule table", () => {
       `PHONE PATH – retained by setRuleSet beyond the Rule[] after the set document is written (the core's second copy): ${mb(m.phoneBytes)} = ${perRule(m.phoneBytes, m.compiled)}; setRuleSet ${ms(m.setMs)}`,
       `DESKTOP PATH – added by the first decide (buildIndexes: the table the matcher reads + the index): ${mb(m.indexBytes)} = ${perRule(m.indexBytes, m.compiled)} (${mb(m.indexBuffers)} of it typed arrays); build ${ms(m.indexMs)}`,
       `DESKTOP PATH – total beyond the Rule[]: ${mb(m.phoneBytes + m.indexBytes)} = ${perRule(m.phoneBytes + m.indexBytes, m.compiled)}`,
+      `PHONE PATH, the engine the only holder – retained for the set once its document (${p.documentBytes} bytes on the disk) is written and confirmed, the Rule[] included if the engine keeps it: ${mb(p.retained)} = ${perRule(p.retained, m.compiled)}; setRuleSet ${ms(p.setMs)}`,
+      `PHONE PATH, the engine the only holder – rulesOf after that: ${p.readCount} rules in ${ms(p.readMs)}; retained once they are let go again: ${mb(p.afterRead)} = ${perRule(p.afterRead, m.compiled)}`,
+      `PHONE PATH, the engine the only holder – a first decision after that (buildIndexes: the table, the index, the rules read back if they had gone): +${mb(p.decided)} = ${perRule(p.decided, m.compiled)} in ${ms(p.decideMs)}`,
       `the census set's ${m.lists.lists} distinct domain lists (${m.lists.entries} entries, ${m.lists.chars} characters) – its table alone (no index), next to its Rule[], by list form: ${m.forms
         .map(
           (f) =>
