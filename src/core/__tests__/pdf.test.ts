@@ -494,7 +494,10 @@ describe('a form in the document', () => {
     const f = fixture({ writtenPath: '/sdcard/Download/mooring (1).pdf' })
     const { tab } = await openForm(f, true)
     const before = f.browser.downloads.items.length
-    expect(await f.browser.handleCommand(f.win, 'pdf.save', { tabId: tab.id })).toBe(true)
+    // The answer is where the copy went, for the chrome's "Saved to <folder>".
+    expect(await f.browser.handleCommand(f.win, 'pdf.save', { tabId: tab.id })).toBe(
+      '/sdcard/Download/mooring (1).pdf'
+    )
     // The viewer's bytes, under the file's own name; the host kept the original and numbered the copy.
     expect(f.written).toEqual([
       { name: 'mooring.pdf', mimeType: 'application/pdf', data: SAVED_COPY }
@@ -518,22 +521,22 @@ describe('a form in the document', () => {
   it('Save says no – and leaves the form modified – without a copy, a writer, or a written file', async () => {
     const noCopy = fixture({ savedCopy: null })
     const a = await openForm(noCopy, true)
-    expect(await noCopy.browser.pdf.save(a.tab.id)).toBe(false)
+    expect(await noCopy.browser.pdf.save(a.tab.id)).toBeNull()
     expect(noCopy.written).toEqual([])
     const noWriter = fixture({ saveFile: false })
     const b = await openForm(noWriter, true)
-    expect(await noWriter.browser.pdf.save(b.tab.id)).toBe(false)
+    expect(await noWriter.browser.pdf.save(b.tab.id)).toBeNull()
     // The viewer is not asked for a copy no one could write.
     expect(noWriter.scripts.some((s) => s.code === pdfSaveScript())).toBe(false)
     const failed = fixture({ writtenPath: null })
     const c = await openForm(failed, true)
     const before = failed.browser.downloads.items.length
-    expect(await failed.browser.pdf.save(c.tab.id)).toBe(false)
+    expect(await failed.browser.pdf.save(c.tab.id)).toBeNull()
     expect(failed.browser.downloads.items).toHaveLength(before)
     expect(failed.scripts.some((s) => s.code === pdfCommandScript({ kind: 'saved' }))).toBe(false)
     // A tab that shows no viewer has nothing to save.
     const other = openSite(failed, 'https://example.test/other')
-    expect(await failed.browser.pdf.save(other.id)).toBe(false)
+    expect(await failed.browser.pdf.save(other.id)).toBeNull()
   })
 
   it('Print hands the host the file as downloaded, or the filled copy once the form was touched', async () => {

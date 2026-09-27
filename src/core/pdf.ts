@@ -204,14 +204,16 @@ export class PdfViewerService {
    * downloads location under the file's name, listed as a completed download beside the
    * original, as Chrome desktop's Save on its PDF viewer does. The viewer's form reads
    * unmodified once the copy is written and not before: a write that failed leaves Save to try
-   * again. False when the tab shows no viewer, the host cannot write files, or there is no copy.
+   * again. Answers where the copy went – the path the host wrote it under (a `content:`
+   * address on a host that names none), for the chrome to name the folder as the share hub
+   * does – or null when the tab shows no viewer, the host cannot write files, or there is no copy.
    */
-  async save(tabId: string): Promise<boolean> {
+  async save(tabId: string): Promise<string | null> {
     const item = this.itemOf(tabId)
     const downloads = this.browser.platform.downloads
-    if (!item || !downloads.saveFile) return false
+    if (!item || !downloads.saveFile) return null
     const data = await this.savedCopy(tabId)
-    if (data === null) return false
+    if (data === null) return null
     let path: string | null
     try {
       path = await downloads.saveFile({
@@ -222,14 +224,14 @@ export class PdfViewerService {
     } catch {
       path = null
     }
-    if (!path) return false
+    if (!path) return null
     this.browser.downloads.addCompleted(path, 'application/pdf', {
       containerId: item.containerId,
       private: item.private,
       size: base64Size(data)
     })
     await this.command(tabId, { kind: 'saved' })
-    return true
+    return path
   }
 
   /**

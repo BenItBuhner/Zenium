@@ -6227,10 +6227,11 @@ export interface Commands {
   /**
    * Save a copy of the PDF with the form's values written in (pdf.js's incremental save) to the
    * downloads location under the file's name, listed as a completed download; the viewer's
-   * form reads unmodified once it is written. False when the tab shows no viewer, the host
-   * cannot write files, or the copy could not be made or written.
+   * form reads unmodified once it is written. The path the copy was written under (a `content:`
+   * address on a host that names none), or null when the tab shows no viewer, the host cannot
+   * write files, or the copy could not be made or written.
    */
-  'pdf.save': { args: { tabId: string }; result: boolean }
+  'pdf.save': { args: { tabId: string }; result: string | null }
   /**
    * The system print flow with the PDF the tab shows (`capabilities.pdfPrint`): the file as
    * downloaded, or – the form edited – a copy with its values written in. False when the tab
