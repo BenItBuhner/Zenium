@@ -13,8 +13,10 @@ import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from '../
 
 describe('the Privacy and security hub cards', () => {
   it('are Chrome’s, in Chrome’s order, without Privacy Guide and Ad privacy (no page, no engine)', () => {
+    // The first card is Chrome's `IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data"
+    // (M124+), the opener's ellipsis added (W8-7).
     expect(PRIVACY_HUB_CARDS.map((c) => c.label)).toEqual([
-      'Clear browsing data…',
+      'Delete browsing data…',
       'Third-party cookies',
       'Safe Browsing',
       'Site settings',
@@ -28,7 +30,7 @@ describe('the Privacy and security hub cards', () => {
     ])
   })
 
-  it('name the group each lands on, the Clear browsing data… card its dialog instead, each with its glyph', () => {
+  it('name the group each lands on, the Delete browsing data… card its dialog instead, each with its glyph', () => {
     expect(PRIVACY_HUB_CARDS.map((c) => [c.id, c.group])).toEqual([
       ['hub-clear-data', null],
       ['hub-cookies', 'site-data'],

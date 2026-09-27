@@ -650,7 +650,7 @@ describe('the section model', () => {
 
   it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
     const privacy = section('privacy', blockingState())
-    // The engine's groups sit between #135's Safety check and Clear browsing data groups; their
+    // The engine's groups sit between #135's Safety check and Delete browsing data groups; their
     // own order and content are asserted here (the whole category's order is #135's test).
     const tracking = privacy.groups.filter((g) => g.id.startsWith('tracking-'))
     expect(tracking.map((g) => g.id)).toEqual([
@@ -2035,7 +2035,7 @@ describe('the section model', () => {
     }
   })
 
-  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Clear browsing data, Site settings', () => {
+  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Delete browsing data, Site settings', () => {
     const c = context()
     const privacy = buildSection(
       PAGE.sections.find((x) => x.id === 'privacy')!,
@@ -2096,12 +2096,16 @@ describe('the section model', () => {
     now.onPress?.()
     expect(invoke).toHaveBeenCalledWith('privacy.safetyCheck', undefined)
 
-    // Clear browsing data is one action row whose sheet is the form.
+    // Delete browsing data is one action row whose sheet is the form – Chrome's words since
+    // M124 (W8-7: `IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data", the row's button
+    // Chrome's `IDS_SETTINGS_CLEAR` "Delete" with the opener's ellipsis).
     const clear = row(privacy, 'clear-data-open')
     if (clear.kind !== 'action') throw new Error('not an action')
-    expect(clear.label).toBe('Clear browsing data')
-    expect(clear.form?.title).toBe('Clear browsing data')
+    expect(clear.label).toBe('Delete browsing data')
+    expect(clear.button).toBe('Delete…')
+    expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.form?.description).toContain('time range')
+    expect(clear.form?.description).toContain('what to delete')
 
     // Site settings: the catalogue this host honours, each an item whose sheet holds the default
     // as a value row; a type with one possible default is a fact. Notifications are in it since
@@ -5560,7 +5564,7 @@ describe('searching the rows', () => {
     expect(rowText(max)).toContain(max.kind === 'field' ? (max.display ?? max.value) : '')
   })
 
-  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Clear browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
+  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Delete browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
     const privacy = section('privacy', state({ privacy: PRIVACY_STATUS }))
     const ids = privacy.groups.map((g) => g.id)
     // The protection groups' own order and content are asserted here; the whole category's
@@ -5585,7 +5589,7 @@ describe('searching the rows', () => {
     const at = (id: string): number => ids.indexOf(id)
     expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
     expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
-    // #310's Cookies and site data groups (site-data-*) stand between Clear browsing data and
+    // #310's Cookies and site data groups (site-data-*) stand between Delete browsing data and
     // Site settings, where Chrome's cookies page sits, the related sites right under the default
     // they qualify; siteData.test.ts asserts their content.
     expect(at('site-data')).toBe(at('clear-data') + 1)
@@ -7856,10 +7860,11 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
       layouts: ['desktop', 'tablet']
     })
     // The first card follows the dialog it opens by name (the #553 lead check's F1: one name
-    // for one thing today; the family's rename to "Delete browsing data" is its own slice), the
-    // third names its landing, Safe Browsing, since the nav has a Security category (F3 / Q4).
+    // for one thing) – Chrome's "Delete browsing data" since M124, the family renamed together
+    // in W8-7; the third names its landing, Safe Browsing, since the nav has a Security
+    // category (F3 / Q4).
     expect(cards.rows.map((r) => [r.id, r.label])).toEqual([
-      ['hub-clear-data', 'Clear browsing data…'],
+      ['hub-clear-data', 'Delete browsing data…'],
       ['hub-cookies', 'Third-party cookies'],
       ['hub-security', 'Safe Browsing'],
       ['hub-site-settings', 'Site settings'],
@@ -7885,7 +7890,7 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     ])
   })
 
-  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Clear browsing data…', () => {
+  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Delete browsing data…', () => {
     const { privacy, revealed } = hub()
     const groupIds = privacy.groups.map((g) => g.id)
     const targets = ['site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
@@ -7906,8 +7911,8 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
 
     const clear = cards[0]
     if (clear.kind !== 'action') throw new Error('not an action row')
-    // The same sheet as the Clear browsing data row's (`clear-data-open`), no landing.
-    expect(clear.form?.title).toBe('Clear browsing data')
+    // The same sheet as the Delete browsing data row's (`clear-data-open`), no landing.
+    expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.onPress).toBeUndefined()
     const existing = row(privacy, 'clear-data-open')
     if (existing.kind !== 'action') throw new Error('not an action row')

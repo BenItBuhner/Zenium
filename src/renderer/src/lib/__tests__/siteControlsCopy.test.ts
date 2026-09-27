@@ -112,21 +112,23 @@ describe('Site settings rows', () => {
   })
 })
 
-describe('Clear browsing data copy', () => {
+describe('Delete browsing data copy', () => {
   it("names Chrome's five ranges, the last hour first", () => {
     expect(RANGE_OPTIONS.map((o) => o.value)).toEqual(['hour', 'day', 'week', 'month', 'all'])
     expect(RANGE_OPTIONS[0].label).toBe('Last hour')
     expect(RANGE_OPTIONS[4].label).toBe('All time')
   })
 
-  it('lists what was cleared as a sentence', () => {
-    expect(clearedToast([])).toBe('Nothing to clear')
-    expect(clearedToast(['history'])).toBe('Cleared history')
+  it("lists what was deleted as a sentence, in Chrome's M124+ verb", () => {
+    // Chrome's done word is "Data deleted." (`IDS_SETTINGS_CLEARED_DATA`), Android's snackbar
+    // "<period> deleted"; the house toast names the types, the verb Chrome's (W8-7).
+    expect(clearedToast([])).toBe('Nothing to delete')
+    expect(clearedToast(['history'])).toBe('Deleted history')
     expect(clearedToast(['history', 'cookies', 'cache'])).toBe(
-      'Cleared history, cookies and site data and the cache'
+      'Deleted history, cookies and site data and the cache'
     )
     expect(clearedToast(['passwords', 'autofill'])).toBe(
-      'Cleared saved passwords and autofill data'
+      'Deleted saved passwords and autofill data'
     )
   })
 

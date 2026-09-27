@@ -330,7 +330,7 @@ describe('the Cookies and site data groups', () => {
     const { ctx, patches } = context(status({ clearOnExitTypes: ['cache'] }))
     const exit = siteDataGroups(ctx).find((g) => g.id === 'site-data-exit')!
     expect(exit.heading).toBe('Delete browsing data on exit')
-    expect(exit.description).toContain('Saved passwords are never cleared this way')
+    expect(exit.description).toContain('Saved passwords are never deleted this way')
     expect(exit.rows.map((r) => r.id)).toEqual(
       CLEAR_ON_EXIT_TYPES.map((type) => `site-data-exit:${type}`)
     )
@@ -357,7 +357,7 @@ describe('the Cookies and site data groups', () => {
     const exit = siteDataGroups(ctx).find((g) => g.id === 'site-data-exit')!
     // The timing is the Clear on exit row's to say, once (#322 Q6, (d)), not this group's.
     expect(exit.description).not.toContain('the next time Zenium starts')
-    expect(exit.description).toContain('Saved passwords are never cleared this way')
+    expect(exit.description).toContain('Saved passwords are never deleted this way')
     expect(exit.description).toContain('still running')
   })
 
