@@ -82,6 +82,12 @@ class ImageOwnerTest {
         fun postedTo(frame: Frame): List<JSONObject> = posted.filter { it.first === frame }.map { it.second }
     }
 
+    /**
+     * A sub-frame of the current main document ([MAIN_START]) says hello: stamped [FRAME_START],
+     * after its parent's navigation start, as every sub-frame's is.
+     */
+    private fun ImageOwner<Frame>.registerFrame(proxy: Frame) = registerFrame(proxy, FRAME_START)
+
     // --- the broadcast ---------------------------------------------------------------------------
 
     @Test
@@ -250,8 +256,8 @@ class ImageOwnerTest {
         h.owner.registerFrame(f1)
         h.start()
         h.posted.clear()
-        // onPageStarted: the frames were the old document's, and so was the request.
-        h.owner.documentStarted()
+        // The next main document's hello: the frames were the old document's, and so was the request.
+        h.owner.documentStarted(NEXT_START)
         assertEquals(listOf(failure("timeout")), h.replies)
         assertEquals(0, h.owner.frameCount)
         assertFalse(h.owner.busy)
@@ -628,10 +634,12 @@ class ImageOwnerTest {
         h.owner.onMessage(json("v" to 1, "type" to "zen:image-owner", "nonce" to NONCE, "hashes" to JSONArray(listOf(HASH))), null, true)
         assertTrue(h.posted.isEmpty())
         assertTrue(h.owner.busy)
-        // Next time the late frame is asked, after the first, before the main document.
-        h.owner.documentStarted()
-        h.owner.registerFrame(f1)
-        h.owner.registerFrame(late)
+        // Next time (a new main document, whose frames say hello again) the late frame is asked,
+        // after the first, before the main document.
+        h.owner.documentStarted(NEXT_START)
+        assertEquals(0, h.owner.frameCount)
+        h.owner.registerFrame(f1, NEXT_START + 40.0)
+        h.owner.registerFrame(late, NEXT_START + 40.0)
         h.posted.clear()
         h.start()
         assertEquals(listOf(f1, late, h.main), h.posted.map { it.first })
@@ -654,6 +662,117 @@ class ImageOwnerTest {
         assertEquals(listOf(f1), h.posted.map { it.first })
     }
 
+    // --- the document boundary: the main frame's hello, by the stamps -----------------------------
+
+    @Test
+    fun theBoundaryDropsTheFramesStampedBeforeItAndKeepsTheRest() {
+        val h = Harness()
+        val old = Frame("old")
+        val unknown = Frame("unknown")
+        val newer = Frame("newer")
+        val equal = Frame("equal")
+        h.owner.registerFrame(old, FRAME_START)
+        h.owner.registerFrame(unknown, Double.NaN)
+        h.owner.registerFrame(newer, NEXT_START + 40.0)
+        h.owner.registerFrame(equal, NEXT_START)
+        assertEquals(4, h.owner.frameCount)
+        // The next main document's hello: the frames stamped before its navigation start were the
+        // old document's, one without a stamp cannot be placed, and the rest are its own.
+        h.owner.documentStarted(NEXT_START)
+        assertEquals(2, h.owner.frameCount)
+        // No request was live: nothing is answered.
+        assertTrue(h.replies.isEmpty())
+        h.start()
+        assertEquals(listOf(newer, equal, h.main), h.posted.map { it.first })
+    }
+
+    @Test
+    fun aBoundaryWithoutAStampForgetsEveryFrame() {
+        val h = Harness()
+        h.owner.registerFrame(Frame("f1"), FRAME_START)
+        h.owner.registerFrame(Frame("f2"), NEXT_START + 40.0)
+        h.owner.registerFrame(Frame("f3"), Double.NaN)
+        // A main frame's hello that carried no stamp: nothing can be placed against it, so the
+        // boundary is what onPageStarted's was.
+        h.owner.documentStarted(Double.NaN)
+        assertEquals(0, h.owner.frameCount)
+        h.start()
+        assertEquals(listOf(h.main), h.posted.map { it.first })
+    }
+
+    @Test
+    fun aSubFramesHelloThatRanAheadOfTheMainFramesSurvivesTheBoundaryAndIsAsked() {
+        // The b3 scene on WebView 113: the old document's frame is registered; the new
+        // document's sub-frame says hello FIRST (its stamp after the new main document's
+        // navigation start), then the main frame's hello lands with the older stamp.
+        val h = Harness()
+        val old = Frame("old")
+        val frame = Frame("frame")
+        h.owner.registerFrame(old, MAIN_START - 5_000.0 + 40.0)
+        h.owner.registerFrame(frame, FRAME_START)
+        h.owner.documentStarted(MAIN_START)
+        assertEquals(1, h.owner.frameCount)
+        // The request finds the sub-frame: it is asked before the main document, it owns the
+        // image, and it is asked for the thumbnail.
+        h.start()
+        assertEquals(listOf(frame, h.main), h.posted.map { it.first })
+        h.posted.clear()
+        h.answer(frame, listOf(HASH))
+        h.answer(h.main, emptyList())
+        assertEquals(listOf(frame), h.posted.map { it.first })
+        assertEquals("zen:image-thumbnail", h.postedTo(frame).single().getString("type"))
+        h.thumbnail(frame, okResult("QUJD"))
+        assertEquals(1, h.replies.size)
+        assertTrue(JSONObject(h.replies.single()).getBoolean("ok"))
+    }
+
+    @Test
+    fun theBoundaryEndsTheLiveRequestWhateverItKeeps() {
+        val h = Harness()
+        val frame = Frame("frame")
+        h.owner.registerFrame(frame, FRAME_START)
+        h.start()
+        h.posted.clear()
+        // The main frame's hello with a stamp older than the frame's keeps the frame, but the
+        // request was started under the document that is going: its reply is timeout.
+        h.owner.documentStarted(MAIN_START)
+        assertEquals(listOf(failure("timeout")), h.replies)
+        assertEquals(1, h.owner.frameCount)
+        assertFalse(h.owner.busy)
+        h.answer(frame, listOf(HASH))
+        assertTrue(h.posted.isEmpty())
+        h.clock.advance(ImageOwner.OWNER_THUMBNAIL_MS)
+        assertEquals(1, h.replies.size)
+    }
+
+    @Test
+    fun theSameProxyAgainKeepsItsFirstStamp() {
+        val h = Harness()
+        val frame = Frame("frame")
+        h.owner.registerFrame(frame, FRAME_START)
+        h.owner.registerFrame(frame, NEXT_START + 40.0)
+        assertEquals(1, h.owner.frameCount)
+        h.owner.documentStarted(NEXT_START)
+        assertEquals(0, h.owner.frameCount)
+    }
+
+    @Test
+    fun theCapCountsTheFramesWhateverTheirStampsAndTheViewsEndForgetsThemAll() {
+        val h = Harness()
+        val first = Frame("first")
+        h.owner.registerFrame(first, NEXT_START + 40.0)
+        repeat(ImageOwner.OWNER_MAX_FRAMES - 1) { h.owner.registerFrame(Frame("f$it"), FRAME_START) }
+        assertEquals(ImageOwner.OWNER_MAX_FRAMES, h.owner.frameCount)
+        // The 257th drops the oldest registered, not the oldest stamped.
+        h.owner.registerFrame(Frame("last"), Double.NaN)
+        assertEquals(ImageOwner.OWNER_MAX_FRAMES, h.owner.frameCount)
+        h.start()
+        assertFalse(h.posted.any { it.first === first })
+        h.owner.destroy()
+        assertEquals(0, h.owner.frameCount)
+        assertEquals(listOf(failure("timeout")), h.replies)
+    }
+
     // --- the wiring in TabWebView and Host, read as text ------------------------------------------------
 
     @Test
@@ -662,23 +781,37 @@ class ImageOwnerTest {
         val onPageMessage = code.indexOf("private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?, isMainFrame: Boolean = true)")
         assertTrue(onPageMessage >= 0)
         val body = code.substring(onPageMessage)
-        val register = body.indexOf("if (!isMainFrame && proxy != null && route === PageMessageRoute.Hello) imageOwner().registerFrame(proxy)")
+        val register = body.indexOf(
+            "if (!isMainFrame && proxy != null && route is PageMessageRoute.Hello) imageOwner().registerFrame(proxy, route.documentStart)"
+        )
         val drop = body.indexOf("if (!route.heardFrom(isMainFrame)) return")
-        assertTrue("the sub-frame's hello registers its proxy", register >= 0)
+        assertTrue("the sub-frame's hello registers its proxy, stamped", register >= 0)
         assertTrue("before heardFrom drops it", drop > register)
         // `replyProxy = proxy` is the main document's alone: once, under Hello, after the drop.
         val assignments = Regex("""replyProxy = proxy\b""").findAll(code).map { it.range.first }.toList()
         assertEquals(1, assignments.size)
-        val hello = body.indexOf("PageMessageRoute.Hello -> {")
+        val hello = body.indexOf("is PageMessageRoute.Hello -> {")
         assertTrue(hello > drop)
-        assertEquals(onPageMessage + hello, code.lastIndexOf("PageMessageRoute.Hello -> {", assignments.single()))
+        assertEquals(onPageMessage + hello, code.lastIndexOf("is PageMessageRoute.Hello -> {", assignments.single()))
+        // The main frame's hello is the document boundary: the registry is told, with the stamp,
+        // once the proxy is the new document's and before the flags go out.
+        val helloArm = body.substring(hello, body.indexOf("sendFlags()", hello))
+        val boundary = helloArm.indexOf("imageOwner?.documentStarted(route.documentStart)")
+        assertTrue("the main frame's hello is the boundary", boundary >= 0)
+        assertTrue(helloArm.indexOf("replyProxy = proxy") < boundary)
+        assertEquals(1, Regex("""documentStarted\(route\.documentStart\)""").findAll(code).count())
         // Nothing of the protocol is built with the view: a nullable field, made on first use.
         assertTrue(code.contains("private var imageOwner: ImageOwner<JavaScriptReplyProxy>? = null"))
         assertFalse(Regex("""imageOwner\s*=\s*ImageOwner""").containsMatchIn(code))
-        // Cleared with the main document and with the view.
-        val onPageStarted = code.indexOf("domReady.documentStarted()")
+        // onPageStarted no longer touches the registry: WebView 113 posts it at commit as a Java
+        // message the new document's frame hellos run ahead of (they are delivered inline from the
+        // native queue), so a boundary drawn there dropped the frames it should have kept.
+        val onPageStarted = code.indexOf("override fun onPageStarted(")
         assertTrue(onPageStarted >= 0)
-        assertEquals("imageOwner?.documentStarted()", code.substring(onPageStarted).lines()[1].trim())
+        val onPageStartedBody = code.substring(onPageStarted, code.indexOf("override fun ", onPageStarted + 1))
+        assertTrue(onPageStartedBody.contains("domReady.documentStarted()"))
+        assertFalse(onPageStartedBody.contains("imageOwner"))
+        // Cleared with the view.
         assertTrue(code.contains("imageOwner?.destroy()"))
     }
 
@@ -726,6 +859,12 @@ class ImageOwnerTest {
         const val URL = "https://example.com/a.png"
         const val HASH = "5008d908d5e08c6645f6aa651b540491afe63dde85ea320e6774c2808abbd885"
         const val MAX_BYTES = 20_971_520L
+        /** The current main document's navigation start (`performance.timeOrigin`, Unix ms). */
+        const val MAIN_START = 1_758_965_000_000.0
+        /** A sub-frame of that document: its navigation started after its parent's. */
+        const val FRAME_START = MAIN_START + 40.0
+        /** The next main document's navigation start. */
+        const val NEXT_START = MAIN_START + 5_000.0
         val BOUNDS: JSONObject get() = json("maxSide" to 1000, "minArea" to 90_000)
 
         fun bytes(hex: String): ByteArray = ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
