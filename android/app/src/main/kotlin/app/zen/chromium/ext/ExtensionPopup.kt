@@ -27,7 +27,8 @@ class ExtensionPopup(
 ) {
     val extensionId = served.id
     private val density = host.activity.resources.displayMetrics.density
-    val webView = ExtensionWebView(host, extensions, served, context)
+    // The sheet's title is the extension's name (the core's `manifest.name`), the title line of the page's dialogs too.
+    val webView = ExtensionWebView(host, extensions, served, context, title)
     private val sheet = ExtensionSheet(host, title, webView) {
         webView.destroy()
         onClosed()
