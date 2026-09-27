@@ -2899,8 +2899,9 @@ class TabWebView(
          *
          * The same answer under the system's Data Saver (this app's data restricted on a metered
          * network) or Battery Saver, at `standard` and `extended` too (OS-21): Chrome Android's
-         * `IsSomePreloadingEnabled` holds every preload under either mode, and this is the
-         * phone's one preloading seam. The state is [SaverModes]' as of the last second, read
+         * `IsSomePreloadingEnabled` holds the pages' preloads under either mode (its one
+         * exception, the omnibox's on-press search prefetch, this omnibox does not do), and this
+         * is the phone's one preloading seam. The state is [SaverModes]' as of the last second, read
          * only for a request that carries the mark – a page's own requests never ask the
          * system, and the reader is created by the first marked request, not at boot.
          */

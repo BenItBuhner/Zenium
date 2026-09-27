@@ -10,7 +10,7 @@ import org.junit.Test
  * The system's saver modes as Chrome Android maps them for its preloading (OS-21):
  * `DataSaverOSSetting.isDataSaverEnabled` (metered AND restrict-background ENABLED),
  * `BatterySaverOSSetting.isBatterySaverEnabled` (`isPowerSaveMode`), folded in
- * `IsSomePreloadingEnabled`'s order (`preloading_prefs.cc:60-76`), and read once a second.
+ * `IsSomePreloadingEnabled`'s order (`preloading_prefs.cc:60-77`), and read once a second.
  */
 class SaverModesTest {
     private val enabled = ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
@@ -52,7 +52,7 @@ class SaverModesTest {
     @Test
     fun `the readers are asked in Chrome's order and no further than needed`() {
         val asked = mutableListOf<String>()
-        // Unmetered: the restrict-background status is never asked (DataSaverOSSetting.java:25-27).
+        // Unmetered: the restrict-background status is never asked (DataSaverOSSetting.java:25-29).
         assertEquals(
             SaverState.NONE,
             SaverRules.stateOf(
@@ -64,7 +64,7 @@ class SaverModesTest {
         assertEquals(listOf("metered", "power"), asked)
 
         asked.clear()
-        // Data Saver on: the power manager is never asked (preloading_prefs.cc:68-72).
+        // Data Saver on: the power manager is never asked (preloading_prefs.cc:68-73).
         assertEquals(
             SaverState.DATA_SAVER,
             SaverRules.stateOf(
@@ -120,5 +120,34 @@ class SaverModesTest {
         // The same instant again: cached.
         assertEquals(SaverState.DATA_SAVER, modes.state())
         assertEquals(1, reads)
+    }
+
+    @Test
+    fun `a system service that fails to answer reads as NONE, warned not thrown, and the answer stands for the second`() {
+        var now = 0L
+        var reads = 0
+        val failure = IllegalStateException("the connectivity service did not answer")
+        val warned = mutableListOf<Throwable>()
+        val modes = SaverModes(
+            metered = { reads++; throw failure },
+            restrictBackgroundStatus = { enabled },
+            // The power manager would say Battery Saver: a failed reading is NONE, not the other reader's word.
+            powerSaveMode = { true },
+            now = { now },
+            warn = { warned += it },
+        )
+
+        assertEquals(SaverState.NONE, modes.state())
+        assertEquals(listOf<Throwable>(failure), warned)
+        assertEquals(1, reads)
+
+        // The failed reading is cached like any other; the next second asks again.
+        now += SaverModes.TTL_MS - 1
+        assertEquals(SaverState.NONE, modes.state())
+        assertEquals(1, reads)
+        now += 1
+        assertEquals(SaverState.NONE, modes.state())
+        assertEquals(2, reads)
+        assertEquals(2, warned.size)
     }
 }

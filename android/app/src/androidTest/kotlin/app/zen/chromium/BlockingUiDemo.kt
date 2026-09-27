@@ -472,7 +472,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     /**
      * The system's Data Saver and Battery Saver at the request engine (OS-21; W6-D24): Chrome
-     * Android's `IsSomePreloadingEnabled` holds every preload under either mode at every
+     * Android's `IsSomePreloadingEnabled` holds the pages' preloads under either mode at every
      * Preload-pages level, and the phone's `refusePreload` reads the same two OS settings
      * (`SaverModes`) for every marked request. The scene keeps the level at `standard` and turns
      * each mode on with the levers the emulator offers – Battery Saver: the battery unplugged

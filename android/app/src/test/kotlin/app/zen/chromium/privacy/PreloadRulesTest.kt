@@ -140,4 +140,24 @@ class PreloadRulesTest {
         PreloadRules.refuses(standard, "https://news.example/next", mark, saver)
         assertEquals(1, asked)
     }
+
+    @Test
+    fun `a page's own Purpose prefetch, the forgeable mark, is refused under a saver mode at standard as under none`() {
+        val none = PrivacyFlags.parse(JSONObject("""{"preloadPages":"none"}"""))
+        val standard = PrivacyFlags.parse(JSONObject("""{"preloadPages":"standard"}"""))
+        val extended = PrivacyFlags.parse(JSONObject("""{"preloadPages":"extended"}"""))
+        // A fetch() may set the legacy header; only the Sec- prefix is unforgeable.
+        val forged = mapOf("Purpose" to "prefetch", "Accept" to "*/*")
+
+        // W6-S10's accepted rule: refused under none.
+        assertTrue(PreloadRules.refuses(none, "https://news.example/next", forged))
+        // Neither mode on: it goes at the other two levels, as before.
+        assertFalse(PreloadRules.refuses(standard, "https://news.example/next", forged) { SaverState.NONE })
+        assertFalse(PreloadRules.refuses(extended, "https://news.example/next", forged) { SaverState.NONE })
+        // The rule widened: under a saver mode the same request is refused at standard and extended too.
+        for (saver in listOf({ SaverState.DATA_SAVER }, { SaverState.BATTERY_SAVER })) {
+            assertTrue(PreloadRules.refuses(standard, "https://news.example/next", forged, saver))
+            assertTrue(PreloadRules.refuses(extended, "https://news.example/next", forged, saver))
+        }
+    }
 }
