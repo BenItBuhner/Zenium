@@ -292,10 +292,11 @@ const regranting = new Set<string>()
  * description Chrome's subheader – which says once why they went – one item row per site, the
  * permissions alone under the host ("Camera, Microphone"), Allow again its one action, and Got
  * it closing the block. Allow again and Got it each raise Chrome's toast with Undo on §9.33's
- * Undo clock (`TOAST_UNDO_MS`); the check runs again after each act and each undo. Got it
- * leaves the review sheet with its press (`closesSheet`): its act ends the list the sheet was
- * opened for, and the toast then stands over the page on the phone, where a message sits under
- * an open sheet. Allow again keeps the sheet open for the sites left.
+ * Undo clock (`TOAST_UNDO_MS`); the check runs again after each act and each undo. Both keep
+ * the sheet open: Allow again for the sites left, Got it for the granted list under it – as
+ * Chrome's Safety Hub collapses the module and leaves the page – and the toast stands above the
+ * sheet on every host (§9.33: the phone lifts its messages over the sheet whose act raised
+ * them, #651), so its Undo is in reach without leaving.
  */
 function revokedReview(
   id: string,
@@ -375,7 +376,6 @@ function revokedReview(
     label: 'Got it',
     description: 'Clears this list. Sites ask again when they need a permission.',
     button: 'Got it',
-    closesSheet: true,
     onPress: acknowledge
   })
   return {

@@ -2648,8 +2648,8 @@ describe('the section model', () => {
 
     // Got it: the list is acknowledged through the engine, which hands back the records; the
     // bulk toast counts them – on the Undo clock – and its Undo puts them back as they were.
-    // The press leaves the review sheet first (`closesSheet`): its act ends the list the sheet
-    // was opened for, and the toast then stands over the page on the phone.
+    // The press keeps the sheet open (no `closesSheet`): the granted list stays under it and the
+    // toast stands above the sheet on every host (#651 lifted the phone's), its Undo in reach.
     const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
     invoke.mockImplementation(async (name) =>
       name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
@@ -2657,7 +2657,8 @@ describe('the section model', () => {
     invoke.mockClear()
     const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
     if (gotIt.kind !== 'action') throw new Error('not an action')
-    expect(gotIt).toMatchObject({ button: 'Got it', closesSheet: true })
+    expect(gotIt).toMatchObject({ button: 'Got it' })
+    expect(gotIt.closesSheet).toBeUndefined()
     expect(gotIt.confirm).toBeUndefined()
     expect(gotIt.destructive).toBeUndefined()
     gotIt.onPress?.()
