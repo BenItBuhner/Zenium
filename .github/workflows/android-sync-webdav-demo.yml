@@ -1,0 +1,54 @@
+name: Android sync WebDAV demo
+
+# Records the WebDAV sync transport on a hardware-accelerated Android emulator (ID-32's Android
+# half: `sync.fetch` / `sync.fetchAbort` over OkHttp and `secrets.*` over the Android Keystore)
+# against a WebDAV server the driver runs on the device's own loopback (DemoWebDavServer): the
+# probe through the bridge, the setup's PROPFIND / MKCOL / PUT-then-MOVE, a MOVE answered 412 and
+# the engine's quiet retry, a revoked app password (authRefused) and the new one sealed under the
+# Keystore, a relaunch that reads it back through `secrets.get`, and the disconnect that removes
+# this device's documents and forgets the secret. The phone's Settings has no transport choice
+# yet, so the engine is driven through the core's commands and the Sync section photographed as
+# it reflects each state. Dispatch-only, like the other demos: it takes a few minutes and says
+# nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sync-webdav-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Sync WebDAV demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SyncWebDavDemo
+        DEMO_DIR=sync-webdav-demo
+        DEMO_OUT=artifacts/android-sync-webdav-demo
+        DEMO_VIDEO=services-sync-webdav-android-demo.mp4
+      artifact-name: android-sync-webdav-demo
+      artifact-path: artifacts/android-sync-webdav-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Sync WebDAV demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SyncWebDavDemo
+        DEMO_DIR=sync-webdav-demo
+        DEMO_OUT=artifacts/android-sync-webdav-demo
+        DEMO_VIDEO=services-sync-webdav-android-demo.mp4
+      artifact-name: android-sync-webdav-demo-second-boot
+      artifact-path: artifacts/android-sync-webdav-demo/

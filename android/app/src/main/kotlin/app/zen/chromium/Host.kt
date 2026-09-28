@@ -322,6 +322,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * reads it. An instrumentation driver sets it on the activity's host.
      */
     @Volatile var syncTreeOverride: ((String) -> SyncTree)? = null
+    /**
+     * The WebDAV transport's HTTP verbs (SyncFetch.kt) and its app password's store (Secrets.kt).
+     * Both null until the engine's first call – a field read at boot, nothing built: no OkHttp
+     * class loads and the Keystore is not opened until the user connects a WebDAV server.
+     */
+    private var syncFetch: SyncFetch? = null
+    private var secrets: Secrets? = null
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
     /** The store's install and permission prompt when no live window can show the chrome's sheet (the native chassis). */
@@ -1473,6 +1480,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "sync.remove" -> syncOp(args, reply) { it.remove(args.str("name")); null }
             "sync.removeAll" -> syncOp(args, reply) { it.removeAll(); null }
 
+            // --- the WebDAV transport's HTTP verbs and app password (SyncFetch.kt, Secrets.kt; the
+            //     contracts are `SyncFetch` and `SecretStore` in src/core/platform.ts, the callers
+            //     src/android/syncFetch.ts and src/android/secrets.ts) ------------------------------
+            "sync.fetch" -> syncFetch(args, reply)
+            "sync.fetchAbort" -> reply(syncFetch?.abort(args.str("id")) == true)
+            "secrets.get" -> secretsOp(reply) { it.get(args.str("key")) }
+            "secrets.set" -> secretsOp(reply) { it.set(args.str("key"), args.str("value")); null }
+            "secrets.delete" -> secretsOp(reply) { it.delete(args.str("key")); null }
+
             // --- voice search (Voice.kt; the contract is `VoiceHost` in src/core/platform.ts) ----------
             "voice.start" -> voice.start(reply)
             "voice.cancel" -> { voice.cancel(); reply(null) }
@@ -1579,6 +1595,55 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 Rejection("${SyncFolder.LOST_PREFIX} ${e.message}")
             } catch (e: Exception) {
                 Log.w(TAG, "sync folder operation failed", e)
+                Rejection(e.message ?: e.javaClass.simpleName)
+            }
+            main.post { reply(result) }
+        }
+    }
+
+    /**
+     * One HTTP request for the WebDAV transport (`sync.fetch { id, url, method, headers, body?,
+     * cache? }` → `{ status, headers, body }`), off the main thread. The ticket is taken here, on
+     * the main thread, so a `sync.fetchAbort` that arrives before the worker starts still lands.
+     * No response means a `fetch-<kind>:` rejection; a 3xx, a 4xx and a 5xx are responses (the
+     * transport classes them). Nothing of the request is logged: its headers carry the credential.
+     */
+    private fun syncFetch(args: JSONObject, reply: (Any?) -> Unit) {
+        val fetch = syncFetch ?: SyncFetch().also { syncFetch = it }
+        val ticket = fetch.begin(args.str("id"))
+        val url = args.str("url")
+        val method = args.str("method", "GET")
+        val headers = args.obj("headers").let { given -> given.keys().asSequence().associateWith { given.str(it) } }
+        val body = args.strOrNull("body")
+        val noStore = args.strOrNull("cache") == "no-store"
+        io.execute {
+            val result = when (val outcome = fetch.run(ticket, url, method, headers, body, noStore)) {
+                is SyncFetch.Outcome.Response -> json(
+                    "status" to outcome.status,
+                    "headers" to JSONObject(outcome.headers),
+                    "body" to outcome.body
+                )
+                is SyncFetch.Outcome.Failure -> Rejection("${SyncFetch.REJECTION_PREFIX}${outcome.kind}: ${outcome.message}")
+            }
+            main.post { reply(result) }
+        }
+    }
+
+    /**
+     * One operation on the secret store, off the main thread (the Keystore and the preferences
+     * file are opened on the first call, there). A store that cannot seal rejects with
+     * `secrets-unavailable:`, which the engine turns into its typed refusal for the chrome to
+     * word; a read never rejects for that – it reads as no value. The value itself is never logged.
+     */
+    private fun secretsOp(reply: (Any?) -> Unit, op: (Secrets) -> Any?) {
+        val store = secrets ?: Secrets.onDevice(activity).also { secrets = it }
+        io.execute {
+            val result = try {
+                op(store)
+            } catch (e: Secrets.Unavailable) {
+                Rejection("${Secrets.UNAVAILABLE_PREFIX} ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "secret store operation failed: ${e.javaClass.simpleName}")
                 Rejection(e.message ?: e.javaClass.simpleName)
             }
             main.post { reply(result) }
