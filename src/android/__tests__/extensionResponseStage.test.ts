@@ -317,6 +317,141 @@ describe('the response stage of a relayed media request (ext.response → webReq
     expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({ requestId: '14' })
   })
 
+  it("a document's server redirect – WebView followed it, the engine stamped the follow-up with the URL before it (redirectedFrom, #670) – is told as onBeforeRedirect of the tab's open main-frame request at that URL, statusCode 302 as the stated divergence and no headers, the follow-up continuing under the hop's id; a chain pairs hop by hop", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    await sniffer(h, 'bg1')
+    const page = (path: string): string => `https://shop.example${path}`
+    const document = (over: Partial<ExtRequestEvent>): ExtRequestEvent =>
+      requestEvent({ type: 'main_frame', mainFrame: true, initiator: null, ...over })
+    // The navigation's own request: a main-frame decision, no hop word.
+    h.runtime.onRequest(document({ requestId: '20', url: page('/redirect?to=/page-a.html') }))
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(0)
+    // The server answered 3xx; WebView issued the follow-up itself and the engine stamped it.
+    h.runtime.onRequest(
+      document({
+        requestId: '21',
+        url: page('/page-a.html'),
+        redirectedFrom: page('/redirect?to=/page-a.html'),
+        document: 3
+      })
+    )
+    const redirected = heard(h, 'bg1', 'onBeforeRedirect')
+    expect(redirected).toHaveLength(1)
+    // Redirect Path's worker keeps the hop off this event alone (`details.frameType ==
+    // "outermost_frame"`, `statusCode`, `redirectUrl`, `statusLine`); the phone tells 302 for
+    // any 3xx (WebView never gives the code) and has no headers of a document.
+    expect(redirected[0]).toMatchObject({
+      requestId: '20',
+      url: page('/redirect?to=/page-a.html'),
+      method: 'GET',
+      type: 'main_frame',
+      frameId: 0,
+      parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
+      statusCode: 302,
+      statusLine: 'HTTP/1.1 302 Found',
+      redirectUrl: page('/page-a.html'),
+      fromCache: false
+    })
+    expect(redirected[0].responseHeaders).toBeUndefined()
+    expect(redirected[0].initiator).toBeUndefined()
+    expect(redirected[0].tabId).toBe(heard(h, 'bg1', 'onBeforeRequest')[0].tabId)
+    // The hop comes BEFORE the follow-up's request stage, and the follow-up runs under the
+    // hop's id – one requestId across the chain, as Chrome's.
+    const before = heard(h, 'bg1', 'onBeforeRequest')
+    expect(before).toHaveLength(2)
+    expect(before[1]).toMatchObject({ requestId: '20', url: page('/page-a.html') })
+    const order = h.kt
+      .to('bg1')
+      .filter((m) => m.t === 'event' && m.ns === 'webRequest')
+      .map((m) => m.name)
+    expect(order).toEqual(['onBeforeRequest', 'onBeforeRedirect', 'onBeforeRequest'])
+    // A second hop of the same chain pairs with the follow-up's entry (the chain's id stays).
+    h.runtime.onRequest(
+      document({ requestId: '22', url: page('/page-b.html'), redirectedFrom: page('/page-a.html') })
+    )
+    expect(heard(h, 'bg1', 'onBeforeRedirect')[1]).toMatchObject({
+      requestId: '20',
+      url: page('/page-a.html'),
+      redirectUrl: page('/page-b.html')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRequest')[2]).toMatchObject({
+      requestId: '20',
+      url: page('/page-b.html')
+    })
+    // No hop word on a plain navigation, a subresource or a hop whose request the ledger does
+    // not hold as the tab's latest main-frame request: no event, the load reported as its own.
+    h.runtime.onRequest(
+      document({ requestId: '23', url: page('/other.html'), redirectedFrom: null })
+    )
+    h.runtime.onRequest(
+      requestEvent({
+        requestId: '24',
+        url: page('/clip.mp4'),
+        initiator: page(''),
+        redirectedFrom: page('/other.html')
+      })
+    )
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(2)
+    // Two navigations in flight (the user went on before the first answered): the follow-up
+    // stamped with the tab's LATEST main-frame request pairs with it, under its id.
+    h.runtime.onRequest(document({ requestId: '25', url: page('/first') }))
+    h.runtime.onRequest(document({ requestId: '26', url: page('/second') }))
+    h.runtime.onRequest(
+      document({ requestId: '27', url: page('/second-landed'), redirectedFrom: page('/second') })
+    )
+    expect(heard(h, 'bg1', 'onBeforeRedirect')[2]).toMatchObject({
+      requestId: '26',
+      url: page('/second'),
+      redirectUrl: page('/second-landed')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      requestId: '26',
+      url: page('/second-landed')
+    })
+    // A stamp that is not the tab's latest main-frame request (the first navigation's straggler)
+    // is refused rather than paired with the wrong request: no event, the load its own.
+    h.runtime.onRequest(
+      document({ requestId: '28', url: page('/first-landed'), redirectedFrom: page('/first') })
+    )
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(3)
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      requestId: '28',
+      url: page('/first-landed')
+    })
+    // A hop in another tab never pairs with this tab's request.
+    h.tabs.t2 = { ...h.tabs.t1, id: 't2' }
+    h.runtime.onRequest(document({ requestId: '29', url: page('/t2'), tabId: 't2' }))
+    h.runtime.onRequest(
+      document({
+        requestId: '30',
+        url: page('/t2-landed'),
+        redirectedFrom: page('/t2'),
+        tabId: 't1'
+      })
+    )
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(3)
+    // Nothing of the hop while no response-stage listener exists: the switch is the gate.
+    for (const [index, event] of [
+      'onHeadersReceived',
+      'onResponseStarted',
+      'onBeforeRedirect',
+      'onCompleted'
+    ].entries())
+      await call(h, 'bg1', 'webRequest', 'removeListener', [event, index + 2])
+    h.runtime.onRequest(document({ requestId: '31', url: page('/late') }))
+    h.runtime.onRequest(
+      document({ requestId: '32', url: page('/late-landed'), redirectedFrom: page('/late') })
+    )
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(3)
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      requestId: '32',
+      url: page('/late-landed')
+    })
+  })
+
   it("a 3xx without a Location (a 304) is one the relay closed too: onHeadersReceived, onResponseStarted and onCompleted at once, as the relay's observation of it ended", async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
