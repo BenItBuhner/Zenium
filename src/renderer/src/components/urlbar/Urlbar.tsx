@@ -49,7 +49,10 @@ import {
   closeDeleteSearchHistoryConfirm,
   closeUrlbar,
   openDeleteSearchHistoryConfirm,
+  provideUrlbarField,
   uiStore,
+  urlbarKeepsTabDrafts,
+  type UrlbarDraftKeyword,
   type UrlbarState
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -118,7 +121,12 @@ const POPUP_GAP = 4
  * Android does (a program default of 19 Sep 2026): the pill opens search-ready every time, with
  * the header (OMN-05) and the clipboard row (OMN-14), which a restored draft would hide until it
  * is cleared. Nothing is written or read here for the phone; a submit, Edit and the header chips
- * are as they are on either.
+ * are as they are on either. This map is the bar's own dismissals'; a tab the palette LEAVES
+ * mid-typing – the active tab changed under it – keeps its draft in `UiState.urlbarDrafts` by
+ * tab id instead, and the bar re-opens with it on the tab's return (W8-F15, Chrome desktop's
+ * per-tab omnibox state; `urlbarFollowsActiveTab`) – on the desktop layout alone: the phone and
+ * the tablet, Chrome Android's both, keep no leave-draft (`urlbarKeepsTabDrafts`); the tablet's
+ * dismissal drafts in this map are as they were.
  */
 const drafts = new Map<string, string>()
 let keywordSeq = 0
@@ -178,6 +186,16 @@ function hasCompletionTail(el: HTMLInputElement): boolean {
 interface KeywordMode {
   engine: SearchEngine
   typed: string
+}
+
+/** The keyword mode a tab's saved draft was in (W8-F15), or null: none, or its engine is gone. */
+function keywordModeOf(
+  keyword: UrlbarDraftKeyword | null | undefined,
+  engines: SearchEngine[]
+): KeywordMode | null {
+  if (!keyword) return null
+  const engine = engines.find((e) => e.id === keyword.engineId)
+  return engine ? { engine, typed: keyword.typed } : null
 }
 
 /** The id of a row's trailing control, the target Tab moves the keyboard to (omnibox-50). */
@@ -260,9 +278,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   )
   const tab = urlbar.tabId ? state.tabs[urlbar.tabId] : null
   // Ctrl+K / Ctrl+E open the bar in search mode: keyword mode for the default engine, the chip
-  // up from the start and nothing to bring back on Backspace (Chrome's).
+  // up from the start and nothing to bring back on Backspace (Chrome's). A tab's restored draft
+  // (W8-F15, `urlbar.draft`) brings its own chip back, as Chrome's `RestoreState` sets the
+  // keyword after the user text; an engine gone meanwhile leaves the field plain.
   const [keywordMode, setKeywordMode] = useState<KeywordMode | null>(() =>
-    urlbar.mode === 'search' ? { engine: defaultEngine, typed: '' } : null
+    urlbar.mode === 'search'
+      ? { engine: defaultEngine, typed: '' }
+      : keywordModeOf(urlbar.draft?.keyword, engines)
   )
 
   // Keyword mode from the text (`@ddg cats`, `@bookmarks foo`): the chip names where the search
@@ -291,6 +313,18 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     const el = inputRef.current
     if (!el) return
     el.focus()
+    const { draft } = urlbar
+    if (draft) {
+      // The tab's draft back in the field (W8-F15): the selection as the tab was left, as
+      // `OmniboxViewViews::OnTabChanged` sets the saved range back after `RestoreState`.
+      const end = el.value.length
+      el.setSelectionRange(
+        Math.min(draft.selectionStart, end),
+        Math.min(draft.selectionEnd, end),
+        draft.selectionDirection
+      )
+      return
+    }
     if (urlbar.typed) {
       // Text the user typed into the new tab page before the bar was up: carry on after it.
       el.setSelectionRange(el.value.length, el.value.length)
@@ -304,12 +338,63 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, on mount
   }, [])
 
+  // W8-F15 — the per-tab URL-bar-input signal the core's `freshTabIn` reads. The field now holds a
+  // draft the user typed, differing from the page's own text (over a fresh new tab page the page's
+  // text is empty, so any draft counts; in edit mode the address at rest does not): the tab is not
+  // a fresh empty one a launch URL may take, whatever its history says, as Chrome's omnibox carries
+  // `user_input_in_progress()` per tab and a typed-into new tab page is never written over by a
+  // launch URL there. This instance is keyed to
+  // one `urlbar.tabId` (`ContentArea`/`TabletShell`), so the signal fires on the FLIP of that
+  // boolean for the bound tab – not per keystroke – and once more on the bar's close (unmount)
+  // when a draft was out. A window-level bar bound to no tab marks nothing; the phone runs the
+  // same signal but its host has no `freshTabIn` caller, so the core keeps it unread.
+  const inputTab = urlbar.tabId
+  const barHoldsInput = Boolean(text.trim()) && (!tab || text !== pageTextFor(tab))
+  const barInputOut = useRef(false)
+  useEffect(() => {
+    if (!inputTab || barInputOut.current === barHoldsInput) return
+    barInputOut.current = barHoldsInput
+    run('urlbar.input', { tabId: inputTab, active: barHoldsInput })
+  }, [inputTab, barHoldsInput])
+  useEffect(() => {
+    if (!inputTab) return undefined
+    return () => {
+      if (barInputOut.current) run('urlbar.input', { tabId: inputTab, active: false })
+      barInputOut.current = false
+    }
+  }, [inputTab])
+
   // The state's keyword mode, readable from the fetch callback without re-creating it per change
   // (`enterKeywordMode` writes it ahead of the state, so its own fetch already sees the engine).
   const modeRef = useRef(keywordMode)
   useLayoutEffect(() => {
     modeRef.current = keywordMode
   }, [keywordMode])
+
+  // W8-F15, the draft's half: the desktop bar lends its field to `urlbarFollowsActiveTab`, which
+  // reads it – the text as shown, the selection, the keyword chip – at the one moment it leaves
+  // the tab this instance is bound to, and saves it as the tab's draft (Chrome's
+  // `OmniboxViewViews::SaveStateToTab`). Read on that moment alone, never per keystroke. The
+  // desktop layout's alone (`urlbarKeepsTabDrafts`): the phone's and the tablet's bars lend
+  // nothing – Chrome for Android drops the edit on a switcher tab switch (§9.34: the same
+  // `Urlbar`, two behaviours) – and the phone's drafts are discarded on every dismissal besides
+  // (`drafts`). The input signal above is not gated: it is the same on every layout.
+  const formFactor = viewportStore.use((v) => v.formFactor)
+  useEffect(() => {
+    if (!urlbarKeepsTabDrafts(formFactor)) return undefined
+    return provideUrlbarField(() => {
+      const el = inputRef.current
+      if (!el) return null
+      const mode = modeRef.current
+      return {
+        text: el.value,
+        selectionStart: el.selectionStart ?? el.value.length,
+        selectionEnd: el.selectionEnd ?? el.value.length,
+        selectionDirection: el.selectionDirection ?? 'none',
+        keyword: mode ? { engineId: mode.engine.id, typed: mode.typed } : null
+      }
+    })
+  }, [formFactor])
 
   const fetchSuggestions = useCallback(
     async (query: string, autofill: boolean, engine?: SearchEngine | null) => {
@@ -365,11 +450,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   )
 
   useEffect(() => {
-    // Typed text behaves as if typed here: inline completion applies to it from the start.
-    const autofill = Boolean(urlbar.typed) && !/\s/.test(lastTyped.current)
+    // Typed text behaves as if typed here: inline completion applies to it from the start. A
+    // tab's restored draft (W8-F15) is shown as it was left – a completion it had was accepted
+    // into the text on the leave – and is completed anew by no one: Chrome's `RestoreState` sets
+    // the user text back without running autocomplete over it. The rows come up as ever.
+    const autofill = Boolean(urlbar.typed) && !urlbar.draft && !/\s/.test(lastTyped.current)
     const timer = setTimeout(() => void fetchSuggestions(lastTyped.current, autofill), 0)
     return () => clearTimeout(timer)
-  }, [fetchSuggestions, urlbar.typed])
+  }, [fetchSuggestions, urlbar.typed, urlbar.draft])
 
   // Keys the new tab page's search box received while this bar was already open (a keystroke
   // that raced the focus hand-off): spliced in at the caret as if typed here.

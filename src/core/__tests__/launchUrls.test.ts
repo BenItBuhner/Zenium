@@ -303,3 +303,150 @@ describe('a launch that carries a URL (zenium <url>, the default-browser path)',
     expect(g.browser.tabs.tab(gFresh.id)?.url).toBe(NEW_TAB_URL)
   })
 })
+
+/**
+ * W8-F15: a tab the user is typing into is not empty, whatever its history says (Chrome's rule –
+ * `OmniboxEditModel::user_input_in_progress()` keeps the new tab page from being reused). The
+ * renderer reports the URL bar's per-tab input over `urlbar.input { tabId, active }`; the core
+ * keeps it in memory (`Browser.barInput`, cleared on the tab's close) and `freshTabIn` reads it,
+ * so a second-instance URL opens beside a fresh NTP being typed into and the draft is kept.
+ */
+describe('a tab the user is typing into is not empty (W8-F15, the bar-input signal)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const signal = (
+    f: Fixture,
+    win: ReturnType<Browser['focusedWindow']>,
+    tabId: string,
+    active: boolean
+  ): void => {
+    f.browser.handleCommand(win, 'urlbar.input', { tabId, active })
+  }
+
+  it('a fresh NTP being typed into: the URL opens BESIDE it, the draft untouched', async () => {
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    expect(fresh.url).toBe(NEW_TAB_URL)
+    // The user typed into the fresh NTP's bar: the renderer's `urlbar.input` for that tab.
+    signal(f, win, fresh.id, true)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    // A second `zenium <url>`: the URL opens beside the NTP, which keeps its draft.
+    f.browser.openLaunchUrls([FIRST], win)
+    expect(tabUrls(f)).toEqual([NEW_TAB_URL, FIRST])
+    expect(f.browser.tabs.tab(fresh.id)?.url).toBe(NEW_TAB_URL)
+  })
+
+  it('typed then cleared: the NTP is fresh again and the URL is reused', async () => {
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    signal(f, win, fresh.id, true)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    // The user cleared the field (or put the bar away): the tab is empty once more.
+    signal(f, win, fresh.id, false)
+    expect(f.browser.freshTabIn(win)?.id).toBe(fresh.id)
+    f.browser.openLaunchUrls([FIRST], win)
+    expect(tabUrls(f)).toEqual([FIRST])
+    expect(f.browser.tabs.activeTabFor(win)?.id).toBe(fresh.id)
+  })
+
+  it('typed then committed (navigated): not fresh by history anyway, the record freed', async () => {
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    signal(f, win, fresh.id, true)
+    // A submit navigates the tab and closes the bar (its `urlbar.input {active:false}`): the tab is
+    // no longer empty, so it is not fresh by history, and the record is freed either way.
+    f.browser.tabs.navigate(fresh.id, FIRST)
+    signal(f, win, fresh.id, false)
+    expect(f.browser.hasBarInput(fresh.id)).toBe(false)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    // A later launch opens beside the now-navigated tab, as any running window's does.
+    f.browser.openLaunchUrls([SECOND], win)
+    expect(tabUrls(f)).toEqual([FIRST, SECOND])
+  })
+
+  it('the signal is per tab: another fresh tab beside a typed one is still fresh', async () => {
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const typed = f.browser.tabs.activeTabFor(win)!
+    signal(f, win, typed.id, true)
+    // A second fresh New Tab, now active, has no bar input of its own.
+    const other = f.browser.tabs.createTab({ url: NEW_TAB_URL, active: true, load: false }, win)
+    expect(f.browser.freshTabIn(win)?.id).toBe(other.id)
+    // Back on the typed tab, it is not fresh.
+    f.browser.tabs.activateTab(typed.id, win)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+  })
+
+  it("the tab's close clears the core's record", () => {
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    // A second tab to keep the window alive when the typed one closes.
+    f.browser.tabs.createTab({ url: NEW_TAB_URL, active: false, load: false }, win)
+    signal(f, win, fresh.id, true)
+    expect(f.browser.hasBarInput(fresh.id)).toBe(true)
+    f.browser.tabs.closeTab(fresh.id, true, win)
+    expect(f.browser.hasBarInput(fresh.id)).toBe(false)
+  })
+
+  it('the round trip (round two): the draft leaves with the tab and comes back with it', async () => {
+    // The renderer's bar follows the active tab: when the handed-over URL opens in front, the
+    // bar closes over the typed NTP (`urlbar.input {active:false}`) and saves the draft with the
+    // tab; on the tab's return the bar re-opens with it, and the signal is true again. The core
+    // reads the signal alone: while away the NTP is fresh again by the signal but not active, so
+    // a launch never takes it; back, it is typed into once more, and a launch opens beside it.
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    signal(f, win, fresh.id, true)
+    f.browser.openLaunchUrls([FIRST], win)
+    const handed = f.browser.tabs.activeTabFor(win)!
+    expect(handed.url).toBe(FIRST)
+    // The bar went down over the NTP as the handed-over tab came in front.
+    signal(f, win, fresh.id, false)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    // Back on the NTP: the bar is up with the draft, the signal true for it again.
+    f.browser.tabs.activateTab(fresh.id, win)
+    expect(f.browser.freshTabIn(win)?.id).toBe(fresh.id)
+    signal(f, win, fresh.id, true)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    f.browser.openLaunchUrls([SECOND], win)
+    expect(tabUrls(f)).toEqual([NEW_TAB_URL, FIRST, SECOND])
+    expect(f.browser.tabs.tab(fresh.id)?.url).toBe(NEW_TAB_URL)
+  })
+
+  it('the phone host: the command is harmless (no freshTabIn caller); it just records', async () => {
+    // The same shared command reaches the core on either host. Android has no `openLaunchUrls`
+    // / `freshTabIn` caller (W8-F14), so the record is written and simply unread.
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    expect(() => signal(f, win, fresh.id, true)).not.toThrow()
+    expect(f.browser.hasBarInput(fresh.id)).toBe(true)
+  })
+
+  it('onChromeReady is unchanged: nobody has typed before the chrome is up, so the fresh tab still announces', async () => {
+    // The arm is the fresh tab's alone (W8-F14) and reads the tab's URL, never `barInput`; a
+    // bar-input signal can only arrive once the chrome (and its bar) is up. The announcement still
+    // fires for the fresh tab at chrome-ready.
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)
+    f.browser.openLaunchUrls([], win)
+    await chromeReady(f, win)
+    expect(named(f, 'newtab.opened')).toEqual([{ tabId: fresh?.id }])
+    expect(named(f, 'urlbar.toggle')).toEqual([])
+  })
+})
