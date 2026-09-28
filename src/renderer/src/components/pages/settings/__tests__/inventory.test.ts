@@ -590,7 +590,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Resolver',
     'Send a Global Privacy Control signal',
     'Send a Do Not Track request',
-    // Site Settings (#135): the 40 content types and the sites with their own settings
+    // Site Settings (#135): the 39 content types and the sites with their own settings
     'Location',
     'Camera',
     'Microphone',
@@ -633,7 +633,6 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Speaker selection',
     'Clipboard writes',
     'Screen sharing',
-    'MIDI system messages',
     'Default behaviour',
     'meet.example',
     'Reset all sites'

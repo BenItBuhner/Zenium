@@ -120,7 +120,7 @@ class Permissions(private val host: PageHost) {
                 PermissionRequest.RESOURCE_VIDEO_CAPTURE -> { wanted += r; runtime += Manifest.permission.CAMERA; mediaTypes += "video" }
                 PermissionRequest.RESOURCE_AUDIO_CAPTURE -> { wanted += r; runtime += Manifest.permission.RECORD_AUDIO; mediaTypes += "audio" }
                 PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID -> { wanted += r; permissionName = "mediaKeySystem" }
-                PermissionRequest.RESOURCE_MIDI_SYSEX -> { /* denied, like the desktop */ }
+                PermissionRequest.RESOURCE_MIDI_SYSEX -> { wanted += r; permissionName = "midiSysex" }
             }
         }
         if (wanted.isEmpty()) {
