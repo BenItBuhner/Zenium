@@ -7,15 +7,14 @@
  * answer, the same Settings row – `PermissionService`) and reads the clipboard through the host
  * (`ClipboardReadService`).
  *
- * Chrome's gates, kept (`third_party/blink/renderer/modules/clipboard/clipboard_promise.cc`):
- * a secure context (the `Clipboard` interface is `[SecureContext]`, so there is nothing to shim
- * elsewhere), a focused document (`RejectIfDocumentNotFocused`: "Document is not focused."),
- * and the permission – refused, the promise rejects with a `NotAllowedError` reading "Read
- * permission denied." (`HandleReadTextWithPermission`). Zenium's stricter gate on top: a
- * transient user activation (`navigator.userActivation.isActive`), which Chrome does not ask
- * of a read (its descriptor's `has_user_gesture` serves the sanitized-write shortcut alone,
- * `blink/common/permissions/permission_utils.cc`) but Safari and Firefox do – a page that has
- * not been touched gets no prompt and no read, as the brief for the phone asked.
+ * Chrome's two gates are the shim's two gates
+ * (`third_party/blink/renderer/modules/clipboard/clipboard_promise.cc`): a focused document
+ * (`RejectIfDocumentNotFocused`: "Document is not focused.") and the permission – refused, the
+ * promise rejects with a `NotAllowedError` reading "Read permission denied."
+ * (`HandleReadTextWithPermission`). No user activation is asked of a read, as Chrome asks none
+ * (its descriptor's `has_user_gesture` serves the sanitized-write shortcut alone,
+ * `blink/common/permissions/permission_utils.cc`). A secure context is the engine's own gate
+ * already: the `Clipboard` interface is `[SecureContext]`, so there is nothing to shim elsewhere.
  *
  * Lazy by design: installing defines the two functions on `Clipboard.prototype` and nothing
  * more – no listener, no map, no read – so a page that never calls them pays nothing at load
@@ -54,8 +53,6 @@ export function isClipboardReadCall(value: unknown): value is ClipboardReadCall 
 /** Chrome's words (`clipboard_promise.cc`), verbatim, so a page's error handling sees the same. */
 export const CLIPBOARD_READ_DENIED = 'Read permission denied.'
 export const CLIPBOARD_READ_UNFOCUSED = 'Document is not focused.'
-/** Zenium's own gate, in the register of Chrome's share message. */
-export const CLIPBOARD_READ_NO_GESTURE = 'Must be handling a user gesture to read the clipboard.'
 
 /**
  * Runs in the page's main world, the bridge in the same world (the phone's page script). The
@@ -103,10 +100,6 @@ export function installClipboardReadShim(
       /* a document that cannot say is taken as focused, as a worker's absence of one is */
     }
     if (!focused) return new win.DOMException(prefix + CLIPBOARD_READ_UNFOCUSED, 'NotAllowedError')
-    const activation = (win.navigator as Navigator & { userActivation?: { isActive: boolean } })
-      .userActivation
-    if (activation && !activation.isActive)
-      return new win.DOMException(prefix + CLIPBOARD_READ_NO_GESTURE, 'NotAllowedError')
     return null
   }
 

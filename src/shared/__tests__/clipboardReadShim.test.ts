@@ -2,7 +2,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   CLIPBOARD_READ_DENIED,
-  CLIPBOARD_READ_NO_GESTURE,
   CLIPBOARD_READ_UNFOCUSED,
   installClipboardReadShim,
   isClipboardReadCall,
@@ -62,7 +61,7 @@ afterEach(() => {
  * `navigator.clipboard.read()` / `readText()` where the engine refuses every read (MW-38): the
  * shim's answers are Chrome's – the promise resolves with the clipboard's text, or rejects with
  * the `NotAllowedError` Chrome's `ClipboardPromise` throws (its message verbatim) – and its
- * preconditions are Chrome's focus check plus Zenium's gesture rule.
+ * preconditions are Chrome's two: a focused document and the permission, no user activation.
  */
 describe('installClipboardReadShim', () => {
   it('lays the two methods over Clipboard.prototype and does nothing more until the first call', () => {
@@ -74,23 +73,20 @@ describe('installClipboardReadShim', () => {
     expect(host.listens).toBe(0)
   })
 
-  it('rejects without a user gesture with a NotAllowedError, nothing sent', async () => {
+  it('reads without a user gesture, as Chrome does: a focused document and the permission are the gates', async () => {
     const host = install()
     setUserActivation(false)
-    const failure = clipboard().readText()
-    await expect(failure).rejects.toBeInstanceOf(DOMException)
-    await expect(failure).rejects.toMatchObject({
-      name: 'NotAllowedError',
-      message: `Failed to execute 'readText' on 'Clipboard': ${CLIPBOARD_READ_NO_GESTURE}`
-    })
-    await expect(clipboard().read()).rejects.toMatchObject({ name: 'NotAllowedError' })
-    expect(host.sent).toEqual([])
-    expect(host.listens).toBe(0)
+    const text = clipboard().readText()
+    const items = clipboard().read()
+    expect(host.sent.map((call) => call.kind)).toEqual(['text', 'items'])
+    host.answer({ id: host.sent[0].id, text: 'no gesture needed' })
+    host.answer({ id: host.sent[1].id, text: 'no gesture needed' })
+    await expect(text).resolves.toBe('no gesture needed')
+    await expect(items).resolves.toHaveLength(1)
   })
 
   it("rejects when the document is not focused, with Chrome's message", async () => {
     const host = install()
-    setUserActivation(true)
     setFocused(false)
     await expect(clipboard().read()).rejects.toMatchObject({
       name: 'NotAllowedError',
@@ -101,7 +97,6 @@ describe('installClipboardReadShim', () => {
 
   it("resolves readText with the host's text once the core allows the read", async () => {
     const host = install()
-    setUserActivation(true)
     const pending = clipboard().readText()
     expect(host.sent).toHaveLength(1)
     expect(host.sent[0].kind).toBe('text')
@@ -112,7 +107,6 @@ describe('installClipboardReadShim', () => {
 
   it("rejects a refused read with Chrome's NotAllowedError 'Read permission denied.'", async () => {
     const host = install()
-    setUserActivation(true)
     const pending = clipboard().readText()
     host.answer({ id: host.sent[0].id, error: 'denied' })
     await expect(pending).rejects.toBeInstanceOf(DOMException)
@@ -124,7 +118,6 @@ describe('installClipboardReadShim', () => {
 
   it('read() gives one text/plain ClipboardItem with the text, and no item for an empty clipboard', async () => {
     const host = install()
-    setUserActivation(true)
     const pending = clipboard().read()
     expect(host.sent[0].kind).toBe('items')
     host.answer({ id: host.sent[0].id, text: 'from the clip' })
@@ -143,7 +136,6 @@ describe('installClipboardReadShim', () => {
 
   it('settles each call by its id, in any order, and ignores answers it did not ask for', async () => {
     const host = install()
-    setUserActivation(true)
     const first = clipboard().readText()
     const second = clipboard().readText()
     expect(host.sent.map((call) => call.id)).toHaveLength(2)
@@ -160,17 +152,7 @@ describe('installClipboardReadShim', () => {
 
   it('rejects the call with the bridge’s own error when the message cannot go up', async () => {
     install(new Error('bridge gone'))
-    setUserActivation(true)
     await expect(clipboard().readText()).rejects.toThrow('bridge gone')
-  })
-
-  it('reads without the gesture rule where the engine has no userActivation to consult', async () => {
-    const host = install()
-    Object.defineProperty(navigator, 'userActivation', { value: undefined, configurable: true })
-    const pending = clipboard().readText()
-    expect(host.sent).toHaveLength(1)
-    host.answer({ id: host.sent[0].id, text: 'ok' })
-    await expect(pending).resolves.toBe('ok')
   })
 
   it('leaves a window without the Clipboard API alone', () => {
