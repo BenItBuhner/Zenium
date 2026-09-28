@@ -390,7 +390,7 @@ interface ResponseHeaderLine {
  * error on `onErrorOccurred`. `requestHeaders` / `responseHeaders` are the full lists as WebView
  * holds / received them; what each listener sees of them is cut per its spec at delivery
  * (`detailsFor`). `fromCache` is false on the phone (the relay and the page read the origin);
- * `ip` is never known.
+ * `ip` is never known. The frame words are [OUTERMOST_FRAME]'s on every event.
  */
 interface RequestDetails {
   requestId: string
@@ -398,6 +398,8 @@ interface RequestDetails {
   method: string
   frameId: number
   parentFrameId: number
+  frameType: 'outermost_frame' | 'sub_frame'
+  documentLifecycle: 'active'
   tabId: number
   type: ResourceType
   timeStamp: number
@@ -410,6 +412,26 @@ interface RequestDetails {
   responseHeaders?: ResponseHeaderLine[]
   redirectUrl?: string
 }
+
+/**
+ * The frame fields of every request the phone reports. WebView tells the intercept nothing of
+ * the frame a request belongs to beyond `isForMainFrame`, so every request is reported as the
+ * outermost frame's (`frameId` 0, no parent – the stated limit), and Chrome's two frame words
+ * (on every `webRequest` event since 106) go with it: `frameType` – the desktop's rule, the
+ * outermost frame for `frameId` 0 – and `documentLifecycle` `active` (the phone prerenders
+ * nothing, and a document in WebView's back/forward cache makes no request the intercept sees).
+ * Redirect Path's worker keeps a hop of a document's redirect chain only when the event's
+ * `frameType` reads `outermost_frame`, and dropped every one here (compat round 23).
+ */
+const OUTERMOST_FRAME = {
+  frameId: 0,
+  parentFrameId: -1,
+  frameType: 'outermost_frame',
+  documentLifecycle: 'active'
+} as const satisfies Pick<
+  RequestDetails,
+  'frameId' | 'parentFrameId' | 'frameType' | 'documentLifecycle'
+>
 
 /** The request headers Chrome withholds from a listener without `extraHeaders` (since 72). */
 const REQUEST_HEADERS_BEHIND_EXTRA: ReadonlySet<string> = new Set([
@@ -2616,8 +2638,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       requestId,
       url: event.url,
       method: event.method,
-      frameId: 0,
-      parentFrameId: -1,
+      ...OUTERMOST_FRAME,
       tabId,
       type,
       timeStamp: now
@@ -2650,8 +2671,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       requestId: this.ledger.chainIdOf(event.requestId),
       url: event.url,
       method: event.method,
-      frameId: 0,
-      parentFrameId: -1,
+      ...OUTERMOST_FRAME,
       tabId: event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID,
       type: resourceTypeNamed(event.type),
       timeStamp: this.now(),
@@ -2701,8 +2721,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       requestId,
       url: event.url,
       method: event.method,
-      frameId: 0,
-      parentFrameId: -1,
+      ...OUTERMOST_FRAME,
       tabId: chromeTabId,
       type: resourceTypeNamed(event.type),
       timeStamp: now
@@ -2793,8 +2812,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       requestId: pair.requestId,
       url: observation.finalUrl ?? observation.url,
       method: observation.method,
-      frameId: 0,
-      parentFrameId: -1,
+      ...OUTERMOST_FRAME,
       tabId: this.api.tabs.chromeIdFor(tabId),
       type: pair.type,
       timeStamp: now,

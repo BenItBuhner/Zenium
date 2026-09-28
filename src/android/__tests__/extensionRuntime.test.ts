@@ -1070,12 +1070,16 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     h.runtime.onRequest(request({ requestId: '5', document: 3 }))
     const before = events(h, 'bg1', 'webRequest.onBeforeRequest')
     expect(before).toHaveLength(2)
+    // Every request is the outermost frame's on the phone, and Chrome's two frame words (since
+    // 106) go with it: Redirect Path's worker keeps a hop only when `frameType` reads so.
     expect((before[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
       requestId: '4',
       url: 'https://example.com/ok.js',
       method: 'GET',
       frameId: 0,
       parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
       tabId: chromeTab,
       type: 'script',
       initiator: 'https://example.com'
@@ -1084,7 +1088,9 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     expect(errors).toHaveLength(1)
     expect((errors[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
       requestId: '5',
-      error: 'net::ERR_BLOCKED_BY_CLIENT'
+      error: 'net::ERR_BLOCKED_BY_CLIENT',
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active'
     })
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('1')
     // Each delivery is addressed to the one listener whose filter matched.
@@ -1551,6 +1557,8 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       method: 'GET',
       frameId: 0,
       parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
       tabId: chromeTab,
       type: 'xmlhttprequest',
       timeStamp: h.clock.now,
