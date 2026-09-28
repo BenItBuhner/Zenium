@@ -483,10 +483,14 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
   it('the walk reaches the v2 primitives, the extensions toolbar and the autofill surfaces', () => {
     const rels = files.map(({ rel }) => rel)
     for (const entry of ALSO_WALKED) {
-      if (entry.endsWith('/')) expect(rels.some((rel) => rel.startsWith(entry)), entry).toBe(true)
+      if (entry.endsWith('/')) expect(rels.filter((rel) => rel.startsWith(entry))).not.toEqual([])
       else expect(rels).toContain(entry)
     }
-    for (const rel of ['autofill/PickerPanel.tsx', 'autofill/PickerSurface.tsx', 'autofill/controls.tsx'])
+    for (const rel of [
+      'autofill/PickerPanel.tsx',
+      'autofill/PickerSurface.tsx',
+      'autofill/controls.tsx'
+    ])
       expect(rels).toContain(rel)
   })
 
