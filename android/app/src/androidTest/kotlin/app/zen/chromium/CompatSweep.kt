@@ -7974,6 +7974,104 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("jiidiaalihmmhddjgbnbgdfflelocpak", "Bitget Wallet - Crypto, Web3 | Bitcoin & USDT", "bitget-wallet", core = domMarker("Bitget Wallet's provider injected into the page world", "wallet.html?bitget", BITGET_PROVIDER, settleMs = 30_000)),
         Row("onablhclbgaihanifkenpggjkkgdpnkk", "Wallsflow New Tab: Live Wallpapers, Widgets & Focus Music", "wallsflow-new-tab", core = newTabOverride("Wallsflow New Tab")),
         Row("bomfdkbfpdhijjbeoicnfhjbdhncfhig", "Paperpile Extension", "paperpile", core = accountGate("Paperpile", Regex("paperpile\\.com", RegexOption.IGNORE_CASE), injects = "#pp-extension-root, #pp-react-root", gate = "a Paperpile account (its click mounts its in-page popup in a closed shadow root, `#pp-extension-root`, which signs in at app.paperpile.com)")),
+        // --- compat round 24 (ranks 601-630 by installs; `.github/scripts/ext-compat/next30-round21.json`) ---
+        // Each core rule read off the unpacked bundle: Add to Babylist Button's click injects its
+        // content script (`scripting.executeScript`), which mounts a full-screen iframe of its own
+        // UI over the page (`iframe[title="Add To Babylist Extension"]`) whose sign-in is
+        // babylist.com; PWA Install Block is one `document_start` content script and nothing else
+        // (no `storage` permission, so its `chrome.storage.managed.get('escape')` throws inside
+        // its own `try`): a MutationObserver on the document that removes the first
+        // `link[rel=manifest]` it finds and disconnects – the `pwa.html` fixture's link gone is
+        // the pass; Speed Dial, Live Start Page and GNTD replace the new-tab page
+        // (`chrome_url_overrides.newtab`: `pages/newtab.html`, `pages/newtab/newtab.html`,
+        // `newtab.html`); ZIP Extractor's click runs `tabs.create({url: runtime.getURL('open.html')})`,
+        // whose `#formView` (`#urlInput`, `#openButton` "Open in ZIP Extractor") its script shows;
+        // Martian's content script inserts its web-accessible `inpage.js`, which defines
+        // `window.martian` and dispatches `martian_wallet_injected`; Privacy Extension For
+        // WhatsApp Web's content-script loader (`web.whatsapp.com`, `document_end`) imports its
+        // chunk, which mounts `#crx-root-Y5rD2uBG` beside the chat list's filters – signed out
+        // the page is the QR code; Story Saver's content scripts (instagram.com, facebook.com; no
+        // web-accessible resource) put `.violet_toolkit_dl_btn` download buttons on the feed's
+        // posts and stories; Webpage Screenshot's click runs `jquery.js`, `content.js` and
+        // `intab.js` in the tab (`scripting.executeScript`), which prepend a shadow host to the
+        // body with its fixed bar (`#ws_all_buttons`: `#ws_entire`, `#start_visible`,
+        // `#start_desktop`, `#edit_content`, `#ws_close`); AdBlock Max blocks with its
+        // `declarativeNetRequest` rulesets (uBlock filters, EasyList, EasyPrivacy and Peter
+        // Lowe's list enabled); Browser Lock's popup (`screen.html#/ppup`) is two buttons – lock
+        // the browser, open the settings – and its lock needs a password set in its settings
+        // (`security.browser_password.password`, else `lockNotActive`); Note Board's worker opens
+        // with a `self.localStorage` shim, `let window = {}`, `screen = {}` and a `const document`
+        // stub (the runtime's worker rescue and self proxy carry them) and its click, with no
+        // `openExt` stored, runs `windows.create({url: runtime.getURL("popup.html"), type: "popup",
+        // state: "maximized"})` – the board (`#Postits`, `#botonPost`, `#nombreTablon`);
+        // Wikiwand's static ruleset redirects `^https://([a-z-]+)\.wikipedia\.org/wiki/([^?#]+)`
+        // to `https://www.wikiwand.com/\1/\2` (main frame, `www.wikipedia.org` excluded, an
+        // `allow` above it for `?oldformat`); RoEarn's six content-script groups run on
+        // www.roblox.com – its `document_start` injector marks the page with
+        // `#__roearn_extension_url__` and adds its web-accessible scripts, `#nav-roearn` goes in
+        // the signed-in sidebar; Desktopify's content script (instagram.com, every frame) adds
+        // `a.inb-photo-el` open-in-new-tab links on the feed's images every second; MightyText's
+        // popup signs in with its Google account; ProWritingAid's popup is its sign-up / log-in
+        // (`<pwa-browser-action-root>`); Video Downloader - MPMux's worker watches
+        // `webRequest.onBeforeSendHeaders` and `onResponseStarted` (media, xmlhttprequest,
+        // object, other) for m3u8 playlists and media of 300 KB or more, keeps them per tab in
+        // `storage.local` and its popup lists them (`#list .item`; "No resource file found!"
+        // while empty); Open SEO Stats' popup shows, at its free level, its SEO Stats tab (the
+        // `#frame_seostats` iframe, whose table's first `th` names the tab's host from
+        // `sessionStorage.host`) and asks user.openadmintools.com for the host's figures – its
+        // Page Info and Links tabs are blurred behind its paid level (`lock_blur`,
+        // `GetUserLevel()`) and its first launch raises its Google sign-in
+        // (`#btn_google_login`); Talk & Comment's content script
+        // mounts `#tac-extension-root` and its recorder signs in at talkandcomment.com; Web
+        // Highlights' click sends `browserActionClicked` to its content script
+        // (`content-loader.js` imports `content.js` on idle), which toggles its
+        // `<webhighlights-sidebar>`; Astar VPN's popup connects through
+        // `proxy.settings.set({value: {mode: "pac_script"}})` after its "Accept"; YouTube DJ's
+        // popup switch (`#bsw`) asks `tabCapture.getMediaStreamId({targetTabId})` for the tab's
+        // audio; EverSync's popup, signed out, says "To Synchronize your data you have to login
+        // in your EverSync account" with Login and Register; Black Menu's popup
+        // (`/views/popup.html`, `scripts/main.js`) draws its list of Google services as
+        // `.bm-ele-navlist__item[role=menuitem]` entries; Workona's worker sets its popup at its
+        // start (`action.setPopup({popup: "popup.html"})`, the manifest declaring none), an
+        // iframe of `https://workona.com/ext/popup`, its service's sign-in; FC27 Enhancer's
+        // content script runs on EA's Ultimate Team web app, which signs in first; Custom
+        // Progress Bar's content script (youtube.com, `document_idle`) builds CSS from the
+        // `current` style its install seeded (the Starter collection's first) and appends
+        // `<style data-custom-progressbar="true">` to the page; Telegram Video Downloader's
+        // content script (`web.telegram.org`, `document_end`) appends its web-accessible
+        // `content-script-inject.js` to the page and puts download buttons on the chat's media
+        // bubbles – signed out the page is the QR code and the phone-number form.
+        Row("jcmljanephecacpljcpiogonhhadfpda", "Add to Babylist Button", "add-to-babylist", core = accountGate("Add to Babylist Button", Regex("babylist\\.com", RegexOption.IGNORE_CASE), injects = "iframe[title=\"Add To Babylist Extension\"]", gate = "a Babylist account (its click injects its content script, which mounts a full-screen iframe of its own UI over the page whose sign-in is babylist.com)")),
+        Row("ieadfjdkjpnoafofpolljfnejbgppgad", "PWA Install Block", "pwa-install-block", core = domMarker("PWA Install Block's removal of the page's manifest link", "pwa.html?pwablock", PWA_BLOCK_MARKER, settleMs = 25_000)),
+        Row("ejbjamhkdedinncaeiackcdehpccoejm", "Speed Dial", "speed-dial", core = newTabOverride("Speed Dial")),
+        Row("mmfcakoljjhncfphlflcedhgogfhpbcd", "ZIP Extractor", "zip-extractor", core = actionPage("ZIP Extractor", Regex("open\\.html"), ZIP_EXTRACTOR_PAGE, listOf("page-a.html?zipextractor"))),
+        Row("efbglgofoippbgcjepnhiblaibcnclgk", "Martian Aptos & Sui Wallet Extension", "martian-wallet", core = domMarker("Martian's provider injected into the page world", "wallet.html?martian", MARTIAN_PROVIDER, settleMs = 30_000)),
+        Row("mbcghjiodcjankhkllfohcgnckhdbkmi", "Privacy Extension For WhatsApp Web - WABULK", "privacy-extension-whatsapp", core = attachedGate("Privacy Extension For WhatsApp Web", "https://web.whatsapp.com/", "a linked WhatsApp Web session (its blurs and lock act on the chat list; signed out the page is the QR code)")),
+        Row("mafcolokinicfdmlidhaebadidhdehpk", "Story Saver", "story-saver", core = attachedGate("Story Saver", "https://www.instagram.com/", "an Instagram session (its download buttons, `.violet_toolkit_dl_btn`, go on the feed's posts and stories)")),
+        Row("akgpcdalpfphjmfifkmfbpdmgdmeeaeo", "Webpage Screenshot - Entire page screenshot!", "webpage-screenshot", core = actionMarker("Webpage Screenshot", "page-a.html?wpscreenshot", WPS_MENU, settleMs = 25_000)),
+        Row("nldijlfmoepgjkjhmdiiainkjgmpdnmj", "Browser Lock | Lock Your Browser", "browser-lock", core = popupMarker("Browser Lock", BROWSER_LOCK_POPUP, settleMs = 25_000)),
+        Row("emffkefkbkpkgpdeeooapgaicgmcbolj", "Wikiwand - Wikipedia Modernized", "wikiwand", core = dnrRedirects("Wikiwand", "https://en.wikipedia.org/wiki/Tea", Regex("^https://www\\.wikiwand\\.com/en/Tea"), "the static ruleset's regexFilter ^https://([a-z-]+)\\.wikipedia\\.org/wiki/([^?#]+) with regexSubstitution https://www.wikiwand.com/\\1/\\2")),
+        Row("nlhjgcligpbnjphflfdbmabbmjidnmek", "Desktopify", "desktopify", core = attachedGate("Desktopify", "https://www.instagram.com/", "an Instagram session (its open-in-new-tab links go on the feed's images)")),
+        Row("dkfhfaphfkopdgpbfkebjfcblcafcmpi", "MightyText - SMS from PC & Text from Computer", "mightytext", account = true, core = popupLogin("MightyText")),
+        Row("mbflpfaamifmmmkdjkcmpofpccfmlmap", "Video Downloader - MPMux", "video-downloader-mpmux", core = mediaPopup("Video Downloader - MPMux", "hls.html?mpmux", "/stream\\.m3u8|\\.m3u8|hls/i", probe = true, listener = "webRequest.onBeforeSendHeaders and onResponseStarted (media, xmlhttprequest, object, other; responseHeaders)")),
+        Row("hbdkkfheckcdppiaiabobmennhijkknn", "Open SEO Stats(Formerly: PageRank Status)", "open-seo-stats", core = popupMarker("Open SEO Stats", OPEN_SEO_POPUP, page = "page-a.html?openseo", settleMs = 25_000, gate = "an Open SEO Stats account and its plan (its first launch opens its Google sign-in over the popup; its Page Info and Links tabs are blurred behind its paid level; the SEO Stats tab asks user.openadmintools.com for the tab's host)", apiHost = "user.openadmintools.com")),
+        Row("djnhkfljnimcpelfndpcjcgngmefaobl", "Talk & Comment: Voice Notes & Audio Feedback", "talk-and-comment", core = accountGate("Talk & Comment", Regex("talkandcomment\\.com", RegexOption.IGNORE_CASE), injects = "#tac-extension-root, #tac-ExtensionRoot", gate = "a Talk & Comment account and the microphone (its recorder uploads the voice note to its service)")),
+        Row("hldjnlbobkdkghfidgoecgmklcemanhm", "Web Highlights: PDF & Web Highlighter + Notes & AI Summary", "web-highlights", core = actionMarker("Web Highlights", "article.html?webhighlights", WEB_HIGHLIGHTS_SIDEBAR, settleMs = 35_000)),
+        Row("jajilbjjinjmgcibalaakngmkilboobh", "Astar VPN - Free and fast VPN for everyone", "astar-vpn", core = vpn("Astar VPN", pac = true, consent = true)),
+        Row("iphblfpnippelmibidfaejanmnhcjdee", "GNTD: Glass New Tab Dashboard", "gntd", core = newTabOverride("GNTD")),
+        Row("defekohaofmambflfpfoojkmfdpcbgko", "YouTube DJ effects / EQ / Volume Booster / Bass Booster", "youtube-dj", core = captureLimit("YouTube DJ", "/\\bon\\b|\\boff\\b|volume|bass|\\beq\\b/i")),
+        Row("iohcojnlgnfbmjfjfkbhahhmppcggdog", "EverSync - Sync bookmarks, backup favorites", "eversync", account = true, core = popupLogin("EverSync")),
+        Row("eignhdfgaldabilaaegmdfbajngjmoke", "Black Menu for Google™", "black-menu-for-google", core = popupMarker("Black Menu for Google", BLACK_MENU_POPUP, settleMs = 30_000)),
+        Row("ailcmbgekjpnablpdkmaaccecekgdhlh", "Tab Manager by Workona", "workona", account = true, core = popupLogin("Tab Manager by Workona")),
+        Row("boffdonfioidojlcpmfnkngipappmcoh", "FC27 Enhancer | SBC Solver, Trader & Keyboard Shortcuts", "fc27-enhancer", core = attachedGate("FC27 Enhancer", "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/", "an EA account (the web app signs in before its enhancer has a page to act on)")),
+        Row("nbkomboflhdlliegkaiepilnfmophgfg", "Custom Progress Bar for YouTube™", "custom-progress-bar", core = { row, entry -> youtube(row, entry, CUSTOM_PROGRESS_BAR_STYLE, "Custom Progress Bar's style on a watch page", desktopSite = true, settleMs = 30_000) }),
+        Row("ioiepomamdncfjkigofklhciigbonnlk", "Telegram Video Downloader - TG Downloader", "telegram-video-downloader", core = attachedGate("Telegram Video Downloader", "https://web.telegram.org/k/", "a Telegram session (its download buttons go on the chat's media bubbles; signed out the page is the QR code and the phone-number form)")),
+        // The five largest bundles last (Live Start Page 37.1 MB, ProWritingAid 30.0, Note Board 16.5, AdBlock Max 14.9, RoEarn 6.8), as rounds 19 to 23 ordered their own.
+        Row("ocggccaacacpienfcgmgcihoombokbbj", "Live Start Page - Living Wallpapers", "live-start-page", core = newTabOverride("Live Start Page")),
+        Row("npnbdojkgkbcdfdjlfdmplppdphlhhcf", "ProWritingAid: Grammar Checker & Paraphrasing Tool", "prowritingaid", account = true, core = popupLogin("ProWritingAid")),
+        Row("goficmpcgcnombioohjcgdhbaloknabb", "Note Board - Sticky Notes App", "note-board", core = actionPage("Note Board", Regex("popup\\.html"), NOTE_BOARD_PAGE, listOf("page-a.html?noteboard"))),
+        Row("ggdpplfehdighdpleoegjefnpefgpgfh", "AdBlock Max - ad blocker", "adblock-max", core = ::adBlocker),
+        Row("fooenmopnfaejehogdbmegaleanpdcea", "RoEarn: Custom Avatar Creator & Cashback", "roearn", core = attachedGate("RoEarn", "https://www.roblox.com/", "a Roblox account (its `#nav-roearn` sidebar entry, cashback and avatar tools go on the signed-in pages; signed out its injector still marks the page with `#__roearn_extension_url__`)")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -8008,6 +8106,41 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 24 (ranks 601-630 by installs) --------------------------
+
+    /**
+     * A main-frame redirect of one live site to another by a static `declarativeNetRequest`
+     * ruleset (Wikiwand: `regexFilter "^https://([a-z-]+)\.wikipedia\.org/wiki/([^?#]+)"` with
+     * `regexSubstitution "https://www.wikiwand.com/\1/\2"`, `www.wikipedia.org` excluded, an
+     * `allow` of higher priority for `?oldformat`): a tab opened on [url] whose address lands on
+     * [landsOn] is the pass – the redirect applied at the intercept before the request went out,
+     * as MEGA's to its bundled client ([megaClient]) –, the rulesets the worker has enabled
+     * (`DNR_RULESETS_PROBE`) read beside it. Chrome redirects a main-frame request at its start,
+     * so the site's own reachability is no part of the measure: the tab still on the site after
+     * the wait is `F`, the rule not applied, an error page for the site named in the reason.
+     */
+    private fun dnrRedirects(label: String, url: String, landsOn: Regex, rule: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        backgroundView(row.id)?.let { bg -> extra.put("rulesets", probe(bg, DNR_RULESETS_PROBE, "__zenRulesets", scaled(8_000, factor))) }
+        val tab = createTab(url)
+        val started = SystemClock.uptimeMillis()
+        val landed = poll(scaled(30_000, factor), 700) { tabUrls()[tab]?.takeIf { landsOn.containsMatchIn(it) } }
+        val now = tabUrls()[tab] ?: ""
+        val view = runCatching { waitForView(tab) }.getOrNull()
+        val state = view?.let { v -> runCatching { json(tabEval(v, PAGE_OR_ERROR)) }.getOrNull() } ?: JSONObject()
+        extra.put("url", now.take(160)).put("waitedMs", SystemClock.uptimeMillis() - started).put("page", state)
+        view?.let { extra.put("console", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-dnr-redirect")
+        val rulesets = extra.optJSONObject("rulesets")?.let { r -> "enabled ${r.opt("enabled") ?: "?"}${r.optString("err").takeIf { it.isNotEmpty() && it != "null" }?.let { ", error $it" } ?: ""}" } ?: "no background view"
+        val errored = state.optBoolean("errorPage") || now.startsWith("zen://error")
+        when {
+            landed != null -> Grade("P", "$label: $url was sent to ${now.take(90)} by $rule at the intercept (rulesets $rulesets)", extra)
+            else -> Grade("F", "$label: the tab stayed on ${now.take(90)} for ${(SystemClock.uptimeMillis() - started) / 1000} s${if (errored) " (an error page: ${state.optString("code").ifEmpty { state.optString("text").take(60) }})" else ""} – $rule did not apply to the main-frame request (rulesets $rulesets)", extra)
+        }
+    }
 
     // --- the core checks of compat round 23 (ranks 571-600 by installs) --------------------------
 
@@ -15560,6 +15693,108 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SAML_TRACER_LISTED =
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
+
+        // --- the expressions of compat round 24 (ranks 601-630) ---------------------------------
+
+        /**
+         * PWA Install Block's removal of the page's manifest link: the fixture (`pwa.html`) links
+         * `/pwa.webmanifest` in its source, so the link's absence is the removal (nothing else
+         * strips a manifest link); its `document_start` content script's observer removes the
+         * first `link[rel=manifest]` at its callback and disconnects. The head script's
+         * `window.__pwa.hadManifest` is the ordering's witness (true when it ran before the
+         * observer's microtask, the usual order; false when the parser yielded first), not the
+         * measure; the paragraph the fixture appends 2 s in is read beside it (a mutation after
+         * the observer's work).
+         */
+        private const val PWA_BLOCK_MARKER =
+            "(function(){var link=document.querySelector('link[rel=\"manifest\"]');var p=window.__pwa||{};" +
+                "return JSON.stringify({pass:!link,present:!!link,hadManifest:p.hadManifest===true,late:p.late===true,links:document.querySelectorAll('link').length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,60)})})()"
+
+        /** ZIP Extractor's `open.html` (the tab its click opens): its `#formView` drawn (`hidden` until its script's `showView('formView')`) with the `#urlInput` address field and the `#openButton`; the `#statusRegion` text beside them (its `permissionView` is the fallback after a site refuses a download). */
+        private const val ZIP_EXTRACTOR_PAGE =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}var b=document.getElementById('openButton');var s=document.getElementById('statusRegion');" +
+                "return JSON.stringify({pass:shown('#formView')&&!!document.getElementById('urlInput')&&!!b,form:shown('#formView'),permission:shown('#permissionView'),urlInput:!!document.getElementById('urlInput'),openButton:b?(b.textContent||b.value||'').replace(/\\s+/g,' ').trim().slice(0,40):null,status:s?(s.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Martian's provider in the page world: `window.martian` (the provider class instance its
+         * page script sets, `connect` on it – the only global it adds); the Wallet Standard
+         * registration the fixture recorded read beside it.
+         */
+        private const val MARTIAN_PROVIDER =
+            "(function(){var m=window.martian||null;" +
+                "return JSON.stringify({pass:!!m&&typeof m.connect==='function',martian:typeof m,connect:typeof (m&&m.connect),connected:!!(m&&m._isConnected),keys:m?Object.keys(m).slice(0,8):[],standard:window.__wallet?window.__wallet.standard:null})})()"
+
+        /**
+         * Webpage Screenshot's menu over the page after the click: the bar its content script
+         * mounts in an open shadow root on a `div` host appended to the body – `#ws_all_buttons`
+         * with its buttons (`#ws_entire` the entire page, `#start_visible` the visible part,
+         * `#start_desktop`, `#edit_content`, `#ws_close`). The light DOM is searched when no
+         * body child carries the bar in a shadow root.
+         */
+        private const val WPS_MENU =
+            "(function(){var ids=['ws_entire','start_visible','start_desktop','edit_content','ws_close'];var root=null,host=null;var kids=document.body?document.body.children:[];for(var i=0;i<kids.length;i++){var sr=kids[i].shadowRoot;if(sr&&(sr.querySelector('#ws_all_buttons')||sr.querySelector('#ws_entire')||sr.querySelector('#start_visible'))){root=sr;host=kids[i];break}}if(!root&&document.querySelector('#ws_all_buttons'))root=document;var all=root?root.querySelector('#ws_all_buttons'):null;var found=root?ids.filter(function(i){return !!root.querySelector('#'+i)}):[];" +
+                "return JSON.stringify({pass:!!all&&found.length>=2,host:host?host.tagName.toLowerCase()+(host.id?'#'+host.id:''):null,shadow:!!(root&&root!==document),bar:!!all,buttons:found.join(' '),text:all?(all.textContent||'').replace(/\\s+/g,' ').trim().slice(0,100):null})})()"
+
+        /**
+         * Browser Lock's popup (`screen.html#/ppup`): its `/ppup` route drawn – its two buttons
+         * (lock the browser, open the settings; the en locale mixes languages, so their count
+         * and the route are the measure, the labels read beside them).
+         */
+        private const val BROWSER_LOCK_POPUP =
+            "(function(){var labels=[].slice.call(document.querySelectorAll('button, [role=button], a.btn')).map(function(b){return (b.innerText||b.textContent||'').replace(/\\s+/g,' ').trim()}).filter(function(t){return t.length>0});" +
+                "return JSON.stringify({pass:labels.length>=2&&/\\/ppup/.test(location.hash),labels:labels.slice(0,4),hash:location.hash,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Open SEO Stats' popup (`popup.html`): the SEO Stats tab its free level shows –
+         * `#frame_seostats` (`frame-seostats.html`, the extension's own origin) with its
+         * `.report_container` whose first `th` names the tab's host ("PagesIndexed: <host>",
+         * `sessionStorage.host` the popup's read of the active tab); the Google sign-in button
+         * its first launch raises and its `GetUserLevel()` read beside them.
+         */
+        private const val OPEN_SEO_POPUP =
+            "(function(){var f=document.getElementById('frame_seostats');var d=null;try{d=f?f.contentDocument:null}catch(e){}var rc=d?d.querySelector('.report_container'):null;var th=d?(d.querySelector('.report_container th')||d.querySelector('th')):null;var head=th?(th.textContent||'').replace(/\\s+/g,' ').trim():'';var host='';try{host=sessionStorage.getItem('host')||''}catch(e){}var url='';try{url=sessionStorage.getItem('url')||''}catch(e){}var level=null;try{level=typeof GetUserLevel==='function'?GetUserLevel():null}catch(e){level='err'}" +
+                "return JSON.stringify({pass:!!rc&&host.length>0&&head.indexOf(host)>=0,frame:!!f,doc:!!d,report:!!rc,head:head.slice(0,80),host:host.slice(0,60),url:url.slice(0,80),login:!!document.getElementById('btn_google_login'),level:level,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Web Highlights' sidebar mounted in the page after the click: its custom elements
+         * (`webhighlights-sidebar`, `webhighlights-app-view`, `webhighlights-toggle-button`)
+         * found through open shadow roots (four levels, three thousand nodes a root); the
+         * sidebar's width read beside them. The elements are defined in the content script's
+         * world, so `customElements.get` in the page world stays empty (`defined`).
+         */
+        private const val WEB_HIGHLIGHTS_SIDEBAR =
+            "(function(){var names=['webhighlights-sidebar','webhighlights-app-view','webhighlights-toggle-button'];var found={};var width=null;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];var tag=n.tagName.toLowerCase();if(names.indexOf(tag)>=0){found[tag]=true;if(tag==='webhighlights-sidebar'&&width===null)width=Math.round(n.getBoundingClientRect().width)}if(n.shadowRoot)scan(n.shadowRoot,depth+1)}}scan(document,0);" +
+                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']),found:Object.keys(found),width:width,defined:typeof customElements!=='undefined'&&!!customElements.get('webhighlights-sidebar')})})()"
+
+        /**
+         * Black Menu's popup: its navigation list drawn – `.bm-ele-navlist__item` entries (its
+         * `bm-navitem` template's `role=menuitem` rows for Google's services), five or more,
+         * found through open shadow roots; its app root and sign-in button read beside them.
+         */
+        private const val BLACK_MENU_POPUP =
+            "(function(){var items=0;var labels=[];function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<4000;i++){var n=nodes[i];if(n.classList&&n.classList.contains('bm-ele-navlist__item')){items++;if(labels.length<6){var t=(n.getAttribute('aria-label')||n.getAttribute('title')||n.textContent||'').replace(/\\s+/g,' ').trim();if(t)labels.push(t.slice(0,30))}}if(n.shadowRoot)scan(n.shadowRoot,depth+1)}}scan(document,0);" +
+                "return JSON.stringify({pass:items>=5,items:items,labels:labels,app:!!document.querySelector('.bm-ele-app, .bm-app, .cjmd-container'),signIn:!!document.querySelector('.bm-ele-signinbutton'),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Custom Progress Bar's style on a watch page: the `<style data-custom-progressbar>` its
+         * content script appends (the stored `current` bar – the Starter "Pepperoni Pizza"
+         * seeded at install, `is_enable` true), its CSS naming `.ytp-play-progress`; the
+         * player's progress element with its computed background and the 3 s
+         * `data-custom-progressbar-bottom` style read beside them.
+         */
+        private const val CUSTOM_PROGRESS_BAR_STYLE =
+            "(function(){var s=document.querySelector('style[data-custom-progressbar]');var css=s?(s.textContent||''):'';var p=document.querySelector('.ytp-play-progress');var bg=null;try{bg=p?getComputedStyle(p).backgroundImage.slice(0,80):null}catch(e){}" +
+                "return JSON.stringify({pass:!!s&&/ytp-play-progress/.test(css),style:!!s,cssLength:css.length,progress:!!p,background:bg,bottom:!!document.querySelector('style[data-custom-progressbar-bottom]'),player:!!document.querySelector('#movie_player, .html5-video-player')})})()"
+
+        /**
+         * Note Board's `popup.html` (the tab its click opens; a page of its own, not a popup):
+         * its board (`#Postits`, the notes' container its script creates) drawn with its add
+         * button (`#botonPost`), its bottom panel (`#panelBotDiv`) or its board name
+         * (`#nombreTablon`); the notes' count read beside them.
+         */
+        private const val NOTE_BOARD_PAGE =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}var board=document.getElementById('Postits');var name=document.getElementById('nombreTablon');" +
+                "return JSON.stringify({pass:!!board&&(shown('#botonPost')||shown('#panelBotDiv')||shown('#nombreTablon')),board:!!board,notes:board?board.children.length:0,addButton:shown('#botonPost'),panel:shown('#panelBotDiv'),boardName:name?((name.value||name.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40)):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
 
         // --- the expressions of compat round 23 (ranks 571-600) ---------------------------------
 
