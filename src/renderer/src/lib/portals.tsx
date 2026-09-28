@@ -1069,17 +1069,21 @@ function useToastSeat(
     return () => window.removeEventListener('keydown', onKey, true)
   }, [active, slotRef])
 
-  // Whether the keyboard is in the seat: a card's control removed with its toast fires no blur,
-  // so the last focus seen is kept and read when the cards change.
-  const keyboardInSeat = useRef(false)
+  // The seat's control the focus was last on, kept until the focus goes somewhere of its own
+  // (a `focusout` naming where it went, outside the seat). A control removed with its toast –
+  // pressed, timed out – leaves the focus on the body: Chromium blurs it as it goes with no
+  // `relatedTarget`, the very events a press on the scrim or the window losing focus give (and
+  // happy-dom, like Firefox, fires none), so that blur decides nothing; the control itself
+  // does, read when the cards change – gone or on its way out, the focus is returned.
+  const seatFocus = useRef<HTMLElement | null>(null)
   useEffect(() => {
     if (!seat) return
-    const onIn = (): void => {
-      keyboardInSeat.current = true
+    const onIn = (e: FocusEvent): void => {
+      if (e.target instanceof HTMLElement) seatFocus.current = e.target
     }
     const onOut = (e: FocusEvent): void => {
-      if (!(e.relatedTarget instanceof Node) || !seat.contains(e.relatedTarget))
-        keyboardInSeat.current = false
+      if (e.relatedTarget instanceof Node && !seat.contains(e.relatedTarget))
+        seatFocus.current = null
     }
     seat.addEventListener('focusin', onIn)
     seat.addEventListener('focusout', onOut)
@@ -1090,12 +1094,15 @@ function useToastSeat(
   }, [seat])
   useEffect(() => {
     const seatEl = seatRef.current
-    if (!active || !seatEl || !keyboardInSeat.current) return
+    const last = seatFocus.current
+    if (!active || !seatEl || !last) return
+    const standsIn = (el: Element): boolean =>
+      el.isConnected && seatEl.contains(el) && el.closest('[data-leaving]') === null
     const now = document.activeElement
-    const stands =
-      now instanceof HTMLElement && seatEl.contains(now) && now.closest('[data-leaving]') === null
-    if (stands) return
-    keyboardInSeat.current = false
+    if (now instanceof HTMLElement && standsIn(now)) return
+    // The control still stands and the focus left it on its own: nothing to return.
+    if (standsIn(last)) return
+    seatFocus.current = null
     const slot = slotRef.current
     const topPanel = slot && topPanelIn(slot)
     if (topPanel) dialogReturn(topPanel).focus({ preventScroll: true })

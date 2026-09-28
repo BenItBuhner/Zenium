@@ -319,7 +319,27 @@ const openSheet = (): RecedeHandle => {
   return handle
 }
 
+/**
+ * Chromium's blur on removal: a focused node removed from the document gets `blur` and
+ * `focusout` with a null `relatedTarget` as it goes – the same events a press on the scrim or
+ * the window losing focus gives – where happy-dom, like Firefox, fires none. The desktop drive
+ * of W8-F16 found the seat reading that blur as the keyboard leaving it, the focus left on the
+ * body once the Undo went; the tests run under Chromium's rule.
+ */
+const removeChild = Node.prototype.removeChild
+const blurOnRemoval = (): void => {
+  Node.prototype.removeChild = function <T extends Node>(this: Node, child: T): T {
+    const focused = document.activeElement
+    if (focused && focused !== document.body && child.contains(focused)) {
+      focused.dispatchEvent(new FocusEvent('blur', { relatedTarget: null }))
+      focused.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+    }
+    return removeChild.call(this, child) as T
+  }
+}
+
 beforeEach(() => {
+  blurOnRemoval()
   vi.useFakeTimers()
   vi.stubGlobal('requestAnimationFrame', () => 1)
   vi.stubGlobal('cancelAnimationFrame', () => undefined)
@@ -348,6 +368,7 @@ afterEach(() => {
   root = null
   mount?.remove()
   mount = null
+  Node.prototype.removeChild = removeChild
   for (const sheet of sheets.splice(0)) sheet.release()
   uiStore.set({ toasts: [], banners: [], screenshotCards: [], frameDialogsOpen: 0 })
   viewportStore.set({
@@ -592,6 +613,30 @@ describe('the keyboard: the Undo is the last stop of the dialog’s Tab cycle (�
     focus(control('data-got-it'))
     tab()
     expect(active()).toBe(undo())
+    act(() => vi.advanceTimersByTime(TOAST_UNDO_MS))
+    expect(uiStore.get().toasts).toEqual([])
+    expect(active()).toBe(dialog())
+  })
+
+  it('a blur naming no place while the Undo stands – the window losing focus – returns nothing when other cards change; the Undo going does', () => {
+    render(<Desktop dialog />)
+    act(() => {
+      allowAgain()
+    })
+    focus(control('data-got-it'))
+    tab()
+    expect(active()).toBe(undo())
+    // The window loses focus: `blur` and `focusout` with no `relatedTarget`, the control standing.
+    act(() => undo()!.blur())
+    expect(active()).toBe(document.body)
+    // Another card comes and goes: the Undo stands on, the focus is left where it is.
+    act(() => {
+      pushToast('Saved', 'info', { duration: 1000 })
+    })
+    expect(active()).toBe(document.body)
+    act(() => vi.advanceTimersByTime(1000))
+    expect(active()).toBe(document.body)
+    // The Undo goes with its clock: the focus returns to the dialog.
     act(() => vi.advanceTimersByTime(TOAST_UNDO_MS))
     expect(uiStore.get().toasts).toEqual([])
     expect(active()).toBe(dialog())
