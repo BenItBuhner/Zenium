@@ -33,6 +33,7 @@ import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.ext.SweepHeapSteps
+import app.zen.chromium.ext.SweepInsertProbe
 import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepOrderProbe
 import app.zen.chromium.ext.SweepScreenGuard
@@ -2832,7 +2833,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * runs once its document is complete, then `expr` (a `JSON.stringify` of `{pass, ...}`) is
      * polled for `pass`. Phantom's `window.phantom.solana` on the wallet page is one.
      */
-    private fun domMarker(label: String, fixture: String, expr: String, settleMs: Long = 25_000, prepare: ((WebView) -> Unit)? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun domMarker(label: String, fixture: String, expr: String, settleMs: Long = 25_000, prepare: ((WebView) -> Unit)? = null, onMiss: ((WebView, Row, Double) -> JSONObject)? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val tab = createTab(fixtureUrl(fixture))
         val view = waitForView(tab)
@@ -2842,8 +2843,67 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val found = pollExpr(view, expr, scaled(settleMs, factor))
         val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        if (!found.optBoolean("pass")) extra.put("errors", targetErrors(view))
-        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(240)}", extra)
+        if (!found.optBoolean("pass")) {
+            extra.put("errors", targetErrors(view))
+            // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading joins the grade's word.
+            onMiss?.let { extra.put("probe", it(view, row, factor)) }
+        }
+        val probeWord = extra.optJSONObject("probe")?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
+        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
+    }
+
+    /**
+     * AdGuard Extra's discriminating probe, run when the row's own reading found no
+     * resource-timing entry for `userscript.js` (round 23's BEFORE on WebView 156: the
+     * isolated-world content script ran at document_start with no error and appended and removed
+     * its `<script src>`, and the page's timeline held no entry for it in ~100 s, where WebView
+     * 113's page world fetched it – 200, 297,918 bytes). The same insertion is run again three
+     * ways and each load's verdict read: in the extension's isolated world with
+     * `chrome.runtime.getURL('userscript.js')` as the content script spells it (`?zenworld`) and
+     * with the served origin spelled out (`?zenworldorigin`), and in the page world with the
+     * served origin (`?zenpage`). The record: the world's `getURL` answer and `typeof
+     * window.browser`, each element's `src` as the attribute reads after the shield and the
+     * parent it went under, the elements' `load` / `error` events (written to `<html
+     * data-agx-*>`, the DOM the worlds share), the timeline's entries for the three
+     * (`responseStatus` on Chromium 109+), the timeline's size and its last names, and the
+     * bridge's script-recovery lines (`mainScript`, `extFetch`, `chunkScript`) of the row;
+     * [SweepInsertProbe.reading] names where the miss is (document_start's moment, the world's
+     * `getURL` spelling, the world, the loader). On a WebView without isolated worlds the page's
+     * insert stands for both realms. The file runs in the page once per insert that loads – its
+     * effects are for its listed hosts alone, none on the fixture.
+     */
+    private fun adguardExtraProbe(view: WebView, row: Row, factor: Double): JSONObject {
+        val probe = JSONObject()
+        val origin = "https://${row.id}${Extensions.ORIGIN_SUFFIX}/userscript.js"
+        var worldRan = false
+        if (worlds) {
+            val world = worldEval(view, row.id, ADGUARD_EXTRA_WORLD_INSERT.replace("%ORIGIN%", JSONObject.quote(origin)))?.let { json(it) }
+            worldRan = world?.optJSONArray("inserted")?.length() == 2
+            probe.put("world", world ?: JSONObject().put("error", "the world answered nothing (no world endpoint for the extension on the frame, or the script threw before its return)"))
+        } else {
+            probe.put("world", "one realm on this WebView (no isolated worlds): the page's insert stands for both")
+        }
+        probe.put("page", json(tabEval(view, ADGUARD_EXTRA_PAGE_INSERT.replace("%URL%", JSONObject.quote("$origin?zenpage")))))
+        val read = pollExpr(view, ADGUARD_EXTRA_PROBE_READ.replace("%NOWORLD%", if (worldRan) "false" else "true"), scaled(12_000, factor))
+        probe.put("read", read)
+        var trace: List<String> = emptyList()
+        instrumentation.runOnMainSync { trace = host.extensions.traceSnapshot(row.id) }
+        val recovery = trace.filter { it.contains(" mainScript") || it.contains(" extFetch") || it.contains(" chunkScript") }
+        probe.put("recovery", JSONArray(recovery.takeLast(12))).put("bridgeLines", trace.size)
+        val verdict = read.optJSONObject("verdict") ?: JSONObject()
+        val entries = read.optJSONObject("entries") ?: JSONObject()
+        val legs = SweepInsertProbe.Legs(
+            worldRan = worldRan,
+            world = SweepInsertProbe.verdict(verdict.optString("zenworld", "").takeIf { verdict.opt("zenworld") is String }),
+            worldOrigin = SweepInsertProbe.verdict(verdict.optString("zenworldorigin", "").takeIf { verdict.opt("zenworldorigin") is String }),
+            page = SweepInsertProbe.verdict(verdict.optString("zenpage", "").takeIf { verdict.opt("zenpage") is String }),
+            worldEntry = entries.optJSONObject("zenworld") != null,
+            worldOriginEntry = entries.optJSONObject("zenworldorigin") != null,
+            pageEntry = entries.optJSONObject("zenpage") != null,
+            recoveryLines = recovery.size
+        )
+        probe.put("reading", SweepInsertProbe.reading(legs))
+        return probe
     }
 
     /**
@@ -7895,7 +7955,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("aomidfkchockcldhbkggjokdkkebmdll", "Redirect Path", "redirect-path", core = popupMarker("Redirect Path", REDIRECT_PATH_CHAIN, page = "redirect?to=/page-a.html&redirectpath=1", settleMs = 25_000)),
         Row("ienfalfjdbdpebioblfackkekamfmbnh", "Angular DevTools", "angular-devtools", core = popupMarker("Angular DevTools", ANGULAR_DEVTOOLS_POPUP, page = "angular.html?ngdevtools", settleMs = 25_000, fixtureSettleMs = 3_000)),
         Row("oodfdmglhbbkkcngodjjagblikmoegpa", "Url Shortener", "url-shortener", core = popupMarker("Url Shortener", URL_SHORTENER_RESULT, page = "page-a.html?tly", settleMs = 25_000, notMeasurable = Regex("had an error|error|failed|try again|unavailable", RegexOption.IGNORE_CASE), gate = "t.ly's shortening API (api.t.ly, asked for the runner's own address)", apiHost = "api.t.ly")),
-        Row("gkeojjjcdcopjkbelgbcpckplegclfeg", "AdGuard Extra", "adguard-extra", core = domMarker("AdGuard Extra's userscript.js handed to the page world", "page-a.html?adguardextra", ADGUARD_EXTRA_SCRIPT, settleMs = 25_000)),
+        Row("gkeojjjcdcopjkbelgbcpckplegclfeg", "AdGuard Extra", "adguard-extra", core = domMarker("AdGuard Extra's userscript.js handed to the page world", "page-a.html?adguardextra", ADGUARD_EXTRA_SCRIPT, settleMs = 25_000, onMiss = { view, row, factor -> adguardExtraProbe(view, row, factor) })),
         Row("bnmojkbbkkonlmlfgejehefjldooiedp", "Otter.ai: Record & Transcribe Meetings - Google Meet & Web Audio", "otter-ai", core = accountGate("Otter.ai", Regex("otter\\.ai", RegexOption.IGNORE_CASE), injects = "#otter-root, .otter-react-root, #otter-container, [class*=\"otter-\"]", gate = "an Otter.ai account (its click has its content script mount the Otter widget, which signs in at otter.ai; the recording itself is a tab capture the WebView has not)")),
         Row("fpjppnhnpnknbenelmbnidjbolhandnf", "Enable Copy Paste - E.C.P", "enable-copy-paste-ecp", core = popupSwitch("Enable Copy Paste - E.C.P", "right-click.html?ecp", "#enable-checkbox", ECP_ENABLED, settleMs = 30_000)),
         Row("hgenngnjgfkdggambccohomebieocekm", "Bulk URL Opener Extension", "bulk-url-opener", core = ::bulkUrlOpener),
@@ -15560,6 +15620,37 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val ADGUARD_EXTRA_SCRIPT =
             "(function(){var rs=performance.getEntriesByType('resource').filter(function(e){return /userscript\\.js/.test(e.name)});if(!window.__agx&&rs.length){window.__agx={pending:true};fetch(rs[0].name).then(function(r){return r.text().then(function(t){window.__agx={ok:r.ok,status:r.status,bytes:t.length,userscript:/==UserScript==/.test(t)}})}).catch(function(e){window.__agx={error:String(e)}})}var a=window.__agx||null;" +
                 "return JSON.stringify({pass:!!(a&&a.ok&&a.userscript),entries:rs.length,name:rs.length?rs[0].name.slice(0,90):null,fetched:a})})()"
+
+        /**
+         * The world half of [adguardExtraProbe], run in the extension's isolated world: the content
+         * script's own insertion twice – `chrome.runtime.getURL('userscript.js')` as it spells it
+         * (`window.browser || chrome`, `?zenworld`) and the served origin spelled out
+         * (`%ORIGIN%`, `?zenworldorigin`) –, each element's `load` / `error` written to
+         * `<html data-agx-<tag>>` (the DOM the worlds share) for the page-world read; the
+         * `getURL` answer, `typeof window.browser`, the `src` attribute as it reads after the
+         * shield and the parent the element went under returned.
+         */
+        private const val ADGUARD_EXTRA_WORLD_INSERT =
+            "(function(){var out={getURL:null,browser:typeof window.browser,chrome:typeof chrome,head:!!document.head,inserted:[],error:null};try{var b=window.browser||chrome;var u=b.runtime.getURL('userscript.js');out.getURL=u;var origin=%ORIGIN%;" +
+                "[[u+'?zenworld','zenworld'],[origin+'?zenworldorigin','zenworldorigin']].forEach(function(p){var s=document.createElement('script');s.setAttribute('type','text/javascript');s.className='extra';s.addEventListener('load',function(){document.documentElement.setAttribute('data-agx-'+p[1],'load')});s.addEventListener('error',function(){document.documentElement.setAttribute('data-agx-'+p[1],'error')});s.setAttribute('src',p[0]);" +
+                "var parent=document.head||document.documentElement;parent.appendChild(s);out.inserted.push({tag:p[1],src:String(s.getAttribute('src')).slice(0,120),parent:parent.nodeName});if(s.parentNode){s.parentNode.removeChild(s)}})}catch(e){out.error=String(e)}return JSON.stringify(out)})()"
+
+        /** The page half of [adguardExtraProbe]: the same insertion in the page world with the served origin (`%URL%`, quoted), its verdict on `window.__agxPage`. */
+        private const val ADGUARD_EXTRA_PAGE_INSERT =
+            "(function(){var s=document.createElement('script');s.setAttribute('type','text/javascript');s.className='extra';window.__agxPage={src:null,event:null,parent:null};s.addEventListener('load',function(){window.__agxPage.event='load'});s.addEventListener('error',function(){window.__agxPage.event='error'});s.setAttribute('src',%URL%);" +
+                "var parent=document.head||document.documentElement;parent.appendChild(s);window.__agxPage.src=String(s.getAttribute('src')).slice(0,120);window.__agxPage.parent=parent.nodeName;if(s.parentNode){s.parentNode.removeChild(s)}return JSON.stringify(window.__agxPage)})()"
+
+        /**
+         * The read of [adguardExtraProbe], polled in the page world until every insert has its
+         * verdict (`%NOWORLD%` true when the world's inserts did not run): the three verdicts, the
+         * timeline's entry for each (`responseStatus` where the WebView has it), the count of
+         * entries for the extension's own load, the timeline's size and its last names.
+         */
+        private const val ADGUARD_EXTRA_PROBE_READ =
+            "(function(){var rs=performance.getEntriesByType('resource');function ent(tag){var e=rs.filter(function(x){return x.name.indexOf('?'+tag)>=0})[0];return e?{name:e.name.slice(0,110),status:('responseStatus' in e)?e.responseStatus:null,transfer:e.transferSize,duration:Math.round(e.duration),initiator:e.initiatorType}:null}var de=document.documentElement;var noWorld=%NOWORLD%;" +
+                "var verdict={zenworld:de.getAttribute('data-agx-zenworld'),zenworldorigin:de.getAttribute('data-agx-zenworldorigin'),zenpage:(window.__agxPage||{}).event||null};var entries={zenworld:ent('zenworld'),zenworldorigin:ent('zenworldorigin'),zenpage:ent('zenpage')};" +
+                "var own=rs.filter(function(x){return /userscript\\.js/.test(x.name)&&!/[?&]zen(world|page)/.test(x.name)}).length;var settled=(noWorld||(verdict.zenworld!==null&&verdict.zenworldorigin!==null))&&verdict.zenpage!==null;" +
+                "return JSON.stringify({pass:settled,settled:settled,verdict:verdict,entries:entries,ownEntries:own,all:rs.length,names:rs.slice(-8).map(function(x){return x.name.slice(-70)})})})()"
 
         /**
          * Enable Copy Paste's effect on the right-click fixture after its popup switch: its
