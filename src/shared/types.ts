@@ -405,7 +405,10 @@ export interface SelectionMenuState {
  * `selectionMenu.surfaceSize`): `below`, the pixels the surface reaches under the box so a
  * tooltip 8 under a button stays 8 inside the document, and `width`, the least width of the
  * surface for the widest title's tooltip and its margins. CSS pixels, whole; the core adds
- * them around the pill (`placeMiniMenuSurface`), never moving the pill for them.
+ * them around the pill (`placeMiniMenuSurface`), never moving the pill for them. Asked for the
+ * tooltip's moment alone – while one is on its way or up – and given back the instant it is
+ * over: at rest the surface is the pill's padded box, and nothing under it eats the page's
+ * pointer.
  */
 export interface MiniMenuRoom {
   below: number
@@ -6663,12 +6666,19 @@ export interface Commands {
    * The pill's document measured the size its content wants (CSS px, the pill's box without the
    * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`, in the
    * pose it drew (`folded`: the glyph row, or the full pill) – with, for the folded row, the
-   * room its glyph buttons' tooltips need beyond the box (`room`, `MiniMenuRoom`); the core
-   * keeps one measurement per pose and places the popup surface to fit
-   * (`SelectionMenuService.surfaceSize`).
+   * room its glyph buttons' tooltips need beyond the box while one is on its way or up (`room`,
+   * `MiniMenuRoom`; null at rest, the same box told again as the moment comes and goes); the
+   * core keeps one measurement per pose and places the popup surface to fit
+   * (`SelectionMenuService.surfaceSize`), back at the padded box on the null.
    */
   'selectionMenu.surfaceSize': {
-    args: { tabId: string; width: number; height: number; folded: boolean; room?: MiniMenuRoom }
+    args: {
+      tabId: string
+      width: number
+      height: number
+      folded: boolean
+      room?: MiniMenuRoom | null
+    }
     result: void
   }
   /**

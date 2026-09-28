@@ -64,14 +64,14 @@ function measure(
   width: number,
   height: number,
   folded = false,
-  room?: MiniMenuRoom
+  room?: MiniMenuRoom | null
 ): void {
   h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
     tabId: h.tabId,
     width,
     height,
     folded,
-    ...(room ? { room } : {})
+    ...(room !== undefined ? { room } : {})
   })
 }
 
@@ -296,7 +296,7 @@ describe('the pill on the popup surface', () => {
     expect(h.popupCalls.length).toBe(placed)
   })
 
-  it('gives the folded pill the room its document asks for its tooltips, leaves a nonsensical room out of a good report, and places nothing anew for the same room', () => {
+  it('gives the folded pill the room its document asks for its tooltips’ moment, and the padded box back on the null; a nonsensical room reads as none; the same report places nothing anew', () => {
     const h = pageHarness({ ...DESKTOP, readAloud: true }, FULL)
     const full = estimateMiniMenuSize([
       { id: 'copy', title: 'Copy' },
@@ -309,22 +309,33 @@ describe('the pill on the popup surface', () => {
     layout(h, narrow)
     report(h, 'quantum foam')
     expect(model(h)?.folded).toBe(true)
-    // The estimate has no room: the tooltip comes after the pointer's dwell, by when the
-    // document has measured and asked.
+    // The estimate has no room: a tooltip arms only under a pointer or the keyboard on a drawn
+    // pill, by when the document has measured and asks.
     expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_HEIGHT + PAD * 2 })
+    // The folded row measured, at rest: the padded box.
+    measure(h, 190, 46, true, null)
+    const rest = { width: 190 + PAD * 2, height: 46 + PAD * 2 }
+    expect(h.popupCalls.at(-1)).toMatchObject(rest)
+    const box = h.popupCalls.at(-1)!
+    // A tooltip arms: the room comes under the box, the pill's own place untouched.
     measure(h, 190, 46, true, { below: 29, width: 112 })
-    expect(h.popupCalls.at(-1)).toMatchObject({
-      width: 190 + PAD * 2,
-      height: 46 + PAD * 2 + 29
-    })
+    expect(h.popupCalls.at(-1)).toEqual({ ...box, height: rest.height + 29 })
     const placed = h.popupCalls.length
     measure(h, 190, 46, true, { below: 29, width: 112 })
     expect(h.popupCalls.length).toBe(placed)
-    // A room that is not two finite, non-negative numbers is left out: the box stands, and the
-    // report is a new one.
-    measure(h, 190, 46, true, { below: -1, width: 112 })
+    // The moment is over: the null returns the surface to the padded box, on the same pixels.
+    measure(h, 190, 46, true, null)
     expect(h.popupCalls.length).toBe(placed + 1)
-    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 46 + PAD * 2 })
+    expect(h.popupCalls.at(-1)).toEqual(box)
+    measure(h, 190, 46, true, null)
+    expect(h.popupCalls.length).toBe(placed + 1)
+    // Again, and a room left out of the report reads as none, as does one that is not two
+    // finite, non-negative numbers: the box stands, the tooltips take their chances.
+    measure(h, 190, 46, true, { below: 29, width: 112 })
+    expect(h.popupCalls.at(-1)).toEqual({ ...box, height: rest.height + 29 })
+    measure(h, 190, 46, true, { below: -1, width: 112 })
+    expect(h.popupCalls.length).toBe(placed + 3)
+    expect(h.popupCalls.at(-1)).toEqual(box)
     h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
       tabId: h.tabId,
       width: 190,
@@ -332,15 +343,53 @@ describe('the pill on the popup surface', () => {
       folded: true,
       room: 'lots' as unknown as MiniMenuRoom
     })
-    expect(h.popupCalls.length).toBe(placed + 1)
-    // The full pose has no room of its own: unfolded, the surface is the padded box again.
+    measure(h, 190, 46, true)
+    expect(h.popupCalls.length).toBe(placed + 3)
+    // The full pose has no room of its own: unfolded, the surface is the padded box, a room in
+    // its report or standing from the fold notwithstanding.
+    measure(h, 190, 46, true, { below: 29, width: 112 })
     layout(h, { ...narrow, width: full.width + MINI_MENU_FOLD_SLACK })
     expect(model(h)?.folded).toBe(false)
-    measure(h, full.width, 46)
+    expect(h.popupCalls.at(-1)).toMatchObject({ height: 46 + PAD * 2 })
+    measure(h, full.width, 46, false, { below: 29, width: 112 })
     expect(h.popupCalls.at(-1)).toMatchObject({
       width: full.width + PAD * 2,
       height: 46 + PAD * 2
     })
+  })
+
+  it('forgets the room with the model: a pill up again over the same chips starts at rest, at its measured box', () => {
+    const h = pageHarness({ ...DESKTOP, readAloud: true }, FULL)
+    const full = estimateMiniMenuSize([
+      { id: 'copy', title: 'Copy' },
+      { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' },
+      { id: 'translate', title: 'Translate' },
+      { id: 'readAloud', title: 'Listen' }
+    ])
+    layout(h, { x: 0, y: 120, width: full.width + MINI_MENU_FOLD_SLACK - 1, height: 680 })
+    report(h, 'quantum foam')
+    measure(h, 190, 46, true, { below: 29, width: 112 })
+    expect(h.popupCalls.at(-1)).toMatchObject({ height: 46 + PAD * 2 + 29 })
+    // The tooltip's moment stands while the same pill follows a new box of the same words (the
+    // pill's document says when it is over, and starts over for a moved pill itself).
+    const grown = h.popupCalls.at(-1)!
+    h.browser.handlePageMessage(h.tabId, {
+      type: 'selection',
+      selection: { text: 'quantum foam', rect: { ...RECT, y: RECT.y + 40 }, isEditable: false },
+      frameId: 0
+    })
+    expect(h.popupCalls.at(-1)).toEqual({ ...grown, y: grown.y + 40 })
+    // Dismissed and up again: the measurement is kept for the same chips, the room is not.
+    h.browser.handleCommand(h.win, 'selectionMenu.dismiss', { tabId: h.tabId })
+    expect(h.popupCalls.at(-1)).toBeNull()
+    report(h, 'quantum foam')
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 46 + PAD * 2 })
+    // Other chips are another pill: at rest from the estimate.
+    measure(h, 190, 46, true, { below: 29, width: 112 })
+    report(h, 'the quantum foam theory')
+    expect(model(h)?.actions.map((a) => a.id)).not.toContain('define')
+    expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_HEIGHT + PAD * 2 })
   })
 
   it('keeps the measurement for the same chips and starts from the estimate when the chips change', () => {
