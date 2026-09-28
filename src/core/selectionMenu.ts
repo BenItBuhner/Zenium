@@ -1,4 +1,5 @@
 import type {
+  MiniMenuRoom,
   Rect,
   SelectionMenuAction,
   SelectionMenuActionId,
@@ -33,13 +34,16 @@ import type { ZenWindow } from './window'
  * The pill hugs its chips – each the button primitive at 12 of side padding around its glyph
  * and title, no floor – and folds as one row where the page view is narrower than the pill and
  * its margins (`miniMenuFolds`; the lead's rule): every chip becomes a 28 px glyph button with
- * its title as the tooltip, never one chip at a time. The fold changes the pill's width alone:
- * the box keeps §9.20's 46 in both poses, the glyph buttons centred in the 32 control band (as
- * the capture toolbar's 28 close is), so a resize across the threshold never moves the pill by
- * the buttons' 4. The fold is decided here, where the view's width is known, from the pill's
- * full width – measured when its document has, estimated until then – and told to the pill
- * through `SelectionMenuState.folded`; the document measures each pose it draws and the
- * service keeps one measurement per pose.
+ * its title as the chrome's tooltip (§9.31's, hosted in the surface's own document), never one
+ * chip at a time. The fold changes the pill's width alone: the box keeps §9.20's 46 in both
+ * poses, the glyph buttons centred in the 32 control band (as the capture toolbar's 28 close
+ * is), so a resize across the threshold never moves the pill by the buttons' 4. The fold is
+ * decided here, where the view's width is known, from the pill's full width – measured when
+ * its document has, estimated until then – and told to the pill through
+ * `SelectionMenuState.folded`; the document measures each pose it draws and the service keeps
+ * one measurement per pose. With the folded pose the document also asks the room its tooltips
+ * need beyond the pill's padded box (`MiniMenuRoom`: under the pill, and a least width for the
+ * widest title), which the surface gets around the pill without the pill moving for it.
  *
  * Desktop hosts with `capabilities.selectionMenu`, and the setting on (`Settings.
  * showSelectionMenu`, Edge's "Show mini menu when selecting text"); a report reaching a host
@@ -55,10 +59,16 @@ import type { ZenWindow } from './window'
 // Where the pill stands
 // ---------------------------------------------------------------------------
 
-/** The pill's size in window CSS pixels, as its document measured it or as estimated. */
+/**
+ * The pill's size in window CSS pixels, as its document measured it or as estimated – and, when
+ * the document measured a folded pill, the room its glyph buttons' tooltips need beyond the
+ * pill's padded box (`room`; the estimate never has one: a tooltip comes only after the
+ * pointer's dwell, by when the document has measured).
+ */
 export interface MiniMenuSize {
   width: number
   height: number
+  room?: MiniMenuRoom
 }
 
 /**
@@ -130,8 +140,16 @@ export function miniMenuFolds(full: MiniMenuSize, view: Pick<Rect, 'width'>): bo
  * selection), below it when the room above is short, and held inside the page view by
  * `MINI_MENU_MARGIN` on every side – a selection at the view's edge gets the pill beside it,
  * never over the chrome; a view too short for either side gets it clamped over the box. The
- * surface adds `MINI_MENU_SURFACE_PAD` all around for the pill's shadow. Pure; `anchor` is
- * `anchorInChrome`'s rect (the box in window pixels, clipped to `view`).
+ * surface adds `MINI_MENU_SURFACE_PAD` all around for the pill's shadow – and, for a folded
+ * pill whose document asked it (`size.room`), the room its tooltips need: `room.below` more
+ * under the padded box (the tooltip stands under its button, the chassis's first side, over
+ * the selection's top as Edge's native tooltips do under the pointer), and the box widened
+ * towards `room.width` by an even count split around the pill, which its document centres
+ * (`.zen-mini-menu-surface`), so the pill stands where it would without the room and its
+ * hairlines on whole pixels – no further than the view's edges, as the pill itself never
+ * stands over the chrome beside the page. The room hangs past the view's bottom when the pill
+ * is clamped there. Pure; `anchor` is `anchorInChrome`'s rect (the box in window pixels,
+ * clipped to `view`).
  */
 export function placeMiniMenuSurface(anchor: Rect, view: Rect, size: MiniMenuSize): Rect {
   const pad = MINI_MENU_SURFACE_PAD
@@ -149,11 +167,22 @@ export function placeMiniMenuSurface(anchor: Rect, view: Rect, size: MiniMenuSiz
   if (above >= minTop) top = above
   else if (below <= maxTop) top = below
   else top = Math.max(minTop, Math.min(maxTop, above))
+  const box = { width: width + pad * 2, height: height + pad * 2 }
+  const room = size.room
+  let extra = 0
+  if (room) {
+    // Split evenly around the pill, so no more than twice the narrower side the padded box has
+    // to the view's edges: the surface stays inside the view as the pill does (a tooltip wider
+    // than that is slid to the document's margin and cut at the view's edge, the pill standing).
+    const side = Math.min(left - pad - view.x, view.x + view.width - (left + width + pad))
+    extra = Math.max(0, Math.min(Math.ceil(room.width) - box.width, 2 * Math.floor(side)))
+    if (extra % 2 === 1) extra += 1
+  }
   return {
-    x: Math.round(left - pad),
+    x: Math.round(left - pad - extra / 2),
     y: Math.round(top - pad),
-    width: width + pad * 2,
-    height: height + pad * 2
+    width: box.width + extra,
+    height: box.height + (room ? Math.max(0, Math.ceil(room.below)) : 0)
   }
 }
 
@@ -307,17 +336,27 @@ export class SelectionMenuService {
   /**
    * `selectionMenu.surfaceSize`: the pill's document measured the size its content wants (window
    * CSS pixels, the pill's box without the surface's shadow margin) in the pose it drew
-   * (`folded`); the surface follows. A report for another tab's pill, or a nonsensical one, is
-   * dropped.
+   * (`folded`) – with, for the folded row, the room its tooltips need beyond the box (`room`);
+   * the surface follows. A report for another tab's pill, or a nonsensical one, is dropped; a
+   * nonsensical room is left out of a good report (the box stands, the tooltips take their
+   * chances).
    */
-  surfaceSize(tabId: string, width: number, height: number, folded: boolean): void {
+  surfaceSize(
+    tabId: string,
+    width: number,
+    height: number,
+    folded: boolean,
+    room?: MiniMenuRoom
+  ): void {
     const current = this.state
     if (!current || current.tabId !== tabId) return
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return
     const pose = folded ? 'folded' : 'full'
+    const asked = parseMiniMenuRoom(room)
     const last = this.measured[pose]
-    if (last && last.width === width && last.height === height) return
-    this.measured = { ...this.measured, [pose]: { width, height } }
+    if (last && last.width === width && last.height === height && sameRoom(last.room, asked)) return
+    const size: MiniMenuSize = asked ? { width, height, room: asked } : { width, height }
+    this.measured = { ...this.measured, [pose]: size }
     this.place()
   }
 
@@ -438,4 +477,17 @@ function sameChips(a: readonly SelectionMenuAction[], b: readonly SelectionMenuA
   return (
     a.length === b.length && a.every((chip, i) => chip.id === b[i].id && chip.title === b[i].title)
   )
+}
+
+/** The room out of a report: two finite, non-negative numbers, or nothing. */
+function parseMiniMenuRoom(raw: unknown): MiniMenuRoom | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { below, width } = raw as Record<string, unknown>
+  if (!finite(below) || below < 0 || !finite(width) || width < 0) return undefined
+  return { below, width }
+}
+
+function sameRoom(a: MiniMenuRoom | undefined, b: MiniMenuRoom | undefined): boolean {
+  if (!a || !b) return a === b
+  return a.below === b.below && a.width === b.width
 }

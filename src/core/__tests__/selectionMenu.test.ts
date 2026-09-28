@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Rect, SelectionMenuState } from '../../shared/types'
+import type { MiniMenuRoom, Rect, SelectionMenuState } from '../../shared/types'
 import { anchorInChrome } from '../credentials/fill'
 import { SELECTION_MINI_MENU_ORDER } from '../menus'
 import type { PageFlags } from '../platform'
@@ -59,12 +59,19 @@ function expectedSurface(h: PageHarness, rect: Rect, view: Rect = VIEW): Rect {
   )
 }
 
-function measure(h: PageHarness, width: number, height: number, folded = false): void {
+function measure(
+  h: PageHarness,
+  width: number,
+  height: number,
+  folded = false,
+  room?: MiniMenuRoom
+): void {
   h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
     tabId: h.tabId,
     width,
     height,
-    folded
+    folded,
+    ...(room ? { room } : {})
   })
 }
 
@@ -146,6 +153,62 @@ describe('where the pill stands', () => {
     const placed = placeMiniMenuSurface({ x: 100, y: 100, width: 100, height: 60 }, view, SIZE)
     expect(placed.y + PAD).toBe(view.y + MINI_MENU_MARGIN)
     expect(placed.height).toBe(SIZE.height + PAD * 2)
+  })
+
+  it('gives a folded pill the room its tooltips asked under the padded box, and widens the surface evenly around the pill – never past the view', () => {
+    // The folded row's document measures the room for its glyph buttons' tooltips
+    // (`MiniMenu`'s `tooltipRoom`): 29 under the padded box (a 30 tooltip 8 under a 28 button
+    // centred in the 46, 8 inside the document) and 112 across for "Search DuckDuckGo".
+    const anchor = { x: 400, y: 400, width: 120, height: 18 }
+    const folded = { width: 186, height: MINI_MENU_HEIGHT }
+    const plain = placeMiniMenuSurface(anchor, VIEW, folded)
+    const roomy = placeMiniMenuSurface(anchor, VIEW, {
+      ...folded,
+      room: { below: 29, width: 112 }
+    })
+    // The room hangs under the box; the pill's own place is untouched (the surface's top, and
+    // the pill's left once the widening is taken off, stand where they did).
+    expect(roomy).toEqual({ ...plain, height: plain.height + 29 })
+    // A narrow pill (two chips) gets the surface widened to the tooltip's width by an even
+    // count, half each side, so the document's centring keeps the pill on the pixel it had.
+    const narrow = { width: 78, height: MINI_MENU_HEIGHT }
+    const plainNarrow = placeMiniMenuSurface(anchor, VIEW, narrow)
+    const wide = placeMiniMenuSurface(anchor, VIEW, { ...narrow, room: { below: 29, width: 145 } })
+    // 145 − (78 + 16) = 51, taken up to 52.
+    expect(wide).toEqual({
+      x: plainNarrow.x - 26,
+      y: plainNarrow.y,
+      width: plainNarrow.width + 52,
+      height: plainNarrow.height + 29
+    })
+    // The widening is capped at twice the narrower side the padded box has to the view's edges:
+    // the surface never stands over the chrome beside the page, as the pill does not. Held at
+    // the margin, the padded box touches the edge, so a pill there gets no widening at all
+    // (its tooltip is slid to the document's margin and cut at the edge – the pill stands);
+    // one 10 in from the edge gets 20.
+    const view = { x: 200, y: 120, width: 800, height: 680 }
+    const atEdge = placeMiniMenuSurface({ x: 205, y: 400, width: 20, height: 18 }, view, {
+      ...narrow,
+      room: { below: 29, width: 145 }
+    })
+    expect(atEdge.x).toBe(view.x)
+    expect(atEdge.width).toBe(narrow.width + PAD * 2)
+    expect(atEdge.height).toBe(narrow.height + PAD * 2 + 29)
+    const nearEdge = placeMiniMenuSurface(
+      { x: view.x + MINI_MENU_MARGIN + 10, y: 400, width: 78, height: 18 },
+      view,
+      { ...narrow, room: { below: 29, width: 145 } }
+    )
+    expect(nearEdge.x).toBe(view.x)
+    expect(nearEdge.width).toBe(narrow.width + PAD * 2 + 20)
+    // A room narrower than the padded box, or none, widens nothing; a fractional room is taken
+    // up to the whole pixel.
+    expect(
+      placeMiniMenuSurface(anchor, VIEW, { ...folded, room: { below: 0, width: 50 } })
+    ).toEqual(plain)
+    expect(
+      placeMiniMenuSurface(anchor, VIEW, { ...folded, room: { below: 28.2, width: 50 } }).height
+    ).toBe(plain.height + 29)
   })
 
   it('estimates the pill from its chips hugging their labels (no floor), the gaps and sides; folded, from the 28 glyph buttons at the same 46', () => {
@@ -231,6 +294,53 @@ describe('the pill on the popup surface', () => {
     // The same size again places nothing anew.
     measure(h, 420, 46)
     expect(h.popupCalls.length).toBe(placed)
+  })
+
+  it('gives the folded pill the room its document asks for its tooltips, leaves a nonsensical room out of a good report, and places nothing anew for the same room', () => {
+    const h = pageHarness({ ...DESKTOP, readAloud: true }, FULL)
+    const full = estimateMiniMenuSize([
+      { id: 'copy', title: 'Copy' },
+      { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' },
+      { id: 'translate', title: 'Translate' },
+      { id: 'readAloud', title: 'Listen' }
+    ])
+    const narrow: Rect = { x: 0, y: 120, width: full.width + MINI_MENU_FOLD_SLACK - 1, height: 680 }
+    layout(h, narrow)
+    report(h, 'quantum foam')
+    expect(model(h)?.folded).toBe(true)
+    // The estimate has no room: the tooltip comes after the pointer's dwell, by when the
+    // document has measured and asked.
+    expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_HEIGHT + PAD * 2 })
+    measure(h, 190, 46, true, { below: 29, width: 112 })
+    expect(h.popupCalls.at(-1)).toMatchObject({
+      width: 190 + PAD * 2,
+      height: 46 + PAD * 2 + 29
+    })
+    const placed = h.popupCalls.length
+    measure(h, 190, 46, true, { below: 29, width: 112 })
+    expect(h.popupCalls.length).toBe(placed)
+    // A room that is not two finite, non-negative numbers is left out: the box stands, and the
+    // report is a new one.
+    measure(h, 190, 46, true, { below: -1, width: 112 })
+    expect(h.popupCalls.length).toBe(placed + 1)
+    expect(h.popupCalls.at(-1)).toMatchObject({ width: 190 + PAD * 2, height: 46 + PAD * 2 })
+    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
+      tabId: h.tabId,
+      width: 190,
+      height: 46,
+      folded: true,
+      room: 'lots' as unknown as MiniMenuRoom
+    })
+    expect(h.popupCalls.length).toBe(placed + 1)
+    // The full pose has no room of its own: unfolded, the surface is the padded box again.
+    layout(h, { ...narrow, width: full.width + MINI_MENU_FOLD_SLACK })
+    expect(model(h)?.folded).toBe(false)
+    measure(h, full.width, 46)
+    expect(h.popupCalls.at(-1)).toMatchObject({
+      width: full.width + PAD * 2,
+      height: 46 + PAD * 2
+    })
   })
 
   it('keeps the measurement for the same chips and starts from the estimate when the chips change', () => {

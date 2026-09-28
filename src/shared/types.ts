@@ -400,6 +400,19 @@ export interface SelectionMenuState {
 }
 
 /**
+ * The room the pill's document asks of the popup surface beyond the pill's padded box, for the
+ * folded glyph buttons' tooltips (the chrome's `Tooltip`, hosted in the surface's document;
+ * `selectionMenu.surfaceSize`): `below`, the pixels the surface reaches under the box so a
+ * tooltip 8 under a button stays 8 inside the document, and `width`, the least width of the
+ * surface for the widest title's tooltip and its margins. CSS pixels, whole; the core adds
+ * them around the pill (`placeMiniMenuSurface`), never moving the pill for them.
+ */
+export interface MiniMenuRoom {
+  below: number
+  width: number
+}
+
+/**
  * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
  * than three words, no letters, an address), Wiktionary has no page for it (`not-found`), the
  * network did not answer (`offline`), it answered with an error (`unavailable`) or with
@@ -6649,11 +6662,13 @@ export interface Commands {
   /**
    * The pill's document measured the size its content wants (CSS px, the pill's box without the
    * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`, in the
-   * pose it drew (`folded`: the glyph row, or the full pill); the core keeps one measurement per
-   * pose and places the popup surface to fit (`SelectionMenuService.surfaceSize`).
+   * pose it drew (`folded`: the glyph row, or the full pill) – with, for the folded row, the
+   * room its glyph buttons' tooltips need beyond the box (`room`, `MiniMenuRoom`); the core
+   * keeps one measurement per pose and places the popup surface to fit
+   * (`SelectionMenuService.surfaceSize`).
    */
   'selectionMenu.surfaceSize': {
-    args: { tabId: string; width: number; height: number; folded: boolean }
+    args: { tabId: string; width: number; height: number; folded: boolean; room?: MiniMenuRoom }
     result: void
   }
   /**
