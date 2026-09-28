@@ -13,6 +13,10 @@ name: Android sync WebDAV demo
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  # Temporary, this branch only: no token here can dispatch, so the merged-up head re-drives the
+  # demo on push. Removed again before the squash.
+  push:
+    branches: [cursor/android-webdav-host-verbs-9271]
 
 permissions:
   contents: read
