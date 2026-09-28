@@ -21,6 +21,7 @@ import { useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
+import { AddressReveal } from './AddressReveal'
 import { DialogStack } from './dialogs'
 import { useFontsDraft } from './fontsDraft'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
@@ -87,6 +88,7 @@ export function DesktopSettings({
 }): JSX.Element {
   const shown = current ?? sections[0] ?? null
   const sectionId = shown?.id ?? null
+  const root = useRef<HTMLDivElement>(null)
   const sheets = useSheetStack()
   // The vault's lists while Autofill is the open category (the phone page reads them the same
   // way); a search builds every category with the gate and the switches, not the entries.
@@ -218,7 +220,12 @@ export function DesktopSettings({
   }
 
   return (
-    <div className="zen-settings-two-pane" data-testid="settings-page" data-section={sectionId}>
+    <div
+      ref={root}
+      className="zen-settings-two-pane"
+      data-testid="settings-page"
+      data-section={sectionId}
+    >
       <nav className="zen-settings-nav" aria-label="Settings categories">
         <div className="zen-settings-nav-title">
           <SettingsGlyph className="zen-settings-nav-title-glyph" aria-hidden="true" />
@@ -272,6 +279,9 @@ export function DesktopSettings({
           closeTop={sheets.closeTop}
         />
       )}
+      {/* §9.2's reveal of a shortened path or address: the hover card on a mouse or under the
+          keyboard; the hold sheet on touch only where the page draws sheets (the phone shell). */}
+      <AddressReveal root={root} hold={formFactor === 'phone' ? sheets.ctx.open : undefined} />
     </div>
   )
 }

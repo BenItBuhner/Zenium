@@ -12250,6 +12250,31 @@
   -webkit-line-clamp: none;
 }
 /*
+ * §9.2's reveal of that line where it is actually shortened (services seed #32; the lead's
+ * ruling on #685 item 4; `AddressReveal`, lib/addressReveal.ts). On a mouse or under the
+ * keyboard: the §9.31 hover card – the tab card's chrome (`.zen-tab-hover-card`: §9.20's panel at
+ * the 320 list width, `--v2-panel` under the hairline and the panel shadow, padding 16, radius
+ * 8, no pointer) hung under the row – carrying the whole value at the body size, 15/400 on the
+ * 20 line as the tab card's title, and broken wherever it must be: a path or an address has no
+ * spaces to break at, and every line of it is the point (no clamp – the row's line is the
+ * clamped one).
+ */
+.zen-address-hover-card-value {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  font-weight: var(--v2-weight-body);
+}
+/*
+ * On touch, the row's hold sheet (`AddressSheet`, sheets.tsx): §9.23's title block, the row's
+ * label over the whole value as its paragraph – the block's own 15 at 69% – wrapped the same
+ * way, since the chassis's paragraph breaks only at spaces.
+ */
+.zen-settings-sheet-address .zen-sheet-title-block p {
+  overflow-wrap: anywhere;
+}
+/*
  * A description that reports a status (a load error, a retirement notice, the folder-lost
  * sentence): §1 status ink, text only, read off the row's one `data-tone` – the primitive's
  * attribute above – not off the span.

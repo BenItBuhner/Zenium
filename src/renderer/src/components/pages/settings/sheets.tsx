@@ -97,8 +97,9 @@ function RowSheet({
   close(): void
 }): JSX.Element | null {
   // The row a sheet was opened for is gone (its item was deleted, its list changed): the sheet
-  // has nothing to show and leaves.
-  const orphan = row === null || !fits(request, row)
+  // has nothing to show and leaves. The address hold's sheet carries its own content (the row
+  // held may be a picker's option, no row of the model) and is the user's to dismiss.
+  const orphan = request.kind !== 'address' && (row === null || !fits(request, row))
   useEffect(() => {
     if (orphan) close()
   }, [orphan, close])
@@ -116,6 +117,16 @@ function RowSheet({
       return <ItemSheet row={row as ItemRow} under={under} ctx={ctx} close={close} />
     case 'detail':
       return <ItemSheet row={row as DetailRow} under={under} ctx={ctx} close={close} />
+    case 'address':
+      return (
+        <AddressSheet
+          rowId={request.rowId}
+          label={request.label}
+          text={request.text}
+          under={under}
+          close={close}
+        />
+      )
   }
 }
 
@@ -133,6 +144,9 @@ function fits(request: SheetRequest, row: SettingsRow): boolean {
       return row.kind === 'item'
     case 'detail':
       return row.kind === 'detail'
+    case 'address':
+      // Any row: the request brought its own label and value (`RowSheet` never orphans it).
+      return true
   }
 }
 
@@ -185,6 +199,8 @@ interface SheetProps {
    */
   openExpanded?: boolean | 'overflow'
   sheetRef?: RefObject<BottomSheetHandle | null>
+  /** A class on the panel beside the Settings tab's own, for a sheet with a rule of its own (the address hold's). */
+  className?: string
 }
 
 /**
@@ -213,7 +229,8 @@ export function SettingsSheet({
   titleId,
   body,
   openExpanded,
-  sheetRef
+  sheetRef,
+  className
 }: SheetProps): JSX.Element {
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
@@ -264,7 +281,7 @@ export function SettingsSheet({
       onClose={onClose}
       contentKey={`${contentKey ?? ''}|${relayouts}|${footerClaimed ? 'footer' : ''}`}
       openExpanded={openExpanded}
-      className="zen-settings-sheet"
+      className={cn('zen-settings-sheet', className)}
       sheetRef={sheet}
       footer={
         footerClaimed ? (
@@ -603,6 +620,45 @@ export function ConfirmSheet({
         onCancel={() => sheet.current?.dismiss()}
         onAction={confirm}
       />
+    </SettingsSheet>
+  )
+}
+
+/**
+ * The hold sheet §9.2 gives a shortened path or address on touch (services seed #32): the
+ * document names the surface – "the row's hold sheet header" – and defines no hold sheet
+ * beyond that clause (SET-54's copy hold raises a toast, not a sheet), so this is the smallest
+ * one the chassis already has: `PhoneSheet`'s §9.23 title block alone, the row's label as its
+ * 17/600 title and the whole value as the paragraph under it, wrapped wherever it must break
+ * (`.zen-settings-sheet-address`, main.css – a path has no spaces to break at), on the §9.16
+ * grip; no rows, no verbs, nothing else. Focus lands on the sheet itself (`focus: 'dialog'`, the
+ * prompt's rule): a reader hears the label and then the whole value, which is what the hold
+ * asked for. A swipe, the scrim or back dismisses it.
+ */
+function AddressSheet({
+  rowId,
+  label,
+  text,
+  under,
+  close
+}: {
+  rowId: string
+  label: string
+  text: string
+  under: boolean
+  close(): void
+}): JSX.Element {
+  return (
+    <SettingsSheet
+      name={`settings-address:${rowId || 'option'}`}
+      title={label}
+      description={text}
+      under={under}
+      focus="dialog"
+      onClose={close}
+      className="zen-settings-sheet-address"
+    >
+      {null}
     </SettingsSheet>
   )
 }
