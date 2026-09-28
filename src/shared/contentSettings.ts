@@ -53,6 +53,15 @@ export interface ContentSetting {
   /** Whether the prompt offers a session-scoped "Allow once" next to Allow and Block. */
   allowOnce: boolean
   support: { desktop: ContentSupport; android: ContentSupport }
+  /**
+   * The phone's own sub-lines where its engine does less than the desktop's for the same row:
+   * the Clipboard row hands a page text alone on Android (MW-38), so its lines say "text" where
+   * the desktop's say "text and images". `contentSettingsFor('android')` hands the phone the row
+   * with these in place of `description` and, value by value, `descriptions`; the desktop, and
+   * `contentSetting(id)`, read the row as written. The prompt's words (`promptLabel`) are one
+   * string on both hosts.
+   */
+  android?: { description: string; descriptions?: Partial<Record<ContentDefault, string>> }
 }
 
 /**
@@ -257,7 +266,18 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['ask', 'deny'],
     promptLabel: 'read from your clipboard',
     allowOnce: true,
-    support: { desktop: 'enforced', android: 'n-a' }
+    // Desktop: Electron's permission request handler asks this row. Android: the WebView's
+    // permission manager refuses every clipboard read, so the page script's shim over
+    // `navigator.clipboard.read` / `readText` asks through the same prompt and the host's
+    // clipboard answers (`core/clipboardRead.ts`; MW-38). Android 12+ shows the system's paste
+    // toast for the app's read, as it does for Chrome's.
+    support: { desktop: 'enforced', android: 'enforced' },
+    // The phone's path hands the page the clipboard's text alone, so its lines say text until
+    // it reads images too (the lead's copy on #657); the prompt's words are the row's.
+    android: {
+      description: 'Sites can ask to see text on your clipboard',
+      descriptions: { deny: 'Sites cannot see text on your clipboard' }
+    }
   },
   {
     id: 'payment-handler',
@@ -657,6 +677,21 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
 const BY_ID = new Map(CONTENT_SETTINGS.map((setting) => [setting.id, setting]))
 
 /**
+ * The catalogue as the phone reads it: a row with `android` lines carries them in place of the
+ * desktop's (its `descriptions` merged value by value); every other row is the catalogue's own
+ * object.
+ */
+const ANDROID_CONTENT_SETTINGS: readonly ContentSetting[] = CONTENT_SETTINGS.map((setting) => {
+  if (!setting.android) return setting
+  const { description, descriptions } = setting.android
+  return {
+    ...setting,
+    description,
+    ...(descriptions ? { descriptions: { ...setting.descriptions, ...descriptions } } : {})
+  }
+})
+
+/**
  * The site every local file's decisions are kept under. A `file:` page has no origin (its
  * `URL.origin` is 'null'), so all local files share one site, as Chrome keeps their exceptions
  * under `file:///`.
@@ -768,10 +803,14 @@ export function allowOnceFor(permission: string): boolean {
   return contentSetting(permission)?.allowOnce ?? false
 }
 
-/** The rows whose setting this host honours or at least remembers (Settings hides `n-a`). */
+/**
+ * The rows whose setting this host honours or at least remembers (Settings hides `n-a`), each
+ * in the host's own words where a row has any (`android`).
+ */
 export function contentSettingsFor(
   platform: 'desktop' | 'android',
   include: ContentSupport[] = ['enforced', 'stored']
 ): ContentSetting[] {
-  return CONTENT_SETTINGS.filter((setting) => include.includes(setting.support[platform]))
+  const catalogue = platform === 'android' ? ANDROID_CONTENT_SETTINGS : CONTENT_SETTINGS
+  return catalogue.filter((setting) => include.includes(setting.support[platform]))
 }

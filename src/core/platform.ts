@@ -239,6 +239,12 @@ export interface PageMessage {
     | 'share'
     /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
     | 'geolocation'
+    /**
+     * The page's `navigator.clipboard.read()` / `readText()` shim asks for the clipboard's
+     * text (`shared/clipboardRead`; hosts whose engine refuses every read, MW-38): the
+     * `clipboard-read` permission decides, the host's clipboard answers.
+     */
+    | 'clipboardRead'
     /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
     | 'readAloud'
     /**
@@ -326,6 +332,8 @@ export interface PageMessage {
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */
   geolocation?: unknown
+  /** `clipboardRead`: the shim's call (`ClipboardReadCall`, validated by the core). */
+  clipboardRead?: unknown
   /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
   readAloud?: unknown
   /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
@@ -356,6 +364,18 @@ export interface GeolocationHostMessage {
   error?: { code: GeolocationErrorCode; message: string }
 }
 
+/**
+ * The answer to one call of the page's clipboard-read shim (`shared/clipboardRead`): the
+ * clipboard's text when the `clipboard-read` permission allowed it, `denied` when it did not
+ * (the shim rejects with Chrome's `NotAllowedError`).
+ */
+export interface ClipboardReadHostMessage {
+  type: 'clipboardRead'
+  id: string
+  text?: string
+  error?: 'denied'
+}
+
 /** The page's `display-mode` changed (`shared/displayMode`): its window went fullscreen, or it moved. */
 export interface DisplayModeHostMessage {
   type: 'display-mode'
@@ -365,10 +385,10 @@ export interface DisplayModeHostMessage {
 /**
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
- * the notification polyfill's answers and events, a share call's outcome, a position, the
- * page's display mode, read aloud's extraction request and highlight, the request for the
- * selection's text directive (a link to the highlight, SH-11), and where a Tab entering the
- * page from the chrome lands (`focus`, A11Y-09).
+ * the notification polyfill's answers and events, a share call's outcome, a position, a
+ * clipboard read's text, the page's display mode, read aloud's extraction request and
+ * highlight, the request for the selection's text directive (a link to the highlight, SH-11),
+ * and where a Tab entering the page from the chrome lands (`focus`, A11Y-09).
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -376,6 +396,7 @@ export type PageHostMessage =
   | NotificationHostMessage
   | ShareHostMessage
   | GeolocationHostMessage
+  | ClipboardReadHostMessage
   | DisplayModeHostMessage
   | ReadAloudHostMessage
   | TextFragmentHostMessage
