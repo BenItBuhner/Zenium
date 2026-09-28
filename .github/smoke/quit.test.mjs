@@ -488,7 +488,9 @@ describe('holdReleaseRedrives (the chord driven again when the runner’s key-up
       holdReleaseRedrives(judgeHoldRelease({ ...overshot, polls: [] }, { holdMs: 3000 }))
     ).toBe(false)
     expect(
-      holdReleaseRedrives(judgeHoldRelease({ ...released, upAt: T0 + 1000, polls: [] }, { holdMs: 1000 }))
+      holdReleaseRedrives(
+        judgeHoldRelease({ ...released, upAt: T0 + 1000, polls: [] }, { holdMs: 1000 })
+      )
     ).toBe(true)
     expect(holdReleaseRedrives(undefined)).toBe(false)
     expect(holdReleaseRedrives(null)).toBe(false)
