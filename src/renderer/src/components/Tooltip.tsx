@@ -43,13 +43,24 @@ import {
  * one hold while the pointer browses from control to control, so the page does not flash back
  * between two tooltips. A tooltip that fits in its pane – every one in the sidebar – touches
  * the page not at all.
+ *
+ * A window resize takes the tooltip down (`resize: 'hide'`, the shells' way: the controls move
+ * under a still pointer, and the one the pointer lands on starts its own dwell). The popup
+ * surface's document has the other way (`'place'`): there a resize is the core giving the
+ * document the room it asked for the tooltip's own moment (`MiniMenuRoom`, the folded pill),
+ * which moves no control from under the pointer – so the tooltip on its way keeps its dwell
+ * and one up is placed again in the grown document, rather than taken down by the room made
+ * for it.
  */
-export function Tooltip(): JSX.Element | null {
+export function Tooltip({ resize = 'hide' }: TooltipProps = {}): JSX.Element | null {
   const { target, by } = tooltipStore.use()
   // The text is the control's attribute, read at render; `words` re-renders when it changes.
   const [, setWords] = useState(0)
   const text = target ? tooltipText(target) : ''
   const [placement, setPlacement] = useState<TooltipPlacement | null>(null)
+  // Counts the window's resizes while the host places through them (`resize: 'place'`): the
+  // placement runs again for each, in the document's new size.
+  const [resized, setResized] = useState(0)
   // Whether the page is under its picture right now – by the tooltip's own hold once the
   // capture is in place (`floatingChrome`), or by other chrome's – which is when a tooltip over
   // the page's box may show.
@@ -98,6 +109,9 @@ export function Tooltip(): JSX.Element | null {
       tooltip.dismiss()
     }
     const hide = (): void => tooltip.hide()
+    // The popup surface's document places through a resize (the room made for the tooltip);
+    // the shells take the tooltip down.
+    const onResize = resize === 'place' ? (): void => setResized((n) => n + 1) : hide
     document.addEventListener('pointerover', onOver)
     document.addEventListener('pointerout', onOut)
     document.addEventListener('focusin', onFocusIn)
@@ -106,7 +120,7 @@ export function Tooltip(): JSX.Element | null {
     document.addEventListener('keydown', onKey, true)
     document.addEventListener('scroll', hide, { capture: true, passive: true })
     window.addEventListener('blur', hide)
-    window.addEventListener('resize', hide)
+    window.addEventListener('resize', onResize)
     const unsubscribe = subscribePopovers((change) => {
       if (change === 'open' || change === 'all') tooltip.hide()
     })
@@ -119,11 +133,11 @@ export function Tooltip(): JSX.Element | null {
       document.removeEventListener('keydown', onKey, true)
       document.removeEventListener('scroll', hide, { capture: true })
       window.removeEventListener('blur', hide)
-      window.removeEventListener('resize', hide)
+      window.removeEventListener('resize', onResize)
       unsubscribe()
       tooltip.hide()
     }
-  }, [])
+  }, [resize])
 
   // While the tooltip is up: its text follows the control's attribute (Reload becoming Stop
   // under the pointer), the control leaving the DOM takes it down (the chrome's tree is watched
@@ -162,7 +176,8 @@ export function Tooltip(): JSX.Element | null {
   // `max-content`. The placer takes the width up to the whole pixel (`box.width`) and the box
   // is given it here, outside React's style prop – the same whole width for two texts in a
   // row would otherwise leave the cleared style uncorrected – so the right hairline stands on
-  // a column as the left one does.
+  // a column as the left one does. `resized` runs it again for a window the host places
+  // through a resize of (`resize: 'place'`): the same tooltip, the document's new size.
   useLayoutEffect(() => {
     const el = ref.current
     if (!target || !el || !text) {
@@ -180,7 +195,7 @@ export function Tooltip(): JSX.Element | null {
     )
     el.style.width = `${placed.box.width}px`
     setPlacement(placed)
-  }, [target, text])
+  }, [target, text, resized])
 
   // Over the page, the page goes under its picture first – unless it is under one already (a
   // revealed compact sidebar, another overlay) – and the one hold stays across the controls the
@@ -241,6 +256,15 @@ export function Tooltip(): JSX.Element | null {
       </div>
     </ChromePortal>
   )
+}
+
+export interface TooltipProps {
+  /**
+   * What a window resize does to the tooltip: `'hide'` (the shells; the default) takes it down,
+   * `'place'` (the popup surface's document) places it again in the document's new size and
+   * lets one on its way keep its dwell.
+   */
+  resize?: 'hide' | 'place'
 }
 
 interface Hold {

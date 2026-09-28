@@ -289,6 +289,51 @@ describe('Tooltip host', () => {
     expect(shown()).toBeNull()
   })
 
+  it('goes on a window resize, and one on its way does not come: the controls moved under the pointer', () => {
+    const resize = (): void => {
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    act(() => back.focus())
+    expect(shown()).not.toBeNull()
+    resize()
+    expect(shown()).toBeNull()
+    pointer('pointerover', reload, aside)
+    tick(TOOLTIP_DELAY / 2)
+    resize()
+    tick(TOOLTIP_DELAY)
+    expect(shown()).toBeNull()
+  })
+
+  it('mounted to place through a resize (`resize="place"`, the popup surface’s document), it keeps one on its way and places one up again rather than hiding it', () => {
+    act(() => root?.unmount())
+    render(createElement(Tooltip, { resize: 'place' }))
+    const resize = (): void => {
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    // The resize is the document growing for the tooltip (`MiniMenuRoom`): the dwell runs on
+    // through it, and the tooltip shows at its end.
+    pointer('pointerover', back, aside)
+    tick(TOOLTIP_DELAY / 2)
+    resize()
+    tick(TOOLTIP_DELAY / 2)
+    expect(shown()!.textContent).toBe('Back (Alt+←)')
+    // One up is placed again – in the document's new size – and stays.
+    const placements = vi.spyOn(back, 'getBoundingClientRect')
+    resize()
+    expect(shown()!.textContent).toBe('Back (Alt+←)')
+    expect(placements).toHaveBeenCalled()
+    expect(back.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
+    // Everything else takes it down as ever.
+    act(() => {
+      window.dispatchEvent(new Event('blur'))
+    })
+    expect(shown()).toBeNull()
+  })
+
   describe('over the page', () => {
     // The content area under the window's top band, a control with no pane standing over it
     // (a split pane's header sits in the gap between the views: ContentArea mounts it only
