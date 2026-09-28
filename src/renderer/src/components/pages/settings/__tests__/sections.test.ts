@@ -2675,7 +2675,9 @@ describe('the section model', () => {
     } as Partial<UIState>)
     const privacyDef = PAGE.sections.find((x) => x.id === 'privacy')
     if (!privacyDef) throw new Error('no privacy section')
-    const gotItOn = (formFactor: 'desktop' | 'tablet' | 'phone'): Extract<Row, { kind: 'action' }> => {
+    const gotItOn = (
+      formFactor: 'desktop' | 'tablet' | 'phone'
+    ): Extract<Row, { kind: 'action' }> => {
       const built = buildSection(privacyDef, { ...context(reviewState).ctx, formFactor })
       const hostGotIt = row(built, 'safety-check:permissions:revoked:acknowledge')
       if (hostGotIt.kind !== 'action') throw new Error(`${formFactor}: not an action`)
