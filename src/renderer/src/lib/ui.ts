@@ -898,7 +898,8 @@ function disarmClock(id: number): number | null {
  * cards, and on the desktop's plain column while a dialog stands on the frame's host – the
  * toast is the dialog's act's reply, and it rises above the dialog in the host's seat (§9.33;
  * lib/portals.tsx). The host's count, not its way out: a toast raised after a dialog closed
- * (Got it's, once the dialog has left) is the column's, as it always was.
+ * (one raised by an act that closed the last dialog, once it has left) is the column's, as it
+ * always was.
  */
 function toastSeatNow(): Toast['seat'] {
   return onCards() || uiStore.get().frameDialogsOpen > 0 ? 'frame' : undefined
