@@ -77,7 +77,14 @@ function state(t: Tab, capabilities: Partial<HostCapabilities> = { newTabPage: t
 }
 
 function urlbarState(patch: Partial<UrlbarState> = {}): UrlbarState {
-  return { open: true, mode: 'new-tab', tabId: 't1', initialText: undefined, attached: false, ...patch }
+  return {
+    open: true,
+    mode: 'new-tab',
+    tabId: 't1',
+    initialText: undefined,
+    attached: false,
+    ...patch
+  }
 }
 
 const view = (

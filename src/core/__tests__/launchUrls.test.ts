@@ -315,7 +315,12 @@ describe('a tab the user is typing into is not empty (W8-F15, the bar-input sign
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  const signal = (f: Fixture, win: ReturnType<Browser['focusedWindow']>, tabId: string, active: boolean): void => {
+  const signal = (
+    f: Fixture,
+    win: ReturnType<Browser['focusedWindow']>,
+    tabId: string,
+    active: boolean
+  ): void => {
     f.browser.handleCommand(win, 'urlbar.input', { tabId, active })
   }
 
