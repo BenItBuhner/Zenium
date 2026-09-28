@@ -28,7 +28,15 @@ class Request(
      */
     val partition: String? = null,
     /** The tab's document generation at the time of the request (`BlockingTab.documentGeneration`). */
-    val documentGeneration: Long = 0L
+    val documentGeneration: Long = 0L,
+    /**
+     * For a main-frame request WebView issued as the follow-up of a server redirect
+     * (`WebResourceRequest.isRedirect`): the URL of the tab's previous main-frame request, the
+     * one the redirect answered – the pair the extension runtime makes `onBeforeRedirect` of.
+     * Null for a fresh navigation, a subresource, or a hop with no request before it. The status
+     * code is not WebView's to tell.
+     */
+    val redirectedFrom: String? = null
 ) {
     val urlLower: String = url.lowercase()
     /** Index in `url` where the host begins (after the scheme and any user info). */

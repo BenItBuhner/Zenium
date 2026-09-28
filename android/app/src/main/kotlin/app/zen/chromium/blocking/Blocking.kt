@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.util.WeakHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -95,6 +96,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     /** The header stage of a process without an extension runtime; its jar is the profile's `CookieManager`. */
     private val defaultHeaderStage: HeaderStage by lazy { HeaderStage(ProfileCookieStore) }
+
+    /** Each tab's last main-frame request URL, for the pair a redirect hop makes ([Request.redirectedFrom]). */
+    private val redirectPairs = RedirectPairs()
 
     /**
      * Whether the response stage of media-element requests is observed (`ext.observeResponses`,
@@ -218,9 +222,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      * ([observeResponses]) is the origin's response, streamed.
      */
     fun intercept(tab: BlockingTab, request: WebResourceRequest): WebResourceResponse? {
+        val url = request.url.toString()
+        val redirectedFrom = redirectPairs.redirectedFrom(tab, url, request.isForMainFrame, request.isRedirect)
         val verdict = evaluate(
-            snapshot, listeners, tab, request.url.toString(), request.isForMainFrame,
-            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy, observer, observeResponses
+            snapshot, listeners, tab, url, request.isForMainFrame,
+            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy, observer, observeResponses, redirectedFrom
         )
         return when (verdict) {
             Verdict.Pass -> null
@@ -423,11 +429,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             method: String,
             policy: RequestPolicy? = null,
             observer: DecisionObserver? = null,
-            observeResponses: Boolean = false
+            observeResponses: Boolean = false,
+            redirectedFrom: String? = null
         ): Verdict {
             val ranged = observeResponses && RelaySelection.hasHeader(headers, "Range")
             val hasOrigin = ranged && RelaySelection.hasHeader(headers, "Origin")
-            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer, observeResponses, ranged, hasOrigin)
+            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer, observeResponses, ranged, hasOrigin, redirectedFrom)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
             // A relay – to the header stage, or of a media request for its response – is a
@@ -481,6 +488,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * 14's measurement; a cors-mode `fetch` / XHR carries `Origin` – is answered
          * [Verdict.MediaRelay] in place of [Verdict.Pass] ([RelaySelection.selects], contract
          * 7.2 as 7.10 amends it: no type in the choice, the runtime's twin has none to read).
+         * `redirectedFrom` is stamped on the record for the observer ([Request.redirectedFrom]);
+         * the rules do not read it.
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -493,7 +502,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             observer: DecisionObserver? = null,
             observeResponses: Boolean = false,
             ranged: Boolean = false,
-            hasOrigin: Boolean = false
+            hasOrigin: Boolean = false,
+            redirectedFrom: String? = null
         ): Verdict {
             // Outside the web – `data:`, `about:`, an extension's own page in either spelling –
             // nothing is asked, the policy included: the pass, before any rule.
@@ -523,7 +533,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             val req = Request(
                 url, type, if (isMainFrame) null else tab.documentUrl, method,
                 tabId = tab.tabId, typeMask = known?.bit ?: ResourceType.AMBIGUOUS_MASK,
-                partition = tab.containerId, documentGeneration = generation
+                partition = tab.containerId, documentGeneration = generation, redirectedFrom = redirectedFrom
             )
             val cpuBefore = if (observer != null) ThreadCpu.nanos() else -1L
             val started = System.nanoTime()
@@ -811,6 +821,32 @@ internal object ThreadCpu {
             available = false
             -1L
         }
+    }
+}
+
+/**
+ * The pair a main-frame redirect hop makes ([Request.redirectedFrom]). WebView reports a server
+ * redirect of a navigation as a follow-up `WebResourceRequest` with `isRedirect` and never the
+ * status, so the hop is told as the pair: each tab's last main-frame request URL is kept here,
+ * replaced at every main-frame intercept, and the follow-up is stamped with the one before it.
+ * The extension runtime makes `webRequest.onBeforeRedirect` of the pair. Written and read on
+ * WebView's intercept threads (there are several), every access under the map's lock; keyed
+ * weakly by the tab, so a closed tab's entry goes with it.
+ */
+internal class RedirectPairs {
+    private val lastMainFrameUrl = WeakHashMap<BlockingTab, String>()
+
+    /**
+     * A request of `tab` for `url` came in: a main-frame one is remembered as the tab's latest,
+     * and answered with the URL it hopped from – the tab's previous main-frame request – when
+     * WebView marked it a server redirect's follow-up (`isRedirect`). Null for a subresource, a
+     * fresh navigation, or a hop with no request before it (a tab's first). A hop back to the
+     * same URL is still a hop.
+     */
+    fun redirectedFrom(tab: BlockingTab, url: String, isMainFrame: Boolean, isRedirect: Boolean): String? {
+        if (!isMainFrame) return null
+        val previous = synchronized(lastMainFrameUrl) { lastMainFrameUrl.put(tab, url) }
+        return if (isRedirect) previous else null
     }
 }
 
