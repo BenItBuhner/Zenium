@@ -77,6 +77,24 @@ export function elidedAddressOf(target: EventTarget | null): AddressSubject | nu
   return subject && isElided(subject.span) ? subject : null
 }
 
+/**
+ * The controls a hold never arms on – `useLongPress`'s rule, "controls inside the element keep
+ * their own taps" (the independent review of #694, nit 3): a slow press on Location's Change…
+ * button or a desktop switch's box is that control's press, not the row's hold, so its lift's
+ * click must reach it. A row that is itself the control – a pressable row, a picker's option
+ * (`RadioOption` is the button) – keeps its hold.
+ */
+export const HOLD_CONTROL_SELECTOR = 'button, input, select, textarea, a[href]'
+
+/**
+ * The control a press inside `row` landed on – one the hold leaves alone – or null when the
+ * press landed on the row's own text, or on a row that is itself the control.
+ */
+export function controlUnder(target: EventTarget | null, row: HTMLElement): Element | null {
+  const control = elementOf(target)?.closest(HOLD_CONTROL_SELECTOR) ?? null
+  return control && control !== row ? control : null
+}
+
 /** The card's state: the controller's slice (the row's key and box), and the row it names. */
 export interface AddressRevealState {
   card: HoverCardState

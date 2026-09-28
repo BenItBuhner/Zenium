@@ -10,7 +10,7 @@ import { FrameDialogHost, POPOVER_WIDTH } from '@renderer/lib/portals'
 import { LONG_PRESS_MS, RELEASE_DELAY_MS } from '../../../phone/useLongPress'
 import { AddressReveal, ADDRESS_CARD_ID, type AddressHoldRequest } from '../AddressReveal'
 import { RadioOption } from '../blocks'
-import type { ActionRow, InfoRow } from '../model'
+import type { ActionRow, InfoRow, SwitchRow } from '../model'
 import { RowView } from '../rows'
 import { SheetStack } from '../sheets'
 
@@ -94,6 +94,20 @@ function location(patch: Partial<ActionRow> = {}): ActionRow {
     description: PATH,
     address: true,
     onPress: () => undefined,
+    ...patch
+  }
+}
+
+/** A desktop boolean whose description is a path (a skill's row): the box is the control, the words the row. */
+function skill(patch: Partial<SwitchRow> = {}): SwitchRow {
+  return {
+    kind: 'switch',
+    id: 'skill-ask',
+    label: 'Ask before running',
+    description: PATH,
+    address: true,
+    checked: true,
+    onChange: () => undefined,
     ...patch
   }
 }
@@ -419,6 +433,72 @@ describe('the hold on touch where the page draws sheets', () => {
     expect(open).toHaveBeenCalledTimes(1)
     expect(open.mock.calls[0]?.[0]?.text).toBe(PATH)
   })
+
+  it('a hold on a control inside the row is the control’s – no sheet, and the lift’s click reaches it – while the row’s own line still asks; a picker’s option, itself the control, keeps its hold', async () => {
+    const open = vi.fn<(request: AddressHoldRequest) => void>()
+    const press = vi.fn()
+    // The two panes inside the phone shell (a phone in landscape) draw the desktop's rows – a
+    // control row with its trailing button, a check row on its box – and the phone's sheets.
+    const el = render(
+      <Page hold={open}>
+        <RowView
+          row={location({ button: 'Change…', onPress: press })}
+          ctx={ctx}
+          variant="desktop"
+        />
+        <RowView row={skill()} ctx={ctx} variant="desktop" />
+        <div role="radiogroup">
+          <RadioOption
+            label="Forum"
+            description={PATH}
+            address
+            checked
+            onSelect={() => undefined}
+          />
+        </div>
+      </Page>
+    )
+    const control = rowOf(el, 'download-directory')
+    expect(control.hasAttribute('data-static')).toBe(true)
+    const button = control.querySelector<HTMLElement>('button')
+    if (!button) throw new Error('no button')
+    expect(button.textContent).toBe('Change…')
+    measure(lineOf(control), 640, 280)
+    // The finger rests on the button: no hold arms, and the click its lift raises is the button's.
+    expect(await hold(button)).toBe(false)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(open).not.toHaveBeenCalled()
+    expect(press).toHaveBeenCalledTimes(1)
+    // On the row's own line the hold is the row's.
+    expect(await hold(lineOf(control))).toBe(true)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenLastCalledWith({
+      kind: 'address',
+      rowId: 'download-directory',
+      label: 'Location',
+      text: PATH
+    })
+    expect(press).toHaveBeenCalledTimes(1)
+    // A desktop switch: its box is the control, its words are the row.
+    const check = rowOf(el, 'skill-ask')
+    expect(check.tagName).toBe('LABEL')
+    const box = check.querySelector<HTMLElement>('input')
+    if (!box) throw new Error('no box')
+    measure(lineOf(check), 640, 280)
+    expect(await hold(box)).toBe(false)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(await hold(lineOf(check))).toBe(true)
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(open.mock.calls[1]?.[0]?.rowId).toBe('skill-ask')
+    // A picker's option is the button itself: its hold stands.
+    const option = el.querySelector<HTMLElement>('[role="radio"]')
+    if (!option) throw new Error('no option')
+    measure(lineOf(option), 640, 280)
+    expect(await hold(option)).toBe(true)
+    expect(open).toHaveBeenCalledTimes(3)
+    expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'address', text: PATH }))
+  })
 })
 
 /*
@@ -629,6 +709,45 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     pointer(lineOf(other), 'pointerup', { pointerType: 'touch' })
     await wait(RELEASE_DELAY_MS + 1)
     expect(card()?.textContent).toBe(OTHER)
+    expect(card()?.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
+  })
+
+  it('a hold on a control inside the row is the control’s – no card, and the lift’s click reaches it – while the row’s own line raises the card', async () => {
+    const press = vi.fn()
+    const el = render(
+      <Page>
+        <RowView
+          row={location({ button: 'Change…', onPress: press })}
+          ctx={ctx}
+          variant="desktop"
+        />
+        <RowView row={skill()} ctx={ctx} variant="desktop" />
+      </Page>
+    )
+    const control = rowOf(el, 'download-directory')
+    const check = rowOf(el, 'skill-ask')
+    place(control, FOLDER_BOX)
+    place(check, OTHER_BOX)
+    measure(lineOf(control), 640, 280)
+    measure(lineOf(check), 640, 280)
+    const button = control.querySelector<HTMLElement>('button')
+    const box = check.querySelector<HTMLElement>('input')
+    if (!button || !box) throw new Error('no control')
+    // The finger rests on the button or the box: no hold arms, the click its lift raises is the control's.
+    expect(await hold(button)).toBe(false)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBeNull()
+    expect(press).toHaveBeenCalledTimes(1)
+    expect(await hold(box)).toBe(false)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBeNull()
+    // On the row's own line the hold is the row's: the card stands under it, and moves with the next.
+    expect(await hold(lineOf(control))).toBe(true)
+    expect(card()?.textContent).toBe(PATH)
+    expect(card()?.getAttribute('data-by')).toBe('hold')
+    expect(card()?.style.top).toBe(`${FOLDER_BOX.y + FOLDER_BOX.height}px`)
+    expect(press).toHaveBeenCalledTimes(1)
+    expect(await hold(lineOf(check))).toBe(true)
     expect(card()?.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
   })
 })

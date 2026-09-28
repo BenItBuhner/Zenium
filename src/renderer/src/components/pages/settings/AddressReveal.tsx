@@ -8,6 +8,7 @@ import {
   addressPointerLeave,
   addressRevealStore,
   addressRowOf,
+  controlUnder,
   elidedAddressOf,
   hideAddressCard,
   placeAddressCard,
@@ -76,10 +77,13 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * fired on the click the lift raises (or `RELEASE_DELAY_MS` after the lift when none comes) so
  * the sheet cannot receive that click, or at once on the `contextmenu` Chromium raises for a
  * touch hold, and the click swallowed either way. That hook spreads onto one element; a hold
- * heard for every row from the document reads its constants and keeps its rules. A row that
- * copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets neither sheet
- * nor card – none carries an address today; the day one does, the copy is the sheet's Copy
- * row (§9.31's link-menu precedent), not a second gesture on the same hold.
+ * heard for every row from the document reads its constants and keeps its rules – its control
+ * rule too: a press on a control inside the row (Location's Change… button, a desktop switch's
+ * box) arms no hold, so the control's own tap and slow press stay its own (`controlUnder`),
+ * while a row that is itself the control (a pressable row, a picker's option) holds as any row.
+ * A row that copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets
+ * neither sheet nor card – none carries an address today; the day one does, the copy is the
+ * sheet's Copy row (§9.31's link-menu precedent), not a second gesture on the same hold.
  */
 export function AddressReveal({
   root,
@@ -176,6 +180,11 @@ export function AddressReveal({
       if (mouse(e) || e.button !== 0 || !e.isPrimary) return
       const subject = elidedAddressOf(e.target)
       if (!subject) return
+      // A press on a control inside the row – Location's Change…, a desktop switch's box – is
+      // the control's, whichever reveal the hold would make (`controlUnder`; `useLongPress`'s
+      // rule): no hold arms, and the lift's click reaches the control. A row that is itself
+      // the control (a pressable row, a picker's option) keeps its hold.
+      if (controlUnder(e.target, subject.row)) return
       // The sheet is the page root's rows' (a frame dialog draws none where sheets are); the
       // card is any row's the page answers for, a frame dialog's too, as the mouse's card is.
       const inside = holdRef.current
