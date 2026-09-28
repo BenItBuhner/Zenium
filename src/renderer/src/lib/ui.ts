@@ -132,8 +132,8 @@ export interface UrlbarFieldState {
  * (navigated while away: what was typed was for a page that is gone) – `pruneUrlbarDrafts`.
  * A draft committed (a navigation) or dismissed (Escape) by the user while the bar is up never
  * reaches this store: only a leave writes it, and the bar's own close paths keep their rules
- * (`Urlbar.tsx`, `drafts`). The desktop layout's alone (`urlbarKeepsTabDrafts`): the phone and
- * the tablet write none and read none back.
+ * (`Urlbar.tsx`, `drafts`, under the same predicate). The desktop layout's alone
+ * (`urlbarKeepsTabDrafts`): the phone and the tablet write none and read none back.
  */
 export interface UrlbarTabDraft extends UrlbarFieldState {
   /** The bar was anchored to the top (`UrlbarState.attached`), not floating. */
@@ -1876,15 +1876,24 @@ let urlbarField: (() => UrlbarFieldState | null) | null = null
 let followedTabId: string | null = null
 
 /**
- * Whether the bar keeps a tab's draft across a tab switch (W8-F15's form-factor gate): the
- * desktop layout's behaviour alone. Chrome desktop's omnibox carries its state per tab
- * (`OmniboxViewViews::SaveStateToTab` on the leave, `OnTabChanged` → `RestoreState` on the
- * return); Chrome for Android drops the edit when the switcher changes tabs, so the phone and the
- * tablet – both Chrome Android's – save nothing and read nothing back (§9.34: the same `Urlbar`,
- * two behaviours). The layout is the renderer's (`viewportStore`), not the platform's: a window
- * narrowed to the phone layout on a laptop keeps none while it stays so. The bar's input signal
- * to the core (`urlbar.input`, `Urlbar.tsx`) is not gated: a tab being typed into is not a fresh
- * one on any layout.
+ * Whether the bar keeps a draft that outlives it – the ONE predicate for both ways a draft does
+ * (W8-F15's form-factor gate; W8-F17 put the second way under it): the desktop layout's
+ * behaviour alone.
+ *
+ *  - Across a tab switch (W8-F15): the per-tab draft in `UiState.urlbarDrafts`, saved as the
+ *    palette leaves the tab and restored on the tab's return. Chrome desktop's omnibox carries
+ *    its state per tab (`OmniboxViewViews::SaveStateToTab` on the leave, `OnTabChanged` →
+ *    `RestoreState` on the return); Chrome for Android drops the edit when the switcher changes
+ *    tabs.
+ *  - Across a dismissal (W8-F17): the bar's own `drafts` (`Urlbar.tsx`) – what was typed, kept
+ *    through Escape, an outside press or the back gesture and restored on the bar's next open
+ *    over the same page. Chrome desktop keeps the edit; Chrome for Android drops it on Escape.
+ *
+ * So the phone and the tablet – both Chrome Android's – save nothing and read nothing back
+ * either way (§9.34: the same `Urlbar`, two behaviours). The layout is the renderer's
+ * (`viewportStore`), not the platform's: a window narrowed to the phone layout on a laptop keeps
+ * none while it stays so. The bar's input signal to the core (`urlbar.input`, `Urlbar.tsx`) is
+ * not gated: a tab being typed into is not a fresh one on any layout.
  */
 export function urlbarKeepsTabDrafts(
   formFactor: FormFactor = viewportStore.get().formFactor
@@ -1896,8 +1905,8 @@ export function urlbarKeepsTabDrafts(
  * The mounted desktop bar lends its field to `urlbarFollowsActiveTab`: `read` answers the field
  * as it stands – text as shown, selection, keyword chip – or null before the input is in the
  * tree. One bar at a time (the palette is one instance per tab it is bound to); the release
- * forgets it. The phone's and the tablet's bars lend nothing (`urlbarKeepsTabDrafts`); the
- * phone's drafts are discarded on every dismissal besides (`Urlbar.tsx`, `drafts`).
+ * forgets it. The phone's and the tablet's bars lend nothing (`urlbarKeepsTabDrafts`); their
+ * drafts are discarded on every dismissal besides (`Urlbar.tsx`, `drafts` – the same predicate).
  */
 export function provideUrlbarField(read: () => UrlbarFieldState | null): () => void {
   urlbarField = read
