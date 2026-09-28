@@ -5813,13 +5813,19 @@ export interface Commands {
    * (the phone's Quick Delete, HB-07) the tabs the range holds AT THIS MOMENT close last, after
    * the data – the set `privacy.tabsInRange` named a moment earlier, give or take a tab that
    * navigated in between – with no undo and no "Recently closed" entry (Chrome's
-   * `QuickDeleteTabsFilter`: `allowUndo(false).saveToTabRestoreService(false)`).
+   * `QuickDeleteTabsFilter`: `allowUndo(false).saveToTabRestoreService(false)`). The tab the form
+   * was confirmed from – the active tab of the window the command comes from (Settings, a tab
+   * here where Chrome's surface is none) – stays, as it is left out of `privacy.tabsInRange`.
    */
   'privacy.clearBrowsingData': {
     args: { range: BrowsingDataRange; types: BrowsingDataType[]; passphrase?: string }
     result: ReauthOutcome<ClearBrowsingDataResult>
   }
-  /** How much of each type the range holds, for the dialog's preview lines (the `tabs` row last). */
+  /**
+   * How much of each type the range holds, for the dialog's preview lines (the `tabs` row last;
+   * its count leaves out the active tab of the window the command comes from, the tab the form
+   * is up over, as `privacy.tabsInRange` does – the row counts the tabs that will close).
+   */
   'privacy.clearBrowsingDataCounts': {
     args: { range: BrowsingDataRange }
     result: BrowsingDataCount[]
@@ -5829,10 +5835,13 @@ export interface Commands {
    * order the overview lists them: every tab of every space and window whose last committed
    * navigation (`Tab.lastNavigatedAt`) is at or after the range's start – pinned and essential
    * tabs among them, private tabs never – or, for `'all'`, every tab (Chrome's ALL_TIME takes the
-   * whole model). The chrome asks BEFORE `privacy.clearBrowsingData` with `'tabs'`, as Chrome
-   * shows the tab switcher and runs its motion on the cards first, then closes; the clear takes
-   * the set as it stands at clear time, so a tab that navigates between the two calls joins or
-   * leaves it – the motion's list may differ by that tab, as Chrome's may (cosmetic).
+   * whole model); less the tab the form was confirmed from, the active tab of the window the
+   * command comes from (the Settings tab the phone's form is a sheet over: Chrome runs Quick
+   * Delete from no tab, so the surface the user acted from is never in its set). The chrome asks
+   * BEFORE `privacy.clearBrowsingData` with `'tabs'`, as Chrome shows the tab switcher and runs
+   * its motion on the cards first, then closes; the clear takes the set as it stands at clear
+   * time, so a tab that navigates between the two calls joins or leaves it – the motion's list
+   * may differ by that tab, as Chrome's may (cosmetic).
    */
   'privacy.tabsInRange': { args: { range: BrowsingDataRange }; result: string[] }
 
