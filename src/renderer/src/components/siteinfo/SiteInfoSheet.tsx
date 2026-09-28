@@ -26,6 +26,7 @@ import {
   VolumeX,
   type LucideIcon
 } from 'lucide-react'
+import { siteOriginOf } from '@shared/blocking'
 import type { Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import {
@@ -55,6 +56,14 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { mediaOf } from '@renderer/lib/media'
 import { LevelMotion, paintLevels, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
+import {
+  TRACKER_REPORT_EMPTY,
+  TRACKER_REPORT_SETTINGS,
+  TRACKER_REPORT_TITLE,
+  blockedSiteCategoryLabel,
+  trackerReportOrder,
+  trackerReportRows
+} from '@renderer/lib/blockingUi'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import {
   securityToneClass,
@@ -102,20 +111,22 @@ import { SiteInfoDesktopLayer } from '../siteControls/SiteInfoPopover'
 const COOKIE_FOLD = 6
 
 /**
- * The sheet's levels: the root, the three detail levels behind its rows, and the two
- * confirmations – levels too (§10.4: a confirmation inside a surface with levels is a level, not
- * a prompt over it; the question stays in the site's own place, and a sheet over the sheet would
- * spend §9.24's one depth on a question the sheet can ask itself).
+ * The sheet's levels: the root, the four detail levels behind its rows (the tracker report,
+ * PS-33, behind the shield's row among them), and the two confirmations – levels too (§10.4: a
+ * confirmation inside a surface with levels is a level, not a prompt over it; the question stays
+ * in the site's own place, and a sheet over the sheet would spend §9.24's one depth on a
+ * question the sheet can ask itself).
  */
-type LevelId = 'main' | 'connection' | 'cookies' | 'permissions' | ConfirmLevel
+type LevelId = 'main' | 'connection' | 'cookies' | 'permissions' | 'trackers' | ConfirmLevel
 /** The confirmation levels: Delete cookies, one level in from the cookies; Delete site data, from the root. */
 type ConfirmLevel = 'clear-cookies' | 'clear-data'
 /** The detail levels with a §9.16 header – the title and the back control. A confirmation carries none (§9.23). */
-type TitledLevel = 'connection' | 'cookies' | 'permissions'
+type TitledLevel = 'connection' | 'cookies' | 'permissions' | 'trackers'
 const LEVEL_TITLES: Record<TitledLevel, string> = {
   connection: 'Connection',
   cookies: 'Cookies and site data',
-  permissions: 'Permissions'
+  permissions: 'Permissions',
+  trackers: TRACKER_REPORT_TITLE
 }
 const CONFIRM_KINDS: Record<ConfirmLevel, 'cookies' | 'data'> = {
   'clear-cookies': 'cookies',
@@ -467,6 +478,7 @@ const LEVEL_IDS: readonly LevelId[] = [
   'connection',
   'cookies',
   'permissions',
+  'trackers',
   'clear-cookies',
   'clear-data'
 ]
@@ -755,7 +767,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 />
               </div>
             ) : (
-              <PillChipRows chips={pillChips} />
+              <PillChipRows chips={pillChips} push={push} />
             )}
             {!extension && (
               <SheetMainRows
@@ -831,6 +843,22 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
               busy={actions.busy}
               onReset={actions.resetPermission}
               kit={SHEET_ROWS}
+            />
+          </section>
+          <section
+            ref={register('trackers')}
+            className="zen-sheet-pane"
+            data-level="trackers"
+            hidden={!inPlay('trackers')}
+          >
+            <TrackerReportRows
+              tab={tab}
+              open={level === 'trackers'}
+              onSettings={() => {
+                const origin = siteOriginOf(tab.url)
+                if (!overlayAvailable('settings')) dismissSiteInfo()
+                openSettingsPage('privacy', origin ? { site: origin } : undefined)
+              }}
             />
           </section>
           <ConfirmPane
@@ -966,23 +994,78 @@ function SheetTitle({
  * the rows name themselves. Nothing on a page with neither.
  */
 function PillChipRows({
-  chips
+  chips,
+  push
 }: {
   chips: ReadonlyArray<PillChipModel & { row: PillChipRow }>
+  /** Opens the level a §10.4 detail row among them leads to (the shield's tracker report). */
+  push: (id: 'trackers') => void
 }): JSX.Element | null {
   if (chips.length === 0) return null
   return (
     <div className="flex flex-col" data-testid="siteinfo-pill-chips">
-      {chips.map((chip) => (
-        <SheetRow
-          key={chip.id}
-          glyph={chip.row.glyph}
-          label={chip.row.label}
-          value={chip.row.value}
-          onClick={chip.row.activate}
-        />
-      ))}
+      {chips.map((chip) => {
+        const level = chip.row.level
+        return (
+          <SheetRow
+            key={chip.id}
+            glyph={chip.row.glyph}
+            label={chip.row.label}
+            value={chip.row.value}
+            onClick={level ? () => push(level) : chip.row.activate}
+          />
+        )
+      })}
       <div aria-hidden className="zen-sheet-sep" />
+    </div>
+  )
+}
+
+/**
+ * The tracker report (PS-33), one level under the shield's row: the sites the engine blocked
+ * requests to on the page, one §10.1 chassis row each – the registrable domain as the label,
+ * the kind of rule that blocked it as the 13/69% line, the request count as the tabular-nums
+ * value – sorted by count as the level opens and never re-sorted while it is up; a site blocked
+ * later joins at the foot (§9.29), the counts move live. Empty, §9.17's one sentence. No
+ * controls, no per-site allow; the one footer is a hairline and a 44 navigation row to
+ * Settings › Privacy and security at the site. The level has no control of its own to land the
+ * keyboard on but that row, so the sheet parks the focus on its root as §10.4 has it. A private
+ * tab's list is the same; nothing here persists (the record is the tab's, gone with the document).
+ * The order starts over each time the level opens (`open`), so a report that changed under a
+ * closed level shows sorted the next time.
+ */
+function TrackerReportRows({
+  tab,
+  open,
+  onSettings
+}: {
+  tab: Tab
+  open: boolean
+  onSettings: () => void
+}): JSX.Element {
+  const [order, setOrder] = useState<readonly string[]>([])
+  const nextOrder = open ? trackerReportOrder(order, tab.blockedSites) : []
+  if (nextOrder !== order && (open || order.length > 0)) setOrder(nextOrder)
+  const rows = trackerReportRows(nextOrder, tab.blockedSites)
+  return (
+    <div className="flex flex-col pb-2" data-testid="tracker-report">
+      {rows.length === 0 ? (
+        <p className="zen-sheet-empty">{TRACKER_REPORT_EMPTY}</p>
+      ) : (
+        rows.map((site) => (
+          <div key={site.domain} data-tracker-row={site.domain} className="contents">
+            <SheetRow
+              label={site.domain}
+              description={blockedSiteCategoryLabel(site.category)}
+              value={String(site.count)}
+            />
+          </div>
+        ))
+      )}
+      <div aria-hidden className="zen-sheet-sep" />
+      <button type="button" className="zen-sheet-item" onClick={onSettings}>
+        <span className="min-w-0 flex-1 truncate">{TRACKER_REPORT_SETTINGS}</span>
+      </button>
     </div>
   )
 }

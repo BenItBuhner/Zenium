@@ -115,7 +115,15 @@ function state(t: Tab, patch: Partial<UIState> = {}): UIState {
 
 const page = tab('https://github.com/BenItBuhner/Zenium')
 /** Bennett's page: five requests blocked, the translation offered. */
-const counted = { ...page, blockedCount: 5 }
+const counted: Tab = {
+  ...page,
+  blockedCount: 5,
+  // The tracker report behind the count (PS-33), in the order the engine met the sites.
+  blockedSites: [
+    { domain: 'example-cdn.com', category: 'user', count: 2 },
+    { domain: 'doubleclick.net', category: 'tracker', count: 3 }
+  ]
+}
 
 /** The page offered for translation (the bar dismissed: the chip still offers). */
 function offered(s: UIState): UIState {
@@ -236,7 +244,7 @@ describe('phonePillChips: the chips as data', () => {
     expect(chips.filter((c) => c.render).map((c) => c.id)).toEqual(['lock', 'media'])
     expect(chips.filter((c) => c.row).map((c) => c.id)).toEqual(['blocked', 'translate', 'media'])
     const rows = Object.fromEntries(chips.map((c) => [c.id, c.row]))
-    expect(rows.blocked?.label).toBe('Requests blocked')
+    expect(rows.blocked?.label).toBe('Trackers blocked')
     expect(rows.blocked?.value).toBe('5')
     expect(rows.translate?.label).toBe('Translate this page')
     expect(rows.translate?.value).toBe('German to English')
@@ -345,7 +353,7 @@ describe('phonePillChips: the chips as data', () => {
       })
       const chips = phonePillChips(state(t), t, ctx)
       expect(chips.map((c) => c.id)).toEqual(['certificate-error', 'blocked'])
-      expect(chips[1]!.row?.label).toBe('Requests blocked')
+      expect(chips[1]!.row?.label).toBe('Trackers blocked')
       expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['certificate-error'])
     }
     // A certificate error the core reports by its net error code alone reads the same.
@@ -1327,7 +1335,7 @@ describe('ChipRun cross-fades a set change in place (§11.4)', () => {
 /*
  * The other half, rendered for real: the site-information sheet on the chassis, the chips'
  * rows at the top of its root level – the same names, states and actions the chips had, as
- * TalkBack will read them ("Requests blocked, 5") and as a finger will take them.
+ * TalkBack will read them ("Trackers blocked, 5") and as a finger will take them.
  */
 describe('the site-information sheet lists the chips as rows', () => {
   const initialViewport = viewportStore.get()
@@ -1386,12 +1394,12 @@ describe('the site-information sheet lists the chips as rows', () => {
     await open(offered(state(counted)))
     expect(group()).not.toBeNull()
     expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
-      'Requests blocked, 5',
+      'Trackers blocked, 5',
       'Translate this page, German to English'
     ])
     // The chip's own words and formatting on the row: the count as the value, the pair on offer
     // in the bar's words.
-    expect(row('Requests blocked')!.querySelector('.zen-sheet-item-value')?.textContent).toBe('5')
+    expect(row('Trackers blocked')!.querySelector('.zen-sheet-item-value')?.textContent).toBe('5')
     expect(row('Translate this page')!.querySelector('.zen-sheet-item-value')?.textContent).toBe(
       'German to English'
     )
@@ -1402,7 +1410,7 @@ describe('the site-information sheet lists the chips as rows', () => {
       el.getAttribute('aria-label')?.startsWith('Connection')
     )
     expect(connection).toBeGreaterThan(-1)
-    expect(items.indexOf(row('Requests blocked')!)).toBeLessThan(connection)
+    expect(items.indexOf(row('Trackers blocked')!)).toBeLessThan(connection)
     expect(items.indexOf(row('Translate this page')!)).toBeLessThan(connection)
     // No heading over them: the rows name themselves.
     expect(group()!.querySelector('.zen-sheet-heading')).toBeNull()
@@ -1417,17 +1425,47 @@ describe('the site-information sheet lists the chips as rows', () => {
     await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(false))
   })
 
-  it('the shield’s row leads on to Settings › Privacy and security, where the lists and the site exceptions are', async () => {
+  it('the shield’s row is a detail row: it opens the tracker report one level down, whose footer leads on to Settings › Privacy and security (PS-33)', async () => {
     await open(offered(state(counted)))
-    act(() => row('Requests blocked')!.click())
+    const pane = document.querySelector<HTMLElement>('[data-level="trackers"]')!
+    expect(pane.hidden).toBe(true)
+    act(() => row('Trackers blocked')!.click())
+    await vi.waitFor(() => expect(pane.hidden).toBe(false))
+    expect(document.querySelector('.zen-sheet-title')?.textContent).toBe('Trackers blocked')
+    // The rows are the record's sites, most blocked first, each named for TalkBack by domain,
+    // count and kind; the counts are the chassis's tabular values.
+    const report = pane.querySelector<HTMLElement>('[data-testid="tracker-report"]')!
+    const items = Array.from(report.querySelectorAll<HTMLElement>('.zen-sheet-item'))
+    expect(items.map((el) => el.textContent)).toEqual([
+      'doubleclick.netTracker3',
+      'example-cdn.comYour filter2',
+      'Tracking prevention settings…'
+    ])
+    expect(report.querySelector('.zen-sheet-empty')).toBeNull()
+    expect(report.querySelector('.zen-sheet-sep')).not.toBeNull()
+    // One level and no deeper (§9.24): the report's rows open nothing.
+    expect(items.slice(0, 2).every((el) => el.tagName === 'DIV')).toBe(true)
+    act(() => (items[2] as HTMLButtonElement).click())
     await vi.waitFor(() => expect(commands()).toContain('page.open'))
     const [, args] = invoke.mock.calls.find(([name]) => name === 'page.open')!
     expect(args).toMatchObject({ id: 'settings', section: 'privacy' })
   })
 
+  it('the tracker report says when nothing was blocked, in one sentence (§9.17)', async () => {
+    await open(state(page))
+    act(() => row('Trackers blocked')!.click())
+    const pane = document.querySelector<HTMLElement>('[data-level="trackers"]')!
+    await vi.waitFor(() => expect(pane.hidden).toBe(false))
+    const report = pane.querySelector<HTMLElement>('[data-testid="tracker-report"]')!
+    expect(report.querySelector('.zen-sheet-empty')?.textContent).toBe(
+      'No trackers blocked on this page'
+    )
+    expect(report.querySelectorAll('.zen-sheet-item').length).toBe(1)
+  })
+
   it('lists the shield alone on a quiet page with no offer, its count 0; nothing on an internal page', async () => {
     await open(state(page))
-    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual(['Requests blocked, 0'])
+    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual(['Trackers blocked, 0'])
     act(() => root?.unmount())
     host?.remove()
     const settings = tab('zen://settings')
@@ -1438,7 +1476,7 @@ describe('the site-information sheet lists the chips as rows', () => {
   it('does not list the media chip while it has the pill’s slot: the shield and the offer alone (its waiting row is the model’s case above)', async () => {
     await open(playing(offered(state(counted))))
     expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
-      'Requests blocked, 5',
+      'Trackers blocked, 5',
       'Translate this page, German to English'
     ])
   })
@@ -1454,7 +1492,7 @@ describe('the site-information sheet lists the chips as rows', () => {
     const article = { ...counted, url: 'https://news.example.com/story', readerable: true }
     await open(offered(state(article)))
     expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
-      'Requests blocked, 5',
+      'Trackers blocked, 5',
       'Translate this page, German to English',
       'Reader View'
     ])
@@ -1465,7 +1503,7 @@ describe('the site-information sheet lists the chips as rows', () => {
     host?.remove()
     await open(offered(state(counted)))
     expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
-      'Requests blocked, 5',
+      'Trackers blocked, 5',
       'Translate this page, German to English'
     ])
   })

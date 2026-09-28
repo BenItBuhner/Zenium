@@ -131,8 +131,8 @@ export interface ViewEventPayloads {
   crashed: { reason: string; repeat?: boolean }
   audio: { audible: boolean }
   /** The Kotlin request engine blocked `count` more requests of the page. */
-  /** `hosts`: the beat's blocked requests by hostname and matched set (the tracker report). */
-  blocked: { count: number; hosts?: Array<{ host?: unknown; set?: unknown; count?: unknown }> }
+  /** `hosts`: the beat's blocked requests by hostname and matched set (the tracker report), raw. */
+  blocked: { count: number; hosts?: unknown }
   enterFullscreen: void
   leaveFullscreen: void
   found: FindResultInfo

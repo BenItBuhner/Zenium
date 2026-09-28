@@ -1,4 +1,4 @@
-import type { Tab } from '@shared/types'
+import type { BlockedSite, BlockedSiteCategory, Tab } from '@shared/types'
 import {
   listDefaultFor,
   siteOriginOf,
@@ -72,6 +72,78 @@ export function chipCount(blocked: number): string {
   if (blocked < 1000) return String(blocked)
   if (blocked < 10_000) return `${(blocked / 1000).toFixed(1).replace(/\.0$/, '')}k`
   return `${Math.round(blocked / 1000)}k`
+}
+
+// ---------------------------------------------------------------------------
+// The tracker report (PS-33): the list behind the count
+// ---------------------------------------------------------------------------
+
+/** The report's title, on the desktop popover and the phone sheet's level (sentence case). */
+export const TRACKER_REPORT_TITLE = 'Trackers blocked'
+
+/** The report's empty state (§9.17: one sentence, no full stop). */
+export const TRACKER_REPORT_EMPTY = 'No trackers blocked on this page'
+
+/** The report's one footer row: the way to Settings › Privacy and security. */
+export const TRACKER_REPORT_SETTINGS = 'Tracking prevention settings…'
+
+/** Tooltip and accessible name of the count pill that opens the report on the desktop. */
+export function trackerReportChipLabel(blocked: number): string {
+  return `${requests(blocked)} blocked on this page · ${TRACKER_REPORT_TITLE}`
+}
+
+/**
+ * A row's 13/69% line: the kind of rule that blocked the site. The filter lists match as one set,
+ * so a list's block reads as a tracker; the user's own filters, an extension's rules and Safe
+ * Browsing (an unsafe frame refused, Android) name themselves.
+ */
+export function blockedSiteCategoryLabel(category: BlockedSiteCategory): string {
+  switch (category) {
+    case 'tracker':
+      return 'Tracker'
+    case 'user':
+      return 'Your filter'
+    case 'extension':
+      return 'Extension'
+    case 'unsafe':
+      return 'Unsafe site'
+  }
+}
+
+/**
+ * The order the report's rows stand in (§9.29: no jitter): sorted by count, most first, when the
+ * list opens (`order` empty), ties in the order the engine first saw them; afterwards the order
+ * holds and a site the engine meets later joins at the foot. A report that emptied (the document
+ * changed under the open list) starts the order over.
+ */
+export function trackerReportOrder(
+  order: readonly string[],
+  sites: readonly BlockedSite[] | undefined
+): readonly string[] {
+  if (!sites || sites.length === 0) return order.length === 0 ? order : []
+  if (order.length === 0)
+    return sites
+      .map((site, index) => ({ site, index }))
+      .sort((a, b) => b.site.count - a.site.count || a.index - b.index)
+      .map(({ site }) => site.domain)
+  const known = new Set(order)
+  const late = sites.filter((site) => !known.has(site.domain)).map((site) => site.domain)
+  return late.length === 0 ? order : [...order, ...late]
+}
+
+/** The rows in `order`, each with its live count; a domain the report no longer holds is skipped. */
+export function trackerReportRows(
+  order: readonly string[],
+  sites: readonly BlockedSite[] | undefined
+): BlockedSite[] {
+  if (!sites || sites.length === 0) return []
+  const byDomain = new Map(sites.map((site) => [site.domain, site]))
+  const rows: BlockedSite[] = []
+  for (const domain of order) {
+    const site = byDomain.get(domain)
+    if (site) rows.push(site)
+  }
+  return rows
 }
 
 export interface StatusCardText {
