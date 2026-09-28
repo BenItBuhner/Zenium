@@ -82,6 +82,7 @@ export const DESKTOP: HostCapabilities = {
   screenCapture: false,
   shareSheet: false,
   selectionToolbar: false,
+  selectionMenu: true,
   popupSurface: true,
   qrScan: false,
   readAloud: false,

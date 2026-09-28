@@ -13,6 +13,7 @@ import type {
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { UpdateDotRecord } from '../core/updateDot'
+import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
@@ -281,6 +282,16 @@ export interface HostCapabilities {
    */
   selectionToolbar: boolean
   /**
+   * Selected page text gets the chrome's mini menu over it (CT-39; Edge's mini menu: Copy,
+   * Search, Define, Translate, Read aloud): the page script reports the settled selection
+   * (`shared/selectionScript`), the core publishes `UIState.selectionMenu` and the chrome draws
+   * the pill. Desktop hosts declare it; a host without it – the phone, whose system toolbar is
+   * its selection menu – leaves it out, and the core drops a `selection` report unread. The one
+   * capability a host may leave out: a desktop-only surface must not write a `false` into the
+   * phone's boot path for its sake.
+   */
+  selectionMenu?: boolean
+  /**
    * The host can float a second chrome document above the page views (`WindowHost.setPopupSurface`):
    * the autofill picker hangs from a page field there, over a page the user keeps typing into.
    * Hosts without it (phones) draw the picker in the chrome's own document beside the page.
@@ -349,6 +360,80 @@ export interface HostCapabilities {
    */
   placementAnswered: boolean
 }
+
+// ---------------------------------------------------------------------------
+// The mini menu over a text selection, and Define (CT-39)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the mini menu offers, by id, in its order (Edge's: Copy, Search, Define, then the two
+ * the services core adds): each runs the page context menu's own selection action
+ * (`Menus.selectionActions`); `copy` is the engine's copy of the selection.
+ */
+export type SelectionMenuActionId = 'copy' | 'search' | 'define' | 'translate' | 'readAloud'
+
+/** One chip of the mini menu: the id handed back to `selectionMenu.run` and the action's short title. */
+export interface SelectionMenuAction {
+  id: SelectionMenuActionId
+  title: string
+}
+
+/**
+ * `UIState.selectionMenu`: the settled selection the chrome draws the mini menu for, from the
+ * page script's report (`shared/selectionScript`); null while nothing is selected, once the
+ * selection collapses or an action ran, and on hosts without `capabilities.selectionMenu`.
+ */
+export interface SelectionMenuState {
+  tabId: string
+  /** The selected text, whitespace folded, cut at the page script's cap. */
+  text: string
+  /** Where the selection is, in CSS pixels of the page view; null when the page could not say. */
+  rect: Rect | null
+  /** Whether the selection is a text field's. */
+  isEditable: boolean
+  /** The chips, in order; never empty (an empty list clears the state instead). */
+  actions: SelectionMenuAction[]
+}
+
+/**
+ * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
+ * than three words, no letters, an address), Wiktionary has no page for it (`not-found`), the
+ * network did not answer (`offline`), it answered with an error (`unavailable`) or with
+ * something that is not its definition JSON (`malformed`).
+ */
+export type DefineRefusal = 'invalid-term' | 'not-found' | 'offline' | 'unavailable' | 'malformed'
+
+export interface DefineDefinition {
+  /** The sense, as plain text (Wiktionary's HTML stripped). */
+  text: string
+  /** Up to two usage examples, plain text. */
+  examples: string[]
+}
+
+export interface DefineEntry {
+  /** Wiktionary's part of speech heading: `Noun`, `Verb`, `Adjective`, … */
+  partOfSpeech: string
+  /** The language the entry defines the term in, as Wiktionary names it (`English`). */
+  language: string
+  definitions: DefineDefinition[]
+}
+
+/** A definition from Wiktionary (`core/define.ts`); the attribution its licence asks for rides with it. */
+export interface DefineResult {
+  /** The term as looked up (whitespace folded, trimmed). */
+  term: string
+  /** The language code of the section shown (`en`), the reader's when Wiktionary has it. */
+  lang: string
+  entries: DefineEntry[]
+  attribution: {
+    source: 'Wiktionary'
+    licence: 'CC BY-SA 4.0'
+    /** The term's page on Wiktionary, for "See more". */
+    url: string
+  }
+}
+
+export type DefineLookup = { ok: true; result: DefineResult } | { ok: false; reason: DefineRefusal }
 
 export interface Rect {
   x: number
@@ -2764,15 +2849,24 @@ export interface NewTabDeviceState {
    * are. Ids from `MAGIC_STACK_MODULE_IDS` (`shared/newTab.ts`).
    */
   hiddenModules: MagicStackModuleId[]
+  /**
+   * The Safety check card's memory (NTP-19; `shared/safetyHubCard.ts`): per type, the run being
+   * shown and its impressions, the runs so far, when it may show again – Chrome's
+   * `safety_hub.menu_notifications` pref, per device as that is.
+   */
+  safetyHubCard: SafetyHubCardMemories
 }
 
 /**
  * The Magic Stack's modules (NTP-16): the contextual cards the phone's new tab page pages
  * through under its tiles. `continue` is the recently closed tab (Chrome's local tab
  * resumption), `downloads` the last completed download, `bookmarks` the newest bookmark,
- * `default-browser` the "Set Zenium as your default browser" promo (DEF-04).
+ * `safety-hub` the Safety check card (NTP-19: revoked permissions, Safe Browsing off, compromised
+ * passwords – one at a time), `default-browser` the "Set Zenium as your default browser" promo
+ * (DEF-04).
  */
-export type MagicStackModuleId = 'continue' | 'downloads' | 'bookmarks' | 'default-browser'
+export type MagicStackModuleId =
+  'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'default-browser'
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
 export interface NewTabPageShortcut extends NewTabShortcut {
@@ -4588,6 +4682,8 @@ export interface UIState {
   newTabHiddenHosts: string[]
   /** The Magic Stack's modules hidden on this device (NTP-16; the phone's page and its Customise sheet). */
   newTabHiddenModules: MagicStackModuleId[]
+  /** The Safety check card's memory on this device (NTP-19; `NewTabDeviceState.safetyHubCard`). */
+  newTabSafetyHubCard: SafetyHubCardMemories
   /**
    * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
    * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
@@ -4725,6 +4821,11 @@ export interface UIState {
   readAloud: ReadAloudState | null
   /** The import from another browser or file that is running or just finished; null otherwise. */
   import: ImportProgress | null
+  /**
+   * The settled text selection the chrome's mini menu stands over (CT-39): its tab, text, box
+   * and chips; null while nothing is selected. Desktop hosts with `capabilities.selectionMenu`.
+   */
+  selectionMenu: SelectionMenuState | null
 }
 
 export interface FindResult {
@@ -5888,6 +5989,12 @@ export interface Commands {
   'newtab.undoRemove': { args: { url: string }; result: boolean }
   /** Hide or show one of the Magic Stack's modules on this device (NTP-16). */
   'newtab.setModuleHidden': { args: { id: MagicStackModuleId; hidden: boolean }; result: void }
+  /**
+   * The Safety check card's memory after an impression or a dismissal (NTP-19): the renderer
+   * runs the machine (`shared/safetyHubCard.ts`) over the published state and writes the record
+   * back whole; the core sanitises and keeps it with the device's other new-tab sets.
+   */
+  'newtab.setSafetyHubCardMemory': { args: { memories: SafetyHubCardMemories }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }
@@ -6412,6 +6519,22 @@ export interface Commands {
   'readAloud.setHighlight': { args: { mode: ReadAloudHighlightMode }; result: void }
   /** The host's voices and the per-language default among them (the pickers). */
   'readAloud.voices': { args: void; result: ReadAloudVoicesResult }
+
+  /**
+   * The mini menu's chip `id` was pressed over the selection `UIState.selectionMenu` holds for
+   * `tabId` (CT-39): the matching page-menu selection action runs (`Menus.selectionActions`,
+   * the one list) and the state clears. False when the state is another tab's or gone.
+   */
+  'selectionMenu.run': { args: { tabId: string; id: SelectionMenuActionId }; result: boolean }
+  /** The mini menu was dismissed (Escape, a click elsewhere in the chrome): the state clears. */
+  'selectionMenu.dismiss': { args: { tabId: string }; result: void }
+  /**
+   * A definition of `term` from Wiktionary (`core/define.ts`; English Wiktionary's REST
+   * definitions, the reader's language section when it has one, `lang` defaulting to the first
+   * preferred language). The answer carries the attribution the licence asks for, or a typed
+   * refusal; cached for a day.
+   */
+  'define.lookup': { args: { term: string; lang?: string }; result: DefineLookup }
   'reader.toggle': { args: { tabId: string }; result: void }
   /** Change Reader View's text preferences; every open reader page follows at once. */
   'reader.setPreferences': { args: Partial<ReaderPreferences>; result: void }
@@ -7253,6 +7376,13 @@ export interface Events {
    * asked, in CSS pixels of the page view, when known.
    */
   'translate.selection': { tabId: string; text: string; x: number | null; y: number | null }
+  /**
+   * Show the definition surface for `term` in the tab (CT-39's Define, from the mini menu or
+   * the phone's selection toolbar): the chrome looks the term up (`define.lookup`) and shows the
+   * answer over `rect` – the selection's box in CSS pixels of the page view – or, with null
+   * (the toolbar's touch anchors nothing), in its sheet.
+   */
+  'define.show': { tabId: string; term: string; rect: Rect | null }
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }

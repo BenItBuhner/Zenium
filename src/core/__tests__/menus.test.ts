@@ -4220,6 +4220,43 @@ describe('the selection toolbar', () => {
     ])
   })
 
+  it('keeps Define off the toolbar and the page menu until its surface exists, while the mini menu carries it (CT-39, 4a)', () => {
+    // `SELECTION_TOOLBAR_ORDER` has the item's rank ready (search · define · glance · share ·
+    // translate · readAloud), and the action names the mini surface alone: the phone's bar and
+    // the right-click menu show no Define with nothing behind it (the Define sheet and popover
+    // are the UI PR's, lead-gated).
+    const phone = pageHarness(ANDROID, PHONE)
+    expect(phone.browser.menus.selectionToolbar(phone.tabId, 'foam').map((i) => i.id)).toEqual([
+      'search',
+      'share'
+    ])
+    expect(phone.browser.menus.runSelectionAction(phone.tabId, 'define', 'foam')).toBe(false)
+    expect(phone.menu(pageParams({ selectionText: 'foam' }))).not.toContain('Define')
+    const desktop = pageHarness()
+    expect(desktop.menu(pageParams({ selectionText: 'foam' }))).not.toContain('Define')
+    expect(desktop.browser.menus.selectionMenuActions(desktop.tabId, 'foam', null)).toEqual([
+      { id: 'copy', title: 'Copy' },
+      { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' }
+    ])
+    // The phone has no mini menu: its chips are empty, and a chip pressed there runs nothing.
+    expect(phone.browser.menus.selectionMenuActions(phone.tabId, 'foam', null)).toEqual([])
+    expect(phone.browser.menus.runSelectionMenuAction(phone.tabId, 'copy', 'foam', null)).toBe(
+      false
+    )
+    // An address is a link, not a word (`example.com` is one word with letters): no Define where
+    // the selection is offered as a link. The stop a drag took along with the word is no bar:
+    // the chip stands for the bare word.
+    expect(
+      desktop.browser.menus
+        .selectionMenuActions(desktop.tabId, 'example.com', null)
+        .map((a) => a.id)
+    ).toEqual(['copy'])
+    expect(desktop.browser.menus.selectionMenuActions(desktop.tabId, 'foam.', null)).toContainEqual(
+      { id: 'define', title: 'Define' }
+    )
+  })
+
   it('on the phone lists Search <engine> then Share for text, and nothing for blank text or a gone tab', () => {
     const h = pageHarness(ANDROID, PHONE)
     expect(h.browser.menus.selectionToolbar(h.tabId, '  quantum foam ')).toEqual([

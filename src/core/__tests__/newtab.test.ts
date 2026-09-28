@@ -11,6 +11,7 @@ import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
+import { emptySafetyHubCardMemory } from '../../shared/safetyHubCard'
 import { makeTheme, resolveTheme, unfollowedTheme } from '../../shared/theme'
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
@@ -916,7 +917,12 @@ describe('NewTabService: my shortcuts and most visited', () => {
     // Removing a pinned site drops the tile and blocks the host.
     svc.pin('https://docs.example/', 'Docs')
     svc.remove('https://docs.example/')
-    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'], hiddenModules: [] })
+    expect(device()).toEqual({
+      shortcuts: [],
+      hiddenHosts: ['docs.example'],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     svc.pin('javascript:alert(1)', 'nope')
     expect(device().shortcuts).toEqual([])
   })
@@ -984,7 +990,12 @@ describe('NewTabService: my shortcuts and most visited', () => {
         }
       ])
       expect(svc.undoRemove('https://www.news.example/a')).toBe(true)
-      expect(device()).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+      expect(device()).toEqual({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: [],
+        safetyHubCard: {}
+      })
       expect(f.browser.history.topSites(8, device().hiddenHosts).map((s) => s.url)).toEqual([
         'https://www.news.example/a',
         'https://docs.example/'
@@ -1339,7 +1350,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
       expect(f.browser.state.newTabDevice).toEqual({
         shortcuts: [],
         hiddenHosts: [],
-        hiddenModules: []
+        hiddenModules: [],
+        safetyHubCard: {}
       })
       expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
       expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
@@ -1396,6 +1408,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
           modules: { ...f.browser.state.settings.newTab.modules, greeting: true }
         }
       })
+      // A Safety check card seen on this device: Chrome's Safety Hub record, not the page's.
+      const seen = { ...emptySafetyHubCardMemory(), lastShownAt: 5, runs: 1, result: 'off' }
+      f.browser.handleCommand(win, 'newtab.setSafetyHubCardMemory', {
+        memories: { 'safe-browsing': seen }
+      })
       await f.browser.handleCommand(win, 'newtab.reset', undefined)
       expect(f.browser.state.settings.newTab).toEqual({
         ...DEFAULT_NEW_TAB_SETTINGS,
@@ -1404,7 +1421,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
       expect(f.browser.state.newTabDevice).toEqual({
         shortcuts: [],
         hiddenHosts: [],
-        hiddenModules: []
+        hiddenModules: [],
+        safetyHubCard: { 'safe-browsing': seen }
       })
       expect(f.background.current).toBeNull()
       // No restore snapshot survives a reset.

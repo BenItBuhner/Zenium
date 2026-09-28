@@ -201,7 +201,6 @@ export const ZENIUM_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Close Other Tabs', 'O'],
   ['Move Left', 'L'],
   ['Move Right', 'R'],
-  ['Rename…', 'n'],
   ['Paste as Plain Text', 'l'],
   ['Quit', 'Q'],
   ['Exit Full Screen', 'x'],

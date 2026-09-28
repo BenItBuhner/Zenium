@@ -530,21 +530,35 @@ describe('the bookmarks manager page tab (§10.1, §10.5)', () => {
     })
   })
 
-  it("the menus' folder rename and Add New Folder are done in place when the folder is in view", async () => {
+  it("the menus' Edit… on a folder is the frame's dialog whether the folder is in view or not (W8-F13: one door behind the one word); Add New Folder is done in place", async () => {
     const el = await mountPage()
+    // A folder in view: the request stands for the frame's "Edit folder" dialog – no in-place
+    // field takes it (that door is F2's).
     await act(async () => {
       uiStore.set({ bookmarkEdit: { id: 'docs', parentId: BOOKMARKS_BAR_ID, type: 'folder' } })
     })
     await flush()
-    // Taken by the page: no dialog is left asking.
-    expect(uiStore.get().bookmarkEdit).toBeNull()
-    expect(row(el, 'docs').querySelector('input.zen-bm-rename')).not.toBeNull()
-    // A folder the list does not show is the dialog's.
+    expect(uiStore.get().bookmarkEdit).toEqual({
+      id: 'docs',
+      parentId: BOOKMARKS_BAR_ID,
+      type: 'folder'
+    })
+    expect(row(el, 'docs').querySelector('input.zen-bm-rename')).toBeNull()
+    // A folder the list does not show: the dialog's as before.
     await act(async () => {
       uiStore.set({ bookmarkEdit: { id: 'api', parentId: 'docs', type: 'folder' } })
     })
     await flush()
     expect(uiStore.get().bookmarkEdit).toEqual({ id: 'api', parentId: 'docs', type: 'folder' })
+    // A new folder asked of the shown folder: made and named in place, the request taken.
+    await act(async () => {
+      uiStore.set({ bookmarkEdit: { id: null, parentId: BOOKMARKS_BAR_ID, type: 'folder' } })
+    })
+    await flush()
+    expect(uiStore.get().bookmarkEdit).toBeNull()
+    expect(calls('bookmark.create')).toEqual([
+      { parentId: BOOKMARKS_BAR_ID, title: 'New folder', type: 'folder' }
+    ])
   })
 
   it('Add folder creates one in the shown folder and names it in place; Add bookmark asks the Edit dialog', async () => {

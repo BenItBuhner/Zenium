@@ -11,6 +11,7 @@ import type {
   Boost,
   ClosedEntry,
   ImportProgress,
+  SelectionMenuState,
   NavigationSnapshot,
   NetworkStatus,
   Container,
@@ -358,6 +359,7 @@ export interface StateExtras {
   translate: TranslateUIState
   spellcheck: SpellcheckStatus
   readAloud: ReadAloudState | null
+  selectionMenu: SelectionMenuState | null
   import: ImportProgress | null
 }
 
@@ -549,6 +551,7 @@ export class BrowserState {
     translate: emptyTranslateState(),
     spellcheck: UNAVAILABLE_SPELLCHECK,
     readAloud: null,
+    selectionMenu: null,
     import: null
   })
   /**
@@ -1286,6 +1289,7 @@ export class BrowserState {
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabHiddenModules: this.newTabDevice.hiddenModules,
+      newTabSafetyHubCard: this.newTabDevice.safetyHubCard,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
       updateDot: this.updateDot,
       newTabBackground: this.newTabBackgroundFor(),

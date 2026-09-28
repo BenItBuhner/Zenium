@@ -34,7 +34,11 @@ export const PREVIEW_PULL_MAX = 2.5
  * timer opens, not the `contextmenu` a row's hold takes), `type` fills the field with that id
  * the way a keyboard would and leaves it (the field is touched: a form's validation shows),
  * `back` is one system back (the top sheet closes, a section pops), `overview` opens the tab
- * overview over the page, `urlbar` opens the pill for editing.
+ * overview over the page, `urlbar` opens the pill for editing, `toast` raises a toast at that
+ * point of the walk (`toast:<text>` or `toast:<text>|<action label>`, on a still's clock like
+ * `toast=`'s): raised after a sheet's step it stands above that sheet (design language v2
+ * §9.33); raised before one it is up as the sheet opens and lifts above it too, as Chrome
+ * re-parents whatever snackbar is showing into an open bottom sheet.
  */
 export type PreviewStep =
   | { kind: 'tap'; text: string }
@@ -46,6 +50,7 @@ export type PreviewStep =
   | { kind: 'urlbar' }
   /** The new tab page's cards strip (NTP-16) at its nth card, 1-based (`cards:<n>`). */
   | { kind: 'cards'; page: number }
+  | { kind: 'toast'; text: string; action: string | null }
 
 /**
  * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
@@ -1236,8 +1241,8 @@ function parsePrivate(value: string, params: URLSearchParams): PreviewState {
 }
 
 /**
- * The `then=` list: `tap:<text>;hold:<text>;press:<text>;type:<id>=<text>;back;overview;urlbar`;
- * blanks and unknown steps are dropped.
+ * The `then=` list: `tap:<text>;hold:<text>;press:<text>;type:<id>=<text>;back;overview;urlbar;
+ * cards:<n>;toast:<text>|<action>`; blanks and unknown steps are dropped.
  */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
@@ -1248,6 +1253,12 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
     if (pressing) {
       const text = step.slice(pressing.length + 1).trim()
       if (text) steps.push({ kind: pressing, text })
+    } else if (step.startsWith('toast:')) {
+      const body = step.slice('toast:'.length)
+      const bar = body.indexOf('|')
+      const text = (bar === -1 ? body : body.slice(0, bar)).trim()
+      const action = bar === -1 ? null : body.slice(bar + 1).trim() || null
+      if (text) steps.push({ kind: 'toast', text, action })
     } else if (step.startsWith('type:')) {
       const at = step.indexOf('=')
       const id = at === -1 ? '' : step.slice('type:'.length, at).trim()

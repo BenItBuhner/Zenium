@@ -1,5 +1,11 @@
 import { BookmarkTree, recentBookmarks } from '@shared/bookmarks'
 import { MAGIC_STACK_MODULE_IDS } from '@shared/newTab'
+import {
+  SAFETY_HUB_CARD_NAME,
+  safetyHubTriggers,
+  type SafetyHubCardType,
+  type SafetyHubInputs
+} from '@shared/safetyHubCard'
 import type {
   BookmarkNode,
   ClosedEntrySummary,
@@ -11,14 +17,19 @@ import type {
 /**
  * The Magic Stack's module plan (NTP-16, design language v2 §9.29): which cards the stack under
  * the new tab page's tiles draws, from what the UI state already publishes, in the stack's
- * order – the user's own content first, the promo last – less the modules hidden on this device
- * and the ones with nothing to show. Pure: the component renders what `planMagicStack` returns,
- * the Customise sheet lists `availableModules`, and the tests read both directly.
+ * order – the user's own content first, the Safety check card, the promo last – less the modules
+ * hidden on this device and the ones with nothing to show. Pure: the component renders what
+ * `planMagicStack` returns, the Customise sheet lists `availableModules`, and the tests read
+ * both directly.
  *
  * Chrome 152's stack has more modules than Zenium has sources for. Tab resumption from other
- * devices, Price tracking and Safety check wait on the services' tab sync, a price service and
- * a phone Safety check; the History sync promo and Auxiliary search are Google-account features.
- * Those are not drawn, not listed and not pretended.
+ * devices and Price tracking wait on the services' tab sync and a price service; the History
+ * sync promo and Auxiliary search are Google-account features. Those are not drawn, not listed
+ * and not pretended. The Safety check card (NTP-19) is Chrome's Safety Hub module: one of its
+ * types at a time, picked once per impression by `shared/safetyHubCard.ts`'s machine – the
+ * component runs the pick and hands the plan the type with the live inputs, so the card holds
+ * through the impression and leaves when its trigger clears (Chrome's observers,
+ * `SafetyHubMagicStackMediator.java:136-151`).
  */
 
 /** What the plan reads: the slices of `UIState` the modules are built from. */
@@ -33,6 +44,8 @@ export interface MagicStackSources {
   defaultBrowser: DefaultBrowserStatus
   /** `UIState.capabilities.defaultBrowser`: the host can tell and can ask. */
   canRequestDefault: boolean
+  /** The Safety check type this impression shows (the machine's pick; null for none) and the live inputs. */
+  safetyHub: { type: SafetyHubCardType | null; inputs: SafetyHubInputs }
 }
 
 /** One card of the stack, with the content its module found. */
@@ -40,6 +53,7 @@ export type MagicStackCard =
   | { id: 'continue'; entry: ClosedEntrySummary }
   | { id: 'downloads'; item: DownloadItem }
   | { id: 'bookmarks'; items: BookmarkNode[] }
+  | { id: 'safety-hub'; type: SafetyHubCardType; inputs: SafetyHubInputs }
   | { id: 'default-browser' }
 
 /** How a module names itself: on its card's title row and on its row of the Customise sheet. */
@@ -62,6 +76,11 @@ export const MAGIC_STACK_MODULES: readonly MagicStackModule[] = [
   },
   { id: 'downloads', title: 'Downloads', description: 'The file you downloaded last' },
   { id: 'bookmarks', title: 'Bookmarks', description: 'The bookmarks you added most recently' },
+  {
+    id: 'safety-hub',
+    title: SAFETY_HUB_CARD_NAME,
+    description: 'Permissions removed from unused sites, Safe Browsing off, compromised passwords'
+  },
   {
     id: 'default-browser',
     title: 'Default browser',
@@ -89,8 +108,9 @@ export function availableModules(
 /**
  * A module's card from the sources, or null when it has nothing to show. Each module is one
  * rule: the newest closed entry; the newest completed download still on disk and not held in
- * quarantine; the newest bookmarks; the default-browser reminder while Zenium is known not to
- * be the default and no dedicated prompt (the first-run sheet, the banner) is asking already.
+ * quarantine; the newest bookmarks; the Safety check type the machine picked, for as long as
+ * its trigger holds; the default-browser reminder while Zenium is known not to be the default
+ * and no dedicated prompt (the first-run sheet, the banner) is asking already.
  */
 export function buildCard(
   id: MagicStackModuleId,
@@ -115,6 +135,10 @@ export function buildCard(
       if (sources.bookmarks.length === 0) return null
       const items = recentBookmarks(new BookmarkTree(sources.bookmarks), BOOKMARKS_CARD_LIMIT)
       return items.length > 0 ? { id, items } : null
+    }
+    case 'safety-hub': {
+      const { type, inputs } = sources.safetyHub
+      return type && safetyHubTriggers(type, inputs) ? { id, type, inputs } : null
     }
     case 'default-browser': {
       if (!sources.canRequestDefault) return null

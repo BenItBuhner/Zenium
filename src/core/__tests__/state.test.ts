@@ -388,7 +388,8 @@ describe('state.json v5 (new tab page)', () => {
     s.newTabDevice = {
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example'],
-      hiddenModules: ['downloads']
+      hiddenModules: ['downloads'],
+      safetyHubCard: {}
     }
     await s.flush()
     const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
@@ -397,7 +398,8 @@ describe('state.json v5 (new tab page)', () => {
     expect(written.newTabDevice).toEqual({
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example'],
-      hiddenModules: ['downloads']
+      hiddenModules: ['downloads'],
+      safetyHubCard: {}
     })
     expect(written.newTabShortcuts).toBeUndefined()
     expect(written.newTabHiddenHosts).toBeUndefined()
@@ -409,19 +411,34 @@ describe('state.json v5 (new tab page)', () => {
     const settings = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
     delete settings.newTab
     const s = state(fakeIo(legacyProfile(2, { settings: settings as typeof DEFAULT_SETTINGS })))
-    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
 
   it('migrates a v1 profile the same way', () => {
     const s = state(fakeIo(legacyProfile(1, { windowBounds: null, maximized: false })))
-    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(s.settings.newTab.enabled).toBe(true)
   })
 
   it('migrates a v3 profile (bookmark tree, recently closed) keeping its closed list', () => {
     const s = state(fakeIo(legacyProfile(3, { bookmarks: undefined, recentlyClosed: [] })))
-    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(s.recentlyClosed).toEqual([])
     expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
@@ -450,7 +467,8 @@ describe('state.json v5 (new tab page)', () => {
         { id: 'b', title: 'https://b.example/', url: 'https://b.example/' }
       ],
       hiddenHosts: ['news.example'],
-      hiddenModules: []
+      hiddenModules: [],
+      safetyHubCard: {}
     })
     expect(s.settings.newTab).toEqual({ ...DEFAULT_NEW_TAB_SETTINGS, background: 'solid' })
   })
@@ -590,7 +608,12 @@ describe('state.json v5 (new tab page)', () => {
       fakeIo(
         legacyProfile(5, {
           settings: settings as unknown as Persisted['settings'],
-          newTabDevice: { shortcuts: [], hiddenHosts: ['kept.example'], hiddenModules: [] }
+          newTabDevice: {
+            shortcuts: [],
+            hiddenHosts: ['kept.example'],
+            hiddenModules: [],
+            safetyHubCard: {}
+          }
         })
       )
     )

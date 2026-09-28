@@ -34,6 +34,7 @@ import {
 import { installEditingFocusReporter } from '../shared/editingFocus'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installTextFragmentScript } from '../shared/textFragmentScript'
+import { installSelectionReporter } from '../shared/selectionScript'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
@@ -297,6 +298,12 @@ if (process.isMainFrame) {
     installTextFragmentScript({
       send: (message) => ipcRenderer.send('zen:page', message),
       onCommand: (listener) => onHost('textFragment', listener)
+    })
+    // The selection menu (CT-39): the settled selection's text and rect for the chrome's mini
+    // menu, the collapse once. The isolated world sees the document's selection; the main
+    // process stamps the sender frame's id, and the core takes the top frame's report alone.
+    installSelectionReporter({
+      send: (selection) => ipcRenderer.send('zen:page', { type: 'selection', selection })
     })
     // Geolocation (MW-04): Linux has no location provider in the engine, so every call is
     // answered by Zenium's network provider; Windows and macOS ask the OS first and fall back.

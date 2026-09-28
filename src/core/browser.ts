@@ -88,6 +88,8 @@ import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
 import { CaretBrowsing } from './caretBrowsing'
 import { ReadAloudService } from './readAloud'
+import { SelectionMenuService } from './selectionMenu'
+import { DefineService } from './define'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
 import { ShareService } from './share'
@@ -373,6 +375,10 @@ export class Browser {
   readonly caretBrowsing: CaretBrowsing
   /** Read aloud: the one session's text, playback and highlight state over the host's speech engine. */
   readonly readAloud: ReadAloudService
+  /** The mini menu over a settled text selection (CT-39): the one model, from the page's report. */
+  readonly selectionMenu: SelectionMenuService
+  /** Define (CT-39): the word's definitions through Wiktionary's REST endpoint, cached a day. */
+  readonly define: DefineService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
   readonly webNotifications: WebNotificationService
   /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
@@ -606,6 +612,8 @@ export class Browser {
     this.mediaSession = new MediaSessionService(this)
     this.caretBrowsing = new CaretBrowsing(this)
     this.readAloud = new ReadAloudService(this)
+    this.selectionMenu = new SelectionMenuService(this)
+    this.define = new DefineService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
     this.screenCapture = new ScreenCaptureService(this)
@@ -652,6 +660,7 @@ export class Browser {
       translate: this.translate.uiState(),
       spellcheck: this.spellcheck.uiState(),
       readAloud: this.readAloud.uiState(),
+      selectionMenu: this.selectionMenu.uiState(win),
       import: this.imports.uiState()
     })
     this.handlers = this.commandHandlers()
@@ -1808,6 +1817,7 @@ export class Browser {
     this.fullscreen.onNavigated(tabId)
     this.geolocation.onNavigated(tabId, inPage)
     this.readAloud.onNavigated(tabId, inPage)
+    this.selectionMenu.onNavigated(tabId, inPage)
     if (!inPage) {
       this.screenCapture.cancelForTab(tabId)
       this.shares.cancelForTab(tabId)
@@ -3206,6 +3216,10 @@ export class Browser {
       this.readAloud.handleMessage(tabId, message.readAloud)
       return
     }
+    if (message.type === 'selection') {
+      this.selectionMenu.onSelection(tabId, message)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -3828,6 +3842,8 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.undoRemove': ({ url }) => this.newTab.undoRemove(url),
       'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
+      'newtab.setSafetyHubCardMemory': ({ memories }) =>
+        this.newTab.setSafetyHubCardMemories(memories),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
@@ -4064,6 +4080,10 @@ export class Browser {
       'readAloud.setVoice': ({ voiceId, lang }) => this.readAloud.setVoice({ voiceId, lang }),
       'readAloud.setHighlight': ({ mode }) => this.readAloud.setHighlight({ mode }),
       'readAloud.voices': () => this.readAloud.voicesResult(),
+
+      'selectionMenu.run': ({ tabId, id }) => this.selectionMenu.run(tabId, id),
+      'selectionMenu.dismiss': ({ tabId }) => this.selectionMenu.dismiss(tabId),
+      'define.lookup': ({ term, lang }) => this.define.lookup(term, lang),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {
         let id = folderId
