@@ -7461,6 +7461,16 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(readingList.description).toBeUndefined()
     readingList.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { readingList: false })
+    // The Mods (services pass 15, ID-43): on by default as Chrome's Themes type is a toggle of
+    // its own; the row is the label and the switch alone, seated last, after Boosts – the
+    // chrome's CSS mods beside the per-site Boosts, Zenium's own types together.
+    expect(scope?.rows.map((r) => r.label).slice(-2)).toEqual(['Boosts', 'Mods'])
+    const mods = row(model, 'sync-scope:mods')
+    if (mods.kind !== 'switch') throw new Error('not a switch')
+    expect(mods.checked).toBe(true)
+    expect(mods.description).toBeUndefined()
+    mods.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { mods: false })
     // The same group, same order, once connected.
     const on = section('sync', syncState(connected()))
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(

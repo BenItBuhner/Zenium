@@ -3,6 +3,7 @@ import type {
   BookmarkNode,
   Boost,
   KeyBinding,
+  Mod,
   ReadingListEntry,
   Settings,
   SyncScope
@@ -19,7 +20,9 @@ import {
   hashData,
   inScope,
   metaFromRemote,
+  modData,
   newestByRecord,
+  readModData,
   settingsKeyTime,
   winningRemote,
   type MetaMap,
@@ -30,6 +33,7 @@ import { sha1Hex } from '../sha1'
 import { parseDeviceFile, serializeDeviceFile } from '../transport'
 import legacy from './fixtures/legacy-device-file.json'
 import golden from './fixtures/golden-sources.json'
+import modRecords from './fixtures/mod-records.json'
 
 /**
  * Format compatibility pins for the move of the engine from src/main/sync (Electron only,
@@ -70,8 +74,24 @@ interface GoldenFixture {
   meta: MetaMap
 }
 
+/**
+ * The `mod` records (services pass 15, ID-43) as the build that introduced the type first wrote
+ * them: the goldens above are the pre-move build's and are never re-made (every later type is
+ * pinned to leave their bytes unchanged), so a new type gets a fixture of its own, written once
+ * by the build that added it – three Mods under a scope with the type alone on.
+ */
+interface ModFixture {
+  now: number
+  scope: SyncScope
+  mods: Mod[]
+  plaintext: string
+  hashes: Record<string, string>
+  meta: MetaMap
+}
+
 const legacyFixture = legacy as unknown as LegacyFixture
 const goldenFixture = golden as unknown as GoldenFixture
+const modFixture = modRecords as unknown as ModFixture
 
 /** The golden fixture's local sources (the pre-move record set's inputs). */
 const goldenSources = (): Parameters<typeof collectLocal>[0] => ({
@@ -244,6 +264,119 @@ describe('the moved engine on a fixed record set', () => {
     expect(
       JSON.stringify({ v: 1, records: diffLocal({}, withIcons, goldenFixture.now).records })
     ).toBe(goldenAsWritten().plaintext)
+  })
+})
+
+/**
+ * The `mod` record type on its own fixture (services pass 15, ID-43): the bytes the build that
+ * introduced the type wrote for three Mods, this build's against them; the goldens untouched by
+ * the type (their scope predates it); and what an older peer makes of the records – nothing,
+ * with no error – as the `future-type` pin below says of any type a build does not know.
+ */
+describe('the mod records on a fixed Mod list (services pass 15, ID-43)', () => {
+  const withMods = (): Parameters<typeof collectLocal>[0] => ({
+    ...goldenSources(),
+    mods: modFixture.mods
+  })
+
+  it('writes byte-identical payload JSON for the fixture’s Mods, and hashes every record as the fixture has it', () => {
+    expect(modFixture.scope.mods).toBe(true)
+    expect(Object.values(modFixture.scope).filter(Boolean)).toHaveLength(1)
+    const local = collectLocal(withMods(), modFixture.scope)
+    expect([...local.values()].every((r) => r.type === 'mod')).toBe(true)
+    const diff = diffLocal({}, local, modFixture.now)
+    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(modFixture.plaintext)
+    const hashes: Record<string, string> = {}
+    for (const [id, { data }] of local) hashes[id] = hashData(data)
+    expect(hashes).toEqual(modFixture.hashes)
+    expect(diff.meta).toEqual(modFixture.meta)
+    // Every record is first seen: 0, whatever the Mod's own `updatedAt` says (that field is
+    // information, not the clock).
+    for (const r of diff.records) expect(r.modified).toBe(0)
+  })
+
+  it('the apply side re-publishes the fixture’s records as received: `readModData ∘ modData` leaves each hash the pinned one', () => {
+    const payload = JSON.parse(modFixture.plaintext) as { records: SyncRecord[] }
+    expect(payload.records).toHaveLength(3)
+    for (const r of payload.records) {
+      const landed = readModData(r.id, r.data)!
+      expect(landed).not.toBeNull()
+      expect(hashData(modData(landed))).toBe(modFixture.hashes[r.id])
+      expect(JSON.stringify(modData(landed))).toBe(JSON.stringify(r.data))
+      // The Mod lands as the fixture holds it, id and all.
+      expect(landed).toEqual(modFixture.mods.find((m) => m.id === r.id))
+    }
+    // The pictures: the inline one rides inside the CSS, the `file:` address travels as the
+    // address alone – neither is anything the record carries apart from the text.
+    const pictures = payload.records.find((r) => r.id === 'mod_golden_pictures')!
+    expect((pictures.data as { css: string }).css).toContain('data:image/png;base64,')
+    expect((pictures.data as { css: string }).css).toContain('file:///home/me/Pictures/wall.png')
+    expect(Object.keys(pictures.data as object)).toEqual([
+      'name',
+      'source',
+      'css',
+      'enabled',
+      'updatedAt'
+    ])
+  })
+
+  it('keeps the Mods out of a pre-move scope object, and the type out of the pinned golden payload; with the toggle on the same sources publish them and nothing else changes', () => {
+    // The golden scope predates `mods` as it predates `readingList` and `passwords`: it says
+    // nothing for the type, so a device holding Mods publishes none under it and the payload is
+    // the pinned bytes still.
+    expect(goldenFixture.scope).not.toHaveProperty('mods')
+    expect(defaultScope().mods).toBe(true)
+    const local = collectLocal(withMods(), goldenFixture.scope)
+    expect([...local.values()].some((r) => r.type === 'mod')).toBe(false)
+    expect(local.size).toBe(Object.keys(goldenFixture.hashes).length)
+    const diff = diffLocal({}, local, goldenFixture.now)
+    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenAsWritten().plaintext)
+
+    const on = collectLocal(withMods(), { ...goldenFixture.scope, mods: true })
+    expect(on.size).toBe(local.size + modFixture.mods.length)
+    for (const mod of modFixture.mods) {
+      expect(on.get(mod.id)).toEqual({ type: 'mod', data: modData(mod) })
+      expect(hashData(on.get(mod.id)!.data)).toBe(modFixture.hashes[mod.id])
+      on.delete(mod.id)
+    }
+    expect(JSON.stringify({ v: 1, records: diffLocal({}, on, goldenFixture.now).records })).toBe(
+      goldenAsWritten().plaintext
+    )
+  })
+
+  it('an older peer – a build without the type, or a scope object from before it – drops a mod record and its tombstone from every round, not an error', () => {
+    const payload = JSON.parse(modFixture.plaintext) as { records: SyncRecord[] }
+    const live = payload.records[0]!
+    const gone: SyncRecord = {
+      ...payload.records[1]!,
+      data: null,
+      deleted: true,
+      modified: modFixture.now
+    }
+    // This device's copy of the golden set, at its first diff, on the older build's scope.
+    const local = collectLocal(goldenSources(), goldenFixture.scope)
+    const mine = diffLocal({}, local, goldenFixture.now)
+    // The round as the engine runs it: the records are winners (this device holds no copy) and
+    // out of the older scope – dropped by the filter, applied nowhere, written to no metadata.
+    const remote = newestByRecord([[...mine.records, live, gone]])
+    const winners = winningRemote(mine.meta, remote)
+    expect(winners).toEqual([live])
+    expect(inScope(live, goldenFixture.scope)).toBeFalsy()
+    expect(inScope(gone, goldenFixture.scope)).toBeFalsy()
+    expect(winners.filter((r) => inScope(r, goldenFixture.scope))).toEqual([])
+    expect(metaFromRemote(winners.filter((r) => inScope(r, goldenFixture.scope)))).toEqual({})
+    // A merge declined on that build tombstones nothing for the Mod: `!inScope` skips it.
+    const declined = [...remote.values()].filter(
+      (r) =>
+        !local.has(r.id) && !r.deleted && r.type !== 'credential' && inScope(r, goldenFixture.scope)
+    )
+    expect(declined).toEqual([])
+    expect(Object.keys(mine.meta)).not.toContain(live.id)
+    expect(JSON.stringify({ v: 1, records: mine.records })).toBe(goldenAsWritten().plaintext)
+    // This build, the toggle on: the same record is in scope and lands.
+    expect(inScope(live, defaultScope())).toBe(true)
+    expect(inScope(gone, defaultScope())).toBe(true)
+    expect(inScope(live, fullScope())).toBe(true)
   })
 })
 

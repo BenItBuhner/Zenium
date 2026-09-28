@@ -1256,6 +1256,22 @@ export interface SyncScope {
    * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
    */
   readingList: boolean
+  /**
+   * The Mods (`Mod`: the browser chrome's CSS mods, Settings › Mods), one `mod` record per Mod
+   * under the Mod's own id (services pass 15, ID-43); on by default, as Chrome's Themes type is
+   * a toggle of its own among what you sync (`UserSelectableType::kThemes`,
+   * `components/sync/base/user_selectable_type.h`; the one theme per profile travels through
+   * `ThemeSyncableService`, `syncer::THEMES`) and Edge carries appearance inside Settings. The
+   * look settings themselves travel as they did – the colour scheme and the app icon on the
+   * settings record key by key, each space's gradient theme (`SpaceTheme`, its colours among
+   * it) on its space record – and `useSystemAccent` stays each device's own
+   * (`DEVICE_LOCAL_SETTINGS`): this key toggles the Mod list alone.
+   * While off, the device neither publishes the type nor takes it in, and its metadata for the
+   * type is frozen, as with every scoped type. Absent on a `sync.json` older than the key, where
+   * the engine completes it with the default; a scope object from an older build says nothing
+   * for it, so `collectLocal` under one publishes no Mod (`__tests__/compat.test.ts`).
+   */
+  mods: boolean
 }
 
 /** One open tab of another device, as its `open-tabs` record carries it (ID-28). */

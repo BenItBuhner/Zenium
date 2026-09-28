@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ReadingListEntry, Settings } from '../../../shared/types'
+import type { Mod, ReadingListEntry, Settings } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { DEFAULT_READER_PREFERENCES, type ReaderPreferences } from '../../../shared/reader'
 import { READING_LIST_CAP, compareReadAge, isUnread } from '../../../shared/readingList'
@@ -1778,4 +1778,250 @@ describe('the reading list across two devices', () => {
     expect(await tombstoned(a)).toEqual(aTombs)
     expect(await tombstoned(b)).toEqual(expectedGone)
   }, 60_000)
+})
+
+/**
+ * The Mods across two devices (services pass 15, ID-43): one `mod` record per Mod, every field
+ * but `id`; the engine's `modified` the clock (an edit stamped at its commit, the Mod's own
+ * `updatedAt` information), tombstones from a Mod's absence, the type's toggle freezing rather
+ * than deleting, and no stamp for the Mods a profile held before the type existed.
+ */
+describe('the Mods across two devices', () => {
+  const modRecords = async (d: Device): Promise<SyncRecord[]> =>
+    (await published(d)).filter((r) => r.type === 'mod')
+
+  const ids = (d: Device): string[] =>
+    d.browser.mods
+      .all()
+      .map((m) => m.id)
+      .sort()
+
+  it('replicates the list both ways, last writer by the stamp; a removal lands as a tombstone', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    const compact = a.browser.mods.add('Compact tabs', '.tab { padding: 2px; }')
+    const rounded = a.browser.mods.add(
+      'Rounded',
+      '.sidebar { border-radius: 12px; }',
+      'https://mods.example/rounded.css'
+    )
+
+    await setup(a)
+    expect(a.engine.status().scope.mods).toBe(true)
+    // The record as it goes over the wire: the Mod's fields but the id, in the normal form's
+    // order, `modified` 0 for a record first seen (no one edited it since it was known).
+    const aRecords = await modRecords(a)
+    expect(aRecords.map((r) => r.id).sort()).toEqual([compact.id, rounded.id].sort())
+    const compactRecord = aRecords.find((r) => r.id === compact.id)!
+    expect(compactRecord).toEqual({
+      id: compact.id,
+      type: 'mod',
+      data: {
+        name: 'Compact tabs',
+        source: null,
+        css: '.tab { padding: 2px; }',
+        enabled: true,
+        updatedAt: compact.updatedAt
+      },
+      modified: 0,
+      deleted: false
+    })
+    expect(Object.keys(compactRecord.data as object)).toEqual([
+      'name',
+      'source',
+      'css',
+      'enabled',
+      'updatedAt'
+    ])
+    // Encrypted like everything else: no CSS in the clear in the folder.
+    for (const text of folderFiles('/drive').values()) expect(text).not.toContain('padding: 2px')
+
+    // The phone joins and takes the list whole, each Mod under the desktop's id.
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(ids(b)).toEqual(ids(a))
+    expect(b.browser.mods.all().find((m) => m.id === compact.id)).toEqual(compact)
+    expect(b.browser.mods.all().find((m) => m.id === rounded.id)).toEqual(rounded)
+
+    // Turned off on the phone: the edit is stamped at its commit and lands on the desktop.
+    await settle()
+    b.browser.mods.update(compact.id, { enabled: false })
+    await settle()
+    await b.engine.syncNow()
+    const theirs = (await modRecords(b)).find((r) => r.id === compact.id)!
+    expect(theirs.modified).toBeGreaterThan(0)
+    expect((theirs.data as Mod).enabled).toBe(false)
+    await a.engine.syncNow()
+    expect(a.browser.mods.all().find((m) => m.id === compact.id)).toMatchObject({
+      enabled: false,
+      updatedAt: (theirs.data as Mod).updatedAt
+    })
+    // The desktop's list keeps its order; the Mod changed in place.
+    expect(a.browser.mods.all().map((m) => m.id)).toEqual([compact.id, rounded.id])
+
+    // Both edit the same Mod apart: the later stamp wins on both, whichever device made it.
+    await settle()
+    a.browser.mods.update(compact.id, { css: '.tab { padding: 3px; }' })
+    await settle()
+    b.browser.mods.update(compact.id, { css: '.tab { padding: 4px; }' })
+    await settle()
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.mods.all().find((m) => m.id === compact.id)!.css).toBe(
+      '.tab { padding: 4px; }'
+    )
+    expect(b.browser.mods.all().find((m) => m.id === compact.id)!.css).toBe(
+      '.tab { padding: 4px; }'
+    )
+    const aStamp = (await modRecords(a)).find((r) => r.id === compact.id)!.modified
+    const bStamp = (await modRecords(b)).find((r) => r.id === compact.id)!.modified
+    expect(aStamp).toBe(bStamp)
+
+    // The desktop removes a Mod: a tombstone at the removal's time, and the phone drops it.
+    await settle()
+    a.browser.mods.remove(rounded.id)
+    await settle()
+    await a.engine.syncNow()
+    const gone = (await modRecords(a)).find((r) => r.id === rounded.id)!
+    expect(gone).toMatchObject({ deleted: true, data: null })
+    expect(gone.modified).toBeGreaterThan(0)
+    await b.engine.syncNow()
+    expect(ids(a)).toEqual([compact.id])
+    expect(ids(b)).toEqual([compact.id])
+
+    // Steady state: another round each changes nothing – the landed Mod re-collects to the
+    // received hash (the sanitiser is idempotent), so no device stamps what it merely holds.
+    const before = [aStamp, (await modRecords(b)).find((r) => r.id === compact.id)!.modified]
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    expect((await modRecords(a)).find((r) => r.id === compact.id)!.modified).toBe(before[0])
+    expect((await modRecords(b)).find((r) => r.id === compact.id)!.modified).toBe(before[1])
+  }, 30_000)
+
+  it("the Mods a profile held before the type existed go out at modified 0 at the first sync on the new build – never at the launch – so a peer's edit of them wins", async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await a.engine.syncNow()
+
+    // The desktop is closed; the previous build (the Mods without their sync type) left a list
+    // in `mods.json` and a sync state that knows nothing of it – no metadata for the Mods, no
+    // `mods` in the scope object.
+    const closed = close(a)
+    const held: Mod[] = [
+      {
+        id: 'mod_before_1',
+        name: 'Before 1',
+        source: null,
+        css: '.before-1 {}',
+        enabled: true,
+        updatedAt: 1_000
+      },
+      {
+        id: 'mod_before_2',
+        name: 'Before 2',
+        source: 'before-2.css',
+        css: '.before-2 {}',
+        enabled: false,
+        updatedAt: 2_000
+      }
+    ]
+    expect(closed['mods.json']).toBeUndefined()
+    closed['mods.json'] = JSON.stringify({ version: 1, mods: held })
+    const sync = JSON.parse(closed['sync.json']!) as {
+      meta: MetaMap
+      scope: Record<string, boolean>
+    }
+    delete sync.scope.mods
+    expect(Object.values(sync.meta).some((m) => m.type === 'mod')).toBe(false)
+    closed['sync.json'] = JSON.stringify(sync)
+
+    // The desktop launches into the build: `ModService` reads the list at construction as it
+    // always did, the scope completes to the default (on), the seed at start writes nothing for
+    // the Mods (it has no entry to adopt a hash into), and the first round publishes them at 0 –
+    // the timestamp of a record no one edited since it was known.
+    await settle()
+    const launched = Date.now()
+    const upgraded = reopen('Desk (Linux)', closed)
+    expect(upgraded.browser.mods.all()).toEqual(held)
+    expect(upgraded.engine.status().scope.mods).toBe(true)
+    upgraded.engine.flushSync()
+    const seeded = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta
+    expect(seeded.mod_before_1).toBeUndefined()
+    expect(seeded.mod_before_2).toBeUndefined()
+    await upgraded.engine.syncNow()
+    expect(upgraded.engine.status().lastError).toBeNull()
+    const records = await modRecords(upgraded)
+    expect(records.map((r) => r.id).sort()).toEqual(['mod_before_1', 'mod_before_2'])
+    for (const r of records) {
+      expect(r.modified).toBe(0)
+      expect(r.modified).toBeLessThan(launched)
+      expect(r.data).not.toHaveProperty('id')
+    }
+    expect(records.find((r) => r.id === 'mod_before_2')!.data).toEqual({
+      name: 'Before 2',
+      source: 'before-2.css',
+      css: '.before-2 {}',
+      enabled: false,
+      updatedAt: 2_000
+    })
+    upgraded.engine.flushSync()
+    const meta = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta
+    expect(meta.mod_before_1?.modified).toBe(0)
+    expect(meta.mod_before_2?.modified).toBe(0)
+
+    // The phone takes them, then edits one: its stamp is a real time, and it wins on the desktop.
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual(['mod_before_1', 'mod_before_2'])
+    await settle()
+    b.browser.mods.update('mod_before_2', { enabled: true })
+    await settle()
+    await b.engine.syncNow()
+    await upgraded.engine.syncNow()
+    expect(upgraded.browser.mods.all().find((m) => m.id === 'mod_before_2')).toMatchObject({
+      enabled: true,
+      updatedAt: expect.any(Number)
+    })
+    expect(upgraded.browser.mods.all().find((m) => m.id === 'mod_before_2')!.updatedAt).toBe(
+      b.browser.mods.all().find((m) => m.id === 'mod_before_2')!.updatedAt
+    )
+  }, 30_000)
+
+  it('turning the Mods off stops sending and receiving them without deleting anything, on either device', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    const kept = a.browser.mods.add('Kept', '.kept {}')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(ids(b)).toEqual([kept.id])
+
+    // The desktop turns the type off: its file carries no Mod and no tombstone either.
+    a.engine.setScope({ mods: false })
+    expect(a.engine.status().scope.mods).toBe(false)
+    await a.engine.syncNow()
+    expect(await modRecords(a)).toEqual([])
+    await b.engine.syncNow()
+    expect(ids(b)).toEqual([kept.id])
+    expect(ids(a)).toEqual([kept.id])
+
+    // The phone adds a Mod and removes the shared one meanwhile; the desktop, with the type
+    // off, takes neither the Mod nor the removal.
+    await settle()
+    const theirs = b.browser.mods.add('Phone', '.phone {}')
+    b.browser.mods.remove(kept.id)
+    await settle()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual([kept.id])
+
+    // Back on: the desktop publishes again and catches up – the Mod lands, the removal too.
+    a.engine.setScope({ mods: true })
+    await a.engine.syncNow()
+    expect(ids(a)).toEqual([theirs.id])
+    expect((await modRecords(a)).filter((r) => !r.deleted).map((r) => r.id)).toEqual([theirs.id])
+  }, 30_000)
 })
