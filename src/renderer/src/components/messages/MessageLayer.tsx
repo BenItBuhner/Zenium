@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { hintBubbleStore } from '@renderer/lib/iph'
 import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
@@ -8,6 +9,11 @@ import { HintBubbleCard } from './HintBubbleCard'
 import { ScreenshotCard } from './ScreenshotCard'
 import { bannerSlots, coverFor, hintCoverFor } from './stack'
 import { ToastCard } from './ToastCard'
+
+interface Props {
+  /** Where the toast's slot draws instead of in this layer; null for here. */
+  toastSeat?: HTMLElement | null
+}
 
 /**
  * The phone's message layer over the content frame: banners stack down from its top edge (the
@@ -23,8 +29,14 @@ import { ToastCard } from './ToastCard'
  * overlays but below sheets, dialogs and popovers, as Chrome's Messages do; the chrome layer is
  * `fixed` over the whole window, above all of those, and never under a transform. Layer and
  * cards are page surfaces (§9.29).
+ *
+ * `toastSeat`: a second frame for the toast's slot, the same box as this one, that the host
+ * seats on its own – the phone lifts it above the sheet host while a toast a sheet's act raised
+ * is up (§9.33, `messages/lift.ts`). The slot is portalled there, so the host moves the frame
+ * and never the cards: a toast keeps its element, its motion and its one announcement
+ * (`role="status"`) through a re-seat. Without one the slot draws here.
  */
-export function MessageLayer(): JSX.Element | null {
+export function MessageLayer({ toastSeat = null }: Props = {}): JSX.Element | null {
   const toasts = uiStore.use((s) => s.toasts)
   const cards = uiStore.use((s) => s.screenshotCards)
   const banners = uiStore.use((s) => s.banners)
@@ -82,6 +94,16 @@ export function MessageLayer(): JSX.Element | null {
   if (toasts.length === 0 && cards.length === 0 && banners.length === 0 && !hint.bubble) {
     return null
   }
+  const slot = (toasts.length > 0 || cards.length > 0) && (
+    <div ref={bindToasts} className="zen-message-toasts">
+      {toasts.map((t) => (
+        <ToastCard key={t.id} toast={t} onMeasure={measure} />
+      ))}
+      {cards.map((c) => (
+        <ScreenshotCard key={`shot-${c.id}`} card={c} onMeasure={measure} />
+      ))}
+    </div>
+  )
   return (
     <div className="zen-message-layer" data-surface="page">
       {hint.bubble && (
@@ -102,16 +124,14 @@ export function MessageLayer(): JSX.Element | null {
           ))}
         </div>
       )}
-      {(toasts.length > 0 || cards.length > 0) && (
-        <div ref={bindToasts} className="zen-message-toasts">
-          {toasts.map((t) => (
-            <ToastCard key={t.id} toast={t} onMeasure={measure} />
-          ))}
-          {cards.map((c) => (
-            <ScreenshotCard key={`shot-${c.id}`} card={c} onMeasure={measure} />
-          ))}
-        </div>
-      )}
+      {toastSeat
+        ? createPortal(
+            <div className="zen-message-layer" data-surface="page">
+              {slot}
+            </div>,
+            toastSeat
+          )
+        : slot}
     </div>
   )
 }

@@ -62,6 +62,8 @@ import {
   type PhoneBarItemId,
   type Platform as PlatformOs,
   type Rect,
+  type SelectionMenuAction,
+  type SelectionMenuActionId,
   type Settings,
   type Shortcut,
   type ShortcutAction,
@@ -90,6 +92,7 @@ import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
+import { isDefinableTerm, normalizeTerm } from './define'
 import { mayAutoOpen } from './downloads/danger'
 import {
   applicationMenu,
@@ -114,8 +117,11 @@ import {
 
 type Template = MenuItemTemplate[]
 
-/** Where a selection action was invoked from: the page context menu or the host's floating toolbar. */
-type SelectionSurface = 'menu' | 'toolbar'
+/**
+ * Where a selection action was invoked from: the page context menu, the host's floating toolbar
+ * (Android's action mode) or the chrome's mini menu over the selection (CT-39, the desktop).
+ */
+type SelectionSurface = 'menu' | 'toolbar' | 'mini'
 
 /** One thing to do with selected text; see `Menus.selectionActions`. */
 interface SelectionAction {
@@ -129,6 +135,8 @@ interface SelectionAction {
   menu: boolean
   /** Whether the floating toolbar lists it (on hosts that have one). */
   toolbar: boolean
+  /** Whether the mini menu over the selection lists it (on hosts with `capabilities.selectionMenu`). */
+  mini: boolean
   run(surface: SelectionSurface): void
 }
 
@@ -136,13 +144,16 @@ interface SelectionAction {
 interface SelectionPlaces {
   /**
    * Where the context menu's click landed, in CSS pixels of the page view; absent for a text
-   * field's selection and for the toolbar.
+   * field's selection and for the toolbar. The mini menu's actions anchor at the selection's
+   * box instead (`rect`), its bottom middle standing in for a click.
    */
   at?: { x: number; y: number }
   /** Where the selection sits in the page, 0…1 of its width and height (the toolbar's touch). */
   origin?: { x: number; y: number }
   /** The frame the context menu's selection is in (`PageContextParams.frameId`), for the actions that read it. */
   frameId?: number
+  /** The selection's box in CSS pixels of the page view (the mini menu's report), for the surfaces that hang from it. */
+  rect?: Rect | null
 }
 
 /** What a toolbar host draws for one action: the id it names back and the title it shows. */
@@ -160,6 +171,8 @@ export interface SelectionToolbarItem {
  */
 const SELECTION_TOOLBAR_ORDER: readonly string[] = [
   'search',
+  // Define after the search, Edge's order (Copy, Search, Define); as short a word as Share.
+  'define',
   'glance',
   'share',
   'translate',
@@ -169,6 +182,22 @@ const SELECTION_TOOLBAR_ORDER: readonly string[] = [
 function toolbarRank(id: string): number {
   const rank = SELECTION_TOOLBAR_ORDER.indexOf(id)
   return rank === -1 ? SELECTION_TOOLBAR_ORDER.length : rank
+}
+
+/**
+ * The mini menu's chips in order (CT-39): Edge's mini menu reads Copy, Search, Define, … and
+ * the two the services core adds follow. An action not named here is not a chip.
+ */
+export const SELECTION_MINI_MENU_ORDER: readonly SelectionMenuActionId[] = [
+  'copy',
+  'search',
+  'define',
+  'translate',
+  'readAloud'
+]
+
+function miniRank(id: string): number {
+  return SELECTION_MINI_MENU_ORDER.indexOf(id as SelectionMenuActionId)
 }
 
 /** How long state changes are batched before the menu bar is rebuilt from them. */
@@ -1237,23 +1266,32 @@ export class Menus {
     tab: Tab,
     selection: string,
     win: ZenWindow,
-    { at, origin = { x: 0.5, y: 0.5 }, frameId }: SelectionPlaces = {}
+    { at, origin = { x: 0.5, y: 0.5 }, frameId, rect }: SelectionPlaces = {}
   ): SelectionAction[] {
     const { tabs, state, translate, reader } = this.browser
     const engine = state.defaultSearchEngine()
     // The toolbar's tab opens in the background, with this tab as its opener: a back on it
-    // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome).
+    // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome;
+    // the mini menu's too – Edge's Search chip switches to the results).
     const open = (url: string, surface: SelectionSurface): void =>
       void tabs.createTab(
         {
           url,
-          active: surface === 'menu',
+          active: surface !== 'toolbar',
           afterTabId: tab.id,
           containerId: tab.containerId,
           openerTabId: tab.id
         },
         win
       )
+    // Where a surface's popover hangs: the menu's click, or – the mini menu's – the bottom middle
+    // of the selection's box, the place a click on the selection would be; the toolbar's touch
+    // anchors nothing (the phone shows its sheet).
+    const anchorOf = (surface: SelectionSurface): { x: number; y: number } | null => {
+      if (surface === 'menu') return at ?? null
+      if (surface === 'mini' && rect) return { x: rect.x + rect.width / 2, y: rect.y + rect.height }
+      return null
+    }
     const asUrl = selectionUrl(selection)
     const actions: SelectionAction[] = []
     if (asUrl) {
@@ -1265,6 +1303,7 @@ export class Menus {
         title: 'Open in New Tab',
         menu: true,
         toolbar: false,
+        mini: false,
         run: (surface) => open(asUrl, surface)
       })
       // Glance previews the address over the page: the toolbar's own item (the menu's link
@@ -1276,6 +1315,7 @@ export class Menus {
           title: 'Open in Glance',
           menu: false,
           toolbar: true,
+          mini: false,
           run: () => tabs.openGlance(asUrl, tab.id, clamp01(origin.x), clamp01(origin.y), win)
         })
       }
@@ -1289,7 +1329,37 @@ export class Menus {
         title: `Search ${engine.name}`,
         menu: true,
         toolbar: true,
+        mini: true,
         run: (surface) => open(buildSearchUrl(engine, selection), surface)
+      })
+    }
+    // Define (CT-39; Edge's mini menu's "smart action" – Chrome for Android has none of its own:
+    // its menu's items beyond Cut / Copy / Paste / Share / Select all / Web search are the text
+    // classifier's and the process-text apps', `SelectActionMenuHelper`): Wiktionary's definition
+    // of a word or a short phrase (`core/define.ts` says what is a term), shown by the chrome's
+    // Define surface (`define.show`) – over the selection's box on the desktop, in a sheet on
+    // the phone. The mini menu's chip in this pass; the phone's toolbar item and the menu's stay
+    // off until the surface that shows the answer is in (4b), so no item stands with nothing
+    // behind it. Not for an address (`example.com` is one word with letters): the selection
+    // that reads as a link is offered as one above, not as a word.
+    if (!asUrl && isDefinableTerm(selection)) {
+      actions.push({
+        id: 'define',
+        label: 'Define',
+        title: 'Define',
+        menu: false,
+        toolbar: false,
+        mini: true,
+        run: (surface) =>
+          this.browser.emit(
+            'define.show',
+            {
+              tabId: tab.id,
+              term: normalizeTerm(selection),
+              rect: surface === 'mini' ? (rect ?? null) : null
+            },
+            win
+          )
       })
     }
     // Chrome's Copy Link to Highlight: the menu's item for the link alone (the toolbar's Share
@@ -1302,6 +1372,7 @@ export class Menus {
         title: 'Copy Link',
         menu: true,
         toolbar: false,
+        mini: false,
         run: () => void this.copyHighlightLink(tab, win)
       })
     }
@@ -1323,12 +1394,14 @@ export class Menus {
         title: 'Reader View',
         menu: true,
         toolbar: false,
+        mini: false,
         run: () => void reader.openSelection(tab.id, win, frameId)
       })
     }
     // The services core's selection translation: the menu offers it for the page's own selection
-    // (a text field's comes without `at`) and puts the popover where the click landed; the
-    // toolbar's touch anchors nothing, so the phone shows its sheet.
+    // (a text field's comes without `at`) and puts the popover where the click landed; the mini
+    // menu's hangs it from the selection's box; the toolbar's touch anchors nothing, so the
+    // phone shows its sheet.
     if (translate.available) {
       actions.push({
         id: 'translate',
@@ -1336,13 +1409,8 @@ export class Menus {
         title: 'Translate',
         menu: at !== undefined,
         toolbar: true,
-        run: (surface) =>
-          void translate.showSelection(
-            tab.id,
-            selection,
-            surface === 'menu' ? (at ?? null) : null,
-            win
-          )
+        mini: true,
+        run: (surface) => void translate.showSelection(tab.id, selection, anchorOf(surface), win)
       })
     }
     // The selection's share carries a link to the highlight (SH-11, Chrome's shared
@@ -1355,6 +1423,7 @@ export class Menus {
         title: 'Share',
         menu: true,
         toolbar: true,
+        mini: false,
         run: () => void this.shareSelection(tab, selection, win)
       })
     }
@@ -1376,10 +1445,62 @@ export class Menus {
         title: 'Listen',
         menu: true,
         toolbar: true,
+        mini: true,
         run: () => void this.browser.readAloud.start({ tabId: tab.id, from: 'selection-on' })
       })
     }
     return actions
+  }
+
+  /**
+   * The mini menu's chips over `text` selected in `tabId` (CT-39), in `SELECTION_MINI_MENU_ORDER`:
+   * Copy first – the engine's own copy of the selection, always – then the selection actions
+   * that name the surface (`mini`), from the one list the page context menu draws from. Empty
+   * on hosts without `capabilities.selectionMenu`, for a tab that is gone and for blank text.
+   */
+  selectionMenuActions(tabId: string, text: string, rect: Rect | null): SelectionMenuAction[] {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    const selection = clipSelection(text)
+    if (!state.capabilities.selectionMenu || !tab || !selection.trim()) return []
+    const win = tabs.windowFor(tabId)
+    const chips: SelectionMenuAction[] = [{ id: 'copy', title: 'Copy' }]
+    for (const action of this.selectionActions(tab, selection, win, { rect })) {
+      if (action.mini && miniRank(action.id) !== -1)
+        chips.push({ id: action.id as SelectionMenuActionId, title: action.title })
+    }
+    return chips.sort((a, b) => miniRank(a.id) - miniRank(b.id))
+  }
+
+  /**
+   * The mini menu's chip `id` was pressed over `text` in `tabId`: run it. Copy is the view's
+   * copy of the selection as the engine holds it (`TabView.editCommand`, its markup with it –
+   * what ⌘C would put on the clipboard), the text alone on a view without one; every other chip
+   * runs its selection action on the `mini` surface. False for a chip the text does not warrant.
+   */
+  runSelectionMenuAction(
+    tabId: string,
+    id: SelectionMenuActionId,
+    text: string,
+    rect: Rect | null
+  ): boolean {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    const selection = clipSelection(text)
+    if (!state.capabilities.selectionMenu || !tab || !selection.trim()) return false
+    const win = tabs.windowFor(tabId)
+    if (id === 'copy') {
+      const view = tabs.view(tabId)
+      if (view?.editCommand) view.editCommand('copy')
+      else this.browser.platform.clipboard.writeText(selection)
+      return true
+    }
+    const action = this.selectionActions(tab, selection, win, { rect }).find(
+      (candidate) => candidate.mini && candidate.id === id
+    )
+    if (!action) return false
+    action.run('mini')
+    return true
   }
 
   /** The selection onto the share sheet with its link to the highlight when the page can make one. */

@@ -406,6 +406,7 @@ export class ZenWindow {
    */
   onBlur(): void {
     this.browser.quitHold.onWindowBlur(this)
+    this.browser.selectionMenu.onWindowBlur(this)
     this.onWindowStateChanged()
   }
 
