@@ -85,6 +85,58 @@ export interface UrlbarState {
    * that pane and the other panes stay live – it covers no page and hides none.
    */
   pane?: boolean
+  /**
+   * The bar re-opened over `tabId` with the draft the tab was left with (`UiState.urlbarDrafts`,
+   * W8-F15): the field takes the draft's text as `initialText`, its selection and its keyword
+   * chip, as Chrome's `OmniboxEditModel::RestoreState` and `OmniboxViewViews::OnTabChanged` put
+   * the omnibox back the way the tab was left. `typed` is set with it: the text is user input in
+   * progress, not the page's.
+   */
+  draft?: UrlbarTabDraft
+}
+
+/**
+ * The keyword chip the bar's field is in (tab-to-search after `@ddg` or an engine's name,
+ * omnibox-08 / -26): the engine by id and the text Backspace on the empty field brings back.
+ * Saved with a tab's draft as Chrome's `OmniboxEditModel::State` carries `keyword_` and its
+ * entry method (`GetStateForTabSwitch`).
+ */
+export interface UrlbarDraftKeyword {
+  engineId: string
+  typed: string
+}
+
+/**
+ * The bar's field as it stands: its text as shown – an inline completion included, as Chrome's
+ * `GetStateForTabSwitch` takes the display text ("switching tabs 'accepts' the temporary text
+ * as the user text", `chrome/browser/ui/omnibox/omnibox_edit_model.cc`) – its selection with its
+ * direction (`OmniboxViewViews::SaveStateToTab` keeps `GetSelectedRange()`), and the keyword chip
+ * it is in. The mounted desktop bar lends it (`provideUrlbarField`); it is read at one moment
+ * alone, when `urlbarFollowsActiveTab` leaves the tab the bar is bound to.
+ */
+export interface UrlbarFieldState {
+  text: string
+  selectionStart: number
+  selectionEnd: number
+  selectionDirection: 'forward' | 'backward' | 'none'
+  keyword: UrlbarDraftKeyword | null
+}
+
+/**
+ * A tab's draft – Chrome's per-tab omnibox state, the second half of W8-F15's ruling (keeping
+ * the tab but dropping its text on the same event was half the fix): the field as
+ * `urlbarFollowsActiveTab` found it when it left the tab, and how the bar stood (`attached`).
+ * Kept in `UiState.urlbarDrafts` by tab id – this window's renderer, in memory, never persisted
+ * – from the leave until the tab is active again (the bar re-opens with the draft in place,
+ * `openNewTabPageUrlbar`), the tab closes while away, or the tab is no longer an empty one
+ * (navigated while away: what was typed was for a page that is gone) – `pruneUrlbarDrafts`.
+ * A draft committed (a navigation) or dismissed (Escape) by the user while the bar is up never
+ * reaches this store: only a leave writes it, and the bar's own close paths keep their rules
+ * (`Urlbar.tsx`, `drafts`).
+ */
+export interface UrlbarTabDraft extends UrlbarFieldState {
+  /** The bar was anchored to the top (`UrlbarState.attached`), not floating. */
+  attached: boolean
 }
 
 /**
@@ -297,6 +349,13 @@ export interface UiState {
    */
   overlayAnchor: Omit<Anchor, 'element'> | null
   urlbar: UrlbarState
+  /**
+   * The drafts of tabs the New Tab palette was left from mid-typing, by tab id (W8-F15, Chrome's
+   * per-tab omnibox state): written by `urlbarFollowsActiveTab` as it leaves a tab, taken back
+   * into the field by `openNewTabPageUrlbar` when the tab is active again, pruned with the tabs.
+   * In memory for this window alone; never persisted, never synced.
+   */
+  urlbarDrafts: Record<string, UrlbarTabDraft>
   findOpen: boolean
   findTabId: string | null
   /** The query in the find bar's field (kept here so the bar survives a remount, e.g. into HTML fullscreen). */
@@ -660,6 +719,7 @@ export const uiStore = createStore<UiState>(
     overlaySection: null,
     overlayAnchor: null,
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
+    urlbarDrafts: {},
     findOpen: false,
     findTabId: null,
     findText: '',
@@ -1690,6 +1750,13 @@ export function newTabRevealOpensUrlbar(text: string | undefined): boolean {
 /**
  * The URL bar over a new tab page: `new-tab` mode bound to that tab, so what is typed navigates
  * it instead of creating another. `text` is what the page's search box already received.
+ *
+ * A draft the tab was left with (`urlbarDrafts`, W8-F15) comes back into the field here – its
+ * text, selection and keyword chip, the bar `attached` as it stood – the way Chrome's
+ * `RestoreState` puts the omnibox back on the tab's return; the store's copy is spent on the
+ * open (the field holds it now; a later leave saves it afresh). Keys the page's own field
+ * received while the bar was on its way up (`text`) are typed into the draft at its selection,
+ * as keys that race an open bar are spliced in at the caret (`zen-urlbar-type`).
  */
 export function openNewTabPageUrlbar(
   tabId: string,
@@ -1712,18 +1779,40 @@ export function openNewTabPageUrlbar(
     if (typeahead !== mine) return
     typeahead = null
     run('focus.chrome', undefined)
-    uiStore.set({
-      urlbar: {
-        open: true,
-        mode: 'new-tab',
-        tabId,
-        initialText: mine.text || undefined,
-        typed: Boolean(mine.text),
-        attached
-      },
-      drawerOpen: false
+    uiStore.set((s) => {
+      const { [tabId]: spent, ...urlbarDrafts } = s.urlbarDrafts
+      const left: UrlbarTabDraft | undefined = spent
+      const draft = left && mine.text ? typedInto(left, mine.text) : left
+      return {
+        urlbar: {
+          open: true,
+          mode: 'new-tab',
+          tabId,
+          initialText: draft?.text ?? (mine.text || undefined),
+          typed: draft !== undefined || Boolean(mine.text),
+          attached: draft?.attached ?? attached,
+          ...(draft ? { draft } : {})
+        },
+        urlbarDrafts: left ? urlbarDrafts : s.urlbarDrafts,
+        drawerOpen: false
+      }
     })
   })
+}
+
+/** `text` typed into the draft's field as it stands: it replaces the selection, the caret after it. */
+function typedInto(draft: UrlbarTabDraft, text: string): UrlbarTabDraft {
+  const start = Math.min(draft.selectionStart, draft.selectionEnd)
+  const end = Math.max(draft.selectionStart, draft.selectionEnd)
+  const value = draft.text.slice(0, start) + text + draft.text.slice(end)
+  const caret = start + text.length
+  return {
+    ...draft,
+    text: value,
+    selectionStart: caret,
+    selectionEnd: caret,
+    selectionDirection: 'none'
+  }
 }
 
 export interface UrlbarCloseOptions {
@@ -1778,6 +1867,60 @@ function newTabPaletteOn(state: UIState): boolean {
   return state.capabilities.newTabPage && state.settings.newTab.enabled
 }
 
+let urlbarField: (() => UrlbarFieldState | null) | null = null
+
+/** The tab `urlbarFollowsActiveTab` last saw in front: a change is a tab's arrival. */
+let followedTabId: string | null = null
+
+/**
+ * The mounted desktop bar lends its field to `urlbarFollowsActiveTab`: `read` answers the field
+ * as it stands – text as shown, selection, keyword chip – or null before the input is in the
+ * tree. One bar at a time (the palette is one instance per tab it is bound to); the release
+ * forgets it. The phone's bar sheet lends nothing: its bar is bound to no tab and its drafts are
+ * discarded on every dismissal (`Urlbar.tsx`, `drafts`), so nothing there is ever read.
+ */
+export function provideUrlbarField(read: () => UrlbarFieldState | null): () => void {
+  urlbarField = read
+  return () => {
+    if (urlbarField === read) urlbarField = null
+  }
+}
+
+/**
+ * The leaving tab's draft, saved as the palette leaves it (W8-F15; Chrome's
+ * `OmniboxViewViews::SaveStateToTab` → `GetStateForTabSwitch`): the field as it stands, when it
+ * holds text at all – over an empty tab the page's own text is nothing, so any text is the
+ * user's – and the tab is still an empty one (a palette over a page that took the tab is not
+ * worth a return). A field left empty writes nothing: a tab left with no draft restores no bar,
+ * as it never had one to come back to. A bare keyword chip with no text is let go with the bar,
+ * as the bar's own input signal (`urlbar.input`) counts text alone.
+ */
+function saveUrlbarDraft(tabId: string, attached: boolean, state: UIState): void {
+  const tab = state.tabs[tabId]
+  const field = urlbarField?.()
+  if (!tab || !isEmptyTabUrl(tab.url) || !field || !field.text.trim()) return
+  uiStore.set((s) => ({ urlbarDrafts: { ...s.urlbarDrafts, [tabId]: { ...field, attached } } }))
+}
+
+/**
+ * Drafts whose tab is gone (closed while away) or is no longer an empty one (navigated while
+ * away – an extension's `tabs.update`, a session restore) go with it: the draft was for a page
+ * that is not there any more.
+ */
+function pruneUrlbarDrafts(state: UIState): void {
+  const { urlbarDrafts } = uiStore.get()
+  const stale = Object.keys(urlbarDrafts).filter((id) => {
+    const tab = state.tabs[id]
+    return !tab || !isEmptyTabUrl(tab.url)
+  })
+  if (stale.length === 0) return
+  uiStore.set((s) => {
+    const kept = { ...s.urlbarDrafts }
+    for (const id of stale) delete kept[id]
+    return { urlbarDrafts: kept }
+  })
+}
+
 /**
  * The bar in new-tab mode bound to a tab – the palette over a fresh New Tab
  * (`openNewTabPageUrlbar`) – follows the window's active tab. Its cover hides every page view
@@ -1785,23 +1928,48 @@ function newTabPaletteOn(state: UIState): boolean {
  * (an extension's `chrome.tabs.create({ active: true })`, a `tab.create` over the bridge, Ctrl+Tab
  * from the bar, a page's `window.open`) stood behind the palette with no live view on screen
  * until a key put the bar away. Now, the moment the active tab is not the one the bar is bound
- * to, the bar closes – without a reason: not a dismissal, so nothing is kept as a draft and the
- * phone's field morph would not run back; the keyboard goes to the page as after a submit – or,
- * when the tab now active is itself an empty New Tab whose palette is the one to show (Ctrl+T
- * over the palette, a tab an extension made without an address), the palette re-binds to it
- * through `openNewTabPageUrlbar`: the bar stays up over the new tab, and the core's own
- * `newtab.opened` for that tab – sent after the state that made it active
+ * to, the bar closes – without a reason: not a dismissal, so the bar's own close paths keep
+ * nothing and the phone's field morph would not run back; the keyboard goes to the page as after
+ * a submit – or, when the tab now active is itself an empty New Tab whose palette is the one to
+ * show (Ctrl+T over the palette, a tab an extension made without an address), the palette
+ * re-binds to it through `openNewTabPageUrlbar`: the bar stays up over the new tab, and the
+ * core's own `newtab.opened` for that tab – sent after the state that made it active
  * (`NewTabService.open`) – finds it bound already. The bar over a split's empty pane is the
  * pane's own field and goes with the pane (`Urlbar.tsx`, `paneLive`); the bar bound to no tab
  * (`openUrlbar` in new-tab mode) belongs to the window and stays as it is.
+ *
+ * What the leaving tab's field held goes with the tab (W8-F15, the second half of its ruling:
+ * Chrome's omnibox keeps its state per tab – `OmniboxViewViews::SaveStateToTab` on the leave,
+ * `OnTabChanged` → `RestoreState` on the return): the draft is saved to `urlbarDrafts` before
+ * the bar closes or re-binds, and when a tab with a draft is active again – the bar down, or
+ * the palette re-binding to it from another tab – the palette re-opens over it with the draft
+ * in place, through `openNewTabPageUrlbar`. A tab left with nothing typed restores nothing. The
+ * return is the tab's arrival in front (`OnTabChanged`), not any later state the window sends:
+ * a draft whose tab is in front under another bar waits for the tab's next activation.
  */
 export function urlbarFollowsActiveTab(): void {
-  const { urlbar } = uiStore.get()
-  if (!urlbar.open || urlbar.mode !== 'new-tab' || !urlbar.tabId || urlbar.pane) return
   const state = browserStore.get().state
   if (!state) return
+  const { urlbar, urlbarDrafts } = uiStore.get()
+  const palette = urlbar.open && urlbar.mode === 'new-tab' && urlbar.tabId !== null && !urlbar.pane
+  // Nothing to follow and no draft to mind: most of the window's state goes by untouched.
+  if (!palette && Object.keys(urlbarDrafts).length === 0) return
+  pruneUrlbarDrafts(state)
   const active = activeTab(state)
+  const arrived = active !== null && active.id !== followedTabId
+  followedTabId = active?.id ?? null
+  if (!urlbar.open) {
+    // The bar is down and the tab that just came in front was left mid-draft: the bar comes
+    // back over it with the draft in place.
+    const draft = active && arrived ? uiStore.get().urlbarDrafts[active.id] : undefined
+    if (active && draft && newTabPaletteOn(state)) {
+      openNewTabPageUrlbar(active.id, undefined, draft.attached)
+    }
+    return
+  }
+  if (!palette || !urlbar.tabId) return
   if (active?.id === urlbar.tabId) return
+  saveUrlbarDraft(urlbar.tabId, urlbar.attached, state)
   if (active && isEmptyTabUrl(active.url) && newTabPaletteOn(state)) {
     openNewTabPageUrlbar(active.id, undefined, urlbar.attached)
     return
