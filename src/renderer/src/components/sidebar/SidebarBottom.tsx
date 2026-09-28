@@ -50,9 +50,13 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   const fadeSpaces = useFadeEdges<HTMLDivElement>({ axis: 'auto', size: 20 })
 
   // Android's wide layouts show toasts on the message card (`components/messages`); the desktop
-  // sidebar keeps its plain toasts until the desktop program adopts the card.
+  // sidebar keeps its plain toasts until the desktop program adopts the card – except a toast
+  // seated on the frame (`Toast.seat`, §9.33): one a frame dialog's act raised, which the
+  // dialog host's seat draws above the dialog as a card (`FrameSeatToasts`) and keeps for the
+  // rest of its clock, so the column never shows it.
   const cards = state.platform === 'android'
   useEffect(() => (cards ? claimMessageCards() : undefined), [cards])
+  const rows = toasts.filter((t) => t.seat !== 'frame')
 
   return (
     <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
@@ -65,9 +69,9 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
           ))}
         </div>
       )}
-      {toasts.length > 0 && !cards && (
+      {rows.length > 0 && !cards && (
         <div className="flex flex-col gap-1">
-          {toasts.map((t) => (
+          {rows.map((t) => (
             <div
               key={t.id}
               // A polite live region, as the message card is (`ToastCard`): a toast arriving is

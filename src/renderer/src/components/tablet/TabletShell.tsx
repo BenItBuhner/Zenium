@@ -5,6 +5,7 @@ import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import { onboardingCovers } from '@renderer/lib/onboarding'
+import { useFrameToastSeat } from '@renderer/lib/portals'
 import { usePrivateTabLocked } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
@@ -115,6 +116,10 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId)
 
+  // Where the message layer seats the toast's slot (§9.33): the frame dialog host's seat, once
+  // TabDialogs below has mounted it – null until then, and the slot draws in the layer.
+  const toastSeat = useFrameToastSeat().element
+
   // The URL bar's popup hangs from the toolbar's address pill, as wide as it (TB-21): the pill
   // is measured as the bar opens and again when the window or the sidebar changes under it.
   const anchor = useFieldAnchor(windowRef, ui.urlbar.open)
@@ -187,12 +192,18 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         >
           <div className="relative min-h-0 flex-1">
             <ContentArea state={state} ui={ui} hostsUrlbar={false} />
-            {/* Messages on the content frame's box (v2 §9.33): banners from its top edge, the
-                toast at its bottom, over the page and under the dialogs. Its own name: the
-                phone's `.zen-message-frame` is a `--zen-recede` reader that recedes with the
-                phone's frame (PERF-2's registry), and nothing recedes on the tablet. */}
+            {/* Messages on the content frame's box (v2 §9.33): banners from its top edge over
+                the page and under the dialogs; the toast's slot seated in the frame dialog
+                host's own seat (`useFrameToastSeat`, lib/portals.tsx), inside the host and so
+                outside both of its inert holds, which the host lifts above a standing dialog
+                while the slot holds a card – a toast a dialog's act raised stands over the
+                dialog and its scrim, its Undo in reach, on the frame's 8 px inset – and seats
+                normally again when the dialog closes, the card's element and clock untouched
+                (the phone's lift, #651, as one mechanism). Its own name: the phone's
+                `.zen-message-frame` is a `--zen-recede` reader that recedes with the phone's
+                frame (PERF-2's registry), and nothing recedes on the tablet. */}
             <div className="zen-tablet-message-frame pointer-events-none absolute inset-0 z-[36]">
-              <MessageLayer />
+              <MessageLayer toastSeat={toastSeat} />
             </div>
             {/*
              * Modal dialogs render in the content frame through FrameDialogHost (its scrim dims

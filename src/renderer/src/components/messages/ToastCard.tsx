@@ -43,6 +43,10 @@ export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
       data-kind={toast.kind}
       data-action={toast.action ? '' : undefined}
       data-glyph={toast.icon ? '' : undefined}
+      // On its way out: the frame dialog host's seat drops the card's controls from the
+      // dialog's Tab cycle with it (§9.33: the stop leaves the cycle with the toast) and returns
+      // the keyboard to the dialog (lib/portals.tsx `useToastSeat`).
+      data-leaving={toast.leaving ? '' : undefined}
       role="status"
       {...handlers}
     >

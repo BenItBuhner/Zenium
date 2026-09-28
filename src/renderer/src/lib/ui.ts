@@ -173,6 +173,14 @@ export interface Toast {
   duration: number
   /** Set once the toast is on its way out: the card animates off and then forgets itself. */
   leaving?: boolean
+  /**
+   * Where the toast is seated (§9.33): `frame` for a toast drawn as a card on the content
+   * frame's edge – every toast on a shell that shows the cards (the phone, the tablet, the
+   * Android sidebar), and on the desktop's plain column a toast raised while a frame dialog
+   * stood (`frameDialogsOpen`), which the dialog host's seat draws above the dialog and keeps
+   * for the rest of its clock (lib/portals.tsx). Unset: the desktop sidebar's row.
+   */
+  seat?: 'frame'
 }
 
 /**
@@ -695,6 +703,13 @@ export interface UiState {
    * to tell panels from dialogs (`panelAloneOverContent`) should change its answer for it.
    */
   frameDialogCover: number
+  /**
+   * How many dialogs stand on the frame's dialog host right now (its registry, lib/portals.tsx
+   * `FrameDialogHost frame`; a panel on its way out is not counted). What seats a toast on
+   * the frame while one does (`Toast.seat`, §9.33): a toast a dialog's act raises has to rise
+   * above the dialog with its Undo in reach, and the host's seat is where it does.
+   */
+  frameDialogsOpen: number
 }
 
 /** Where the content area is, in window coordinates (measured by the layout reporter). */
@@ -811,7 +826,8 @@ export const uiStore = createStore<UiState>(
     extensionPopup: null,
     extensionPrompts: [],
     floatingChrome: 0,
-    frameDialogCover: 0
+    frameDialogCover: 0,
+    frameDialogsOpen: 0
   },
   'ui'
 )
@@ -878,6 +894,17 @@ function disarmClock(id: number): number | null {
 }
 
 /**
+ * The seat a toast pushed now takes (`Toast.seat`): the frame's card on a shell that shows the
+ * cards, and on the desktop's plain column while a dialog stands on the frame's host – the
+ * toast is the dialog's act's reply, and it rises above the dialog in the host's seat (§9.33;
+ * lib/portals.tsx). The host's count, not its way out: a toast raised after a dialog closed
+ * (Got it's, once the dialog has left) is the column's, as it always was.
+ */
+function toastSeatNow(): Toast['seat'] {
+  return onCards() || uiStore.get().frameDialogsOpen > 0 ? 'frame' : undefined
+}
+
+/**
  * Show a toast. On the cards one toast is live at a time: a new one sends the current one off
  * (the two pass each other), except that the same message again just restarts its clock, so a
  * key held down does not stack a column of identical toasts. The plain desktop column takes
@@ -903,6 +930,8 @@ export function pushToast(
   }
   const id = ++messageSeq
   const toast: Toast = { id, message, kind, duration, action: opts.action, icon: opts.icon }
+  const seat = toastSeatNow()
+  if (seat) toast.seat = seat
   uiStore.set((s) => ({ toasts: [...s.toasts, toast] }))
   armClock(id, duration, () => dismissToast(id))
   return id
