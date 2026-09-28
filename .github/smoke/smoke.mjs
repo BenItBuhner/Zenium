@@ -51,7 +51,8 @@
 //                (no serious or critical violation; .github/smoke/aria/axe-known.json names the
 //                tolerated ones on surfaces the chrome does not own), Ctrl+F (the field takes
 //                the keyboard, Escape closes the bar and hands it back to the page),
-//                Ctrl+plus/minus/0 with the zoom bubble, Ctrl+Shift+S's Web capture overlay
+//                Ctrl+plus/minus with the zoom bubble and Ctrl+0 ending it with the zoom chip
+//                (nothing rises at the default zoom, W8-F12), Ctrl+Shift+S's Web capture overlay
 //                over the page's picture (its toolbar, the chrome inert, the view out of its
 //                box – parked in a corner or hidden) and Escape taking it down whole, F11,
 //                Ctrl+N, Ctrl+Shift+N, Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu
@@ -4060,6 +4061,7 @@ async function scenarioWalkthrough() {
       await s.reset()
       const zoom = async () => (await s.tabs()).find((t) => t.url.startsWith(page.url))?.zoomFactor
       const bubble = s.chrome.locator('[data-zoom-bubble]')
+      const chip = s.chrome.locator('[data-zoom-chip]')
       const level = bubble.locator('#zen-zoom-level')
       /** The bubble is up and says `percent`; the page's factor agrees. */
       const expectZoom = async (factor, what) => {
@@ -4088,11 +4090,27 @@ async function scenarioWalkthrough() {
       await s.shot('03-zoom-bubble')
       await s.press(`${ACCEL}+-`)
       const z3 = await expectZoom(1.1, 'Ctrl+minus')
+      // Ctrl+0 lands on the default zoom: the pill's zoom chip goes (§9.29) and the bubble ends
+      // with it – a change that leaves no chip raises no bubble on any road (W8-F12, #654);
+      // Chrome's clocked 100 % notice is not owed. Nothing rises in the time it would have taken.
       await s.press(`${ACCEL}+0`)
-      const z4 = await expectZoom(1, 'Ctrl+0')
-      // Left alone the bubble goes on its own (1.5 s; up to 5 s once its buttons were used).
-      await bubble.first().waitFor({ state: 'hidden', timeout: 8000 })
-      return { z0, z1, z2, z3, z4, bubbleGone: true }
+      const z4 = await waitFor(
+        async () => {
+          const z = await zoom()
+          return z !== undefined && Math.abs(z - 1) < 0.01 ? z : null
+        },
+        8000,
+        'Ctrl+0: page zoom 1'
+      )
+      await bubble.first().waitFor({ state: 'hidden', timeout: 5000 })
+      await chip.first().waitFor({ state: 'hidden', timeout: 5000 })
+      await delay(1600)
+      const bubblesAfter = await bubble.count()
+      if (bubblesAfter) {
+        const text = ((await level.textContent()) ?? '').trim()
+        throw new Error(`Ctrl+0: a zoom bubble rose with no chip to hang from ("${text}")`)
+      }
+      return { z0, z1, z2, z3, z4, bubbleGone: true, chipGone: true }
     })
 
     // Web capture (Edge's; the desktop's overlay of components/capture/CaptureOverlay.tsx over
