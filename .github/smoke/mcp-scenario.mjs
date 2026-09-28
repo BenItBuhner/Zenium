@@ -105,16 +105,59 @@ export function agentSettings(port) {
   }
 }
 
-/** A port nothing listens on right now (the OS's pick, released again). */
-export function freePort() {
-  return new Promise((resolve, reject) => {
+/**
+ * Where the scenario picks the server's port from: below the kernel's ephemeral range, which on
+ * Linux starts at 32768 by default (`/proc/sys/net/ipv4/ip_local_port_range`; macOS and Windows
+ * hand out from 49152). Nothing that asks the kernel for "any port" can land here.
+ */
+export const PORT_POOL = Object.freeze({ lo: 20000, hi: 32768 })
+
+/** The kernel's first ephemeral port, from the proc file where there is one; the Linux default otherwise. */
+export function ephemeralFloor(read = (p) => fs.readFileSync(p, 'utf8')) {
+  try {
+    const low = Number(String(read('/proc/sys/net/ipv4/ip_local_port_range')).trim().split(/\s+/)[0])
+    if (Number.isInteger(low) && low > 0) return low
+  } catch {
+    // Not Linux, or no proc: the default below.
+  }
+  return PORT_POOL.hi
+}
+
+/** Whether a loopback listener can bind `port` right now (bound and released again). */
+export function bindable(port) {
+  return new Promise((resolve) => {
     const srv = net.createServer()
-    srv.once('error', reject)
-    srv.listen(0, '127.0.0.1', () => {
-      const { port } = srv.address()
-      srv.close(() => resolve(port))
-    })
+    srv.once('error', () => resolve(false))
+    srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)))
   })
+}
+
+/**
+ * A port nothing listens on right now, picked below the ephemeral range so nothing can take it
+ * between here and the app's own bind.
+ *
+ * The pick used to be the OS's – bind port 0, read the number, release it, seed the profile with
+ * it. Released, that number went straight back into the kernel's ephemeral pool: the very pool the
+ * fixture server, the stage pages, Playwright's inspector socket and Chromium's own sockets draw
+ * from while the app boots. When one of those drew it first, the app's listen failed with
+ * EADDRINUSE, agent.json stayed `running: false`, and server-up waited its full minute on a server
+ * that had already given up (runs 36451930938 and 36274678598: ports 44025 and 43491, both inside
+ * Linux's 32768–60999). A port below the floor can only be taken by something asking for that
+ * exact number, which nothing here does; `bindable` still confirms it is free at the moment of the
+ * pick. `random` and `floor` are injectable for the unit tests.
+ */
+export async function freePort({ random = Math.random, floor = ephemeralFloor(), tries = 32 } = {}) {
+  // A box whose ephemeral range starts low leaves no room beneath it; the pool is used as is
+  // there – a verified-free port still, only without the guarantee.
+  const hi = floor - PORT_POOL.lo >= 1024 ? Math.min(PORT_POOL.hi, floor) : PORT_POOL.hi
+  const span = hi - PORT_POOL.lo
+  let last = null
+  for (let i = 0; i < tries; i++) {
+    const port = PORT_POOL.lo + Math.floor(random() * span)
+    if (await bindable(port)) return port
+    last = port
+  }
+  throw new Error(`no free port in ${PORT_POOL.lo}–${hi - 1} after ${tries} tries (last tried ${last})`)
 }
 
 /** Where a step starts: the verdict's counts and every check's failure count so far. */
@@ -542,15 +585,19 @@ export async function scenarioMcp(h) {
       },
       opts
     )
+  // The wait itself gives up at SERVER_UP_MS and says which phase it was stuck in (what
+  // agent.json said, whether the url answered); the step's own guard sits a beat past that so
+  // it is the wait's report that fails the step, not a bare "timed out after 60000 ms" that
+  // pre-empted it (run 36451930938 read exactly that, with "server: no diagnostics read").
   const serverUp = (s) =>
     s.step(
       'server-up',
       async () => {
-        ctx.endpoint = await waitForEndpoint(userData, SERVER_UP_MS)
+        ctx.endpoint = await waitForEndpoint(userData, SERVER_UP_MS, { log: ctx.log })
         if (!verdict.secrets.includes(ctx.endpoint.token)) verdict.secrets.push(ctx.endpoint.token)
         return { url: ctx.endpoint.url, port }
       },
-      { fatal: true }
+      { fatal: true, timeoutMs: SERVER_UP_MS + 5_000 }
     )
   const summary = () =>
     verdict.summary({
