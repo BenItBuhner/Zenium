@@ -365,6 +365,7 @@ export function OptionsSheet({
                 key={option.value}
                 label={option.label}
                 description={option.description}
+                address={option.address}
                 leading={option.leading}
                 checked={option.value === row.value}
                 onSelect={() => {

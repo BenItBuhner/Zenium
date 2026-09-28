@@ -1128,7 +1128,9 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
         {
           value: 'url',
           label: 'Specific page',
-          description: address || 'Enter an address below, or use the current page.'
+          description: address || 'Enter an address below, or use the current page.',
+          // The page's address once there is one (§9.2's exception); the invitation is prose.
+          address: address !== ''
         }
       ],
       onChange: (mode) => set({ homepage: { ...own, mode } })
@@ -1145,6 +1147,8 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
         controlled,
         value: address,
         display: address || 'Not set',
+        // The row's line is the address once set (§9.2's exception); "Not set" is prose.
+        address: address !== '',
         input: 'url',
         placeholder: 'example.com',
         onCommit: (value) => {
@@ -1161,6 +1165,8 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
         description: current
           ? displayUrl(current.url).replace(/\/$/, '')
           : 'Open a page, then come back to Settings from it.',
+        // The page's address while there is a page (§9.2's exception); the hint is prose.
+        address: current !== null,
         keywords: ['homepage'],
         layouts: ['phone'],
         controlled,
@@ -2642,6 +2648,9 @@ function downloadsSection({ state, set, downloadDirectory }: SectionContext): Ro
       // – Android keeps a picked folder as a document-tree URI, read as its relative path – or
       // the system folder by name.
       description: downloadLocationLabel(downloadDirectory, d.directory),
+      // A path while there is a folder to name (§9.2's exception: one line, its start
+      // shortened, the folder's own name readable); the system folder's line is prose.
+      address: Boolean(downloadDirectory || d.directory),
       keywords: ['folder', 'directory', 'save files to', 'downloads folder', 'path'],
       button: 'Change…',
       onPress: () => {
@@ -3374,13 +3383,18 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           label: 'Default search engine',
           controlled: engineControl,
           value: heldEngine?.id ?? s.searchEngineId,
-          options: [...(heldEngine ? [heldEngine] : []), ...active].map((e) => ({
-            value: e.id,
-            label: e.name,
-            description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
-            leading: glyph(e),
-            group: pickerGroup(e)
-          })),
+          options: [...(heldEngine ? [heldEngine] : []), ...active].map((e) => {
+            // An added or discovered engine's line is its host: an address (§9.2's exception).
+            const host = pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined
+            return {
+              value: e.id,
+              label: e.name,
+              description: host,
+              address: host !== undefined,
+              leading: glyph(e),
+              group: pickerGroup(e)
+            }
+          }),
           onChange: (v) => set({ searchEngineId: v })
         }),
         // The EEA's choice screen again (W6-2; Chrome's chrome://search-engine-choice can be
@@ -5132,6 +5146,8 @@ function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
       id: `skill:${t.id}`,
       label: t.label,
       description: t.note ?? t.dir,
+      // The skill's directory is a path (§9.2's exception); a note in its place is prose.
+      address: t.note === null,
       tone: t.note ? (isSkillFailure(t.note) ? 'danger' : 'warn') : undefined,
       keywords: ['skill', t.dir],
       checked: t.installed,
