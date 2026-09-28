@@ -43,6 +43,13 @@ export interface PageScriptFlags {
    * other page; the browser turns it as the split changes.
    */
   linksToSplitPane: boolean
+  /**
+   * The browser shows the mini menu over a text selection (CT-39; `PageFlags.selectionMenu`):
+   * the host has it and the setting is on. The Electron preload runs the selection reporter
+   * (`shared/selectionScript`) while this is on; the phone's page script never does (its system
+   * toolbar is its selection menu), and reads it as nothing.
+   */
+  selectionMenu: boolean
 }
 
 export interface PageScriptMessage {
@@ -221,7 +228,10 @@ export const DEFAULT_PAGE_FLAGS: PageScriptFlags = {
   glanceEnabled: true,
   glanceTrigger: 'alt',
   thirdParty: null,
-  linksToSplitPane: false
+  linksToSplitPane: false,
+  // Nothing runs for the menu until the browser says it is on: the reporter's listeners are
+  // installed by the first flags that say so, never before.
+  selectionMenu: false
 }
 
 export function installPageScript(transport: PageScriptTransport): void {

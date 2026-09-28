@@ -117,16 +117,18 @@ const POPUP_GAP = 4
 /**
  * Zen remembers what you typed until you navigate away: the desktop bar's per-tab draft, kept
  * through Escape, an outside press or the back gesture and restored, selected, on the next open
- * over the same page. On the PHONE a dismissed bar discards the draft instead, as Chrome for
- * Android does (a program default of 19 Sep 2026): the pill opens search-ready every time, with
- * the header (OMN-05) and the clipboard row (OMN-14), which a restored draft would hide until it
- * is cleared. Nothing is written or read here for the phone; a submit, Edit and the header chips
- * are as they are on either. This map is the bar's own dismissals'; a tab the palette LEAVES
- * mid-typing – the active tab changed under it – keeps its draft in `UiState.urlbarDrafts` by
- * tab id instead, and the bar re-opens with it on the tab's return (W8-F15, Chrome desktop's
- * per-tab omnibox state; `urlbarFollowsActiveTab`) – on the desktop layout alone: the phone and
- * the tablet, Chrome Android's both, keep no leave-draft (`urlbarKeepsTabDrafts`); the tablet's
- * dismissal drafts in this map are as they were.
+ * over the same page. On the PHONE and the TABLET a dismissed bar discards the draft instead, as
+ * Chrome for Android does on both (a program default of 19 Sep 2026 for the phone; W8-F17 for
+ * the tablet): the phone's pill opens search-ready every time, with the header (OMN-05) and the
+ * clipboard row (OMN-14), which a restored draft would hide until it is cleared; the tablet's
+ * bar opens at rest – the page's address, or empty over a new tab. Nothing is written or read
+ * here on those layouts; a submit, Edit and the header chips are as they are on every one. This
+ * map is the bar's own dismissals'; a tab the palette LEAVES mid-typing – the active tab changed
+ * under it – keeps its draft in `UiState.urlbarDrafts` by tab id instead, and the bar re-opens
+ * with it on the tab's return (W8-F15, Chrome desktop's per-tab omnibox state;
+ * `urlbarFollowsActiveTab`). ONE predicate governs both ways a draft outlives its bar
+ * (`urlbarKeepsTabDrafts`: the desktop layout alone): the phone and the tablet, Chrome
+ * Android's both, keep neither.
  */
 const drafts = new Map<string, string>()
 let keywordSeq = 0
@@ -157,13 +159,23 @@ function restTextFor(tab: Tab, phone: boolean): string {
   return phone ? '' : pageTextFor(tab)
 }
 
-function initialTextFor(state: UIState, urlbar: UrlbarState, phone: boolean): string {
+/**
+ * The field's text as the bar opens. `keepsDrafts` is `urlbarKeepsTabDrafts` for the layout: a
+ * touch layout restores no dismissal draft (see `drafts`), not even one a desktop layout left
+ * behind for the same page.
+ */
+function initialTextFor(
+  state: UIState,
+  urlbar: UrlbarState,
+  phone: boolean,
+  keepsDrafts: boolean
+): string {
   if (urlbar.initialText !== undefined) return urlbar.initialText
-  // The phone restores no draft (see `drafts`), not even one a desktop layout left behind.
-  if (urlbar.mode !== 'edit' || !urlbar.tabId) return (phone ? undefined : drafts.get('new')) ?? ''
+  if (urlbar.mode !== 'edit' || !urlbar.tabId)
+    return (keepsDrafts ? drafts.get('new') : undefined) ?? ''
   const tab = state.tabs[urlbar.tabId]
   if (!tab) return ''
-  const draft = phone ? undefined : drafts.get(`${tab.id}|${tab.url}`)
+  const draft = keepsDrafts ? drafts.get(`${tab.id}|${tab.url}`) : undefined
   if (draft !== undefined) return draft
   return restTextFor(tab, phone)
 }
@@ -224,7 +236,14 @@ const PAGE_ROW_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'bookmark'
 
 export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.Element {
   const phone = Boolean(phoneEdge)
-  const [text, setText] = useState(() => initialTextFor(state, urlbar, phone))
+  // The chrome's layout, and the one predicate for both ways a draft outlives its bar
+  // (`urlbarKeepsTabDrafts`, the desktop layout alone): the dismissal `drafts` this instance
+  // writes on its close and reads on its open, and the field lend for the per-tab draft below.
+  // The layout, not the host: `phone` is the sheet's own composition (the header, the rows'
+  // controls), while the phone AND the tablet – Chrome Android's both – keep no draft.
+  const formFactor = viewportStore.use((v) => v.formFactor)
+  const keepsDrafts = urlbarKeepsTabDrafts(formFactor)
+  const [text, setText] = useState(() => initialTextFor(state, urlbar, phone, keepsDrafts))
   const [results, setResults] = useState<Suggestion[]>([])
   /**
    * The clipboard row's content once the user revealed it (Chrome's "Link you copied" shows the
@@ -375,13 +394,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // reads it – the text as shown, the selection, the keyword chip – at the one moment it leaves
   // the tab this instance is bound to, and saves it as the tab's draft (Chrome's
   // `OmniboxViewViews::SaveStateToTab`). Read on that moment alone, never per keystroke. The
-  // desktop layout's alone (`urlbarKeepsTabDrafts`): the phone's and the tablet's bars lend
-  // nothing – Chrome for Android drops the edit on a switcher tab switch (§9.34: the same
-  // `Urlbar`, two behaviours) – and the phone's drafts are discarded on every dismissal besides
-  // (`drafts`). The input signal above is not gated: it is the same on every layout.
-  const formFactor = viewportStore.use((v) => v.formFactor)
+  // desktop layout's alone (`keepsDrafts`, `urlbarKeepsTabDrafts`): the phone's and the tablet's
+  // bars lend nothing – Chrome for Android drops the edit on a switcher tab switch (§9.34: the
+  // same `Urlbar`, two behaviours) – and their drafts are discarded on every dismissal besides
+  // (`drafts`, the same predicate). The input signal above is not gated: it is the same on
+  // every layout.
   useEffect(() => {
-    if (!urlbarKeepsTabDrafts(formFactor)) return undefined
+    if (!keepsDrafts) return undefined
     return provideUrlbarField(() => {
       const el = inputRef.current
       if (!el) return null
@@ -394,7 +413,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         keyword: mode ? { engineId: mode.engine.id, typed: mode.typed } : null
       }
     })
-  }, [formFactor])
+  }, [keepsDrafts])
 
   const fetchSuggestions = useCallback(
     async (query: string, autofill: boolean, engine?: SearchEngine | null) => {
@@ -604,11 +623,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
 
   // A new-tab draft is shared by every new tab page, as it is for the bar without a tab.
   const draftKey = tab && urlbar.mode !== 'new-tab' ? `${tab.id}|${tab.url}` : 'new'
-  // `keepDraft` is the desktop's: the phone discards what was typed on every dismissal (see
-  // `drafts`), so the system back, the scrim and the pill's close all reopen it search-ready.
+  // `keepDraft` is the desktop layout's (`keepsDrafts`): the phone and the tablet discard what
+  // was typed on every dismissal (see `drafts`), so the system back, the scrim, Escape and the
+  // pill's close all reopen the bar at rest – search-ready on the phone, the page's address or
+  // an empty field on the tablet.
   const close = useCallback(
     (keepDraft: boolean, keepKeyboard = false) => {
-      if (keepDraft && !phone && text.trim() && (!tab || text !== pageTextFor(tab))) {
+      if (keepDraft && keepsDrafts && text.trim() && (!tab || text !== pageTextFor(tab))) {
         drafts.set(draftKey, text)
       } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
@@ -616,7 +637,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       // A dismissal, not a submit: the new tab page's field morph runs back on it (lib/fakeboxMorph.ts).
       closeUrlbar({ keepKeyboard, reason: 'dismiss' })
     },
-    [draftKey, phone, tab, text]
+    [draftKey, keepsDrafts, tab, text]
   )
   // F6 / Shift+F6 from the bar (lib/panes.ts): the keyboard has moved on to another chrome pane;
   // the bar goes away as on Escape – draft kept, extension session ended – and leaves it there.

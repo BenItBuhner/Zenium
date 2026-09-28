@@ -280,6 +280,14 @@ export interface ExtRequestEvent {
    * carry it); 0 from a tab that keeps no count.
    */
   document: number
+  /**
+   * For a main-frame request WebView issued as a server redirect's follow-up
+   * (`WebResourceRequest.isRedirect`): the URL of the tab's previous main-frame request, the
+   * one the redirect answered (Kotlin's `Request.redirectedFrom`) – the pair
+   * `webRequest.onBeforeRedirect` is made of; null for any other request. WebView never tells
+   * the status code.
+   */
+  redirectedFrom?: string | null
   /** `allow` | `block` | `redirect` | `upgrade` | `modifyHeaders`. */
   action: string
   /** The rule set and rule that decided, when one did (`ext:<id>:…` for an extension's). */
