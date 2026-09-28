@@ -304,6 +304,31 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, on mount
   }, [])
 
+  // W8-F15 — the per-tab URL-bar-input signal the core's `freshTabIn` reads. The field now holds a
+  // draft the user typed, differing from the page's own text (over a fresh new tab page the page's
+  // text is empty, so any draft counts; in edit mode the address at rest does not): the tab is not
+  // a fresh empty one a launch URL may take, whatever its history says, as Chrome's omnibox keeps
+  // its new tab page from being reused while `user_input_in_progress()`. This instance is keyed to
+  // one `urlbar.tabId` (`ContentArea`/`TabletShell`), so the signal fires on the FLIP of that
+  // boolean for the bound tab – not per keystroke – and once more on the bar's close (unmount)
+  // when a draft was out. A window-level bar bound to no tab marks nothing; the phone runs the
+  // same signal but its host has no `freshTabIn` caller, so the core keeps it unread.
+  const inputTab = urlbar.tabId
+  const barHoldsInput = Boolean(text.trim()) && (!tab || text !== pageTextFor(tab))
+  const barInputOut = useRef(false)
+  useEffect(() => {
+    if (!inputTab || barInputOut.current === barHoldsInput) return
+    barInputOut.current = barHoldsInput
+    run('urlbar.input', { tabId: inputTab, active: barHoldsInput })
+  }, [inputTab, barHoldsInput])
+  useEffect(() => {
+    if (!inputTab) return undefined
+    return () => {
+      if (barInputOut.current) run('urlbar.input', { tabId: inputTab, active: false })
+      barInputOut.current = false
+    }
+  }, [inputTab])
+
   // The state's keyword mode, readable from the fetch callback without re-creating it per change
   // (`enterKeywordMode` writes it ahead of the state, so its own fetch already sees the engine).
   const modeRef = useRef(keywordMode)

@@ -5651,6 +5651,18 @@ export interface Commands {
   'urlbar.pasteAndSearch': { args: { tabId: string | null }; result: void }
   /** The URL bar closed without an entry (Escape, a click away): an omnibox session ends. */
   'urlbar.cancel': { args: void; result: void }
+  /**
+   * Whether the URL bar is holding user input for a tab (W8-F15): the desktop bar's field, over a
+   * fresh new tab page or in edit mode, now differs from the page's own text (a draft the user
+   * typed), or has gone back to it / the bar has closed. The core keeps this per tab in memory –
+   * this window's moment, not persisted and not synced (`Browser.barInput`, cleared on the tab's
+   * close) – and `freshTabIn` reads it: a tab the user is typing into is not a fresh empty one a
+   * launch URL may take, whatever its history says, as Chrome's omnibox `user_input_in_progress`
+   * keeps its new tab page from being reused (`OmniboxEditModel::user_input_in_progress()`;
+   * `singleton_tabs.cc` `ShowSingletonTabOverwritingNTP`). Fired on the flip, not per keystroke.
+   * Harmless on the phone, whose host has no `freshTabIn` caller (the record is simply unread).
+   */
+  'urlbar.input': { args: { tabId: string; active: boolean }; result: void }
   /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
   'urlbar.deleteSuggestion': { args: { input: string }; result: void }
   /**

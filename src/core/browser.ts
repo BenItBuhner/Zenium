@@ -424,6 +424,15 @@ export class Browser {
    * `url` is the page the tab was made on, for the "still fresh" reading there.
    */
   private readonly urlbarOnReady = new Map<string, { tabId: string; url: string }>()
+  /**
+   * Tabs the URL bar is holding user input for (W8-F15), by tab id – the renderer's `urlbar.input`
+   * signal: the desktop bar's field, over a fresh new tab page or in edit mode, differs from the
+   * page's own text (a draft the user typed). In memory only: this window's moment, not persisted
+   * and not synced, cleared on the tab's close (`forgetBarInput`). {@link freshTabIn} reads it so
+   * a tab being typed into is not a fresh empty one a launch URL may take, as Chrome's omnibox
+   * `user_input_in_progress` keeps its new tab page from being reused.
+   */
+  private readonly barInput = new Set<string>()
   /** The shortcut table last handed to the host (`syncShortcuts`). */
   private syncedShortcuts: Shortcut[] | null = null
   /**
@@ -2623,9 +2632,35 @@ export class Browser {
     const tab = this.tabs.activeTabFor(win)
     if (!tab || !isEmptyTabUrl(tab.url) || tab.pinned || tab.essential) return null
     if (tab.canGoBack || tab.canGoForward) return null
+    // A tab the user is typing into is not empty, whatever its history says (W8-F15, Chrome's
+    // rule): the URL bar holds a draft for it (`urlbar.input`), so a launch URL opens beside it
+    // and the draft is kept, as Chrome does not reuse a new tab page while its omnibox has user
+    // input in progress (`OmniboxEditModel::user_input_in_progress()`).
+    if (this.barInput.has(tab.id)) return null
     const stack = this.state.tabNavigation.get(tab.id)
     if (stack?.entries.some((entry) => !isEmptyTabUrl(entry.url))) return null
     return tab
+  }
+
+  /**
+   * The renderer's word that the URL bar does or does not hold user input for a tab (W8-F15,
+   * `urlbar.input`): a draft typed into a fresh new tab page's bar (or an edited address) makes
+   * the tab non-empty for {@link freshTabIn}; the bar cleared, committed or closed frees it. In
+   * memory for this window's moment; cleared on the tab's close (`forgetBarInput`).
+   */
+  setBarInput(tabId: string, active: boolean): void {
+    if (active) this.barInput.add(tabId)
+    else this.barInput.delete(tabId)
+  }
+
+  /** The tab is gone (`TabManager.closeTab`): drop its URL-bar-input record (W8-F15). */
+  forgetBarInput(tabId: string): void {
+    this.barInput.delete(tabId)
+  }
+
+  /** Whether the URL bar holds user input for `tabId` (W8-F15's per-tab signal). */
+  hasBarInput(tabId: string): boolean {
+    return this.barInput.has(tabId)
   }
 
   /**
@@ -3754,6 +3789,7 @@ export class Browser {
       'urlbar.runCommand': ({ action }, win) =>
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
       'urlbar.cancel': (_a, win) => this.extensions.omniboxCancel(win),
+      'urlbar.input': ({ tabId, active }) => this.setBarInput(tabId, active),
       'urlbar.deleteSuggestion': ({ input }, win) =>
         this.extensions.omniboxDeleteSuggestion(input, win),
       'urlbar.suggestionContextMenu': ({ id, kind, ...anchor }, win) =>

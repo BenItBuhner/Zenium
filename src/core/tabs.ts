@@ -2918,6 +2918,7 @@ export class TabManager {
     this.saveFolderOnLastClose(tab, closed?.closedAt ?? Date.now())
     this.openerReturn.delete(tabId)
     this.browser.state.tabNavigation.delete(tabId)
+    this.browser.forgetBarInput(tabId)
     // Its host-state document stays only while a "Recently closed" entry holds the id.
     this.browser.state.navigationState.touch(tabId)
     this.destroyView(tabId)
