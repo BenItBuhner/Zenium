@@ -38,6 +38,7 @@ const { Sidebar } = await import('../sidebar/Sidebar')
 const { Toolbar } = await import('../Toolbar')
 const { BookmarksBar } = await import('../bookmarks/BookmarksBar')
 const { V2IconButton } = await import('../extensions/v2')
+const { MiniMenu } = await import('../selection/MiniMenu')
 const { SkipForward } = await import('lucide-react')
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
@@ -298,6 +299,32 @@ describe('the desktop chrome, rendered: one tooltip vocabulary (§9.31, a11y-26)
     expect(hinted!.getAttribute('aria-label')).toBe('Unpin Ad blocker')
     expectOneVocabulary(el, 'v2 icon button')
   })
+
+  // The folded mini menu's glyph buttons (CT-39, the lead's fold rule: the titles as tooltips)
+  // are drawn in the popup surface's own document (`index.html?surface=popup`), which mounts
+  // the same host (`PopupSurface`): the title is the chrome's tooltip and the name, never the
+  // toolkit's `title` – the register's stopgap for the pill (services seed #24) is closed.
+  it('the folded mini menu names its glyph buttons by data-tooltip and no title', () => {
+    const el = render(
+      <MiniMenu
+        menu={{
+          tabId: 't1',
+          text: 'quantum foam',
+          rect: { x: 100, y: 200, width: 120, height: 18 },
+          folded: true,
+          actions: [
+            { id: 'copy', title: 'Copy' },
+            { id: 'search', title: 'Search Google' },
+            { id: 'define', title: 'Define' }
+          ]
+        }}
+      />
+    )
+    const texts = expectOneVocabulary(el, 'folded pill').map((c) => tooltipText(c))
+    expect(texts).toEqual(['Copy', 'Search Google', 'Define'])
+    for (const button of all('[data-mini-menu-chip]', el))
+      expect(button.getAttribute('aria-label')).toBe(button.getAttribute(TOOLTIP_ATTR))
+  })
 })
 
 describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)', () => {
@@ -349,17 +376,7 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
       count: 3,
       why: 'dialog lines, not controls: the address and the description on both chassis'
     },
-    'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' },
-    // The folded mini menu's glyph buttons (CT-39, the lead's fold rule: the titles as tooltips).
-    // The pill is drawn in the popup surface's own document (`index.html?surface=popup`, a
-    // WebContentsView the size of the pill and its 8 shadow band), which mounts no tooltip host
-    // – the picker it shares the document with carries native titles too (`autofill/`, not
-    // walked) – and has no room beside the pill for the chrome's panel without a dead band
-    // over the page; the toolkit's tooltip names the glyph until the surface hosts the chrome's.
-    'selection/MiniMenu.tsx': {
-      count: 1,
-      why: 'the popup surface’s document: no tooltip host, no room beside the pill for the chrome’s panel'
-    }
+    'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' }
   }
 
   function sources(dir: string): string[] {
