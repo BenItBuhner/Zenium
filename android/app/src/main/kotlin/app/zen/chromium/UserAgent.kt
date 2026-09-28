@@ -16,7 +16,8 @@ import androidx.webkit.WebViewFeature
  * sent one fixed platform since M110, `Linux; Android 10; K`, with the version reduced to
  * `Chrome/<major>.0.0.0` (`GetUnifiedPlatform` and `BuildUnifiedPlatformUAFromProductAndExtraOs`
  * in components/embedder_support/user_agent_utils.cc), so the device model and the Android version
- * never reach a site through the string; the full version travels in the client hints, on request.
+ * never reach a site through the string; the full version, the OS version and the device model
+ * travel in the high-entropy client hints, on a site's request – as Chrome's do.
  * The brand list is Chromium's for a Chromium-branded build (`GenerateBrandVersionList`: a GREASE
  * entry and "Chromium", in the order the major seeds) – the list the desktop sends
  * (`src/shared/browserIdentity.ts`), so a site reads the same brands from both hosts.
@@ -137,8 +138,10 @@ object UserAgent {
     /**
      * Rewrite the user-agent string and, where the WebView supports it, the client hints metadata
      * behind `navigator.userAgentData` and the `Sec-CH-UA-*` headers, to what Chrome for Android
-     * sends: the brands above, platform "Android" at the OS's version, the model empty (the string
-     * names none either), `Mobile` as the string has it, architecture and bitness empty
+     * sends: the brands above, platform "Android" at the OS's version, the device model as the
+     * WebView's default has it (Chrome's `BuildModelInfo()`: the string hides it behind `K`, the
+     * high-entropy `Sec-CH-UA-Model` carries it on a site's request), `Mobile` as the string has
+     * it, architecture and bitness empty
      * (`GetCpuArchitecture` and `GetCpuBitness` are empty on Android), and the WebView's own full
      * version – read from its default metadata, since a WebView that reduces its minor version
      * names only the major in the string. Desktop site: Chrome-on-Linux's values, as before.
@@ -170,7 +173,9 @@ object UserAgent {
                 // desktop mode): platform, its version, the model and mobile-ness change with it.
                 metadata.setPlatform("Linux").setPlatformVersion("").setModel("").setMobile(false).setArchitecture("x86").setBitness(64)
             } else {
-                metadata.setPlatform("Android").setPlatformVersion(platformVersion(osRelease)).setModel("")
+                // `setModel(null)` keeps the WebView's default – `Build.MODEL`, the model Chrome for
+                // Android puts in the high-entropy hint (androidx: null = the system's value).
+                metadata.setPlatform("Android").setPlatformVersion(platformVersion(osRelease)).setModel(null)
                     .setMobile(MOBILE_TOKEN.containsMatchIn(default)).setArchitecture("").setBitness(UserAgentMetadata.BITNESS_DEFAULT)
             }
             WebSettingsCompat.setUserAgentMetadata(settings, metadata.build())
