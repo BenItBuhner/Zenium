@@ -355,19 +355,55 @@ export async function answers(url) {
   }
 }
 
-/** The endpoint once agent.json says `running: true` and the URL answers; throws at the deadline. */
-export async function waitForEndpoint(userDataDir, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
+/**
+ * The phase a wait for the endpoint stands in, from what `agent.json` says and whether the URL
+ * answered – so a `server-up` that never comes says WHICH of the four it was stuck on, not just
+ * "timed out" (runs 36451930938 / 36274678598 stalled at `not-running`: the app's server never
+ * bound its port and nothing said so).
+ */
+export function endpointPhase(endpoint, answered) {
+  if (!endpoint) return 'absent'
+  if (!endpoint.running) return 'not-running'
+  if (!endpoint.url) return 'url-missing'
+  return answered ? 'answered' : 'url-silent'
+}
+
+/** What each phase means, in words, for the wait's log lines and its final error. */
+export const ENDPOINT_PHASE_SAID = Object.freeze({
+  absent: 'agent.json is absent or unreadable (no server file written yet)',
+  'not-running':
+    'agent.json says the server is not running – it never started (Settings → AI Agents off, or the port was taken before the app bound it)',
+  'url-missing': 'agent.json says running but names no url',
+  'url-silent': 'agent.json says running, but the url did not answer an OPTIONS yet',
+  answered: 'agent.json says running and the url answered'
+})
+
+/**
+ * The endpoint once `agent.json` says `running: true` and the URL answers; throws at the deadline.
+ * `log` (optional) is called on each phase change so a wait that stalls leaves a trail of which
+ * phase it reached and when; `now`, `probe` and `pollMs` are injectable for the unit tests.
+ */
+export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
+  const { log = () => undefined, now = Date.now, probe = answers, pollMs = 250 } = opts
+  const started = now()
+  const deadline = started + timeoutMs
+  let lastPhase = null
   for (;;) {
     const e = readEndpoint(userDataDir)
-    if (e?.running && e.url && (await answers(e.url))) return { url: e.url, token: e.token }
-    if (Date.now() >= deadline)
+    const answered = Boolean(e?.running && e.url) && (await probe(e.url))
+    const phase = endpointPhase(e, answered)
+    if (phase !== lastPhase) {
+      log(`server-up: ${ENDPOINT_PHASE_SAID[phase]} (after ${now() - started} ms)`)
+      lastPhase = phase
+    }
+    if (phase === 'answered') return { url: e.url, token: e.token }
+    if (now() >= deadline)
       throw new Error(
-        `no MCP server answered within ${timeoutMs} ms (${path.join(userDataDir, 'zen', 'agent.json')}: ${
+        `no MCP server answered within ${timeoutMs} ms: ${ENDPOINT_PHASE_SAID[phase]} (${path.join(userDataDir, 'zen', 'agent.json')}: ${
           e ? `running ${e.running}, url ${e.url}` : 'absent or unreadable'
-        }) – is Zenium running with Settings → AI Agents on?`
+        })`
       )
-    await delay(250)
+    await delay(pollMs)
   }
 }
 
@@ -1618,7 +1654,7 @@ export async function main(argv) {
         return 2
       }
       browser.launch()
-      endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
+      endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
     }
   }
   secrets.push(endpoint.token)
@@ -1673,7 +1709,7 @@ export async function main(argv) {
       diagnostics = await readDiagnostics(ctx)
       await browser.quit()
       browser.launch()
-      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
+      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
       log(`server back at ${endpoint.url}`)
       await restartVerify(ctx, carry)
       await tidy(ctx)
