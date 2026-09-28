@@ -56,15 +56,18 @@ import type { ClearArgs, ClearOutcome } from '../siteControls/useClearForm'
 
 /**
  * How long the wipe takes to CROSS THE VISIBLE GRID, its bottom edge to its top – the one
- * constant of the stagger, in ms (0 = every card at once). Chrome's cadence, the lead's ruling
- * on gate (a): the gradient crosses the visible grid in about 380 ms of its 1200 ms curve
- * (`QuickDeleteAnimationGradientDrawable.java:52–72`: the sweep runs 1.35 × the grid's height on
- * (0.25, 0, 0.15, 1), the trigger line 0.175 × the height ahead of the gradient's top); the house
- * form takes it as a straight sweep. This is a SCHEDULE, not a motion's length: each card's own
- * exit (the §11.4 spring, ~250 ms to rest, standing for Chrome's 230 ms linear fade,
+ * constant of the stagger, in ms (0 = every card at once). Chrome's crossing proper, the lead's
+ * ruling on gate (a) and its follow-up: `QuickDeleteAnimationGradientDrawable.java:52–72,
+ * 174–179` – the sweep's `translationY` runs +H to −H (twice the grid's height H) over 1200 ms on
+ * (0.25, 0, 0.15, 1), the gradient 0.35 × H tall with the fade's trigger 0.175 × H into it – so
+ * on that curve the trigger crosses the grid's bottom edge at 132 ms and its top edge at 381 ms:
+ * the crossing is the 250 ms between. The 132 ms lead-in (the gradient's approach from below the
+ * grid) is not mirrored – our sweep sets off on the overview's landing; the house form takes the
+ * crossing as a straight sweep. This is a SCHEDULE, not a motion's length: each card's own exit
+ * (the §11.4 spring, ~250 ms to rest, standing for Chrome's 230 ms linear fade,
  * `TabGridView.java:159–193`) stays under §11's 300 ms cap on its own.
  */
-export const QUICK_DELETE_GRID_CROSSING_MS = 380
+export const QUICK_DELETE_GRID_CROSSING_MS = 250
 
 /**
  * How long the chrome waits for the browser to show the closes (the core's state broadcast is
