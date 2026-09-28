@@ -332,7 +332,7 @@ class TabWebView(
         // pushed up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
         applyFonts()
         // Present as the browser it is, not as an app's embedded view (see UserAgent).
-        UserAgent.apply(settings, BuildConfig.VERSION_NAME, desktopMode, defaultUserAgent)
+        UserAgent.apply(settings, desktop = desktopMode, default = defaultUserAgent)
         applyTextZoom()
         // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
         // darkening to the theme), and never for pages that bring a dark scheme of their own.
@@ -2404,7 +2404,7 @@ class TabWebView(
         if (desktopMode == on) return
         desktopMode = on
         userAgentStale = true
-        UserAgent.apply(settings, BuildConfig.VERSION_NAME, on, defaultUserAgent)
+        UserAgent.apply(settings, desktop = on, default = defaultUserAgent)
     }
 
     /** Switch the user agent to what the rules say for `url`; true when it changed. */
