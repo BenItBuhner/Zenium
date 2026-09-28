@@ -33,6 +33,7 @@ import type { BundledFilterList } from '../platform'
 import { connectivityProbesRuleSet } from './connectivityProbes'
 import { RuleEngine } from './engine'
 import { prepareListText, validateFilterText, type FilterSyntaxError } from './lists'
+import { recordBlockedSites, type BlockedRequestSource } from './report'
 import {
   BUILTIN_RULE_SETS,
   RULE_SET_PRIORITY,
@@ -259,12 +260,26 @@ export class BlockingService {
   // Counters
   // ---------------------------------------------------------------------------
 
-  /** A host engine blocked `count` requests, `tabId` when it knows the page they belonged to. */
-  recordBlocked(tabId: string | undefined, count = 1): void {
+  /**
+   * A host engine blocked `count` requests, `tabId` when it knows the page they belonged to and
+   * `sources` when it knows where they went (the tracker report; see `./report.ts`). The report
+   * rides the count's own commit beat: nothing new is scheduled for it.
+   */
+  recordBlocked(
+    tabId: string | undefined,
+    count = 1,
+    sources?: readonly BlockedRequestSource[]
+  ): void {
     if (count <= 0) return
     this.sessionBlocked += count
     const tab = tabId ? this.browser.tabs.tab(tabId) : undefined
-    if (tab) tab.blockedCount += count
+    if (tab) {
+      tab.blockedCount += count
+      if (sources?.length) {
+        const sites = recordBlockedSites(tab.blockedSites, sources)
+        if (sites) tab.blockedSites = sites
+      }
+    }
     if (this.counterTimer) return
     this.counterTimer = setTimeout(() => {
       this.counterTimer = null
@@ -272,10 +287,12 @@ export class BlockingService {
     }, COUNTER_COMMIT_INTERVAL_MS)
   }
 
-  /** A tab committed a new document: its counter starts over (the caller commits). */
+  /** A tab committed a new document: its counter and report start over (the caller commits). */
   onNavigated(tabId: string): void {
     const tab = this.browser.tabs.tab(tabId)
-    if (tab) tab.blockedCount = 0
+    if (!tab) return
+    tab.blockedCount = 0
+    delete tab.blockedSites
   }
 
   // ---------------------------------------------------------------------------

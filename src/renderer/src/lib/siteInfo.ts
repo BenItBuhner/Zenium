@@ -28,17 +28,25 @@ export interface SiteInfoState {
   /**
    * The pill chip the open surface hangs from – the one that wears the pressed fill and reads
    * `aria-expanded` while it is up (design language v2 §9.20, §9.29: one anchor per popover):
-   * the site-information slot or the shield; null when nothing in the pill opened it (the app
-   * menu's Page info, the phone's pill tap) and when nothing is open.
+   * the site-information slot, the shield or the shield's count; null when nothing in the pill
+   * opened it (the app menu's Page info, the phone's pill tap) and when nothing is open.
    */
   openedBy: SiteInfoAnchor | null
+  /**
+   * What the desktop popover shows: the site information, or – from the shield's count pill –
+   * the tracker report, the §9.20 list of the sites the engine blocked requests to on the page
+   * (PS-33). The phone's sheet reaches the report as a level of its own and ignores this.
+   */
+  view: SiteInfoView
 }
 
 /** The pill chips that open the site information on the desktop and anchor its popover. */
-export type SiteInfoAnchor = 'site' | 'shield'
+export type SiteInfoAnchor = 'site' | 'shield' | 'count'
+
+export type SiteInfoView = 'site' | 'trackers'
 
 export const siteInfoStore = createStore<SiteInfoState>(
-  { tabId: null, anchor: null, revision: 0, level: 'overview', openedBy: null },
+  { tabId: null, anchor: null, revision: 0, level: 'overview', openedBy: null, view: 'site' },
   'site-info'
 )
 
@@ -86,20 +94,25 @@ export function siteInfoIsOpen(): boolean {
  * keyboard goes back there rather than to the page (design language v2 §9.22). `level` opens
  * the surface on one of its levels rather than the overview (the site-information slot opens it
  * on Permissions while it carries a capture or a block, omnibox-38); `by` names the pill chip
- * that opened it, the one chip that reads pressed while it is up (§9.20).
+ * that opened it, the one chip that reads pressed while it is up (§9.20); `view` is the tracker
+ * report when the shield's count opened it on the desktop.
  */
 export async function openSiteInfo(
   tab: Tab,
   anchor: Rect | null = null,
   from: HTMLElement | null = null,
-  { level = 'overview', by = null }: { level?: LevelId; by?: SiteInfoAnchor | null } = {}
+  {
+    level = 'overview',
+    by = null,
+    view = 'site'
+  }: { level?: LevelId; by?: SiteInfoAnchor | null; view?: SiteInfoView } = {}
 ): Promise<void> {
   if (siteInfoStore.get().tabId === tab.id) return
   await captureActiveTab(tab.id)
   run('focus.chrome', undefined)
   opener = from
   uiStore.set({ siteInfoOpen: true, drawerOpen: false })
-  siteInfoStore.set({ tabId: tab.id, anchor, revision: 0, level, openedBy: by })
+  siteInfoStore.set({ tabId: tab.id, anchor, revision: 0, level, openedBy: by, view })
 }
 
 /**
@@ -158,7 +171,7 @@ export const siteInfoBack = {
 function finishClose(): void {
   const from = opener
   opener = null
-  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null })
+  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null, view: 'site' })
   if (uiStore.get().siteInfoOpen) uiStore.set({ siteInfoOpen: false })
   invalidateSnapshot()
   // Escape, a click outside, the back gesture: the keyboard returns to the chip that opened the

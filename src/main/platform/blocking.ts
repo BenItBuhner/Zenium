@@ -25,6 +25,8 @@ import { gunzipSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import type { Browser } from '../../core/browser'
 import { DocumentFilters } from '../../core/blocking/documentFilters'
+import { hostnameOf } from '../../core/blocking/domain'
+import type { BlockedRequestSource } from '../../core/blocking/report'
 import {
   TEXT_MATCH_SET_ID,
   type RuleEngine,
@@ -86,7 +88,14 @@ export type DecisionStage = 'request' | 'headersReceived'
 /** What the handler needs from the core: decisions and the counters. */
 export interface BlockingDecider {
   decide(ctx: RequestContext): Decision
-  recordBlocked(tabId: string | undefined, count?: number): void
+  /** `source`: the blocked request's host and the set that matched, for the tracker report. */
+  recordBlocked(tabId: string | undefined, count?: number, source?: BlockedRequestSource): void
+}
+
+/** The tracker report's view of a blocked request: its hostname and the matched set's id. */
+function blockedSource(ctx: RequestContext, decision: Decision): BlockedRequestSource | undefined {
+  const host = hostnameOf(ctx.url)
+  return host ? { host, setId: decision.matched?.setId } : undefined
 }
 
 /** The text matcher's extra answer for documents: `$csp` directives the lists inject. */
@@ -118,7 +127,7 @@ export class BlockingHandler implements RequestHandler {
     if (decision.matched && this.observer) this.observer(request, decision, 'request')
     switch (decision.action) {
       case 'block':
-        this.decider.recordBlocked(request.tabId)
+        this.decider.recordBlocked(request.tabId, 1, blockedSource(ctx, decision))
         return { cancel: true }
       case 'redirect':
       case 'upgrade':
@@ -126,7 +135,7 @@ export class BlockingHandler implements RequestHandler {
           // A list's `$redirect` to a neutered resource is a blocked request from the user's
           // point of view; a translator's plain redirect or an upgrade is not.
           if (decision.matched?.setId === TEXT_MATCH_SET_ID)
-            this.decider.recordBlocked(request.tabId)
+            this.decider.recordBlocked(request.tabId, 1, blockedSource(ctx, decision))
           return { redirectURL: decision.redirectUrl }
         }
         return undefined
@@ -164,12 +173,13 @@ export class BlockingHandler implements RequestHandler {
         this.observer(request, late, 'headersReceived')
       switch (late.action) {
         case 'block':
-          this.decider.recordBlocked(request.tabId)
+          this.decider.recordBlocked(request.tabId, 1, blockedSource(ctx, late))
           return { cancel: true }
         case 'redirect':
         case 'upgrade':
           if (late.redirectUrl && late.redirectUrl !== ctx.url) {
-            if (late.matched?.setId === TEXT_MATCH_SET_ID) this.decider.recordBlocked(request.tabId)
+            if (late.matched?.setId === TEXT_MATCH_SET_ID)
+              this.decider.recordBlocked(request.tabId, 1, blockedSource(ctx, late))
             return { redirectURL: late.redirectUrl }
           }
           break
@@ -578,7 +588,8 @@ export class ElectronBlocking {
       new BlockingHandler(
         {
           decide: (ctx) => blocking.engine.decide(ctx),
-          recordBlocked: (tabId, count) => blocking.recordBlocked(tabId, count)
+          recordBlocked: (tabId, count, source) =>
+            blocking.recordBlocked(tabId, count, source && [source])
         },
         this.matcher,
         (request, decision, stage) => {

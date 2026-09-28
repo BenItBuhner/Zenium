@@ -68,6 +68,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { BlockedRequestSource } from './blocking/report'
 import type { PageViewport } from '../shared/capture'
 import type { ContentRules } from '../shared/contentRules'
 import type { DisplayMode } from '../shared/displayMode'
@@ -762,8 +763,11 @@ export interface TabViewEvents {
   onResponsive?(): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
-  /** The host's own request engine blocked `count` more requests of this page (Android). */
-  onRequestsBlocked(count: number): void
+  /**
+   * The host's own request engine blocked `count` more requests of this page (Android), `sources`
+   * saying which hosts they went to and which set matched, for the tracker report.
+   */
+  onRequestsBlocked(count: number, sources?: readonly BlockedRequestSource[]): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
   /**
