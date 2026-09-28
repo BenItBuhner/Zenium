@@ -1,4 +1,4 @@
-import type { Credential, Rect } from '../../shared/types'
+import type { Credential, PopupSurfaceRoom, Rect } from '../../shared/types'
 import { siteLabel } from './origins'
 
 /**
@@ -150,12 +150,17 @@ export function estimatePickerHeight(count: number, twoLine: boolean): number {
  * no arrow, §9.20) – and flips above the field when the room below is short and there is more
  * above. `panelHeight` is what the picker's document asked for; the panel is clamped to 60% of
  * the window and to the room on its side, and the surface adds `PICKER_SURFACE_PAD` all around
- * for the panel's shadow. Pure; the anchor is `anchorInChrome`'s rect.
+ * for the panel's shadow. With `room` – what the picker's document asks beyond that box for a
+ * tooltip's moment on one of its edge controls (`PopupSurfaceRoom`, §9.31; `placeMiniMenuSurface`'s
+ * for the pill) – the surface reaches `below` further under the box, as far as the window's
+ * bottom allows, and widens evenly to `width`, as far as the window's sides allow; the panel's
+ * box stands where it stood. Pure; the anchor is `anchorInChrome`'s rect.
  */
 export function placePickerSurface(
   anchor: Rect,
   viewport: { width: number; height: number },
-  panelHeight: number
+  panelHeight: number,
+  room?: PopupSurfaceRoom | null
 ): Rect {
   const pad = PICKER_SURFACE_PAD
   const width = PICKER_WIDTH
@@ -166,14 +171,28 @@ export function placePickerSurface(
   const cap = Math.max(PICKER_MIN_HEIGHT, Math.floor(viewport.height * PICKER_MAX_SHARE))
   const wanted = Math.max(PICKER_MIN_HEIGHT, Math.min(Math.ceil(panelHeight), cap))
   const flip = wanted > below && above > below
-  const room = Math.max(PICKER_MIN_HEIGHT, flip ? above : below)
-  const height = Math.min(wanted, room)
+  const side = Math.max(PICKER_MIN_HEIGHT, flip ? above : below)
+  const height = Math.min(wanted, side)
   const top = flip ? anchor.y - height : anchor.y + anchor.height
-  return {
+  const box = {
     x: Math.round(left - pad),
     y: Math.round(top - pad),
     width: width + pad * 2,
     height: Math.round(height + pad * 2)
+  }
+  if (!room) return box
+  const under = Math.max(
+    0,
+    Math.min(Math.ceil(room.below), viewport.height - (box.y + box.height))
+  )
+  const margin = Math.min(box.x, viewport.width - (box.x + box.width))
+  let extra = Math.max(0, Math.min(Math.ceil(room.width) - box.width, 2 * Math.floor(margin)))
+  if (extra % 2 === 1) extra += 1
+  return {
+    x: box.x - extra / 2,
+    y: box.y,
+    width: box.width + extra,
+    height: box.height + under
   }
 }
 
