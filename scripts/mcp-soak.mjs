@@ -71,6 +71,16 @@ const CLIENT_VERSION = '1'
 /** A tool call that has not answered by then failed the session (the server has no such limit). */
 const CALL_TIMEOUT_MS = 90_000
 
+/**
+ * A background snapshot may run a beat before the staged off-screen view lays out (MCP-C, #568):
+ * the viewport reads 0×0 and the page's heading is not there yet, so an immediate snapshot fails
+ * the hard check (`background-snapshot ×1 (viewport 0×0, headings [], N refs)`, run 36371842431).
+ * A real agent would snapshot again; the soak settles the same way – re-snapshot until the page has
+ * laid out, bounded, and judge the settled snapshot. Not a per-agent limit: the server's snapshot
+ * is instant; this waits on the layout the stage gives a hidden view.
+ */
+export const SNAPSHOT_SETTLE = Object.freeze({ attempts: 8, ms: 250 })
+
 // ---------------------------------------------------------------------------------------------
 // Arguments
 // ---------------------------------------------------------------------------------------------
@@ -238,6 +248,20 @@ export function parseSnapshot(text) {
       )
     }
   }
+}
+
+/**
+ * Whether a background snapshot has laid out enough to check (`SNAPSHOT_SETTLE`): a non-zero
+ * viewport and the fixture's heading (a custom fixture: any heading). The same predicate the hard
+ * `background-snapshot` check applies, so the settle loop stops exactly when the check would pass –
+ * a page that never lays out still fails at the bound, as a genuinely blank hidden view should.
+ */
+export function snapshotLaidOut(snap, fixture) {
+  const viewportOk = Boolean(snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0)
+  const heading = fixture.custom
+    ? snap.headings.length > 0
+    : snap.headings.some((h) => h.startsWith(FIXTURE.heading))
+  return viewportOk && heading
 }
 
 /**
@@ -1070,20 +1094,35 @@ export async function soakSession(client, ctx, { index, leg }) {
 
     if (tabId) {
       at = 'background-snapshot'
-      r = await call('browser_snapshot', { tabId })
-      const snap = parseSnapshot(r.text)
+      // The staged off-screen view (MCP-C, #568) lays out a beat after the tab opens; a snapshot
+      // taken at once can read a 0×0 viewport with no heading yet. Re-snapshot until it has laid
+      // out, bounded (`SNAPSHOT_SETTLE`) – the check then judges the settled page, not the race.
+      const settle = ctx.snapshotSettle ?? SNAPSHOT_SETTLE
+      let snap = null
+      let tries = 0
+      for (;;) {
+        r = await call('browser_snapshot', { tabId })
+        tries++
+        snap = parseSnapshot(r.text)
+        if (r.isError || snapshotLaidOut(snap, fixture) || tries >= settle.attempts) break
+        await delay(settle.ms)
+      }
       const heading = fixture.custom
         ? snap.headings.length > 0
         : snap.headings.some((h) => h.startsWith(FIXTURE.heading))
       const viewportOk = Boolean(
         snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0
       )
+      if (tries > 1)
+        ctx.log(
+          `${label}: background snapshot laid out after ${tries} tries (${viewportOk && heading ? 'settled' : 'never settled'})`
+        )
       verdict.hard(
         at,
         !r.isError && viewportOk && heading,
         r.isError
           ? `error: ${r.text}`
-          : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs`
+          : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs after ${tries} tr${tries === 1 ? 'y' : 'ies'}`
       )
 
       at = 'background-screenshot'
