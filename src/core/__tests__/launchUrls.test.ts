@@ -398,6 +398,33 @@ describe('a tab the user is typing into is not empty (W8-F15, the bar-input sign
     expect(f.browser.hasBarInput(fresh.id)).toBe(false)
   })
 
+  it('the round trip (round two): the draft leaves with the tab and comes back with it', async () => {
+    // The renderer's bar follows the active tab: when the handed-over URL opens in front, the
+    // bar closes over the typed NTP (`urlbar.input {active:false}`) and saves the draft with the
+    // tab; on the tab's return the bar re-opens with it, and the signal is true again. The core
+    // reads the signal alone: while away the NTP is fresh again by the signal but not active, so
+    // a launch never takes it; back, it is typed into once more, and a launch opens beside it.
+    const f = fixture()
+    f.browser.start()
+    const win = f.browser.focusedWindow()
+    const fresh = f.browser.tabs.activeTabFor(win)!
+    signal(f, win, fresh.id, true)
+    f.browser.openLaunchUrls([FIRST], win)
+    const handed = f.browser.tabs.activeTabFor(win)!
+    expect(handed.url).toBe(FIRST)
+    // The bar went down over the NTP as the handed-over tab came in front.
+    signal(f, win, fresh.id, false)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    // Back on the NTP: the bar is up with the draft, the signal true for it again.
+    f.browser.tabs.activateTab(fresh.id, win)
+    expect(f.browser.freshTabIn(win)?.id).toBe(fresh.id)
+    signal(f, win, fresh.id, true)
+    expect(f.browser.freshTabIn(win)).toBeNull()
+    f.browser.openLaunchUrls([SECOND], win)
+    expect(tabUrls(f)).toEqual([NEW_TAB_URL, FIRST, SECOND])
+    expect(f.browser.tabs.tab(fresh.id)?.url).toBe(NEW_TAB_URL)
+  })
+
   it('the phone host: the command is harmless (no freshTabIn caller); it just records', async () => {
     // The same shared command reaches the core on either host. Android has no `openLaunchUrls`
     // / `freshTabIn` caller (W8-F14), so the record is written and simply unread.

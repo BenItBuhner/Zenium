@@ -26,7 +26,7 @@ Object.assign(window, { zen: { invoke, on } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Urlbar } = await import('../Urlbar')
-const { uiStore } = await import('@renderer/lib/ui')
+const { browserStore, openNewTabPageUrlbar, uiStore } = await import('@renderer/lib/ui')
 
 function tab(patch: Partial<Tab> = {}): Tab {
   return {
@@ -205,5 +205,253 @@ describe('the URL bar tells the core when it holds input for a tab (W8-F15)', ()
     await type(inputEl(el), 'foo')
     // The same command fires on the phone; the core has no `freshTabIn` caller there.
     expect(inputs()).toEqual([{ tabId: 't1', active: true }])
+  })
+})
+
+/*
+ * Round two of W8-F15 – the draft goes with the tab (Chrome's per-tab omnibox state). The palette
+ * bound to a tab follows the window's active tab (W5-F4, `urlbarFollowsActiveTab`); what its
+ * field held when it left is saved by tab id and comes back – text, selection, keyword chip –
+ * when the tab is active again, and the signal above follows it: false on the leave, true again
+ * on the return. The bar is mounted as the desktop shell mounts it (`ContentArea`): one instance
+ * per bound tab, keyed so, gone when the bar is down.
+ */
+
+/** A window on one space with `tabs`, `active` in front, for the shell's mount below. */
+function windowState(active: string, tabs: Tab[]): UIState {
+  return {
+    ...state(tabs[0]!),
+    tabs: Object.fromEntries(tabs.map((t) => [t.id, t])),
+    spaces: [{ id: 'space', name: 'Space', activeTabId: active, tabIds: tabs.map((t) => t.id) }],
+    essentialTabIds: [],
+    folders: {},
+    // Not under the first-run tour, which holds the bar (`onboardingUp`).
+    settings: { ...DEFAULT_SETTINGS, onboardingDone: true, searchEngineId: 'google' },
+    shortcuts: [],
+    systemDark: false,
+    window: { kind: 'synced', chrome: 'full', fullscreen: false, htmlFullscreenTabId: null }
+  } as unknown as UIState
+}
+
+function Host(): ReactElement | null {
+  const urlbar = uiStore.use((s) => s.urlbar)
+  const st = browserStore.use((s) => s.state)
+  if (!urlbar.open || !st) return null
+  return createElement(Urlbar, {
+    key: `${urlbar.mode}-${urlbar.tabId ?? 'new'}`,
+    state: st,
+    urlbar,
+    area: { x: 0, y: 0, width: 1200, height: 800 }
+  })
+}
+
+/** A state from the core, and the turn after it: the capture behind a palette's open, the rows' fetch. */
+async function arrive(st: UIState): Promise<void> {
+  await act(async () => {
+    browserStore.set({ state: st })
+    await new Promise((r) => setTimeout(r, 0))
+  })
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+  })
+}
+
+async function key(target: HTMLElement, k: string): Promise<void> {
+  await act(async () => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    await Promise.resolve()
+  })
+}
+
+const field = (): HTMLInputElement | null =>
+  host?.querySelector<HTMLInputElement>('[data-testid="urlbar-input"]') ?? null
+
+describe('the draft goes with the tab, and the signal with it (W8-F15, round two)', () => {
+  const ntp = tab()
+  const page = tab({ id: 't2', url: 'https://gamma.test/' })
+  const other = tab({ id: 't3' })
+
+  /** The boot's palette over the New Tab `t1`, mounted by the shell. */
+  async function bootPalette(tabs: Tab[] = [ntp, page]): Promise<HTMLInputElement> {
+    await render(createElement(Host))
+    await arrive(windowState('t1', tabs))
+    await act(async () => {
+      openNewTabPageUrlbar('t1', undefined, false)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    invoke.mockClear()
+    return field()!
+  }
+
+  beforeEach(() => {
+    uiStore.set({
+      urlbar: {
+        open: false,
+        mode: 'new-tab',
+        tabId: null,
+        initialText: undefined,
+        attached: false
+      },
+      urlbarDrafts: {}
+    })
+  })
+
+  afterEach(async () => {
+    await unmount()
+    browserStore.set({ state: null })
+    uiStore.set({
+      urlbar: {
+        open: false,
+        mode: 'new-tab',
+        tabId: null,
+        initialText: undefined,
+        attached: false
+      },
+      urlbarDrafts: {}
+    })
+  })
+
+  it('typed into the NTP, the handed-over URL opens active, back: the bar is up with the same text and caret, the signal true again', async () => {
+    const el = await bootPalette()
+    await type(el, 'hello world')
+    el.setSelectionRange(6, 11)
+    expect(inputs()).toEqual([{ tabId: 't1', active: true }])
+    // The handed-over URL opened in the foreground (`freshTabIn` found `t1` typed into, so the
+    // launch URL took a tab of its own): `t2` in front, the bar down, the signal false.
+    await arrive(windowState('t2', [ntp, page]))
+    expect(field()).toBeNull()
+    expect(inputs()).toEqual([
+      { tabId: 't1', active: true },
+      { tabId: 't1', active: false }
+    ])
+    // Back to the New Tab: the bar is up over it as it was left – the text, "world" selected,
+    // the field focused – and the core hears the tab is typed into again.
+    await arrive(windowState('t1', [ntp, page]))
+    const back = field()
+    expect(back).not.toBeNull()
+    expect(back!.value).toBe('hello world')
+    expect([back!.selectionStart, back!.selectionEnd]).toEqual([6, 11])
+    expect(document.activeElement).toBe(back)
+    expect(inputs()).toEqual([
+      { tabId: 't1', active: true },
+      { tabId: 't1', active: false },
+      { tabId: 't1', active: true }
+    ])
+    // The field is one instance again: typing on carries the signal as ever.
+    await type(back!, 'hello there')
+    expect(inputs()).toHaveLength(3)
+  })
+
+  it('a tab left with nothing typed restores no bar, and the signal never fired', async () => {
+    await bootPalette()
+    await arrive(windowState('t2', [ntp, page]))
+    expect(field()).toBeNull()
+    await arrive(windowState('t1', [ntp, page]))
+    expect(field()).toBeNull()
+    expect(inputs()).toEqual([])
+  })
+
+  it('a draft dismissed with Escape before the leave restores nothing', async () => {
+    const el = await bootPalette()
+    await type(el, 'hello')
+    // Escape, staged (omnibox-50): the text reverts to the page's – nothing, over a New Tab –
+    // then the bar closes; the signal goes false with the text.
+    await key(el, 'Escape')
+    if (uiStore.get().urlbar.open) await key(field()!, 'Escape')
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(inputs()).toEqual([
+      { tabId: 't1', active: true },
+      { tabId: 't1', active: false }
+    ])
+    await arrive(windowState('t2', [ntp, page]))
+    await arrive(windowState('t1', [ntp, page]))
+    expect(field()).toBeNull()
+    expect(inputs()).toHaveLength(2)
+  })
+
+  it('a draft committed before the leave restores nothing: the tab is a page now', async () => {
+    const el = await bootPalette()
+    await type(el, 'gamma')
+    // Enter: the bar closes, the tab loads the result.
+    await key(el, 'Enter')
+    expect(uiStore.get().urlbar.open).toBe(false)
+    const loaded = tab({ url: 'https://gamma.test/?q=gamma' })
+    await arrive(windowState('t1', [loaded, page]))
+    await arrive(windowState('t2', [loaded, page]))
+    await arrive(windowState('t1', [loaded, page]))
+    expect(field()).toBeNull()
+    expect(uiStore.get().urlbarDrafts).toEqual({})
+  })
+
+  it('the tab closed while away takes its draft with it', async () => {
+    const el = await bootPalette()
+    await type(el, 'hello')
+    await arrive(windowState('t2', [ntp, page]))
+    expect(uiStore.get().urlbarDrafts).toEqual({ t1: expect.objectContaining({ text: 'hello' }) })
+    await arrive(windowState('t2', [page]))
+    expect(uiStore.get().urlbarDrafts).toEqual({})
+  })
+
+  it('two tabs with two drafts keep their own, the field one instance per tab', async () => {
+    const el = await bootPalette([ntp, other])
+    await type(el, 'alpha')
+    // Ctrl+T over the palette: the fresh New Tab `t3` in front, the palette re-bound to it.
+    await arrive(windowState('t3', [ntp, other]))
+    const third = field()!
+    expect(third.value).toBe('')
+    await type(third, 'november')
+    await arrive(windowState('t1', [ntp, other]))
+    expect(field()!.value).toBe('alpha')
+    await arrive(windowState('t3', [ntp, other]))
+    expect(field()!.value).toBe('november')
+    expect(uiStore.get().urlbarDrafts).toEqual({ t1: expect.objectContaining({ text: 'alpha' }) })
+    // Each tab's signal in its own turn: `t1` typed, left, back, left; `t3` typed, left, back.
+    expect(inputs()).toEqual([
+      { tabId: 't1', active: true },
+      { tabId: 't1', active: false },
+      { tabId: 't3', active: true },
+      { tabId: 't3', active: false },
+      { tabId: 't1', active: true },
+      { tabId: 't1', active: false },
+      { tabId: 't3', active: true }
+    ])
+  })
+
+  it('the keyword chip comes back with the draft', async () => {
+    await render(createElement(Host))
+    // `t1` left in `@ddg` keyword mode, the terms alone in the field, `t2` in front.
+    uiStore.set({
+      urlbarDrafts: {
+        t1: {
+          text: 'cats',
+          selectionStart: 4,
+          selectionEnd: 4,
+          selectionDirection: 'none',
+          keyword: { engineId: 'duckduckgo', typed: '@ddg' },
+          attached: false
+        }
+      }
+    })
+    await arrive(windowState('t2', [ntp, page]))
+    await arrive(windowState('t1', [ntp, page]))
+    const el = field()
+    expect(el).not.toBeNull()
+    expect(el!.value).toBe('cats')
+    expect(host!.textContent).toContain('Search DuckDuckGo')
+  })
+
+  it('a restored draft is the bar’s again: dismissed, it is gone; the tab left and back restores nothing', async () => {
+    const el = await bootPalette()
+    await type(el, 'hello')
+    await arrive(windowState('t2', [ntp, page]))
+    await arrive(windowState('t1', [ntp, page]))
+    const back = field()!
+    expect(back.value).toBe('hello')
+    await key(back, 'Escape')
+    if (uiStore.get().urlbar.open) await key(field()!, 'Escape')
+    expect(uiStore.get().urlbar.open).toBe(false)
+    await arrive(windowState('t2', [ntp, page]))
+    await arrive(windowState('t1', [ntp, page]))
+    expect(field()).toBeNull()
   })
 })
