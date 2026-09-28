@@ -1,4 +1,4 @@
-import type { CSSProperties, FocusEvent as ReactFocusEvent, JSX } from 'react'
+import type { CSSProperties, FocusEvent as ReactFocusEvent, JSX, Ref } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus, VenetianMask } from 'lucide-react'
 import type { Folder, SavedGroupTab, Space, Tab, UIState } from '@shared/types'
@@ -34,6 +34,7 @@ import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon, type FaviconSource } from './Favicon'
 import { watchGutter } from './listGutter'
 import { ENTER_BATCH, ListMotionContext } from './listMotion'
+import { SlideSnapshot } from './SlideSnapshot'
 import { SplitGroupRow } from './SplitGroupRow'
 import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
@@ -116,6 +117,12 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
     },
     [fade, motion]
   )
+  // The New Tab row under the list follows its layout (MOT-33's foot): a row grown into the list
+  // or shrunk out of it above it, it glides from where it stood on the rows' spring.
+  const newTab = useCallback(
+    (el: HTMLButtonElement | null) => motion.follow('foot:new-tab', el),
+    [motion]
+  )
   const orderKey = [
     space.pinnedCollapsed ? 'c' : 'o',
     ...pinned.map((t) => t.id),
@@ -124,7 +131,9 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   ].join('|')
   useLayoutEffect(() => {
     // The row whose ghost is still gliding into its slot is placed, not animated. The rows also
-    // glide when a drop zone above the panel takes its room (`zones`), rather than jumping.
+    // glide when a drop zone above the panel takes its room (`zones`), rather than jumping. The
+    // flip is read against the list as it stood just before this commit (`SlideSnapshot`, on
+    // the same dependencies).
     motion.flip(uiStore.get().drag?.tabId ?? null, isActive)
   }, [motion, orderKey, isActive, zones])
   // After the flip: the active row's resting box is read with its glide taken off (BUG-008).
@@ -141,12 +150,9 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           it – outside the scroller (tabs-28), so the row stays in view however long the list
           (Zen's, Edge's, the strip's + fixed at its end, §9.37); the scroller takes no more room
           than its rows, so with a short list the foot stands right under the last row as
-          before, and with a long one the rows scroll between the fades and the row holds. The
-          column is positioned: a closed row's picture is drawn in it while it shrinks
-          (`SlideMotion.leave`), placed in the box the row stood in – the scroller would clip it,
-          shrinking with its last row. */}
+          before, and with a long one the rows scroll between the fades and the row holds. */}
       <div
-        className="relative flex h-full w-full shrink-0 flex-col"
+        className="flex h-full w-full shrink-0 flex-col"
         data-tab-panel
         data-active={isActive}
         aria-hidden={!isActive}
@@ -160,14 +166,17 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           run('newtab.contextMenu', contextMenuAnchor(e))
         }}
       >
+        <SlideSnapshot motion={motion} deps={[orderKey, isActive, zones]} />
         {/* The rows' scroller: §9.20's overlay scrollbar (the chassis rule on every scroller of
             a mouse's chrome – the 8 gutter, the 6 pill in the window's ink; nothing to state
-            here), the wheel's, and the strip's 24 fades at its edges. */}
+            here), the wheel's, and the strip's 24 fades at its edges. Positioned: a closed row's
+            picture is drawn in a layer of its content while it shrinks (`SlideMotion.leave`),
+            under the fades, scrolling with the rows. */}
         <div
           ref={scroller}
           data-tab-scroller
           data-active={isActive}
-          className="flex min-h-0 shrink flex-col overflow-y-auto overflow-x-hidden px-2"
+          className="relative flex min-h-0 shrink flex-col overflow-y-auto overflow-x-hidden px-2"
           onDoubleClick={(e) => {
             // Chrome's title-bar double-click on the strip's empty room (tabs-47,
             // shortcuts-menus-94): maximise / restore, or the Mac's own choice. The list's
@@ -289,6 +298,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           }}
         >
           <NewTabButton
+            ref={newTab}
             compact={compact}
             spaced={folders.length > 0 || regular.length > 0}
             dropInto={dropKey === `newtab:${space.id}`}
@@ -456,15 +466,18 @@ function DropZone({
  * same menu and the same drop. On the sidebar's private pose it is New Private Tab (the
  * overview's private new-tab card, INC-01): the mask for its glyph, asking for a tab of the
  * private container (`pane`). The strip passes its axis and the tablet its pane: the horizontal
- * layout is the desktop's, the poses the tablet's, so no button is both.
+ * layout is the desktop's, the poses the tablet's, so no button is both. The sidebar's row hands
+ * its element to the list's motion (`ref`): it follows the rows' layout (`SlideMotion.follow`).
  */
 export function NewTabButton({
+  ref,
   compact,
   spaced,
   dropInto,
   button,
   pane = 'tabs'
 }: {
+  ref?: Ref<HTMLButtonElement>
   compact: boolean
   spaced: boolean
   dropInto: boolean
@@ -477,6 +490,7 @@ export function NewTabButton({
   const hinted = useHint('New Tab', 'tab.new')
   return (
     <button
+      ref={ref}
       type="button"
       className={cn(
         button

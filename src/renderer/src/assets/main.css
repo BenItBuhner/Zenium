@@ -1862,12 +1862,24 @@
   }
   /*
    * A closed row's picture (MOT-33; v2 §11.4's departure, `SlideMotion.leave`): the row's
-   * element, React's no longer, placed in the list's column in the box it stood in and clipped
-   * shut from its foot on the spring as the rows below glide up into the gap – the row's entry
-   * run backwards. A picture: nothing reaches it, its own 120 ms eases hold off (the spring
-   * writes every frame), and `will-change` names the two properties for the run alone. Its
-   * geometry is inline.
+   * element, React's no longer, placed in the scroller's layer in the box it stood in and
+   * clipped shut from its foot on the spring as the rows below glide up into the gap – the
+   * row's entry run backwards. A picture: nothing reaches it, its own 120 ms eases hold off
+   * (the spring writes every frame), and `will-change` names the two properties for the run
+   * alone. Its geometry is inline. The layer is a box of no size at the scroller's content
+   * origin, so the pictures scroll with the rows under the scroller's fades; laid out contained,
+   * so their boxes are ink and not scrollable overflow – the scroller's extent (its fades, the
+   * desktop's gutter) answers to its rows alone while the held box runs down past a picture.
    */
+  .zen-slide-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    contain: layout;
+    pointer-events: none;
+  }
   .zen-slide-leaving {
     pointer-events: none;
     transition: none;
