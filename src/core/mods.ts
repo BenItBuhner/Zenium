@@ -1,5 +1,6 @@
 import type { Mod } from '../shared/types'
 import { newId } from '../shared/ids'
+import { MAX_MOD_CSS, UNTITLED_MOD } from '../shared/mods'
 import { JsonStore } from './store/JsonStore'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -9,11 +10,11 @@ interface Persisted {
   mods: Mod[]
 }
 
-const MAX_CSS = 512 * 1024
-
 /**
  * Zen Mods for the Chromium port: custom CSS applied to the browser chrome (the equivalent of
- * Zen's `chrome.css` mods / `userChrome.css`). Stored locally, toggled live in the UI.
+ * Zen's `chrome.css` mods / `userChrome.css`). Stored locally, toggled live in the UI; one `mod`
+ * record per Mod across devices (`sync/records.ts`, the `mods` scope), landed through `put` and
+ * `remove`.
  */
 export class ModService {
   private mods: Mod[] = []
@@ -36,9 +37,9 @@ export class ModService {
   add(name: string, css: string, source: string | null = null): Mod {
     const mod: Mod = {
       id: newId('mod'),
-      name: name.trim() || 'Untitled mod',
+      name: name.trim() || UNTITLED_MOD,
       source,
-      css: css.slice(0, MAX_CSS),
+      css: css.slice(0, MAX_MOD_CSS),
       enabled: true,
       updatedAt: Date.now()
     }
@@ -51,10 +52,25 @@ export class ModService {
     const mod = this.mods.find((m) => m.id === id)
     if (!mod) return
     if (patch.name !== undefined) mod.name = patch.name.trim() || mod.name
-    if (patch.css !== undefined) mod.css = patch.css.slice(0, MAX_CSS)
+    if (patch.css !== undefined) mod.css = patch.css.slice(0, MAX_MOD_CSS)
     if (patch.enabled !== undefined) mod.enabled = patch.enabled
     mod.updatedAt = Date.now()
     this.persist()
+  }
+
+  /**
+   * Replace a whole Mod under its id (used by sync: the record as `sanitizeMod` read it). A Mod
+   * the list holds keeps its place, one it does not is appended – the list's order is each
+   * device's own, as the Boosts' is. Returns true when something changed.
+   */
+  put(mod: Mod): boolean {
+    const index = this.mods.findIndex((m) => m.id === mod.id)
+    const before = index === -1 ? undefined : this.mods[index]
+    if (JSON.stringify(before) === JSON.stringify(mod)) return false
+    if (index === -1) this.mods.push(mod)
+    else this.mods[index] = mod
+    this.persist()
+    return true
   }
 
   remove(id: string): void {

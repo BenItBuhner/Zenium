@@ -1,0 +1,12 @@
+{
+  "id": "tablet-settings-toast-dark",
+  "class": "TabletSettingsToastDemo",
+  "shard": "tablet",
+  "mirrors": "android-tablet-settings-toast-demo.yml:dark",
+  "dir": "tablet-settings-toast-demo",
+  "env": {
+    "DEMO_THEME": "dark"
+  },
+  "estimate": 3,
+  "note": "tablet-settings-toast in the dark colour scheme (the workflow's `dark` act): the program's stills for the lead are light/dark pairs, and the lifted seat over the dialog is the one the tablet check reads, so the nightly records both. The same class and handshake dir on the same shard as the light run, as media/media-ui/pip/fullscreen share media-demo on webview: the driver clears its dir at its start (DemoHarness), and the runner keeps each driver's pull under its own id."
+}

@@ -2799,6 +2799,36 @@
     pointer-events: auto;
   }
   /*
+   * The host's toast seat (v2 draft §9.33, lib/portals.tsx `useToastSeat`; the desktop's and
+   * the tablet's twin of the phone's `.zen-toast-frame` lift): the frame's box after the slot,
+   * where the shells seat the toast's slot – the tablet's message layer portals it here
+   * (`MessageLayer toastSeat`), the desktop draws its dialog-raised toasts here
+   * (`FrameSeatToasts`). The seat itself takes no pointer; the cards in it do (`.zen-message`).
+   * At the normal seat it paints in tree order in the host's context – over the scrim, under
+   * the slot's dialogs (z 1). Lifted, while a dialog stands and the seat holds a card, it takes
+   * z 2 over the slot: the card paints above the dialog and its scrim, undimmed, its Undo in
+   * reach. The card stands where the layer always puts it – `.zen-message-toasts`, 8 inside the
+   * frame's bottom edge (`--zen-message-inset`), the frame's own inset on the tablet – and never
+   * inside the dialog box: over a hosted sheet with a footer band (`BottomSheet` placed `hosted`,
+   * the recede registry's `footer`) the host writes the band's height on the seat as
+   * `--zen-sheet-footer` and the layer's bottom stands on the band's top edge, the card 8 over
+   * it, never over the actions (§9.33's footer clause). The transform the phone's lifted frame
+   * rides the sheet's progress on has no twin here: nothing recedes on a mouse or a tablet, and
+   * the re-seat at the dialog's close moves nothing. Never a `--zen-recede` reader. The
+   * layer's rules the seat amends – its bottom on the band, the desktop's column of cards –
+   * are unlayered with the message layer's own (`.zen-frame-toast-seat[data-lifted] >
+   * .zen-message-layer`, `.zen-frame-toasts`, below `.zen-message-toasts`), which are unlayered
+   * and would win over an amendment made here.
+   */
+  .zen-frame-toast-seat {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .zen-frame-toast-seat[data-lifted] {
+    z-index: 2;
+  }
+  /*
    * On a phone the host's dialogs are sheets, and the host is on the sheet chassis (v2 draft
    * §11.1, §11.7, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
    * sheet's progress and the slot slides its whole height in across the frame's bottom edge on
@@ -9434,6 +9464,25 @@
 .zen-message-toasts > * {
   grid-area: 1 / 1;
 }
+/*
+ * The toast's slot in the frame dialog host's seat (v2 §9.33, lib/portals.tsx `useToastSeat`;
+ * `.zen-frame-toast-seat` with the host's rules): the desktop's and the tablet's lift. Over a
+ * hosted sheet with a footer band the host writes the band's height on the lifted seat as
+ * `--zen-sheet-footer`, and the layer's bottom stands on the band's top edge, the card the
+ * usual 8 over it – never over the actions. The desktop's toasts in the seat (`FrameSeatToasts`)
+ * keep the plain column's rule – every toast up joins, none sends another off – drawn as cards,
+ * so two toasts raised in a dialog stand one over the other, 8 apart, in place of the slot's one
+ * cell. Unlayered with the layer's own rules, which they amend.
+ */
+.zen-frame-toast-seat[data-lifted] > .zen-message-layer {
+  bottom: var(--zen-sheet-footer, 0px);
+}
+.zen-frame-toasts {
+  row-gap: 8px;
+}
+.zen-frame-toasts > * {
+  grid-area: auto;
+}
 :root[data-form-factor='phone'][data-receding] .zen-content-frame {
   will-change: transform;
 }
@@ -12120,6 +12169,26 @@
 }
 .zen-settings-description-full {
   display: block;
+  -webkit-line-clamp: none;
+}
+/*
+ * §9.2's exception for a path or an address (`RowBase.address`; the lead's ruling on #677): ONE
+ * line that never wraps, its START shortened so the end – a folder's leaf, an address's last
+ * part – stays readable, as Chromium's views elide a string with `ELIDE_HEAD`
+ * (ui/gfx/text_constants.h). CSS alone, nothing measured: `text-overflow` draws its ellipsis at
+ * the block's END edge, so the span is a right-to-left block – its end is the left – and the
+ * value inside it a left-to-right isolate (`Description`'s `<bdi dir="ltr">`) laid out in its
+ * own order. `direction: rtl` on the text itself would send a leading "/" or a trailing ")"
+ * across the line (the bidi algorithm gives a neutral at a paragraph's edge the paragraph's
+ * direction); the isolate keeps them in place. `text-align: left` seats a value that fits where
+ * every description starts; the chassis is left-to-right.
+ */
+.zen-settings-description-address {
+  display: block;
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   -webkit-line-clamp: none;
 }
 /*

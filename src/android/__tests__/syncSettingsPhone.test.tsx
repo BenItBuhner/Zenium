@@ -34,8 +34,9 @@ import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
  *    decrypt). No other row reads `lastError`.
  *  - `sync.tsx:438-463` – while `authRefused` the App password field stands first in "Server and
  *    device" (`SYNC_COPY.whereServer`, :382), its commit `sync.setWebDavPassword`.
- *  - `rows.tsx:124-176` `GroupList` → `GroupRows` → `RowView`; a field row on the phone shows
- *    `row.display ?? row.value` (:373-383), so a held app password is the dots (`appPasswordSet`).
+ *  - `rows.tsx:124-177` `GroupList` → `GroupRows` (:186) → `RowView` (:217); a field row on the
+ *    phone shows `row.display ?? row.value` (:373-383), so a held app password is the dots
+ *    (`appPasswordSet`).
  *
  * The rows' search `keywords` (the refused row lists '401' so "Find in Settings" reaches it)
  * are not painted (`rows.tsx` writes none), which is why these tests read the rendered DOM and
@@ -198,6 +199,7 @@ describe('Settings › Sync on the phone, from the engine’s status (ID-32)', (
     expect(words).not.toContain('401')
     expect(words).not.toContain(RAW_ENGINE_LINE)
     expect(el.innerHTML).not.toContain('PROPFIND')
+    expect(el.innerHTML).not.toContain('401')
 
     // The status row (§9.33): the sentence as the label, the way out as the description, the
     // danger ink through the row's one `data-tone`; nothing to press.
