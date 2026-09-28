@@ -37,7 +37,18 @@
         "rotation": 40
       },
       "tabIds": [
-        "tab_demo"
+        "tab_demo",
+        "tab_more_01",
+        "tab_more_02",
+        "tab_more_03",
+        "tab_more_04",
+        "tab_more_05",
+        "tab_more_06",
+        "tab_more_07",
+        "tab_more_08",
+        "tab_more_09",
+        "tab_more_10",
+        "tab_more_11"
       ],
       "activeTabId": "tab_demo",
       "pinnedCollapsed": false
@@ -52,6 +63,116 @@
       "folderId": null,
       "url": "http://127.0.0.1:18131/",
       "title": "Orchard",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_01",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/tides",
+      "title": "Tides",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_02",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/atlas",
+      "title": "Atlas",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_03",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/ledger",
+      "title": "Ledger",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_04",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/",
+      "title": "Orchard",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_05",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/tides",
+      "title": "Tides",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_06",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/atlas",
+      "title": "Atlas",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_07",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/ledger",
+      "title": "Ledger",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_08",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/",
+      "title": "Orchard",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_09",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/tides",
+      "title": "Tides",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_10",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/atlas",
+      "title": "Atlas",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_more_11",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/ledger",
+      "title": "Ledger",
       "pinned": false,
       "essential": false
     }

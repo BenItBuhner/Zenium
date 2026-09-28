@@ -20,15 +20,16 @@ import kotlin.math.abs
  *  1. The stack under a seeded profile: a recently closed tab, a completed download whose file
  *     is on the device, two bookmarks and one site the permissions sweep took a grant from –
  *     four cards in the stack's fixed order (Continue where you left off, Downloads, Bookmarks,
- *     Safety check), and the Default browser reminder as a fifth where the host says the browser
- *     is not the default (the emulator's answer; the driver reads it and expects the count it
- *     implies). The cards are page surfaces named for TalkBack, the section named "Cards", the
- *     strip a carousel with a page indicator under it – a dot per card, none of them a control,
- *     and a status line reading the page – each card's ⋮ the shared 44 icon button named for its
- *     module; one action a card and only one its rows do not already do (See all on Downloads
- *     and Bookmarks, Review on Safety check, Set as default on the reminder, none on Continue),
- *     the Continue card's detail the host then the time; at the bottom dock the stack stands
- *     above the shortcut tiles, each card the strip's width less the 24 the next one peeks by.
+ *     Safety check), and the tip card (NTP-20, W6-E15; Chrome's educational tip module, "Zenium
+ *     tips") as a fifth: one tip at a time at the stack's end, the theme tip on a fresh
+ *     profile's memory. The cards are page surfaces named for TalkBack, the section named
+ *     "Cards", the strip a carousel with a page indicator under it – a dot per card, none of
+ *     them a control, and a status line reading the page – each card's ⋮ the shared 44 icon
+ *     button named for its module; one action a card and only one its rows do not already do
+ *     (See all on Downloads and Bookmarks, Review on Safety check, the tip's one button, none on
+ *     Continue), the Continue card's detail the host then the time; at the bottom dock the stack
+ *     stands above the shortcut tiles, each card the strip's width less the 24 the next one
+ *     peeks by.
  *  2. Paging by a real swipe on the strip (a measured scene, `magic-stack-swipe`): the strip
  *     snaps to the second card and the indicator reads "Page 2 of N" with the second dot
  *     current; a swipe back returns it to the first card.
@@ -42,26 +43,43 @@ import kotlin.math.abs
  *     tab (`zen://settings/privacy?group=safety-check`, the group the landing) and does not end
  *     the run – Chrome's Review is a look, not a fix (`SafetyHubMagicStackMediator.java`) – the
  *     new tab page made active again in front of the Settings tab (left open: closed, it would
- *     head the recently closed list the Continue card reads, and step 8 restores the seeded
- *     tab), the card still in the stack, the strip swiped home for the steps after.
- *  4. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
+ *     head the recently closed list the Continue card reads, and step 9 restores the seeded
+ *     tab), the card still in the stack – and the tip card gone from it: the page re-mounts, and
+ *     the tip module rests three days after an impression – the strip swiped home for the steps
+ *     after.
+ *  4. The tip card (NTP-20, W6-E15; Chrome's educational tip module in the Magic Stack): the
+ *     memory emptied again (the driver's seed, through the command the page writes with), a
+ *     fresh page shows the theme tip last in the stack, swiped to a card at a time; its face is
+ *     the Safety check card's form – the page's tile with a 24 glyph, Chrome's title over
+ *     Chrome's description, one filled button named for the tip – and the impression is on the
+ *     device's memory before the finger lands. Try it now opens the page's customise sheet (the
+ *     feature itself) and retires the card on the memory while the card stands, as Chrome's
+ *     `OnInteract` leaves it. Then, the memory's stamps moved eight days back by the driver
+ *     (Chrome's cadence would take the days) and the card shown retired, the next fresh page
+ *     shows the next tip in Chrome's order – the default browser where the host says Zenium is
+ *     not the default (the emulator's answer; the driver reads it and predicts what it implies),
+ *     tab groups over the seed's twelve tabs and no group, Delete browsing data with nothing
+ *     deleted here in 30 days – each shot on the light scheme and the dark; the default browser
+ *     tip retired at its cap of three impressions, the others as tapped. A page within three
+ *     days of a tip shows none: the page the steps after continue on.
+ *  5. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
  *     rows; Hide This (a measured scene, `magic-stack-hide`) writes the device's hidden set,
  *     fades the card out over 120 ms and glides the cards after it into the gap on the FLIP
  *     spring – a probe on the strip records the fade's start and end, the card's removal and the
  *     siblings' transform frames while the finger's act runs.
- *  5. Customise from the ⋮ opens the "Cards" sheet of switch rows, the hidden card's switch off;
+ *  6. Customise from the ⋮ opens the "Cards" sheet of switch rows, the hidden card's switch off;
  *     a finger on it re-enables the card, which arrives in view behind the sheet: the strip
  *     pages to it on the spring (§9.29's arrival) and the first dot is current.
- *  6. Every switch off: the stack is gone from the page altogether (the page keeps its field and
+ *  7. Every switch off: the stack is gone from the page altogether (the page keeps its field and
  *     tiles); the sheet closed, the empty state.
- *  7. The way back with no ⋮ left: the page's gear sheet seats a Cards row first, above Layout
+ *  8. The way back with no ⋮ left: the page's gear sheet seats a Cards row first, above Layout
  *     with a hairline after it and in view at the sheet's rest height (§9.13); a finger on it
  *     swaps the sheets (one sheet over the page, §9.24) and the stack's sheet comes up; a switch
  *     on brings one card back, alone at the strip's full width and without dots; another brings
  *     the dots back, the strip paged to the card brought back ahead of the one in view.
- *  8. The Continue card's row restores the closed tab (`session.restoreClosed`; the row is the
+ *  9. The Continue card's row restores the closed tab (`session.restoreClosed`; the row is the
  *     card's whole act, there is no Reopen button): the tab comes back on its loopback page. The
- *     strip stands on the Continue card step 7 brought back (the arrival paged to it; Chrome
+ *     strip stands on the Continue card step 8 brought back (the arrival paged to it; Chrome
  *     alone would have kept the snapped Bookmarks card through the layout change and left
  *     Continue a page to the left) – a claim, and a swipe back the recovery if it does not.
  *
@@ -81,8 +99,14 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
     private val failures = ArrayList<String>()
     private var shotIndex = 0
     private lateinit var demoTabId: String
-    /** Whether the host says the browser is not the default: the fourth card's condition. */
+    /** Whether the host says the browser is not the default: the default browser tip's condition. */
     private var notDefault = false
+    /**
+     * The tip expected on the page in view (NTP-20): the machine's pick over the memory the
+     * driver last read or seeded ([predictTip]), or null while the module rests – the count of
+     * cards a page draws follows from it ([expectedCards]).
+     */
+    private var tipUp: String? = null
 
     /** A loopback page: its path, the page's title and a heading colour. */
     private class Site(val path: String, val title: String, val hex: String) {
@@ -178,9 +202,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
     // --- warm-up ---------------------------------------------------------------------------------
 
     /**
-     * Off camera: read what the host says of the default browser (the fourth card's condition),
-     * pay for the menu and the first new tab page's layout, and calibrate the DOM's boxes against
-     * the tree.
+     * Off camera: read what the host says of the default browser (the default browser tip's
+     * condition), pay for the menu and the first new tab page's layout, and calibrate the DOM's
+     * boxes against the tree. The off-camera page takes the tip module's first impression (the
+     * stack's mount writes it), so the memory is emptied again after it – a seed, on record –
+     * for the first page on camera to show the theme tip as a fresh profile's would.
      */
     override fun warmUp() {
         findings = File(out, "magic-stack-findings.txt")
@@ -191,11 +217,12 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         val defaultBrowser = state.optJSONObject("defaultBrowser") ?: JSONObject()
         notDefault = defaultBrowser.has("isDefault") && !defaultBrowser.isNull("isDefault") && !defaultBrowser.optBoolean("isDefault", true)
         finding(
-            "start: ${describeActive()}; defaultBrowser $defaultBrowser (the Default browser card ${if (notDefault) "expected" else "not expected"}); " +
+            "start: ${describeActive()}; defaultBrowser $defaultBrowser (the default browser tip ${if (notDefault) "expected" else "not expected"} in its turn); " +
                 "recentlyClosed ${state.optJSONArray("recentlyClosed")?.length()}; downloads ${summariseDownloads(state)}; " +
                 "bookmarks ${state.optJSONArray("bookmarks")?.length()}; revoked ${state.optJSONArray("revokedUnusedPermissions")}; " +
                 "safeBrowsing ${state.optJSONObject("settings")?.optJSONObject("privacy")?.opt("safeBrowsingEnabled")}; " +
-                "safety card memory ${state.optJSONObject("newTabSafetyHubCard")}; hidden ${hiddenModules()}"
+                "safety card memory ${state.optJSONObject("newTabSafetyHubCard")}; tip memory ${state.optJSONObject("newTabEducationalTips")}; " +
+                "tabs ${tabCount()}, groups ${groupCount()}, background ${background(state)}; hidden ${hiddenModules()}"
         )
 
         // The first menu pays for layout and compilation: open it once off camera.
@@ -217,6 +244,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
                 SystemClock.sleep(1_500)
             }
         }
+        // The off-camera page's stack took the tip module's first impression: the memory back to
+        // a fresh profile's, so the first page on camera shows the theme tip (NTP-20).
+        val taken = tipMemory()
+        setTipMemory(emptyTipMemory())
+        finding("warm-up: the off-camera page took the tip module's first impression ($taken); the memory emptied again for the first page on camera (${tipMemory()})")
         ensureActive(demoTabId)
         val close = closeUrlField()
         if (!close.ok) finding("warm-up: ${close.describe()}")
@@ -231,6 +263,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         theStackOnThePage()
         pageBySwipe()
         theSafetyCheckCard()
+        theTipCard()
         hideACard()
         customiseBringsItBack()
         theEmptyState()
@@ -239,14 +272,16 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         finding("\nend: ${describeActive()}; ${failures.size} claim(s) failed${if (failures.isEmpty()) "" else ": " + failures.joinToString("; ")}")
     }
 
-    /** The stack's cards on a fresh page: the four the seed gives, and the reminder where the host is not the default. */
-    private fun expectedCards(): List<String> = if (notDefault) MODULES else MODULES.filter { it != "default-browser" }
+    /** The stack's cards on a fresh page: the four the seed gives, and the tip card while the module has a tip to show ([tipUp]). */
+    private fun expectedCards(): List<String> = if (tipUp != null) MODULES else MODULES.filter { it != "tips" }
 
     // --- 1. the stack on the page ----------------------------------------------------------------
 
     private fun theStackOnThePage() {
         step("1. The stack on the page: one card per module with content, in the stack's order, named for TalkBack, the strip a carousel with its dots, above the tiles at the bottom dock") {
             val before = tabCount()
+            tipUp = predictTip(tipMemory())
+            finding("  the tip predicted for a fresh profile's memory: ${tipUp ?: "none"}")
             if (!tapLabel(Finger(), NEW_TAB_LABEL)) error("no '$NEW_TAB_LABEL' button on the bar")
             SystemClock.sleep(2_000)
             val expected = expectedCards()
@@ -256,15 +291,16 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val ids = cardIds()
             finding("  ${describeActive()} (tabs were $before); stack ${if (up) "up" else "NOT at the expected count"}; cards $ids; $geometry")
             expect("the plus opens a new tab page (tabs ${tabCount()})", tabCount() == before + 1 && activeUrl() == BLANK_URL, "ntp-open")
-            expect("the stack draws ${expected.size} cards in the stack's order: $ids", ids == expected, "stack-cards")
+            expect("the stack draws ${expected.size} cards in the stack's order, the tip card last: $ids", ids == expected && tipUp == "ntp-theme", "stack-cards")
             val labels = chromeValue(CARD_LABELS_JS)
             finding("  card names: $labels")
             expect(
-                "the cards are named for TalkBack, the module first then what it holds",
+                "the cards are named for TalkBack, the module first then what it holds – the tip card the module's name, the tip's title and its description",
                 labels.contains("Continue where you left off: ${tides.title}") &&
                     labels.contains("Downloads: $DOWNLOAD_NAME") &&
                     labels.contains("Bookmarks: ${sites[2].title}, ${sites[3].title}") &&
-                    labels.contains(SAFETY_CARD_LABEL),
+                    labels.contains(SAFETY_CARD_LABEL) &&
+                    labels.contains(tipLabel("ntp-theme")),
                 "stack-card-names"
             )
             expect("every card is a page surface (data-surface page)", chromeValue("String(${ALL_PAGE_SURFACES_JS})") == "true", "stack-card-surface")
@@ -288,10 +324,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             )
             val actions = chromeValue(ACTIONS_JS)
             val actionsExpected = JSONArray().also { list ->
-                for (id in expected) list.put(JSONArray().put(id).put(JSONArray(actionsFor(id))))
+                for (id in expected) list.put(JSONArray().put(id).put(JSONArray(actionsFor(id, tipUp))))
             }.toString()
             finding("  the cards' actions: $actions")
-            expect("one action a card and only one its rows do not already do – none on Continue, See all on Downloads and Bookmarks, Review on Safety check, Set as default on the reminder", actions == actionsExpected, "stack-actions")
+            expect("one action a card and only one its rows do not already do – none on Continue, See all on Downloads and Bookmarks, Review on Safety check, the tip's one button (Try it now on the theme tip)", actions == actionsExpected, "stack-actions")
             val detail = chromeValue(CONTINUE_DETAIL_JS)
             expect("the Continue card's detail reads the host then the time ('$detail'; the seed closed the tab an hour ago)", detail == "127.0.0.1 · 1 h ago", "stack-continue-detail")
             val mores = chromeValue(MORE_LABELS_JS)
@@ -392,6 +428,32 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         return Swipe(from.x, from.y, nudge, travel)
     }
 
+    /**
+     * The strip swiped forward a card at a time from where it stands to the card `id` of
+     * `expected` (the strip's `scroll-snap-stop: always` holds a fling to the next card); a swipe
+     * that stops short is a finding, and the strip scrolled to the card by the DOM is the
+     * recovery, on record. The strip's geometry where it stood.
+     */
+    private fun swipeToCard(id: String, expected: List<String>): JSONObject {
+        val index = expected.indexOf(id)
+        if (index < 0) error("the stack's expected order has no $id card")
+        val from = geometry().optInt("selected").coerceAtLeast(0)
+        for (page in from + 1..index) {
+            swipeStrip(forward = true)
+            SystemClock.sleep(900)
+            if (!awaitChrome(dotCurrentJs(page), 4_000)) finding("  the swipe to page ${page + 1} did not take: ${geometry()}")
+        }
+        SystemClock.sleep(400)
+        var stood = geometry()
+        if (stood.optInt("selected") != index) {
+            chromeValue(scrollToCardJs(id))
+            SystemClock.sleep(1_000)
+            stood = geometry()
+            finding("  the swipes stopped short of the $id card: the strip scrolled to it by the DOM, now $stood")
+        }
+        return stood
+    }
+
     // --- 3. the Safety check card ---------------------------------------------------------------
 
     /**
@@ -406,28 +468,16 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
      * the Settings tab; Settings is the chrome document's own page (`SettingsPage.tsx`, as the
      * new tab page is), so its landing is read there. The new tab page is then made active
      * again (`tab.activate`) with the Settings tab left open behind it – closed, it would head
-     * the recently closed list the Continue card reads, and step 8 restores the seeded tab – and
-     * the strip swiped home for the Hide This step, which wants the Continue card in view.
+     * the recently closed list the Continue card reads, and step 9 restores the seeded tab – and
+     * the strip swiped home for the tip step and the Hide This step after it, which wants the
+     * Continue card in view.
      */
     private fun theSafetyCheckCard() {
         step("3. The Safety check card: the seeded revoked permission gives Chrome's low-priority type alone, fourth in the stack – the page's tile with the check, 'Removed permissions for 1 site', no summary, one filled Review named 'Review Safety check'; Review opens Settings on the Safety check group in a new tab and does not end the run") {
             val ntpTabId = activeCoreTab()?.optString("id").orEmpty()
             val expected = expectedCards()
             val index = expected.indexOf("safety-hub")
-            if (index < 0) error("the stack's expected order has no Safety check card")
-            for (page in 1..index) {
-                swipeStrip(forward = true)
-                SystemClock.sleep(900)
-                if (!awaitChrome(dotCurrentJs(page), 4_000)) finding("  the swipe to page ${page + 1} did not take: ${geometry()}")
-            }
-            SystemClock.sleep(400)
-            var stood = geometry()
-            if (stood.optInt("selected") != index) {
-                chromeValue(SCROLL_TO_SAFETY_JS)
-                SystemClock.sleep(1_000)
-                stood = geometry()
-                finding("  the swipes stopped short of the card: the strip scrolled to it by the DOM, now $stood")
-            }
+            val stood = swipeToCard("safety-hub", expected)
             expect("the strip stands on the Safety check card, page ${index + 1} of ${expected.size} (selected ${stood.optInt("selected")}, status '${stood.optString("status")}')", stood.optInt("selected") == index && stood.optString("status") == "Page ${index + 1} of ${expected.size}", "safety-page")
             val face = runCatching { JSONObject(chromeValue(SAFETY_FACE_JS)) }.getOrElse { JSONObject() }
             finding("  the card's face: $face")
@@ -466,15 +516,23 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             expect("Review does not end the run – Chrome's Review is a look, not a fix; the two asks' buttons dismiss, this one does not (activeSince ${after?.opt("activeSince")}, runs ${after?.optInt("runs")})", after != null && !after.isNull("activeSince") && after.optInt("runs") == 0, "safety-review-keeps-run")
 
             // The Settings tab stays open behind the page: `tab.close` would seat it at the head of
-            // the recently closed list, which the Continue card reads and step 8 restores from.
+            // the recently closed list, which the Continue card reads and step 9 restores from.
+            // The page re-mounts (the chrome keeps no new tab page for a tab out of view,
+            // `ContentArea.tsx`), and the tip module's impression on it rests the module three
+            // days (Chrome's `kEducationalTipShownCount` over `KDaysToShowEphemeralCardOnce`): the
+            // stack comes back without the tip card (NTP-20).
             if (ntpTabId.isNotEmpty()) ensureActive(ntpTabId)
-            val back = awaitChrome("document.querySelectorAll('.zen-mstack-card').length===${expected.size}", 8_000)
+            val memory = tipMemory()
+            tipUp = predictTip(memory)
+            val expectedBack = expectedCards()
+            val back = awaitChrome("document.querySelectorAll('.zen-mstack-card').length===${expectedBack.size}", 8_000)
             SystemClock.sleep(600)
             val ids = cardIds()
-            expect("the new tab page is active again in front of the Settings tab with its ${expected.size} cards, the Safety check card still among them ($ids; ${describeActive()})", back && activeUrl() == BLANK_URL && ids == expected && tabCount() == tabsBefore + 1, "safety-back")
+            finding("  the tip memory at the re-mount: $memory; the tip predicted: ${tipUp ?: "none"}")
+            expect("the new tab page is active again in front of the Settings tab with its ${expectedBack.size} cards, the Safety check card still among them and the tip card gone – the module rests three days after an impression ($ids; ${describeActive()})", back && activeUrl() == BLANK_URL && ids == expectedBack && tipUp == null && tabCount() == tabsBefore + 1, "safety-back")
             var home = geometry()
             var swipes = 0
-            while (home.optInt("selected") > 0 && swipes < expected.size) {
+            while (home.optInt("selected") > 0 && swipes < expectedBack.size) {
                 val target = home.optInt("selected") - 1
                 swipeStrip(forward = false)
                 swipes++
@@ -494,10 +552,220 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 4. Hide This -----------------------------------------------------------------------------
+    // --- 4. the tip card ------------------------------------------------------------------------
+
+    /**
+     * NTP-20's card (W6-E15): Chrome's educational tip module in the Magic Stack, one tip at a
+     * time at the stack's end (`EphemeralHomeModuleRank::kLast`), the first eligible in the
+     * registry's order – the theme, the default browser, tab groups, Delete browsing data
+     * (`home_modules_card_registry_android.cc:36-64`) – any tip once in three days, each once in
+     * seven, ten impressions a card (three for the default browser), a tapped card never again
+     * (`constants.h:119-130`, `default_browser_promo.cc:20`, `:151-183`). The memory is the
+     * device's (`NewTabDeviceState.educationalTips`, read through `UIState.newTabEducationalTips`
+     * and written through `newtab.setEducationalTipMemory` – the command the page writes with,
+     * and the one the driver seeds through). Every page here is opened by a finger on the bar's
+     * New tab and swiped to its last card; the days between Chrome's tips are the driver's:
+     * between pages it moves the memory's stamps eight days back and retires the tip shown –
+     * the theme by its own tap here, the default browser at its cap of three impressions, the
+     * others as tapped – so the next page shows the next tip in Chrome's order. The one button's
+     * act is the theme tip's Try it now, which opens the page's customise sheet
+     * (`ChromeTabbedActivity.java:3519-3531` opens Chrome's) and retires the card on the memory
+     * while the card stands until the next page, as Chrome's `OnInteract` leaves it. Each face
+     * is shot on the light scheme and the dark (the design record's pair), the light scheme –
+     * the seed's – put back after each.
+     */
+    private fun theTipCard() {
+        step("4. The tip card (NTP-20): the memory emptied, a fresh page shows the theme tip last in the stack – Chrome's title over Chrome's description, one filled button, the impression on the memory; Try it now opens the customise sheet and retires the card; eight days on, the next page shows the next tip in Chrome's order (the default browser where the host says Zenium is not the default, tab groups, Delete browsing data), light and dark; a page within three days of a tip shows none") {
+            // The tips this profile qualifies for, in Chrome's order: the default browser's only where
+            // the host says Zenium is not the default.
+            val order = TIP_ORDER.filter { it != "default-browser" || notDefault }
+            finding("  the tips this profile qualifies for: $order (the host's answer on the default browser: ${if (notDefault) "not the default" else "the default, or not yet known"})")
+            val shown = ArrayList<String>()
+            var seed: JSONObject? = emptyTipMemory()
+            var what = "the memory emptied again – a fresh profile's"
+            while (shown.size < order.size) {
+                val tip = openTipPage(seed, what) ?: break
+                val expected = expectedCards()
+                val stood = swipeToCard("tips", expected)
+                expect("the strip stands on the tip card, page ${expected.size} of ${expected.size} (selected ${stood.optInt("selected")}, status '${stood.optString("status")}')", stood.optInt("selected") == expected.size - 1 && stood.optString("status") == "Page ${expected.size} of ${expected.size}", "tip-$tip-page")
+                tipFace(tip, shown.size + 1)
+                if (tip == "ntp-theme") tryItNow(tip)
+                shown += tip
+                if (shown.size == order.size) break
+                // Eight days on, the tip shown retired: the next page's tip is the next in the order.
+                seed = retired(rested(tipMemory(), 8), tip)
+                what = "eight days on (the memory's stamps moved back by the driver), the $tip tip retired ${if (tip == "default-browser") "at its cap of three impressions" else "by its tap"}"
+            }
+            finding("  the tips shown: $shown")
+            expect("the tips came one to a page in Chrome's order, every tip the profile qualifies for once: $shown", shown == order, "tip-order")
+            // The memory as the last page left it – a tip shown minutes ago: the next page shows none.
+            val none = openTipPage(null, "a page within three days of a tip")
+            expect("a page within three days of a tip draws no tip card (predicted ${none ?: "none"}; cards ${cardIds()})", none == null && !cardIds().contains("tips"), "tip-rests")
+            SystemClock.sleep(400)
+        }
+    }
+
+    /**
+     * A fresh page under the tip module's memory as `seed`ed (null: as the last page left it): the
+     * tip predicted from the memory and the page's signals ([predictTip]) is the one expected on
+     * it ([tipUp]), and the page – opened by a finger on the bar's New tab – is expected to draw
+     * the stack's cards with the tip card last, or without it. The tip predicted, or null.
+     */
+    private fun openTipPage(seed: JSONObject?, what: String): String? {
+        if (seed != null) setTipMemory(seed)
+        val memory = tipMemory()
+        tipUp = predictTip(memory)
+        finding("  $what: memory $memory; tabs ${tabCount()}, groups ${groupCount()}, background ${background()}; the tip predicted: ${tipUp ?: "none"}")
+        val before = tabCount()
+        if (!tapLabel(Finger(), NEW_TAB_LABEL)) error("no '$NEW_TAB_LABEL' button on the bar")
+        SystemClock.sleep(2_000)
+        val expected = expectedCards()
+        val up = awaitChrome("document.querySelectorAll('.zen-mstack-card').length===${expected.size}", 10_000)
+        SystemClock.sleep(600)
+        val ids = cardIds()
+        finding("  ${describeActive()} (tabs were $before); cards $ids")
+        expect(
+            "the page draws ${expected.size} cards${if (tipUp != null) ", the tip card last" else " and no tip card"}: $ids",
+            up && ids == expected && activeUrl() == BLANK_URL && tabCount() == before + 1,
+            "tip-page-${tipUp ?: "none"}"
+        )
+        return tipUp
+    }
+
+    /** The tip card's face read against Chrome's words and the gate's numbers, its impression on the memory, and its two stills. */
+    private fun tipFace(tip: String, ordinal: Int) {
+        val face = runCatching { JSONObject(chromeValue(TIP_FACE_JS)) }.getOrElse { JSONObject() }
+        finding("  the tip card's face: $face")
+        val title = TIP_TITLES.getValue(tip)
+        val description = TIP_DESCRIPTIONS.getValue(tip)
+        val button = TIP_BUTTONS.getValue(tip)
+        expect("the card is the $tip tip: Chrome's title '$title' over Chrome's description ('${face.optString("title")}' / '${face.optString("description")}')", face.optString("card") == tip && face.optString("title") == title && face.optString("description") == description, "tip-$tip-face")
+        expect("the card is named for TalkBack '${tipLabel(tip)}' ('${face.optString("label")}')", face.optString("label") == tipLabel(tip), "tip-$tip-name")
+        val tile = face.optJSONObject("tile")
+        expect(
+            "the tile is the page's own, as the Safety check card's: 56 with a 24 glyph on the card surface's --v2-fill (tile ${tile?.optInt("w")} × ${tile?.optInt("h")}, radius ${tile?.optString("radius")}, fill ${tile?.optString("background")} against the surface's ${face.optString("fill")}, glyph ${tile?.optInt("glyph")})",
+            tile != null && tile.optInt("w") == 56 && tile.optInt("h") == 56 && tile.optInt("glyph") == 24 && tile.optString("radius") == "8px" && tile.optString("background") == face.optString("fill"),
+            "tip-$tip-tile"
+        )
+        expect("the title block: 17/600 on 22 (${face.optString("titleFont")}); the description within the phone's three lines (${face.optInt("descriptionLines")} at ${face.optString("descriptionFont")}; Chrome's layout clamps at two)", face.optString("titleFont") == "17px/600/22px" && face.optInt("descriptionLines") in 1..3, "tip-$tip-text")
+        expect("one filled button '$button' named '$button: $title' (${face.optInt("buttons")} button(s): '${face.optString("button")}' / '${face.optString("buttonLabel")}', primary ${face.optBoolean("primary")})", face.optInt("buttons") == 1 && face.optString("button") == button && face.optString("buttonLabel") == "$button: $title" && face.optBoolean("primary"), "tip-$tip-button")
+        val memory = tipMemory()
+        val card = memory.optJSONObject("cards")?.optJSONObject(tip)
+        finding("  the memory with the card up: $memory")
+        expect("the impression is on the memory before the finger lands: the $tip card's impressions ${card?.optInt("impressions")}, shown now, the module's shownAt set", card != null && card.optInt("impressions") >= 1 && !card.isNull("shownAt") && !memory.isNull("shownAt"), "tip-$tip-memory")
+        still("tip-$ordinal-$tip-light")
+        darkStill("tip-$ordinal-$tip-dark")
+    }
+
+    /** The theme tip's one button: the page's customise sheet opens, the card is retired on the memory and stands until the next page. */
+    private fun tryItNow(tip: String) {
+        val title = TIP_TITLES.getValue(tip)
+        val button = TIP_BUTTONS.getValue(tip)
+        val opened = touchControlExpecting("$button: $title", TIP_ACTION_JS, "the page's customise sheet '$GEAR_TITLE' is up", 8_000) { sheetPresented(GEAR_TITLE) }
+        expect("$button opens the page's customise sheet '$GEAR_TITLE' – the feature itself, as Chrome's button opens its customisation sheet (sheets ${sheetsPresented()})", opened, "tip-cta-opens")
+        awaitSheetAtRest(6_000)
+        still("tip-1-$tip-try-it-now")
+        val memory = tipMemory()
+        val card = memory.optJSONObject("cards")?.optJSONObject(tip)
+        finding("  the memory after the tap: $memory; cards ${cardIds()}")
+        expect("the tap retires the card on the memory (interacted ${card?.optBoolean("interacted")}) while the card stands until the next page, as Chrome's OnInteract leaves it (cards ${cardIds()})", card != null && card.optBoolean("interacted") && cardIds().contains("tips"), "tip-cta-retires")
+        back()
+        expect("the system back closes the sheet", awaitSheetGone(GEAR_TITLE, 6_000), "tip-cta-sheet-closed")
+        SystemClock.sleep(600)
+    }
+
+    /** The pose in view on the dark scheme for the design record, the light scheme – the seed's – put back after. */
+    private fun darkStill(name: String) {
+        coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
+        val dark = awaitChrome("document.documentElement.dataset.theme==='dark'", 8_000)
+        SystemClock.sleep(1_500)
+        if (!dark) finding("  the chrome did not take the dark scheme in time (data-theme '${chromeValue("document.documentElement.dataset.theme||''")}')")
+        still(name)
+        coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
+        awaitChrome("(document.documentElement.dataset.theme||'light')==='light'", 8_000)
+        SystemClock.sleep(800)
+    }
+
+    // --- the tip module's memory -----------------------------------------------------------------
+
+    /** The tip module's memory (`newTabDevice.educationalTips`, read through `UIState.newTabEducationalTips`). */
+    private fun tipMemory(): JSONObject = coreState().optJSONObject("newTabEducationalTips") ?: emptyTipMemory()
+
+    private fun setTipMemory(memory: JSONObject) {
+        coreInvoke("newtab.setEducationalTipMemory", JSONObject().put("memory", memory).toString())
+    }
+
+    private fun emptyTipMemory(): JSONObject =
+        JSONObject().put("cards", JSONObject()).put("shownAt", JSONObject.NULL).put("browsingDataClearedAt", JSONObject.NULL)
+
+    /** The memory as it would stand `days` after its last impression: every shownAt moved that far back (the driver's stand-in for the days passing). */
+    private fun rested(memory: JSONObject, days: Int): JSONObject {
+        val copy = JSONObject(memory.toString())
+        val at = System.currentTimeMillis() - days * DAY_MS
+        if (!copy.isNull("shownAt")) copy.put("shownAt", at)
+        val cards = copy.optJSONObject("cards") ?: JSONObject().also { copy.put("cards", it) }
+        for (key in cards.keys()) {
+            val card = cards.getJSONObject(key)
+            if (!card.isNull("shownAt")) card.put("shownAt", at)
+        }
+        return copy
+    }
+
+    /** The memory with the `tip` retired: the default browser tip at its cap of three impressions, any other as tapped. */
+    private fun retired(memory: JSONObject, tip: String): JSONObject {
+        val cards = memory.optJSONObject("cards") ?: JSONObject().also { memory.put("cards", it) }
+        val card = cards.optJSONObject(tip) ?: JSONObject().put("impressions", 1).put("shownAt", System.currentTimeMillis() - 8 * DAY_MS).put("interacted", false).also { cards.put(tip, it) }
+        if (tip == "default-browser") card.put("impressions", DEFAULT_BROWSER_TIP_CAP) else card.put("interacted", true)
+        return memory
+    }
+
+    /**
+     * The tip the machine picks at the next mount (`pickEducationalTipCard`): none while the
+     * module rests (a tip within three days); else the first card in Chrome's order that is
+     * wanted – the theme while the background is the default, the default browser while the host
+     * says Zenium is not the default and no other surface is asking, tab groups while there is no
+     * group and more than ten tabs, Delete browsing data while none was deleted here in 30 days –
+     * and rested: not tapped, under its cap (ten; three for the default browser), not shown in
+     * seven days.
+     */
+    private fun predictTip(memory: JSONObject, state: JSONObject = coreState()): String? {
+        val now = System.currentTimeMillis()
+        val shownAt = if (memory.isNull("shownAt")) null else memory.optLong("shownAt")
+        if (shownAt != null && now - shownAt < 3 * DAY_MS) return null
+        val cleared = if (memory.isNull("browsingDataClearedAt")) null else memory.optLong("browsingDataClearedAt")
+        val cards = memory.optJSONObject("cards") ?: JSONObject()
+        val prompt = state.optJSONObject("defaultBrowser")?.opt("prompt")
+        val tabs = state.getJSONObject("tabs").length()
+        val groups = state.optJSONObject("folders")?.length() ?: 0
+        for (id in TIP_ORDER) {
+            val wanted = when (id) {
+                "ntp-theme" -> background(state) == "space"
+                "default-browser" -> notDefault && (prompt == null || prompt == JSONObject.NULL)
+                "tab-groups" -> groups == 0 && tabs > TAB_GROUPS_TIP_TABS
+                else -> cleared == null || now - cleared >= 30 * DAY_MS
+            }
+            if (!wanted) continue
+            val card = cards.optJSONObject(id)
+            if (card != null) {
+                if (card.optBoolean("interacted")) continue
+                if (card.optInt("impressions") >= (if (id == "default-browser") DEFAULT_BROWSER_TIP_CAP else TIP_CAP)) continue
+                if (!card.isNull("shownAt") && now - card.optLong("shownAt") < 7 * DAY_MS) continue
+            }
+            return id
+        }
+        return null
+    }
+
+    private fun groupCount(state: JSONObject = coreState()): Int = state.optJSONObject("folders")?.length() ?: 0
+
+    /** The page's background kind (`settings.newTab.background`; `space` is the default, the theme tip's condition). */
+    private fun background(state: JSONObject = coreState()): String =
+        state.optJSONObject("settings")?.optJSONObject("newTab")?.optString("background", "space") ?: "space"
+
+    // --- 5. Hide This -----------------------------------------------------------------------------
 
     private fun hideACard() {
-        step("4. A card's ⋮ opens the module's menu (Hide This, Customise); Hide This writes the hidden set, fades the card over 120 ms and glides the rest into the gap") {
+        step("5. A card's ⋮ opens the module's menu (Hide This, Customise); Hide This writes the hidden set, fades the card over 120 ms and glides the rest into the gap") {
             val id = "continue"
             val title = moduleTitle(id)
             if (!touchControl("More options for $title", moreJs(id))) error("no ⋮ on the $title card")
@@ -535,10 +803,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 5. Customise -----------------------------------------------------------------------------
+    // --- 6. Customise -----------------------------------------------------------------------------
 
     private fun customiseBringsItBack() {
-        step("5. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's off; a finger on it brings the card back behind the sheet, the strip paged to it") {
+        step("6. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's off; a finger on it brings the card back behind the sheet, the strip paged to it") {
             val first = cardIds().firstOrNull() ?: error("no card left on the page")
             val title = moduleTitle(first)
             if (!touchControl("More options for $title", moreJs(first))) error("no ⋮ on the $title card")
@@ -555,7 +823,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val switches = switchStates()
             finding("  the sheet's switches: $switches; sheets ${sheetsPresented()}")
             val expected = JSONObject().also { for (id in MODULES) it.put(moduleTitle(id), id != "continue") }
-            expect("one switch per module the host has (the five: Android can ask to be the default), the hidden card's off: $switches", sameStates(switches, expected), "customise-switches")
+            expect("one switch per module the host has (the five, the tip module one switch for all its tips), the hidden card's off: $switches", sameStates(switches, expected), "customise-switches")
             val note = chromeValue("((document.querySelector('.zen-sheet .zen-v2-description')||{}).textContent||'').trim()")
             expect("the sheet says a card appears only when it has something to show ('$note')", note == "A card appears only when it has something to show.", "customise-note")
             still("customise-sheet")
@@ -576,10 +844,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 6. the empty state -----------------------------------------------------------------------
+    // --- 7. the empty state -----------------------------------------------------------------------
 
     private fun theEmptyState() {
-        step("6. Every switch off: the stack is gone from the page, the page keeps its field and tiles") {
+        step("7. Every switch off: the stack is gone from the page, the page keeps its field and tiles") {
             if (!sheetPresented(SHEET_TITLE)) error("the '$SHEET_TITLE' sheet is not up")
             for (id in MODULES) {
                 val title = moduleTitle(id)
@@ -601,10 +869,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 7. the way back through the gear ---------------------------------------------------------
+    // --- 8. the way back through the gear ---------------------------------------------------------
 
     private fun theWayBack() {
-        step("7. With no ⋮ left, the page's gear sheet seats a Cards row first, above Layout and in view at rest; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back and the strip pages to it") {
+        step("8. With no ⋮ left, the page's gear sheet seats a Cards row first, above Layout and in view at rest; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back and the strip pages to it") {
             if (!touchControl(GEAR_LABEL, GEAR_JS)) error("no gear on the page")
             val gear = awaitSheet(GEAR_TITLE, 8_000)
             awaitSheetAtRest(6_000)
@@ -656,11 +924,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         }
     }
 
-    // --- 8. the Continue card's row --------------------------------------------------------------
+    // --- 9. the Continue card's row --------------------------------------------------------------
 
     private fun reopenFromContinue() {
-        step("8. The Continue card's row restores the closed tab on its page (the row is the card's whole act; there is no Reopen button)") {
-            // Step 7 brought Bookmarks back first and Continue after it, ahead of it in the order.
+        step("9. The Continue card's row restores the closed tab on its page (the row is the card's whole act; there is no Reopen button)") {
+            // Step 8 brought Bookmarks back first and Continue after it, ahead of it in the order.
             // Chrome alone keeps the snapped card through the layout change and would leave the
             // Continue card a page to the left; the arrival paged the strip to it (§9.29), and it
             // stands there with the sheet gone. The dots take no tap; were the card a page to the
@@ -711,7 +979,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         "downloads" -> "Downloads"
         "bookmarks" -> "Bookmarks"
         "safety-hub" -> "Safety check"
-        "default-browser" -> "Default browser"
+        "tips" -> TIPS_TITLE
         else -> id
     }
 
@@ -917,8 +1185,39 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val GEAR_LABEL = "Customise the new tab page"
         private const val SHEET_TITLE = "Cards"
         private const val GEAR_TITLE = "New tab page"
-        /** The modules in the stack's fixed order (`magicStackPlan.ts`); the sheet lists all five on Android, which can ask to be the default. */
-        private val MODULES = listOf("continue", "downloads", "bookmarks", "safety-hub", "default-browser")
+        /** The modules in the stack's fixed order (`magicStackPlan.ts`), the tip module last (Chrome's ephemeral rank); the sheet lists all five. */
+        private val MODULES = listOf("continue", "downloads", "bookmarks", "safety-hub", "tips")
+        /** The tip module's name, on its card's title row and the sheet's row (`EDUCATIONAL_TIP_MODULE_NAME`; Chrome's "Chrome tips" with the product's name). */
+        private const val TIPS_TITLE = "Zenium tips"
+        /** The tips in Chrome's registry order (`educationalTips.ts`, `home_modules_card_registry_android.cc:36-64`, less the two account-bound promos). */
+        private val TIP_ORDER = listOf("ntp-theme", "default-browser", "tab-groups", "quick-delete")
+        /** Chrome's words for the four tips (`educationalTips.ts`; `browser_ui_strings.grd:1210-1260`), with the product's name and its British spelling. */
+        private val TIP_TITLES = mapOf(
+            "ntp-theme" to "Customise your homepage",
+            "default-browser" to "Use Zenium by default",
+            "tab-groups" to "Tidy up with tab groups",
+            "quick-delete" to "Manage your browsing data"
+        )
+        private val TIP_DESCRIPTIONS = mapOf(
+            "ntp-theme" to "Make Zenium your own with custom colours and images for your homepage",
+            "default-browser" to "You can use Zenium any time you tap links in messages, documents and other apps",
+            "tab-groups" to "Create tab groups that automatically save and update across all your devices",
+            "quick-delete" to "You can delete some or all of your history, cookies, site data and more"
+        )
+        private val TIP_BUTTONS = mapOf(
+            "ntp-theme" to "Try it now",
+            "default-browser" to "Set default",
+            "tab-groups" to "Show me how",
+            "quick-delete" to "Show me how"
+        )
+        /** The tip card's TalkBack name: the module, the tip's title, its description (`MagicStack.tsx`, `cardLabel`). */
+        private fun tipLabel(tip: String) = "$TIPS_TITLE: ${TIP_TITLES.getValue(tip)}. ${TIP_DESCRIPTIONS.getValue(tip)}"
+        private const val DAY_MS = 86_400_000L
+        /** A tip card's cap of impressions, and the default browser tip's (`constants.h:128-130`, `default_browser_promo.cc:20`). */
+        private const val TIP_CAP = 10
+        private const val DEFAULT_BROWSER_TIP_CAP = 3
+        /** The tab groups tip wants more open tabs than this (`tab_group_promo.cc:20`). */
+        private const val TAB_GROUPS_TIP_TABS = 10
         private const val DOWNLOAD_DIR = "magic-stack-demo-files"
         private const val DOWNLOAD_NAME = "field-guide.pdf"
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)([hd]))?\\}\\}\"")
@@ -1007,11 +1306,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private fun dotCurrentJs(i: Int) =
             "(document.querySelectorAll('.zen-ntp .zen-mstack-dot')[$i]||{hasAttribute:function(){return false}}).hasAttribute('data-current')"
 
-        /** The one action a card carries, by module: only what its rows do not already do (§9.29); the Safety check card's is the revoked type's Review. */
-        private fun actionsFor(id: String): List<String> = when (id) {
+        /** The one action a card carries, by module: only what its rows do not already do (§9.29); the Safety check card's is the revoked type's Review, the tip card's the tip's button. */
+        private fun actionsFor(id: String, tip: String?): List<String> = when (id) {
             "downloads", "bookmarks" -> listOf("See all")
             "safety-hub" -> listOf("Review")
-            "default-browser" -> listOf("Set as default")
+            "tips" -> listOfNotNull(tip?.let { TIP_BUTTONS.getValue(it) })
             else -> emptyList()
         }
 
@@ -1040,7 +1339,28 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         /** The Safety check card's one button. */
         private const val SAFETY_ACTION_JS = "document.querySelector('.zen-mstack-card[data-cell=\"safety-hub\"] .zen-mstack-action')"
         /** The recovery for a swipe that stopped short: the strip scrolled to the card's snap position. */
-        private const val SCROLL_TO_SAFETY_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip'),c=document.querySelector('.zen-mstack-card[data-cell=\"safety-hub\"]');if(!s||!c)return 'no card';s.scrollTo({left:c.offsetLeft-s.offsetLeft});return 'scrolled'})()"
+        private fun scrollToCardJs(id: String) =
+            "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip'),c=document.querySelector('.zen-mstack-card[data-cell=\"$id\"]');if(!s||!c)return 'no card';s.scrollTo({left:c.offsetLeft-s.offsetLeft});return 'scrolled'})()"
+        /**
+         * The tip card's face (`MagicStack.tsx`, `TipContent` on the Safety check card's form): the
+         * tip up (`data-card`), the card's name, the title and description texts, the tile's box,
+         * radius, fill and glyph width, the card surface's own `--v2-fill` through a probe element,
+         * the title's font as size/weight/line, the description's as size/line with the lines it
+         * takes (its box over its line height; the phone clamps it at three, Chrome's layout at
+         * two), the action buttons' count and the first one's text, name and primary mark.
+         */
+        private const val TIP_FACE_JS = "(function(){var c=document.querySelector('.zen-mstack-card[data-cell=\"tips\"]');if(!c)return JSON.stringify({});" +
+            "var f=c.querySelector('.zen-mstack-tip'),t=c.querySelector('.zen-mstack-safety-tile'),g=t?t.querySelector('svg'):null;" +
+            "var ti=c.querySelector('.zen-mstack-safety-title'),su=c.querySelector('.zen-mstack-safety-summary'),b=c.querySelector('.zen-mstack-action');" +
+            "var cs=function(e){return e?getComputedStyle(e):null};var ts=cs(t),tis=cs(ti),sus=cs(su);" +
+            "var pr=document.createElement('span');pr.style.background='var(--v2-fill)';c.appendChild(pr);var fill=getComputedStyle(pr).backgroundColor;c.removeChild(pr);" +
+            "var lines=su&&sus?Math.round(su.getBoundingClientRect().height/parseFloat(sus.lineHeight)):0;" +
+            "return JSON.stringify({card:f?f.dataset.card:null,label:c.getAttribute('aria-label'),title:ti?ti.textContent.trim():null,description:su?su.textContent.trim():null,fill:fill," +
+            "tile:t?{w:t.offsetWidth,h:t.offsetHeight,radius:ts.borderRadius,background:ts.backgroundColor,ink:ts.color,glyph:g?Math.round(g.getBoundingClientRect().width):0}:null," +
+            "titleFont:tis?tis.fontSize+'/'+tis.fontWeight+'/'+tis.lineHeight:null,descriptionFont:sus?sus.fontSize+'/'+sus.lineHeight:null,descriptionLines:lines," +
+            "buttons:c.querySelectorAll('.zen-mstack-action').length,button:b?b.textContent.trim():null,buttonLabel:b?b.getAttribute('aria-label'):null,primary:!!(b&&b.hasAttribute('data-primary'))})})()"
+        /** The tip card's one button. */
+        private const val TIP_ACTION_JS = "document.querySelector('.zen-mstack-card[data-cell=\"tips\"] .zen-mstack-action')"
         /** The recovery for the swipes home: the strip scrolled to its start. */
         private const val SCROLL_HOME_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return 'no strip';s.scrollTo({left:0});return 'scrolled'})()"
         /** On the Settings page (the chrome document's, with the Settings tab active): the Safety check group is the landing (`SettingsPage.tsx` marks the group `?group=` lands `data-landing`), its top in the viewport's upper part. */
