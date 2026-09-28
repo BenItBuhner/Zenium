@@ -11730,6 +11730,17 @@
 .zen-v2-menu-hint + .zen-v2-menu-chevron {
   margin-left: 0;
 }
+/* A row's trailing mark (the Managed Browser row's building, TB-13): the chevron's seat and ink. */
+.zen-v2-menu-mark {
+  margin-left: auto;
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-menu-hint + .zen-v2-menu-mark {
+  margin-left: 0;
+}
+.zen-v2-menu-item:disabled .zen-v2-menu-mark {
+  color: inherit;
+}
 /*
  * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill while the
  * in-chrome menu stands, said by the `aria-expanded` the menu sets on it – the toolbar button's

@@ -32,6 +32,15 @@ export const MENU_KEY_CHANGE_MENU = 'menu.change'
  */
 export const MENU_KEY_UPDATE = 'menu.update'
 
+/**
+ * The key of the "Managed Browser" row (Chrome's `managed_by_menu_id`, TB-13): the menu's last
+ * row, past the Change Menu row and over its own hairline, while the host's app-restrictions
+ * bundle is non-empty (`shared/managed.ts`). Outside the order like the two above: the sheet
+ * keeps it out of the edit mode and the saved order, and it comes and goes with the device's
+ * management, not with the user's list.
+ */
+export const MENU_KEY_MANAGED = 'menu.managed'
+
 /** A saved order longer than this is cut: the phone menu has a few dozen items at most. */
 export const MENU_ORDER_MAX = 96
 /** A key longer than this names nothing of ours (`row.closePrivateTabs` is 20): it is dropped. */
