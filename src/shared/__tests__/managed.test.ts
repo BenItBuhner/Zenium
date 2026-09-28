@@ -83,12 +83,12 @@ describe('managedStatusOf', () => {
 })
 
 describe('the page’s sentences', () => {
-  it("are Chrome's management strings: the subtitle for a named manager, for an unnamed one, and for a browser that is not managed", () => {
+  it("are Chrome's management strings in the house's spelling: the subtitle for a named manager, for an unnamed one, and for a browser that is not managed", () => {
     expect(managementHeading({ by: 'example.com', keys: ['URLBlocklist'] })).toBe(
       'Your browser is managed by example.com'
     )
     expect(managementHeading({ by: null, keys: ['URLBlocklist'] })).toBe(
-      'Your browser is managed by your organization'
+      'Your browser is managed by your organisation'
     )
     expect(managementHeading(unmanaged())).toBe('Your browser is not managed')
     // A name with no key is no manager: the unmanaged sentence, as `isManaged` reads it.
@@ -97,7 +97,7 @@ describe('the page’s sentences', () => {
 
   it("say what Zenium does: Chrome's not-managed notice with the product's name; for a managed browser, that the configuration is read and listed, not applied", () => {
     expect(managementNotice(unmanaged())).toBe(
-      'This browser is not managed by a company or other organization. Activity on this device may be managed outside of Zenium.'
+      'This browser is not managed by a company or other organisation. Activity on this device may be managed outside of Zenium.'
     )
     const managed = managementNotice({ by: null, keys: ['URLBlocklist'] })
     expect(managed).toContain('does not apply them yet')

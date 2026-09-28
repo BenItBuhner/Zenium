@@ -5137,10 +5137,11 @@ export interface MenuItemDescriptor {
    */
   action?: ShortcutAction
   /**
-   * A mark the row carries after its label, in the trailing slot the sheet's secondary ink and
-   * the popover's hint share (§10.4): `managed` is Chrome's `ic_domain` on the "Managed Browser"
-   * row (TB-13; `shared/managed.ts`), the building glyph the row keeps on the phone's sheet and
-   * the tablet's popover alike. A native menu host has no glyph in its ink and draws the text.
+   * A mark the row carries after its label, in the trailing slot – the sheet's state seat, the
+   * one its secondary ink and the popover's hint take: `managed` is Chrome's `ic_domain` on the
+   * "Managed Browser" row (TB-13; `shared/managed.ts`), the building glyph the row keeps on the
+   * phone's sheet and the tablet's popover alike. A native menu host has no glyph in its ink and
+   * draws the text.
    */
   mark?: 'managed'
 }

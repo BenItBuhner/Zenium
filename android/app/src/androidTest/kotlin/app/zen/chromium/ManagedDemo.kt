@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit
  *  D. A real touch on the row opens `zen://management` in a NEW tab in front, the page's child
  *     (`openerTabId`): the title "Management", Chrome's subtitle "Your browser is managed by
  *     <org>", the notice that says Zenium reads the configuration and does not yet apply it, and
- *     the keys as static rows under "Settings your administrator controls" with their count.
+ *     the keys as static rows under "Settings your administrator set" with their count.
  *  E. The same page and menu on the dark scheme (the design record's pair).
  *  F. The device as it was found: the bundle cleared and the ownership given back (the owner's
  *     own `clearDeviceOwnerApp`, through the same receiver), whatever came before (a `finally`),
@@ -319,7 +319,7 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
     companion object {
         private const val ROW = "Managed Browser"
         private const val ORG = "Nimbus Works"
-        private const val GROUP = "Settings your administrator controls"
+        private const val GROUP = "Settings your administrator set"
         private const val MANAGEMENT_URL = "zen://management"
 
         /** The seeded bundle's keys as the status lists them: sorted. */

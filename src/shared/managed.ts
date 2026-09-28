@@ -23,7 +23,7 @@
 export interface ManagedStatus {
   /**
    * The organisation's display name, from the bundle's `EnterpriseCustomLabel` string, or
-   * `null` when no restriction names one: the page then says "your organization", as Chrome's
+   * `null` when no restriction names one: the page then says "your organisation", as Chrome's
    * `GetManagementPageSubtitle` does without a manager.
    */
   by: string | null
@@ -96,31 +96,33 @@ export const MANAGEMENT_PAGE_TITLE = 'Management'
 
 /**
  * The page's heading, Chrome's `IDS_MANAGEMENT_SUBTITLE_MANAGED_BY` / `_SUBTITLE_MANAGED` /
- * `_NOT_MANAGED_SUBTITLE` in `components/management_strings.grdp`, verbatim.
+ * `_NOT_MANAGED_SUBTITLE` in `components/management_strings.grdp` ("Your browser is managed by
+ * your organization"), in the house's British spelling.
  */
 export function managementHeading(status: ManagedStatus): string {
   if (!isManaged(status)) return 'Your browser is not managed'
   return status.by === null
-    ? 'Your browser is managed by your organization'
+    ? 'Your browser is managed by your organisation'
     : `Your browser is managed by ${status.by}`
 }
 
 /**
- * The notice under the heading. Unmanaged: Chrome's `IDS_MANAGEMENT_NOT_MANAGED_NOTICE` with the
- * product's name. Managed: Chrome's notice promises remote changes and reporting, which Zenium
- * does not do – the bundle is read and listed, not applied – so the notice says exactly that,
- * keeping Chrome's closing sentence about management outside the browser.
+ * The notice under the heading. Unmanaged: Chrome's `IDS_MANAGEMENT_NOT_MANAGED_NOTICE` ("…by a
+ * company or other organization…") with the product's name, in the house's British spelling.
+ * Managed: Chrome's notice promises remote changes and reporting, which Zenium does not do – the
+ * bundle is read and listed, not applied – so the notice says exactly that, keeping Chrome's
+ * closing sentence about management outside the browser.
  */
 export function managementNotice(status: ManagedStatus): string {
   if (!isManaged(status)) {
-    return 'This browser is not managed by a company or other organization. Activity on this device may be managed outside of Zenium.'
+    return 'This browser is not managed by a company or other organisation. Activity on this device may be managed outside of Zenium.'
   }
   return 'Your administrator set up a managed configuration for Zenium on this device. Zenium reads it and lists the settings below; it does not apply them yet. Activity on this device may also be managed outside of Zenium.'
 }
 
 /**
  * The heading of the page's list of keys. Chrome's page has no list of policies (it sends the
- * reader to chrome://policy); the row's name says what the bundle's keys are without claiming
- * they are applied – the notice above the list says they are not.
+ * reader to chrome://policy); the heading says who set the bundle's keys without claiming they
+ * are applied – the notice above the list says they are not.
  */
-export const MANAGED_KEYS_HEADING = 'Settings your administrator controls'
+export const MANAGED_KEYS_HEADING = 'Settings your administrator set'

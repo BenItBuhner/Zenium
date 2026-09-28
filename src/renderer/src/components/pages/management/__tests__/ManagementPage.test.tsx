@@ -71,7 +71,7 @@ describe('ManagementPage', () => {
     )
     expect(notice).toContain('Activity on this device may also be managed outside of Zenium.')
     const group = el.querySelector<HTMLElement>('[data-testid="management-keys"]')!
-    expect(text(group.querySelector('h2'))).toBe('Settings your administrator controls')
+    expect(text(group.querySelector('h2'))).toBe('Settings your administrator set')
     expect(text(group.querySelector('.zen-page-heading-aside'))).toBe('3')
     // The keys sorted, each a static row (§9.34): text, not a target.
     expect(keys(el)).toEqual(['EnterpriseCustomLabel', 'HomepageLocation', 'URLBlocklist'])
@@ -83,7 +83,7 @@ describe('ManagementPage', () => {
   it("says the organisation's generic name when the bundle names none: Chrome's subtitle for an unnamed manager", async () => {
     const el = await mountPage({ by: null, keys: ['URLBlocklist'] })
     expect(text(el.querySelector('.zen-page-title-desc'))).toBe(
-      'Your browser is managed by your organization'
+      'Your browser is managed by your organisation'
     )
     expect(keys(el)).toEqual(['URLBlocklist'])
   })
@@ -92,7 +92,7 @@ describe('ManagementPage', () => {
     const el = await mountPage({ by: null, keys: [] })
     expect(text(el.querySelector('.zen-page-title-desc'))).toBe('Your browser is not managed')
     expect(text(el.querySelector('[data-testid="management-notice"]'))).toBe(
-      'This browser is not managed by a company or other organization. Activity on this device may be managed outside of Zenium.'
+      'This browser is not managed by a company or other organisation. Activity on this device may be managed outside of Zenium.'
     )
     expect(el.querySelector('[data-testid="management-keys"]')).toBeNull()
   })
