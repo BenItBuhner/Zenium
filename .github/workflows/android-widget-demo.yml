@@ -33,6 +33,9 @@ name: Android widget demo
 # file picks the driver, the themes and the engines. The retry for a harness reason is a second
 # dispatch: the theme matrix has no single emulator-died output to key a second boot on.
 on:
+  # TEMPORARY (W6-S20, PR #662): the budget's ONE recording run of the driver fix (the overlay out of the window before the landing's capture); removed before READY.
+  push:
+    branches: [cursor/android-widget-demo-overlay-capture-9271]
   workflow_dispatch:
 
 permissions:
