@@ -201,10 +201,18 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
           }}
         >
           {/* The bar at the head of the content column, beside the sidebar – the desktop's seat
-              (App.tsx) and Chrome's: the page's chrome, over the page it opens into. A chrome
-              root of its own (`data-surface="window"`, `WINDOW_CHROME_ROOTS`): inert under a
-              sheet or a frame dialog with the toolbar and the sidebar. */}
-          {showBookmarksBar && <BookmarksBar state={state} tab={tab} />}
+              (App.tsx) and Chrome's: the page's chrome, over the page it opens into. Above the
+              content box, not in it, so its height is the column's to lay out and the box's
+              messages and dialogs sit below it. Its own chrome mark (`contents`, no box of its
+              own, as the content area's below): a fourth piece beside the sidebar column, the
+              content area and the message frame, inert while a sheet or a frame dialog stands
+              (`holdChromeInert`) – which the bar's root is as a window surface too
+              (`data-surface="window"`); the shell names the hold on its pieces itself. */}
+          {showBookmarksBar && (
+            <div data-shell-chrome className="contents">
+              <BookmarksBar state={state} tab={tab} />
+            </div>
+          )}
           <div className="relative min-h-0 flex-1">
             {/* No box of its own (`contents`): the chrome mark for the content area, which a
                 dialog on the host covers (`holdFrameInert`) and a sheet holds with the chrome. */}

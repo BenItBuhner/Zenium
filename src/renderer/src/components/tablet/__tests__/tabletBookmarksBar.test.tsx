@@ -59,6 +59,7 @@ vi.mock('@renderer/components/urlbar/Urlbar', () => ({ Urlbar: stub('urlbar') })
 const { TabletShell } = await import('../TabletShell')
 const { BookmarksBar } = await import('../../bookmarks/BookmarksBar')
 const { viewportStore } = await import('@renderer/lib/formFactor')
+const { holdChromeInert } = await import('@renderer/lib/portals')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 
 // --- a profile, a window ------------------------------------------------------------------------
@@ -345,16 +346,22 @@ describe('the tablet’s bookmarks bar (NTP-34; Chrome 152’s tablet bar, §9.3
     const el = bar()
     expect(el).not.toBeNull()
     // The desktop's seat (App.tsx): the first thing in the content column, the page's box after
-    // it; the sidebar column stands beside the column in the row under the toolbar.
-    const column = el!.parentElement!
+    // it; the sidebar column stands beside the column in the row under the toolbar. The bar
+    // sits in the shell's own chrome mark (#678's per-piece marks), a `contents` wrapper with no
+    // box of its own, so the bar is the column's first flex item and the content box the next.
+    const mark = el!.parentElement!
+    expect(mark.hasAttribute('data-shell-chrome')).toBe(true)
+    expect(mark.className).toBe('contents')
+    const column = mark.parentElement!
     expect(column.tagName).toBe('MAIN')
-    expect(el!.previousElementSibling).toBeNull()
-    expect(el!.nextElementSibling?.querySelector('[data-content-stub]')).not.toBeNull()
+    expect(mark.previousElementSibling).toBeNull()
+    expect(mark.nextElementSibling?.querySelector('[data-content-stub]')).not.toBeNull()
+    // Not in the content box: the box's message frame and its dialog host lie below the bar.
+    expect(mark.nextElementSibling?.contains(el)).toBe(false)
     const row = column.parentElement!
     expect(row.querySelector('.zen-tablet-sidebar [data-sidebar-stub]')).not.toBeNull()
     expect(row.previousElementSibling?.matches('[data-toolbar-stub]')).toBe(true)
-    // A window surface and a chrome root of its own (`WINDOW_CHROME_ROOTS`, lib/portals.tsx):
-    // inert under a sheet or a frame dialog with the toolbar and the sidebar.
+    // A window surface and a chrome root of its own too (`WINDOW_CHROME_ROOTS`, lib/portals.tsx).
     expect(el!.getAttribute('data-surface')).toBe('window')
     expect(chips().map((c) => c.getAttribute('data-bm-id'))).toEqual([
       'docs',
@@ -363,6 +370,22 @@ describe('the tablet’s bookmarks bar (NTP-34; Chrome 152’s tablet bar, §9.3
       'mail',
       'wiki'
     ])
+  })
+
+  it('goes inert with the chrome while a sheet or a frame dialog holds it, and comes back with the release', async () => {
+    await mountShell(stateOf({ bookmarksBar: 'always' }))
+    const el = bar()!
+    const mark = el.parentElement!
+    // The hold every BottomSheet and the frame dialog host take (§9.5, §9.22): the shell's
+    // pieces go inert – the bar's mark with the sidebar column, the content area and the
+    // message frame – so no press, focus or shortcut reaches a chip under a standing dialog.
+    const release = holdChromeInert()
+    expect(mark.hasAttribute('inert')).toBe(true)
+    expect(el.closest('[inert]')).not.toBeNull()
+    expect(host!.querySelector('.zen-tablet-sidebar')?.hasAttribute('inert')).toBe(true)
+    release()
+    expect(mark.hasAttribute('inert')).toBe(false)
+    expect(el.closest('[inert]')).toBeNull()
   })
 
   it('reads the setting against the page: Only on new tab page shows it on the new tab page alone', async () => {
