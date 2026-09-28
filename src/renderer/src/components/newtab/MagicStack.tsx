@@ -131,7 +131,7 @@ export function MagicStack({
 }): JSX.Element | null {
   const hidden = state.newTabHiddenModules
   const safetyHub = useSafetyHub(state, hidden.includes('safety-hub'))
-  const tips = useEducationalTips(state, hidden.includes('tips'))
+  const tips = useEducationalTips(state, hidden.includes('tips'), tab.id)
   const sources = useSources(state, safetyHub.source, tips.source)
   // A module hidden from a card's menu is kept as hidden here until the core's list has it, so
   // the card cannot come back between the command and the state; once the list has an id, the
@@ -503,16 +503,20 @@ function useSafetyHub(
  * device's state as the page already has it: the background kind of the page's own settings,
  * the browser role as `DefaultBrowserService` refreshed it on start and on foreground (its host
  * verb is read there, never here – the card adds nothing to the boot path), the folders and the
- * tabs. The pick names the card for the mount; the Cards sheet's switch bringing the module back
+ * tabs. The pick names the card for the page; the Cards sheet's switch bringing the module back
  * is an impression of its own, picked in the render that sees the switch and written in an
- * effect. The card's button is Chrome's interaction (`OnInteract`, `:180-183`): the card leaves
- * the ranking for good and the memory is written, while the card stays for the rest of the
- * mount as Chrome's module stays under the sheet it opened – the next page has the next card. A
- * module hidden on this device is not built at all: no pick, no impression, no write.
+ * effect – and so is another tab's page under the same mounted stack: the chrome draws one new
+ * tab page for whichever blank tab is active (`ContentArea.tsx`), so a new tab opened from a new
+ * tab page keeps the component and changes its tab, where Chrome builds a Magic Stack per page.
+ * The card's button is Chrome's interaction (`OnInteract`, `:180-183`): the card leaves the
+ * ranking for good and the memory is written, while the card stays for the rest of the page as
+ * Chrome's module stays under the sheet it opened – the next page has the next card. A module
+ * hidden on this device is not built at all: no pick, no impression, no write.
  */
 function useEducationalTips(
   state: UIState,
-  hidden: boolean
+  hidden: boolean,
+  pageId: string
 ): {
   source: MagicStackSources['tips']
   act: (card: EducationalTipCardId, tabId: string) => void
@@ -538,22 +542,25 @@ function useEducationalTips(
   const [first] = useState<TipImpression>(() =>
     hidden ? { card: null, memory } : impress(inputs, memory)
   )
-  // The switch that brought the module back into the stack (the previous-render pattern): a new
-  // impression, picked in the render that sees the switch – and read in that same render, so the
-  // stack's own previous-render check finds the card and marks its arrival (§11.4).
+  // The switch that brought the module back into the stack, or another tab's page under the
+  // same mounted stack (the previous-render pattern): a new impression, picked in the render
+  // that sees the change – and read in that same render, so the stack's own previous-render
+  // check finds the card and marks its arrival (§11.4). One impression when both change at once.
   const [seenHidden, setSeenHidden] = useState(hidden)
+  const [seenPage, setSeenPage] = useState(pageId)
   const [reshownState, setReshown] = useState<{ n: number } & TipImpression>({
     n: 0,
     card: null,
     memory
   })
   let reshown = reshownState
-  if (seenHidden !== hidden) {
-    setSeenHidden(hidden)
-    if (!hidden) {
-      reshown = { n: reshownState.n + 1, ...impress(inputs, memory) }
-      setReshown(reshown)
-    }
+  const switched = seenHidden !== hidden
+  const turned = seenPage !== pageId
+  if (switched) setSeenHidden(hidden)
+  if (turned) setSeenPage(pageId)
+  if ((switched || turned) && !hidden) {
+    reshown = { n: reshownState.n + 1, ...impress(inputs, memory) }
+    setReshown(reshown)
   }
   const written = useRef({ first: false, reshown: 0 })
   useEffect(() => {

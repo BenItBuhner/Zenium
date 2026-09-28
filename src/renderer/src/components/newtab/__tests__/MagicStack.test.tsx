@@ -1766,4 +1766,38 @@ describe('the tip card (NTP-20)', () => {
     expect(shown()).toBe('ntp-theme')
     expect(memoryWrites()).toHaveLength(1)
   })
+
+  it('another tab’s page under the same mounted stack is a page of its own: a new tab opened from a new tab page keeps the component and changes its tab, and the change is an impression – none while the module rests, the next card once it has rested', () => {
+    render(stack(tips({})))
+    expect(shown()).toBe('ntp-theme')
+    const [written] = memoryWrites()
+    // The next tab, moments later, under the memory as written: the module rests three days –
+    // no card, nothing written – where the same tab would have kept the theme card.
+    const page = (id: string, s: UIState): ReactElement => (
+      <MagicStack state={s} tab={{ ...TAB, id }} dock="top" />
+    )
+    render(page('n2', tips({ memory: written! })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toHaveLength(1)
+    // Eight days on, the theme card tapped meanwhile, a third tab: the next card in Chrome's
+    // order, its impression written once; the same tab again writes nothing more.
+    clock!.mockReturnValue(NOW + 8 * DAY)
+    const tapped: EducationalTipMemory = {
+      ...written!,
+      cards: { 'ntp-theme': { ...written!.cards['ntp-theme']!, interacted: true } }
+    }
+    render(page('n3', tips({ memory: tapped })))
+    expect(shown()).toBe('default-browser')
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(2)
+    expect(writes[1]!.cards['default-browser']).toEqual({
+      impressions: 1,
+      shownAt: NOW + 8 * DAY,
+      interacted: false
+    })
+    expect(writes[1]!.shownAt).toBe(NOW + 8 * DAY)
+    render(page('n3', tips({ memory: writes[1]! })))
+    expect(shown()).toBe('default-browser')
+    expect(memoryWrites()).toHaveLength(2)
+  })
 })
