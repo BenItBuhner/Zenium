@@ -4258,6 +4258,8 @@ export class Browser {
       'sync.now': () => this.sync.syncNow(),
       'sync.confirmMerge': ({ merge }) => this.sync.confirmMerge(merge),
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
+      'sync.testWebDav': (credentials) => this.sync.testWebDav(credentials),
+      'sync.setWebDavPassword': ({ password }) => this.sync.setWebDavPassword(password),
       'sync.tabsFromDevices': () => this.sync.tabsFromDevices(),
       'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 
