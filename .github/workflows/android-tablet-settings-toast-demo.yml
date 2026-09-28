@@ -28,12 +28,6 @@ name: Android tablet settings toast demo
 # per act when the emulator itself went away under the driver, never when the driver failed.
 on:
   workflow_dispatch:
-  # TEMPORARY (services seed 30, PR #692): a branch-scoped push trigger so Android's two lanes
-  # run at this head with the dispatch API closed to the builders' tokens; the workflow's
-  # dispatch takes no inputs, so the push path needs no fallbacks. The PR's final commit
-  # removes this block, leaving the file byte-identical to main's.
-  push:
-    branches: [cursor/services-seed-30-got-it-keeps-sheet-24d1]
 
 permissions:
   contents: read
