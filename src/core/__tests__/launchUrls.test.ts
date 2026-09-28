@@ -376,7 +376,7 @@ describe('a tab the user is typing into is not empty (W8-F15, the bar-input sign
     const other = f.browser.tabs.createTab({ url: NEW_TAB_URL, active: true, load: false }, win)
     expect(f.browser.freshTabIn(win)?.id).toBe(other.id)
     // Back on the typed tab, it is not fresh.
-    win.select(win.localSpace!, typed.id)
+    f.browser.tabs.activateTab(typed.id, win)
     expect(f.browser.freshTabIn(win)).toBeNull()
   })
 
