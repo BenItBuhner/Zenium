@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, useRef, type JSX, type ReactElement } from 'react'
+import { act, useRef, useState, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   ChromePortal,
@@ -12,6 +12,7 @@ import {
   type DismissReason,
   type PopoverChange
 } from '../portals'
+import { TAP_CLICK_CEILING_MS } from '../popoverStore'
 
 /*
  * The chrome layer's light dismiss (lib/popoverStore.ts, design-language-v2-draft §9.20
@@ -45,8 +46,10 @@ afterEach(async () => {
   mount = null
   document.getElementById('zen-chrome-layer')?.remove()
   closeAllPopovers()
-  // The swallow of a consumed press ends a tick after its release.
+  // The swallow of a consumed press ends a tick after its release; a touch's waits for its click
+  // (W8-F20), and a fresh press ends whatever is still pending, so no test inherits a swallow.
   await tick()
+  pointer('pointerdown', document.body, { pointerType: 'mouse' })
 })
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -713,5 +716,309 @@ describe('subscribePopovers: chrome that is not a popover but keeps one at a tim
     stop()
     a.remove()
     b.remove()
+  })
+})
+
+describe('a tap’s late click (W8-F20, §9.20): the consumed press’s remainder includes the click a touch still owes', () => {
+  /*
+   * Android's finding on #687's tablet run: the bookmarks bar's » chip, tapped while its panel was
+   * open, closed the panel – and the panel came back 1.75 s later with no finger on the glass. The
+   * store ended the swallow on a 0 ms timer after the release, reasoning that a press's `click` is
+   * dispatched with its release. True of a mouse: Chromium dispatches a mouse's click in the same
+   * task as its `pointerup`. Not of a touch: a tap's click is the browser's gesture, dispatched
+   * from its gesture detector a task later – measured in Electron 44 (Chromium 152) for this
+   * slice at 0.3–1.2 ms after `pointerup`, and after a 0 ms timer armed at `pointerup` in 39 of
+   * 40 taps. It outran the timer, reached the anchor un-swallowed, and toggled the popover open
+   * again. The fix: a touch or pen release keeps the swallow on until the press's click (or
+   * `auxclick`, `contextmenu`) has been swallowed, bounded by `TAP_CLICK_CEILING_MS` for a release
+   * that owes none; a mouse's release ends it as before; a keyboard's click passes meanwhile.
+   *
+   * The events are Chromium's shapes: `pointerdown` / `pointerup` carry the `pointerType`; the
+   * click is a `PointerEvent` with the pointer's type and `detail` 1; a keyboard's click (Enter or
+   * Space on the focused control) has `pointerType` '' and `detail` 0.
+   */
+  type Pointer = 'mouse' | 'touch' | 'pen' | ''
+
+  /** A pointer's press: down and up, as Chromium delivers them, in one task. */
+  function pointerPress(target: Element, pointerType: Pointer): { down: PointerEvent; up: PointerEvent } {
+    const init = { pointerType, pointerId: pointerType === 'mouse' ? 1 : 7, isPrimary: true }
+    const down = pointer('pointerdown', target, init)
+    const up = pointer('pointerup', target, init)
+    return { down, up }
+  }
+  /** The `click` a press produces: a PointerEvent carrying the pointer's type, `detail` 1. */
+  function pointerClick(target: Element, pointerType: Pointer): PointerEvent {
+    return pointer('click', target, { pointerType, detail: 1 })
+  }
+  /** A keyboard's click – Enter or Space on the focused control – with no pointer behind it. */
+  function keyboardClick(target: Element): PointerEvent {
+    return pointer('click', target, { pointerType: '', detail: 0 })
+  }
+  /** A finger's (or a pen's) tap: the press in one task, the click a task later. */
+  async function tap(
+    target: Element,
+    pointerType: 'touch' | 'pen' = 'touch'
+  ): Promise<{ down: PointerEvent; up: PointerEvent; click: PointerEvent }> {
+    const { down, up } = pointerPress(target, pointerType)
+    await tick()
+    const click = pointerClick(target, pointerType)
+    return { down, up, click }
+  }
+
+  /** An anchor that toggles its popover on click – the » chip and its panel, the star and its bubble. */
+  function Toggle({ onClick }: { onClick: (what: string) => void }): JSX.Element {
+    const [open, setOpen] = useState(false)
+    return (
+      <div data-chrome>
+        <button
+          type="button"
+          data-anchor="more"
+          aria-expanded={open}
+          onClick={() => {
+            onClick('more')
+            setOpen((v) => !v)
+          }}
+        >
+          more
+        </button>
+        <div data-page onClick={() => onClick('page')} />
+        {open && <Popover name="panel" onDismiss={() => setOpen(false)} anchor="more" />}
+      </div>
+    )
+  }
+
+  it.each(['touch', 'pen'] as const)(
+    'RED on main: a %s tap on the anchor closes its popover, and the tap’s click – a task later – is swallowed, so the popover stays closed',
+    async (kind) => {
+      const onClick = vi.fn()
+      render(<Toggle onClick={onClick} />)
+      // The first tap opens: no popover is open, so the press is nobody's to consume.
+      const first = await tap(q('[data-anchor="more"]'), kind)
+      expect(first.down.defaultPrevented).toBe(false)
+      expect(first.click.defaultPrevented).toBe(false)
+      expect(onClick).toHaveBeenCalledTimes(1)
+      expect(openPopoverCount()).toBe(1)
+      expect(q('[data-anchor="more"]').getAttribute('aria-expanded')).toBe('true')
+      // The second tap: its press closes the panel (reason `anchor`) and is consumed …
+      const second = await tap(q('[data-anchor="more"]'), kind)
+      expect(second.down.defaultPrevented).toBe(true)
+      expect(second.up.defaultPrevented).toBe(true)
+      // … and its click, dispatched a task after the release, is that press's own: swallowed.
+      expect(second.click.defaultPrevented, 'the tap’s late click').toBe(true)
+      expect(onClick, 'the tap’s late click reached the anchor').toHaveBeenCalledTimes(1)
+      expect(openPopoverCount(), 'the popover reopened from the tap’s click').toBe(0)
+      expect(q('[data-anchor="more"]').getAttribute('aria-expanded')).toBe('false')
+    }
+  )
+
+  it('a mouse press (unchanged): its click comes with the release and is swallowed; the swallow ends a tick after the release and the listeners come off', async () => {
+    const onDismiss = vi.fn()
+    const onClick = vi.fn()
+    const removed = vi.spyOn(window, 'removeEventListener')
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="bubble" onDismiss={onDismiss} anchor="star" />
+      </Chrome>
+    )
+    const { down, up } = pointerPress(q('[data-anchor="star"]'), 'mouse')
+    // Chromium dispatches a mouse's click in the same task as its `pointerup`.
+    const click = pointerClick(q('[data-anchor="star"]'), 'mouse')
+    expect(onDismiss).toHaveBeenCalledWith('anchor')
+    expect(down.defaultPrevented).toBe(true)
+    expect(up.defaultPrevented).toBe(true)
+    expect(click.defaultPrevented).toBe(true)
+    expect(onClick).not.toHaveBeenCalled()
+    // The popover unmounts on its dismiss; the listeners stay on for the rest of the press …
+    rerender(<Chrome onClick={onClick} />)
+    expect(removed).not.toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+    // … and come off a tick after the release, as before this slice.
+    await tick()
+    expect(removed).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+    expect(removed).toHaveBeenCalledWith('click', expect.any(Function), true)
+    const after = pointerClick(q('[data-anchor="star"]'), 'mouse')
+    expect(after.defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledWith('star')
+    removed.mockRestore()
+  })
+
+  it('a mouse press (unchanged): a mouse’s click that arrives a task after the release is not swallowed – the mouse’s swallow ends as it did', async () => {
+    const onClick = vi.fn()
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="bubble" onDismiss={vi.fn()} anchor="star" />
+      </Chrome>
+    )
+    pointerPress(q('[data-anchor="star"]'), 'mouse')
+    rerender(<Chrome onClick={onClick} />)
+    await tick()
+    // No such click exists for a real mouse; the shape pins that the mouse's swallow is not longer.
+    expect(pointerClick(q('[data-anchor="star"]'), 'mouse').defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledWith('star')
+    onClick.mockClear()
+    // A release with no `pointerType` (the empty string) is the mouse's road too.
+    rerender(
+      <Chrome onClick={onClick}>
+        <Popover key="2" name="bubble" onDismiss={vi.fn()} anchor="star" />
+      </Chrome>
+    )
+    expect(openPopoverCount()).toBe(1)
+    pointerPress(q('[data-page]'), '')
+    expect(openPopoverCount()).toBe(0)
+    rerender(<Chrome onClick={onClick} />)
+    await tick()
+    expect(mouse('click', q('[data-page]')).defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledWith('page')
+  })
+
+  it('a keyboard’s click during a touch swallow is nobody’s remainder: it passes, and the tap’s click is still swallowed after it', async () => {
+    const onDismiss = vi.fn()
+    const onClick = vi.fn()
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="bubble" onDismiss={onDismiss} anchor="star" />
+      </Chrome>
+    )
+    const { down, up } = pointerPress(q('[data-page]'), 'touch')
+    expect(onDismiss).toHaveBeenCalledWith('outside')
+    expect(down.defaultPrevented).toBe(true)
+    expect(up.defaultPrevented).toBe(true)
+    rerender(<Chrome onClick={onClick} />)
+    await tick()
+    // Enter on the folder anchor while the tap's click is still owed: no pointer behind it, it lands.
+    const keyboard = keyboardClick(q('[data-anchor="folder"]'))
+    expect(keyboard.defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledWith('folder')
+    // A `click()` from a script the same (no pointer, `detail` 0).
+    const scripted = mouse('click', q('[data-anchor="folder"]'))
+    expect(scripted.defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledTimes(2)
+    // The tap's own click, still to come, is still the press's: swallowed.
+    const click = pointerClick(q('[data-page]'), 'touch')
+    expect(click.defaultPrevented).toBe(true)
+    expect(onClick).toHaveBeenCalledTimes(2)
+    // And with it the press is over: a pointer's click after it (a new press's) passes.
+    expect(pointerClick(q('[data-anchor="star"]'), 'touch').defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenLastCalledWith('star')
+  })
+
+  it('a second tap is a fresh press: it reopens; the tap after that closes again and stays closed', async () => {
+    const onClick = vi.fn()
+    render(<Toggle onClick={onClick} />)
+    await tap(q('[data-anchor="more"]'))
+    expect(openPopoverCount()).toBe(1)
+    await tap(q('[data-anchor="more"]'))
+    expect(openPopoverCount()).toBe(0)
+    // The third tap: nothing is open, so its press is consumed by nothing and its click opens.
+    const third = await tap(q('[data-anchor="more"]'))
+    expect(third.down.defaultPrevented).toBe(false)
+    expect(third.click.defaultPrevented).toBe(false)
+    expect(openPopoverCount()).toBe(1)
+    expect(q('[data-anchor="more"]').getAttribute('aria-expanded')).toBe('true')
+    const fourth = await tap(q('[data-anchor="more"]'))
+    expect(fourth.click.defaultPrevented).toBe(true)
+    expect(openPopoverCount()).toBe(0)
+    expect(onClick).toHaveBeenCalledTimes(2)
+  })
+
+  it('the next pointerdown ends the wait: a second tap that lands before the first’s click is a fresh press, whole', async () => {
+    const onClick = vi.fn()
+    render(<Toggle onClick={onClick} />)
+    await tap(q('[data-anchor="more"]'))
+    expect(openPopoverCount()).toBe(1)
+    // The closing tap's press, its click not yet come (Chromium's double tap withholds the first
+    // tap's click when a second tap lands inside the double-tap window).
+    const closing = pointerPress(q('[data-anchor="more"]'), 'touch')
+    expect(closing.down.defaultPrevented).toBe(true)
+    expect(openPopoverCount()).toBe(0)
+    await tick()
+    // The second tap's press: nothing is open, so nothing is consumed – the wait for the first's
+    // click is over, and this press's click is its own.
+    const next = await tap(q('[data-anchor="more"]'))
+    expect(next.down.defaultPrevented).toBe(false)
+    expect(next.up.defaultPrevented).toBe(false)
+    expect(next.click.defaultPrevented).toBe(false)
+    expect(openPopoverCount()).toBe(1)
+  })
+
+  it('a cancelled touch – one that scrolled, one the platform took over – owes no click: the swallow ends with the cancel, as a mouse’s does with its release', async () => {
+    const onDismiss = vi.fn()
+    const onClick = vi.fn()
+    const removed = vi.spyOn(window, 'removeEventListener')
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="bubble" onDismiss={onDismiss} anchor="star" />
+      </Chrome>
+    )
+    const init = { pointerType: 'touch', pointerId: 7, isPrimary: true }
+    const down = pointer('pointerdown', q('[data-page]'), init)
+    expect(onDismiss).toHaveBeenCalledWith('outside')
+    expect(down.defaultPrevented).toBe(true)
+    const cancel = pointer('pointercancel', q('[data-page]'), init)
+    expect(cancel.defaultPrevented).toBe(true)
+    rerender(<Chrome onClick={onClick} />)
+    await tick()
+    expect(removed).toHaveBeenCalledWith('click', expect.any(Function), true)
+    // Nothing waits: a pointer's click now is a new press's.
+    expect(pointerClick(q('[data-anchor="star"]'), 'touch').defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledWith('star')
+    removed.mockRestore()
+  })
+
+  it('a release that owes no click: the swallow ends at the ceiling, the listeners come off, and a pointer’s click after it passes', () => {
+    vi.useFakeTimers()
+    const removed = vi.spyOn(window, 'removeEventListener')
+    const bubble = document.createElement('div')
+    const page = document.createElement('button')
+    const onPage = vi.fn()
+    page.addEventListener('click', onPage)
+    document.body.append(bubble, page)
+    try {
+      // Short of the ceiling the swallow still waits: the tap's click, however late, is eaten.
+      openPopover({ element: () => bubble, close: () => undefined })
+      pointerPress(page, 'touch')
+      expect(openPopoverCount()).toBe(0)
+      vi.advanceTimersByTime(TAP_CLICK_CEILING_MS - 1)
+      expect(removed).not.toHaveBeenCalledWith('click', expect.any(Function), true)
+      expect(pointerClick(page, 'touch').defaultPrevented).toBe(true)
+      expect(onPage).not.toHaveBeenCalled()
+      // That click ended the press; the listeners are off.
+      expect(removed).toHaveBeenCalledWith('click', expect.any(Function), true)
+      removed.mockClear()
+      // A release whose click never comes: at the ceiling the swallow ends and the listeners come
+      // off, and a pointer's click after it – a new press's – passes.
+      openPopover({ element: () => bubble, close: () => undefined })
+      pointerPress(page, 'touch')
+      expect(openPopoverCount()).toBe(0)
+      vi.advanceTimersByTime(TAP_CLICK_CEILING_MS - 1)
+      expect(removed).not.toHaveBeenCalledWith('click', expect.any(Function), true)
+      vi.advanceTimersByTime(1)
+      expect(removed).toHaveBeenCalledWith('click', expect.any(Function), true)
+      expect(pointerClick(page, 'touch').defaultPrevented).toBe(false)
+      expect(onPage).toHaveBeenCalledTimes(1)
+    } finally {
+      removed.mockRestore()
+      vi.useRealTimers()
+      bubble.remove()
+      page.remove()
+    }
+  })
+
+  it('the tap’s click, swallowed, ends the press: the listeners come off with it (none open behind them)', async () => {
+    const onClick = vi.fn()
+    const removed = vi.spyOn(window, 'removeEventListener')
+    render(<Toggle onClick={onClick} />)
+    await tap(q('[data-anchor="more"]'))
+    const { down, up } = pointerPress(q('[data-anchor="more"]'), 'touch')
+    expect(down.defaultPrevented).toBe(true)
+    expect(up.defaultPrevented).toBe(true)
+    await tick()
+    // Still waiting for the click: the listeners are on.
+    expect(removed).not.toHaveBeenCalledWith('click', expect.any(Function), true)
+    const click = pointerClick(q('[data-anchor="more"]'), 'touch')
+    expect(click.defaultPrevented).toBe(true)
+    expect(removed).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+    expect(removed).toHaveBeenCalledWith('click', expect.any(Function), true)
+    expect(openPopoverCount()).toBe(0)
+    removed.mockRestore()
   })
 })
