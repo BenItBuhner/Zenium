@@ -12,6 +12,7 @@ import {
   tooltipCoverHeld,
   tooltipMayCover,
   tooltipPaneOf,
+  tooltipRoomStore,
   tooltipSize,
   tooltipStore,
   tooltipTargetOf,
@@ -50,10 +51,14 @@ import {
  * document the room it asked for the tooltip's own moment (`MiniMenuRoom`, the folded pill),
  * which moves no control from under the pointer – so the tooltip on its way keeps its dwell
  * and one up is placed again in the grown document, rather than taken down by the room made
- * for it.
+ * for it. And while that room is on its way (`tooltipRoomStore.awaited`: asked of the core,
+ * its landing not yet seen – `awaitTooltipRoom`, §11's handshake) a tooltip waits hidden, as
+ * one waits for the page's cover: painted before the room lands it would be cut by the
+ * surface's old bounds. The shells never ask a room; nothing waits there.
  */
 export function Tooltip({ resize = 'hide' }: TooltipProps): JSX.Element | null {
   const { target, by } = tooltipStore.use()
+  const roomAwaited = tooltipRoomStore.use((s) => s.awaited)
   // The text is the control's attribute, read at render; `words` re-renders when it changes.
   const [, setWords] = useState(0)
   const text = target ? tooltipText(target) : ''
@@ -177,7 +182,9 @@ export function Tooltip({ resize = 'hide' }: TooltipProps): JSX.Element | null {
   // is given it here, outside React's style prop – the same whole width for two texts in a
   // row would otherwise leave the cleared style uncorrected – so the right hairline stands on
   // a column as the left one does. `resized` runs it again for a window the host places
-  // through a resize of (`resize: 'place'`): the same tooltip, the document's new size.
+  // through a resize of (`resize: 'place'`): the same tooltip, the document's new size – and
+  // so does the room's landing (`roomAwaited` going), which is that size's arrival by another
+  // word: placed in the document as it stands the moment it may show.
   useLayoutEffect(() => {
     const el = ref.current
     if (!target || !el || !text) {
@@ -195,7 +202,7 @@ export function Tooltip({ resize = 'hide' }: TooltipProps): JSX.Element | null {
     )
     el.style.width = `${placed.box.width}px`
     setPlacement(placed)
-  }, [target, text, resized])
+  }, [target, text, resized, roomAwaited])
 
   // Over the page, the page goes under its picture first – unless it is under one already (a
   // revealed compact sidebar, another overlay) – and the one hold stays across the controls the
@@ -233,7 +240,8 @@ export function Tooltip({ resize = 'hide' }: TooltipProps): JSX.Element | null {
   useEffect(() => () => releaseHold(hold), [])
 
   if (!target || !text) return null
-  const shown = placement !== null && (!placement.coversPage || pageUnderCover)
+  // Placed, over a covered page or beside it, and with its room landed where it asked one.
+  const shown = placement !== null && (!placement.coversPage || pageUnderCover) && !roomAwaited
   return (
     <ChromePortal>
       <div
