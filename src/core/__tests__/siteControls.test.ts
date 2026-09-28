@@ -18,6 +18,7 @@ import type { SiteInfoSnapshot } from '../../shared/siteInfo'
 import { crashPageUrl, errorPageUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import { REVOKED_PERMISSIONS_KEPT_MS, coarseVisitTime } from '../permissions'
+import { DEVICE_LOCAL_SETTINGS } from '../sync/records'
 import {
   UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS,
   UNUSED_PERMISSIONS_SWEEP_INTERVAL_MS
@@ -510,6 +511,23 @@ describe('clear browsing data', () => {
     expect(rangeStart('week', now)).toBe(now - 7 * 86_400_000)
     expect(rangeStart('month', now)).toBe(now - 28 * 86_400_000)
     expect(rangeStart('all', now)).toBe(0)
+  })
+
+  it('remembers the range the dialog last deleted with (seed #20): the last hour until a Delete writes another; a range no picker offers reads the last hour; the key is the device’s own', () => {
+    const f = fixture()
+    expect(f.browser.state.settings.clearBrowsingDataRange).toBe('hour')
+    // The dialog's Delete writes the range it went with through the settings path.
+    f.command('settings.update', { clearBrowsingDataRange: 'month' })
+    expect(f.browser.state.settings.clearBrowsingDataRange).toBe('month')
+    f.command('settings.update', { clearBrowsingDataRange: '15min' })
+    expect(f.browser.state.settings.clearBrowsingDataRange).toBe('15min')
+    // A malformed patch reads as Chrome's default, never as a range the pickers lack.
+    for (const bad of ['year', 3, null, { range: 'all' }]) {
+      f.command('settings.update', { clearBrowsingDataRange: bad })
+      expect(f.browser.state.settings.clearBrowsingDataRange, JSON.stringify(bad)).toBe('hour')
+    }
+    // Chrome stopped syncing browser.clear_data.time_period (CL 5398105): device-local here too.
+    expect(DEVICE_LOCAL_SETTINGS).toContain('clearBrowsingDataRange')
   })
 })
 

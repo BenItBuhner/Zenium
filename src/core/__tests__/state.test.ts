@@ -840,6 +840,38 @@ describe('Settings.gameBestScore (ERR-03)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The Delete browsing data dialog's remembered range (services pass 13, seed #20): Chrome's
+// `browser.clear_data.time_period`, the last hour by default (`pref_names.cc:23–25`) – a
+// device-local setting, sanitised at load like the rest.
+// ---------------------------------------------------------------------------
+
+describe('Settings.clearBrowsingDataRange (seed #20)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.clearBrowsingDataRange
+    else settings.clearBrowsingDataRange = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships as the last hour, and a profile from before the key opens the dialog on it', () => {
+    expect(DEFAULT_SETTINGS.clearBrowsingDataRange).toBe('hour')
+    expect(stored(undefined).settings.clearBrowsingDataRange).toBe('hour')
+    expect(state(fakeIo()).settings.clearBrowsingDataRange).toBe('hour')
+  })
+
+  it('keeps every range the pickers offer, and reads anything else as the last hour', () => {
+    for (const range of ['15min', 'hour', 'day', 'week', 'month', 'all'] as const) {
+      expect(stored(range).settings.clearBrowsingDataRange).toBe(range)
+    }
+    for (const bad of ['year', 'Hour', '', 1, null, true, { range: 'all' }, ['all']]) {
+      expect(stored(bad).settings.clearBrowsingDataRange, JSON.stringify(bad)).toBe('hour')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Settings › Performance on a fresh profile (W8-2; pr-584 §D (2)(3)): Chrome's defaults for a
 // profile written for the first time, an existing profile keeping what it had.
 // ---------------------------------------------------------------------------

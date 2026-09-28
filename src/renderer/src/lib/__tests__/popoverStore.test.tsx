@@ -440,9 +440,11 @@ describe('a popover that closed by itself leaves no swallowed press behind (W8-F
     )
     rerender(<Chrome onClick={onClick} />)
     expect(openPopoverCount()).toBe(0)
-    // The reset (`tab.setZoom null`) is a `zoom.changed`: `showZoomBubble` raises the step's own
-    // bubble – a notice that opened by itself, with no chip to hang from (the chip left with the
-    // zoom) and holding no focus.
+    // The reset (`tab.setZoom null`, as the F7 drive invoked it) came back as a `zoom.changed`
+    // and, as `showZoomBubble` had it before W8-F12, raised the step's own bubble – a notice that
+    // opened by itself, with no chip to hang from (the chip left with the zoom) and holding no
+    // focus. Since W8-F12 a change that leaves no chip raises no bubble on any road, so this is
+    // the store's own rule for a popover standing with no anchor, as the F7 observation met it.
     rerender(
       <Chrome onClick={onClick}>
         <Popover key="reset" name="zoom" onDismiss={resetBubble} />

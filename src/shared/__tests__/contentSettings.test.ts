@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { CONTENT_SETTINGS, contentSetting, contentSettingsFor } from '../contentSettings'
+import {
+  CONTENT_SETTINGS,
+  allowOnceFor,
+  builtInDefault,
+  contentSetting,
+  contentSettingId,
+  contentSettingsFor,
+  promptLabelFor,
+  tracksLastVisit
+} from '../contentSettings'
 
 const ids = (platform: 'desktop' | 'android'): string[] =>
   contentSettingsFor(platform).map((setting) => setting.id)
@@ -80,6 +89,49 @@ describe('contentSettingsFor', () => {
     })
   })
 
+  it('keeps one MIDI row, as Chrome has since kBlockMidiByDefault, and folds the engines’ SysEx request into it (MW-36 / PS-54)', () => {
+    // Chrome: one setting, `midi-sysex`, ask by default, allow / block / ask
+    // (`content_settings_registry.cc:209-217`); every `requestMIDIAccess()` asks for it since
+    // `kBlockMidiByDefault` (`midi_access_initializer.cc:48-52`); no one-time allow
+    // (`permission_request.cc:319-320`). Its words: `IDS_SETTINGS_SITE_SETTINGS_MIDI_ASK` and
+    // `IDS_MIDI_SYSEX_PERMISSION_FRAGMENT`; the label the lead's ruling on #656 kept.
+    expect(contentSetting('midi')).toMatchObject({
+      label: 'MIDI devices',
+      description: 'Sites can ask to control and reprogram your MIDI devices',
+      descriptions: { deny: 'Sites cannot control or reprogram your MIDI devices' },
+      group: 'permissions',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'control and reprogram your MIDI devices',
+      allowOnce: false,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // Electron's `midiSysex` and the WebView's `RESOURCE_MIDI_SYSEX` (the request any Web MIDI
+    // call makes) are that row: the same answer, the same words, no row of their own.
+    expect(contentSettingId('midiSysex')).toBe('midi')
+    expect(contentSetting('midiSysex')).toBe(contentSetting('midi'))
+    expect(promptLabelFor('midiSysex')).toBe('control and reprogram your MIDI devices')
+    expect(allowOnceFor('midiSysex')).toBe(false)
+    expect(builtInDefault('midiSysex')).toBe('ask')
+    expect(tracksLastVisit('midiSysex')).toBe(true)
+    expect(CONTENT_SETTINGS.map((s) => s.id)).not.toContain('midiSysex')
+    // Listed on both hosts: Electron hands the core `midiSysex`, and `Permissions.kt` relays
+    // `RESOURCE_MIDI_SYSEX` as the same request – a path acts on the row on each (#506).
+    expect(ids('desktop')).toContain('midi')
+    expect(ids('android')).toContain('midi')
+    // The retired words are gone: the second row's label and refusal, the first row's old lines.
+    for (const setting of CONTENT_SETTINGS) {
+      const words = [
+        setting.label,
+        setting.description,
+        setting.promptLabel ?? '',
+        ...Object.values(setting.descriptions ?? {})
+      ].join('\n')
+      expect(words, setting.id).not.toMatch(/MIDI system messages|system-exclusive/)
+      expect(words, setting.id).not.toMatch(/connect to MIDI devices|access MIDI devices/)
+    }
+  })
+
   it('still hides a row a host has no feature for, and lists it when asked for everything', () => {
     const android = contentSettingsFor('android').map((s) => s.id)
     expect(android).not.toContain('pointerLock')
@@ -118,7 +170,7 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
         allow: 'Sites can download multiple files without asking',
         deny: 'Sites cannot download multiple files automatically'
       },
-      midi: { deny: 'Sites cannot connect to MIDI devices' },
+      midi: { deny: 'Sites cannot control or reprogram your MIDI devices' },
       usb: { deny: 'Sites cannot connect to USB devices' },
       serial: { deny: 'Sites cannot connect to serial ports' },
       hid: { deny: 'Sites cannot connect to HID devices' },

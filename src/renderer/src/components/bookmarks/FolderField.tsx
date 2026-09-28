@@ -15,6 +15,11 @@ interface Props {
   onChange: (folderId: string) => void
   /** The control's id, for the form field's `<label for>` (§9.12). */
   id?: string
+  /**
+   * The row's label, the accessible name of the list and the tree ("Folder"; "Parent folder"
+   * on a folder's own editor, as the phone's row reads).
+   */
+  label?: string
   /** Folders that cannot be chosen (a folder being moved, and everything below it). */
   disabled?: Set<string>
   /** Whether a nested level (the list or the tree) is showing; Escape closes it before the dialog. */
@@ -41,6 +46,7 @@ export function FolderField({
   value,
   onChange,
   id,
+  label = 'Folder',
   disabled,
   onNestedChange,
   className
@@ -53,7 +59,13 @@ export function FolderField({
   const listOpen = anchor !== null
   const current = tree.get(value)
   const options = useMemo(() => {
-    const recent = recentFolders(tree, 5).filter((f) => !disabled?.has(f.id))
+    // Five recents. A folder that cannot be chosen drops out of the list and the next recent
+    // folder takes its slot – the list is not shortened by the folder's own subtree, which is
+    // filed into last as often as not (a folder is edited where it was just worked in).
+    const excluded = disabled?.size ?? 0
+    const recent = recentFolders(tree, 5 + excluded)
+      .filter((f) => !disabled?.has(f.id))
+      .slice(0, 5)
     return current && !recent.some((f) => f.id === current.id) ? [current, ...recent] : recent
   }, [current, disabled, tree])
 
@@ -78,6 +90,7 @@ export function FolderField({
         tree={tree}
         selectedId={value}
         onSelect={onChange}
+        label={label}
         disabled={disabled}
         allowCreate
         onEscape={() => {
@@ -112,7 +125,7 @@ export function FolderField({
       {anchor && (
         <MenulistPopover
           anchor={anchor}
-          label="Folder"
+          label={label}
           value={value}
           options={options.map((f) => ({ value: f.id, label: f.title }))}
           actions={[

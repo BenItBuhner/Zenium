@@ -479,7 +479,7 @@ describe("a private window's bar reads and opens, never writes (bookmarks-43)", 
     expect(item(f.shown(), 'Open in Split View').enabled).toBe(true)
   })
 
-  it("a folder's menu opens – all, in a window, in a tab folder – and copies; no Rename, Sort, Add or Delete", () => {
+  it("a folder's menu opens – all, in a window, in a tab folder – and copies; no Edit, Sort, Add or Delete", () => {
     const f = fixture()
     const id = folderWith(f, 'Reading', 2)
     expect(privateMenu(f, [id])).toEqual([
@@ -523,5 +523,38 @@ describe("a private window's bar reads and opens, never writes (bookmarks-43)", 
     const manager = privateMenu(f, [id], 'manager')
     for (const row of ['Edit…', 'Cut', 'Paste', 'Delete', 'Add New Bookmark…'])
       expect(manager).toContain(row)
+  })
+})
+
+describe("the folder's edit row (W8-F13: the folder editor owns the move)", () => {
+  it("reads Edit… for a folder as for a page, on the bar and in the manager – the row opens the folder's editor (Edit folder: the name and the parent folder), not a name-only Rename", () => {
+    const f = fixture()
+    const folderId = folderWith(f, 'Reading', 2)
+    const page = f.browser.bookmarks.tree.children(folderId)[0]
+    for (const surface of ['bar', 'manager'] as const) {
+      const folderRows = menuFor(f, [folderId], surface)
+      expect(folderRows).toContain('Edit…')
+      expect(folderRows.some((l) => l.startsWith('Rename'))).toBe(false)
+      expect(item(f.shown(), 'Edit…').enabled).toBe(true)
+      const pageRows = menuFor(f, [page.id], surface)
+      expect(pageRows).toContain('Edit…')
+      expect(pageRows.some((l) => l.startsWith('Rename'))).toBe(false)
+    }
+  })
+
+  it("the folder's Edit… asks the chrome for the folder's editor with its type – the same event as a page's", () => {
+    const f = fixture()
+    const folderId = folderWith(f, 'Reading', 1)
+    menuFor(f, [folderId], 'manager')
+    item(f.shown(), 'Edit…').click?.()
+    expect(f.sent.filter((e) => e.name === 'bookmark.edit').map((e) => e.payload)).toEqual([
+      { id: folderId, parentId: BOOKMARKS_BAR_ID, type: 'folder' }
+    ])
+  })
+
+  it('a root has the row disabled: no editor opens on Bookmarks bar itself', () => {
+    const f = fixture()
+    menuFor(f, [BOOKMARKS_BAR_ID], 'manager')
+    expect(item(f.shown(), 'Edit…').enabled).toBe(false)
   })
 })

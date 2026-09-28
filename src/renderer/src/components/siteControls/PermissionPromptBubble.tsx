@@ -49,7 +49,6 @@ const GLYPHS: Record<string, LucideIcon> = {
   geolocation: MapPin,
   notifications: Bell,
   midi: Music,
-  midiSysex: Music,
   'clipboard-read': ClipboardCopy,
   'window-management': MonitorUp,
   'idle-detection': Activity,

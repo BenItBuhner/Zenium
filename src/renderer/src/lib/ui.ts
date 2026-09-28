@@ -31,6 +31,7 @@ import type {
 } from '@shared/types'
 import { TOAST_SHOW_MS } from '@shared/toastCard'
 import { isEmptyTabUrl } from '@shared/url'
+import { isZoomed } from '@renderer/components/zoom/bubble'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
@@ -2837,15 +2838,39 @@ export function menuAloneOverContent(ui: UiState): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether the pill's zoom chip stands for the tab once its zoom is `factor`: the chip's own rule
+ * (`isZoomed`, §9.29 – the page away from its default zoom, the site's exception counted as the
+ * deviation it is), read against the change itself rather than the tab's zoom of the last push,
+ * which the event may run ahead of.
+ */
+function zoomChipStandsAt(tabId: string, factor: number): boolean {
+  const state = browserStore.get().state
+  const tab = state?.tabs[tabId]
+  if (!state || !tab) return false
+  return isZoomed({ ...tab, zoom: factor }, state.settings.pageControls, state.pageEnvironment)
+}
+
+/**
  * A page was zoomed (`zoom.changed`): the bubble comes up for it over a picture of the page –
  * the live view gives way under chrome that overlaps it, as under the star bubble – and, while
  * it is up, takes a fresh picture at every step so the page is seen at its new zoom. The
  * keyboard is left where it is: a zoom step opens the bubble as feedback, not as a place to be.
+ *
+ * The bubble hangs from the pill's zoom chip (§9.20), which stands only while the page is away
+ * from its default zoom (§9.29). A change that leaves no chip – a reset from anywhere (the
+ * bubble's own Reset, Ctrl+0, the menus' and the context menu's), a step or the wheel landing on
+ * the default – raises nothing and ends a bubble that stands, with its chip. Chrome's clocked
+ * notice after such a change is not owed: the chip leaving the pill and the page resizing are the
+ * feedback.
  */
 export async function showZoomBubble(tabId: string, factor: number): Promise<void> {
   const bubbleFor = (id: string): UiState['zoomBubble'] => {
     const open = uiStore.get().zoomBubble
     return open && open.tabId === id ? open : null
+  }
+  if (!zoomChipStandsAt(tabId, factor)) {
+    if (bubbleFor(tabId)) closeZoomBubble()
+    return
   }
   if (!bubbleFor(tabId)) {
     await captureActiveTab(tabId)

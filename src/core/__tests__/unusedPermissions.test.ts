@@ -162,6 +162,8 @@ describe('the eligibility of a rule for the sweep (Chrome’s CanTrackLastVisit)
       'microphone',
       'automatic-downloads',
       'midi',
+      // The engines' name for any Web MIDI request: the `midi` row through its alias.
+      'midiSysex',
       'fileSystem',
       'clipboard-read',
       'window-management',
