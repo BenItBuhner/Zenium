@@ -83,7 +83,7 @@ function urlbarState(patch: Partial<UrlbarState> = {}): UrlbarState {
 const view = (
   t: Tab = tab(),
   urlbar: UrlbarState = urlbarState(),
-  phoneEdge: 'left' | 'right' | undefined = undefined
+  phoneEdge: 'top' | 'bottom' | undefined = undefined
 ): ReactElement =>
   createElement(Urlbar, {
     state: state(t),
@@ -194,7 +194,7 @@ describe('the URL bar tells the core when it holds input for a tab (W8-F15)', ()
   })
 
   it('the phone runs the same signal (its host leaves it unread)', async () => {
-    const el = await render(view(tab(), urlbarState(), 'left'))
+    const el = await render(view(tab(), urlbarState(), 'bottom'))
     await type(inputEl(el), 'foo')
     // The same command fires on the phone; the core has no `freshTabIn` caller there.
     expect(inputs()).toEqual([{ tabId: 't1', active: true }])
