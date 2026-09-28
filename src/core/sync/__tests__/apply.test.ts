@@ -479,14 +479,18 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
 
   it('a peer on an older build sends fewer fields: its object lands whole with every missing field at the default, and the reader service hands out no hole', () => {
     const b = browser()
-    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', spacing: 'wide', syllables: true })
-    expect(b.state.settings.reader).toMatchObject({ spacing: 'wide', syllables: true })
+    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', lineSpacing: 'loose', syllables: true })
+    expect(b.state.settings.reader).toMatchObject({ lineSpacing: 'loose', syllables: true })
 
     // The peer's build knows two fields fewer (built from the defaults, so the fixture is an
     // older build's before and after the next field is added); its own edits are the size and
     // the font.
-    const { spacing: _spacing, syllables: _syllables, ...older } = DEFAULT_READER_PREFERENCES
-    void _spacing
+    const {
+      letterSpacing: _letterSpacing,
+      syllables: _syllables,
+      ...older
+    } = DEFAULT_READER_PREFERENCES
+    void _letterSpacing
     void _syllables
     const peer = { ...older, fontSize: 14, font: 'mono' }
     expect(Object.keys(peer)).toHaveLength(Object.keys(DEFAULT_READER_PREFERENCES).length - 2)
@@ -507,6 +511,57 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
     expect(sent(b).reader).toEqual(b.state.settings.reader)
   })
 
+  it("a peer from before CT-35 sends Edge's one Text spacing step: it reads forward as the pair it stood for, and the record sent on carries the two keys and never the old one", () => {
+    const b = browser()
+    // The peer's object as its build wrote it: `spacing` and neither of the two rows' keys.
+    const {
+      lineSpacing: _lineSpacing,
+      letterSpacing: _letterSpacing,
+      ...rest
+    } = DEFAULT_READER_PREFERENCES
+    void _lineSpacing
+    void _letterSpacing
+    const peer = { ...rest, fontSize: 20, spacing: 'wider' }
+    applyRemote(b, [{ ...settingsRecord({ reader: peer }), keys: { reader: 900 } }])
+    expect(b.state.settings.reader).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 20,
+      lineSpacing: 'very-loose',
+      letterSpacing: 'very-wide'
+    })
+    expect('spacing' in b.state.settings.reader).toBe(false)
+    expect(b.reader.preferences()).toEqual(b.state.settings.reader)
+    const onward = sent(b).reader as Record<string, unknown>
+    expect(onward).toEqual(b.state.settings.reader)
+    expect('spacing' in onward).toBe(false)
+
+    // The other two steps, read the same way; a peer that already carries the two keys is
+    // taken as it is, whatever old key rides along.
+    applyRemote(b, [
+      { ...settingsRecord({ reader: { ...rest, spacing: 'wide' } }), keys: { reader: 901 } }
+    ])
+    expect(b.state.settings.reader).toMatchObject({ lineSpacing: 'loose', letterSpacing: 'wide' })
+    applyRemote(b, [
+      { ...settingsRecord({ reader: { ...rest, spacing: 'normal' } }), keys: { reader: 902 } }
+    ])
+    expect(b.state.settings.reader).toMatchObject({
+      lineSpacing: 'standard',
+      letterSpacing: 'standard'
+    })
+    applyRemote(b, [
+      {
+        ...settingsRecord({
+          reader: { ...DEFAULT_READER_PREFERENCES, lineSpacing: 'loose', spacing: 'wider' }
+        }),
+        keys: { reader: 903 }
+      }
+    ])
+    expect(b.state.settings.reader).toMatchObject({
+      lineSpacing: 'loose',
+      letterSpacing: 'standard'
+    })
+  })
+
   it('a garbage value – off the ladder, unknown names, no object at all – lands as the defaults; a valid value lands as it is', () => {
     const b = browser()
     applyRemote(b, [
@@ -517,7 +572,8 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
           theme: 'neon',
           width: 'huge',
           lineFocus: 2,
-          spacing: 'x',
+          lineSpacing: 'x',
+          letterSpacing: 'wider',
           syllables: 'yes'
         }
       })

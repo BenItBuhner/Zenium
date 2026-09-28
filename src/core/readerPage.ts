@@ -2,9 +2,10 @@ import type { ReaderArticle } from './reader'
 import {
   LINE_FOCUS_MASK_CLASS,
   READER_IMAGES_ATTRIBUTE,
+  READER_LETTER_SPACING_ATTRIBUTE,
   READER_LINE_FOCUS_ATTRIBUTE,
+  READER_LINE_SPACING_ATTRIBUTE,
   READER_LINKS_ATTRIBUTE,
-  READER_SPACING_ATTRIBUTE,
   READER_SYLLABLES_ATTRIBUTE,
   SYLLABLE_MARK_CLASS,
   type ReaderPreferences
@@ -36,7 +37,13 @@ export interface ReaderShown {
  * the host's forced scheme reaches it). Chrome's Links and Images toggles (reader-12) are the
  * root's `data-links="off"` / `data-images="off"`: links off are the article's text as text
  * (no colour, no underline, no click), images off hide the article's pictures, figures and
- * video. The document carries no toolbar of its own: a `zen://`
+ * video. Line spacing and letter spacing (CT-35, Chrome's Reading mode "Line height" and
+ * "Letter spacing" menus) are the root's `data-line-spacing` / `data-letter-spacing`, each
+ * setting the article's variable – `--zen-reader-line-height` (1.65 at Standard, the page's
+ * own; 1.9 Loose; 2.15 Very loose) and `--zen-reader-letter-spacing` with the word gap that
+ * widens with it (0 / 0.06em + 0.16em Wide / 0.12em + 0.32em Very wide) – the numbers Edge's one
+ * Text spacing step drew at Normal / Wide / Wider, so a profile read forward from before the
+ * split renders to the pixel as it did. The document carries no toolbar of its own: a `zen://`
  * document is chrome (v2 §10.1), and its preferences – the text, the extras, read aloud – live
  * in the pill chip's Text preferences popover and sheet, the one home for them.
  */
@@ -45,6 +52,7 @@ const STYLE = `
     --font-size: 18px; --width: 680px; --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --serif: Georgia, "Iowan Old Style", "Times New Roman", serif; --mono: ui-monospace, Menlo, Consolas, monospace; --font: var(--serif);
     --bg: #fbfbfd; --fg: #1c1c22; --muted: #66666e; --border: rgba(0,0,0,.09); --link: #5b5fd6;
+    --zen-reader-line-height: 1.65; --zen-reader-letter-spacing: 0; --zen-reader-word-spacing: 0;
   }
   :root[data-theme='dark'] { --bg: #18181c; --fg: #ececf1; --muted: #a0a0ab; --border: rgba(255,255,255,.1); --link: #9a9cff; color-scheme: dark; }
   @media (prefers-color-scheme: dark) {
@@ -74,8 +82,11 @@ const STYLE = `
   @media (prefers-color-scheme: dark) { :root[data-theme='auto'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); } }
   :root[${READER_LINKS_ATTRIBUTE}='off'] article a { color: inherit; text-decoration: none; pointer-events: none; cursor: text; }
   :root[${READER_IMAGES_ATTRIBUTE}='off'] article :is(img, picture, video, figure, svg) { display: none; }
-  :root[data-spacing='wide'] article { letter-spacing: 0.06em; word-spacing: 0.16em; line-height: 1.9; }
-  :root[data-spacing='wider'] article { letter-spacing: 0.12em; word-spacing: 0.32em; line-height: 2.15; }
+  :root[${READER_LINE_SPACING_ATTRIBUTE}='loose'] { --zen-reader-line-height: 1.9; }
+  :root[${READER_LINE_SPACING_ATTRIBUTE}='very-loose'] { --zen-reader-line-height: 2.15; }
+  :root[${READER_LETTER_SPACING_ATTRIBUTE}='wide'] { --zen-reader-letter-spacing: 0.06em; --zen-reader-word-spacing: 0.16em; }
+  :root[${READER_LETTER_SPACING_ATTRIBUTE}='very-wide'] { --zen-reader-letter-spacing: 0.12em; --zen-reader-word-spacing: 0.32em; }
+  article { line-height: var(--zen-reader-line-height); letter-spacing: var(--zen-reader-letter-spacing); word-spacing: var(--zen-reader-word-spacing); }
   .${SYLLABLE_MARK_CLASS}::before { content: '\\00B7'; color: var(--muted); opacity: 0.8; }
   .${LINE_FOCUS_MASK_CLASS} { position: fixed; left: 0; right: 0; z-index: 20; pointer-events: none; background: color-mix(in srgb, var(--bg) 78%, transparent); }
   @media print { .${LINE_FOCUS_MASK_CLASS} { display: none; } .${SYLLABLE_MARK_CLASS}::before { content: none; } }
@@ -95,7 +106,8 @@ const SCRIPT = `
     root.style.setProperty('--font-size', state.fontSize + 'px');
     root.dataset.theme = state.theme; root.dataset.font = state.font; root.dataset.width = state.width;
     root.setAttribute(${JSON.stringify(READER_LINE_FOCUS_ATTRIBUTE)}, String(state.lineFocus || 0));
-    root.setAttribute(${JSON.stringify(READER_SPACING_ATTRIBUTE)}, state.spacing || 'normal');
+    root.setAttribute(${JSON.stringify(READER_LINE_SPACING_ATTRIBUTE)}, state.lineSpacing || 'standard');
+    root.setAttribute(${JSON.stringify(READER_LETTER_SPACING_ATTRIBUTE)}, state.letterSpacing || 'standard');
     root.setAttribute(${JSON.stringify(READER_SYLLABLES_ATTRIBUTE)}, String(state.syllables === true));
     if (state.links === false) root.setAttribute(${JSON.stringify(READER_LINKS_ATTRIBUTE)}, 'off');
     else root.removeAttribute(${JSON.stringify(READER_LINKS_ATTRIBUTE)});
@@ -151,7 +163,8 @@ export function readerPage(
     `data-font="${prefs.font}"`,
     `data-width="${prefs.width}"`,
     `${READER_LINE_FOCUS_ATTRIBUTE}="${prefs.lineFocus}"`,
-    `${READER_SPACING_ATTRIBUTE}="${prefs.spacing}"`,
+    `${READER_LINE_SPACING_ATTRIBUTE}="${prefs.lineSpacing}"`,
+    `${READER_LETTER_SPACING_ATTRIBUTE}="${prefs.letterSpacing}"`,
     `${READER_SYLLABLES_ATTRIBUTE}="${prefs.syllables}"`,
     // Off is the one word that turns them off: a record without the two (a peer's, from
     // before reader-12) reads on.
