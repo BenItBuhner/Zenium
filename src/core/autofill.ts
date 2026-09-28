@@ -14,6 +14,8 @@ import type {
   PaymentCard,
   PaymentCardInput,
   PaymentCardSummary,
+  PopupSurfaceRoom,
+  PopupSurfaceSize,
   ReauthOutcome,
   Rect,
   SaveAddressPrompt,
@@ -26,7 +28,7 @@ import { newId } from '../shared/ids'
 import { EXTENSION_SETTING_KEYS, effectiveSwitch } from '../shared/extensionSettings'
 import type { Browser } from './browser'
 import type { ConfirmOptions, SystemAutofillStatus } from './platform'
-import type { ZenWindow } from './window'
+import { parsePopupSurfaceRoom, samePopupSurfaceRoom, type ZenWindow } from './window'
 import {
   addressComplete,
   addressFromForm,
@@ -157,6 +159,10 @@ export class AutofillService {
   private surfaceWindow: ZenWindow | null = null
   /** The height the picker's document asked for (null until it has reported one). */
   private surfaceHeight: number | null = null
+  /** The room the picker's document asked beyond its box for a tooltip's moment (null at rest). */
+  private surfaceRoom: PopupSurfaceRoom | null = null
+  /** The surface's bounds as last set – the size a report is answered with (null while down). */
+  private surfaceBounds: Rect | null = null
   /** The popup surface holds the keyboard (a press on a row blurs the page field first). */
   private surfaceFocused = false
 
@@ -466,18 +472,36 @@ export class AutofillService {
     if (!this.pickerContext?.fieldFocused) this.schedulePickerClose()
   }
 
-  /** The picker's document measured the height its content wants; the surface follows. */
-  surfaceSize(id: string, height: number): void {
-    if (!this.picker || this.picker.id !== id) return
-    if (!Number.isFinite(height) || height <= 0) return
+  /**
+   * The picker's document measured the height its content wants – with, for a tooltip's moment
+   * on one of its edge controls, the room beyond its box (`PopupSurfaceRoom`; null at rest); the
+   * surface follows (`placePickerSurface`). Answers with the surface's size as set – the room's
+   * acknowledgement, which the document's tooltip waits for (`awaitTooltipRoom`) – the same
+   * size again for a report that changed nothing, or null when the report placed no surface.
+   */
+  surfaceSize(id: string, height: number, room?: PopupSurfaceRoom | null): PopupSurfaceSize | null {
+    if (!this.picker || this.picker.id !== id) return null
+    if (!Number.isFinite(height) || height <= 0) return null
+    const asked = parsePopupSurfaceRoom(room)
+    if (this.surfaceHeight === height && samePopupSurfaceRoom(this.surfaceRoom, asked))
+      return this.surfaceSizeSet()
     this.surfaceHeight = height
+    this.surfaceRoom = asked
     this.placeSurface()
+    return this.surfaceSizeSet()
+  }
+
+  /** The surface's size as this service last set it, or null while it has the surface down. */
+  private surfaceSizeSet(): PopupSurfaceSize | null {
+    const bounds = this.surfaceBounds
+    return bounds ? { width: bounds.width, height: bounds.height } : null
   }
 
   /**
    * Show the popup surface under the picker's field on the window that has it, sized to the
-   * height its document reported – estimated from the rows until it has – or leave the picker to
-   * the chrome's own document on a host without one.
+   * height its document reported – estimated from the rows until it has – with the room it
+   * asked for a tooltip's moment, or leave the picker to the chrome's own document on a host
+   * without one.
    */
   private placeSurface(): void {
     const picker = this.picker
@@ -486,14 +510,18 @@ export class AutofillService {
     if (!win || !win.hasPopupSurface) return
     const twoLine = picker.items.some((item) => item.subtitle !== '')
     const height = this.surfaceHeight ?? estimatePickerHeight(picker.items.length, twoLine)
-    win.setPopupSurface(placePickerSurface(picker.anchor, win.viewportSize(), height))
+    const bounds = placePickerSurface(picker.anchor, win.viewportSize(), height, this.surfaceRoom)
+    win.setPopupSurface(bounds)
     this.surfaceWindow = win
+    this.surfaceBounds = bounds
   }
 
   private dropSurface(): void {
     this.surfaceWindow?.setPopupSurface(null)
     this.surfaceWindow = null
     this.surfaceHeight = null
+    this.surfaceRoom = null
+    this.surfaceBounds = null
     this.surfaceFocused = false
   }
 
@@ -581,6 +609,7 @@ export class AutofillService {
     }
     // A new picker starts from the estimate: its document reports the real height once drawn.
     this.surfaceHeight = null
+    this.surfaceRoom = null
     this.placeSurface()
     this.browser.state.commitVolatile()
   }

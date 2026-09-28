@@ -1063,14 +1063,17 @@ export function ListRow({
 
 /**
  * A hairline between groups of rows, in the gutter: 4 px margins in a desktop popover (§6
- * menus), the chassis's `.zen-sheet-sep` at 8 in a phone sheet.
+ * menus), the chassis's `.zen-sheet-sep` at 8 in a phone sheet. A `data-*` mark rides along
+ * (a control panel's `data-sheet-peek-end`, `BottomSheet`: the hairline the peek ends after
+ * where the 52 % detent would cut the live row before it).
  */
-export function Separator(): JSX.Element {
+export function Separator(data: DataAttributes = {}): JSX.Element {
   const phone = usePhone()
   return (
     <div
       className={phone ? 'zen-sheet-sep shrink-0' : 'mx-4 my-1 h-px shrink-0 bg-[var(--v2-border)]'}
       aria-hidden
+      {...data}
     />
   )
 }

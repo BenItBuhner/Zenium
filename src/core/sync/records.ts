@@ -8,6 +8,7 @@ import type {
   FolderAgentMark,
   FolderColor,
   KeyBinding,
+  Mod,
   PasskeyEntry,
   ReadingListEntry,
   Settings,
@@ -19,6 +20,7 @@ import type {
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { OTHER_BOOKMARKS_ID, isBookmarkRoot } from '../../shared/bookmarks'
+import { sanitizeMod } from '../../shared/mods'
 import { isReadingListUrl, sanitizeReadingEntry } from '../../shared/readingList'
 import type { Model } from '../model'
 import type { SiteDataPolicy } from '../../shared/siteData'
@@ -58,6 +60,13 @@ export type RecordType =
    * does not know, which is how the builds before it treat this one).
    */
   | 'reading-list-entry'
+  /**
+   * One Mod (`Mod`, Settings › Mods: a sheet of CSS for the browser chrome; services pass 15,
+   * ID-43), under the Mod's own id, carrying every field but `id` (`ModData`); the `mods`
+   * scope's. Additive on the wire like the two above: a peer on a build without the type leaves
+   * the record alone (`__tests__/compat.test.ts`).
+   */
+  | 'mod'
 
 export interface SyncRecord {
   id: string
@@ -334,6 +343,48 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
 }
 
 /**
+ * One Mod as its record carries it (services pass 15, ID-43): every field but `id`, which is
+ * the record's – `name`, `source`, `css`, `enabled`, `updatedAt`, in the interface's order. The
+ * CSS travels whole, as a Boost's does: the sheet IS the Mod, and a `url()` inside it is the
+ * user's text – a `data:` picture written into the sheet travels as part of it (within
+ * `MAX_MOD_CSS`), while a `file:` or other host-local address names a file only the authoring
+ * device holds and travels as the address alone: the sync layer has no attachment path, and a
+ * picture is each device's own, as the new tab page's is (`NewTabService`). `source` is
+ * information – where the CSS was imported from, a file's name (`pickTextFiles` hands over the
+ * basename) or a URL – shown under the Mod's name on every device. `updatedAt` rides as
+ * information too: the conflict clock is the record's `modified`, the engine's stamp at the
+ * commit that changed the Mod (`SyncEngine.onLocalChange`), and `winningRemote` reads no payload
+ * field. Last writer per Mod; ties keep the local copy; no field-level merge. A removal is the
+ * engine's tombstone, from absence (`diffLocal`, at `now`, kept `TOMBSTONE_TTL_MS`).
+ */
+export type ModData = Omit<Mod, 'id'>
+
+/** The record's payload for a Mod: the five fields in the interface's order, `id` left to the record. */
+export function modData(mod: Mod): ModData {
+  return {
+    name: mod.name,
+    source: mod.source,
+    css: mod.css,
+    enabled: mod.enabled,
+    updatedAt: mod.updatedAt
+  }
+}
+
+/**
+ * Read a Mod record from another device – the apply side's sanitiser, before the Mod joins the
+ * list (`ModService.put`): `sanitizeMod` under the record's id (a CSS string, cut to
+ * `MAX_MOD_CSS`; a trimmed, never empty name; `source` a string or null; unknown fields dropped).
+ * Null for garbage. Idempotent – what it returns, it returns again unchanged
+ * (`__tests__/records.test.ts`) – so a Mod this device re-publishes after applying it hashes as
+ * the record it took, and two builds never bounce a Mod back and forth. A sheet a peer's build
+ * let grow past the cap lands cut, and the round that follows the apply (`SyncEngine.run`,
+ * `stamp: null`) republishes it at the peer's time, where the peer ties and keeps its own.
+ */
+export function readModData(id: string, data: unknown): Mod | null {
+  return sanitizeMod(id, data)
+}
+
+/**
  * The settings that are one device's own and travel in neither direction: this device's record
  * carries none of them, and a peer's record carrying one (a build from before a key joined the
  * list still sends it) leaves this device's value standing – the settings record is otherwise
@@ -559,7 +610,8 @@ export function defaultScope(): SyncScope {
     boosts: true,
     passwords: true,
     history: true,
-    readingList: true
+    readingList: true,
+    mods: true
   }
 }
 
@@ -578,7 +630,8 @@ export function fullScope(): SyncScope {
     boosts: true,
     passwords: true,
     history: true,
-    readingList: true
+    readingList: true,
+    mods: true
   }
 }
 
@@ -606,6 +659,8 @@ export function inScope(record: SyncRecord, scope: SyncScope): boolean {
       return scope.shortcuts
     case 'boost':
       return scope.boosts
+    case 'mod':
+      return scope.mods
     case 'credential':
       return scope.passwords
     case 'tab': {
@@ -1026,6 +1081,12 @@ export interface LocalSources {
    * type, `__tests__/compat.test.ts`'s golden sources) publishes none.
    */
   readingList?: readonly ReadingListEntry[]
+  /**
+   * The Mods (`ModService.all()`), one `mod` record per Mod under the Mod's own id and the `mods`
+   * scope (services pass 15, ID-43); a source without the field (a record set from before the
+   * type, `__tests__/compat.test.ts`'s golden sources) publishes none.
+   */
+  mods?: readonly Mod[]
 }
 
 /** Snapshot of everything in scope as `{ id → { type, data } }`. */
@@ -1142,6 +1203,9 @@ export function collectLocal(
   if (scope.readingList && src.readingList) {
     for (const entry of src.readingList)
       out.set(entry.id, { type: 'reading-list-entry', data: readingListEntryData(entry) })
+  }
+  if (scope.mods && src.mods) {
+    for (const mod of src.mods) out.set(mod.id, { type: 'mod', data: modData(mod) })
   }
   if (scope.settings) {
     // The record carries the settings as they are and never a key they lack: a key invented here

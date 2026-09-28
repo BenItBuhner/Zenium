@@ -95,6 +95,18 @@ export function sheetMaxHeight(
 }
 
 /**
+ * Where a control panel's peek must end (§9.13: what the peek shows whole is what is live):
+ * `foot` is the bottom edge of the last live row and `end` the top edge of the first row after
+ * the hairline that follows it, both in px from the sheet's top edge (content is anchored
+ * there). Where the peek fraction would cut the last live row – the fold falling above `foot`
+ * – the peek ends at `end` instead: the live rows whole, then the hairline.
+ */
+export interface SheetPeekEnd {
+  foot: number
+  end: number
+}
+
+/**
  * Detents for content `intrinsic` px tall (grip, body and bottom inset together). Content that
  * fits within the peek height gets a single detent; a taller sheet peeks at about half the
  * room and expands up to the top margin – or, for a list body, to 80 % of the layer (§9.20).
@@ -104,21 +116,28 @@ export function sheetMaxHeight(
  * `SHEET_PEEK_FRACTION` of the room between the inset and the top of the layer, plus the inset
  * itself, which the sheet pads for underneath. So a keyboard coming up lifts the peek with it
  * instead of eating it, and a sheet with a form keeps the same share of the room above the keys
- * that it had above the bar.
+ * that it had above the bar. A control panel that names where its peek must end (`peekEnd`)
+ * keeps the fraction while it shows the live rows whole, and takes the named end – the rows'
+ * foot plus the hairline, above the inset – where the fraction would cut the last of them.
  */
 export function computeDetents(
   intrinsic: number,
   layerHeight: number,
   insetTop: number,
   insetBottom = 0,
-  body: SheetBody = 'content'
+  body: SheetBody = 'content',
+  peekEnd: SheetPeekEnd | null = null
 ): SheetDetents {
   const expanded = Math.max(
     0,
     Math.min(Math.round(intrinsic), sheetMaxHeight(layerHeight, insetTop, body))
   )
   const bottom = Math.max(0, Math.min(Math.round(insetBottom), layerHeight))
-  const peek = bottom + Math.round((layerHeight - bottom) * SHEET_PEEK_FRACTION)
+  const fraction = bottom + Math.round((layerHeight - bottom) * SHEET_PEEK_FRACTION)
+  const peek =
+    peekEnd !== null && Math.round(peekEnd.foot) + bottom > fraction
+      ? Math.min(Math.round(peekEnd.end) + bottom, expanded)
+      : fraction
   const collapsed = expanded - peek >= SHEET_MIN_DETENT_GAP ? peek : expanded
   return { collapsed, expanded }
 }

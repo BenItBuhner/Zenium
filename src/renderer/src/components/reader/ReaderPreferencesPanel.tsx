@@ -9,10 +9,12 @@ import {
   READER_FONTS,
   READER_FONT_LABELS,
   READER_FONT_SIZES,
+  READER_LETTER_SPACINGS,
+  READER_LETTER_SPACING_LABELS,
   READER_LINE_FOCUS,
   READER_LINE_FOCUS_LABELS,
-  READER_SPACINGS,
-  READER_SPACING_LABELS,
+  READER_LINE_SPACINGS,
+  READER_LINE_SPACING_LABELS,
   READER_THEMES,
   READER_THEME_LABELS,
   READER_WIDTHS,
@@ -67,7 +69,9 @@ let lastLineFocus: ReaderLineFocus = 3
  * Immersive Reader "Text preferences" and "Reading preferences"): the one home for everything
  * the reader document offers (v2 §10.1 – the document itself draws no toolbar): read aloud's
  * start, the text size on its ladder with A− / A+, the font, the colour theme, the column
- * width and the text spacing, then the immersive-reader extras – line focus with its band size
+ * width, the line spacing and the letter spacing (CT-35, Chrome's Reading mode "Line height"
+ * and "Letter spacing" menus in the lead's words), then the immersive-reader extras – line
+ * focus with its band size
  * and syllables – and last Chrome's Reading mode content toggles, Links and Images (reader-12),
  * one setting for every reader page. On a mouse a 400 px popover under the
  * pill's chip (v2 draft §9.20) – rows with trailing controls (§9.21) under a title block (§9.23);
@@ -101,7 +105,8 @@ export function ReaderPreferencesPanel({
     prefs.font,
     prefs.theme,
     prefs.width,
-    prefs.spacing,
+    prefs.lineSpacing,
+    prefs.letterSpacing,
     prefs.lineFocus,
     prefs.syllables,
     prefs.links,
@@ -156,17 +161,24 @@ export function ReaderPreferencesPanel({
  * rule holds within the group: the action rows carry glyphs together, the setting rows below
  * none) – then a hairline and the text: the size as a stepper row – A− and A+ as the shared
  * icon buttons (§9.3) with the size in px between them, the ends disabled at .4 (§9.30) – and
- * a menulist row each for the font, the colour theme, the column width and the spacing (§9.13,
- * a sheet of radio rows under a finger); then the extras: line focus as a switch row (§10.4)
- * with the band size a dependent menulist row – laid out at .4 while the focus is off – and
- * syllables as a switch row; then, behind a hairline of their own, the article's content as
- * Chrome's Reading mode Settings menu ends its toolbar with it (reader-12): Links and Images as
- * one-line switch rows – the label alone, as Chrome's – off drawing the links as plain text and
- * hiding the pictures; with a description each the popover would pass §9.20's 60 % ceiling at
- * 1600 × 1000 and scroll by a hair (the first line's read of #587). #265's rule for the
- * phone sheet holds with the one head row: the peek shows the live type rows whole above the
- * fold (the 44 head rows and the hairline before Text spacing's bottom edge stay inside the
- * 412 × 915 phone's peek), the set-once aids after the hairline. Exported for the order's test.
+ * a menulist row each for the font, the colour theme, the column width, the line spacing and
+ * the letter spacing (§9.13, a sheet of radio rows under a finger; CT-35: Chrome's Reading
+ * mode "Line height" and "Letter spacing" menus as two value rows in place of Edge's one Text
+ * spacing, each in Chrome's three live steps, no description, among the type rows and never
+ * among the aids); then the extras: line focus as a switch row (§10.4) with the band size a
+ * dependent menulist row – laid out at .4 while the focus is off – and syllables as a switch
+ * row; then, behind a hairline of their own, the article's content as Chrome's Reading mode
+ * Settings menu ends its toolbar with it (reader-12): Links and Images as one-line switch rows
+ * – the label alone, as Chrome's – off drawing the links as plain text and hiding the
+ * pictures. With the sixth type row the popover crosses §9.20's 60 % ceiling at 1600 × 1000
+ * when both head rows are there and scrolls under its title block by a hair, as the lead
+ * allowed; a description on the aids' Links and Images would have done the same for nothing
+ * (the first line's read of #587). #265's rule for the phone sheet is the lead's: the peek
+ * shows every live type row whole – the hairline after the type rows carries the chassis's
+ * `data-sheet-peek-end`, so where the 52 % detent would cut the sixth row (a phone with both
+ * head rows) the peek ends at the type rows' foot plus the hairline instead
+ * (`BottomSheet`'s peek end) – the set-once aids after the hairline. Exported for the order's
+ * test.
  */
 export function Rows({
   prefs,
@@ -242,12 +254,24 @@ export function Rows({
         onChange={(width) => onChange({ width })}
       />
       <ChoiceRow
-        label="Text spacing"
-        value={prefs.spacing}
-        options={READER_SPACINGS.map((value) => ({ value, label: READER_SPACING_LABELS[value] }))}
-        onChange={(spacing) => onChange({ spacing })}
+        label="Line spacing"
+        value={prefs.lineSpacing}
+        options={READER_LINE_SPACINGS.map((value) => ({
+          value,
+          label: READER_LINE_SPACING_LABELS[value]
+        }))}
+        onChange={(lineSpacing) => onChange({ lineSpacing })}
       />
-      <Separator />
+      <ChoiceRow
+        label="Letter spacing"
+        value={prefs.letterSpacing}
+        options={READER_LETTER_SPACINGS.map((value) => ({
+          value,
+          label: READER_LETTER_SPACING_LABELS[value]
+        }))}
+        onChange={(letterSpacing) => onChange({ letterSpacing })}
+      />
+      <Separator data-sheet-peek-end="" />
       <SwitchRow
         label="Line focus"
         description="Dim everything but the lines being read"

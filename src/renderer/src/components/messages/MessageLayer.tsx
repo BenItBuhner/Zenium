@@ -26,14 +26,17 @@ interface Props {
  * It is a frame surface, not a `ChromePortal` one (lib/portals.tsx): the cards belong to the
  * content frame's box – they sit at its edges, clip to its rounded corners, recede with it under
  * a sheet, and the strips they report are the frame's – and they layer above the page and the
- * overlays but below sheets, dialogs and popovers, as Chrome's Messages do; the chrome layer is
- * `fixed` over the whole window, above all of those, and never under a transform. Layer and
- * cards are page surfaces (§9.29).
+ * overlays but below sheets, dialogs and popovers, as Chrome's Messages do, with one exception
+ * (§9.33): the toast's slot, which its seat lifts above a standing sheet or dialog for as long
+ * as it holds a card (`toastSeat` below); the chrome layer is `fixed` over the whole window,
+ * above all of those, and never under a transform. Layer and cards are page surfaces (§9.29).
  *
  * `toastSeat`: a second frame for the toast's slot, the same box as this one, that the host
  * seats on its own – the phone lifts it above the sheet host while a toast a sheet's act raised
- * is up (§9.33, `messages/lift.ts`). The slot is portalled there, so the host moves the frame
- * and never the cards: a toast keeps its element, its motion and its one announcement
+ * is up (§9.33, `messages/lift.ts`, `PhoneMessages`); the tablet seats it in the frame dialog
+ * host's own seat, which the host lifts above a standing dialog the same way
+ * (`useFrameToastSeat`, lib/portals.tsx). The slot is portalled there, so the host moves the
+ * frame and never the cards: a toast keeps its element, its motion and its one announcement
  * (`role="status"`) through a re-seat. Without one the slot draws here.
  */
 export function MessageLayer({ toastSeat = null }: Props = {}): JSX.Element | null {

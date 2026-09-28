@@ -11,10 +11,12 @@ import {
   hashData,
   inScope,
   metaFromRemote,
+  modData,
   newestByRecord,
   readBookmarkData,
   readCredentialData,
   readFolderAgentMark,
+  readModData,
   readReadingListData,
   readSpaceAgentMark,
   readingListEntryData,
@@ -46,8 +48,10 @@ import {
   createBookmarkRoots
 } from '../../../shared/bookmarks'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
+import { MAX_MOD_CSS, UNTITLED_MOD } from '../../../shared/mods'
 import type {
   BookmarkNode,
+  Mod,
   ReadingListEntry,
   SearchEngine,
   Space,
@@ -1920,5 +1924,276 @@ describe('reading-list records (services pass 11, ID-48)', () => {
     // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
     const naive = diffLocal(on.meta, collectLocal(src, off), 2000)
     expect(naive.records.find((r) => r.id === 'rl_a')?.deleted).toBe(true)
+  })
+})
+
+/**
+ * The Mods (services pass 15, ID-43): the browser chrome's CSS mods (`Mod`, Settings › Mods),
+ * one `mod` record per Mod under its own id, every field but `id`, the `mods` scope's – built as
+ * the reading list's type was: the CSS travels whole (an inline `data:` picture within it rides
+ * along; a `file:` or host-local address travels as the address alone), the apply side's
+ * sanitiser is idempotent, tombstones come from a Mod's absence, and a scope or a source from
+ * before the type publishes none.
+ */
+describe('mod records (services pass 15, ID-43)', () => {
+  const compact: Mod = {
+    id: 'mod_a',
+    name: 'Compact tabs',
+    source: null,
+    css: '.tab { padding: 2px 6px; }',
+    enabled: true,
+    updatedAt: 1000
+  }
+  const rounded: Mod = {
+    id: 'mod_b',
+    name: 'Rounded',
+    source: 'https://mods.example/rounded.css',
+    css: '.sidebar { border-radius: 12px; }',
+    enabled: false,
+    updatedAt: 800
+  }
+
+  it('collectLocal emits one record per Mod under its id: the five fields in the normal form’s order, never the id', () => {
+    const src = { ...sources(), mods: [compact, rounded] }
+    const out = collectLocal(src, defaultScope())
+    expect(out.get('mod_a')).toEqual({
+      type: 'mod',
+      data: {
+        name: 'Compact tabs',
+        source: null,
+        css: '.tab { padding: 2px 6px; }',
+        enabled: true,
+        updatedAt: 1000
+      }
+    })
+    expect(Object.keys(out.get('mod_a')!.data as object)).toEqual([
+      'name',
+      'source',
+      'css',
+      'enabled',
+      'updatedAt'
+    ])
+    expect(out.get('mod_a')!.data).not.toHaveProperty('id')
+    expect(out.get('mod_b')).toEqual({
+      type: 'mod',
+      data: {
+        name: 'Rounded',
+        source: 'https://mods.example/rounded.css',
+        css: '.sidebar { border-radius: 12px; }',
+        enabled: false,
+        updatedAt: 800
+      }
+    })
+    // `modData` is the payload; the switch is part of it, so a Mod turned off hashes apart from
+    // the same Mod on, and a CSS edit changes the hash – the record is the Mod, whole.
+    expect(modData(compact)).toEqual(out.get('mod_a')!.data)
+    expect(hashData(modData(compact))).not.toBe(hashData(modData({ ...compact, enabled: false })))
+    expect(hashData(modData(compact))).not.toBe(hashData(modData({ ...compact, css: '' })))
+    // The list's order is each device's own: the records carry no place in it.
+    expect(collectLocal({ ...src, mods: [rounded, compact] }, defaultScope()).get('mod_a')).toEqual(
+      out.get('mod_a')
+    )
+  })
+
+  it('the mods toggle (default on, as Chrome’s Themes type is a toggle of its own) gates the type both ways, and a source or a scope from before the type publishes none', () => {
+    expect(defaultScope().mods).toBe(true)
+    const src = { ...sources(), mods: [compact, rounded] }
+    const off = { ...defaultScope(), mods: false }
+    expect([...collectLocal(src, off).values()].some((r) => r.type === 'mod')).toBe(false)
+    // A source without the field (a record set from before the type) has nothing to publish.
+    const before = collectLocal(sources(), defaultScope())
+    expect([...before.values()].some((r) => r.type === 'mod')).toBe(false)
+    // A scope object persisted by an older build names no `mods`: it says nothing for the
+    // type, and the Mods stay home (the fixture pins of `compat.test.ts` rest on this).
+    const { mods: _absent, ...olderScope } = defaultScope()
+    void _absent
+    expect(
+      [...collectLocal(src, olderScope as SyncScope).values()].some((r) => r.type === 'mod')
+    ).toBe(false)
+    const record: SyncRecord = {
+      id: 'mod_a',
+      type: 'mod',
+      modified: 1,
+      deleted: false,
+      data: modData(compact)
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, defaultScope())).toBe(true)
+    // The older build's scope, as `inScope` reads it: nothing for the type, so an older peer
+    // drops the record from every round rather than erring on it.
+    expect(inScope(record, olderScope as SyncScope)).toBeFalsy()
+    // The look settings travel as they did, with the Mods off or on: the colour scheme and the
+    // app icon on the settings record, each space's gradient theme on its space record – and
+    // the OS accent switch stays each device's own. The toggle moves the Mod list alone.
+    for (const scope of [off, defaultScope()]) {
+      const local = collectLocal(src, scope)
+      const settings = local.get(SETTINGS_RECORD_ID)!.data as Record<string, unknown>
+      expect(settings).toHaveProperty('colorScheme')
+      expect(settings).toHaveProperty('appIcon')
+      expect(settings).not.toHaveProperty('useSystemAccent')
+      expect(local.get(src.ids.space.id)!.data).toHaveProperty('theme')
+    }
+    expect(DEVICE_LOCAL_SETTINGS).toContain('useSystemAccent')
+  })
+
+  it('diffLocal: first seen at 0; an edit stamps that one record at the commit’s now and no other; a removal is a tombstone at now; a change the round alone notices (stamp null) keeps its modified', () => {
+    const src = { ...sources(), mods: [compact, rounded] }
+    const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    expect(first.meta.mod_a).toMatchObject({ type: 'mod', modified: 0 })
+    expect(first.meta.mod_b).toMatchObject({ type: 'mod', modified: 0 })
+
+    // The user turns B on here: the subscriber's diff stamps B's record `now`.
+    const switched: Mod = { ...rounded, enabled: true, updatedAt: 2000 }
+    src.mods = [compact, switched]
+    const edited = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+    expect(edited.changed).toBe(true)
+    expect(edited.meta.mod_b.modified).toBe(2000)
+    expect(edited.meta.mod_a.modified).toBe(0)
+    expect(edited.records.find((r) => r.id === 'mod_b')).toMatchObject({
+      type: 'mod',
+      modified: 2000,
+      deleted: false,
+      data: { enabled: true, updatedAt: 2000 }
+    })
+
+    // The round (`run()`) never stamps: a hash it alone finds changed keeps the record's time.
+    src.mods = [compact, { ...switched, name: 'Renamed by a build' }]
+    const noticed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 3000, {
+      stamp: null
+    })
+    expect(noticed.changed).toBe(true)
+    expect(noticed.meta.mod_b.modified).toBe(2000)
+    expect(noticed.records.find((r) => r.id === 'mod_b')!.modified).toBe(2000)
+
+    // `remove(id)` drops the Mod; the engine writes the tombstone itself, at `now`.
+    src.mods = [switched]
+    const removed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000)
+    expect(removed.changed).toBe(true)
+    expect(removed.meta.mod_a).toEqual({ type: 'mod', hash: '', modified: 4000, deleted: true })
+    expect(removed.records.find((r) => r.id === 'mod_a')).toEqual({
+      id: 'mod_a',
+      type: 'mod',
+      modified: 4000,
+      deleted: true,
+      data: null
+    })
+    // The tombstone is kept for the bookmarks' TTL (30 days) and then forgotten.
+    const day = 24 * 60 * 60 * 1000
+    expect(
+      diffLocal(removed.meta, collectLocal(src, defaultScope()), 4000 + 29 * day).records.some(
+        (r) => r.id === 'mod_a'
+      )
+    ).toBe(true)
+    expect(
+      diffLocal(removed.meta, collectLocal(src, defaultScope()), 4000 + 31 * day).records.some(
+        (r) => r.id === 'mod_a'
+      )
+    ).toBe(false)
+    // A tombstone beats a live copy by `modified` alone; a live record beats it the same way;
+    // a tie keeps what this device holds.
+    const live: SyncRecord = {
+      id: 'mod_a',
+      type: 'mod',
+      modified: 3999,
+      deleted: false,
+      data: modData(compact)
+    }
+    expect(winningRemote(removed.meta, new Map([['mod_a', live]]))).toEqual([])
+    expect(winningRemote(removed.meta, new Map([['mod_a', { ...live, modified: 4000 }]]))).toEqual(
+      []
+    )
+    expect(
+      winningRemote(removed.meta, new Map([['mod_a', { ...live, modified: 4001 }]]))
+    ).toHaveLength(1)
+    const mine = metaFromRemote([{ ...live, modified: 4001 }])
+    expect(mine.mod_a).toEqual({
+      type: 'mod',
+      hash: hashData(live.data),
+      modified: 4001,
+      deleted: false
+    })
+  })
+
+  it('readModData – the apply side’s sanitiser – lands the Mod under the record’s id in the normal form, cuts the CSS at the cap, names an unnamed one, drops what it does not know, refuses garbage, and is idempotent', () => {
+    const sent = {
+      updatedAt: 800,
+      enabled: false,
+      css: '.sidebar { border-radius: 12px; }',
+      name: '  Rounded  ',
+      source: 'https://mods.example/rounded.css',
+      id: 'mod_other',
+      device: 'not a field'
+    }
+    const once = readModData('mod_b', sent)!
+    expect(once).toEqual({
+      id: 'mod_b',
+      name: 'Rounded',
+      source: 'https://mods.example/rounded.css',
+      css: '.sidebar { border-radius: 12px; }',
+      enabled: false,
+      updatedAt: 800
+    })
+    expect(Object.keys(once)).toEqual(['id', 'name', 'source', 'css', 'enabled', 'updatedAt'])
+    expect(once).not.toHaveProperty('device')
+    // Idempotent: sanitise(sanitise(x)) = sanitise(x), byte for byte – so a record this device
+    // re-publishes after applying it hashes as the Mod it holds.
+    const twice = readModData('mod_b', once)!
+    expect(JSON.stringify(twice)).toBe(JSON.stringify(once))
+    expect(hashData(modData(twice))).toBe(hashData(modData(once)))
+    expect(readModData('mod_b', modData(once))).toEqual(once)
+    // The record's id is the key; a payload naming another lands under the record's.
+    expect(readModData('mod_other', sent)!.id).toBe('mod_other')
+    // The CSS alone is required: a blank or missing name takes the fallback, a missing source
+    // is none, a missing switch is on, a missing or broken time is 0.
+    expect(readModData('mod_u', { css: 'a {}' })).toEqual({
+      id: 'mod_u',
+      name: UNTITLED_MOD,
+      source: null,
+      css: 'a {}',
+      enabled: true,
+      updatedAt: 0
+    })
+    expect(readModData('mod_u', { css: 'a {}', name: '   ', updatedAt: -1 })!.name).toBe(
+      UNTITLED_MOD
+    )
+    expect(readModData('mod_u', { css: 'a {}', updatedAt: Number.NaN })!.updatedAt).toBe(0)
+    expect(readModData('mod_u', { css: 'a {}', enabled: 'yes' })!.enabled).toBe(true)
+    expect(readModData('mod_u', { css: 'a {}', source: 7 })!.source).toBeNull()
+    // The cap: a peer's oversized Mod lands cut at `MAX_MOD_CSS`, the same as this device's own
+    // `add`/`update` would cut it, and the cut is idempotent too.
+    const huge = readModData('mod_h', { css: 'x'.repeat(MAX_MOD_CSS + 100) })!
+    expect(huge.css).toHaveLength(MAX_MOD_CSS)
+    expect(readModData('mod_h', modData(huge))).toEqual(huge)
+    // The CSS travels whole: an inline picture within it rides along; a `file:` address is the
+    // address alone – the picture behind it is that device's own (KNOWN).
+    const inline = 'body { background: url("data:image/png;base64,AAAA") }'
+    expect(readModData('mod_p', { css: inline })!.css).toBe(inline)
+    const local = 'body { background: url("file:///home/me/wall.png") }'
+    expect(readModData('mod_p', { css: local })!.css).toBe(local)
+    // Garbage: no CSS, a CSS that is not text, not an object, an array.
+    expect(readModData('mod_x', { name: 'No CSS' })).toBeNull()
+    expect(readModData('mod_x', { css: 42 })).toBeNull()
+    expect(readModData('mod_x', null)).toBeNull()
+    expect(readModData('mod_x', 'nonsense')).toBeNull()
+    expect(readModData('mod_x', [sent])).toBeNull()
+  })
+
+  it('frozenRecords: turning the Mods off holds their records instead of tombstoning them', () => {
+    const src = { ...sources(), mods: [compact, rounded] }
+    const on = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const off = { ...defaultScope(), mods: false }
+    const held = diffLocal(on.meta, collectLocal(src, off), 2000, {
+      stamp: 2000,
+      frozen: frozenRecords(src, off, on.meta)
+    })
+    expect(held.changed).toBe(false)
+    expect(held.meta.mod_a).toEqual(on.meta.mod_a)
+    expect(held.meta.mod_b).toEqual(on.meta.mod_b)
+    expect(held.records.some((r) => r.type === 'mod')).toBe(false)
+    // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
+    const naive = diffLocal(on.meta, collectLocal(src, off), 2000)
+    expect(naive.records.find((r) => r.id === 'mod_a')?.deleted).toBe(true)
   })
 })
