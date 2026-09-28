@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SyncFetch } from '../../platform'
 import type { WebDavProbe, WebDavSyncCredentials } from '../../../shared/types'
 import {
+  DEFAULT_WEBDAV_FOLDER,
   WebDavError,
   WebDavTransport,
   basicAuthorization,
@@ -190,6 +191,18 @@ describe('the addresses', () => {
     expect(webDavFolderUrl({ url: 'https://h/dav/', username: 'u', folder: '' })).toBe(
       'https://h/dav/zenium-sync/'
     )
+  })
+
+  it('reads the default folder by its name and written as a path alike: a device set up with `Zenium/` keeps its directory now the form starts with `Zenium`', () => {
+    expect(DEFAULT_WEBDAV_FOLDER).toBe('Zenium')
+    expect(webDavFolderSegments(DEFAULT_WEBDAV_FOLDER)).toEqual(['Zenium'])
+    expect(webDavFolderSegments(`${DEFAULT_WEBDAV_FOLDER}/`)).toEqual(['Zenium'])
+    const named = { url: 'https://h/dav/', username: 'u', folder: DEFAULT_WEBDAV_FOLDER }
+    const path = { ...named, folder: `${DEFAULT_WEBDAV_FOLDER}/` }
+    expect(webDavFolderUrl(named)).toBe('https://h/dav/Zenium/zenium-sync/')
+    expect(webDavFolderUrl(path)).toBe(webDavFolderUrl(named))
+    expect(webDavFolderName(named)).toBe('Zenium')
+    expect(webDavFolderName(path)).toBe('Zenium')
   })
 
   it('names the folder as the status shows it: the last segment, or the host for the root', () => {
