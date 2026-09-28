@@ -42,6 +42,7 @@ import {
   type Alarm
 } from '@core/extensions/api/alarms'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { PersistedRule } from '@core/extensions/api/declarativeContent'
 import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
 import type { ScopedValues } from '@core/extensions/api/privacy'
 import type { ProxyConfig } from '@core/extensions/api/proxy'
@@ -528,6 +529,8 @@ interface RuntimeData {
   listeners: Record<string, string[]>
   /** id → the `chrome.contextMenus` tree of a lazy-background extension (Chrome's `MenuManager` storage). */
   contextMenus: Record<string, PersistedMenuItem[]>
+  /** id → the `chrome.declarativeContent.onPageChanged` rules it added (Chrome's `ExtensionPrefs`; dropped at uninstall alone). */
+  declarativeRules: Record<string, PersistedRule[]>
   /** id → `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`. */
   sidePanelOnActionClick: Record<string, boolean>
   /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
@@ -705,6 +708,7 @@ function emptyData(): RuntimeData {
     alarms: {},
     listeners: {},
     contextMenus: {},
+    declarativeRules: {},
     sidePanelOnActionClick: {},
     proxy: {},
     fontSettings: {},
@@ -726,6 +730,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.alarms = saved.alarms ?? {}
   data.listeners = saved.listeners ?? {}
   data.contextMenus = saved.contextMenus ?? {}
+  data.declarativeRules = saved.declarativeRules ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
   data.fontSettings = saved.fontSettings ?? {}
@@ -1241,6 +1246,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.alarms[id]
     delete this.data.listeners[id]
     delete this.data.contextMenus[id]
+    delete this.data.declarativeRules[id]
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
     delete this.data.fontSettings[id]
@@ -1667,6 +1673,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   setContextMenuItems(id: string, items: PersistedMenuItem[]): void {
     if (items.length === 0) delete this.data.contextMenus[id]
     else this.data.contextMenus[id] = items
+    this.save()
+  }
+
+  declarativeRules(id: string): unknown {
+    return this.data.declarativeRules[id] ?? []
+  }
+
+  setDeclarativeRules(id: string, rules: PersistedRule[]): void {
+    if (rules.length === 0) delete this.data.declarativeRules[id]
+    else this.data.declarativeRules[id] = rules
     this.save()
   }
 
