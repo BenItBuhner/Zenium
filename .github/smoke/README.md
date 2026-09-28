@@ -48,6 +48,49 @@ xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
 The fixture extension lives under `fixtures/mv3-worker` (its worker logs the `chrome` surface it
 starts with; the hook in `smoke.mjs` reads the line off the session's ServiceWorkers console).
 
+## Launch render budget (`--render-budget-ms`, `--first-launch-render-budget-ms`)
+
+Every scenario's `launch` step bounds how long the chrome takes to be on screen: the run's first
+launch of a build is the cold one (`--first-launch-render-budget-ms`, 20 s; nothing has mapped the
+build's pages yet), every launch after it the warm one (`--render-budget-ms`, 10 s). The budget
+guards the chrome's **first paint** and a regression in what the chrome does before it, so it is
+judged on the renderer's own paint timeline: `Session.readFirstPaintMs` reads `performance.timeOrigin`
+plus the latest `paint` entry off the chrome page and reports `firstPaintMs`, the offset from the
+launch's start. That reading is the renderer thread's, not the main process's.
+
+It has to be, because the harness reaches the render through a handshake. `electron.launch()`
+spawns the app (through `cmd.exe` on Windows), waits for its two debugger lines, opens both sockets,
+attaches over CDP, then sends its first two commands **to the main process** (`Runtime.enable`, the
+`__playwright_run` probe – a packaged app has no Playwright loader, so it boots on its own and is
+not held at `ready`); the harness then runs two more main-process evaluates – `hookMain` and the pid
+read – and only then finds the chrome window and awaits its `chrome-root`. `chromeRenderedMs` spans
+all of that: it is the handshake's clock, and every one of those steps can hold it.
+
+W8-H2's two reds were the handshake, not the paint. Run 36356941806 (`agent-space-restore`, the
+unpacked leg's 4th launch) read 10154 ms and run 36362439181 (`dark`, its 7th) 10139 ms; every other
+launch of both legs read 0.7–2.5 s, the ones just before and after included, and the installed leg
+never came near. In both the whole excess sat in `launchMs` (`electron.launch()` plus `hookMain`):
+10052 and 10091 ms against 536–1851 ms otherwise, with the render steps after it at 102 and 48 ms –
+shorter than on any normal launch, over a chrome the failure screenshots show fully painted. A hold
+on the whole process (an antivirus pre-execution check, say) is ruled out by the arithmetic: a boot
+after a 10 s hold still needs the ≥ 536 ms every other launch needed, and 52–91 ms remained. So the
+app booted and painted while the handshake waited, and the wait was in the handshake – which step,
+the logs could not say, and no 10 s code deadline exists on the path (Playwright 1.63's launch runs
+under the harness's 90 s progress deadline; the app's boot before its window has none; `hookMain`
+is synchronous).
+
+Judging on `firstPaintMs` keeps a genuine paint regression failing on every launch, while a handshake
+that waited on something other than the paint no longer does. That handshake is not dropped: when it
+runs over the budget behind a paint within it, the launch step logs `launch handshake N ms over the
+render budget … while the chrome painted at M ms` with every timed phase, and each scenario's
+`result.json` and the summary carry `chromeRenderedMs` beside `firstPaintMs`. The phases split the
+handshake so the next occurrence names its own: on the harness's side `launchResolveMs`
+(`electron.launch()`), `hookMs`, `pidMs`, `chromePageMs`, `rootAttachMs`; on the app's, against the
+same launch clock, `processStartMs` (the OS's creation time of the browser process – a wait before
+the app existed), `nodeStartMs` (Node up in the main process), `chromeNavStartMs` (the chrome
+document loading – the window was up) and `firstPaintMs`. The composite is still the verdict when the
+renderer reported no paint entry.
+
 ## reCAPTCHA v2 (`recaptcha`, allow-network)
 
 The one scenario that leaves the loopback fixture: it opens Google's own reCAPTCHA v2 demo
