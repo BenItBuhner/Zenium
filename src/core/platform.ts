@@ -86,6 +86,7 @@ import type {
   EngineTransport
 } from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type { ManagedStatus } from '../shared/managed'
 import type { QrStartOutcome } from '../shared/qrScan'
 import type { InterstitialAction } from '../shared/interstitial'
 import type { PdfRenderOptions, PrinterDescription, PrintJobOptions } from '../shared/print'
@@ -1497,6 +1498,12 @@ export interface MenuItemTemplate {
    * `tablet-groups` §6). A native menu host has no such hand-back and ignores it.
    */
   keepsKeyboard?: boolean
+  /**
+   * A mark after the label (`MenuItemDescriptor.mark`): `managed` is Chrome's `ic_domain` on the
+   * "Managed Browser" row (TB-13), which a renderer-drawn menu draws in the row's trailing slot;
+   * a native host draws the text.
+   */
+  mark?: 'managed'
 }
 
 export type MenuSource =
@@ -3001,6 +3008,18 @@ export interface PrivateSessionHost {
   setOpenTabs(count: number): void
 }
 
+/**
+ * The managed configuration a device or profile owner handed the app (Android's app
+ * restrictions, `RestrictionsManager.getApplicationRestrictions()`; TB-13, `shared/managed.ts`).
+ * The core asks once, lazily – the app menu's first build or the Management page's first mount,
+ * never at start (`ManagedService`) – and the host reads the bundle then, off its main thread,
+ * answering the organisation's name if a key gives one and the bundle's keys, never its values.
+ * Hosts with no such bundle leave it out and are unmanaged.
+ */
+export interface ManagedHost {
+  read(): Promise<ManagedStatus>
+}
+
 export type { MediaSessionAction }
 
 // ---------------------------------------------------------------------------
@@ -3234,6 +3253,8 @@ export interface Platform {
   readonly webNotifications?: WebNotificationHost
   /** The private session's presence outside the chrome (Android's notification); optional. */
   readonly privateSession?: PrivateSessionHost
+  /** The app-restrictions bundle behind the "Managed Browser" row (Android); hosts without one are unmanaged. */
+  readonly managed?: ManagedHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

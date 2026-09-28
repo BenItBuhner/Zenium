@@ -103,6 +103,7 @@ import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
 import { ConnectivityService } from './connectivity'
+import { ManagedService } from './managed'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
 import { BackgroundWork } from './background/work'
@@ -337,6 +338,8 @@ export class Browser {
   readonly defaultBrowser: DefaultBrowserService
   /** The device's connectivity: the offline banner's state and the error pages that reload themselves. */
   readonly connectivity: ConnectivityService
+  /** The managed configuration behind the app menu's "Managed Browser" row and `zen://management` (TB-13). */
+  readonly managed: ManagedService
   /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
   readonly imports: ImportService
   /**
@@ -620,6 +623,7 @@ export class Browser {
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.connectivity = new ConnectivityService(this)
+    this.managed = new ManagedService(this)
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -3697,12 +3701,17 @@ export class Browser {
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title, tabId }, win) =>
         this.menus.showTopSiteContextMenu(url, title, tabId ?? null, win),
-      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) =>
-        this.menus.showAppMenu(win, {
-          anchor,
-          keyboard: Boolean(keyboard),
-          mediaHubFolded: Boolean(mediaHubFolded)
-        }),
+      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) => {
+        const show = (): void =>
+          this.menus.showAppMenu(win, {
+            anchor,
+            keyboard: Boolean(keyboard),
+            mediaHubFolded: Boolean(mediaHubFolded)
+          })
+        // The first build reads the host's app-restrictions bundle (the "Managed Browser" row,
+        // TB-13) and no later one does; hosts without a bundle never wait.
+        return this.managed.known() ? show() : this.managed.ensure().then(show)
+      },
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
       haptic: ({ kind }, win) => win.haptic(kind),
@@ -4291,6 +4300,8 @@ export class Browser {
       'updates.install': () => this.updates.install(),
       'updates.cancel': () => this.updates.cancel(),
       'updates.openRelease': (_a, win) => this.updates.openRelease(win),
+
+      'managed.status': () => this.managed.ensure(),
 
       'passwords.unlock': ({ passphrase }) => this.passwords.unlock(passphrase),
       'passwords.lock': () => this.passwords.lock(),

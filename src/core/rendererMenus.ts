@@ -31,8 +31,8 @@ export function serialiseMenu(
         // Only an icon-row item carries a glyph, only a saved group's row its mark, only a
         // device's row its kind, only a bound action a chord, only an empty state's sentence the
         // note, only a destructive item the danger, only a field-mounting item the kept keyboard,
-        // only an item standing for a shortcut action the action; every other descriptor keeps
-        // its shape.
+        // only an item standing for a shortcut action the action, only the managed row its
+        // trailing mark; every other descriptor keeps its shape.
         ...(item.glyph ? { glyph: item.glyph } : {}),
         ...(item.group ? { group: item.group } : {}),
         ...(item.device ? { device: item.device } : {}),
@@ -40,7 +40,8 @@ export function serialiseMenu(
         ...(item.note ? { note: true } : {}),
         ...(item.danger ? { danger: true } : {}),
         ...(item.keepsKeyboard ? { keepsKeyboard: true } : {}),
-        ...(item.action ? { action: item.action } : {})
+        ...(item.action ? { action: item.action } : {}),
+        ...(item.mark ? { mark: item.mark } : {})
       }
     })
   return { items: serialise(items), handlers }

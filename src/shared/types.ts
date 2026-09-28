@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { ManagedStatus } from './managed'
 import type { UpdateDotRecord } from '../core/updateDot'
 import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { EducationalTipMemory } from './educationalTips'
@@ -5191,6 +5192,14 @@ export interface MenuItemDescriptor {
    * takes the page under its picture before the core's toggle runs (`lib/readerTransition.ts`).
    */
   action?: ShortcutAction
+  /**
+   * A mark the row carries after its label, in the trailing slot – the sheet's state seat, the
+   * one its secondary ink and the popover's hint take: `managed` is Chrome's `ic_domain` on the
+   * "Managed Browser" row (TB-13; `shared/managed.ts`), the building glyph the row keeps on the
+   * phone's sheet and the tablet's popover alike. A native menu host has no glyph in its ink and
+   * draws the text.
+   */
+  mark?: 'managed'
 }
 
 /**
@@ -6962,6 +6971,13 @@ export interface Commands {
   'updates.cancel': { args: void; result: void }
   /** Open the release notes on GitHub in a tab. */
   'updates.openRelease': { args: void; result: void }
+
+  /**
+   * Who manages the browser (TB-13; `shared/managed.ts`): the host's app-restrictions bundle,
+   * read once on the first ask – the app menu's first build or the Management page's mount,
+   * never at start – or the unmanaged status on a host without a bundle to read.
+   */
+  'managed.status': { args: void; result: ManagedStatus }
 
   /**
    * Open (or first create) the vault. `passphrase` answers a `passphrase` outcome, and creates

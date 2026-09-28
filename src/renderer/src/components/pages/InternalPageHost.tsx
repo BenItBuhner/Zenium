@@ -8,6 +8,7 @@ import { BookmarkManager } from './bookmarks/BookmarkManager'
 import { DownloadsPage } from './downloads/DownloadsPage'
 import { HistoryPage } from './history/HistoryPage'
 import { LicencesPage } from './licences/LicencesPage'
+import { ManagementPage } from './management/ManagementPage'
 import { ReadingListPage } from './readingList/ReadingListPage'
 import { SettingsPage } from './settings/SettingsPage'
 import { TasksPage } from './tasks/TasksPage'
@@ -72,6 +73,8 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
       return <LegalPage id={id} state={state} tab={tab} />
     case 'tasks':
       return <TasksPage state={state} tab={tab} />
+    case 'management':
+      return <ManagementPage />
     default:
       return null
   }
