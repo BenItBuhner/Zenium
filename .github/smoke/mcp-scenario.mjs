@@ -115,7 +115,9 @@ export const PORT_POOL = Object.freeze({ lo: 20000, hi: 32768 })
 /** The kernel's first ephemeral port, from the proc file where there is one; the Linux default otherwise. */
 export function ephemeralFloor(read = (p) => fs.readFileSync(p, 'utf8')) {
   try {
-    const low = Number(String(read('/proc/sys/net/ipv4/ip_local_port_range')).trim().split(/\s+/)[0])
+    const low = Number(
+      String(read('/proc/sys/net/ipv4/ip_local_port_range')).trim().split(/\s+/)[0]
+    )
     if (Number.isInteger(low) && low > 0) return low
   } catch {
     // Not Linux, or no proc: the default below.
@@ -146,7 +148,11 @@ export function bindable(port) {
  * exact number, which nothing here does; `bindable` still confirms it is free at the moment of the
  * pick. `random` and `floor` are injectable for the unit tests.
  */
-export async function freePort({ random = Math.random, floor = ephemeralFloor(), tries = 32 } = {}) {
+export async function freePort({
+  random = Math.random,
+  floor = ephemeralFloor(),
+  tries = 32
+} = {}) {
   // A box whose ephemeral range starts low leaves no room beneath it; the pool is used as is
   // there – a verified-free port still, only without the guarantee.
   const hi = floor - PORT_POOL.lo >= 1024 ? Math.min(PORT_POOL.hi, floor) : PORT_POOL.hi
@@ -157,7 +163,9 @@ export async function freePort({ random = Math.random, floor = ephemeralFloor(),
     if (await bindable(port)) return port
     last = port
   }
-  throw new Error(`no free port in ${PORT_POOL.lo}–${hi - 1} after ${tries} tries (last tried ${last})`)
+  throw new Error(
+    `no free port in ${PORT_POOL.lo}–${hi - 1} after ${tries} tries (last tried ${last})`
+  )
 }
 
 /** Where a step starts: the verdict's counts and every check's failure count so far. */

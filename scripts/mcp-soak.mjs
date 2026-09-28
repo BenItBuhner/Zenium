@@ -381,10 +381,16 @@ export const ENDPOINT_PHASE_SAID = Object.freeze({
 /**
  * The endpoint once `agent.json` says `running: true` and the URL answers; throws at the deadline.
  * `log` (optional) is called on each phase change so a wait that stalls leaves a trail of which
- * phase it reached and when; `now`, `probe` and `pollMs` are injectable for the unit tests.
+ * phase it reached and when; `now`, `probe`, `pollMs` and `sleep` are injectable for the unit tests.
  */
 export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
-  const { log = () => undefined, now = Date.now, probe = answers, pollMs = 250 } = opts
+  const {
+    log = () => undefined,
+    now = Date.now,
+    probe = answers,
+    pollMs = 250,
+    sleep = delay
+  } = opts
   const started = now()
   const deadline = started + timeoutMs
   let lastPhase = null
@@ -403,7 +409,7 @@ export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
           e ? `running ${e.running}, url ${e.url}` : 'absent or unreadable'
         })`
       )
-    await delay(pollMs)
+    await sleep(pollMs)
   }
 }
 
@@ -1151,7 +1157,7 @@ export async function soakSession(client, ctx, { index, leg }) {
       )
       if (tries > 1)
         ctx.log(
-          `${label}: background snapshot laid out after ${tries} tries (${viewportOk && heading ? 'settled' : 'never settled'})`
+          `${label}: background snapshot ${viewportOk && heading ? `laid out after ${tries} tries` : `never laid out in ${tries} tries`}`
         )
       verdict.hard(
         at,
