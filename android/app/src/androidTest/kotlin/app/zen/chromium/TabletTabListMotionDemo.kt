@@ -21,16 +21,23 @@ import kotlin.math.roundToInt
  *     commit never animates (`SlideMotion.flip`'s `committed` gate, pinned by
  *     `slideLeave.test.ts`'s first-commit cases);
  *  1. GROW: a touch on the New Tab row; the new row mounts clipped shut at its end edge (opacity
- *     0) and opens on SPRING_SNAPPY as the New Tab row makes room – caught one frame in (the
+ *     0) and opens on SPRING_SNAPPY as the New Tab row glides down from where it stood on the
+ *     same spring – its own FLIP (`SlideMotion.follow`), no extent hold on a grow – while the rows
+ *     above it stand: a row whose box the commit did not change never moves (§11.4; the list is
+ *     read where it stands just before each commit, `SlideSnapshot`, so the chrome's insets
+ *     landing after the first paint move nothing at the first grow) – caught one frame in (the
  *     chrome's animation frames held from before the touch and stepped once: the spring's step is
  *     clamped at 64 ms, so the one frame lands at 38 % of the way whatever the emulator's cadence)
  *     for the mid-motion still, then let run to rest, the clip lifted;
- *  2. SHRINK: a touch on a middle row's close; the row's picture stands in the panel's column
- *     where the row stood (`.zen-slide-leaving`: no tab id, no test id, no role, `aria-hidden`,
- *     `inert`), clipped shut from its end edge on the same spring as the rows below glide up into
- *     the gap (FLIP) and the scroller's extent runs down with them (a `min-height` floor in whole
- *     px), so the New Tab row glides too – caught one frame in for the still, then let run: the
- *     picture gone at rest, the rows and the scroller bare, the tab gone from the core;
+ *  2. SHRINK: a touch on a middle row's close; the row's picture stands where the row stood, in
+ *     a layer of the scroller's content (`.zen-slide-layer`, `contain: layout`: under the
+ *     scroller's fades, scrolling with the rows, no scrollable overflow of its own) as
+ *     `.zen-slide-leaving` (no tab id, no test id, no role, `aria-hidden`, `inert`), clipped shut
+ *     from its end edge on the same spring as the rows below glide up into the gap (FLIP) and the
+ *     scroller's extent runs down with them (a `min-height` floor in whole px, the room the
+ *     picture stood in), so the New Tab row rides the extent rather than jumping – caught one
+ *     frame in for the still, then let run: the picture and the layer gone at rest, the rows and
+ *     the scroller bare, the tab gone from the core;
  *  3. the two again at the emulator's own cadence, traced (`tablet-list-grow`,
  *     `tablet-list-shrink`: the renderer's frames in `frames.jsonl`);
  *  4. FADES: tabs opened off camera until the list overflows its box – the end fade (24 px) comes
@@ -128,8 +135,9 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
         ).strings()
         check("the restored rows are there at the first read", rows.size >= 5, "rows $rows")
         check("no restored row wears an inline clip, opacity, transition or transform", marked.isEmpty(), "marked $marked")
-        check("no departure's picture stands in the panel", !inDom(PICTURE), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}")
+        check("no departure's picture or layer stands in the scroller", !inDom(PICTURE) && !inDom(LAYER), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}, layer ${inDom(LAYER)}")
         check("the scroller holds no extent", scrollerFloor().isEmpty(), "min-height '${scrollerFloor()}'")
+        check("the New Tab row wears no transform", translationOf(NEW_TAB_ROW) == null, "transform '${rowStyle(NEW_TAB_ROW, "transform")}'")
     }
 
     // --- 1 and 3. the grow -------------------------------------------------------------------------
@@ -158,6 +166,17 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
             val row = row(id)
             val size = jsNumber("(function(){var e=document.querySelector(${JSONObject.quote(row)});return e?e.getBoundingClientRect().height:0})()")
             check("the new row mounts clipped shut at its end edge, at opacity 0", hiddenOf(row) >= size - 0.5 && rowStyle(row, "opacity") == "0", "clip-path '${rowStyle(row, "clipPath")}', opacity '${rowStyle(row, "opacity")}', height $size")
+            // The rows already in the list: their boxes did not change, so they wear nothing –
+            // whatever moved the chrome under them since the last commit (the insets after the
+            // first paint) was read before this one.
+            val moved = before.mapNotNull { r -> translationOf(row(r))?.let { r to it } }
+            check("the rows above the new one stand: no row whose box did not change wears a transform at the commit", moved.isEmpty(), "translateY ${moved.map { "${titleOf(it.first)} ${"%.1f".format(it.second)}" }}")
+            // The New Tab row is laid out one pitch lower and drawn back up where it stood: its
+            // own FLIP, on the spring; nothing is held (a grow has no extent hold).
+            val footAt = translationOf(NEW_TAB_ROW)
+            val footCommit = domRect(NEW_TAB_ROW)
+            check("the New Tab row is drawn where it stood at the commit, by its own translation", footAt != null && abs(footAt + PITCH) <= 1 && foot != null && footCommit != null && abs(footCommit.top - foot.top) <= 1, "translateY $footAt, foot ${foot?.top} -> ${footCommit?.top}")
+            check("no extent is held on a grow", scrollerFloor().isEmpty(), "min-height '${scrollerFloor()}'")
             SystemClock.sleep(150)
             val ran = stepFrame()
             val hidden = hiddenOf(row)
@@ -165,11 +184,16 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
             val opacity = rowStyle(row, "opacity").toDoubleOrNull() ?: Double.NaN
             check("one frame in (the 64 ms step) the row shows 38 % of its height at the same part of its opacity", ran > 0 && ratio > 0.52 && ratio < 0.72 && abs(opacity - (1 - ratio)) < 0.05, "callbacks $ran, hidden ${"%.1f".format(hidden)} of $size (${"%.0f".format(ratio * 100)} % hidden), opacity $opacity")
             check("the row's own transition is held off while the spring runs", rowStyle(row, "transition") == "none" && rowStyle(row, "willChange").contains("clip-path"), "transition '${rowStyle(row, "transition")}', will-change '${rowStyle(row, "willChange")}'")
+            val movedHeld = before.mapNotNull { r -> translationOf(row(r))?.let { r to it } }
+            check("one frame in the rows above still stand", movedHeld.isEmpty(), "translateY ${movedHeld.map { "${titleOf(it.first)} ${"%.1f".format(it.second)}" }}")
+            val footGlide = translationOf(NEW_TAB_ROW)
             val footHeld = domRect(NEW_TAB_ROW)
+            check("one frame in the New Tab row has come down the same part of its pitch as the row has opened", footGlide != null && abs(footGlide + PITCH * ratio) <= 3, "translateY $footGlide, expected ${"%.1f".format(-PITCH * ratio)}; foot ${foot?.top} -> ${footHeld?.top}")
             finding("  ${awaitChromePaint()}")
             still("grow-mid-$scheme")
             releaseFrames()
             check("at rest the clip lifts and the row is drawn as it is", awaitJs("(function(){var e=document.querySelector(${JSONObject.quote(row)});return !!e&&e.style.clipPath===''&&e.style.opacity===''&&e.style.transition===''})()", true, 4_000), "clip-path '${rowStyle(row, "clipPath")}', opacity '${rowStyle(row, "opacity")}'")
+            check("at rest the New Tab row is bare", awaitJs("(function(){var e=document.querySelector(${JSONObject.quote(NEW_TAB_ROW)});return !!e&&e.style.transform===''})()", true, 3_000), "transform '${rowStyle(NEW_TAB_ROW, "transform")}'")
             val footAfter = domRect(NEW_TAB_ROW)
             check("the New Tab row stands one pitch lower", foot != null && footAfter != null && abs((footAfter.top - foot.top) - PITCH) <= 2, "foot ${foot?.top} -> ${footHeld?.top} (held) -> ${footAfter?.top}")
             SystemClock.sleep(600)
@@ -185,6 +209,8 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
         val id = rowIds().firstOrNull { it !in before } ?: return
         opened += id
         check("the traced row rests drawn whole", awaitJs("(function(){var e=document.querySelector(${JSONObject.quote(row(id))});return !!e&&e.style.clipPath===''&&e.style.opacity===''})()", true, 4_000), "clip-path '${rowStyle(row(id), "clipPath")}'")
+        val footAfter = domRect(NEW_TAB_ROW)
+        check("the traced New Tab row rests bare, one pitch lower", awaitJs("(function(){var e=document.querySelector(${JSONObject.quote(NEW_TAB_ROW)});return !!e&&e.style.transform===''})()", true, 3_000) && foot != null && footAfter != null && abs((footAfter.top - foot.top) - PITCH) <= 2, "transform '${rowStyle(NEW_TAB_ROW, "transform")}', foot ${foot?.top} -> ${footAfter?.top}")
     }
 
     // --- 2 and 3. the shrink ----------------------------------------------------------------------
@@ -217,10 +243,19 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
                 return
             }
             val picture = domRect(PICTURE)
-            check("the row's picture stands in the panel's column where the row stood", picture != null && rowBox != null && abs(picture.top - rowBox.top) <= 1 && abs(picture.left - rowBox.left) <= 1 && abs(picture.height() - rowBox.height()) <= 1 && abs(picture.width() - rowBox.width()) <= 1, "picture $picture, row $rowBox")
+            check("the row's picture stands in the scroller where the row stood", picture != null && rowBox != null && abs(picture.top - rowBox.top) <= 1 && abs(picture.left - rowBox.left) <= 1 && abs(picture.height() - rowBox.height()) <= 1 && abs(picture.width() - rowBox.width()) <= 1, "picture $picture, row $rowBox")
+            // The seat: the scroller's own layer, laid out at nothing and containing its layout,
+            // so the picture lies under the scroller's fades and scrolls with the rows while its
+            // box is ink, not scrollable overflow of the scroller's.
+            check("the picture is seated in the scroller's layer: a child of the scroller, contain: layout, hidden from readers", jsBoolean("(function(){var p=document.querySelector(${JSONObject.quote(PICTURE)});var l=p&&p.parentElement;var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!l&&!!s&&l.parentElement===s&&getComputedStyle(l).contain.indexOf('layout')>=0&&l.getAttribute('aria-hidden')==='true'})()"), "layer ${layerText()}")
             check("the picture is a picture: no tab id, no test id, no role, hidden from readers and inert", jsBoolean("(function(){var p=document.querySelector(${JSONObject.quote(PICTURE)});return !!p&&!p.hasAttribute('data-tab-id')&&!p.hasAttribute('data-testid')&&!p.hasAttribute('role')&&p.getAttribute('aria-hidden')==='true'&&p.hasAttribute('inert')})()"), "")
             val floor0 = scrollerFloor()
             check("the scroller's extent is held where it was at the commit", floor0.isNotEmpty() && abs(floor0.removeSuffix("px").toDouble() - extentBefore) <= 1, "min-height '$floor0', extent before $extentBefore")
+            check("the picture's box is no overflow of the held scroller: nothing to scroll, the end fade off", !overflows() && fadeOf("end") == 0.0, "${scrollerText()}; end fade ${fadeOf("end")}")
+            // The New Tab row is laid out one pitch up and held back where it stood by the
+            // scroller's extent alone: the hold's glide is its glide, no translation of its own.
+            val footCommit = domRect(NEW_TAB_ROW)
+            check("the New Tab row rides the hold at the commit: no translation of its own, standing where it stood", translationOf(NEW_TAB_ROW) == null && foot != null && footCommit != null && abs(footCommit.top - foot.top) <= 1, "transform '${rowStyle(NEW_TAB_ROW, "transform")}', foot ${foot?.top} -> ${footCommit?.top}")
             SystemClock.sleep(150)
             val ran = stepFrame()
             val size = rowBox?.height()?.toDouble() ?: 44.0
@@ -235,12 +270,14 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
             val floor1 = scrollerFloor()
             val floorPx = floor1.removeSuffix("px").toDoubleOrNull()
             check("the scroller's extent runs down with them, in whole px", floorPx != null && floorPx == floorPx.roundToInt().toDouble() && floorPx < extentBefore && floorPx > extentBefore - size - GAP, "min-height '$floor1', extent before $extentBefore")
+            check("one frame in the held scroller still has nothing to scroll, the end fade off", !overflows() && fadeOf("end") == 0.0, "${scrollerText()}; end fade ${fadeOf("end")}")
             val footHeld = domRect(NEW_TAB_ROW)
-            check("the New Tab row glides with the extent rather than jumping", foot != null && footHeld != null && footHeld.top < foot.top - 2 && footHeld.top > foot.top - size - GAP + 2, "foot ${foot?.top} -> ${footHeld?.top}")
+            check("the New Tab row glides with the extent rather than jumping, wearing no translation", translationOf(NEW_TAB_ROW) == null && foot != null && footHeld != null && footHeld.top < foot.top - 2 && footHeld.top > foot.top - size - GAP + 2, "transform '${rowStyle(NEW_TAB_ROW, "transform")}', foot ${foot?.top} -> ${footHeld?.top}")
             finding("  ${awaitChromePaint()}")
             still("shrink-mid-$scheme")
             releaseFrames()
             check("at rest the picture is gone", awaitDomGone(PICTURE, 4_000), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}")
+            check("the layer goes with the last picture: the scroller's children are its rows' again", awaitDomGone(LAYER, 2_000), "layer ${layerText()}")
             check("the rows below rest in their slots, one pitch up, bare", awaitJs(below.joinToString("&&") { "(function(){var e=document.querySelector(${JSONObject.quote(row(it))});return !!e&&e.style.transform===''})()" }, true, 3_000) && below.all { id -> val was = belowBefore[id]; val now = domRect(row(id)); was != null && now != null && abs((was.top - now.top) - (size + GAP)) <= 2 }, "tops ${below.map { "${titleOf(it)} ${belowBefore[it]?.top} -> ${domRect(row(it))?.top}" }}")
             check("the scroller's floor is gone at rest", awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.style.minHeight===''})()", true, 3_000), "min-height '${scrollerFloor()}'")
             check("the tab is gone from the core", awaitCore { !tabExists(tabId, it) }, "exists ${tabExists(tabId)}")
@@ -254,7 +291,7 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
             SystemClock.sleep(SPRING_MS)
         }
         check("the touch on the close takes the row out of the list (traced)", touched, "row present ${inDom(row(tabId))}")
-        check("the traced departure rests with no picture left and the rows bare", awaitDomGone(PICTURE, 4_000) && awaitJs(below.joinToString("&&") { "(function(){var e=document.querySelector(${JSONObject.quote(row(it))});return !e||e.style.transform===''})()" }, true, 3_000), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}")
+        check("the traced departure rests with no picture or layer left and the rows bare", awaitDomGone(PICTURE, 4_000) && awaitDomGone(LAYER, 2_000) && awaitJs(below.joinToString("&&") { "(function(){var e=document.querySelector(${JSONObject.quote(row(it))});return !e||e.style.transform===''})()" }, true, 3_000), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}, layer ${layerText()}")
         check("the tab is gone from the core (traced)", awaitCore { !tabExists(tabId, it) }, "exists ${tabExists(tabId)}")
     }
 
@@ -298,7 +335,7 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
         }
         coreInvoke("tab.closeMany", "{\"tabIds\":[${extra.joinToString(",") { JSONObject.quote(it) }}]}")
         check("the extra tabs close off camera", awaitCore(12_000) { state -> extra.none { tabExists(it, state) } } && awaitUntil(6_000) { extra.none { inDom(row(it)) } }, "left ${extra.filter { inDom(row(it)) }}")
-        check("the list settles with no picture left", awaitDomGone(PICTURE, 4_000), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}")
+        check("the list settles with no picture or layer left", awaitDomGone(PICTURE, 4_000) && awaitDomGone(LAYER, 2_000), "pictures ${jsText("document.querySelectorAll(${JSONObject.quote(PICTURE)}).length")}, layer ${layerText()}")
         check("both fades go as the list fits again", awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.style.getPropertyValue('--zen-fade-end')==='0px'&&s.style.getPropertyValue('--zen-fade-start')==='0px'})()", true, 4_000), "start ${fadeOf("start")}, end ${fadeOf("end")}; ${scrollerText()}")
         SystemClock.sleep(600)
         still("fades-off")
@@ -361,16 +398,19 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
         val ids = rowIds()
         val below = ids.drop(ids.indexOf(tabId) + 1)
         val close = domRect("${row(tabId)} .zen-tab-close")
+        val foot = domRect(NEW_TAB_ROW)
         holdFrames()
         val touched = touch(close, "the close of ${titleOf(tabId)}'s row (reduced motion)") != null && awaitUntil(5_000) { !inDom(row(tabId)) }
         check("the touch on the close takes the row out of the list (reduced motion)", touched, "row present ${inDom(row(tabId))}")
         if (touched) {
-            check("the picture stands in place with no clip, fading", inDom(PICTURE) && rowStyle(PICTURE, "clipPath") == "" && rowStyle(PICTURE, "opacity").toDoubleOrNull() == 1.0, "clip-path '${rowStyle(PICTURE, "clipPath")}', opacity '${rowStyle(PICTURE, "opacity")}'")
+            check("the picture stands in place in the scroller's layer with no clip, fading", inDom(PICTURE) && rowStyle(PICTURE, "clipPath") == "" && rowStyle(PICTURE, "opacity").toDoubleOrNull() == 1.0, "clip-path '${rowStyle(PICTURE, "clipPath")}', opacity '${rowStyle(PICTURE, "opacity")}', layer ${layerText()}")
             check("the rows below take their places at once, nothing travels", below.all { !inDom(row(it)) || translationOf(row(it)) == null }, "translateY ${below.map { translationOf(row(it)) }}")
             check("the scroller's extent is not held", scrollerFloor().isEmpty(), "min-height '${scrollerFloor()}'")
+            val footNow = domRect(NEW_TAB_ROW)
+            check("the New Tab row cuts to its place one pitch up, no translation", translationOf(NEW_TAB_ROW) == null && foot != null && footNow != null && abs((foot.top - footNow.top) - PITCH) <= 2, "transform '${rowStyle(NEW_TAB_ROW, "transform")}', foot ${foot?.top} -> ${footNow?.top}")
             SystemClock.sleep(200)
             stepFrame()
-            check("one frame past 120 ms the fade is over and the picture gone", awaitDomGone(PICTURE, 2_000), "opacity '${rowStyle(PICTURE, "opacity")}'")
+            check("one frame past 120 ms the fade is over and the picture gone with its layer", awaitDomGone(PICTURE, 2_000) && awaitDomGone(LAYER, 2_000), "opacity '${rowStyle(PICTURE, "opacity")}', layer ${layerText()}")
         }
         releaseFrames()
         shellCommand("settings put global animator_duration_scale 1")
@@ -461,6 +501,10 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
     private fun scrollerText(): String =
         jsText("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return s?('client '+s.clientHeight+', scroll '+s.scrollHeight+', top '+s.scrollTop):'no scroller'})()")
 
+    /** The departures' layer as it stands: its parent, its containment and its pictures; or none. */
+    private fun layerText(): String =
+        jsText("(function(){var l=document.querySelector(${JSONObject.quote(LAYER)});if(!l)return 'none';var p=l.parentElement;return (p&&p.hasAttribute('data-tab-scroller')?'in the scroller':'in '+(p?p.className:'nothing'))+', contain '+getComputedStyle(l).contain+', '+l.children.length+' picture(s)'})()")
+
     private fun fadeOf(edge: String): Double =
         jsNumber("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return s?parseFloat(s.style.getPropertyValue('--zen-fade-$edge')||'0'):NaN})()")
 
@@ -484,7 +528,9 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
         private const val SCROLLER = "$PANEL > [data-tab-scroller]"
         private const val ROWS = "$SCROLLER .zen-tab[data-tab-id]"
         private const val NEW_TAB_ROW = "$PANEL [data-new-tab]"
-        private const val PICTURE = "$PANEL > .zen-slide-leaving"
+        /** The departures' layer: a child of the scroller's content, laid out at nothing. */
+        private const val LAYER = "$SCROLLER > .zen-slide-layer"
+        private const val PICTURE = "$LAYER > .zen-slide-leaving"
         private const val GHOST = ".zen-tab-ghost .zen-tab-ghost-row"
 
         private fun row(tabId: String) = "$SIDEBAR .zen-tab[data-tab-id=\"$tabId\"]"
