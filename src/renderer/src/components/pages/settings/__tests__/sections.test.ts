@@ -2660,7 +2660,7 @@ describe('the section model', () => {
     // keeps it there on every host – the phone lifts the toast over the sheet (#651), the tablet
     // and the desktop lift it over a standing dialog in the frame dialog host's seat (#678) – so
     // Got it keeps the sheet with the granted list under it on all three layouts: no
-    // `closesSheet` anywhere (this build's layout is the desktop's; the other two are built here).
+    // `closesSheet` on any host – three pins, one per host, each built for its layout.
     const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
     invoke.mockImplementation(async (name) =>
       name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
@@ -2669,20 +2669,27 @@ describe('the section model', () => {
     const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
     if (gotIt.kind !== 'action') throw new Error('not an action')
     expect(gotIt).toMatchObject({ button: 'Got it' })
-    expect(gotIt.closesSheet).toBeUndefined()
     const reviewState = state({
       lastSafetyCheck: result,
       permissionRules: rules
     } as Partial<UIState>)
     const privacyDef = PAGE.sections.find((x) => x.id === 'privacy')
     if (!privacyDef) throw new Error('no privacy section')
-    for (const formFactor of ['tablet', 'phone'] as const) {
+    const gotItOn = (formFactor: 'desktop' | 'tablet' | 'phone'): Extract<Row, { kind: 'action' }> => {
       const built = buildSection(privacyDef, { ...context(reviewState).ctx, formFactor })
       const hostGotIt = row(built, 'safety-check:permissions:revoked:acknowledge')
-      if (hostGotIt.kind !== 'action') throw new Error('not an action')
+      if (hostGotIt.kind !== 'action') throw new Error(`${formFactor}: not an action`)
       expect(hostGotIt).toMatchObject({ button: 'Got it' })
-      expect(hostGotIt.closesSheet).toBeUndefined()
+      return hostGotIt
     }
+    // The desktop: the review is an item dialog in the frame dialog host; the toast lifts over
+    // it in the host's seat (#678), so Got it leaves the dialog standing.
+    expect(gotItOn('desktop').closesSheet).toBeUndefined()
+    // The tablet: the same host and the same seat (#678, `TabletShell`); the dialog stands.
+    expect(gotItOn('tablet').closesSheet).toBeUndefined()
+    // The phone: the sheet stays as since #668 – its messages lift over the sheet (#651).
+    expect(gotItOn('phone').closesSheet).toBeUndefined()
+    expect(gotIt.closesSheet).toBeUndefined()
     expect(gotIt.confirm).toBeUndefined()
     expect(gotIt.destructive).toBeUndefined()
     gotIt.onPress?.()
