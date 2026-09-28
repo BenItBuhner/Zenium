@@ -16,9 +16,28 @@
   an event only when some enabled service asked for its type, and UiAutomation is none – sends
   them at all. Declared as any accessibility service is: bound by the system under
   BIND_ACCESSIBILITY_SERVICE, its asks in res/xml/events_tap_service.xml.
+
+  And the device admin the managed-configuration driver needs (ManagedTestAdmin.kt): the shell
+  makes this test package the device owner for the run, and as the owner the driver hands Zenium
+  an app-restrictions bundle through DevicePolicyManager – the way an EMM does – so the app reads
+  it through RestrictionsManager as it would in the field. Declared as any device admin is, with
+  no policies of its own (res/xml/device_admin.xml); the driver clears the bundle and gives the
+  ownership back when it is done.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Nimbus News">
+        <receiver
+            android:name="app.zen.chromium.ManagedTestAdmin"
+            android:exported="true"
+            android:label="Demo harness managed-configuration admin"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
         <service
             android:name="app.zen.chromium.EventsTapService"
             android:exported="true"

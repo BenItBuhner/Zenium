@@ -1,0 +1,9 @@
+{
+  "id": "managed",
+  "class": "ManagedDemo",
+  "shard": "phone-d",
+  "mirrors": "android-managed-demo.yml",
+  "dir": "managed-demo",
+  "estimate": 3.5,
+  "note": "TB-13 (W6-E10): Chrome's Managed browser row and chrome://management. The tab-group drivers' seeded profile; the app menu under a finger with no managed configuration (no row, the list ends on Change Menu, managed.status unmanaged); the seam – the test package made device owner through the shell and an app-restrictions bundle handed to the app through DevicePolicyManager, the EMM's path, nothing in the app overridden – then a fresh start, the menu's last row Managed Browser with its mark, a real touch on it opening zen://management in a new tab in front (the title, Chrome's subtitle naming the organisation, the honest notice, the bundle's keys as static rows with their count), the page and the menu again in dark, and the bundle cleared and the ownership given back in a finally. One relaunch and three menu opens: about three and a half minutes of driver after the boot, on phone-d, the shard with the room."
+}
