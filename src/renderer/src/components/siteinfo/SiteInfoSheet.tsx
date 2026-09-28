@@ -363,7 +363,6 @@ const PERMISSION_ICONS: Record<string, LucideIcon> = {
   geolocation: MapPin,
   notifications: Bell,
   midi: Music2,
-  midiSysex: Music2,
   'clipboard-read': ClipboardPaste,
   openExternal: ExternalLink,
   mediaKeySystem: Clapperboard

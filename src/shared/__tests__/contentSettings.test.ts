@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { CONTENT_SETTINGS, contentSetting, contentSettingsFor } from '../contentSettings'
+import {
+  CONTENT_SETTINGS,
+  allowOnceFor,
+  builtInDefault,
+  contentSetting,
+  contentSettingId,
+  contentSettingsFor,
+  promptLabelFor,
+  tracksLastVisit
+} from '../contentSettings'
 
 const ids = (platform: 'desktop' | 'android'): string[] =>
   contentSettingsFor(platform).map((setting) => setting.id)
@@ -80,29 +89,47 @@ describe('contentSettingsFor', () => {
     })
   })
 
-  it('asks about MIDI system messages as Chrome’s one MIDI setting asks (MW-36 / PS-54), on the desktop until the phone routes the resource', () => {
-    // Chrome: `midi-sysex`, ask by default, allow / block / ask (`content_settings_registry.cc:
-    // 209-217`); every `requestMIDIAccess()` asks for it since `kBlockMidiByDefault`
-    // (`midi_access_initializer.cc:48-52`); no one-time allow (`permission_request.cc:319-320`).
-    expect(contentSetting('midiSysex')).toMatchObject({
-      label: 'MIDI system messages',
+  it('keeps one MIDI row, as Chrome has since kBlockMidiByDefault, and folds the engines’ SysEx request into it (MW-36 / PS-54)', () => {
+    // Chrome: one setting, `midi-sysex`, ask by default, allow / block / ask
+    // (`content_settings_registry.cc:209-217`); every `requestMIDIAccess()` asks for it since
+    // `kBlockMidiByDefault` (`midi_access_initializer.cc:48-52`); no one-time allow
+    // (`permission_request.cc:319-320`). Its words: `IDS_SETTINGS_SITE_SETTINGS_MIDI_ASK` and
+    // `IDS_MIDI_SYSEX_PERMISSION_FRAGMENT`; the label the lead's ruling on #656 kept.
+    expect(contentSetting('midi')).toMatchObject({
+      label: 'MIDI devices',
       description: 'Sites can ask to control and reprogram your MIDI devices',
-      group: 'additional',
+      descriptions: { deny: 'Sites cannot control or reprogram your MIDI devices' },
+      group: 'permissions',
       builtInDefault: 'ask',
       choices: ['ask', 'deny'],
       promptLabel: 'control and reprogram your MIDI devices',
       allowOnce: false,
       support: { desktop: 'enforced', android: 'n-a' }
     })
-    expect(ids('desktop')).toContain('midiSysex')
-    // Hidden on the phone while `Permissions.kt` refuses `RESOURCE_MIDI_SYSEX` before the core
-    // hears it: a row is a promise (#506). The plain `midi` row stays as it was, apart.
-    expect(ids('android')).not.toContain('midiSysex')
-    expect(contentSetting('midi')).toMatchObject({
-      builtInDefault: 'ask',
-      promptLabel: 'access MIDI devices',
-      support: { desktop: 'enforced', android: 'n-a' }
-    })
+    // Electron's `midiSysex` and the WebView's `RESOURCE_MIDI_SYSEX` (the request any Web MIDI
+    // call makes) are that row: the same answer, the same words, no row of their own.
+    expect(contentSettingId('midiSysex')).toBe('midi')
+    expect(contentSetting('midiSysex')).toBe(contentSetting('midi'))
+    expect(promptLabelFor('midiSysex')).toBe('control and reprogram your MIDI devices')
+    expect(allowOnceFor('midiSysex')).toBe(false)
+    expect(builtInDefault('midiSysex')).toBe('ask')
+    expect(tracksLastVisit('midiSysex')).toBe(true)
+    expect(CONTENT_SETTINGS.map((s) => s.id)).not.toContain('midiSysex')
+    // Listed on the desktop; hidden on the phone while `Permissions.kt` refuses
+    // `RESOURCE_MIDI_SYSEX` before the core hears it: a row is a promise (#506).
+    expect(ids('desktop')).toContain('midi')
+    expect(ids('android')).not.toContain('midi')
+    // The retired words are gone: the second row's label and refusal, the first row's old lines.
+    for (const setting of CONTENT_SETTINGS) {
+      const words = [
+        setting.label,
+        setting.description,
+        setting.promptLabel ?? '',
+        ...Object.values(setting.descriptions ?? {})
+      ].join('\n')
+      expect(words, setting.id).not.toMatch(/MIDI system messages|system-exclusive/)
+      expect(words, setting.id).not.toMatch(/connect to MIDI devices|access MIDI devices/)
+    }
   })
 
   it('still hides a row a host has no feature for, and lists it when asked for everything', () => {
@@ -143,7 +170,7 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
         allow: 'Sites can download multiple files without asking',
         deny: 'Sites cannot download multiple files automatically'
       },
-      midi: { deny: 'Sites cannot connect to MIDI devices' },
+      midi: { deny: 'Sites cannot control or reprogram your MIDI devices' },
       usb: { deny: 'Sites cannot connect to USB devices' },
       serial: { deny: 'Sites cannot connect to serial ports' },
       hid: { deny: 'Sites cannot connect to HID devices' },
@@ -189,13 +216,11 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
       keyboardLock: { deny: 'Fullscreen sites cannot capture system keys' },
       'speaker-selection': { deny: 'Sites cannot pick which speaker plays their sound' },
       'clipboard-sanitized-write': { deny: 'Sites cannot copy text or images to your clipboard' },
-      'display-capture': { deny: 'Sites cannot share your screen, a window or a tab' },
-      midiSysex: { deny: 'Sites cannot control or reprogram your MIDI devices' }
+      'display-capture': { deny: 'Sites cannot share your screen, a window or a tab' }
     })
-    // 40 rows carry lines (38 new beside #523's Background video, then MIDI system messages
-    // once it became a question, MW-36 / PS-54), 44 lines in all.
-    expect(Object.keys(table)).toHaveLength(40)
-    expect(Object.values(table).flatMap((own) => Object.values(own!))).toHaveLength(44)
+    // 39 rows carry lines (38 new beside #523's Background video), 43 lines in all.
+    expect(Object.keys(table)).toHaveLength(39)
+    expect(Object.values(table).flatMap((own) => Object.values(own!))).toHaveLength(43)
   })
 
   it('writes a line for every choice beyond the built-in default and for nothing else; a row with one choice has no field', () => {

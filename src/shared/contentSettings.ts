@@ -156,19 +156,32 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     // one download per gesture is free, the next asks this row on both hosts.
     support: { desktop: 'enforced', android: 'enforced' }
   },
-  // Electron's `midi` request, which its engine sends only with `kBlockMidiByDefault` off: with
-  // the flag on (the default) a page's `requestMIDIAccess()` arrives as `midiSysex` and takes
-  // that row (`midi_access_initializer.cc:48-52`), as it does in Chrome.
+  // Chrome's one MIDI setting (`midi-sysex`, ask by default, allow / block / ask:
+  // `content_settings_registry.cc:209-217`). Since `kBlockMidiByDefault` (on by default,
+  // `blink/common/features.cc:108-109`) every `requestMIDIAccess()` – with or without `sysex` –
+  // asks for the SysEx permission (`midi_access_initializer.cc:48-52`), so any Web MIDI request
+  // reaches the hosts as that one (Electron's `midiSysex`, the WebView's `RESOURCE_MIDI_SYSEX`;
+  // Electron's plain `midi` only with the flag off) and folds into this row (`ALIASES`), as
+  // Chrome keeps one row. An Allow lets the page send system-exclusive messages too, as Chrome's
+  // does (`midi_sysex_permission_context.cc:34-41`); no one-time allow, as Chrome offers none
+  // for it (`permission_request.cc:319-320`).
   {
     id: 'midi',
     label: 'MIDI devices',
-    description: 'Sites can ask to connect to MIDI devices',
-    descriptions: { deny: 'Sites cannot connect to MIDI devices' },
+    description: 'Sites can ask to control and reprogram your MIDI devices',
+    descriptions: { deny: 'Sites cannot control or reprogram your MIDI devices' },
     group: 'permissions',
     builtInDefault: 'ask',
     choices: ['ask', 'deny'],
-    promptLabel: 'access MIDI devices',
-    allowOnce: true,
+    promptLabel: 'control and reprogram your MIDI devices',
+    allowOnce: false,
+    // Desktop: Electron's request handler is the core's prompt, and the engine grants the
+    // process the SysEx right on an Allow of its own accord (`electron_permission_manager.cc:
+    // 72-80`). Android: the WebView asks `onPermissionRequest` with `RESOURCE_MIDI_SYSEX`
+    // (`aw_permission_manager.cc:373-378`), which `Permissions.kt` refuses before the core hears
+    // it, so no path acts on the row there yet and it is not offered (a row is a promise, the
+    // root's #506 ruling); `enforced` the day the host routes the resource through its
+    // `ask("midiSysex", …)` as it routes the camera's – the core answers that request already.
     support: { desktop: 'enforced', android: 'n-a' }
   },
   // The device rows: a chooser is the prompt (`promptLabel` stays null – the site is never asked
@@ -638,33 +651,6 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
-  },
-  // Chrome's one MIDI setting (`midi-sysex`, ask by default, allow / block / ask:
-  // `content_settings_registry.cc:209-217`). Since `kBlockMidiByDefault` (on by default,
-  // `blink/common/features.cc:108-109`) every `requestMIDIAccess()` – with or without `sysex` –
-  // asks for this permission (`midi_access_initializer.cc:48-52`), so it is the prompt behind
-  // any Web MIDI request on both engines (Electron's `midiSysex`, the WebView's
-  // `RESOURCE_MIDI_SYSEX`), and an Allow lets the page send system-exclusive messages too, as
-  // Chrome's does (`midi_sysex_permission_context.cc:34-41`). No one-time allow, as Chrome
-  // offers none for it (`permission_request.cc:319-320`).
-  {
-    id: 'midiSysex',
-    label: 'MIDI system messages',
-    description: 'Sites can ask to control and reprogram your MIDI devices',
-    descriptions: { deny: 'Sites cannot control or reprogram your MIDI devices' },
-    group: 'additional',
-    builtInDefault: 'ask',
-    choices: ['ask', 'deny'],
-    promptLabel: 'control and reprogram your MIDI devices',
-    allowOnce: false,
-    // Desktop: Electron's request handler is the core's prompt, and the engine grants the
-    // process the SysEx right on an Allow of its own accord (`electron_permission_manager.cc:
-    // 72-80`). Android: the WebView asks `onPermissionRequest` with `RESOURCE_MIDI_SYSEX`
-    // (`aw_permission_manager.cc:373-378`), which `Permissions.kt` refuses before the core hears
-    // it, so no path acts on the row there yet and it is not offered (a row is a promise, the
-    // root's #506 ruling); `enforced` the day the host routes the resource through its
-    // `ask("midiSysex", …)` as it routes the camera's – the core answers that request already.
-    support: { desktop: 'enforced', android: 'n-a' }
   }
 ]
 
@@ -680,7 +666,8 @@ export const FILE_SITE = 'file://'
 /**
  * Engine permission names that are a row under another name: Chromium's finer-grained
  * variants share their row's decision (approximate location is location, periodic background
- * sync is background sync, VR, AR and hand tracking are the one XR row).
+ * sync is background sync, VR, AR and hand tracking are the one XR row, the SysEx request every
+ * Web MIDI call makes is the MIDI row).
  */
 const ALIASES: Record<string, string> = {
   'geolocation-approximate': 'geolocation',
@@ -689,6 +676,10 @@ const ALIASES: Record<string, string> = {
   vr: 'xr',
   ar: 'xr',
   'hand-tracking': 'xr',
+  // Electron's name for Chromium's MIDI_SYSEX permission, which `requestMIDIAccess()` asks for
+  // with or without `sysex` since `kBlockMidiByDefault` (`midi_access_initializer.cc:48-52`);
+  // the WebView's `RESOURCE_MIDI_SYSEX` arrives under the same name. One MIDI row, as Chrome's.
+  midiSysex: 'midi',
   'local-network': 'local-network-access',
   'loopback-network': 'local-network-access'
 }

@@ -172,11 +172,12 @@ describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
     expect(d.asked).toHaveLength(1)
     // Chrome's `IDS_MIDI_SYSEX_PERMISSION_FRAGMENT` ("Control and reprogram your MIDI devices",
     // `permissions_strings.grdp:148-150`) after the prompt's "Allow <site> to …"; no one-time
-    // grant, as Chrome's chip carries none (`permission_request.cc:319-320`).
+    // grant, as Chrome's chip carries none (`permission_request.cc:319-320`). The engine's
+    // `midiSysex` is the one MIDI row (`ALIASES`), so the prompt and the store name `midi`.
     expect(d.asked[0]).toMatchObject({
       tabId: 'tab_d',
       origin: SITE,
-      permission: 'midiSysex',
+      permission: 'midi',
       message: 'Allow synth.example to control and reprogram your MIDI devices?',
       detail: 'Your choice is remembered for this site.',
       allowLabel: 'Allow',
@@ -187,9 +188,9 @@ describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
     expect(p.check('midiSysex', SITE)).toBe(true)
     expect(await p.decide('midiSysex', `${SITE}/other`, DESKTOP)).toBe(true)
     expect(d.asked).toHaveLength(1)
-    expect(p.get('midiSysex', SITE)).toBe('allow')
-    expect(p.listForOrigin(SITE)).toEqual([{ permission: 'midiSysex', decision: 'allow' }])
-    expect(p.rules()).toMatchObject([{ origin: SITE, permission: 'midiSysex', decision: 'allow' }])
+    expect(p.get('midi', SITE)).toBe('allow')
+    expect(p.listForOrigin(SITE)).toEqual([{ permission: 'midi', decision: 'allow' }])
+    expect(p.rules()).toMatchObject([{ origin: SITE, permission: 'midi', decision: 'allow' }])
   })
 
   it('remembers a Block for the site, and the site is refused without a second question', async () => {
@@ -198,7 +199,7 @@ describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
     expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(false)
     expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(false)
     expect(d.asked).toHaveLength(1)
-    expect(p.get('midiSysex', SITE)).toBe('deny')
+    expect(p.get('midi', SITE)).toBe('deny')
     // The site-information sheet's reset: asked again.
     p.resetOrigin(SITE)
     expect(p.resolve('midiSysex', SITE)).toBe('ask')
@@ -211,19 +212,19 @@ describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
     expect(await p.decide('midiSysex', SITE, PHONE)).toBe(true)
     expect(d.asked[0]).toMatchObject({
       tabId: 'tab_a',
-      permission: 'midiSysex',
+      permission: 'midi',
       message: 'Allow synth.example to control and reprogram your MIDI devices?'
     })
     p.flushSync()
     expect(io.writes).toHaveLength(1)
-    expect(JSON.parse(io.writes[0]).decisions).toEqual({ [`${SITE}|midiSysex`]: 'allow' })
+    expect(JSON.parse(io.writes[0]).decisions).toEqual({ [`${SITE}|midi`]: 'allow' })
     // A private tab's Allow lasts its session and is never written (Chrome's Incognito rule).
     const other = 'https://sequencer.example'
     expect(
       await p.decide('midiSysex', other, { tabId: 'tab_p', privateContainerId: 'private' })
     ).toBe(true)
     expect(d.asked).toHaveLength(2)
-    expect(p.get('midiSysex', other)).toBeUndefined()
+    expect(p.get('midi', other)).toBeUndefined()
     expect(p.resolve('midiSysex', other, { privateContainerId: 'private' })).toBe('allow')
     p.forgetContainer('private')
     expect(p.resolve('midiSysex', other, { privateContainerId: 'private' })).toBe('ask')
@@ -234,7 +235,9 @@ describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
   it('a default of Block in Settings refuses every site without a prompt; Ask brings the question back', async () => {
     const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
-    p.chooseDefault('midiSysex', 'deny')
+    // Settings speaks of the row; the engine's name reads the row's default through the alias.
+    p.chooseDefault('midi', 'deny')
+    expect(p.effectiveDefault('midiSysex')).toBe('deny')
     expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(false)
     expect(await p.decide('midiSysex', SITE, PHONE)).toBe(false)
     expect(d.asked).toEqual([])
@@ -244,20 +247,29 @@ describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
     expect(d.asked).toHaveLength(1)
   })
 
-  it('keeps the plain `midi` row’s answer apart: a site allowed MIDI is still asked about system-exclusive access', async () => {
+  it('is one row with the plain `midi` request: one answer, one set of words, one line in the site’s list', async () => {
     const d = prompts(true)
     const p = new PermissionService(fakeIo(), d)
+    // The row's answer (the site card's toggle, Settings › Sites) covers the engine's request …
     p.set('midi', SITE, 'allow')
-    expect(p.check('midiSysex', SITE)).toBe(false)
+    expect(p.check('midiSysex', SITE)).toBe(true)
     expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(true)
-    expect(d.asked).toHaveLength(1)
-    expect(p.listForOrigin(SITE)).toEqual([
-      { permission: 'midi', decision: 'allow' },
-      { permission: 'midiSysex', decision: 'allow' }
-    ])
+    expect(d.asked).toEqual([])
+    expect(p.listForOrigin(SITE)).toEqual([{ permission: 'midi', decision: 'allow' }])
+    // … and Electron's plain `midi` (sent only with `kBlockMidiByDefault` off) reads the same
+    // answer and asks with the same words.
+    expect(p.check('midi', SITE)).toBe(true)
     expect(permissionPromptCopy('midi', SITE).message).toBe(
-      'Allow synth.example to access MIDI devices?'
+      'Allow synth.example to control and reprogram your MIDI devices?'
     )
+    expect(permissionPromptCopy('midiSysex', SITE)).toEqual(permissionPromptCopy('midi', SITE))
+    // A Block of the row refuses both names; forgetting the row forgets both.
+    p.set('midi', SITE, 'deny')
+    expect(p.resolve('midiSysex', SITE)).toBe('deny')
+    expect(p.resolve('midi', SITE)).toBe('deny')
+    p.forget('midiSysex', SITE)
+    expect(p.resolve('midi', SITE)).toBe('ask')
+    expect(p.listForOrigin(SITE)).toEqual([])
   })
 })
 
