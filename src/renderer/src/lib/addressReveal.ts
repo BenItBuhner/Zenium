@@ -1,3 +1,4 @@
+import { createElement, Fragment, type ReactElement, type ReactNode } from 'react'
 import type { Rect } from '@shared/types'
 import { HoverCardController, type HoverCardStore, type RowMeasure } from './hoverCard'
 import { placePopover, POPOVER_WIDTH, toRect, type PopoverBox, type Size } from './portals'
@@ -93,6 +94,27 @@ export const HOLD_CONTROL_SELECTOR = 'button, input, select, textarea, a[href]'
 export function controlUnder(target: EventTarget | null, row: HTMLElement): Element | null {
   const control = elementOf(target)?.closest(HOLD_CONTROL_SELECTOR) ?? null
   return control && control !== row ? control : null
+}
+
+/**
+ * The value with a break opportunity after each of its separators – a `<wbr>` after every `/`
+ * and `.` – so a spaceless path or host breaks at its slashes and dots (§9.23: "a host too long
+ * for a line breaking at its dots") before `overflow-wrap: anywhere` has to break it inside a
+ * name; that rule stays on both surfaces as the fallback for one segment longer than the line
+ * (the independent review of #694, nit 5). Nothing changes for a reader or for `textContent`
+ * (a `<wbr>` has no text); the card's span and the hold sheet's paragraph draw it.
+ */
+export function breakable(text: string): ReactElement {
+  const children: ReactNode[] = []
+  let start = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch !== '/' && ch !== '.') continue
+    children.push(text.slice(start, i + 1), createElement('wbr', { key: i }))
+    start = i + 1
+  }
+  if (start < text.length) children.push(text.slice(start))
+  return createElement(Fragment, null, ...children)
 }
 
 /** The card's state: the controller's slice (the row's key and box), and the row it names. */

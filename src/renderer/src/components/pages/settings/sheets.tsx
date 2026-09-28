@@ -1,5 +1,6 @@
-import type { JSX, ReactNode, RefObject } from 'react'
+import type { JSX, ReactElement, ReactNode, RefObject } from 'react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { breakable } from '@renderer/lib/addressReveal'
 import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../../dialogs/confirmKeyboard'
@@ -160,9 +161,10 @@ interface SheetProps {
   title: string
   /**
    * With a description the sheet opens on the §9.23 title block instead of the 48 px header
-   * (`PhoneSheet`'s two poses): a prompt's paragraph, a form's or an item sheet's introduction.
+   * (`PhoneSheet`'s two poses): a prompt's paragraph, a form's or an item sheet's introduction –
+   * a string, or the address hold sheet's value drawn with its break opportunities (`breakable`).
    */
-  description?: string
+  description?: string | ReactElement
   /** A description that reports a status (an extension's load error): the §1 status ink. */
   descriptionTone?: 'warn' | 'danger'
   /** Another sheet is open over this one: Escape is that sheet's until it leaves. */
@@ -629,11 +631,13 @@ export function ConfirmSheet({
  * document names the surface – "the row's hold sheet header" – and defines no hold sheet
  * beyond that clause (SET-54's copy hold raises a toast, not a sheet), so this is the smallest
  * one the chassis already has: `PhoneSheet`'s §9.23 title block alone, the row's label as its
- * 17/600 title and the whole value as the paragraph under it, wrapped wherever it must break
- * (`.zen-settings-sheet-address`, main.css – a path has no spaces to break at), on the §9.16
- * grip; no rows, no verbs, nothing else. Focus lands on the sheet itself (`focus: 'dialog'`, the
- * prompt's rule): a reader hears the label and then the whole value, which is what the hold
- * asked for. A swipe, the scrim or back dismisses it.
+ * 17/600 title and the whole value as the paragraph under it, breaking at its slashes and dots
+ * first (`breakable`, lib/addressReveal.ts: a `<wbr>` after each) and inside a name only when a
+ * segment outruns the line (`.zen-settings-sheet-address`, main.css – a path has no spaces to
+ * break at), on the §9.16 grip; no rows, no verbs, nothing else, and the sheet ends §9.25's 16
+ * under the paragraph (the block's own 16 below comes off; main.css). Focus lands on the sheet
+ * itself (`focus: 'dialog'`, the prompt's rule): a reader hears the label and then the whole
+ * value, which is what the hold asked for. A swipe, the scrim or back dismisses it.
  */
 function AddressSheet({
   rowId,
@@ -652,7 +656,7 @@ function AddressSheet({
     <SettingsSheet
       name={`settings-address:${rowId || 'option'}`}
       title={label}
-      description={text}
+      description={breakable(text)}
       under={under}
       focus="dialog"
       onClose={close}

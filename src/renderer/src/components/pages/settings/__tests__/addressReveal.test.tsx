@@ -56,6 +56,9 @@ afterEach(() => {
 })
 
 const PATH = '/home/user/Nextcloud/Documents/Work/Projects/2026/Zenium/Backups/Settings'
+/** A value with no space to break at: its slashes and dots are its only break opportunities. */
+const SPACELESS =
+  'https://cloud.example.com/remote.php/dav/files/alice/Backups/a-long-spaceless-segment-that-outruns-the-line/settings.backup.tar.gz'
 const ctx = { open: vi.fn() }
 
 /** The page layout around its rows, with the host as the layouts mount it. */
@@ -110,6 +113,24 @@ function skill(patch: Partial<SwitchRow> = {}): SwitchRow {
     onChange: () => undefined,
     ...patch
   }
+}
+
+/**
+ * The break opportunities a surface draws in a value (`breakable`): a `<wbr>` after each `/`
+ * and `.` – each closing a run of text ending in one – nothing else added, and the text itself
+ * whole for a reader, a search and a copy.
+ */
+function expectBreaks(el: Element, text: string): void {
+  const separators = (text.match(/[/.]/g) ?? []).length
+  const breaks = Array.from(el.querySelectorAll('wbr'))
+  expect(breaks).toHaveLength(separators)
+  for (const wbr of breaks) {
+    const before = wbr.previousSibling
+    expect(before?.nodeType).toBe(Node.TEXT_NODE)
+    expect(/[/.]$/.test(before?.textContent ?? '')).toBe(true)
+  }
+  expect(el.children).toHaveLength(separators)
+  expect(el.textContent).toBe(text)
 }
 
 function rowOf(el: HTMLElement, id: string): HTMLElement {
@@ -229,6 +250,26 @@ describe('the hover card on a mouse', () => {
     pointer(prose, 'pointerover')
     await wait(HOVER_CARD_DELAY + 50)
     expect(card()).toBeNull()
+  })
+
+  it('draws a spaceless value with a break opportunity after each slash and dot, so it breaks there before it breaks inside a name; the row’s own line draws none', async () => {
+    const el = render(
+      <Page>
+        <RowView row={folder({ description: SPACELESS })} ctx={ctx} />
+      </Page>
+    )
+    const row = rowOf(el, 'sync-server-folder')
+    measure(lineOf(row), 900, 280)
+    pointer(lineOf(row), 'pointerover')
+    await wait(HOVER_CARD_DELAY)
+    const value = card()?.querySelector('.zen-address-hover-card-value')
+    expect(value).not.toBeNull()
+    if (!value) throw new Error('no value')
+    expectBreaks(value, SPACELESS)
+    expect(card()?.textContent).toBe(SPACELESS)
+    // #685's line is untouched by the reveal: one line, shortened from its start, no breaks.
+    expect(lineOf(row).querySelector('wbr')).toBeNull()
+    expect(lineOf(row).textContent).toBe(SPACELESS)
   })
 
   it('leaves with the pointer after the grace, and never shows for a touch or pen pointer', async () => {
@@ -812,6 +853,26 @@ describe('the hold sheet', () => {
     expect(dialog?.querySelector('.zen-settings-row')).toBeNull()
     expect(dialog?.querySelector('.zen-settings-sheet-body')?.textContent).toBe('')
     expect(dialog?.querySelector('.zen-settings-sheet-footer')).toBeNull()
+  })
+
+  it('draws the value with a break opportunity after each slash and dot: a spaceless value breaks there before it breaks inside a name', async () => {
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[{ kind: 'address', rowId: 'sync-server', label: 'Server', text: SPACELESS }]}
+          groups={[]}
+          ctx={{ open: () => undefined }}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const paragraph = mount?.querySelector<HTMLElement>('[role="dialog"] .zen-sheet-title-block p')
+    expect(paragraph).not.toBeNull()
+    if (!paragraph) throw new Error('no paragraph')
+    expectBreaks(paragraph, SPACELESS)
   })
 })
 

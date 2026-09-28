@@ -8,6 +8,7 @@ import {
   addressPointerLeave,
   addressRevealStore,
   addressRowOf,
+  breakable,
   controlUnder,
   elidedAddressOf,
   hideAddressCard,
@@ -83,7 +84,9 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * while a row that is itself the control (a pressable row, a picker's option) holds as any row.
  * A row that copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets
  * neither sheet nor card – none carries an address today; the day one does, the copy is the
- * sheet's Copy row (§9.31's link-menu precedent), not a second gesture on the same hold.
+ * sheet's Copy row (§9.31's link-menu precedent), not a second gesture on the same hold. Either
+ * surface draws the value through `breakable`: a spaceless path breaks at its slashes and dots
+ * before it breaks inside a name.
  */
 export function AddressReveal({
   root,
@@ -354,7 +357,8 @@ export function AddressReveal({
           visibility: box ? 'visible' : 'hidden'
         }}
       >
-        <span className="zen-address-hover-card-value">{text}</span>
+        {/* The whole value, breaking at its slashes and dots first (`breakable`), inside a name only when it must. */}
+        <span className="zen-address-hover-card-value">{breakable(text)}</span>
       </div>
     </ChromePortal>
   )
