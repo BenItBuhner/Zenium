@@ -8822,16 +8822,15 @@
   }
   /*
    * The tip card's description (NTP-20; Chrome's `educational_tip_module_layout.xml:88-95`): a
-   * sentence, not a one-line summary – wrapped and clamped at three lines where Chrome clamps at
-   * two, against a text column Chrome's 72 dp illustration (`dimens.xml:12-14`) leaves wider than
-   * the 56 tile does at the card's width.
+   * sentence, not a one-line summary – wrapped in full and never clamped, so the card grows with
+   * the sentence and the strip's cards with it (the design lead's fold on #695; Chrome's layout
+   * clamps at two lines against a text column its 72 dp illustration, `dimens.xml:12-14`, leaves
+   * wider than the 56 tile does at the card's width).
    */
   :root[data-form-factor='phone'] .zen-mstack-tip-summary {
-    display: -webkit-box;
+    overflow: visible;
     white-space: normal;
     text-overflow: clip;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
   }
   /* The action row at the card's foot: one hugging button, leading (§9.11's in-row form); a card whose rows are its whole act has none. */
   :root[data-form-factor='phone'] .zen-mstack-actions {

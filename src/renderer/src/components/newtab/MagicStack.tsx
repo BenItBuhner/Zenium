@@ -96,8 +96,8 @@ import {
  * (the module's glyph, its name, the ⋮) and its content. The content rows act (the file opens,
  * the bookmark opens, the closed tab reopens), so a card carries at most one action its rows
  * cannot do: See all on Downloads and Bookmarks, the Safety check card's one button (Review, Go
- * to settings, Change passwords – NTP-19), the tip card's one button (Try it now, Set default,
- * Show me how – NTP-20), none on Continue where you left off (§9.29). The ⋮ offers Hide This and
+ * to settings, Change passwords – NTP-19), the tip card's one button (Try it now, Set as
+ * default, Show me how – NTP-20), none on Continue where you left off (§9.29). The ⋮ offers Hide This and
  * Customise; the Customise
  * sheet lists the modules with switches. Hidden modules are this device's
  * (`UIState.newTabHiddenModules`, never synced); a stack with no card to show is not drawn at
@@ -592,14 +592,15 @@ function useEducationalTips(
           openCustomize()
           break
         case 'default-browser':
-          // Chrome's "Set default" asks the system for the browser role
-          // (`DefaultBrowserPromoUtils.java`): the host's request, from the page.
+          // Chrome's "Set default" (§9.29's "Set as default" here) asks the system for the
+          // browser role (`DefaultBrowserPromoUtils.java`): the host's request, from the page.
           run('defaultBrowser.request', { source: 'newtab' })
           break
         case 'tab-groups':
           // Chrome's "Show me how" opens the Hub's tab switcher with the grouping IPH
           // (`ChromeTabbedActivity.java:3500-3508`): the overview, where a tab dropped on another
-          // makes a group.
+          // makes a group – no IPH dialog here, so the button reads "Try it now" (the lead's
+          // fold on #695).
           openOverview(state)
           break
         case 'quick-delete':
@@ -1113,8 +1114,9 @@ function SafetyHubContent({
  * check card's tile – the same object at the same 56 on the card's `--v2-fill`, at the accent
  * (§9.17 draws no illustration; whether the tips get one is the gate's) – and beside it the
  * title at §9.23's 17/600 on two lines at most (Chrome's never wraps, `:78-86`) over the
- * description at 15 in the deemphasised ink on three (Chrome's two, `:88-95`, against a text
- * column a 72 dp image leaves wider). The words are Chrome's, spelt as this surface spells
+ * description at 15 in the deemphasised ink, in full – the card grows with the sentence (the
+ * design lead's fold on #695; Chrome clamps at two, `:88-95`, against a text column a 72 dp
+ * image leaves wider). The words are Chrome's, spelt as this surface spells
  * (`shared/educationalTips.ts`).
  */
 function TipContent({ card }: { card: EducationalTipCardId }): JSX.Element {

@@ -333,7 +333,9 @@ export function educationalTipCardTitle(id: EducationalTipCardId): string {
 /**
  * The card's description: `IDS_EDUCATIONAL_TIP_NTP_THEME_DESCRIPTION` :1249-1251,
  * `IDS_EDUCATIONAL_TIP_DEFAULT_BROWSER_DESCRIPTION` :1228-1230,
- * `IDS_EDUCATIONAL_TIP_TAB_GROUP_DESCRIPTION` :1237-1239,
+ * `IDS_EDUCATIONAL_TIP_TAB_GROUP_DESCRIPTION` :1237-1239 – in the design lead's words (the fold
+ * on #695): Chrome's "automatically save and update across all your devices" promises the
+ * account's sync, which here is the Sync setting's, so the sentence says when –
  * `IDS_EDUCATIONAL_TIP_QUICK_DELETE_DESCRIPTION` :1258-1260.
  */
 export function educationalTipCardDescription(id: EducationalTipCardId): string {
@@ -343,25 +345,30 @@ export function educationalTipCardDescription(id: EducationalTipCardId): string 
     case 'default-browser':
       return 'You can use Zenium any time you tap links in messages, documents and other apps'
     case 'tab-groups':
-      return 'Create tab groups that automatically save and update across all your devices'
+      return 'Create tab groups that save and update across your devices when sync is on'
     case 'quick-delete':
       return 'You can delete some or all of your history, cookies, site data and more'
   }
 }
 
 /**
- * The button: the theme card's `IDS_EDUCATIONAL_TIP_NTP_THEME_PROMO_BUTTON` :1252-1254; the
- * default-browser card's `IDS_SETUP_LIST_DEFAULT_BROWSER_PROMO_BUTTON` :1231-1233, since the
- * button here opens the system's role sheet at once where Chrome's "Show me how" opens a how-to
- * sheet first; the other two `IDS_EDUCATIONAL_TIP_MODULE_BUTTON` :1216-1218.
+ * The button says what it does. The theme card's is Chrome's
+ * `IDS_EDUCATIONAL_TIP_NTP_THEME_PROMO_BUTTON` :1252-1254, and so is the tab-groups card's (the
+ * design lead's fold on #695): Chrome's "Show me how" there (`IDS_EDUCATIONAL_TIP_MODULE_BUTTON`
+ * :1216-1218) promises the Hub's grouping IPH dialog (`ChromeTabbedActivity.java:3500-3508`),
+ * which is not built – the button opens the overview, where the grouping is done, so it says
+ * "Try it now". The default-browser card's is §9.29's "Set as default" (the lead's fold; Chrome's
+ * `IDS_SETUP_LIST_DEFAULT_BROWSER_PROMO_BUTTON` :1231-1233 reads "Set default"), since the button
+ * opens the system's role sheet at once where Chrome's "Show me how" opens a how-to sheet first.
+ * The Quick Delete card's stays Chrome's "Show me how": the sheet it opens is the how.
  */
 export function educationalTipCardButton(id: EducationalTipCardId): string {
   switch (id) {
     case 'ntp-theme':
+    case 'tab-groups':
       return 'Try it now'
     case 'default-browser':
-      return 'Set default'
-    case 'tab-groups':
+      return 'Set as default'
     case 'quick-delete':
       return 'Show me how'
   }

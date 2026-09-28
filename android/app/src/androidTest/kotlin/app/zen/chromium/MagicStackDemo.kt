@@ -692,7 +692,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             tile != null && tile.optInt("w") == 56 && tile.optInt("h") == 56 && tile.optInt("glyph") == 24 && tile.optString("radius") == "8px" && tile.optString("background") == face.optString("fill"),
             "tip-$tip-tile"
         )
-        expect("the title block: 17/600 on 22 (${face.optString("titleFont")}); the description within the phone's three lines (${face.optInt("descriptionLines")} at ${face.optString("descriptionFont")}; Chrome's layout clamps at two)", face.optString("titleFont") == "17px/600/22px" && face.optInt("descriptionLines") in 1..3, "tip-$tip-text")
+        expect(
+            "the title block: 17/600 on 22 (${face.optString("titleFont")}); the description in full and never clamped – the card grows with the sentence, the button under it (${face.optInt("descriptionLines")} line(s) at ${face.optString("descriptionFont")}, line clamp ${face.optString("descriptionClamp")}, drawn whole ${face.optBoolean("descriptionFull")}, the button's top ${face.optInt("buttonTop")} at or under the sentence's bottom ${face.optInt("descriptionBottom")}, the card ${face.optInt("cardHeight")} tall; Chrome's layout clamps at two)",
+            face.optString("titleFont") == "17px/600/22px" && face.optInt("descriptionLines") >= 1 && face.optString("descriptionClamp") == "none" && face.optBoolean("descriptionFull") && face.optInt("buttonTop") >= face.optInt("descriptionBottom"),
+            "tip-$tip-text"
+        )
         expect("one filled button '$button' named '$button: $title' (${face.optInt("buttons")} button(s): '${face.optString("button")}' / '${face.optString("buttonLabel")}', primary ${face.optBoolean("primary")})", face.optInt("buttons") == 1 && face.optString("button") == button && face.optString("buttonLabel") == "$button: $title" && face.optBoolean("primary"), "tip-$tip-button")
         val memory = tipMemory()
         val card = memory.optJSONObject("cards")?.optJSONObject(tip)
@@ -1236,7 +1240,12 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val TIPS_TITLE = "Zenium tips"
         /** The tips in Chrome's registry order (`educationalTips.ts`, `home_modules_card_registry_android.cc:36-64`, less the two account-bound promos). */
         private val TIP_ORDER = listOf("ntp-theme", "default-browser", "tab-groups", "quick-delete")
-        /** Chrome's words for the four tips (`educationalTips.ts`; `browser_ui_strings.grd:1210-1260`), with the product's name and its British spelling. */
+        /**
+         * Chrome's words for the four tips (`educationalTips.ts`; `browser_ui_strings.grd:1210-1260`),
+         * with the product's name and its British spelling, and the design lead's folds on #695: the
+         * tab-groups sentence says when the groups sync, its button "Try it now" (the overview it opens
+         * shows no how), the default-browser button §9.29's "Set as default".
+         */
         private val TIP_TITLES = mapOf(
             "ntp-theme" to "Customise your homepage",
             "default-browser" to "Use Zenium by default",
@@ -1246,13 +1255,13 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private val TIP_DESCRIPTIONS = mapOf(
             "ntp-theme" to "Make Zenium your own with custom colours and images for your homepage",
             "default-browser" to "You can use Zenium any time you tap links in messages, documents and other apps",
-            "tab-groups" to "Create tab groups that automatically save and update across all your devices",
+            "tab-groups" to "Create tab groups that save and update across your devices when sync is on",
             "quick-delete" to "You can delete some or all of your history, cookies, site data and more"
         )
         private val TIP_BUTTONS = mapOf(
             "ntp-theme" to "Try it now",
-            "default-browser" to "Set default",
-            "tab-groups" to "Show me how",
+            "default-browser" to "Set as default",
+            "tab-groups" to "Try it now",
             "quick-delete" to "Show me how"
         )
         /** The tip card's TalkBack name: the module, the tip's title, its description (`MagicStack.tsx`, `cardLabel`). */
@@ -1391,18 +1400,24 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
          * tip up (`data-card`), the card's name, the title and description texts, the tile's box,
          * radius, fill and glyph width, the card surface's own `--v2-fill` through a probe element,
          * the title's font as size/weight/line, the description's as size/line with the lines it
-         * takes (its box over its line height; the phone clamps it at three, Chrome's layout at
-         * two), the action buttons' count and the first one's text, name and primary mark.
+         * takes (its box over its line height) and whether it is drawn in full – no line clamp on
+         * it and no overflow past its box (the design lead's fold on #695: the card grows with the
+         * sentence, where Chrome's layout clamps at two lines) – the button's top against the
+         * description's bottom (the card grown, the button below the sentence, not over it), and
+         * the action buttons' count and the first one's text, name and primary mark.
          */
         private const val TIP_FACE_JS = "(function(){var c=document.querySelector('.zen-mstack-card[data-cell=\"tips\"]');if(!c)return JSON.stringify({});" +
             "var f=c.querySelector('.zen-mstack-tip'),t=c.querySelector('.zen-mstack-safety-tile'),g=t?t.querySelector('svg'):null;" +
             "var ti=c.querySelector('.zen-mstack-safety-title'),su=c.querySelector('.zen-mstack-safety-summary'),b=c.querySelector('.zen-mstack-action');" +
             "var cs=function(e){return e?getComputedStyle(e):null};var ts=cs(t),tis=cs(ti),sus=cs(su);" +
             "var pr=document.createElement('span');pr.style.background='var(--v2-fill)';c.appendChild(pr);var fill=getComputedStyle(pr).backgroundColor;c.removeChild(pr);" +
-            "var lines=su&&sus?Math.round(su.getBoundingClientRect().height/parseFloat(sus.lineHeight)):0;" +
+            "var sb=su?su.getBoundingClientRect():null;var lines=sb&&sus?Math.round(sb.height/parseFloat(sus.lineHeight)):0;" +
+            "var clamp=sus?(sus.getPropertyValue('-webkit-line-clamp')||'none'):null;var full=!!(su&&su.scrollHeight<=su.clientHeight+1&&su.scrollWidth<=su.clientWidth+1);" +
+            "var bb=b?b.getBoundingClientRect():null;" +
             "return JSON.stringify({card:f?f.dataset.card:null,label:c.getAttribute('aria-label'),title:ti?ti.textContent.trim():null,description:su?su.textContent.trim():null,fill:fill," +
             "tile:t?{w:t.offsetWidth,h:t.offsetHeight,radius:ts.borderRadius,background:ts.backgroundColor,ink:ts.color,glyph:g?Math.round(g.getBoundingClientRect().width):0}:null," +
-            "titleFont:tis?tis.fontSize+'/'+tis.fontWeight+'/'+tis.lineHeight:null,descriptionFont:sus?sus.fontSize+'/'+sus.lineHeight:null,descriptionLines:lines," +
+            "titleFont:tis?tis.fontSize+'/'+tis.fontWeight+'/'+tis.lineHeight:null,descriptionFont:sus?sus.fontSize+'/'+sus.lineHeight:null,descriptionLines:lines,descriptionClamp:clamp,descriptionFull:full," +
+            "descriptionBottom:sb?Math.round(sb.bottom):null,buttonTop:bb?Math.round(bb.top):null,cardHeight:Math.round(c.getBoundingClientRect().height)," +
             "buttons:c.querySelectorAll('.zen-mstack-action').length,button:b?b.textContent.trim():null,buttonLabel:b?b.getAttribute('aria-label'):null,primary:!!(b&&b.hasAttribute('data-primary'))})})()"
         /** The tip card's one button. */
         private const val TIP_ACTION_JS = "document.querySelector('.zen-mstack-card[data-cell=\"tips\"] .zen-mstack-action')"

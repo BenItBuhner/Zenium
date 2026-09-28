@@ -309,7 +309,7 @@ describe('the transitions and the memory', () => {
 })
 
 describe('the words', () => {
-  it('are Chrome’s, with the product’s name and its British spelling; one name for every tip', () => {
+  it('are Chrome’s, with the product’s name and its British spelling, the design lead’s two folds on #695 (the default-browser button §9.29’s "Set as default"; the tab-groups sentence saying when, its button "Try it now" – no how is shown); one name for every tip', () => {
     expect(EDUCATIONAL_TIP_MODULE_NAME).toBe('Zenium tips')
     expect(educationalTipCardTitle('ntp-theme')).toBe('Customise your homepage')
     expect(educationalTipCardDescription('ntp-theme')).toBe(
@@ -320,12 +320,12 @@ describe('the words', () => {
     expect(educationalTipCardDescription('default-browser')).toBe(
       'You can use Zenium any time you tap links in messages, documents and other apps'
     )
-    expect(educationalTipCardButton('default-browser')).toBe('Set default')
+    expect(educationalTipCardButton('default-browser')).toBe('Set as default')
     expect(educationalTipCardTitle('tab-groups')).toBe('Tidy up with tab groups')
     expect(educationalTipCardDescription('tab-groups')).toBe(
-      'Create tab groups that automatically save and update across all your devices'
+      'Create tab groups that save and update across your devices when sync is on'
     )
-    expect(educationalTipCardButton('tab-groups')).toBe('Show me how')
+    expect(educationalTipCardButton('tab-groups')).toBe('Try it now')
     expect(educationalTipCardTitle('quick-delete')).toBe('Manage your browsing data')
     expect(educationalTipCardDescription('quick-delete')).toBe(
       'You can delete some or all of your history, cookies, site data and more'

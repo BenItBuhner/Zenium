@@ -1591,7 +1591,8 @@ describe('the tip card (NTP-20)', () => {
   })
 
   it('falls through the priority as the signals say: the default browser, then tab groups, then Quick Delete', () => {
-    // The page customised: the default-browser card, with Chrome's "Set default".
+    // The page customised: the default-browser card, with §9.29's "Set as default" (the lead's
+    // fold on #695 for Chrome's "Set default").
     render(stack(tips({ customized: true, tabs: 12 })))
     expect(shown()).toBe('default-browser')
     expect(face()!.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
@@ -1600,8 +1601,11 @@ describe('the tip card (NTP-20)', () => {
     expect(face()!.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
       'You can use Zenium any time you tap links in messages, documents and other apps'
     )
-    expect(button()!.textContent).toBe('Set default')
-    // Zenium the default already, twelve tabs and no group: the tab-groups card.
+    expect(button()!.textContent).toBe('Set as default')
+    expect(button()!.getAttribute('aria-label')).toBe('Set as default: Use Zenium by default')
+    // Zenium the default already, twelve tabs and no group: the tab-groups card, its sentence
+    // the lead's (saying when the groups sync) and its button "Try it now" – the overview it
+    // opens shows no how.
     act(() => root!.unmount())
     root = null
     render(stack(tips({ customized: true, isDefault: true, tabs: 12 })))
@@ -1610,9 +1614,10 @@ describe('the tip card (NTP-20)', () => {
       'Tidy up with tab groups'
     )
     expect(face()!.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
-      'Create tab groups that automatically save and update across all your devices'
+      'Create tab groups that save and update across your devices when sync is on'
     )
-    expect(button()!.textContent).toBe('Show me how')
+    expect(button()!.textContent).toBe('Try it now')
+    expect(button()!.getAttribute('aria-label')).toBe('Try it now: Tidy up with tab groups')
     // A group made: Quick Delete.
     act(() => root!.unmount())
     root = null
@@ -1673,17 +1678,19 @@ describe('the tip card (NTP-20)', () => {
     expect(shown()).toBe('default-browser')
   })
 
-  it('Set default asks the host for the browser role under the page’s own source', () => {
+  it('Set as default asks the host for the browser role under the page’s own source', () => {
     render(stack(tips({ customized: true })))
     expect(shown()).toBe('default-browser')
+    expect(button()!.textContent).toBe('Set as default')
     click(button())
     expect(commands('defaultBrowser.request')).toEqual([{ source: 'newtab' }])
     expect(memoryWrites()[1]!.cards['default-browser']?.interacted).toBe(true)
   })
 
-  it('Show me how on the tab-groups card opens the overview, where a tab dropped on another makes a group', () => {
+  it('Try it now on the tab-groups card opens the overview, where a tab dropped on another makes a group', () => {
     render(stack(tips({ customized: true, isDefault: true, tabs: 12 })))
     expect(shown()).toBe('tab-groups')
+    expect(button()!.textContent).toBe('Try it now')
     expect(stageStore.get().overview.phase).toBe('closed')
     click(button())
     expect(stageStore.get().overview.phase).not.toBe('closed')
