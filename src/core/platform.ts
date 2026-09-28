@@ -259,9 +259,21 @@ export interface PageMessage {
      * the profile's best score at mount, or a run's best at a crash (`GameService`).
      */
     | 'game'
+    /**
+     * The top document's text selection settled, or collapsed (`shared/selectionScript`; the
+     * Electron preload alone): the selection menu's model (`core/selectionMenu`) reads it.
+     */
+    | 'selection'
   url?: string
   /** `editing`: whether a text field of the reporting frame has the keyboard. */
   editing?: boolean
+  /** `selection`: the report (`SelectionReport`, validated by the core). */
+  selection?: unknown
+  /**
+   * `selection`: the reporting frame's extension-API id (`extensionApi/frames` – 0 for the top
+   * frame), stamped by the host from the sender frame; the core takes the top frame's alone.
+   */
+  frameId?: number
   /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
   id?: string
   directive?: string | null

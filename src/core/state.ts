@@ -11,6 +11,7 @@ import type {
   Boost,
   ClosedEntry,
   ImportProgress,
+  SelectionMenuState,
   NavigationSnapshot,
   NetworkStatus,
   Container,
@@ -150,6 +151,7 @@ import {
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import {
   emptyPrivacyStatus,
+  sanitizeClearBrowsingDataRange,
   sanitizePreloadPages,
   sanitizePrivacySettings,
   type PrivacyStatus
@@ -358,6 +360,7 @@ export interface StateExtras {
   translate: TranslateUIState
   spellcheck: SpellcheckStatus
   readAloud: ReadAloudState | null
+  selectionMenu: SelectionMenuState | null
   import: ImportProgress | null
 }
 
@@ -549,6 +552,7 @@ export class BrowserState {
     translate: emptyTranslateState(),
     spellcheck: UNAVAILABLE_SPELLCHECK,
     readAloud: null,
+    selectionMenu: null,
     import: null
   })
   /**
@@ -914,6 +918,11 @@ export class BrowserState {
     // Off only when the profile says so (PS-41): an older profile, or anything but a boolean,
     // reads on – Chrome's default.
     this.settings.autoRevokeUnusedPermissions = data.settings?.autoRevokeUnusedPermissions !== false
+    // The Delete browsing data dialog's remembered range (seed #20): the last hour for a profile
+    // from before the key, or one holding a range no picker offers.
+    this.settings.clearBrowsingDataRange = sanitizeClearBrowsingDataRange(
+      data.settings?.clearBrowsingDataRange
+    )
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)

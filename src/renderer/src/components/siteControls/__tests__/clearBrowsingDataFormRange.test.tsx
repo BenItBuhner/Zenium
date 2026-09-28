@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { BrowsingDataCount, BrowsingDataRange, BrowsingDataType } from '@shared/types'
+import type { BrowsingDataCount, BrowsingDataRange, BrowsingDataType, UIState } from '@shared/types'
 
 /*
  * The Delete browsing data form's time range on the desktop layout (W8-12, the lead's item): the
@@ -21,6 +21,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { ClearBrowsingDataForm } = await import('../ClearBrowsingDataForm')
 const { QUICK_DELETE_FORM } = await import('../useClearForm')
 const { RANGE_OPTIONS } = await import('@renderer/lib/browsingData')
+const { browserStore } = await import('@renderer/lib/browserStore')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 
@@ -208,6 +209,7 @@ afterEach(() => {
   mount = null
   document.body.innerHTML = ''
   act(() => viewportStore.set(desktop))
+  browserStore.set({ state: null })
   vi.unstubAllGlobals()
   frames.now = 0
   HTMLElement.prototype.getBoundingClientRect = rect
@@ -392,7 +394,7 @@ describe('the layouts a finger drives keep the §9.13 sheet', () => {
     it(`on the ${formFactor}: the pressable value row named "label, value" opens the picker sheet over the form, no menulist`, async () => {
       layout(formFactor)
       // The phone's form is Quick Delete (#624): it opens on the last 15 minutes; the tablet's
-      // is the dialog's, on the last hour.
+      // is the dialog's, on its remembered range – the last hour, nothing deleted yet.
       const opens: BrowsingDataRange =
         formFactor === 'phone' ? (QUICK_DELETE_FORM.initialRange ?? 'hour') : 'hour'
       const host = render(<ClearBrowsingDataForm close={() => undefined} />)
@@ -427,4 +429,71 @@ describe('the layouts a finger drives keep the §9.13 sheet', () => {
       )
     })
   }
+})
+
+describe('the remembered range on each layout (services pass 13, seed #20)', () => {
+  /**
+   * The chrome's mirror of the core's state, the remembered range filled in – and the one
+   * space the back state (`lib/back.ts`, wired by the frame dialog host) reads on every set.
+   */
+  const remembered = (range: BrowsingDataRange): void =>
+    browserStore.set({
+      state: {
+        spaces: [{ id: 's1', activeTabId: null, tabIds: [] }],
+        activeSpaceId: 's1',
+        tabs: {},
+        essentialTabIds: [],
+        glance: null,
+        settings: { clearBrowsingDataRange: range }
+      } as unknown as UIState
+    })
+
+  it('the desktop layout opens on the range last deleted with: the menulist reads it, the counts are read for it, and a Delete with another range writes that one', async () => {
+    remembered('week')
+    const host = render(<ClearBrowsingDataForm close={() => undefined} />)
+    await settle()
+    expect(menulist(host)?.textContent).toBe(label('week'))
+    expect(invoke).toHaveBeenCalledWith('privacy.clearBrowsingDataCounts', { range: 'week' })
+    expect(invoke).not.toHaveBeenCalledWith('privacy.clearBrowsingDataCounts', { range: 'hour' })
+
+    await open(host)
+    click(options().find((r) => r.textContent === label('all')))
+    await settle()
+    expect(invoke).not.toHaveBeenCalledWith('settings.update', expect.anything())
+    click(submit(host))
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('settings.update', { clearBrowsingDataRange: 'all' })
+  })
+
+  // The state goes in before the layout: `formFactor.ts` recomputes the viewport on every set.
+  it('the tablet’s form is the dialog’s: it opens on the remembered range too', async () => {
+    remembered('month')
+    layout('tablet')
+    const host = render(<ClearBrowsingDataForm close={() => undefined} />)
+    await settle()
+    expect(row(host, 'clear-data-range')?.getAttribute('aria-label')).toBe(
+      `Time range, ${label('month')}`
+    )
+    expect(invoke).toHaveBeenCalledWith('privacy.clearBrowsingDataCounts', { range: 'month' })
+  })
+
+  it('the phone’s Quick Delete form ignores it: the 15 minutes whatever was remembered, and its Delete writes nothing', async () => {
+    remembered('week')
+    layout('phone')
+    const host = render(<ClearBrowsingDataForm close={() => undefined} />)
+    await settle()
+    expect(row(host, 'clear-data-range')?.getAttribute('aria-label')).toBe(
+      `Time range, ${label('15min')}`
+    )
+    expect(invoke).toHaveBeenCalledWith('privacy.clearBrowsingDataCounts', { range: '15min' })
+    expect(invoke).not.toHaveBeenCalledWith('privacy.clearBrowsingDataCounts', { range: 'week' })
+
+    click(submit(host))
+    await settle()
+    expect(invoke).toHaveBeenCalledWith(
+      'privacy.clearBrowsingData',
+      expect.objectContaining({ range: '15min' })
+    )
+    expect(invoke).not.toHaveBeenCalledWith('settings.update', expect.anything())
+  })
 })
