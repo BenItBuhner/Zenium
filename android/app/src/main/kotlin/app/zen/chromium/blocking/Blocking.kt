@@ -517,7 +517,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                         tab.onDocumentUnsafe(url, hit)
                         return Verdict.Empty(204, "No Content")
                     }
-                    tab.onRequestsBlocked(1)
+                    tab.onRequestBlocked(url, BlockingTab.SAFE_BROWSING_SET)
                     return Verdict.Empty(403, "Forbidden")
                 }
             }
@@ -571,14 +571,14 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                         tab.onDocumentBlocked(url)
                         Verdict.Empty(204, "No Content")
                     } else {
-                        tab.onRequestsBlocked(1)
+                        tab.onRequestBlocked(url, decision.matchedSet)
                         Verdict.Empty(403, "Forbidden")
                     }
                 }
                 Decision.Action.REDIRECT -> when {
                     decision.matchedSet == Decision.TEXT_SET_ID -> {
                         // A filter list's `$redirect`: the neutered stand-in, counted as blocked.
-                        tab.onRequestsBlocked(1)
+                        tab.onRequestBlocked(url, decision.matchedSet)
                         Verdict.Neutered(type)
                     }
                     decision.redirectUrl == null -> Verdict.Pass
@@ -878,6 +878,19 @@ interface BlockingTab {
 
     /** `count` more subresources of the current document were blocked (IO thread). */
     fun onRequestsBlocked(count: Int)
+
+    /**
+     * One more subresource of the current document was blocked (IO thread): `url` is the
+     * request's, `set` the id of the rule set that matched (`Decision.TEXT_SET_ID`, `user`,
+     * `ext:…`, [SAFE_BROWSING_SET] for a frame Safe Browsing refused) or null. The chrome's
+     * tracker report is built from these; a tab that only counts keeps the default.
+     */
+    fun onRequestBlocked(url: String, set: String?) = onRequestsBlocked(1)
+
+    companion object {
+        /** The `set` [onRequestBlocked] reports for a frame Safe Browsing refused. */
+        const val SAFE_BROWSING_SET = "safe-browsing"
+    }
 
     /** The navigation to `url` was blocked before it committed (IO thread). */
     fun onDocumentBlocked(url: String)

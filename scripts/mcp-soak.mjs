@@ -330,19 +330,57 @@ export function randomSessionId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** `<userDataDir>/zen/agent.json` as the shim reads it: `{ url, token, running }`, or null. */
+/**
+ * `<userDataDir>/zen/agent.json` as the shim reads it – `{ url, token, running }` – plus `error`
+ * when the document carries a well-formed one: why the last start failed, which the app writes
+ * beside `running: false` since #690 (`EndpointError` in src/core/agent/service.ts: `code` the
+ * host's or null, `message`, and the `address` and `port` the bind was asked for). A malformed
+ * `error` reads as absent and never fails the read; the bound document reads as it always did.
+ * Null without a readable document or a token.
+ */
 export function readEndpoint(userDataDir) {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(userDataDir, 'zen', 'agent.json'), 'utf8'))
     if (!raw || typeof raw.token !== 'string') return null
-    return {
+    const endpoint = {
       url: typeof raw.url === 'string' ? raw.url : null,
       token: raw.token,
       running: raw.running === true
     }
+    const error = endpointErrorOf(raw.error)
+    if (error) endpoint.error = error
+    return endpoint
   } catch {
     return null
   }
+}
+
+/**
+ * The `error` field of `agent.json` when it has the shape the app writes (every key present:
+ * `code` a string or null, `message` and `address` strings, `port` a whole number), copied to
+ * exactly those four keys; null for anything else – a missing field, a wrong type, not an object.
+ */
+export function endpointErrorOf(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const { code, message, address, port } = raw
+  if (code !== null && typeof code !== 'string') return null
+  if (typeof message !== 'string' || typeof address !== 'string') return null
+  if (typeof port !== 'number' || !Number.isInteger(port)) return null
+  return { code, message, address, port }
+}
+
+/** `host:port`, the host bracketed when it is an IPv6 address – as the app's own log line has it. */
+export function hostPort(host, port) {
+  return `${host.includes(':') ? `[${host}]` : host}:${port}`
+}
+
+/**
+ * A bind failure in the words of the app's log line (`[zen mcp] the server could not bind
+ * <address>:<port>[ (<code>)]: <message>`, without the prefix): `127.0.0.1:41735 (EADDRINUSE):
+ * Port 41735 is already in use – …`; no parenthesis where the host named no code (the phone's).
+ */
+export function bindReason(error) {
+  return `${hostPort(error.address, error.port)}${error.code ? ` (${error.code})` : ''}: ${error.message}`
 }
 
 /** Whether something answers MCP at `url` (an OPTIONS is 204 there; anything HTTP will do). */
@@ -368,7 +406,10 @@ export function endpointPhase(endpoint, answered) {
   return answered ? 'answered' : 'url-silent'
 }
 
-/** What each phase means, in words, for the wait's log lines and its final error. */
+/**
+ * What each phase means, in words, for the wait's log lines and its final error – the words
+ * with no reason to give; {@link endpointPhaseSaid} adds the one `agent.json` names.
+ */
 export const ENDPOINT_PHASE_SAID = Object.freeze({
   absent: 'agent.json is absent or unreadable (no server file written yet)',
   'not-running':
@@ -379,9 +420,23 @@ export const ENDPOINT_PHASE_SAID = Object.freeze({
 })
 
 /**
+ * A phase in words, with the reason where `agent.json` gives one: in `not-running`, the bind
+ * failure the document carries (#690) stands in for the two guesses – `agent.json says the server
+ * is not running – the bind failed: 127.0.0.1:41735 (EADDRINUSE): Port 41735 is already in use –
+ * …`. Without an `error`, and in every other phase, {@link ENDPOINT_PHASE_SAID}'s words.
+ */
+export function endpointPhaseSaid(phase, endpoint) {
+  if (phase === 'not-running' && endpoint?.error)
+    return `agent.json says the server is not running – the bind failed: ${bindReason(endpoint.error)}`
+  return ENDPOINT_PHASE_SAID[phase]
+}
+
+/**
  * The endpoint once `agent.json` says `running: true` and the URL answers; throws at the deadline.
- * `log` (optional) is called on each phase change so a wait that stalls leaves a trail of which
- * phase it reached and when; `now`, `probe`, `pollMs` and `sleep` are injectable for the unit tests.
+ * `log` (optional) is called whenever what there is to say changes – the phase, or the reason
+ * `agent.json` gives in `not-running` – so a wait that stalls leaves a trail of which phase it
+ * reached and when, and why, without a line per poll; `now`, `probe`, `pollMs` and `sleep` are
+ * injectable for the unit tests.
  */
 export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
   const {
@@ -393,19 +448,20 @@ export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
   } = opts
   const started = now()
   const deadline = started + timeoutMs
-  let lastPhase = null
+  let lastSaid = null
   for (;;) {
     const e = readEndpoint(userDataDir)
     const answered = Boolean(e?.running && e.url) && (await probe(e.url))
     const phase = endpointPhase(e, answered)
-    if (phase !== lastPhase) {
-      log(`server-up: ${ENDPOINT_PHASE_SAID[phase]} (after ${now() - started} ms)`)
-      lastPhase = phase
+    const said = endpointPhaseSaid(phase, e)
+    if (said !== lastSaid) {
+      log(`server-up: ${said} (after ${now() - started} ms)`)
+      lastSaid = said
     }
     if (phase === 'answered') return { url: e.url, token: e.token }
     if (now() >= deadline)
       throw new Error(
-        `no MCP server answered within ${timeoutMs} ms: ${ENDPOINT_PHASE_SAID[phase]} (${path.join(userDataDir, 'zen', 'agent.json')}: ${
+        `no MCP server answered within ${timeoutMs} ms: ${said} (${path.join(userDataDir, 'zen', 'agent.json')}: ${
           e ? `running ${e.running}, url ${e.url}` : 'absent or unreadable'
         })`
       )

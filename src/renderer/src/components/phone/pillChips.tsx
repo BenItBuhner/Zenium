@@ -9,7 +9,12 @@ import type { TranslateTabState } from '@shared/translate'
 import type { Tab, UIState } from '@shared/types'
 import { isWebPageUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { chipCount, requests, siteBlockingState } from '@renderer/lib/blockingUi'
+import {
+  TRACKER_REPORT_TITLE,
+  chipCount,
+  requests,
+  siteBlockingState
+} from '@renderer/lib/blockingUi'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
 import { openSettings } from '@renderer/lib/pages'
@@ -107,6 +112,12 @@ export interface PillChipRow {
   value?: string
   /** What the row does, sheet included: it leaves the sheet when what it opens replaces it. */
   activate: () => void
+  /**
+   * The row is a §10.4 detail row: in the sheet it opens this level one down instead of acting
+   * (the shield's row opens the tracker report, PS-33); `activate` is the door where the sheet
+   * has no levels to open.
+   */
+  level?: 'trackers'
 }
 
 export interface PillChipModel {
@@ -316,10 +327,13 @@ export function phonePillChips(
   }
 
   // The blocking shield and its count (#115): on every web page while the host blocks requests.
-  // In the sheet it is the row the count goes on – the shield glyph, the count as the value (the
-  // chip's own formatting), "Off for this site" or "Blocking off" when nothing is blocked here –
-  // and it leads on to Settings › Privacy and security, where the lists and the site exceptions
-  // are; the sheet leaves first, as its Site settings row does. Asked for this site
+  // In the sheet it is the row the count goes on – the shield glyph, "Trackers blocked", the
+  // count as the value (the chip's own formatting), "Off for this site" or "Blocking off" when
+  // nothing is blocked here – a §10.4 detail row that opens the tracker report one level down
+  // (PS-33: the sites blocked on the page, by domain and count; `SiteInfoSheet`'s `trackers`
+  // level), whose footer leads on to Settings › Privacy and security, where the lists and the
+  // site exceptions are. `activate` keeps that door for a host without the level; the sheet
+  // leaves first, as its Site settings row does. Asked for this site
   // (`zen://settings/privacy?site=<origin>`, Chrome's `siteDetails?site=`), the page opens with
   // the site's own group – "Block on <host>", one screen down in Chrome's order – on screen.
   if (identity && !page && !extension && state.capabilities.requestBlocking) {
@@ -347,8 +361,9 @@ export function phonePillChips(
         spoken,
         row: {
           glyph: siteState === 'blocking' ? <Shield /> : <ShieldOff />,
-          label: 'Requests blocked',
+          label: TRACKER_REPORT_TITLE,
           value,
+          level: 'trackers',
           activate: () => {
             if (!overlayAvailable('settings')) dismissSiteInfo()
             openSettings('privacy', { site: origin })

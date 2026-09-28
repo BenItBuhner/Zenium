@@ -16,6 +16,7 @@ import {
 } from '../../shared/types'
 import type { SiteInfoSnapshot } from '../../shared/siteInfo'
 import { crashPageUrl, errorPageUrl } from '../../shared/url'
+import { TEXT_MATCH_SET_ID } from '../blocking/engine'
 import { Browser } from '../browser'
 import { REVOKED_PERMISSIONS_KEPT_MS, coarseVisitTime } from '../permissions'
 import { DEVICE_LOCAL_SETTINGS } from '../sync/records'
@@ -1052,6 +1053,34 @@ describe('siteInfo.snapshot', () => {
     })
     expect(secret!.isPrivate).toBe(true)
     expect(await fx.command<Promise<unknown>>('siteInfo.snapshot', { tabId: 'nope' })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PS-33: the tracker report is the document's own – the record on disk carries none of it
+// ---------------------------------------------------------------------------
+
+describe('the tracker report on disk (PS-33)', () => {
+  it('writes the tab with its count at zero and without its blocked sites', () => {
+    const fx = fixture()
+    const tab = fx.browser.tabs.createTab({ url: 'https://news.example/', active: true }, fx.win)
+    fx.navigate(tab.id, 'https://news.example/')
+    fx.browser.blocking.recordBlocked(tab.id, 3, [
+      { host: 'ads.example', setId: TEXT_MATCH_SET_ID, count: 3 }
+    ])
+    expect(tab.blockedCount).toBe(3)
+    expect(tab.blockedSites).toEqual([{ domain: 'ads.example', category: 'tracker', count: 3 }])
+
+    fx.browser.state.flushSync()
+    const persisted = JSON.parse(fx.io.files['state.json']) as {
+      tabs: Array<Record<string, unknown>>
+    }
+    const record = persisted.tabs.find((t) => t.id === tab.id)
+    expect(record).toBeDefined()
+    expect(record!.blockedCount).toBe(0)
+    expect(record).not.toHaveProperty('blockedSites')
+    // The live tab keeps its report: only the written record goes without.
+    expect(tab.blockedSites).toHaveLength(1)
   })
 })
 
