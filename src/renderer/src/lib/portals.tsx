@@ -1347,7 +1347,7 @@ export function FrameDialogHost({
   // The frame's host tells the store how many dialogs stand on it (`frameDialogsOpen`): a toast
   // raised while one does is seated on the frame (`Toast.seat`, §9.33) for the seat below to
   // draw above the dialog. The registry's count, not the way out: a toast raised once the last
-  // dialog has closed (Got it's, after the dialog it closed) is the column's.
+  // dialog has closed (one raised after the last dialog closed) is the column's.
   useLayoutEffect(() => {
     if (!frame) return
     uiStore.set({ frameDialogsOpen: count })
