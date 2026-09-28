@@ -37,7 +37,7 @@ import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
 import { browserStore } from './browserStore'
 import { devtoolsDockOf } from './contentRadius'
-import { isPhone, isTouchLayout, viewportStore } from './formFactor'
+import { isPhone, isTouchLayout, viewportStore, type FormFactor } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
 import { searchChoiceCovers } from './searchChoice'
@@ -123,8 +123,8 @@ export interface UrlbarFieldState {
 }
 
 /**
- * A tab's draft – Chrome's per-tab omnibox state, the second half of W8-F15's ruling (keeping
- * the tab but dropping its text on the same event was half the fix): the field as
+ * A tab's draft – Chrome desktop's per-tab omnibox state, the second half of W8-F15's ruling
+ * (keeping the tab but dropping its text on the same event was half the fix): the field as
  * `urlbarFollowsActiveTab` found it when it left the tab, and how the bar stood (`attached`).
  * Kept in `UiState.urlbarDrafts` by tab id – this window's renderer, in memory, never persisted
  * – from the leave until the tab is active again (the bar re-opens with the draft in place,
@@ -132,7 +132,8 @@ export interface UrlbarFieldState {
  * (navigated while away: what was typed was for a page that is gone) – `pruneUrlbarDrafts`.
  * A draft committed (a navigation) or dismissed (Escape) by the user while the bar is up never
  * reaches this store: only a leave writes it, and the bar's own close paths keep their rules
- * (`Urlbar.tsx`, `drafts`).
+ * (`Urlbar.tsx`, `drafts`). The desktop layout's alone (`urlbarKeepsTabDrafts`): the phone and
+ * the tablet write none and read none back.
  */
 export interface UrlbarTabDraft extends UrlbarFieldState {
   /** The bar was anchored to the top (`UrlbarState.attached`), not floating. */
@@ -1756,7 +1757,9 @@ export function newTabRevealOpensUrlbar(text: string | undefined): boolean {
  * `RestoreState` puts the omnibox back on the tab's return; the store's copy is spent on the
  * open (the field holds it now; a later leave saves it afresh). Keys the page's own field
  * received while the bar was on its way up (`text`) are typed into the draft at its selection,
- * as keys that race an open bar are spliced in at the caret (`zen-urlbar-type`).
+ * as keys that race an open bar are spliced in at the caret (`zen-urlbar-type`). On the desktop
+ * layout alone (`urlbarKeepsTabDrafts`): a touch layout reads no draft back – one a desktop
+ * window left before it was narrowed stays where it is, unspent, for the window widened again.
  */
 export function openNewTabPageUrlbar(
   tabId: string,
@@ -1781,7 +1784,7 @@ export function openNewTabPageUrlbar(
     run('focus.chrome', undefined)
     uiStore.set((s) => {
       const { [tabId]: spent, ...urlbarDrafts } = s.urlbarDrafts
-      const left: UrlbarTabDraft | undefined = spent
+      const left: UrlbarTabDraft | undefined = urlbarKeepsTabDrafts() ? spent : undefined
       const draft = left && mine.text ? typedInto(left, mine.text) : left
       return {
         urlbar: {
@@ -1873,11 +1876,28 @@ let urlbarField: (() => UrlbarFieldState | null) | null = null
 let followedTabId: string | null = null
 
 /**
+ * Whether the bar keeps a tab's draft across a tab switch (W8-F15's form-factor gate): the
+ * desktop layout's behaviour alone. Chrome desktop's omnibox carries its state per tab
+ * (`OmniboxViewViews::SaveStateToTab` on the leave, `OnTabChanged` → `RestoreState` on the
+ * return); Chrome for Android drops the edit when the switcher changes tabs, so the phone and the
+ * tablet – both Chrome Android's – save nothing and read nothing back (§9.34: the same `Urlbar`,
+ * two behaviours). The layout is the renderer's (`viewportStore`), not the platform's: a window
+ * narrowed to the phone layout on a laptop keeps none while it stays so. The bar's input signal
+ * to the core (`urlbar.input`, `Urlbar.tsx`) is not gated: a tab being typed into is not a fresh
+ * one on any layout.
+ */
+export function urlbarKeepsTabDrafts(
+  formFactor: FormFactor = viewportStore.get().formFactor
+): boolean {
+  return formFactor === 'desktop'
+}
+
+/**
  * The mounted desktop bar lends its field to `urlbarFollowsActiveTab`: `read` answers the field
  * as it stands – text as shown, selection, keyword chip – or null before the input is in the
  * tree. One bar at a time (the palette is one instance per tab it is bound to); the release
- * forgets it. The phone's bar sheet lends nothing: its bar is bound to no tab and its drafts are
- * discarded on every dismissal (`Urlbar.tsx`, `drafts`), so nothing there is ever read.
+ * forgets it. The phone's and the tablet's bars lend nothing (`urlbarKeepsTabDrafts`); the
+ * phone's drafts are discarded on every dismissal besides (`Urlbar.tsx`, `drafts`).
  */
 export function provideUrlbarField(read: () => UrlbarFieldState | null): () => void {
   urlbarField = read
@@ -1893,9 +1913,12 @@ export function provideUrlbarField(read: () => UrlbarFieldState | null): () => v
  * user's – and the tab is still an empty one (a palette over a page that took the tab is not
  * worth a return). A field left empty writes nothing: a tab left with no draft restores no bar,
  * as it never had one to come back to. A bare keyword chip with no text is let go with the bar,
- * as the bar's own input signal (`urlbar.input`) counts text alone.
+ * as the bar's own input signal (`urlbar.input`) counts text alone. The desktop layout's alone
+ * (`urlbarKeepsTabDrafts`): on the phone and the tablet the leave writes nothing, whatever the
+ * field holds.
  */
 function saveUrlbarDraft(tabId: string, attached: boolean, state: UIState): void {
+  if (!urlbarKeepsTabDrafts()) return
   const tab = state.tabs[tabId]
   const field = urlbarField?.()
   if (!tab || !isEmptyTabUrl(tab.url) || !field || !field.text.trim()) return
@@ -1945,7 +1968,9 @@ function pruneUrlbarDrafts(state: UIState): void {
  * the palette re-binding to it from another tab – the palette re-opens over it with the draft
  * in place, through `openNewTabPageUrlbar`. A tab left with nothing typed restores nothing. The
  * return is the tab's arrival in front (`OnTabChanged`), not any later state the window sends:
- * a draft whose tab is in front under another bar waits for the tab's next activation.
+ * a draft whose tab is in front under another bar waits for the tab's next activation. The
+ * desktop layout's alone, the save and the restore both (`urlbarKeepsTabDrafts`): the phone's
+ * and the tablet's palette follows the active tab as W5-F4 had it, and nothing more.
  */
 export function urlbarFollowsActiveTab(): void {
   const state = browserStore.get().state
@@ -1960,9 +1985,10 @@ export function urlbarFollowsActiveTab(): void {
   followedTabId = active?.id ?? null
   if (!urlbar.open) {
     // The bar is down and the tab that just came in front was left mid-draft: the bar comes
-    // back over it with the draft in place.
+    // back over it with the draft in place – on the desktop layout; a touch layout opens no bar
+    // for a draft it would not read back.
     const draft = active && arrived ? uiStore.get().urlbarDrafts[active.id] : undefined
-    if (active && draft && newTabPaletteOn(state)) {
+    if (active && draft && urlbarKeepsTabDrafts() && newTabPaletteOn(state)) {
       openNewTabPageUrlbar(active.id, undefined, draft.attached)
     }
     return

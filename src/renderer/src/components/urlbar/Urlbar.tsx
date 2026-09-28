@@ -51,6 +51,7 @@ import {
   openDeleteSearchHistoryConfirm,
   provideUrlbarField,
   uiStore,
+  urlbarKeepsTabDrafts,
   type UrlbarDraftKeyword,
   type UrlbarState
 } from '@renderer/lib/ui'
@@ -122,8 +123,10 @@ const POPUP_GAP = 4
  * is cleared. Nothing is written or read here for the phone; a submit, Edit and the header chips
  * are as they are on either. This map is the bar's own dismissals'; a tab the palette LEAVES
  * mid-typing – the active tab changed under it – keeps its draft in `UiState.urlbarDrafts` by
- * tab id instead, and the bar re-opens with it on the tab's return (W8-F15, Chrome's per-tab
- * omnibox state; `urlbarFollowsActiveTab`).
+ * tab id instead, and the bar re-opens with it on the tab's return (W8-F15, Chrome desktop's
+ * per-tab omnibox state; `urlbarFollowsActiveTab`) – on the desktop layout alone: the phone and
+ * the tablet, Chrome Android's both, keep no leave-draft (`urlbarKeepsTabDrafts`); the tablet's
+ * dismissal drafts in this map are as they were.
  */
 const drafts = new Map<string, string>()
 let keywordSeq = 0
@@ -372,9 +375,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // reads it – the text as shown, the selection, the keyword chip – at the one moment it leaves
   // the tab this instance is bound to, and saves it as the tab's draft (Chrome's
   // `OmniboxViewViews::SaveStateToTab`). Read on that moment alone, never per keystroke. The
-  // phone's sheet lends nothing: its drafts are discarded on every dismissal (`drafts`).
+  // desktop layout's alone (`urlbarKeepsTabDrafts`): the phone's and the tablet's bars lend
+  // nothing – Chrome for Android drops the edit on a switcher tab switch (§9.34: the same
+  // `Urlbar`, two behaviours) – and the phone's drafts are discarded on every dismissal besides
+  // (`drafts`). The input signal above is not gated: it is the same on every layout.
+  const formFactor = viewportStore.use((v) => v.formFactor)
   useEffect(() => {
-    if (phone) return undefined
+    if (!urlbarKeepsTabDrafts(formFactor)) return undefined
     return provideUrlbarField(() => {
       const el = inputRef.current
       if (!el) return null
@@ -387,7 +394,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         keyword: mode ? { engineId: mode.engine.id, typed: mode.typed } : null
       }
     })
-  }, [phone])
+  }, [formFactor])
 
   const fetchSuggestions = useCallback(
     async (query: string, autofill: boolean, engine?: SearchEngine | null) => {
