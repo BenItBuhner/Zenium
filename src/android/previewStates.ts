@@ -1,5 +1,6 @@
 import type {
   AppLinkState,
+  BlockedSite,
   CertificateDetails,
   ClientCertificateInfo,
   CommandArgs,
@@ -1733,6 +1734,33 @@ let unholdFixtures: (() => void) | null = null
 /** The requests the seeded engine has blocked on the page, unless `blocked=<n>` says otherwise. */
 const BLOCKED_ON_PAGE = 12
 
+/**
+ * The sites those requests went to (PS-33's tracker report, the sheet's "Trackers blocked"
+ * level), in the engine's first-seen order; their counts sum to `BLOCKED_ON_PAGE`.
+ */
+const BLOCKED_SITES_ON_PAGE: readonly BlockedSite[] = [
+  { domain: 'doubleclick.net', category: 'tracker', count: 3 },
+  { domain: 'google-analytics.com', category: 'tracker', count: 4 },
+  { domain: 'facebook.net', category: 'tracker', count: 2 },
+  { domain: 'scorecardresearch.com', category: 'tracker', count: 1 },
+  { domain: 'hotjar.com', category: 'tracker', count: 2 }
+]
+
+/** `BLOCKED_SITES_ON_PAGE` cut or stretched so its counts sum to `blocked` (≥ 1). */
+function blockedSitesFixture(blocked: number): BlockedSite[] {
+  const sites: BlockedSite[] = []
+  let left = blocked
+  for (const site of BLOCKED_SITES_ON_PAGE) {
+    if (left <= 0) break
+    const count = Math.min(site.count, left)
+    sites.push({ ...site, count })
+    left -= count
+  }
+  const last = sites[sites.length - 1]
+  if (last && left > 0) last.count += left
+  return sites
+}
+
 function holdFixture(name: string, fixture: ((state: UIState) => UIState) | null): void {
   if (fixture) heldFixtures.set(name, fixture)
   else heldFixtures.delete(name)
@@ -2008,7 +2036,16 @@ export function blockingFixture(
   }
   const blocks = enabled && level !== 'off' && !(origin !== null && siteExceptions.includes(origin))
   const tabs = { ...state.tabs }
-  if (tab) tabs[tab.id] = { ...tab, blockedCount: blocks ? blocked : 0 }
+  if (tab) {
+    const count = blocks ? blocked : 0
+    // The report's rows come with the count (a device's engine sends both on one beat); the
+    // level is the §9.17 empty line when nothing was blocked.
+    const { blockedSites: _dropped, ...rest } = tab
+    tabs[tab.id] =
+      count > 0
+        ? { ...rest, blockedCount: count, blockedSites: blockedSitesFixture(count) }
+        : { ...rest, blockedCount: 0 }
+  }
   return { ...state, settings, blocking, tabs }
 }
 
