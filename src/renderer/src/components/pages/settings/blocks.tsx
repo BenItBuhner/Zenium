@@ -205,19 +205,29 @@ export function ZoomBlock({
  * the field it belongs to name it (`aria-describedby`), so a reader on the field hears the error;
  * the glyph is decoration and stays out of the reading. Every validation line in the program is
  * this one – a form's under its field, the phone field sheet's, the desktop row's inline field
- * (`rows.tsx`'s `InlineField`, which adds its own class for the row's geometry).
+ * (`rows.tsx`'s `InlineField`, which adds its own class for the row's geometry). With `tone:
+ * 'warn'` it is the same line in the warn ink for a value the field keeps but the user should
+ * know the cost of (`FieldRow.warning`; an `http://` server address): not an error, so it is a
+ * `status` a reader hears in its turn rather than an alert that interrupts.
  */
 export function ValidationMessage({
   message,
   id,
-  className
+  className,
+  tone
 }: {
   message: string
   id?: string
   className?: string
+  tone?: 'warn'
 }): JSX.Element {
   return (
-    <span className={cn('zen-settings-validation', className)} role="alert" id={id}>
+    <span
+      className={cn('zen-settings-validation', className)}
+      role={tone === 'warn' ? 'status' : 'alert'}
+      data-tone={tone}
+      id={id}
+    >
       <CircleAlert aria-hidden="true" />
       {message}
     </span>

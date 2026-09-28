@@ -12652,6 +12652,10 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
 }
+/* The same line in the warn ink for a value kept at a cost (`FieldRow.warning`), not refused. */
+.zen-settings-validation[data-tone='warn'] {
+  color: var(--v2-warn);
+}
 .zen-settings-validation > svg {
   width: 16px;
   height: 16px;
