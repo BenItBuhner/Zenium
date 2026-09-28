@@ -52,7 +52,7 @@ import {
  * and one up is placed again in the grown document, rather than taken down by the room made
  * for it.
  */
-export function Tooltip({ resize = 'hide' }: TooltipProps = {}): JSX.Element | null {
+export function Tooltip({ resize = 'hide' }: TooltipProps): JSX.Element | null {
   const { target, by } = tooltipStore.use()
   // The text is the control's attribute, read at render; `words` re-renders when it changes.
   const [, setWords] = useState(0)
