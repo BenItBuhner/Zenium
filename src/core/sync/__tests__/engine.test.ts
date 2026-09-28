@@ -1190,8 +1190,12 @@ describe('the settings record merges per key, as Chrome Sync treats preferences'
     // The phone runs a build before two of the fields existed: its object holds the fields the
     // defaults hold minus two (an older build's, before and after the next field is added), and
     // the user picks a size and a font there – an edit stamped at its commit (`onLocalChange`).
-    const { spacing: _spacing, syllables: _syllables, ...older } = DEFAULT_READER_PREFERENCES
-    void _spacing
+    const {
+      letterSpacing: _letterSpacing,
+      syllables: _syllables,
+      ...older
+    } = DEFAULT_READER_PREFERENCES
+    void _letterSpacing
     void _syllables
     const phonesOwn = { ...older, fontSize: 14, font: 'mono' as const }
     const completed = { ...DEFAULT_READER_PREFERENCES, fontSize: 14, font: 'mono' as const }
