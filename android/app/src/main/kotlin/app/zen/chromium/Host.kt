@@ -1390,6 +1390,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
             // --- passwords: vault key protection and re-authentication ---------------------------
             "vault.available" -> io.execute { val ok = vault.available(); main.post { reply(ok) } }
+            // The app-restrictions bundle behind the "Managed Browser" row (TB-13): read here, on
+            // the core's first ask, off the main thread; nothing is read or held at boot.
+            "managed.read" -> io.execute { val status = ManagedRestrictions.read(activity); main.post { reply(status) } }
             "vault.wrap" -> vault.wrap(args.str("key"), reply)
             "vault.unwrap" -> vault.unwrap(args.str("blob"), args.bool("interactive"), reply)
             "reauth.available" -> reply(reauth.available())

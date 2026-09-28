@@ -16,9 +16,34 @@
   an event only when some enabled service asked for its type, and UiAutomation is none – sends
   them at all. Declared as any accessibility service is: bound by the system under
   BIND_ACCESSIBILITY_SERVICE, its asks in res/xml/events_tap_service.xml.
+
+  And the device admin the managed-configuration driver needs (ManagedTestAdmin.java): the shell
+  makes this test package the device owner for the run, and as the owner the package hands Zenium
+  an app-restrictions bundle through DevicePolicyManager – the way an EMM does – so the app reads
+  it through RestrictionsManager as it would in the field. Declared as any device admin is, with
+  no policies of its own (res/xml/device_admin.xml). The owner's calls have to come from this
+  package's own uid, and the driver runs in Zenium's process, so it sends them to
+  ManagedSeedReceiver.java – a receiver of this package, reached by an explicit ordered
+  broadcast, exported for that – which sets the bundle and, when the driver is done, clears it
+  and gives the ownership back.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Nimbus News">
+        <receiver
+            android:name="app.zen.chromium.ManagedTestAdmin"
+            android:exported="true"
+            android:label="Demo harness managed-configuration admin"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="app.zen.chromium.ManagedSeedReceiver"
+            android:exported="true" />
         <service
             android:name="app.zen.chromium.EventsTapService"
             android:exported="true"
