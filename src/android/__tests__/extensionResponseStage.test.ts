@@ -247,9 +247,16 @@ describe('the response stage of a relayed media request (ext.response → webReq
     expect(received).toHaveLength(1)
     expect(received[0].statusCode).toBe(302)
     expect(redirected).toHaveLength(1)
+    // Redirect Path's worker keeps a hop only when the event's frameType reads the outermost
+    // frame (`details.frameType == "outermost_frame"` on onBeforeRedirect and onCompleted):
+    // Chrome's two frame words go on every event here, as on the desktop.
     expect(redirected[0]).toMatchObject({
       requestId: '7',
       url: 'https://cdn.example/redirect?to=/clip.mp4',
+      frameId: 0,
+      parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
       statusCode: 302,
       statusLine: 'HTTP/1.1 302 Found',
       redirectUrl: CLIP,
@@ -279,7 +286,9 @@ describe('the response stage of a relayed media request (ext.response → webReq
     expect(heard(h, 'bg1', 'onCompleted')[0]).toMatchObject({
       requestId: '7',
       url: CLIP,
-      statusCode: 206
+      statusCode: 206,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active'
     })
     // A later, unrelated request of the same URL is its own: the mark was consumed by the target.
     h.runtime.onRequest(requestEvent({ requestId: '12', url: CLIP }))
@@ -430,6 +439,10 @@ describe("the page script's observer of a fetch / XHR (ext-observation → webRe
       url,
       method: 'GET',
       type: 'xmlhttprequest',
+      frameId: 0,
+      parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
       initiator: 'https://news.example',
       statusCode: 200,
       statusLine: 'HTTP/1.1 200 OK'

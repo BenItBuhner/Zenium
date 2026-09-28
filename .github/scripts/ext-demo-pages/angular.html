@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Angular application page (Angular DevTools fixture)</title>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Angular application page</h1>
+    <p>
+      The shape Angular DevTools' page-world detector reads once a second: an element carrying
+      <code>ng-version</code> (Angular), an <code>__ngContext__</code> on it (Ivy), a major version
+      of 12 or more, and a <code>window.ng.getComponent</code> function (development mode). The
+      detector posts its finding to the extension's content script, whose worker swaps the tab's
+      popup to <code>popups/supported.html</code>.
+    </p>
+    <app-root ng-version="17.3.0" id="app-root">
+      <p>Angular application running development mode (fixture).</p>
+    </app-root>
+    <ul>
+      <li>ng-version: <span id="version">pending</span></li>
+      <li>__ngContext__: <span id="ivy">pending</span></li>
+      <li>window.ng.getComponent: <span id="debug">pending</span></li>
+    </ul>
+    <script>
+      var root = document.getElementById('app-root')
+      root.__ngContext__ = []
+      window.ng = {
+        getComponent: function () {
+          return null
+        },
+        getDirectiveMetadata: function () {
+          return null
+        }
+      }
+      document.getElementById('version').textContent = root.getAttribute('ng-version')
+      document.getElementById('ivy').textContent = typeof root.__ngContext__
+      document.getElementById('debug').textContent = typeof window.ng.getComponent
+    </script>
+  </body>
+</html>
