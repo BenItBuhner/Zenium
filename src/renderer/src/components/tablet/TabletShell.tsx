@@ -5,6 +5,7 @@ import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import { onboardingCovers } from '@renderer/lib/onboarding'
+import { useFrameToastSeat } from '@renderer/lib/portals'
 import { usePrivateTabLocked } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
@@ -115,6 +116,10 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId)
 
+  // Where the message layer seats the toast's slot (§9.33): the frame dialog host's seat, once
+  // TabDialogs below has mounted it – null until then, and the slot draws in the layer.
+  const toastSeat = useFrameToastSeat().element
+
   // The URL bar's popup hangs from the toolbar's address pill, as wide as it (TB-21): the pill
   // is measured as the bar opens and again when the window or the sidebar changes under it.
   const anchor = useFieldAnchor(windowRef, ui.urlbar.open)
@@ -166,13 +171,13 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={toggleSidebar}
       />
-      {/* The chrome under the sheets – the sidebar, the content column, the messages, the
-          stage – carries `data-shell-chrome`: it goes inert while a sheet or a frame dialog is
-          up (§9.22, `holdChromeInert` in lib/portals.tsx). */}
-      <div
-        data-shell-chrome
-        className={cn('relative flex min-h-0 flex-1', side === 'right' && 'flex-row-reverse')}
-      >
+      {/* The chrome under the sheets – the sidebar column, the content area and the messages
+          on its frame – carries `data-shell-chrome` piece by piece: it goes inert while a sheet
+          or a frame dialog is up (§9.22, `holdChromeInert` in lib/portals.tsx). Never this row
+          as one: the frame dialog host (`TabDialogs`, below) sits inside it, and the hold the
+          host itself takes for a hosted dialog would make the dialog inert with the chrome
+          around it – the phone shell keeps its host outside its `main` for the same reason. */}
+      <div className={cn('relative flex min-h-0 flex-1', side === 'right' && 'flex-row-reverse')}>
         <TabletSidebarColumn swipe={swipe}>
           <Sidebar state={state} isDark={isDark} compact={rail} navRow={false} />
         </TabletSidebarColumn>
@@ -186,18 +191,32 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
           }}
         >
           <div className="relative min-h-0 flex-1">
-            <ContentArea state={state} ui={ui} hostsUrlbar={false} />
-            {/* Messages on the content frame's box (v2 §9.33): banners from its top edge, the
-                toast at its bottom, over the page and under the dialogs. Its own name: the
-                phone's `.zen-message-frame` is a `--zen-recede` reader that recedes with the
-                phone's frame (PERF-2's registry), and nothing recedes on the tablet. */}
-            <div className="zen-tablet-message-frame pointer-events-none absolute inset-0 z-[36]">
-              <MessageLayer />
+            {/* No box of its own (`contents`): the chrome mark for the content area, which a
+                dialog on the host covers (`holdFrameInert`) and a sheet holds with the chrome. */}
+            <div data-shell-chrome className="contents">
+              <ContentArea state={state} ui={ui} hostsUrlbar={false} />
+            </div>
+            {/* Messages on the content frame's box (v2 §9.33): banners from its top edge over
+                the page and under the dialogs; the toast's slot seated in the frame dialog
+                host's own seat (`useFrameToastSeat`, lib/portals.tsx), inside the host and so
+                outside both of its inert holds, which the host lifts above a standing dialog
+                while the slot holds a card – a toast a dialog's act raised stands over the
+                dialog and its scrim, its Undo in reach, on the frame's 8 px inset – and seats
+                normally again when the dialog closes, the card's element and clock untouched
+                (the phone's lift, #651, as one mechanism). Its own name: the phone's
+                `.zen-message-frame` is a `--zen-recede` reader that recedes with the phone's
+                frame (PERF-2's registry), and nothing recedes on the tablet. */}
+            <div
+              data-shell-chrome
+              className="zen-tablet-message-frame pointer-events-none absolute inset-0 z-[36]"
+            >
+              <MessageLayer toastSeat={toastSeat} />
             </div>
             {/*
              * Modal dialogs render in the content frame through FrameDialogHost (its scrim dims
-             * this box only); popovers such as the star bubble render through ChromePortal, over
-             * the window (lib/portals.tsx).
+             * this box only; under no chrome mark, so the hold it takes for a dialog leaves the
+             * dialog and its toast seat in reach); popovers such as the star bubble render
+             * through ChromePortal, over the window (lib/portals.tsx).
              */}
             <TabDialogs state={state} />
           </div>
@@ -253,6 +272,7 @@ function TabletSidebarColumn({
   return (
     <div
       className="zen-tablet-sidebar relative flex h-full shrink-0"
+      data-shell-chrome
       style={{
         opacity: shown,
         visibility: shown === 0 ? 'hidden' : undefined,

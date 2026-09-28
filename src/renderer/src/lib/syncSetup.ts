@@ -160,7 +160,7 @@ export const SYNC_COPY = {
  * The data types in the page's own order: Chrome's types first – Bookmarks, History, Open tabs,
  * Passwords, Reading list, Settings; Chrome's "Manage what you sync" seats Reading list directly
  * after Bookmarks, ours sits beside Passwords, as the lead seated it – then Zenium's own:
- * Spaces, folders, pinned tabs, Essentials, containers, shortcuts, Boosts. Every key of
+ * Spaces, folders, pinned tabs, Essentials, containers, shortcuts, Boosts, Mods. Every key of
  * `SyncScope` is here once (the engine's toggles are the page's).
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
@@ -183,7 +183,14 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
   { key: 'essentials', label: 'Essentials' },
   { key: 'containers', label: 'Containers' },
   { key: 'shortcuts', label: 'Keyboard shortcuts' },
-  { key: 'boosts', label: 'Boosts' }
+  { key: 'boosts', label: 'Boosts' },
+  // The Mods' row (services pass 15, ID-43, the `mod` record): the browser chrome's CSS mods,
+  // named as Settings › Mods names them. Chrome's row for the type is "Themes" (its one theme
+  // per profile, `UserSelectableType::kThemes`); ours toggles the Mod list alone – the look
+  // settings travel with Settings and each space's theme with Spaces – so the row says what it
+  // moves. No hint, as with Boosts (the lead's rule: a hint never restates the name). DRAFT
+  // until the lead approves the label.
+  { key: 'mods', label: 'Mods' }
 ]
 
 /**

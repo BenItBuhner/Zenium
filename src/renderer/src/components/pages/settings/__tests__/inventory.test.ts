@@ -991,6 +991,8 @@ describe('the AI Agents › Agent skill group', () => {
     if (cursor.kind === 'switch') {
       expect(cursor.checked).toBe(false)
       expect(cursor.description).toBe('~/.cursor/skills/zenium-browser')
+      // The directory is a path: one line shortened from its start (§9.2's exception, #677).
+      expect(cursor.address).toBe(true)
       cursor.onChange(true)
       expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', { targets: ['cursor'] })
       cursor.onChange(false)

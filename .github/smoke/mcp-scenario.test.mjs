@@ -1,3 +1,4 @@
+import net from 'node:net'
 import { describe, expect, it } from 'vitest'
 import { SOFT_CHECKS, Verdict } from '../../scripts/mcp-soak.mjs'
 import {
@@ -5,9 +6,12 @@ import {
   MCP_RESTART_SCENARIO,
   MCP_SCENARIO,
   MCP_SOAK,
+  PORT_POOL,
   STAGE_PAGES,
   agentSettings,
+  bindable,
   colourPage,
+  ephemeralFloor,
   freePort,
   isColour,
   judgePixels,
@@ -31,11 +35,52 @@ describe('the profile the scenario seeds', () => {
     })
   })
 
-  it('finds a free loopback port', async () => {
+  it('finds a free loopback port below the ephemeral range, where no bind(0) can take it', async () => {
     const port = await freePort()
     expect(Number.isInteger(port)).toBe(true)
-    expect(port).toBeGreaterThanOrEqual(1024)
-    expect(port).toBeLessThanOrEqual(65535)
+    expect(port).toBeGreaterThanOrEqual(PORT_POOL.lo)
+    expect(port).toBeLessThan(Math.min(PORT_POOL.hi, ephemeralFloor()))
+    expect(await bindable(port)).toBe(true)
+  })
+
+  it('reads the ephemeral floor from the proc file, the Linux default without one', () => {
+    expect(ephemeralFloor(() => '32768\t60999\n')).toBe(32768)
+    expect(ephemeralFloor(() => '49152 65535')).toBe(49152)
+    expect(
+      ephemeralFloor(() => {
+        throw new Error('ENOENT')
+      })
+    ).toBe(32768)
+    expect(ephemeralFloor(() => 'garbage')).toBe(32768)
+  })
+
+  it('skips a port something already listens on (run 36451930938 seeded one that was taken)', async () => {
+    const floor = 32768
+    const span = Math.min(PORT_POOL.hi, floor) - PORT_POOL.lo
+    // A roll that lands squarely in slot i of the pool: the pick is PORT_POOL.lo + i.
+    const roll = (i) => (i + 0.5) / span
+    const taken = await freePort({ random: () => roll(6000), floor })
+    expect(taken).toBe(PORT_POOL.lo + 6000)
+    const busy = net.createServer()
+    await new Promise((resolve) => busy.listen(taken, '127.0.0.1', resolve))
+    try {
+      expect(await bindable(taken)).toBe(false)
+      // The same pick first, then the next port along: the pick moves on.
+      const rolls = [roll(6000), roll(6001)]
+      const port = await freePort({ random: () => rolls.shift() ?? roll(6001), floor })
+      expect(port).toBe(taken + 1)
+      await expect(freePort({ random: () => roll(6000), floor, tries: 2 })).rejects.toThrow(
+        /no free port in 20000–32767 after 2 tries \(last tried 26000\)/
+      )
+    } finally {
+      await new Promise((resolve) => busy.close(resolve))
+    }
+  })
+
+  it('uses the pool as is on a box whose ephemeral range starts too low to leave room', async () => {
+    const port = await freePort({ floor: 1024 })
+    expect(port).toBeGreaterThanOrEqual(PORT_POOL.lo)
+    expect(port).toBeLessThan(PORT_POOL.hi)
   })
 
   it('keeps the CI soak short and names its two launches', () => {

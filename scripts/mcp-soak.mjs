@@ -71,6 +71,16 @@ const CLIENT_VERSION = '1'
 /** A tool call that has not answered by then failed the session (the server has no such limit). */
 const CALL_TIMEOUT_MS = 90_000
 
+/**
+ * A background snapshot may run a beat before the staged off-screen view lays out (MCP-C, #568):
+ * the viewport reads 0×0 and the page's heading is not there yet, so an immediate snapshot fails
+ * the hard check (`background-snapshot ×1 (viewport 0×0, headings [], N refs)`, run 36371842431).
+ * A real agent would snapshot again; the soak settles the same way – re-snapshot until the page has
+ * laid out, bounded, and judge the settled snapshot. Not a per-agent limit: the server's snapshot
+ * is instant; this waits on the layout the stage gives a hidden view.
+ */
+export const SNAPSHOT_SETTLE = Object.freeze({ attempts: 8, ms: 250 })
+
 // ---------------------------------------------------------------------------------------------
 // Arguments
 // ---------------------------------------------------------------------------------------------
@@ -241,6 +251,20 @@ export function parseSnapshot(text) {
 }
 
 /**
+ * Whether a background snapshot has laid out enough to check (`SNAPSHOT_SETTLE`): a non-zero
+ * viewport and the fixture's heading (a custom fixture: any heading). The same predicate the hard
+ * `background-snapshot` check applies, so the settle loop stops exactly when the check would pass –
+ * a page that never lays out still fails at the bound, as a genuinely blank hidden view should.
+ */
+export function snapshotLaidOut(snap, fixture) {
+  const viewportOk = Boolean(snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0)
+  const heading = fixture.custom
+    ? snap.headings.length > 0
+    : snap.headings.some((h) => h.startsWith(FIXTURE.heading))
+  return viewportOk && heading
+}
+
+/**
  * The groups a `zen_groups list` names, from their header lines
  * (`Group "name" (folder_x) [flags] in space "…" – N tabs:`): id, name, tab count, and what the
  * flags say – `home`, `yours`, `orphaned` (with `was`, the former owner), `owner` (a live
@@ -331,19 +355,61 @@ export async function answers(url) {
   }
 }
 
-/** The endpoint once agent.json says `running: true` and the URL answers; throws at the deadline. */
-export async function waitForEndpoint(userDataDir, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
+/**
+ * The phase a wait for the endpoint stands in, from what `agent.json` says and whether the URL
+ * answered – so a `server-up` that never comes says WHICH of the four it was stuck on, not just
+ * "timed out" (runs 36451930938 / 36274678598 stalled at `not-running`: the app's server never
+ * bound its port and nothing said so).
+ */
+export function endpointPhase(endpoint, answered) {
+  if (!endpoint) return 'absent'
+  if (!endpoint.running) return 'not-running'
+  if (!endpoint.url) return 'url-missing'
+  return answered ? 'answered' : 'url-silent'
+}
+
+/** What each phase means, in words, for the wait's log lines and its final error. */
+export const ENDPOINT_PHASE_SAID = Object.freeze({
+  absent: 'agent.json is absent or unreadable (no server file written yet)',
+  'not-running':
+    'agent.json says the server is not running – it never started (Settings → AI Agents off, or the port was taken before the app bound it)',
+  'url-missing': 'agent.json says running but names no url',
+  'url-silent': 'agent.json says running, but the url did not answer an OPTIONS yet',
+  answered: 'agent.json says running and the url answered'
+})
+
+/**
+ * The endpoint once `agent.json` says `running: true` and the URL answers; throws at the deadline.
+ * `log` (optional) is called on each phase change so a wait that stalls leaves a trail of which
+ * phase it reached and when; `now`, `probe`, `pollMs` and `sleep` are injectable for the unit tests.
+ */
+export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
+  const {
+    log = () => undefined,
+    now = Date.now,
+    probe = answers,
+    pollMs = 250,
+    sleep = delay
+  } = opts
+  const started = now()
+  const deadline = started + timeoutMs
+  let lastPhase = null
   for (;;) {
     const e = readEndpoint(userDataDir)
-    if (e?.running && e.url && (await answers(e.url))) return { url: e.url, token: e.token }
-    if (Date.now() >= deadline)
+    const answered = Boolean(e?.running && e.url) && (await probe(e.url))
+    const phase = endpointPhase(e, answered)
+    if (phase !== lastPhase) {
+      log(`server-up: ${ENDPOINT_PHASE_SAID[phase]} (after ${now() - started} ms)`)
+      lastPhase = phase
+    }
+    if (phase === 'answered') return { url: e.url, token: e.token }
+    if (now() >= deadline)
       throw new Error(
-        `no MCP server answered within ${timeoutMs} ms (${path.join(userDataDir, 'zen', 'agent.json')}: ${
+        `no MCP server answered within ${timeoutMs} ms: ${ENDPOINT_PHASE_SAID[phase]} (${path.join(userDataDir, 'zen', 'agent.json')}: ${
           e ? `running ${e.running}, url ${e.url}` : 'absent or unreadable'
-        }) – is Zenium running with Settings → AI Agents on?`
+        })`
       )
-    await delay(250)
+    await sleep(pollMs)
   }
 }
 
@@ -1070,20 +1136,35 @@ export async function soakSession(client, ctx, { index, leg }) {
 
     if (tabId) {
       at = 'background-snapshot'
-      r = await call('browser_snapshot', { tabId })
-      const snap = parseSnapshot(r.text)
+      // The staged off-screen view (MCP-C, #568) lays out a beat after the tab opens; a snapshot
+      // taken at once can read a 0×0 viewport with no heading yet. Re-snapshot until it has laid
+      // out, bounded (`SNAPSHOT_SETTLE`) – the check then judges the settled page, not the race.
+      const settle = ctx.snapshotSettle ?? SNAPSHOT_SETTLE
+      let snap = null
+      let tries = 0
+      for (;;) {
+        r = await call('browser_snapshot', { tabId })
+        tries++
+        snap = parseSnapshot(r.text)
+        if (r.isError || snapshotLaidOut(snap, fixture) || tries >= settle.attempts) break
+        await delay(settle.ms)
+      }
       const heading = fixture.custom
         ? snap.headings.length > 0
         : snap.headings.some((h) => h.startsWith(FIXTURE.heading))
       const viewportOk = Boolean(
         snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0
       )
+      if (tries > 1)
+        ctx.log(
+          `${label}: background snapshot ${viewportOk && heading ? `laid out after ${tries} tries` : `never laid out in ${tries} tries`}`
+        )
       verdict.hard(
         at,
         !r.isError && viewportOk && heading,
         r.isError
           ? `error: ${r.text}`
-          : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs`
+          : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs after ${tries} tr${tries === 1 ? 'y' : 'ies'}`
       )
 
       at = 'background-screenshot'
@@ -1579,7 +1660,7 @@ export async function main(argv) {
         return 2
       }
       browser.launch()
-      endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
+      endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
     }
   }
   secrets.push(endpoint.token)
@@ -1634,7 +1715,7 @@ export async function main(argv) {
       diagnostics = await readDiagnostics(ctx)
       await browser.quit()
       browser.launch()
-      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
+      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
       log(`server back at ${endpoint.url}`)
       await restartVerify(ctx, carry)
       await tidy(ctx)

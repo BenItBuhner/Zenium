@@ -2439,7 +2439,12 @@ export interface SecretStore {
  * turns HTTP requests into responses); hosts only listen on a socket and hand requests over.
  */
 export interface AgentTransport {
-  /** Listen and resolve with the port actually bound plus the LAN addresses (when `lan`). */
+  /**
+   * Listen and resolve with the port actually bound plus the LAN addresses (when `lan`). A bind
+   * that fails rejects with an error whose message the Settings row shows; a host that can
+   * name the failure puts `code` (`EADDRINUSE`, `EACCES`), `address` and `port` on the error,
+   * and the core carries them into `agent.json` and its log line (`AgentService.startServer`).
+   */
   start(options: {
     port: number
     lan: boolean

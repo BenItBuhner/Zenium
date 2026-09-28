@@ -15,8 +15,23 @@ export type ReaderWidth = 'narrow' | 'normal' | 'wide'
  * otherwise; 0 is off.
  */
 export type ReaderLineFocus = 0 | 1 | 3 | 5
-/** Text spacing (EDGE-13): letter, word and line spacing together, in Edge's three steps. */
-export type ReaderSpacing = 'normal' | 'wide' | 'wider'
+/**
+ * Line spacing (CT-35; Chrome's Reading mode "Line height" menu, `read_anything.mojom`
+ * `LineSpacing`: Standard / Loose / Very loose, the tight step deprecated): the article's
+ * line height. Standard is the page's own 1.65.
+ */
+export type ReaderLineSpacing = 'standard' | 'loose' | 'very-loose'
+/**
+ * Letter spacing (CT-35; Chrome's "Letter spacing" menu, `LetterSpacing`: Standard / Wide /
+ * Very wide): the gap between letters, the word gaps widening with it as Edge's text spacing
+ * widened them together.
+ */
+export type ReaderLetterSpacing = 'standard' | 'wide' | 'very-wide'
+/**
+ * Edge's one Text spacing step (EDGE-13), the record's key before CT-35 split it into the two
+ * rows: kept as a type only for the read-forward of a record written before the split.
+ */
+export type LegacyReaderSpacing = 'normal' | 'wide' | 'wider'
 
 export interface ReaderPreferences {
   /** Body text size in CSS px, one of `READER_FONT_SIZES`. */
@@ -25,7 +40,8 @@ export interface ReaderPreferences {
   theme: ReaderTheme
   width: ReaderWidth
   lineFocus: ReaderLineFocus
-  spacing: ReaderSpacing
+  lineSpacing: ReaderLineSpacing
+  letterSpacing: ReaderLetterSpacing
   /** Syllable boundaries marked inside words (English heuristic; `readerExtras.ts`). */
   syllables: boolean
   /**
@@ -43,7 +59,32 @@ export const READER_FONTS: readonly ReaderFont[] = ['serif', 'sans', 'mono']
 export const READER_THEMES: readonly ReaderTheme[] = ['auto', 'light', 'sepia', 'dark']
 export const READER_WIDTHS: readonly ReaderWidth[] = ['narrow', 'normal', 'wide']
 export const READER_LINE_FOCUS: readonly ReaderLineFocus[] = [0, 1, 3, 5]
-export const READER_SPACINGS: readonly ReaderSpacing[] = ['normal', 'wide', 'wider']
+export const READER_LINE_SPACINGS: readonly ReaderLineSpacing[] = [
+  'standard',
+  'loose',
+  'very-loose'
+]
+export const READER_LETTER_SPACINGS: readonly ReaderLetterSpacing[] = [
+  'standard',
+  'wide',
+  'very-wide'
+]
+
+/**
+ * The old key read forward (CT-35): a stored or synced record from before the split carries
+ * `spacing` and neither of the two rows' keys, and reads as the pair its one step stood for –
+ * normal → Standard / Standard, wide → Loose / Wide, wider → Very loose / Very wide – so a
+ * profile or a peer from before the split shows exactly as it did. The key is never written
+ * again and nothing is migrated: the read is the whole of it.
+ */
+export const LEGACY_READER_SPACING: Record<
+  LegacyReaderSpacing,
+  { lineSpacing: ReaderLineSpacing; letterSpacing: ReaderLetterSpacing }
+> = {
+  normal: { lineSpacing: 'standard', letterSpacing: 'standard' },
+  wide: { lineSpacing: 'loose', letterSpacing: 'wide' },
+  wider: { lineSpacing: 'very-loose', letterSpacing: 'very-wide' }
+}
 
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   fontSize: 18,
@@ -51,7 +92,8 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   theme: 'auto',
   width: 'normal',
   lineFocus: 0,
-  spacing: 'normal',
+  lineSpacing: 'standard',
+  letterSpacing: 'standard',
   syllables: false,
   links: true,
   images: true
@@ -80,16 +122,40 @@ export const READER_LINE_FOCUS_LABELS: Record<ReaderLineFocus, string> = {
   3: '3 lines',
   5: '5 lines'
 }
-export const READER_SPACING_LABELS: Record<ReaderSpacing, string> = {
-  normal: 'Normal',
+/**
+ * Chrome's words for the steps, verbatim (`chrome/app/generated_resources.grd`
+ * IDS_READING_MODE_SPACING_COMBOBOX_STANDARD / _LOOSE / _VERY_LOOSE / _WIDE / _VERY_WIDE).
+ */
+export const READER_LINE_SPACING_LABELS: Record<ReaderLineSpacing, string> = {
+  standard: 'Standard',
+  loose: 'Loose',
+  'very-loose': 'Very loose'
+}
+export const READER_LETTER_SPACING_LABELS: Record<ReaderLetterSpacing, string> = {
+  standard: 'Standard',
   wide: 'Wide',
-  wider: 'Wider'
+  'very-wide': 'Very wide'
 }
 
-/** Stored preferences from any version (or a patch from a page) come out complete and valid. */
+/** The pair an old `spacing` value stands for; null for anything but its three words. */
+function legacySpacing(
+  raw: unknown
+): { lineSpacing: ReaderLineSpacing; letterSpacing: ReaderLetterSpacing } | null {
+  return typeof raw === 'string' && raw in LEGACY_READER_SPACING
+    ? LEGACY_READER_SPACING[raw as LegacyReaderSpacing]
+    : null
+}
+
+/**
+ * Stored preferences from any version (or a patch from a page) come out complete and valid: a
+ * record from before CT-35 reads its one `spacing` forward into the two rows' keys.
+ */
 export function sanitizeReaderPreferences(raw: unknown): ReaderPreferences {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<ReaderPreferences>
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<ReaderPreferences> & {
+    spacing?: unknown
+  }
   const d = DEFAULT_READER_PREFERENCES
+  const legacy = legacySpacing(r.spacing)
   return {
     fontSize:
       typeof r.fontSize === 'number' && READER_FONT_SIZES.includes(r.fontSize)
@@ -101,9 +167,12 @@ export function sanitizeReaderPreferences(raw: unknown): ReaderPreferences {
     lineFocus: READER_LINE_FOCUS.includes(r.lineFocus as ReaderLineFocus)
       ? (r.lineFocus as ReaderLineFocus)
       : d.lineFocus,
-    spacing: READER_SPACINGS.includes(r.spacing as ReaderSpacing)
-      ? (r.spacing as ReaderSpacing)
-      : d.spacing,
+    lineSpacing: READER_LINE_SPACINGS.includes(r.lineSpacing as ReaderLineSpacing)
+      ? (r.lineSpacing as ReaderLineSpacing)
+      : (legacy?.lineSpacing ?? d.lineSpacing),
+    letterSpacing: READER_LETTER_SPACINGS.includes(r.letterSpacing as ReaderLetterSpacing)
+      ? (r.letterSpacing as ReaderLetterSpacing)
+      : (legacy?.letterSpacing ?? d.letterSpacing),
     syllables: typeof r.syllables === 'boolean' ? r.syllables : d.syllables,
     links: typeof r.links === 'boolean' ? r.links : d.links,
     images: typeof r.images === 'boolean' ? r.images : d.images
@@ -112,11 +181,13 @@ export function sanitizeReaderPreferences(raw: unknown): ReaderPreferences {
 
 /**
  * A patch as a page or the chrome sends it: only the keys present are taken, each checked; an
- * unknown or malformed value leaves that key out. Null when nothing usable was sent.
+ * unknown or malformed value leaves that key out. Null when nothing usable was sent. A patch
+ * from before CT-35 (`spacing`) sets the pair its step stood for, where the patch names
+ * neither of the two keys itself.
  */
 export function readerPreferencesPatch(raw: unknown): Partial<ReaderPreferences> | null {
   if (!raw || typeof raw !== 'object') return null
-  const r = raw as Partial<Record<keyof ReaderPreferences, unknown>>
+  const r = raw as Partial<Record<keyof ReaderPreferences | 'spacing', unknown>>
   const patch: Partial<ReaderPreferences> = {}
   if (typeof r.fontSize === 'number' && READER_FONT_SIZES.includes(r.fontSize))
     patch.fontSize = r.fontSize
@@ -125,8 +196,13 @@ export function readerPreferencesPatch(raw: unknown): Partial<ReaderPreferences>
   if (READER_WIDTHS.includes(r.width as ReaderWidth)) patch.width = r.width as ReaderWidth
   if (READER_LINE_FOCUS.includes(r.lineFocus as ReaderLineFocus))
     patch.lineFocus = r.lineFocus as ReaderLineFocus
-  if (READER_SPACINGS.includes(r.spacing as ReaderSpacing))
-    patch.spacing = r.spacing as ReaderSpacing
+  if (READER_LINE_SPACINGS.includes(r.lineSpacing as ReaderLineSpacing))
+    patch.lineSpacing = r.lineSpacing as ReaderLineSpacing
+  if (READER_LETTER_SPACINGS.includes(r.letterSpacing as ReaderLetterSpacing))
+    patch.letterSpacing = r.letterSpacing as ReaderLetterSpacing
+  const legacy = legacySpacing(r.spacing)
+  if (legacy && patch.lineSpacing === undefined && patch.letterSpacing === undefined)
+    Object.assign(patch, legacy)
   if (typeof r.syllables === 'boolean') patch.syllables = r.syllables
   if (typeof r.links === 'boolean') patch.links = r.links
   if (typeof r.images === 'boolean') patch.images = r.images
@@ -147,12 +223,13 @@ export function stepReaderFontSize(current: number, direction: number): number {
 
 /**
  * The root attributes the reader page's script renders the extras as (`data-line-focus`,
- * `data-syllables`, `data-spacing`): the stylesheet applies the spacing, the page script's
- * `readerExtras.ts` watches the other two and does the DOM work.
+ * `data-syllables`, `data-line-spacing`, `data-letter-spacing`): the stylesheet applies the two
+ * spacings, the page script's `readerExtras.ts` watches the other two and does the DOM work.
  */
 export const READER_LINE_FOCUS_ATTRIBUTE = 'data-line-focus'
 export const READER_SYLLABLES_ATTRIBUTE = 'data-syllables'
-export const READER_SPACING_ATTRIBUTE = 'data-spacing'
+export const READER_LINE_SPACING_ATTRIBUTE = 'data-line-spacing'
+export const READER_LETTER_SPACING_ATTRIBUTE = 'data-letter-spacing'
 /** `data-links="off"` / `data-images="off"` when the toggle is off; absent while on. */
 export const READER_LINKS_ATTRIBUTE = 'data-links'
 export const READER_IMAGES_ATTRIBUTE = 'data-images'

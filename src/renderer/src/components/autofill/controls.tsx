@@ -79,7 +79,11 @@ export function Btn({
   )
 }
 
-/** An icon button (§9.3): 28 / 44 square at radius 6 / 8 around a 16 / 20 glyph; named by `title`. */
+/**
+ * An icon button (§9.3): 28 / 44 square at radius 6 / 8 around a 16 / 20 glyph; named by `title`
+ * – its accessible name, and its tooltip as the chassis draws one (§9.31's `data-tooltip`, read
+ * by the `Tooltip` host of the document it stands in; no toolkit `title`).
+ */
 export function IconBtn({
   title,
   className,
@@ -95,7 +99,7 @@ export function IconBtn({
     <button
       ref={ref}
       type={type}
-      title={title}
+      data-tooltip={title}
       aria-label={title}
       className={cn('zen-v2-icon-button', className)}
       {...rest}

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type {
   HostCapabilities,
+  Mod,
   Platform as PlatformOs,
   ReadingListEntry
 } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
+import { MAX_MOD_CSS, UNTITLED_MOD } from '../../../shared/mods'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { DEFAULT_READER_PREFERENCES } from '../../../shared/reader'
 import { matchKeywordWord } from '../../../shared/search'
@@ -18,6 +20,7 @@ import {
   SITE_DATA_RECORD_ID,
   collectLocal,
   defaultScope,
+  modData,
   readingListEntryData,
   withoutDeviceLocalSettings,
   type SyncRecord
@@ -477,14 +480,18 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
 
   it('a peer on an older build sends fewer fields: its object lands whole with every missing field at the default, and the reader service hands out no hole', () => {
     const b = browser()
-    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', spacing: 'wide', syllables: true })
-    expect(b.state.settings.reader).toMatchObject({ spacing: 'wide', syllables: true })
+    b.reader.setPreferences({ fontSize: 22, theme: 'sepia', lineSpacing: 'loose', syllables: true })
+    expect(b.state.settings.reader).toMatchObject({ lineSpacing: 'loose', syllables: true })
 
     // The peer's build knows two fields fewer (built from the defaults, so the fixture is an
     // older build's before and after the next field is added); its own edits are the size and
     // the font.
-    const { spacing: _spacing, syllables: _syllables, ...older } = DEFAULT_READER_PREFERENCES
-    void _spacing
+    const {
+      letterSpacing: _letterSpacing,
+      syllables: _syllables,
+      ...older
+    } = DEFAULT_READER_PREFERENCES
+    void _letterSpacing
     void _syllables
     const peer = { ...older, fontSize: 14, font: 'mono' }
     expect(Object.keys(peer)).toHaveLength(Object.keys(DEFAULT_READER_PREFERENCES).length - 2)
@@ -505,6 +512,57 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
     expect(sent(b).reader).toEqual(b.state.settings.reader)
   })
 
+  it("a peer from before CT-35 sends Edge's one Text spacing step: it reads forward as the pair it stood for, and the record sent on carries the two keys and never the old one", () => {
+    const b = browser()
+    // The peer's object as its build wrote it: `spacing` and neither of the two rows' keys.
+    const {
+      lineSpacing: _lineSpacing,
+      letterSpacing: _letterSpacing,
+      ...rest
+    } = DEFAULT_READER_PREFERENCES
+    void _lineSpacing
+    void _letterSpacing
+    const peer = { ...rest, fontSize: 20, spacing: 'wider' }
+    applyRemote(b, [{ ...settingsRecord({ reader: peer }), keys: { reader: 900 } }])
+    expect(b.state.settings.reader).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 20,
+      lineSpacing: 'very-loose',
+      letterSpacing: 'very-wide'
+    })
+    expect('spacing' in b.state.settings.reader).toBe(false)
+    expect(b.reader.preferences()).toEqual(b.state.settings.reader)
+    const onward = sent(b).reader as Record<string, unknown>
+    expect(onward).toEqual(b.state.settings.reader)
+    expect('spacing' in onward).toBe(false)
+
+    // The other two steps, read the same way; a peer that already carries the two keys is
+    // taken as it is, whatever old key rides along.
+    applyRemote(b, [
+      { ...settingsRecord({ reader: { ...rest, spacing: 'wide' } }), keys: { reader: 901 } }
+    ])
+    expect(b.state.settings.reader).toMatchObject({ lineSpacing: 'loose', letterSpacing: 'wide' })
+    applyRemote(b, [
+      { ...settingsRecord({ reader: { ...rest, spacing: 'normal' } }), keys: { reader: 902 } }
+    ])
+    expect(b.state.settings.reader).toMatchObject({
+      lineSpacing: 'standard',
+      letterSpacing: 'standard'
+    })
+    applyRemote(b, [
+      {
+        ...settingsRecord({
+          reader: { ...DEFAULT_READER_PREFERENCES, lineSpacing: 'loose', spacing: 'wider' }
+        }),
+        keys: { reader: 903 }
+      }
+    ])
+    expect(b.state.settings.reader).toMatchObject({
+      lineSpacing: 'loose',
+      letterSpacing: 'standard'
+    })
+  })
+
   it('a garbage value – off the ladder, unknown names, no object at all – lands as the defaults; a valid value lands as it is', () => {
     const b = browser()
     applyRemote(b, [
@@ -515,7 +573,8 @@ describe("applyRemote: the settings record and Reader View's text preferences (s
           theme: 'neon',
           width: 'huge',
           lineFocus: 2,
-          spacing: 'x',
+          lineSpacing: 'x',
+          letterSpacing: 'wider',
           syllables: 'yes'
         }
       })
@@ -1141,5 +1200,155 @@ describe('applyRemote: favicons at the boundary (services pass 11, seed 6)', () 
     expect(b.state.model.tabs['tab_cached'].favicon).toBe('https://pinned.example/other.ico')
     applyRemote(b, [pinned('tab_cached', 'https://pinned.example/third.ico')])
     expect(b.state.model.tabs['tab_cached'].favicon).toBe('https://pinned.example/other.ico')
+  })
+})
+
+/** A peer's live `mod` record for the Mod (plus whatever its build appended). */
+function modRecord(mod: Mod, modified = 2000, extra: Record<string, unknown> = {}): SyncRecord {
+  return { id: mod.id, type: 'mod', data: { ...modData(mod), ...extra }, modified, deleted: false }
+}
+
+function modTombstone(id: string, modified = 2000): SyncRecord {
+  return { id, type: 'mod', data: null, modified, deleted: true }
+}
+
+/** What the peers get back for the Mods this device holds. */
+function publishedMods(b: Browser): Map<string, { type: string; data: unknown }> {
+  const out = new Map<string, { type: string; data: unknown }>()
+  const local = collectLocal(
+    {
+      model: b.state.model,
+      settings: b.state.settings,
+      shortcutOverrides: {},
+      bookmarks: [],
+      boosts: [],
+      mods: b.mods.all()
+    },
+    defaultScope()
+  )
+  for (const [id, record] of local) if (record.type === 'mod') out.set(id, record)
+  return out
+}
+
+describe('applyRemote: the Mods (services pass 15, ID-43)', () => {
+  it('a won live record lands the Mod whole under its id – in place when held, appended when new – and a tombstone removes it', () => {
+    const b = browser()
+    const mine = b.mods.add('Compact tabs', '.tab { padding: 2px; }')
+    const other = b.mods.add('Second', '.second {}')
+    expect(b.mods.all().map((m) => m.id)).toEqual([mine.id, other.id])
+
+    // The phone turned the first Mod off and edited its CSS; a later build appended a field.
+    applyRemote(b, [
+      modRecord(
+        { ...mine, css: '.tab { padding: 4px; }', enabled: false, updatedAt: mine.updatedAt + 5 },
+        2000,
+        { extra: 'a field of a later build' }
+      ),
+      modRecord(
+        {
+          id: 'mod_phone',
+          name: 'From the phone',
+          source: 'phone.css',
+          css: '.phone {}',
+          enabled: true,
+          updatedAt: 10
+        },
+        2000
+      )
+    ])
+    // The peer's fields under the id, in the normal form's order; the Mod keeps its place in the
+    // list (the order is this device's own), the new one goes last.
+    expect(b.mods.all().map((m) => m.id)).toEqual([mine.id, other.id, 'mod_phone'])
+    const landed = b.mods.all().find((m) => m.id === mine.id)!
+    expect(landed).toEqual({
+      id: mine.id,
+      name: 'Compact tabs',
+      source: null,
+      css: '.tab { padding: 4px; }',
+      enabled: false,
+      updatedAt: mine.updatedAt + 5
+    })
+    expect(Object.keys(landed)).toEqual(['id', 'name', 'source', 'css', 'enabled', 'updatedAt'])
+    expect(b.mods.all().every((m) => !('extra' in m))).toBe(true)
+    expect(b.mods.all().find((m) => m.id === 'mod_phone')).toEqual({
+      id: 'mod_phone',
+      name: 'From the phone',
+      source: 'phone.css',
+      css: '.phone {}',
+      enabled: true,
+      updatedAt: 10
+    })
+    // The landed list reaches the chrome as the user's own edits do (`BrowserState.mods`).
+    expect(b.state.snapshot(b.focusedWindow()).mods.map((m) => m.id)).toEqual([
+      mine.id,
+      other.id,
+      'mod_phone'
+    ])
+
+    // The tombstone takes the Mod out; one for an id this device never held is nothing.
+    applyRemote(b, [modTombstone('mod_phone', 3000), modTombstone('mod_unknown', 3000)])
+    expect(b.mods.all().map((m) => m.id)).toEqual([mine.id, other.id])
+
+    // What the peers get back is the Mod as received: the sanitiser is idempotent on it, so the
+    // landed record hashes as the peer sent it and the round stamps nothing.
+    expect(publishedMods(b).get(mine.id)).toEqual({
+      type: 'mod',
+      data: {
+        name: 'Compact tabs',
+        source: null,
+        css: '.tab { padding: 4px; }',
+        enabled: false,
+        updatedAt: mine.updatedAt + 5
+      }
+    })
+  })
+
+  it('a record the sanitiser rejects – no CSS, CSS that is not text, no data, a string – lands nothing; an unnamed one takes the fallback name, an oversized one is cut at the cap', () => {
+    const b = browser()
+    applyRemote(b, [
+      { id: 'mod_nocss', type: 'mod', data: { name: 'No CSS' }, modified: 2000, deleted: false },
+      { id: 'mod_num', type: 'mod', data: { css: 42 }, modified: 2000, deleted: false },
+      { id: 'mod_null', type: 'mod', data: null, modified: 2000, deleted: false },
+      { id: 'mod_str', type: 'mod', data: 'x', modified: 2000, deleted: false },
+      // The record's id is the Mod's, whatever the data says.
+      {
+        id: 'mod_ok',
+        type: 'mod',
+        data: { css: 'a {}', id: 'mod_other' },
+        modified: 2000,
+        deleted: false
+      },
+      {
+        id: 'mod_big',
+        type: 'mod',
+        data: { css: 'x'.repeat(MAX_MOD_CSS + 1), name: ' ' },
+        modified: 2000,
+        deleted: false
+      }
+    ])
+    expect(b.mods.all().map((m) => m.id)).toEqual(['mod_ok', 'mod_big'])
+    expect(b.mods.all()[0]).toEqual({
+      id: 'mod_ok',
+      name: UNTITLED_MOD,
+      source: null,
+      css: 'a {}',
+      enabled: true,
+      updatedAt: 0
+    })
+    const big = b.mods.all()[1]!
+    expect(big.name).toBe(UNTITLED_MOD)
+    expect(big.css).toHaveLength(MAX_MOD_CSS)
+    // The cut Mod is what goes back out – at the peer's time, `stamp: null` at the round – so
+    // the peers converge on the cap rather than bounce the oversized record between them.
+    expect((publishedMods(b).get('mod_big')!.data as Mod).css).toHaveLength(MAX_MOD_CSS)
+  })
+
+  it('a record equal to the Mod held changes nothing (no write, no broadcast)', () => {
+    const b = browser()
+    const mine = b.mods.add('Same', '.same {}')
+    const before = JSON.stringify(b.mods.all())
+    expect(b.mods.put({ ...mine })).toBe(false)
+    applyRemote(b, [modRecord(mine)])
+    expect(JSON.stringify(b.mods.all())).toBe(before)
   })
 })

@@ -15,7 +15,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import app.zen.chromium.BuildConfig
 import app.zen.chromium.Host
 import app.zen.chromium.PageDialogKind
 import app.zen.chromium.PageDialogSheet
@@ -66,7 +65,7 @@ class ExtensionWebView(
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
         // Extension pages present as Zenium, as tab pages do; the CORS proxy sends the same string.
-        UserAgent.apply(settings, BuildConfig.VERSION_NAME)
+        UserAgent.apply(settings)
         extensions.userAgent = settings.userAgentString
         // Chrome paints popups white until the document says otherwise; the hidden views (the background, an offscreen document) have nothing to paint.
         setBackgroundColor(if (context == "background" || context == "offscreen") Color.TRANSPARENT else Color.WHITE)
