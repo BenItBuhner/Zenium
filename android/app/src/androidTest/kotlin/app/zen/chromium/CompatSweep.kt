@@ -37,6 +37,7 @@ import app.zen.chromium.ext.SweepInsertProbe
 import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepOrderProbe
 import app.zen.chromium.ext.SweepPopupClose
+import app.zen.chromium.ext.SweepPopupLabels
 import app.zen.chromium.ext.SweepScreenGuard
 import app.zen.chromium.ext.SweepServedRecord
 import app.zen.chromium.ext.SweepSwitchGrade
@@ -2986,10 +2987,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return tab to view
     }
 
-    /** The row's popup opened over the tab on screen, rendered, or null. */
-    private fun openPopup(row: Row, factor: Double): ExtensionWebView? {
+    /**
+     * The row's popup opened over the tab on screen, rendered, or null; with `orSeen`, a popup
+     * whose document reads empty to a script but whose sheet shows labelled content (its UI in a
+     * closed shadow root – Black Menu's on WebView 156) is rendered too, as the popup stage reads it.
+     */
+    private fun openPopup(row: Row, factor: Double, orSeen: Boolean = false): ExtensionWebView? {
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        return poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        return poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && (rendered(it) || orSeen && shownDespiteEmptyDom(seenInView(it))) } }
     }
 
     /** A probe that lands its answer on `window.<slot>` with `done: true`, from an extension page, read within `timeoutMs`. */
@@ -4264,17 +4269,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * of the driver's to `https://<apiHost><apiProbePath>` from the popup's document with their
      * outcomes, and the proxy record read again after them (`apiProbe`, `proxiedAfterProbe`):
      * the popup's own logic told from the intercept's reach.
+     *
+     * With `ownLabels` (compat round 24, Black Menu for Google on WebView 156: its popup keeps
+     * its UI in a closed shadow root there, so its document reads empty to a script and `expr`
+     * finds nothing) a popup the sheet shows despite its empty document is opened as rendered,
+     * and when `expr` has no pass the sheet's accessibility labels carrying the row's own words –
+     * three or more, of a tree that shows content ([shownDespiteEmptyDom]) – are the pass, as the
+     * popup stage and [accountGate] read such a popup.
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null, ownLabels: Regex? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
-        val popup = openPopup(row, factor)
+        val popup = openPopup(row, factor, orSeen = ownLabels != null)
         var found = JSONObject()
         if (popup != null) {
             found = pollExpr(popup, expr, scaled(settleMs, factor))
             found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (!found.optBoolean("pass") && ownLabels != null) {
+                val seen = seenInView(popup)
+                val own = SweepPopupLabels.own(labelsOf(seen), ownLabels)
+                extra.put("seen", seen).put("ownLabels", JSONArray(own))
+                if (SweepPopupLabels.pass(own, shownDespiteEmptyDom(seen))) {
+                    val scriptRead = JSONObject(found.toString()).apply { remove("console"); remove("text"); remove("pass") }.toString()
+                    found.put("pass", true).put("byAccessibility", SweepPopupLabels.word(seen.optInt("nodes"), own, scriptRead))
+                }
+            }
         }
         extra.put("popup", found)
         val answers = if (apiHost == null) emptyList() else proxied(apiHost).filter { it.startsWith("${row.id} ") }
@@ -4308,7 +4329,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             else -> "; $apiHost answered ${statuses.joinToString("/")} through the host's proxy${if (statuses.size < answers.size) " (and ${answers.size - statuses.size} request(s) not carried: ${answers.filter { proxyStatus(it) == null }.takeLast(2).joinToString("; ") { it.substringAfter(' ').take(120) }})" else ""}"
         }
         when {
-            found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
+            found.optBoolean("pass") -> Grade("P", "$label: popup ${found.optString("byAccessibility").takeIf { it.isNotEmpty() } ?: found.toString().take(240)}", extra)
             refused -> Grade("n/m", "$label: popup renders and answers with $gate's ${if (challenged) "CAPTCHA" else "refusal"} (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
             apiRefused -> Grade("n/m", "$label: popup renders and $gate refused every request the runtime carried for it (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(90) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
             apiUnreachable -> Grade("n/m", "$label: popup renders and the runner's network could not reach $gate for any request the runtime carried (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(120) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
@@ -8122,7 +8143,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("iphblfpnippelmibidfaejanmnhcjdee", "GNTD: Glass New Tab Dashboard", "gntd", core = newTabOverride("GNTD")),
         Row("defekohaofmambflfpfoojkmfdpcbgko", "YouTube DJ effects / EQ / Volume Booster / Bass Booster", "youtube-dj", core = captureLimit("YouTube DJ", "/\\bon\\b|\\boff\\b|volume|bass|\\beq\\b/i")),
         Row("iohcojnlgnfbmjfjfkbhahhmppcggdog", "EverSync - Sync bookmarks, backup favorites", "eversync", account = true, core = popupLogin("EverSync")),
-        Row("eignhdfgaldabilaaegmdfbajngjmoke", "Black Menu for Google™", "black-menu-for-google", core = popupMarker("Black Menu for Google", BLACK_MENU_POPUP, settleMs = 30_000)),
+        // Black Menu's popup keeps its UI in a closed shadow root on WebView 156 (its document read
+        // empty to a script where 113 read 434 elements; round 24's BEFORE): the sheet's labels –
+        // the top bar's services and the navigation list's rows – are its read there.
+        Row("eignhdfgaldabilaaegmdfbajngjmoke", "Black Menu for Google™", "black-menu-for-google", core = popupMarker("Black Menu for Google", BLACK_MENU_POPUP, settleMs = 30_000, ownLabels = Regex("^(Pages|Apps|Settings|Search|Gemini|Maps|Translate|News|YouTube|Gmail|Calendar|Drive|Keep|Home|Saved|Advanced search|Advanced image search|Your data in Search)$"))),
         Row("ailcmbgekjpnablpdkmaaccecekgdhlh", "Tab Manager by Workona", "workona", account = true, core = popupLogin("Tab Manager by Workona")),
         Row("boffdonfioidojlcpmfnkngipappmcoh", "FC27 Enhancer | SBC Solver, Trader & Keyboard Shortcuts", "fc27-enhancer", core = attachedGate("FC27 Enhancer", "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/", "an EA account (the web app signs in before its enhancer has a page to act on)")),
         Row("nbkomboflhdlliegkaiepilnfmophgfg", "Custom Progress Bar for YouTube™", "custom-progress-bar", core = { row, entry -> youtube(row, entry, CUSTOM_PROGRESS_BAR_STYLE, "Custom Progress Bar's style on a watch page", desktopSite = true, settleMs = 30_000) }),
