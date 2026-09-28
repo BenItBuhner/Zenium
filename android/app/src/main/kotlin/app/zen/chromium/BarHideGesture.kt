@@ -68,7 +68,12 @@ class BarHideFrame(
  * pushed against its top, or a fling up under a top-docked bar: the bar comes back). Only a
  * finger's scroll and the fling it leaves count: a page that scrolls itself (an anchor, a
  * script) moves no bar, as in Chrome, and neither does the clamp Chromium applies when the page
- * is laid out taller near its end ([BarHideScrollFilter]).
+ * is laid out taller near its end ([BarHideScrollFilter]). `move`, `end` and `show` go only
+ * while the chrome's word is that the bar may hide ([frame] not null); `start` goes whatever
+ * that word ([reports]): it carries nothing but the fact of a finger landing on the page, and
+ * the chrome's hint bubble dismisses on that fact – as Chrome's does on the one `ACTION_OUTSIDE`
+ * a page touch's down delivers to its popup – with the hide-on-scroll setting off too. One
+ * report per gesture then, at its start, and no more traffic than that.
  *
  * Consuming, with the bar docked at the top. Chrome's top controls take a scroll before the page
  * does; here a drag's vertical travel goes to the bar first and the WebView sees the rest, as a
@@ -145,7 +150,7 @@ class BarHideGesture(
             MotionEvent.ACTION_DOWN -> {
                 filter.down(fingerY, pageTall = frame?.tall == true)
                 share.mirror = frame?.offsetPx ?: 0f
-                if (frame != null) emit("start", null)
+                if (reports("start", barMayHide = frame != null)) emit("start", null)
             }
             // A second finger (a pinch): neither the bar's take nor the page's scroll is the bar's
             // from here to the next down, at either dock.
@@ -158,7 +163,7 @@ class BarHideGesture(
                 // a slow frame) still leaves the scroll it started its gap to arrive in.
                 filter.lifted(maxOf(event.eventTime, SystemClock.uptimeMillis()))
                 flush.run()
-                if (frame != null) emit("end", json("time" to event.eventTime))
+                if (reports("end", barMayHide = frame != null)) emit("end", json("time" to event.eventTime))
             }
         }
     }
@@ -251,5 +256,18 @@ class BarHideGesture(
         private const val SLOP_PASS_DP = 1f
         /** A finger that has moved this far (dp) the other way since the page last scrolled did not scroll it this way. */
         private const val FINGER_TOLERANCE_DP = 2f
+
+        /**
+         * Whether a report of [phase] goes to the chrome, `barMayHide` being the chrome's latest
+         * word ([frame] not null). `start` – a finger's down, no deltas – goes whatever the word:
+         * the chrome's `onBarScrollStart` listeners (the tab switcher's hint bubble,
+         * `useTabSwitcherHint`) hear a finger landing on the page whether or not the bar may hide,
+         * as Chrome's IPH bubble takes the one `ACTION_OUTSIDE` a page touch's down delivers to
+         * its non-focusable popup. The rest of the stream (`move`, `end`, `show`) stays gated on
+         * the word: the bar's own hide-on-scroll is unchanged (the chrome's `BarHideMachine`
+         * ignores a `start` while its gate is closed anyway), and a gesture with the setting off
+         * costs one report, at its start.
+         */
+        fun reports(phase: String, barMayHide: Boolean): Boolean = phase == "start" || barMayHide
     }
 }
