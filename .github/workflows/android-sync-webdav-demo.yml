@@ -15,10 +15,6 @@ name: Android sync WebDAV demo
 # this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY, this branch only: no token here can dispatch, so the nit fold's head drives the
-  # demo on push. Removed again in the branch's last commit, before the squash.
-  push:
-    branches: [cursor/android-webdav-demo-nit-fold-9271]
 
 permissions:
   contents: read
