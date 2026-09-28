@@ -65,6 +65,7 @@ md.push(
     'Scenario',
     'Steps',
     'Failed steps',
+    'First paint',
     'Chrome rendered',
     'Exit',
     'Known',
@@ -92,6 +93,7 @@ for (const r of results) {
       (f) => f.scenario === name || (!f.scenario && name === 'install')
     ).length
     const chrome = sc.session?.timings?.chromeRenderedMs
+    const firstPaint = sc.session?.timings?.firstPaintMs
     const exit = sc.session?.exit
       ? String(sc.session.exit.code ?? sc.session.exit.signal)
       : sc.fatal
@@ -103,6 +105,7 @@ for (const r of results) {
       // A scenario the harness did not run because boot left no profile for it (scenario-deps.mjs).
       sc.skipped ? `skipped: ${sc.skipped}` : String(steps.length),
       failed.length ? failed.join(', ') : '-',
+      typeof firstPaint === 'number' ? `${firstPaint} ms` : '-',
       chrome !== undefined ? `${chrome} ms` : '-',
       exit,
       String(known),
