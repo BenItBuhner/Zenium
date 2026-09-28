@@ -902,10 +902,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // round 16's engine-line row (Adobe Photoshop's worker) is this column going PARTIAL -> P
         // with the name listed here.
         detail.put("polyfills", runCatching { json(tabEval(view, POLYFILLS_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) })
+        // The realm's isolation (compat round 24, R24-2): the worker's page is served with the
+        // cross-origin isolation pair so `SharedArrayBuffer` is there, as in every extension
+        // context of Chrome; a WebView that did not honour `credentialless` reads false here.
+        val isolation = runCatching { json(tabEval(view, ISOLATION_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) }
+        detail.put("isolation", isolation)
         stage(
             entry, "background",
             if (uncaught.isEmpty()) "P" else "PARTIAL",
             "$kind up after ${upMs / 1000.0} s" +
+                (if (kind == "service_worker") "; crossOriginIsolated ${isolation.opt("crossOriginIsolated") ?: isolation.optString("error", "?")}, SharedArrayBuffer ${isolation.optString("sharedArrayBuffer", "?")}" else "") +
                 (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(3).joinToString(" | ") { it.take(200) }}" else "") +
                 (if (errors.isNotEmpty()) "; console.error x${errors.size}: ${errors.first().take(160)}" else ""),
             detail
@@ -14024,6 +14030,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val POLYFILLS_REPORT =
             "JSON.stringify({installed:(window.__zenExtStats&&window.__zenExtStats.polyfills)||null,withResolvers:typeof Promise.withResolvers})"
+        /** The background realm's cross-origin isolation and whether `SharedArrayBuffer` is a constructor there. */
+        private const val ISOLATION_REPORT =
+            "JSON.stringify({crossOriginIsolated:self.crossOriginIsolated===true,sharedArrayBuffer:typeof SharedArrayBuffer})"
         /** A document's size and content, shadow roots included. */
         private const val DOM_REPORT =
             "(function(){var r=document.body?document.body.getBoundingClientRect():{width:0,height:0};var deep=function(root){var n=0;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){n++;if(all[i].shadowRoot)n+=deep(all[i].shadowRoot)}return n};" +
