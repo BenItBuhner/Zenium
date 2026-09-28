@@ -1,0 +1,12 @@
+{
+  "id": "omnibox-group-suggestion",
+  "class": "OmniboxGroupSuggestionDemo",
+  "shard": "phone-d",
+  "mirrors": "android-omnibox-group-suggestion-demo.yml:light",
+  "dir": "omnibox-group-suggestion-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 3.5,
+  "note": "OMN-15 (W6-E14): the tab group row typed under a finger, its pick, the saved group's row and its pick. The workflow runs light, dark and a tablet act; the nightly runs light on the phone, beside the omnibox driver."
+}
