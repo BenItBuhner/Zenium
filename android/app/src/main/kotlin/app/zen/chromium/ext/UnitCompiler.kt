@@ -14,22 +14,39 @@ import kotlin.concurrent.withLock
  *
  *  - the sources of an extension's files are read once per compile, however many units and
  *    groups of the plan copy them (a file a plan lists in several units – Adblock Ad Blocker
- *    Pro's scriptlets sit in its whole units and in its hostname units alike – is read once), and
- *    let go once every unit of the plan is compiled: every source is inside the assembled
- *    scripts, and a re-plan (a `registerContentScripts` call re-plans the extension's units, it
- *    does not change its files) answers its unchanged units from the unit cache without a read
- *    and reads only the files its changed units name – file IO on the runtime's io executor,
- *    off the main thread. Between compiles the texts were held softly until compat round 22: ART
- *    keeps a soft referent as it keeps a strong one and clears it only in the collection it runs
- *    after an allocation has failed, so the 651 sources of Adblock Ad Blocker Pro's plan – 15.8
- *    million characters, 24.7 MB beside its 37.7 MB of units – stood on the 192 MB heap through
- *    every row after it and went only at the edge of the allocation failure the soft hold was
- *    meant to spare, while the lanes' second configure of an extension compiled every unit anew
- *    (`0 cached`) and the hold bought nothing. A file of [LARGE_SOURCE_CHARS] or more is not held
- *    even for the compile's duration: it goes into the script as a [ExtensionScripts.Source.transient]
- *    text released as it is copied in, and a later unit of the plan reads it from disk again
- *    (Monica's 28 million characters of `content.js`: a held copy of it kept the heap at its
- *    limit, and the assembly's third copy of it was the allocation that failed);
+ *    Pro's generic cosmetic filters sit in its every-origin unit and in its `css-generic-some`
+ *    unit alike – is read once), and let go at the LAST unit of the plan that names them
+ *    ([lastUses]): a text is held for the units after this one that still copy it and no longer,
+ *    and a file at its last use – most files of a plan are listed once – travels into the script
+ *    as a [ExtensionScripts.Source.transient] text, released as it is copied in, so the
+ *    assembly's peak (the builder and the string it is copied out to, four bytes a character for
+ *    a 16-bit script) stands over the texts the plan still needs and not over every text of the
+ *    unit. Compat round 23 (R23-1) measured Adblock Ad Blocker Pro's plan on the JVM with the
+ *    real compiler and bundle (11 units, 19.7 million characters, all 16-bit; the serial
+ *    collector with a 4 MB young generation, so the old generation is nearly the heap as ART's
+ *    is): its peak step is the 10.6 million character carrier's assembly – 42 MB of builder and
+ *    string over the 237 texts of the unit, 10.3 million characters that were strongly held
+ *    through the `Source` closures until the assembly returned and softly to the plan's end. The
+ *    collection before the string's allocation left 42 MB live, 12 MB of it those texts, and the
+ *    compile survived a 72 MB heap and died at 64; with the texts let go at their last use the
+ *    same collection leaves 30 MB – the builder, the plan and the 45 generic files the
+ *    `css-generic-some` unit still needs – and the compile survives 64 MB, the floor below which
+ *    [unitBudgetChars] refuses the carrier (§4.2 of the round's report has both sweeps and the
+ *    collections). Every source is inside the assembled
+ *    scripts once the plan is compiled, and a re-plan (a `registerContentScripts` call re-plans
+ *    the extension's units, it does not change its files) answers its unchanged units from the
+ *    unit cache without a read and reads only the files its changed units name – file IO on the
+ *    runtime's io executor, off the main thread. Between compiles the texts were held softly
+ *    until compat round 22: ART keeps a soft referent as it keeps a strong one and clears it only
+ *    in the collection it runs after an allocation has failed, so the 651 sources of Adblock Ad
+ *    Blocker Pro's plan – 15.8 million characters, 24.7 MB beside its 37.7 MB of units – stood on
+ *    the 192 MB heap through every row after it and went only at the edge of the allocation
+ *    failure the soft hold was meant to spare, while the lanes' second configure of an extension
+ *    compiled every unit anew (`0 cached`) and the hold bought nothing. A file of
+ *    [LARGE_SOURCE_CHARS] or more is not held even for the compile's duration: it goes into the
+ *    script as a transient text whatever its later uses, and a later unit of the plan reads it
+ *    from disk again (Monica's 28 million characters of `content.js`: a held copy of it kept the
+ *    heap at its limit, and the assembly's third copy of it was the allocation that failed);
  *  - a unit whose inputs (config, groups, CSS, debug flag) did not change keeps its assembled
  *    script, so a reconfigure that re-sends an unchanged unit costs a hash, not an assembly;
  *  - a unit the heap cannot hold as one script is refused before any of it is read
@@ -92,8 +109,9 @@ class UnitCompiler(
     private class ExtensionCache(val version: String) {
         /**
          * Extension-relative path → the file's text behind a [SoftReference] while a compile
-         * runs (the plan's units share it), or [MISSING] (unreadable, not read again for the
-         * version). [releaseSources] at the end of every compile leaves the [MISSING] marks alone.
+         * runs and a later unit of the plan still names it, or [MISSING] (unreadable, not read
+         * again for the version). [releaseUsedThrough] after every unit and [releaseSources] at
+         * the end of every compile leave the [MISSING] marks alone.
          */
         val sources = HashMap<String, Any>()
         val units = HashMap<String, Compiled>()
@@ -109,6 +127,21 @@ class UnitCompiler(
                 it.remove()
             }
             return held
+        }
+
+        /**
+         * Unit `index` of the plan is done: let go of every text no unit after it names
+         * (`lastUse`, [lastUses]). A compiled unit takes its last-use texts out as it copies them
+         * in ([source], [text]); this is the turn of a cached or refused unit, which reads nothing
+         * and was the last to name what an earlier unit held for it.
+         */
+        fun releaseUsedThrough(index: Int, lastUse: Map<String, Int>) {
+            val it = sources.entries.iterator()
+            while (it.hasNext()) {
+                val entry = it.next()
+                if (entry.value === MISSING) continue
+                if ((lastUse[entry.key] ?: -1) <= index) it.remove()
+            }
         }
     }
 
@@ -160,6 +193,7 @@ class UnitCompiler(
         }
         val out = ArrayList<Compiled>(units.length())
         val keysNow = HashSet<String>()
+        val lastUse = lastUses(units)
         for (i in 0 until units.length()) {
             // Closed while this compile ran (the runtime was destroyed): what was compiled so
             // far goes with the rest, and nothing more is read or assembled.
@@ -170,6 +204,14 @@ class UnitCompiler(
             val u = units.optJSONObject(i) ?: continue
             val key = u.optString("key")
             keysNow.add(key)
+            // How many times this unit names each path: its last naming of a path no later unit
+            // names is the text's last use in the plan, and the text goes with that copy.
+            val usesLeft = usesWithin(u)
+            val lastUseHere = { path: String ->
+                val left = (usesLeft[path] ?: 1) - 1
+                usesLeft[path] = left
+                left <= 0 && lastUse[path] == i
+            }
             val origins = u.optJSONArray("origins").let { a -> if (a == null) emptyList() else List(a.length()) { k -> a.optString(k, "*") } }
                 .toSet().ifEmpty { setOf("*") }.toList()
             // A main-world unit comes with `world: null`, which `optString` would read as "null".
@@ -184,6 +226,7 @@ class UnitCompiler(
                 val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused, presized = previous.presized)
                 entry.units[key] = kept
                 out.add(kept)
+                entry.releaseUsedThrough(i, lastUse)
                 continue
             }
             val estimate = estimateChars(entry, config, groupsJson, cssJson, size, shape)
@@ -193,6 +236,7 @@ class UnitCompiler(
                 val refused = Compiled(id, key, origins, world, shape, "", hash, cached = false, refused = Refused(estimate, groupsJson.length(), budgetChars), presized = 0)
                 entry.units[key] = refused
                 out.add(refused)
+                entry.releaseUsedThrough(i, lastUse)
                 continue
             }
             val groups = ArrayList<ExtensionScripts.Group>()
@@ -203,7 +247,7 @@ class UnitCompiler(
                 val sources = List(files.length()) { k ->
                     val path = files.optString(k, "")
                     if (path.startsWith(INLINE_CODE)) ExtensionScripts.Source(path.substring(INLINE_CODE.length))
-                    else source(entry, ext, path, read)
+                    else source(entry, ext, path, read, lastUseHere(path))
                         ?: ExtensionScripts.Source("console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});")
                 }
                 groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
@@ -212,13 +256,14 @@ class UnitCompiler(
             for (j in 0 until cssJson.length()) {
                 val c = cssJson.optJSONObject(j) ?: continue
                 val path = c.optString("path")
-                val text = text(entry, path, read) ?: continue
+                val text = text(entry, path, read, hold = !lastUseHere(path)) ?: continue
                 css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
             }
             val assembled = ExtensionScripts.documentStartSized(bootstrap(), config, groups, css, debug, shape)
             val compiled = Compiled(id, key, origins, world, shape, assembled.script, hash, cached = false, presized = assembled.presized)
             entry.units[key] = compiled
             out.add(compiled)
+            entry.releaseUsedThrough(i, lastUse)
         }
         if (closed) {
             releaseLocked()
@@ -371,33 +416,74 @@ class UnitCompiler(
     }
 
     /**
-     * A script file as the assembly takes it: held (small, soft-cached) or transient (large,
-     * released as it is copied in), its relative `import()` specifiers resolved to the file's own
-     * served URL on the way in ([RelativeImports]; the cached text stays as read, so the same file
-     * under another path or extension is not confused). The refusal estimate does not count the
-     * rewrite's few dozen characters per call; a loader's handful sits inside the estimate's room.
+     * A script file as the assembly takes it: held (small, soft-cached, a later unit of the plan
+     * names it) or transient (large, or at its last use in the plan – released as it is copied
+     * in), its relative `import()` specifiers resolved to the file's own served URL on the way in
+     * ([RelativeImports]; the cached text stays as read, so the same file under another path or
+     * extension is not confused). The refusal estimate does not count the rewrite's few dozen
+     * characters per call; a loader's handful sits inside the estimate's room.
      */
-    private fun source(entry: ExtensionCache, ext: String, path: String, read: (String) -> String?): ExtensionScripts.Source? {
-        val text = text(entry, path, read) ?: return null
-        val transient = text.length >= LARGE_SOURCE_CHARS
+    private fun source(entry: ExtensionCache, ext: String, path: String, read: (String) -> String?, lastUse: Boolean): ExtensionScripts.Source? {
+        val text = text(entry, path, read, hold = !lastUse) ?: return null
+        val transient = lastUse || text.length >= LARGE_SOURCE_CHARS
         val edits = RelativeImports.edits(text, ext, path)
         if (edits.isNotEmpty()) return RelativeImports.source(text, edits, transient)
         return if (transient) ExtensionScripts.Source.transient(text) else ExtensionScripts.Source(text)
     }
 
-    /** The file's text: from the compile's cache, or read now (and held for the rest of the compile when under [LARGE_SOURCE_CHARS]). */
-    private fun text(entry: ExtensionCache, path: String, read: (String) -> String?): String? {
+    /**
+     * The file's text: from the compile's cache, or read now. Held for the units after this one
+     * while `hold` (and under [LARGE_SOURCE_CHARS]); at a text's last use (`hold` false) the
+     * cache lets go of it as it is handed over, so the copy in the script is the only one left.
+     */
+    private fun text(entry: ExtensionCache, path: String, read: (String) -> String?, hold: Boolean = true): String? {
         if (path.isEmpty()) return null
         when (val held = entry.sources[path]) {
             MISSING -> return null
-            is SoftReference<*> -> (held.get() as String?)?.let { return it }
+            is SoftReference<*> -> (held.get() as String?)?.let {
+                if (!hold) entry.sources.remove(path)
+                return it
+            }
         }
         val text = runCatching { read(path) }.getOrNull()
         when {
             text == null -> entry.sources[path] = MISSING
-            text.length < LARGE_SOURCE_CHARS -> entry.sources[path] = SoftReference(text)
+            hold && text.length < LARGE_SOURCE_CHARS -> entry.sources[path] = SoftReference(text)
         }
         return text
+    }
+
+    /** How many times one unit's groups and CSS name each path (an inline entry is no path). */
+    private fun usesWithin(unit: JSONObject): HashMap<String, Int> {
+        val uses = HashMap<String, Int>()
+        forEachPath(unit) { path -> uses[path] = (uses[path] ?: 0) + 1 }
+        return uses
+    }
+
+    /** The index of the last unit of the plan that names each path: where its text's last use is. */
+    private fun lastUses(units: JSONArray): HashMap<String, Int> {
+        val last = HashMap<String, Int>()
+        for (i in 0 until units.length()) {
+            val u = units.optJSONObject(i) ?: continue
+            forEachPath(u) { path -> last[path] = i }
+        }
+        return last
+    }
+
+    private inline fun forEachPath(unit: JSONObject, visit: (String) -> Unit) {
+        val groups = unit.optJSONArray("groups") ?: JSONArray()
+        for (j in 0 until groups.length()) {
+            val files = groups.optJSONObject(j)?.optJSONArray("js") ?: continue
+            for (k in 0 until files.length()) {
+                val path = files.optString(k, "")
+                if (path.isNotEmpty() && !path.startsWith(INLINE_CODE)) visit(path)
+            }
+        }
+        val css = unit.optJSONArray("css") ?: JSONArray()
+        for (j in 0 until css.length()) {
+            val path = css.optJSONObject(j)?.optString("path") ?: continue
+            if (path.isNotEmpty()) visit(path)
+        }
     }
 
     companion object {
