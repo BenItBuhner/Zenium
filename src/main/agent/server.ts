@@ -27,13 +27,19 @@ export class ElectronAgentTransport implements AgentTransport {
     server.headersTimeout = 70_000
     const host = options.lan ? '0.0.0.0' : '127.0.0.1'
     await new Promise<void>((resolve, reject) => {
+      // The message is what Settings → AI Agents shows; the code and the address tried ride
+      // along for the core's report (`agent.json`'s `error`, the log line) – Node's listen
+      // errors carry them, and they are what makes a failure in a CI artifact explain itself.
       const onError = (error: NodeJS.ErrnoException): void => {
         server.off('listening', onListening)
         reject(
-          new Error(
-            error.code === 'EADDRINUSE'
-              ? `Port ${options.port} is already in use – pick another port in Settings → AI Agents`
-              : error.message
+          Object.assign(
+            new Error(
+              error.code === 'EADDRINUSE'
+                ? `Port ${options.port} is already in use – pick another port in Settings → AI Agents`
+                : error.message
+            ),
+            { code: error.code, address: host, port: options.port }
           )
         )
       }
