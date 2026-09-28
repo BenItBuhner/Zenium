@@ -746,10 +746,57 @@ class UnitCompilerTest {
             val (big, small, huge) = compiler.compile(id, "1.0.0", plan, true, read, size)
             assertTrue(big.file!!.delete())
             assertNull(big.text())
+            val gone = big.read()
+            assertTrue(gone is UnitCompiler.Read.Gone)
+            assertEquals(big.file, (gone as UnitCompiler.Read.Gone).file)
             assertEquals(small.script, small.text())
             assertTrue(huge.refused != null)
             assertNull(huge.text())
+            assertTrue(huge.read() === UnitCompiler.Read.Refused)
             assertNull(huge.file)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a stored unit's read says whether it came from the disk or the soft hold - the hold is counted apart, can be dropped, and outlives the file until it is`() {
+        val root = storeRoot()
+        try {
+            val compiler = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val (big, small) = compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)).put(inlineUnit("small", 10)), true, read, size)
+            // Nothing is held before the first read: the compile wrote the file and kept no string.
+            assertFalse(big.softHeld)
+            assertEquals(0, compiler.memoryOf(id).getInt("softHeldUnits"))
+            // The first read decodes the file and holds the text softly; the next takes the hold.
+            val first = big.read() as UnitCompiler.Read.Text
+            assertTrue(first.fromDisk)
+            assertTrue(big.softHeld)
+            val memory = compiler.memoryOf(id)
+            assertEquals(1, memory.getInt("storedUnits"))
+            assertEquals(1, memory.getInt("softHeldUnits"))
+            assertEquals(big.chars.toLong(), memory.getLong("softHeldChars"))
+            val second = big.read() as UnitCompiler.Read.Text
+            assertFalse(second.fromDisk)
+            assertTrue(first.text === second.text)
+            // A held unit's read is its own string, never from the disk and never soft-held.
+            val held = small.read() as UnitCompiler.Read.Text
+            assertFalse(held.fromDisk)
+            assertTrue(small.script === held.text)
+            assertFalse(small.softHeld)
+            assertEquals(1, compiler.memoryOf(id).getInt("softHeldUnits"))
+            // The hold dropped (what the collector does under pressure): the next read is from the disk again.
+            big.dropSoftText()
+            assertFalse(big.softHeld)
+            assertTrue((big.read() as UnitCompiler.Read.Text).fromDisk)
+            assertEquals(first.text, big.text())
+            // The soft-held text answers after the file is gone (the same text); the dropped hold does not.
+            assertTrue(big.file!!.delete())
+            assertTrue(big.read() is UnitCompiler.Read.Text)
+            big.dropSoftText()
+            assertTrue(big.read() is UnitCompiler.Read.Gone)
+            assertNull(big.text())
+            assertEquals(0, compiler.memoryOf(id).getInt("softHeldUnits"))
         } finally {
             root.deleteRecursively()
         }

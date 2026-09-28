@@ -148,8 +148,24 @@ class Extensions(private val host: Host) {
         /** Whether the unit lives in the store between installs rather than in the heap. */
         val stored: Boolean get() = compiled.file != null
 
-        /** The script to hand the WebView: read now for a stored unit; null when its file is gone. */
+        /** The script to hand the WebView, or why there is none: read now for a stored unit ([UnitCompiler.Compiled.read]). */
+        fun read(): UnitCompiler.Read = compiled.read()
+
+        /** [read]'s text, or null for every other answer. */
         fun text(): String? = compiled.text()
+    }
+
+    /**
+     * One [installExtension] pass: its time in milliseconds (the reads and the handoffs), how
+     * many stored units it read from the disk, how many it took soft-held from the last read,
+     * and how many it could not install – their file gone, or their read out of heap.
+     */
+    class Installed(val ms: Long, val readFromDisk: Int, val softHeld: Int, val gone: Int, val outOfHeap: Int) {
+        val skipped: Int get() = gone + outOfHeap
+
+        companion object {
+            val NONE = Installed(0L, 0, 0, 0, 0)
+        }
     }
 
     /** What the core configured for one attached extension. */
@@ -252,6 +268,13 @@ class Extensions(private val host: Host) {
     private val frames = FrameOwnership<TabWebView>()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
+    /**
+     * How many reads of a stored unit did not fit the heap over the runtime's life
+     * ([UnitCompiler.Read.OutOfHeap]; main thread) – each one a unit the tabs of a pass were
+     * without, said in an error line at the time and counted in [unitMemory] and the configure
+     * line so the reading is never silent.
+     */
+    private var storeReadsOutOfHeap = 0
     /**
      * Whether an extension listens for `webRequest` right now (`ext.observeRequests`): then every
      * decision of the engine is reported, not only those an extension's rule took.
@@ -814,7 +837,7 @@ class Extensions(private val host: Host) {
                 served = served + (id to servedNow)
                 units[id] = unitsNow
                 // One pass over the tabs: a stored unit is read once for all of them, not once a tab.
-                val installMs = installExtension(host.tabs.all(), servedNow, unitsNow)
+                val install = installExtension(host.tabs.all(), servedNow, unitsNow)
                 configureStats[id] = stats
                 flushNotificationEvents(id)
                 // A tab that asked for one of the extension's pages before this: the empty
@@ -841,7 +864,8 @@ class Extensions(private val host: Host) {
                         "builders presized ${assembled.sumOf { it.presized.toLong() }} for ${assembled.sumOf { it.chars.toLong() }} chars " +
                         "(${assembled.count { it.grown }} grown), " +
                         "${stored.size} stored (${stored.sumOf { it.chars.toLong() }} chars), " +
-                        "installed on ${host.tabs.all().size} tab(s) ($installMs ms), " +
+                        "installed on ${host.tabs.all().size} tab(s) (${install.ms} ms" +
+                        (if (install.skipped > 0) "; ${install.gone} unit(s) gone, ${install.outOfHeap} out of heap – the tabs are without them" else "") + "), " +
                         "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
                         "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}, " +
                         "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
@@ -1445,12 +1469,16 @@ class Extensions(private val host: Host) {
      * until they navigate). Unit by unit over the views, not view by view over the units: a
      * unit of the store ([ScriptUnit.stored]) is read once here for all the views of the pass
      * and let go as the pass moves on – its string is live for the handoffs of one unit, never
-     * two units' at once – where a held unit's string is the one the compiler keeps. A stored
-     * unit whose file is gone is skipped with a line (the extension's other units go on).
-     * Answers the pass's time in milliseconds (the reads and the handoffs; the configure line
-     * carries it, and an attach's pass with a read in it says so at info level).
+     * two units' at once – where a held unit's string is the one the compiler keeps, and a
+     * stored unit's text soft-held from its last read is taken as it is ([UnitCompiler.Read]).
+     * A stored unit whose file is gone is skipped with a warning line, one whose read did not
+     * fit the heap with an error line and a count ([storeReadsOutOfHeap], in the runtime's
+     * memory reading and the configure line) – the extension's other units go on either way,
+     * and the line says which unit the tabs are without. Answers the pass ([Installed]: its
+     * time – the reads and the handoffs; the configure line carries it –, its reads and its
+     * skips; an attach's pass with a read in it says so at info level).
      */
-    private fun installExtension(views: Collection<WebView>, ext: Served, list: List<ScriptUnit>): Long {
+    private fun installExtension(views: Collection<WebView>, ext: Served, list: List<ScriptUnit>): Installed {
         val started = SystemClock.uptimeMillis()
         val targets = ArrayList<WebView>(views.size)
         for (view in views) {
@@ -1459,7 +1487,7 @@ class Extensions(private val host: Host) {
             if (view.isPrivateTab && !ext.allowPrivate) continue
             targets.add(view)
         }
-        if (targets.isEmpty()) return 0L
+        if (targets.isEmpty()) return Installed.NONE
         val added = HashMap<WebView, ArrayList<ScriptHandler>>(targets.size)
         for (view in targets) {
             val own = ArrayList<ScriptHandler>(list.size + 1)
@@ -1470,14 +1498,35 @@ class Extensions(private val host: Host) {
             }.getOrNull()?.let(own::add)
             added[view] = own
         }
-        var read = 0
+        var readFromDisk = 0
+        var softHeld = 0
+        var gone = 0
+        var outOfHeap = 0
         for (unit in list) {
-            val text = unit.text()
-            if (text == null) {
-                Log.w(TAG, "install of ${ext.id.take(8)}: unit ${unit.key} (${unit.chars} chars, stored) has no text – its file is gone; the extension's other units go on")
-                continue
+            val text = when (val got = unit.read()) {
+                is UnitCompiler.Read.Text -> {
+                    if (unit.stored) if (got.fromDisk) readFromDisk++ else softHeld++
+                    got.text
+                }
+                is UnitCompiler.Read.Gone -> {
+                    gone++
+                    Log.w(TAG, "install of ${ext.id.take(8)}: unit ${unit.key} (${unit.chars} chars, stored) has no file at ${got.file.name} (${got.error}) – the tabs of this pass are without it; the extension's other units go on")
+                    continue
+                }
+                is UnitCompiler.Read.OutOfHeap -> {
+                    outOfHeap++
+                    storeReadsOutOfHeap++
+                    val heap = Runtime.getRuntime()
+                    Log.e(
+                        TAG,
+                        "install of ${ext.id.take(8)}: unit ${unit.key} (${got.chars} chars, ${got.bytes} bytes in the store) did not fit the heap " +
+                            "(${(heap.totalMemory() - heap.freeMemory()) shr 20}/${heap.maxMemory() shr 20} MB used/max) – the tabs of this pass are WITHOUT it " +
+                            "(the runtime's $storeReadsOutOfHeap. such read); the extension's other units go on"
+                    )
+                    continue
+                }
+                UnitCompiler.Read.Refused -> continue
             }
-            if (unit.stored) read++
             for (view in targets) {
                 val handler = runCatching { addUnit(view, unit, text, unit.origins) }
                     .recoverCatching {
@@ -1489,10 +1538,15 @@ class Extensions(private val host: Host) {
         }
         for ((view, own) in added) handlers[view]?.byExtension?.set(ext.id, own)
         val ms = SystemClock.uptimeMillis() - started
-        if (read > 0 && views.size == 1) {
-            Log.i(TAG, "install of ${ext.id.take(8)} on a tab: ${list.size} unit(s), $read read from the store (${list.filter { it.stored }.sumOf { it.chars.toLong() }} chars) in $ms ms")
+        if ((readFromDisk > 0 || softHeld > 0) && views.size == 1) {
+            Log.i(
+                TAG,
+                "install of ${ext.id.take(8)} on a tab: ${list.size} unit(s), $readFromDisk read from the store, $softHeld soft-held from the last read " +
+                    "(${list.filter { it.stored }.sumOf { it.chars.toLong() }} stored chars) in $ms ms" +
+                    (if (gone + outOfHeap > 0) ", $gone gone, $outOfHeap out of heap" else "")
+            )
         }
-        return ms
+        return Installed(ms, readFromDisk, softHeld, gone, outOfHeap)
     }
 
     private fun removeExtension(view: WebView, id: String) {
@@ -2316,8 +2370,10 @@ class Extensions(private val host: Host) {
      * The Java heap the runtime holds for one extension's content-script units, for
      * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts held in memory – the one
      * copy the compiler's cache and the tabs' [ScriptUnit]s share –, the units of the store
-     * counted apart with their characters and in no heap figure, and the soft-held sources),
-     * with the units installed on the tabs counted, and the extension's configures in flight
+     * counted apart with their characters and in no heap figure but for the texts soft-held
+     * from their last read, and the soft-held sources), with the units installed on the tabs
+     * counted, the runtime's count of store reads that did not fit the heap
+     * (`storeReadsOutOfHeap`, [storeReadsOutOfHeap]), and the extension's configures in flight
      * (`pending`, [ConfiguresInFlight]: requested, their post not landed yet). Main thread; does
      * not wait on a compile in flight (`compiling: true` then, the compiler's counts absent). The
      * reading is settled – the units installed are the last configure's, the compiler's cache
@@ -2327,6 +2383,7 @@ class Extensions(private val host: Host) {
      */
     fun unitMemory(id: String): JSONObject =
         compiler.memoryOf(id).put("installed", units[id]?.size ?: 0).put("pending", configuresInFlight.pending(id))
+            .put("storeReadsOutOfHeap", storeReadsOutOfHeap)
 
     /**
      * Let the runtime's share of an extension's heap go while the extension stays attached, for

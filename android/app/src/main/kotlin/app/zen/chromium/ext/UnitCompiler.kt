@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.OutputStreamWriter
 import java.io.Writer
 import java.lang.ref.SoftReference
@@ -146,26 +147,79 @@ class UnitCompiler(
         val grown: Boolean get() = chars > presized
 
         /**
-         * The script's text: as held, or read from its file – the file's UTF-8 bytes in one
-         * array sized by its length and the string decoded from them, two allocations for the
-         * moment of an install and nothing retained, where a held unit is its string for as
-         * long as it is configured. Not `File.readText()`: that reads through a `StringWriter`
-         * whose buffer doubles as it fills and is copied out at the end – three copies of a
-         * 16-bit text at the peak, more than the builder and string the store is there to
-         * spare. `String(bytes, UTF_8)` is ART's own decoder (native from Android 12, straight
-         * into the string; a char array of the byte count on the way before that). Null for a
-         * refused unit, and for a stored one whose file is gone (the store lives under the
-         * app's files; a runtime that finds a unit's file missing installs the extension's
-         * other units and says so).
+         * A stored unit's text decoded by the last [read], behind a [SoftReference]: a tab
+         * attached while the collector has left it alone pays no read (Compose AI's plan is
+         * eight units of 8.5 million characters – 68 MB of UTF-8 per new tab without this), and
+         * under pressure the collector clears it and the next install reads again – the
+         * retained copy is back only until the edge, which is where it should go (compat round
+         * 22 measured ART holding soft referents to the allocation-failure collection).
          */
-        fun text(): String? {
-            val stored = file
-            return when {
-                refused != null -> null
-                stored != null -> runCatching { String(stored.readBytes(), Charsets.UTF_8) }.getOrNull()
-                else -> script
+        @Volatile
+        private var soft: SoftReference<String>? = null
+
+        /**
+         * The script's text, or why there is none ([Read]): as held; the soft-held text of the
+         * last read while it lasts; else read from its file – the file's UTF-8 bytes in one
+         * array sized by its length and the string decoded from them, two allocations for the
+         * moment of an install, where a held unit is its string for as long as it is
+         * configured. Not `File.readText()`: that reads through a `StringWriter` whose buffer
+         * doubles as it fills and is copied out at the end – three copies of a 16-bit text at
+         * the peak, more than the builder and string the store is there to spare.
+         * `String(bytes, UTF_8)` is ART's own decoder (native from Android 12, straight into
+         * the string; a char array of the byte count on the way before that). A stored unit
+         * whose file is not there answers [Read.Gone] (the store lives under the app's files; a
+         * runtime that finds a unit's file missing installs the extension's other units and
+         * says so); one whose bytes or string do not fit the heap answers [Read.OutOfHeap] –
+         * the `OutOfMemoryError` is this read's own allocation failing and is caught here, at
+         * the one place that knows what it was for, so the install can name it instead of the
+         * process dying or the unit going missing without a word (compat round 24's JVM
+         * measure read the first shape of this method swallowing it as a missing file).
+         */
+        fun read(): Read {
+            if (refused != null) return Read.Refused
+            val stored = file ?: return Read.Text(script, fromDisk = false)
+            soft?.get()?.let { return Read.Text(it, fromDisk = false) }
+            val bytes = try {
+                stored.readBytes()
+            } catch (e: IOException) {
+                return Read.Gone(stored, e)
+            } catch (e: OutOfMemoryError) {
+                return Read.OutOfHeap(chars, stored.length())
             }
+            val text = try {
+                String(bytes, Charsets.UTF_8)
+            } catch (e: OutOfMemoryError) {
+                return Read.OutOfHeap(chars, bytes.size.toLong())
+            }
+            soft = SoftReference(text)
+            return Read.Text(text, fromDisk = true)
         }
+
+        /** [read]'s text, or null for every other answer (a held unit is never null). */
+        fun text(): String? = (read() as? Read.Text)?.text
+
+        /** Whether a stored unit's decoded text is soft-held at this moment (instrumentation). */
+        val softHeld: Boolean get() = soft?.get() != null
+
+        /** Let the soft-held text go now – what the collector does under pressure, for a test or a release. */
+        fun dropSoftText() {
+            soft = null
+        }
+    }
+
+    /** What [Compiled.read] answers. */
+    sealed class Read {
+        /** The script's text; [fromDisk] when this read decoded the file, false for a held unit and for a soft-held text. */
+        class Text(val text: String, val fromDisk: Boolean) : Read()
+
+        /** A stored unit whose file is not there or not readable. */
+        class Gone(val file: File, val error: IOException) : Read()
+
+        /** A stored unit whose bytes or decoded string did not fit the heap; nothing of it is installed by this read. */
+        class OutOfHeap(val chars: Int, val bytes: Long) : Read()
+
+        /** A refused unit: no text by design. */
+        object Refused : Read()
     }
 
     /** A unit over the budget: what it would have run to (from the files' sizes), over how many groups, against what. */
@@ -492,7 +546,9 @@ class UnitCompiler(
      * plan refused ([Compiled.refused], kept with an empty script) are counted apart, so the
      * count installed on the tabs has its match here. The units in the store ([Compiled.file])
      * are counted apart too – `storedUnits` and their `storedChars` – and are in no heap
-     * figure: their text is on disk between installs. Does not wait: the lock is a compile's for
+     * figure: their text is on disk between installs, but for the ones whose last read's text
+     * the collector has left soft-held ([Compiled.softHeld]: `softHeldUnits`, `softHeldChars`
+     * – in the heap until pressure clears them). Does not wait: the lock is a compile's for
      * its whole run (seconds for a plan of Adblock Ad Blocker Pro's size), and what the reading
      * would count under it is the plan being replaced – `compiling: true` and nothing else says
      * so (compat round 22's `[lane]` run read a heap split off such a wait: the instrumentation's
@@ -509,6 +565,8 @@ class UnitCompiler(
             var refused = 0
             var storedUnits = 0
             var storedChars = 0L
+            var softHeldUnits = 0
+            var softHeldChars = 0L
             for (unit in entry.units.values) {
                 if (unit.refused != null) {
                     refused++
@@ -517,6 +575,10 @@ class UnitCompiler(
                 if (unit.file != null) {
                     storedUnits++
                     storedChars += unit.chars
+                    if (unit.softHeld) {
+                        softHeldUnits++
+                        softHeldChars += unit.chars
+                    }
                     continue
                 }
                 val wide = unit.script.any { it > '\u00FF' }
@@ -537,6 +599,7 @@ class UnitCompiler(
                 .put("compiling", false)
                 .put("units", entry.units.size).put("refused", refused).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
                 .put("storedUnits", storedUnits).put("storedChars", storedChars)
+                .put("softHeldUnits", softHeldUnits).put("softHeldChars", softHeldChars)
                 .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
         } finally {
             lock.unlock()
