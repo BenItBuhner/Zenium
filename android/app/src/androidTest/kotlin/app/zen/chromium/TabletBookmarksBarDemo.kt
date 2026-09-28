@@ -154,7 +154,7 @@ class TabletBookmarksBarDemo : DemoHarness("tablet-bookmarks-bar-demo-state.json
         SystemClock.sleep(1_500)
         shot("$scheme-04-folder")
         if (work != null) Finger().tap(work.centerX(), work.centerY())
-        check("[$scheme] the same chip again closes the panel", awaitDomGone(PANEL, 8_000) && awaitJs(BAR_MENU_OPEN, false, 3_000), "panel ${domRect(PANEL)}, flag ${jsBoolean(BAR_MENU_OPEN)}")
+        check("[$scheme] the same chip again closes the panel, and the tap's own click does not bring it back", staysGone(PANEL) && awaitJs(BAR_MENU_OPEN, false, 3_000), "panel ${domRect(PANEL)}, flag ${jsBoolean(BAR_MENU_OPEN)}")
         if (work != null && domRect(PANEL) != null) touchFault("a second touch on the Work chip did not close its panel")
 
         // --- 6. the » under a finger ------------------------------------------------------------
@@ -168,7 +168,7 @@ class TabletBookmarksBarDemo : DemoHarness("tablet-bookmarks-bar-demo-state.json
         SystemClock.sleep(1_500)
         shot("$scheme-05-overflow")
         if (more != null) Finger().tap(more.centerX(), more.centerY())
-        check("[$scheme] the » again closes the overflow panel", awaitDomGone(PANEL, 8_000), "panel ${domRect(PANEL)}")
+        check("[$scheme] the » again closes the overflow panel, and the tap's own click does not bring it back", staysGone(PANEL) && awaitJs(BAR_MENU_OPEN, false, 3_000), "panel ${domRect(PANEL)}, flag ${jsBoolean(BAR_MENU_OPEN)}")
         if (more != null && domRect(PANEL) != null) touchFault("a second touch on the » did not close the overflow panel")
 
         // --- 7. Never ----------------------------------------------------------------------------
@@ -400,6 +400,21 @@ class TabletBookmarksBarDemo : DemoHarness("tablet-bookmarks-bar-demo-state.json
     private fun awaitDom(selector: String, timeoutMs: Long = 4_000): Boolean = awaitTrue(timeoutMs) { domRect(selector) != null }
 
     private fun awaitDomGone(selector: String, timeoutMs: Long = 4_000): Boolean = awaitTrue(timeoutMs) { domRect(selector) == null }
+
+    /**
+     * The element goes within `timeoutMs` and is still gone `holdMs` later: a panel a finger's tap
+     * closed must not come back from that tap's own click (the first run's fault: the » closed
+     * under the finger and stood again a second and a half later, its late click reopening it).
+     */
+    private fun staysGone(selector: String, timeoutMs: Long = 8_000, holdMs: Long = 3_000): Boolean {
+        if (!awaitDomGone(selector, timeoutMs)) return false
+        val until = SystemClock.uptimeMillis() + holdMs
+        while (SystemClock.uptimeMillis() < until) {
+            if (domRect(selector) != null) return false
+            SystemClock.sleep(250)
+        }
+        return domRect(selector) == null
+    }
 
     // --- the chrome's state -----------------------------------------------------------------------
 

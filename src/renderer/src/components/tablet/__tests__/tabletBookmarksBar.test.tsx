@@ -284,6 +284,45 @@ async function press(el: Element): Promise<void> {
   await flush()
 }
 
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+/**
+ * A finger's tap as Chromium delivers it: the pointer's enter, down, up and leave in one task,
+ * the `click` in a later one – the browser's tap gesture, not the release (a mouse's click is
+ * dispatched with its release, inside the press the layer's light dismiss swallows).
+ */
+async function tap(el: Element): Promise<MouseEvent> {
+  const pointer = (type: string, init: PointerEventInit = {}): PointerEvent =>
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'touch',
+      pointerId: 7,
+      isPrimary: true,
+      ...init
+    })
+  await act(async () => {
+    el.dispatchEvent(pointer('pointerover'))
+    el.dispatchEvent(pointer('pointerenter', { bubbles: false }))
+    el.dispatchEvent(pointer('pointerdown'))
+    el.dispatchEvent(pointer('pointerup'))
+    el.dispatchEvent(pointer('pointerout'))
+    el.dispatchEvent(pointer('pointerleave', { bubbles: false }))
+  })
+  await act(async () => {
+    await tick()
+  })
+  const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+  await act(async () => {
+    el.dispatchEvent(click)
+  })
+  await flush()
+  await act(async () => {
+    await tick()
+  })
+  return click
+}
+
 beforeEach(() => {
   stripWidth = 10_000
   layOut()
@@ -388,6 +427,56 @@ describe('the tablet’s bookmarks bar (NTP-34; Chrome 152’s tablet bar, §9.3
     await press(work)
     expect(panels()).toEqual([])
     expect(work.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('closes a panel under a finger’s tap on its own anchor without reopening it from that tap’s late click, and reopens it under the next tap', async () => {
+    // Room for two chips: the » stands in for the rest.
+    stripWidth = 2 * 104 + 40
+    await mountShell(stateOf({ bookmarksBar: 'always' }))
+    const more = overflow()!
+    await tap(more)
+    expect(panels().length).toBe(1)
+    expect(more.getAttribute('aria-expanded')).toBe('true')
+    // The second tap: its press closes the panel (§9.20, reason `anchor`) and its click, a task
+    // later, is that press's own – the panel stays closed and the chrome flag down.
+    const spent = await tap(more)
+    expect(panels()).toEqual([])
+    expect(more.getAttribute('aria-expanded')).toBe('false')
+    expect(uiStore.get().barMenuOpen).toBe(false)
+    expect(spent.defaultPrevented).toBe(false)
+    // A third tap is a new press: it reopens.
+    await tap(more)
+    expect(panels().length).toBe(1)
+    expect(more.getAttribute('aria-expanded')).toBe('true')
+    await tap(more)
+    expect(panels()).toEqual([])
+
+    // A folder chip's panel the same way, on a strip that shows every chip.
+    act(() => root?.unmount())
+    root = null
+    host?.remove()
+    stripWidth = 10_000
+    await mountShell(stateOf({ bookmarksBar: 'always' }))
+    const work = chips().find((c) => c.getAttribute('data-bm-id') === 'work')!
+    await tap(work)
+    expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
+    await tap(work)
+    expect(panels()).toEqual([])
+    expect(work.getAttribute('aria-expanded')).toBe('false')
+    await tap(work)
+    expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
+  })
+
+  it('keeps the desktop’s toggle as it was: a press’s late click on the desktop is a second press', async () => {
+    // The desktop's click comes with the release and is swallowed with it; a click that arrives
+    // a task later is a keyboard's or a second press's, and toggles. The tablet's guard above is
+    // not armed on the desktop.
+    await mountDesktopBar(stateOf({ bookmarksBar: 'always' }))
+    const work = chips().find((c) => c.getAttribute('data-bm-id') === 'work')!
+    await tap(work)
+    expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
+    await tap(work)
+    expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
   })
 
   it('lifts no link from a chip on the tablet, where the desktop’s chip does', async () => {

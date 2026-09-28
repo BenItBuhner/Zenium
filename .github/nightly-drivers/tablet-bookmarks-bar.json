@@ -4,6 +4,6 @@
   "shard": "tablet",
   "mirrors": "android-tablet-bookmarks-bar-demo.yml",
   "dir": "tablet-bookmarks-bar-demo",
-  "estimate": 4,
-  "note": "The tablet's bookmarks bar (NTP-34, W6-E16): the desktop shell's bar under the tablet toolbar beside the sidebar, on the shared Show bookmarks bar setting. Under a finger, in each scheme: Settings › Look and Feel from the app menu, the row's menulist and its sheet (Always / Only on new tab page / Never), the bar's seat and sizes, a folder chip's panel and the »'s overflow panel (the tablet's popovers, not sheets), Never, and the new tab page alone under the default. The driver sets the dark scheme itself (the core's setting and the system's night mode), so DEMO_THEME is not read. The estimate is a guess ahead of the first run; the dispatch run's measure replaces it."
+  "estimate": 3.5,
+  "note": "The tablet's bookmarks bar (NTP-34, W6-E16): the desktop shell's bar under the tablet toolbar beside the sidebar, on the shared Show bookmarks bar setting. Under a finger, in each scheme: Settings › Look and Feel from the app menu, the row's menulist and its sheet (Always / Only on new tab page / Never), the bar's seat and sizes, a folder chip's panel and the »'s overflow panel (the tablet's popovers, not sheets), Never, and the new tab page alone under the default. The driver sets the dark scheme itself (the core's setting and the system's night mode), so DEMO_THEME is not read. The estimate is the builder's run's measure (192 s of driver at the first head, run 36471616589) plus the four 3 s holds the second-tap claims gained."
 }
