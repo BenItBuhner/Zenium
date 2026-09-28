@@ -59,14 +59,15 @@ function expectedSurface(h: PageHarness, rect: Rect, view: Rect = VIEW): Rect {
   )
 }
 
+/** The pill's report, and the core's word back: the surface's size as set (`MiniMenuSurfaceSize`), or null. */
 function measure(
   h: PageHarness,
   width: number,
   height: number,
   folded = false,
   room?: MiniMenuRoom | null
-): void {
-  h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
+): unknown {
+  return h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
     tabId: h.tabId,
     width,
     height,
@@ -276,23 +277,28 @@ describe('the pill on the popup surface', () => {
     expect(h.popupCalls.length).toBe(2)
   })
 
-  it('follows the size the pill\u2019s document measures, and drops another tab\u2019s report or a nonsensical one', () => {
+  it('follows the size the pill\u2019s document measures, and drops another tab\u2019s report or a nonsensical one – answering each with the surface\u2019s size as set, or null for one that placed nothing', () => {
     const h = pageHarness()
     layout(h)
     report(h, 'quantum foam')
-    measure(h, 420, 46)
-    expect(h.popupCalls.at(-1)).toMatchObject({ width: 420 + PAD * 2, height: 46 + PAD * 2 })
+    const set = { width: 420 + PAD * 2, height: 46 + PAD * 2 }
+    expect(measure(h, 420, 46)).toEqual(set)
+    expect(h.popupCalls.at(-1)).toMatchObject(set)
     const placed = h.popupCalls.length
-    h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
-      tabId: 'tab_gone',
-      width: 100,
-      height: 46,
-      folded: false
-    })
-    measure(h, Number.NaN, 46)
-    measure(h, 420, 0)
-    // The same size again places nothing anew.
-    measure(h, 420, 46)
+    // The word back (§11's handshake with the pill's document) is null for a report that
+    // placed no surface: another tab's, or a nonsensical one.
+    expect(
+      h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
+        tabId: 'tab_gone',
+        width: 100,
+        height: 46,
+        folded: false
+      })
+    ).toBeNull()
+    expect(measure(h, Number.NaN, 46)).toBeNull()
+    expect(measure(h, 420, 0)).toBeNull()
+    // The same size again places nothing anew, and is answered with the size as it stands.
+    expect(measure(h, 420, 46)).toEqual(set)
     expect(h.popupCalls.length).toBe(placed)
   })
 
@@ -312,19 +318,23 @@ describe('the pill on the popup surface', () => {
     // The estimate has no room: a tooltip arms only under a pointer or the keyboard on a drawn
     // pill, by when the document has measured and asks.
     expect(h.popupCalls.at(-1)).toMatchObject({ height: MINI_MENU_HEIGHT + PAD * 2 })
-    // The folded row measured, at rest: the padded box.
-    measure(h, 190, 46, true, null)
+    // The folded row measured, at rest: the padded box – and the word back says so.
     const rest = { width: 190 + PAD * 2, height: 46 + PAD * 2 }
+    expect(measure(h, 190, 46, true, null)).toEqual(rest)
     expect(h.popupCalls.at(-1)).toMatchObject(rest)
     const box = h.popupCalls.at(-1)!
-    // A tooltip arms: the room comes under the box, the pill's own place untouched.
-    measure(h, 190, 46, true, { below: 29, width: 112 })
+    // A tooltip arms: the room comes under the box, the pill's own place untouched. The word
+    // back is the grown size, spoken once the host has the bounds (`setPopupSurface` done):
+    // the acknowledgement the pill's document holds the tooltip's show on (§11's handshake).
+    const grown = { ...rest, height: rest.height + 29 }
+    expect(measure(h, 190, 46, true, { below: 29, width: 112 })).toEqual(grown)
     expect(h.popupCalls.at(-1)).toEqual({ ...box, height: rest.height + 29 })
     const placed = h.popupCalls.length
-    measure(h, 190, 46, true, { below: 29, width: 112 })
+    // The same report again places nothing anew, and is answered with the size as it stands.
+    expect(measure(h, 190, 46, true, { below: 29, width: 112 })).toEqual(grown)
     expect(h.popupCalls.length).toBe(placed)
     // The moment is over: the null returns the surface to the padded box, on the same pixels.
-    measure(h, 190, 46, true, null)
+    expect(measure(h, 190, 46, true, null)).toEqual(rest)
     expect(h.popupCalls.length).toBe(placed + 1)
     expect(h.popupCalls.at(-1)).toEqual(box)
     measure(h, 190, 46, true, null)
@@ -333,7 +343,7 @@ describe('the pill on the popup surface', () => {
     // finite, non-negative numbers: the box stands, the tooltips take their chances.
     measure(h, 190, 46, true, { below: 29, width: 112 })
     expect(h.popupCalls.at(-1)).toEqual({ ...box, height: rest.height + 29 })
-    measure(h, 190, 46, true, { below: -1, width: 112 })
+    expect(measure(h, 190, 46, true, { below: -1, width: 112 })).toEqual(rest)
     expect(h.popupCalls.length).toBe(placed + 3)
     expect(h.popupCalls.at(-1)).toEqual(box)
     h.browser.handleCommand(h.win, 'selectionMenu.surfaceSize', {
@@ -433,6 +443,10 @@ describe('the pill on the popup surface', () => {
     })
     expect(h.popupCalls.at(-1)).toBeNull()
     expect(model(h)?.rect).toEqual({ ...RECT, y: -60 })
+    // A report from the pill's document meanwhile places no surface, and its word back says
+    // so (null: nothing for a tooltip to wait for).
+    expect(measure(h, 420, 46)).toBeNull()
+    expect(h.popupCalls.at(-1)).toBeNull()
     // Nothing to hang from without a box either.
     h.browser.handlePageMessage(h.tabId, {
       type: 'selection',

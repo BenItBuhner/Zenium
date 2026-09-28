@@ -1,5 +1,6 @@
 import type {
   MiniMenuRoom,
+  MiniMenuSurfaceSize,
   Rect,
   SelectionMenuAction,
   SelectionMenuActionId,
@@ -47,6 +48,9 @@ import type { ZenWindow } from './window'
  * (`room: null`) the instant it is over – which the surface gets around the pill without the
  * pill moving for it, and loses again on the null. At rest the surface is the padded box: a
  * standing band under the pill would be a dead zone for the page's pointer (the lead's line).
+ * The report is answered with the surface's size as set (`MiniMenuSurfaceSize`): the room's
+ * acknowledgement, on which the document holds the tooltip's show until its own frame has the
+ * size – §11's paint handshake, so no first frame of a tooltip is cut by the old bounds.
  *
  * Desktop hosts with `capabilities.selectionMenu`, and the setting on (`Settings.
  * showSelectionMenu`, Edge's "Show mini menu when selecting text"); a report reaching a host
@@ -257,6 +261,11 @@ export class SelectionMenuService {
    * or none: the room is a moment of the standing pill's, not a measurement to keep.
    */
   private room: MiniMenuRoom | null = null
+  /**
+   * Where this service last put the surface (`placeSurface`), null while it has it down: the
+   * size a report is answered with – the room's acknowledgement to the pill's document.
+   */
+  private surfaceBounds: Rect | null = null
 
   constructor(private readonly browser: Browser) {}
 
@@ -353,7 +362,12 @@ export class SelectionMenuService {
    * moment comes and goes); the surface follows both ways, back at the padded box on the null.
    * A report for another tab's pill, or a nonsensical one, is dropped; a nonsensical room reads
    * as none (the box stands, the tooltips take their chances), and the full row's report carries
-   * none – its tooltips are its labels.
+   * none – its tooltips are its labels. Answers with the surface's size as it stands once the
+   * report is applied – the host's `setBounds` done (`ZenWindow.setPopupSurface`) – the same
+   * size again for a report that changed nothing, and null for a report that placed no surface
+   * (dropped, or the box off the view): the room's acknowledgement, which the pill's document
+   * holds the tooltip's show on (`awaitTooltipRoom`; §11's handshake, the reader cover's word
+   * that its frame is drawn).
    */
   surfaceSize(
     tabId: string,
@@ -361,18 +375,26 @@ export class SelectionMenuService {
     height: number,
     folded: boolean,
     room?: MiniMenuRoom | null
-  ): void {
+  ): MiniMenuSurfaceSize | null {
     const current = this.state
-    if (!current || current.tabId !== tabId) return
-    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return
+    if (!current || current.tabId !== tabId) return null
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0)
+      return null
     const pose = folded ? 'folded' : 'full'
     const asked = folded ? parseMiniMenuRoom(room) : null
     const last = this.measured[pose]
     const sameSize = last !== null && last.width === width && last.height === height
-    if (sameSize && sameRoom(this.room, asked)) return
+    if (sameSize && sameRoom(this.room, asked)) return this.surfaceSizeSet()
     if (!sameSize) this.measured = { ...this.measured, [pose]: { width, height } }
     this.room = asked
     this.place()
+    return this.surfaceSizeSet()
+  }
+
+  /** The surface's size as this service last set it, or null while it has the surface down. */
+  private surfaceSizeSet(): MiniMenuSurfaceSize | null {
+    const bounds = this.surfaceBounds
+    return bounds ? { width: bounds.width, height: bounds.height } : null
   }
 
   /**
@@ -488,13 +510,16 @@ export class SelectionMenuService {
           ...(this.room ? { room: this.room } : {})
         }
       : full
-    win.setPopupSurface(placeMiniMenuSurface(anchor, view, size), 'selectionMenu')
+    const bounds = placeMiniMenuSurface(anchor, view, size)
+    win.setPopupSurface(bounds, 'selectionMenu')
     this.surfaceWindow = win
+    this.surfaceBounds = bounds
   }
 
   private dropSurface(): void {
     this.surfaceWindow?.setPopupSurface(null, 'selectionMenu')
     this.surfaceWindow = null
+    this.surfaceBounds = null
   }
 }
 

@@ -416,6 +416,20 @@ export interface MiniMenuRoom {
 }
 
 /**
+ * The core's word back to a `selectionMenu.surfaceSize` report: the popup surface's size as
+ * the core set it for the report – window CSS pixels, whole: the pill's padded box, with the
+ * room while the report asked one – or null when the report placed no surface (another tab's
+ * pill, a nonsensical report, the box off the view). The pill's document holds a tooltip's
+ * show on the room until this word has come and its own frame is at the size (`awaitTooltipRoom`
+ * – §11's paint handshake, the reader cover's: the word, or the ceiling for one that never
+ * comes), so no first frame of a tooltip is clipped by the surface's old bounds.
+ */
+export interface MiniMenuSurfaceSize {
+  width: number
+  height: number
+}
+
+/**
  * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
  * than three words, no letters, an address), Wiktionary has no page for it (`not-found`), the
  * network did not answer (`offline`), it answered with an error (`unavailable`) or with
@@ -6669,7 +6683,9 @@ export interface Commands {
    * room its glyph buttons' tooltips need beyond the box while one is on its way or up (`room`,
    * `MiniMenuRoom`; null at rest, the same box told again as the moment comes and goes); the
    * core keeps one measurement per pose and places the popup surface to fit
-   * (`SelectionMenuService.surfaceSize`), back at the padded box on the null.
+   * (`SelectionMenuService.surfaceSize`), back at the padded box on the null. Answers with the
+   * surface's size as set – the room's acknowledgement, which the document's tooltip waits for
+   * before it paints (`MiniMenuSurfaceSize`) – or null when the report placed no surface.
    */
   'selectionMenu.surfaceSize': {
     args: {
@@ -6679,7 +6695,7 @@ export interface Commands {
       folded: boolean
       room?: MiniMenuRoom | null
     }
-    result: void
+    result: MiniMenuSurfaceSize | null
   }
   /**
    * A definition of `term` from Wiktionary (`core/define.ts`; English Wiktionary's REST
