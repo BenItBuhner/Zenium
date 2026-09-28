@@ -271,6 +271,16 @@ export interface TranslateSelectionRequest {
   y: number | null
 }
 
+/** A term the core asked the chrome to define (the `define.show` event; CT-39's Define). */
+export interface DefineRequest {
+  tabId: string
+  term: string
+  /** The selection's box in CSS pixels of the page view; null when nothing anchors (the phone's toolbar). */
+  rect: Rect | null
+  /** Where the context menu's click landed (the same pixels), for a popover without a box. */
+  at?: { x: number; y: number }
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -570,6 +580,12 @@ export interface UiState {
    */
   translateSelection: TranslateSelectionRequest | null
   /**
+   * The term the core asked the chrome to define (CT-39's Define, from the mini menu or the
+   * phone's selection toolbar): the definition popover (desktop) or sheet (phone) is up for it.
+   * A request only, as `translateSelection`.
+   */
+  define: DefineRequest | null
+  /**
    * The tab search popover (tabs-17, Ctrl+Shift+A) is up from the sidebar's top row. `keyboard`:
    * a chrome control had the focus when it opened, so the page does not take it back on close.
    * A request only, as `translateSelection`: the popover holds the capture and the keyboard
@@ -724,6 +740,7 @@ export const uiStore = createStore<UiState>(
     install: null,
     mediaSheet: null,
     translateSelection: null,
+    define: null,
     tabSearch: null,
     groupEditor: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },

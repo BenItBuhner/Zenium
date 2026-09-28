@@ -686,6 +686,12 @@ export type PreviewState =
        * title>` picks a card while the mode is on, `tap:Group` opens the action row's picker.
        */
       then?: PreviewStep[]
+      /**
+       * Quick Delete's wipe of the last 15 minutes' cards held this many ms into its release
+       * (MOT-24, `wipe=<ms>`): the frame the sweep would be on, the cards at the grid's bottom
+       * furthest gone, held for a still; the tabs stay open.
+       */
+      wipe?: number
     }
   | {
       /** The pill's editor (the phone omnibox) over the active tab, or over a new tab. */
@@ -879,7 +885,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * permission that page asks for (the permission prompt sheet), `private=<surface>|new|<url>`
  * for a private tab, `voice=<script>` for voice search from the active tab, `overview` for the
  * tab overview over the active page (the grid of cards, with whatever pictures the stand-in
- * host has of the tabs), or `urlbar=<text>` for the pill's editor over the active tab with that
+ * host has of the tabs; `&wipe=<ms>` holds Quick Delete's wipe of the last 15 minutes' cards
+ * that far into its release, MOT-24), or `urlbar=<text>` for the pill's editor over the active tab with that
  * text typed (`urlbar=` opens it search-ready, with the page's header row; `newtab` opens it
  * over a new tab page instead; `clip=<text>` puts that on the stand-in clipboard first, so the
  * clipboard row shows; `then=tap:<label>;…` presses the editor's controls once the suggestions
@@ -1198,6 +1205,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const state: Extract<PreviewState, { kind: 'overview' }> = { kind: 'overview' }
     const then = parsePreviewSteps(params.get('then'))
     if (then.length > 0) state.then = then
+    const wipe = Number(params.get('wipe'))
+    if (params.has('wipe') && Number.isFinite(wipe) && wipe >= 0) state.wipe = wipe
     return state
   }
   const urlbar = params.get('urlbar')

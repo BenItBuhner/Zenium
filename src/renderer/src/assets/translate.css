@@ -162,6 +162,11 @@
 /* --- Selection translation: a popover where the user asked, a sheet on phones -------------- */
 
 /*
+ * The panel, its body and footer, the sheet and its body below are the selection surfaces'
+ * chassis (`components/selection/SelectionSurface.tsx`), which the selection translation and
+ * the Define surface (CT-39, `selection.css` for its own body) both stand on; that file alone
+ * writes these classes.
+ *
  * The desktop popover (§9.20) on `.zen-v2-panel`: its width (400 – it holds a row with a
  * menulist and text that wraps), its place and its height cap (60% of the window) are the
  * chrome layer's, set inline; the title block (§9.23) and the footer stay put and the body

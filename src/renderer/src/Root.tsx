@@ -21,6 +21,7 @@ import { TabSearchLayer } from './components/tabsearch/TabSearchPopover'
 import { VoiceSearchLayer } from './components/voice/VoiceSearchSheet'
 import { SheetPresence } from './lib/motion/presence'
 import { TranslateSelectionLayer } from './components/translate/SelectionPopover'
+import { DefineLayer } from './components/selection/DefinePopover'
 import { browserStore, uiStore } from './lib/ui'
 
 /** Waits for the first state snapshot from the main process before rendering the browser UI. */
@@ -36,6 +37,7 @@ export function Root(): JSX.Element {
       <DefaultBrowserLayer />
       <SiteInfoLayer />
       <TranslateSelectionLayer />
+      <DefineLayer />
       <TabSearchLayer />
       <GroupEditorLayer />
       <BarEditorLayer />

@@ -226,6 +226,9 @@ const V2_FILES: ReadonlyArray<string> = [
   // the translation bar, the selection popover and sheet, the language menulist's list and
   // picker sheet, the desktop Languages pane.
   'assets/translate.css',
+  // The selection surfaces' stylesheet, imported by main.css (components/selection/*, CT-39):
+  // the mini menu's pill over a text selection and the Define popover's and sheet's body.
+  'assets/selection.css',
   // The autofill surfaces' own stylesheet, imported by components/autofill/controls.tsx (#145):
   // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
   // Settings > Autofill with its managers.

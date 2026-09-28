@@ -306,6 +306,7 @@ export const DEFAULT_SETTINGS: Settings = {
   warnBeforeQuitting: true,
   caretBrowsing: false,
   caretBrowsingConfirm: true,
+  showSelectionMenu: true,
   confirmCloseAll: true,
   crashRestore: 'ask',
   askWhereToSave: false,

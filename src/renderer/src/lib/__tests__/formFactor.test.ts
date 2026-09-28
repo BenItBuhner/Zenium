@@ -64,6 +64,13 @@ describe('formFactorFor', () => {
     expect(formFactorFor(mouse(320), 'popup')).toBe('desktop')
     expect(formFactorFor(finger(320), 'popup')).toBe('tablet')
   })
+
+  it('the popup surface’s document keeps the desktop layout at any width (the picker, the mini menu)', () => {
+    expect(formFactorFor(mouse(320), 'full', 'popup')).toBe('desktop')
+    expect(formFactorFor(mouse(599), null, 'popup')).toBe('desktop')
+    expect(formFactorFor(finger(320), 'full', 'popup')).toBe('tablet')
+    expect(formFactorFor(mouse(599), 'full', 'autofill')).toBe('phone')
+  })
 })
 
 describe('viewportStore', () => {
@@ -183,7 +190,7 @@ describe('forcedFormFactor', () => {
     expect(forcedFormFactor('?formFactor=phone&platform=android')).toBe('phone')
     expect(forcedFormFactor('?formFactor=desktop')).toBe('desktop')
     expect(forcedFormFactor('?formFactor=watch')).toBeNull()
-    expect(forcedFormFactor('?surface=autofill')).toBeNull()
+    expect(forcedFormFactor('?surface=popup')).toBeNull()
     expect(forcedFormFactor('')).toBeNull()
     expect(forcedFormFactor(null)).toBeNull()
   })

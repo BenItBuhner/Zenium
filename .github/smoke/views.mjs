@@ -29,3 +29,28 @@ export function viewInBox(view, content) {
   if (!view) return null
   return view.visible === true && !parkedInCorner(view.bounds, content)
 }
+
+/**
+ * Whether `url` is the popup surface's document: the renderer's `index.html` loaded with a
+ * `surface` query (`index.html?surface=popup`, `src/main/platform/window.ts`
+ * `createPopupSurface`) into the `WebContentsView` the desktop host floats inside a window for
+ * the autofill picker and the mini menu over a text selection (CT-39). Neither a window's chrome
+ * page (it has no chrome root) nor a tab page – and it stays loaded for a while after its picker
+ * or menu went (`POPUP_SURFACE_IDLE_MS`), so it stands in the app's page list with nothing
+ * showing in it. The walkthrough meets it after the find bar: its Escape keeps the match
+ * selected (`find.stop { keepSelection: true }`), the page reports the selection, the mini menu
+ * comes up and the document is created.
+ */
+export function isPopupSurfaceUrl(url) {
+  const value = String(url ?? '')
+  return /^file:.*index\.html\?/.test(value) && /[?&]surface=/.test(value)
+}
+
+/**
+ * Whether `url` is a window's chrome page: the renderer's `index.html` from the build (`file:`,
+ * with or without a query), the popup surface's document excepted.
+ */
+export function isWindowChromeUrl(url) {
+  const value = String(url ?? '')
+  return /^file:.*index\.html/.test(value) && !isPopupSurfaceUrl(value)
+}
