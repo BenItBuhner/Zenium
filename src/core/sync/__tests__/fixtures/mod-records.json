@@ -1,0 +1,72 @@
+{
+  "note": "The `mod` records (services pass 15, ID-43) as the build that introduced the type first wrote them: three Mods under a scope with the type alone on. Written once by that build; never re-made – compat.test.ts pins this build against these bytes.",
+  "now": 1758300000000,
+  "scope": {
+    "spaces": false,
+    "folders": false,
+    "pinnedTabs": false,
+    "essentials": false,
+    "openTabs": false,
+    "containers": false,
+    "bookmarks": false,
+    "settings": false,
+    "shortcuts": false,
+    "boosts": false,
+    "passwords": false,
+    "history": false,
+    "readingList": false,
+    "mods": true
+  },
+  "mods": [
+    {
+      "id": "mod_golden_compact",
+      "name": "Compact tabs",
+      "source": null,
+      "css": ".tab { padding: 2px 6px; }\n.tab .title { font-size: 12px; }\n",
+      "enabled": true,
+      "updatedAt": 1758200000000
+    },
+    {
+      "id": "mod_golden_rounded",
+      "name": "Rounded sidebar – “quotes” & ünïcode ✓",
+      "source": "https://mods.example/rounded.css",
+      "css": ".sidebar {\n  border-radius: 12px;\n}\n",
+      "enabled": false,
+      "updatedAt": 1758210000000
+    },
+    {
+      "id": "mod_golden_pictures",
+      "name": "Untitled mod",
+      "source": "wallpaper.css",
+      "css": "body { background: url(\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==\") }\n.frame { background: url(\"file:///home/me/Pictures/wall.png\") }\n",
+      "enabled": true,
+      "updatedAt": 0
+    }
+  ],
+  "plaintext": "{\"v\":1,\"records\":[{\"id\":\"mod_golden_compact\",\"type\":\"mod\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Compact tabs\",\"source\":null,\"css\":\".tab { padding: 2px 6px; }\\n.tab .title { font-size: 12px; }\\n\",\"enabled\":true,\"updatedAt\":1758200000000}},{\"id\":\"mod_golden_rounded\",\"type\":\"mod\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Rounded sidebar – “quotes” & ünïcode ✓\",\"source\":\"https://mods.example/rounded.css\",\"css\":\".sidebar {\\n  border-radius: 12px;\\n}\\n\",\"enabled\":false,\"updatedAt\":1758210000000}},{\"id\":\"mod_golden_pictures\",\"type\":\"mod\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Untitled mod\",\"source\":\"wallpaper.css\",\"css\":\"body { background: url(\\\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==\\\") }\\n.frame { background: url(\\\"file:///home/me/Pictures/wall.png\\\") }\\n\",\"enabled\":true,\"updatedAt\":0}}]}",
+  "hashes": {
+    "mod_golden_compact": "cdb76fd8ebfe1c34a0a094b34284d142e76f83da",
+    "mod_golden_rounded": "1435e14dcaf0096e80622e116acaf5c5c3c05f98",
+    "mod_golden_pictures": "263f9e22a4858026f78e53fb36e54f93a1fc40d3"
+  },
+  "meta": {
+    "mod_golden_compact": {
+      "type": "mod",
+      "hash": "cdb76fd8ebfe1c34a0a094b34284d142e76f83da",
+      "modified": 0,
+      "deleted": false
+    },
+    "mod_golden_rounded": {
+      "type": "mod",
+      "hash": "1435e14dcaf0096e80622e116acaf5c5c3c05f98",
+      "modified": 0,
+      "deleted": false
+    },
+    "mod_golden_pictures": {
+      "type": "mod",
+      "hash": "263f9e22a4858026f78e53fb36e54f93a1fc40d3",
+      "modified": 0,
+      "deleted": false
+    }
+  }
+}
