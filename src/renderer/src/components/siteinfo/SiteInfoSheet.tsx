@@ -1031,9 +1031,11 @@ function PillChipRows({
  * level opens and never re-sorted while it is up; a site blocked
  * later joins at the foot (§9.29), the counts move live. Empty, §9.17's one sentence. No
  * controls, no per-site allow; the one footer is a hairline and a 44 navigation row to
- * Settings › Privacy and security at the site. The level has no control of its own to land the
- * keyboard on but that row, so the sheet parks the focus on its root as §10.4 has it. A private
- * tab's list is the same; nothing here persists (the record is the tab's, gone with the document).
+ * Settings › Privacy and security at the site. The rows are the chassis row's static form
+ * (§9.34: `data-static`, no press fill); that footer row is the level's one control, and the
+ * keyboard lands on it as the level opens (`enter`: the pane's first focusable, as the desktop's
+ * `focus="first"` lands on its footer row). A private tab's list is the same; nothing here
+ * persists (the record is the tab's, gone with the document).
  * The order starts over each time the level opens (`open`), so a report that changed under a
  * closed level shows sorted the next time.
  */
