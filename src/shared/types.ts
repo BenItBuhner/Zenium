@@ -3289,6 +3289,19 @@ export interface Settings {
    */
   autoRevokeUnusedPermissions: boolean
   /**
+   * The time range the Delete browsing data dialog opens on: the one the user last deleted
+   * with, as Chrome's desktop dialog remembers its `browser.clear_data.time_period`
+   * (`clear_browsing_data_time_picker.ts` mirrors the pref into the picker and `sendPrefChange`
+   * writes it when Delete is pressed, `clear_browsing_data_dialog.ts` `onDeleteBrowsingDataClick_`).
+   * One key over Basic and Advanced, which share the range row – Chrome kept one too since its
+   * dialog lost the tabs (CL 7857508 retired `time_period_basic`). The last hour until then
+   * (`DEFAULT_CLEAR_BROWSING_DATA_RANGE`; an unknown value reads so, `sanitizeClearBrowsingDataRange`).
+   * Device-local (`DEVICE_LOCAL_SETTINGS`): Chrome stopped syncing the dialog's choices in
+   * CL 5398105 ("[CBD] Make options not syncable"). The phone's Quick Delete form opens on its
+   * own 15 minutes and neither reads nor writes it (`QUICK_DELETE_FORM`).
+   */
+  clearBrowsingDataRange: BrowsingDataRange
+  /**
    * The new tab page, both platforms' (`shared/newTab.ts`): whether it opens (desktop), its
    * layout preset and sections, what its grid shows, what it paints behind. The user's shortcuts
    * and removed hosts are device-local (`NewTabDeviceState`), not here.

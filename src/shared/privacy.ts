@@ -11,6 +11,7 @@ import {
   type ClearOnExitSettings,
   type SiteDataPolicy
 } from './siteData'
+import type { BrowsingDataRange } from './types'
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -90,6 +91,35 @@ export const PRELOAD_PAGES_LABELS: Record<
     label: 'No preloading',
     description: 'Pages load only when you open them.'
   }
+}
+
+/** Every time range the Delete browsing data pickers offer, in the pickers' order. */
+export const BROWSING_DATA_RANGES: readonly BrowsingDataRange[] = [
+  '15min',
+  'hour',
+  'day',
+  'week',
+  'month',
+  'all'
+]
+
+/**
+ * The range the desktop's Delete browsing data dialog opens on before the user has deleted
+ * anything: the last hour, Chrome's `browser.clear_data.time_period` default on the desktop and
+ * Android (`components/browsing_data/core/pref_names.cc:23–25`, `TimePeriod::LAST_HOUR`; iOS
+ * alone starts on the 15 minutes, `:18–21`).
+ */
+export const DEFAULT_CLEAR_BROWSING_DATA_RANGE: BrowsingDataRange = 'hour'
+
+/**
+ * The remembered range (`Settings.clearBrowsingDataRange`) as the profile or a patch holds it:
+ * one of the pickers' ranges, else the default – a profile from before the key, or a value no
+ * picker offers, opens the dialog on the last hour.
+ */
+export function sanitizeClearBrowsingDataRange(raw: unknown): BrowsingDataRange {
+  return BROWSING_DATA_RANGES.includes(raw as BrowsingDataRange)
+    ? (raw as BrowsingDataRange)
+    : DEFAULT_CLEAR_BROWSING_DATA_RANGE
 }
 
 export interface PrivacySettings {

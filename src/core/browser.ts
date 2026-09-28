@@ -185,7 +185,11 @@ import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
-import { sanitizePreloadPages, sanitizePrivacySettings } from '../shared/privacy'
+import {
+  sanitizeClearBrowsingDataRange,
+  sanitizePreloadPages,
+  sanitizePrivacySettings
+} from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
@@ -4497,6 +4501,9 @@ export class Browser {
         })
       } else if (key === 'preloadPages') {
         s.preloadPages = sanitizePreloadPages(value)
+      } else if (key === 'clearBrowsingDataRange') {
+        // The dialog's Delete sends the range it deleted with; anything else reads the last hour.
+        s.clearBrowsingDataRange = sanitizeClearBrowsingDataRange(value)
       } else if (key === 'spellcheck' && value && typeof value === 'object') {
         s.spellcheck = sanitizeSpellcheck({
           ...s.spellcheck,
