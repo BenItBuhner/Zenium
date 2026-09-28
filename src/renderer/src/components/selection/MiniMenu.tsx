@@ -2,9 +2,10 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { AudioLines, BookA, Copy, Languages, Search, type LucideIcon } from 'lucide-react'
 import type { MiniMenuRoom, SelectionMenuActionId, SelectionMenuState } from '@shared/types'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { POPOVER_MARGIN } from '@renderer/lib/portals'
 import {
+  awaitTooltipRoom,
   measureTooltipSize,
   tooltip,
   TOOLTIP_GAP,
@@ -58,6 +59,16 @@ const GLYPHS: Record<SelectionMenuActionId, LucideIcon> = {
  * surface to the pill's padded box on the null; a resize of this document is the room's coming
  * and going, which the host places through rather than hiding for (`PopupSurface`).
  *
+ * The room is one round trip away when it is asked, and the tooltip must not paint before it
+ * lands – its first frames would be cut by the surface's old bounds (§11's stand-in rule): so
+ * the ask is §11's paint handshake, the reader cover's (`awaitTooltipRoom`). The core answers
+ * the report with the surface's size as set (`MiniMenuSurfaceSize`), and the tooltip host
+ * keeps a tooltip hidden (`tooltipRoomStore`) until that word has come and this document's
+ * own frame is at the size – or the ceiling (`TOOLTIP_ROOM_CEILING_MS`) for a word that never
+ * comes – on keyboard focus as on the pointer's dwell: the hover's dwell usually outlasts the
+ * landing and the tooltip shows on time; focus shows at once in the chassis and here waits
+ * the round trip. The hold goes with the room: the moment ending releases it at once.
+ *
  * The pill sizes itself to its chips and tells the core what it measured, with the pose
  * (`selectionMenu.surfaceSize`); the core places the surface over the selection from it. A chip
  * runs its action through the core (`selectionMenu.run`), which gives the page the keyboard back
@@ -85,13 +96,18 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
   // Tells the core the box last measured again, with the room as it is now (or nothing while
   // the same report stands); the measuring effect's, for the room's listeners.
   const tell = useRef<() => void>(() => undefined)
+  // The hold on the tooltip's show while a room asked is on its way (`awaitTooltipRoom`'s
+  // release); null while none is asked.
+  const roomWait = useRef<(() => void) | null>(null)
 
   // Measured as it comes and again whenever the chips or the pose change: the core keeps one
   // measurement per pose and forgets both with the chips, so the same size is told again for a
   // new list. The layout box is what is told (`offsetWidth`, the observer's border box), never
   // `getBoundingClientRect`'s: the pop animation scales the pill down for its first frames, and
   // a scaled box would leave the surface short of the pill's last chip. The folded row's report
-  // carries the room its tooltips need while one is armed or up, and null at rest.
+  // carries the room its tooltips need while one is armed or up, and null at rest; a report
+  // with a room holds the tooltip's show until the core's word and this document's frame at
+  // the size it says (the handshake), one without lets any hold go.
   useEffect(() => {
     const el = pillRef.current
     if (!el) return
@@ -101,6 +117,10 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
       if (hovering.current) return true
       const up = tooltipStore.get().target
       return up !== null && el.contains(up)
+    }
+    const release = (): void => {
+      roomWait.current?.()
+      roomWait.current = null
     }
     const report = (size: { width: number; height: number } | null): void => {
       const last = reported.current
@@ -116,13 +136,19 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
       if (last && last.width === width && last.height === height && sameRoom(last.room, room))
         return
       reported.current = { width, height, room }
-      run('selectionMenu.surfaceSize', {
+      const answer = cmd('selectionMenu.surfaceSize', {
         tabId: menu.tabId,
         width,
         height,
         folded,
         ...(folded ? { room } : {})
       })
+      if (room) {
+        roomWait.current = awaitTooltipRoom(answer)
+        return
+      }
+      release()
+      void answer.catch(() => undefined)
     }
     tell.current = () => report(null)
     report({ width: el.offsetWidth, height: el.offsetHeight })
@@ -141,6 +167,7 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
     return () => {
       observer?.disconnect()
       tell.current = () => undefined
+      release()
     }
   }, [menu.tabId, chipKey, folded])
 

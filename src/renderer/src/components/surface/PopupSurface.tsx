@@ -22,6 +22,9 @@ import { Tooltip } from '../Tooltip'
  * tooltip's moment (`MiniMenuRoom`), the document being the whole of the tooltip's window. The
  * room's coming is a resize of this window, so the host here places through a resize rather
  * than hiding for it (`resize="place"`): the room made for the tooltip must not take it down.
+ * And the tooltip waits, hidden, until the room has landed – the core's word back to the ask
+ * and this document's frame at the size (`awaitTooltipRoom`, `tooltipRoomStore`; §11's paint
+ * handshake) – so its first frame is never cut by the surface's old bounds.
  */
 export function PopupSurface(): JSX.Element | null {
   const state = browserStore.use((s) => s.state)
