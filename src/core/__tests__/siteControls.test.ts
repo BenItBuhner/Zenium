@@ -557,18 +557,20 @@ describe('quick delete: the tabs of a range', () => {
   }
 
   /**
-   * The Settings tab the phone's form is a sheet over (seed #26): Settings typed into `fromTabId`
-   * opens the page in a tab of its own, active (`PageService.routeNavigation`, as Chrome Android
-   * leaves the current tab alone) – a chrome page, drawn by the chrome, with no view and so no
-   * navigation stamp.
+   * A chrome page typed into `fromTabId` opens in a tab of its own, active
+   * (`PageService.routeNavigation`, as Chrome Android leaves the current tab alone) – drawn by
+   * the chrome, with no view and so no navigation stamp. The Settings tab the phone's form is a
+   * sheet over (seed #26) is one; History is another chrome page, and no seat of the form.
    */
-  function openSettings(f: Fixture, fromTabId: string): Tab {
-    f.browser.tabs.navigate(fromTabId, 'zen://settings')
-    const settings = f.browser.tabs.activeTabFor(f.win)
-    if (!settings || settings.id === fromTabId || !f.browser.pages.isChromePage(settings))
-      throw new Error('Settings did not open as the active tab')
-    return settings
+  function openPage(f: Fixture, fromTabId: string, url: string, id: string): Tab {
+    f.browser.tabs.navigate(fromTabId, url)
+    const page = f.browser.tabs.activeTabFor(f.win)
+    if (!page || page.id === fromTabId || f.browser.pages.pageOf(page)?.id !== id)
+      throw new Error(`${url} did not open as the active tab`)
+    return page
   }
+  const openSettings = (f: Fixture, fromTabId: string): Tab =>
+    openPage(f, fromTabId, 'zen://settings', 'settings')
 
   it('stamps a tab at every committed main-frame navigation, a same-document one too, and never before', () => {
     const f = fixture()
@@ -614,12 +616,12 @@ describe('quick delete: the tabs of a range', () => {
 
   it('lists the tabs whose last commit is in the range, pinned included, in the strip’s order, before anything closes', () => {
     const f = fixture()
-    // The window's first tab never committed a document here: in no bounded range – and, as the
-    // window's active tab (the one a form up now would be confirmed from), in no list at all
-    // until another tab is active.
+    // The window's first tab (the new tab page, a document) never committed here: in no bounded
+    // range, but in the All time list – active or not, it is no Settings tab, so no seat of a
+    // form (seed #26).
     const first = f.browser.tabs.activeTabFor(f.win)!
     expect(first.lastNavigatedAt).toBeNull()
-    expect(f.command<string[]>('privacy.tabsInRange', { range: 'all' })).toEqual([])
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'all' })).toEqual([first.id])
     const old = tabAt(f, 0, 'https://old.example/')
     const pinned = tabAt(f, 10 * 60_000, 'https://pinned.example/', { pinned: true })
     const recent = tabAt(f, 20 * 60_000, 'https://recent.example/')
@@ -653,6 +655,13 @@ describe('quick delete: the tabs of a range', () => {
     // Nothing closed: this is the read the chrome takes before its motion.
     expect(f.browser.tabs.tab(old.id)).toBeDefined()
     expect(f.browser.tabs.tab(recent.id)).toBeDefined()
+    // Another chrome page is no seat of the form: History opened as the active tab is in the All
+    // time list like any other – and the Settings tab, no longer the confirming one, is a tab of
+    // the period again. Only the active Settings tab is kept.
+    const history = openPage(f, fresh.id, 'zen://history', 'history')
+    const withHistory = f.command<string[]>('privacy.tabsInRange', { range: 'all' })
+    expect(withHistory).toEqual(expect.arrayContaining([history.id, settings.id]))
+    expect(withHistory).toHaveLength(7)
   })
 
   it('leaves private tabs out, as Chrome’s filter runs on the regular model only', () => {
@@ -670,29 +679,33 @@ describe('quick delete: the tabs of a range', () => {
     const f = fixture()
     tabAt(f, 0, 'https://old.example/')
     tabAt(f, 20 * 60_000, 'https://recent.example/')
-    // The tab the form is confirmed from – the window's active tab, here a page navigated in
-    // the range – is not counted (seed #26): Chrome's row counts the tabs that will close, and
-    // this one stays.
-    const confirming = tabAt(f, 22 * 60_000, 'https://confirming.example/')
+    // Quick Delete from the app menu over a site: the window's active tab is a site navigated
+    // in the range, a tab of the period like any other (seed #26, the lead's ruling) – counted,
+    // as Chrome's row counts the tabs that will close and this one closes.
+    const site = tabAt(f, 22 * 60_000, 'https://site.example/')
     at(24 * 60_000)
-    expect(f.browser.tabs.activeTabFor(f.win)?.id).toBe(confirming.id)
-    const counts = await f.command<Promise<BrowsingDataCount[]>>(
-      'privacy.clearBrowsingDataCounts',
-      { range: '15min' }
-    )
-    expect(counts.find((c) => c.type === 'tabs')).toEqual({
+    expect(f.browser.tabs.activeTabFor(f.win)?.id).toBe(site.id)
+    const tabsRow = async (range: string): Promise<BrowsingDataCount | undefined> =>
+      (
+        await f.command<Promise<BrowsingDataCount[]>>('privacy.clearBrowsingDataCounts', {
+          range
+        })
+      ).find((c) => c.type === 'tabs')
+    expect(await tabsRow('15min')).toEqual({
       type: 'tabs',
-      count: 1,
+      count: 2,
       unit: 'tabs',
       rangeApplies: true,
       unavailable: null
     })
-    // All time: every tab of the model but the one the form is confirmed from – the window's
-    // first tab, old, recent.
-    const all = await f.command<Promise<BrowsingDataCount[]>>('privacy.clearBrowsingDataCounts', {
-      range: 'all'
-    })
-    expect(all.find((c) => c.type === 'tabs')?.count).toBe(3)
+    // All time: every tab of the model – the window's first tab, old, recent, the site.
+    expect((await tabsRow('all'))?.count).toBe(4)
+    // From the Settings tab (the phone's form is a sheet over it) the seat is left out: the
+    // same fifteen minutes count the same two – Settings carries no stamp – and All time counts
+    // every tab but Settings, four of five.
+    openSettings(f, site.id)
+    expect((await tabsRow('15min'))?.count).toBe(2)
+    expect((await tabsRow('all'))?.count).toBe(4)
     expect(BROWSING_DATA_ADVANCED).not.toContain('tabs')
   })
 
@@ -701,13 +714,15 @@ describe('quick delete: the tabs of a range', () => {
     const old = tabAt(f, 0, 'https://old.example/')
     const pinned = tabAt(f, 10 * 60_000, 'https://pinned.example/', { pinned: true })
     const recent = tabAt(f, 20 * 60_000, 'https://recent.example/')
-    // The window's active tab is the one the form is confirmed from: navigated in the range,
-    // it stays all the same (seed #26), and the list the chrome read for its motion names
-    // exactly the tabs that go.
-    const confirming = tabAt(f, 22 * 60_000, 'https://confirming.example/')
+    // Quick Delete from the app menu over a site: the window's active tab is a site navigated
+    // in the range, and it goes with the period like any other (seed #26, the lead's ruling –
+    // as in Chrome, where the surface the user acts from is never a tab); the list the chrome
+    // read for its motion names exactly the tabs that go.
+    const site = tabAt(f, 22 * 60_000, 'https://site.example/')
     at(24 * 60_000)
+    expect(f.browser.tabs.activeTabFor(f.win)?.id).toBe(site.id)
     const listed = f.command<string[]>('privacy.tabsInRange', { range: '15min' })
-    expect(listed).toEqual([pinned.id, recent.id])
+    expect(listed).toEqual([pinned.id, recent.id, site.id])
     const sent = vi.spyOn(f.win, 'send')
     const before = f.browser.state.recentlyClosed.length
     const result = await f.command<Promise<ClearBrowsingDataResult>>('privacy.clearBrowsingData', {
@@ -715,11 +730,12 @@ describe('quick delete: the tabs of a range', () => {
       types: ['tabs']
     })
     expect(result).toEqual({ status: 'ok', value: { cleared: ['tabs'] } })
-    expect(f.browser.tabs.tab(pinned.id)).toBeUndefined()
-    expect(f.browser.tabs.tab(recent.id)).toBeUndefined()
+    for (const id of listed) expect(f.browser.tabs.tab(id)).toBeUndefined()
     expect(f.browser.tabs.tab(old.id)).toBeDefined()
-    expect(f.browser.tabs.tab(confirming.id)).toBeDefined()
-    expect(f.browser.tabs.activeTabFor(f.win)?.id).toBe(confirming.id)
+    // The site's close selected a neighbour, as any close of the active tab does.
+    const active = f.browser.tabs.activeTabFor(f.win)
+    expect(active).toBeDefined()
+    expect(active?.id).not.toBe(site.id)
     // Chrome's `allowUndo(false).saveToTabRestoreService(false)`: the list stays as it was and
     // the chrome hears no `session.recentlyClosedChanged` – no toast offers to undo.
     expect(f.browser.state.recentlyClosed).toHaveLength(before)
@@ -762,14 +778,48 @@ describe('quick delete: the tabs of a range', () => {
     expect(f.browser.tabs.tabsNavigatedSince(null).map((t) => t.id)).toEqual([settings.id])
   })
 
+  it('keeps the Settings tab the form is confirmed from under a bounded range – were it ever stamped within it – and closes the rest (seed #26)', async () => {
+    const f = fixture()
+    const old = tabAt(f, 0, 'https://old.example/')
+    const recent = tabAt(f, 20 * 60_000, 'https://recent.example/')
+    const settings = openSettings(f, recent.id)
+    // A chrome page carries no navigation stamp today (no view commits a document there), so on
+    // its own the Settings tab is in no bounded range; stamped within the range all the same –
+    // as a stamp on chrome pages would one day – the seat is kept: the predicate is the page,
+    // not the stamp.
+    const stamped = f.browser.tabs.tab(settings.id)!
+    stamped.lastNavigatedAt = T0 + 23 * 60_000
+    at(24 * 60_000)
+    const inRange = f.browser.tabs.tabsNavigatedSince(T0 + 9 * 60_000).map((t) => t.id)
+    expect(inRange).toEqual(expect.arrayContaining([recent.id, settings.id]))
+    expect(f.command<string[]>('privacy.tabsInRange', { range: '15min' })).toEqual([recent.id])
+    const counts = await f.command<Promise<BrowsingDataCount[]>>(
+      'privacy.clearBrowsingDataCounts',
+      { range: '15min' }
+    )
+    expect(counts.find((c) => c.type === 'tabs')?.count).toBe(1)
+    const result = await f.command<Promise<ClearBrowsingDataResult>>('privacy.clearBrowsingData', {
+      range: '15min',
+      types: ['tabs']
+    })
+    expect(result).toEqual({ status: 'ok', value: { cleared: ['tabs'] } })
+    expect(f.browser.tabs.tab(recent.id)).toBeUndefined()
+    expect(f.browser.tabs.tab(old.id)).toBeDefined()
+    expect(f.browser.tabs.tab(settings.id)).toBeDefined()
+    expect(f.browser.tabs.activeTabFor(f.win)?.id).toBe(settings.id)
+  })
+
   it('keeps nothing without a command window: the exclusion is the command context’s', () => {
     const f = fixture()
     const recent = tabAt(f, 20 * 60_000, 'https://recent.example/')
+    const settings = openSettings(f, recent.id)
     at(24 * 60_000)
-    // The chrome's two calls come with their window and leave the active tab out; the service
-    // asked with none (no window to read a confirming tab from) answers the whole range.
-    expect(f.command<string[]>('privacy.tabsInRange', { range: '15min' })).toEqual([])
-    expect(f.browser.privacy.tabsInRange('15min')).toEqual([recent.id])
+    // The chrome's two calls come with their window and leave its Settings tab out; the service
+    // asked with none (no window to read a seat from) answers the whole model.
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'all' })).not.toContain(settings.id)
+    const unasked = f.browser.privacy.tabsInRange('all')
+    expect(unasked).toEqual(expect.arrayContaining([recent.id, settings.id]))
+    expect(unasked).toHaveLength(3)
   })
 
   it('a tab closed by hand still goes to recently closed – the ordinary path is unchanged', () => {

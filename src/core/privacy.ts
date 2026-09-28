@@ -18,6 +18,7 @@ import {
 } from '../shared/types'
 import type { UpdateStatus } from '../shared/updates'
 import { contentSetting } from '../shared/contentSettings'
+import { INTERNAL_PAGES } from '../shared/internalPages'
 import type { Browser } from './browser'
 import { UNUSED_PERMISSION_MS } from './permissions'
 import type { EngineDataCounts } from './platform'
@@ -80,8 +81,9 @@ export class PrivacyService {
   /**
    * How much of each type the range holds, in the order the dialog lists them; the phone's
    * `tabs` row last (the desktop dialog reads the rows by type and lists no Tabs row). `win` is
-   * the window the form is up in: its active tab is left out of the Tabs row's count, as it is
-   * left out of the close ({@link tabsOf}) – Chrome's row counts the tabs that will close.
+   * the window the form is up in: the Settings tab it is a sheet over is left out of the Tabs
+   * row's count, as it is left out of the close ({@link tabsOf}) – Chrome's row counts the tabs
+   * that will close.
    */
   async counts(range: BrowsingDataRange, win?: ZenWindow): Promise<BrowsingDataCount[]> {
     const now = this.now()
@@ -95,7 +97,7 @@ export class PrivacyService {
   /**
    * The tabs Quick Delete closes for the range at this moment (HB-07 / MOT-24), as ids in the
    * overview's order – what the chrome runs its motion on before it asks for the clear – less
-   * the tab the form was confirmed from, `win`'s active tab ({@link tabsOf}).
+   * the Settings tab the form was confirmed from, when `win`'s active tab is one ({@link tabsOf}).
    */
   tabsInRange(range: BrowsingDataRange, win?: ZenWindow): string[] {
     return this.tabsOf(range, rangeStart(range, this.now()), win).map((tab) => tab.id)
@@ -103,20 +105,27 @@ export class PrivacyService {
 
   /**
    * The range's tabs: every tab for "All time" (Chrome's ALL_TIME), else those navigated since
-   * `from` – less the tab the form was confirmed from, the active tab of the window the command
-   * came from (seed #26, Android's #652 observation (a)). Chrome's Quick Delete runs from a
-   * surface that is no tab (the dialog, or the Settings activity's Delete browsing data page),
-   * so the surface the user acted from is never in the set its filter takes from the tab model;
-   * Zenium's Settings is a tab (`INTERNAL_PAGES.settings`, a chrome page in a tab of its own
-   * on every host with `pageTabs`) and the phone's form is a sheet over it, so the same set
-   * would take the page the user is standing on – keeping the surface the user acted from is
-   * the closest reading of Chrome. One rule for the three readers – the Tabs row's count, the
-   * overview's motion (`privacy.tabsInRange`) and the close (`privacy.clearBrowsingData` with
-   * `'tabs'`) – so the cards the motion departs are exactly the tabs that go. Without a window
-   * (a caller outside the command surface) nothing is kept.
+   * `from` – less the dialog's seat: the active tab of the window the command came from, when
+   * and only when it is the Settings chrome page (`INTERNAL_PAGES.settings`, a section or a
+   * drill-in page of it included; seed #26, Android's #652 observation (a), the lead's ruling).
+   * Chrome's Quick Delete runs from a surface that is no tab (the dialog, or the Settings
+   * activity's Delete browsing data page), so the surface the user acted from is never in the
+   * set its filter takes from the tab model; Zenium's Settings is a tab (a chrome page in a tab
+   * of its own on every host with `pageTabs`) and the phone's form is a sheet over it, so the
+   * same set would take the page the user is standing on. The confirming tab is the dialog's
+   * seat only when it is Settings: any other active tab – a site under Quick Delete opened from
+   * the app menu, another chrome page – is a tab of the period like the rest and closes, as in
+   * Chrome. One rule for the three readers – the Tabs row's count, the overview's motion
+   * (`privacy.tabsInRange`) and the close (`privacy.clearBrowsingData` with `'tabs'`) – so the
+   * cards the motion departs are exactly the tabs that go. Without a window (a caller outside
+   * the command surface) nothing is kept.
    */
   private tabsOf(range: BrowsingDataRange, from: number, win?: ZenWindow): Tab[] {
-    const kept = win ? this.browser.tabs.activeTabFor(win)?.id : undefined
+    const active = win ? this.browser.tabs.activeTabFor(win) : undefined
+    const kept =
+      active && this.browser.pages.pageOf(active)?.id === INTERNAL_PAGES.settings.id
+        ? active.id
+        : undefined
     return this.browser.tabs
       .tabsNavigatedSince(range === 'all' ? null : from)
       .filter((tab) => tab.id !== kept)
@@ -241,8 +250,8 @@ export class PrivacyService {
       // Last, once the data is gone, as Chrome closes Quick Delete's tabs after the deletion
       // finished: the range's tabs AS THEY STAND NOW – `tabsInRange` a moment earlier named
       // the same set, give or take a tab that navigated in between – with no undo and no
-      // "Recently closed" entry; the tab the form was confirmed from, `win`'s active tab, stays
-      // (`tabsOf`).
+      // "Recently closed" entry; the Settings tab the form was confirmed from, when `win`'s
+      // active tab is one, stays (`tabsOf`).
       b.tabs.closeUnrecorded(this.tabsOf(range, from, win).map((tab) => tab.id))
       cleared.push('tabs')
     }
