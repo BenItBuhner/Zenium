@@ -18,6 +18,7 @@ import type {
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
   addTabToSplit,
+  allSpaces,
   createSplitGroup,
   createTabRecord,
   dissolveSplitGroup,
@@ -810,6 +811,7 @@ export class TabManager {
     if (this.releaseHidden(win)) moved = true
     this.browser.governor.wakeVisible(win)
     this.browser.mediaSession.onVisibleTabsChanged(win)
+    this.browser.selectionMenu.onVisibleTabsChanged()
     if (moved) this.browser.state.commitVolatile()
   }
 
@@ -1231,10 +1233,13 @@ export class TabManager {
           // over a fragment change. The move is the page's visit all the same – Chrome records
           // a same-document navigation – under the page's own title and icon (`covered` keeps
           // them current), never the reader's fields the row wears; and the page's last commit
-          // is this address, for the chain a later `location.replace` folds into.
+          // is this address, for the chain a later `location.replace` folds into. The tab's
+          // navigation stamp moves with it (HB-07's `Tab.lastNavigatedAt`; Chrome stamps a
+          // same-document commit too).
           before.url = url
           this.committedUrls.set(tabId, url)
           const t = this.tab(tabId)
+          if (t) t.lastNavigatedAt = Date.now()
           if (t && !this.isPrivate(t))
             this.browser.history.visit(url, before.title, before.favicon, {
               transition: 'link',
@@ -1776,6 +1781,18 @@ export class TabManager {
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
+    // The main frame committed – a document or a same-document move alike, as Chrome Android
+    // stamps `lastNavigationCommittedTimestampMillis` on either (`TabWebContentsObserver.java`
+    // `didFinishNavigationInPrimaryMainFrame` :307–327: `hasCommitted` :318, then
+    // `TabImpl.handleDidFinishNavigation` :1873–1912 stamps at :1911): Quick Delete's tab half
+    // reads the stamp (HB-07, `Tab.lastNavigatedAt`). A committed error page stamps as Chrome's
+    // does (`setIsShowingErrorPage` :327 follows the same commit). Not the crash page: Chrome's
+    // sad tab is a view over the tab, no navigation (`primaryMainFrameRenderProcessGone` →
+    // `SadTab.from` + `showSadTab` :221–222, or `setNeedsReload` :212 for a hidden tab), so a
+    // renderer's death never moves Chrome's stamp – and it must not move this one, or a tab
+    // last visited hours ago would read as visited when it crashed and go with Quick Delete's
+    // 15 minutes.
+    if (!isCrashPageUrl(url)) tab.lastNavigatedAt = Date.now()
     // The crash page's own title is the site; the sad tab keeps the crashed page's (Chrome's
     // strip does), so the row reads as the page it was until the next load – through a commit
     // the crash page is about to supersede as well.
@@ -2230,6 +2247,7 @@ export class TabManager {
     this.browser.textFragments.cancelForTab(tabId)
     this.browser.geolocation.onTabGone(tabId)
     this.browser.readAloud.onTabGone(tabId)
+    this.browser.selectionMenu.onTabGone(tabId)
     this.browser.webNotifications.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
@@ -2520,6 +2538,7 @@ export class TabManager {
     this.browser.security.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
+    this.browser.selectionMenu.onTabGone(tabId)
     this.browser.webNotifications.onTabGone(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
@@ -2769,6 +2788,7 @@ export class TabManager {
     this.browser.governor.wakeVisible(win)
     // A playing video left behind goes into its small window; one in front again comes back (MW-28).
     this.browser.mediaSession.onVisibleTabsChanged(win)
+    this.browser.selectionMenu.onVisibleTabsChanged()
     // An offline error page that came back online while hidden reloads on its turn on screen.
     this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
@@ -2815,6 +2835,7 @@ export class TabManager {
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
     this.browser.mediaSession.onVisibleTabsChanged(win)
+    this.browser.selectionMenu.onVisibleTabsChanged()
     win.findResult = null
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
@@ -2947,6 +2968,59 @@ export class TabManager {
       this.divertClosed = null
     }
     return entry
+  }
+
+  /**
+   * The tabs Quick Delete's tab half closes for a range (HB-07, Chrome Android's
+   * `QuickDeleteTabsFilter.prepareListOfTabsToBeClosed`): every tab whose last committed
+   * navigation (`Tab.lastNavigatedAt`) stands at or after `since`, or – `since` null, the "All
+   * time" range – every tab at all, as Chrome's ALL_TIME takes the whole model. Private tabs are
+   * never among them (Chrome's filter runs on the regular model alone, the incognito one is not
+   * its concern); pinned and essential tabs are, as every tab of Chrome's model is. A tab that
+   * never committed this way – a fresh new tab, one restored from a state older than the field
+   * – reads null and is in no bounded range. The order is the overview's: the spaces in order,
+   * each with its Essentials (once) and then its pinned and regular tabs, the blank and private
+   * windows' local spaces after them, then any tab in no list (a Glance preview).
+   */
+  tabsNavigatedSince(since: number | null): Tab[] {
+    const m = this.model
+    const seen = new Set<string>()
+    const out: Tab[] = []
+    const take = (tab: Tab | undefined): void => {
+      if (!tab || seen.has(tab.id)) return
+      seen.add(tab.id)
+      if (this.isPrivate(tab)) return
+      if (since !== null) {
+        const at = tab.lastNavigatedAt ?? null
+        if (at === null || at < since) return
+      }
+      out.push(tab)
+    }
+    for (const space of allSpaces(m)) {
+      for (const tab of orderedTabsForSpace(m, space, this.settings.containerSpecificEssentials))
+        take(tab)
+    }
+    for (const tab of Object.values(m.tabs)) take(tab)
+    return out
+  }
+
+  /**
+   * Close tabs leaving nothing to bring them back by (Quick Delete's close, Chrome's
+   * `TabClosureParams … allowUndo(false).saveToTabRestoreService(false)`): each closes as a
+   * forced close does – `force` bypasses `pinnedCloseBehavior`, so a pinned or essential tab
+   * really closes instead of resetting, unloading or switching away (Chrome's filter takes every
+   * tab of the model) – and the entry "Recently closed" would have kept is dropped, so there is
+   * no undo toast, no Ctrl+Shift+T and no row on the list, and the tab's navigation-state
+   * document goes with it. Every other close path keeps its entry as before.
+   */
+  closeUnrecorded(tabIds: string[], win?: ZenWindow): void {
+    const divert = this.divertClosed
+    this.divertClosed = () => undefined
+    try {
+      for (const tabId of tabIds) if (this.tab(tabId)) this.closeTab(tabId, true, win)
+    } finally {
+      this.divertClosed = divert
+    }
   }
 
   /**
@@ -3287,6 +3361,9 @@ export class TabManager {
     if (!tab) return
     tab.muted = !tab.muted
     this.pageView(tabId)?.setMuted(tab.muted)
+    // The tab's media entry carries the mute (`MediaState.muted`, W8-8): recomputed with the
+    // tab, in the same tick's broadcast.
+    this.browser.updateMedia()
     this.browser.state.commit()
   }
 
@@ -3336,7 +3413,9 @@ export class TabManager {
       this.pageView(t.id)?.setMuted(muted)
       changed = true
     }
-    if (changed) this.browser.state.commit()
+    if (!changed) return
+    this.browser.updateMedia()
+    this.browser.state.commit()
   }
 
   /**
@@ -4067,6 +4146,7 @@ export class TabManager {
     else {
       this.releaseHidden(source)
       this.browser.mediaSession.onVisibleTabsChanged(source)
+      this.browser.selectionMenu.onVisibleTabsChanged()
       source.relayout()
     }
   }

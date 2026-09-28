@@ -808,6 +808,7 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
         options={row.options}
         onChange={row.onChange}
         disabled={row.disabled}
+        readOnly={row.readOnly}
         className="zen-settings-menulist"
       />
     </ControlRow>

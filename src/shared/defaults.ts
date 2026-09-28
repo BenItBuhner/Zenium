@@ -23,12 +23,17 @@ import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 import { DEFAULT_BOOKMARK_ROW_DISPLAY, DEFAULT_BOOKMARK_ROW_SORT_ORDER } from './bookmarkRows'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
-import { DEFAULT_PRELOAD_PAGES, DEFAULT_PRIVACY_SETTINGS } from './privacy'
+import {
+  DEFAULT_CLEAR_BROWSING_DATA_RANGE,
+  DEFAULT_PRELOAD_PAGES,
+  DEFAULT_PRIVACY_SETTINGS
+} from './privacy'
 import { DEFAULT_SPELLCHECK } from './spellcheck'
 import { DEFAULT_READER_PREFERENCES } from './reader'
 import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
 import { DEFAULT_FONT_SETTINGS } from './fonts'
 import { FALLBACK_LANGUAGES } from './languages'
+import { DEFAULT_IPH_STATE } from './iph'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -301,6 +306,7 @@ export const DEFAULT_SETTINGS: Settings = {
   warnBeforeQuitting: true,
   caretBrowsing: false,
   caretBrowsingConfirm: true,
+  showSelectionMenu: true,
   confirmCloseAll: true,
   crashRestore: 'ask',
   askWhereToSave: false,
@@ -326,15 +332,19 @@ export const DEFAULT_SETTINGS: Settings = {
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   preloadPages: DEFAULT_PRELOAD_PAGES,
   autoRevokeUnusedPermissions: true,
+  clearBrowsingDataRange: DEFAULT_CLEAR_BROWSING_DATA_RANGE,
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
   fullscreenHintDone: false,
+  iph: structuredClone(DEFAULT_IPH_STATE),
   spellcheck: structuredClone(DEFAULT_SPELLCHECK),
   reader: structuredClone(DEFAULT_READER_PREFERENCES),
   readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS),
   fonts: structuredClone(DEFAULT_FONT_SETTINGS),
   // A profile takes the OS's languages as it loads (`defaultLanguages`); this stands in until then.
-  languages: [...FALLBACK_LANGUAGES]
+  languages: [...FALLBACK_LANGUAGES],
+  // Roll's best (ERR-03): no run yet.
+  gameBestScore: 0
 }
 
 /** Firefox's four default containers plus "No Container". */

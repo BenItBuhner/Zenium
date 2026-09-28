@@ -272,6 +272,23 @@ describe('ShareService', () => {
     expect(moved.toasts).toEqual(['Saved to Captures'])
   })
 
+  it('on the phone names the public collection – the directory `Download` – as its Files app names it, "Downloads": the shared reading the capture card and the PDF viewer use too', async () => {
+    const phone = harness({ host: 'files' })
+    phone.browser.platform.shareSheet!.saveFiles = async (files) =>
+      files.map((f) => `/storage/emulated/0/Download/${f.name}`)
+    const capture = phone.service.open({ tabId: 't1', title: 'Story', files: [FILE] }, phone.win)
+    await phone.service.respond(capture.id, 'save')
+    expect(phone.toasts).toEqual(['Saved to Downloads'])
+    expect(phone.listed).toEqual([
+      {
+        path: '/storage/emulated/0/Download/photo.png',
+        mimeType: 'image/png',
+        size: 3,
+        private: false
+      }
+    ])
+  })
+
   it('copies one shared picture as an image, and a share with words beside it as words', async () => {
     const h = harness({ host: 'files' })
     // The browser's own share of a picture alone (a capture's Share): Copy is Copy image.

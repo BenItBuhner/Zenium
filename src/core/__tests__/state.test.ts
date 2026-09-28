@@ -271,6 +271,40 @@ describe('tab navigation persistence', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Quick Delete's tab stamp (HB-07): `Tab.lastNavigatedAt` persists with the tab and a record
+// from before the field reads null (that it never travels in the `open-tabs` sync record is
+// `sync/__tests__/documents.test.ts`).
+// ---------------------------------------------------------------------------
+
+describe('Tab.lastNavigatedAt persistence (HB-07)', () => {
+  it('round-trips the stamp with the tab and reads null for a record older than the field', async () => {
+    const { doc, ids } = profile()
+    const [, a, b] = ids
+    const { s, io } = stateFrom(doc)
+    // `createTabRecord` gave the profile's tabs an explicit null; a record from before the
+    // field carries no key at all, and reads the same.
+    const tabs = doc.tabs as Array<Record<string, unknown>>
+    for (const raw of tabs) delete raw.lastNavigatedAt
+    const older = stateFrom(doc).s
+    expect(older.model.tabs[a].lastNavigatedAt).toBeNull()
+    expect(older.model.tabs[b].lastNavigatedAt).toBeNull()
+
+    s.model.tabs[a].lastNavigatedAt = 1_700_000_000_000
+    s.commit()
+    await tick()
+    await s.flush()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as {
+      tabs: Array<{ id: string; lastNavigatedAt?: number | null }>
+    }
+    expect(written.tabs.find((t) => t.id === a)?.lastNavigatedAt).toBe(1_700_000_000_000)
+    expect(written.tabs.find((t) => t.id === b)?.lastNavigatedAt).toBeNull()
+    const reloaded = stateFrom(written).s
+    expect(reloaded.model.tabs[a].lastNavigatedAt).toBe(1_700_000_000_000)
+    expect(reloaded.model.tabs[b].lastNavigatedAt).toBeNull()
+  })
+})
+
 describe('forgetSession', () => {
   it('drops regular tabs, keeps pinned tabs and essentials, and leaves one window without a selection', () => {
     const { doc, ids } = profile()
@@ -354,7 +388,8 @@ describe('state.json v5 (new tab page)', () => {
     s.newTabDevice = {
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example'],
-      hiddenModules: ['downloads']
+      hiddenModules: ['downloads'],
+      safetyHubCard: {}
     }
     await s.flush()
     const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
@@ -363,7 +398,8 @@ describe('state.json v5 (new tab page)', () => {
     expect(written.newTabDevice).toEqual({
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example'],
-      hiddenModules: ['downloads']
+      hiddenModules: ['downloads'],
+      safetyHubCard: {}
     })
     expect(written.newTabShortcuts).toBeUndefined()
     expect(written.newTabHiddenHosts).toBeUndefined()
@@ -375,19 +411,34 @@ describe('state.json v5 (new tab page)', () => {
     const settings = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
     delete settings.newTab
     const s = state(fakeIo(legacyProfile(2, { settings: settings as typeof DEFAULT_SETTINGS })))
-    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
 
   it('migrates a v1 profile the same way', () => {
     const s = state(fakeIo(legacyProfile(1, { windowBounds: null, maximized: false })))
-    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(s.settings.newTab.enabled).toBe(true)
   })
 
   it('migrates a v3 profile (bookmark tree, recently closed) keeping its closed list', () => {
     const s = state(fakeIo(legacyProfile(3, { bookmarks: undefined, recentlyClosed: [] })))
-    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [], hiddenModules: [] })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [],
+      hiddenHosts: [],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     expect(s.recentlyClosed).toEqual([])
     expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
@@ -416,7 +467,8 @@ describe('state.json v5 (new tab page)', () => {
         { id: 'b', title: 'https://b.example/', url: 'https://b.example/' }
       ],
       hiddenHosts: ['news.example'],
-      hiddenModules: []
+      hiddenModules: [],
+      safetyHubCard: {}
     })
     expect(s.settings.newTab).toEqual({ ...DEFAULT_NEW_TAB_SETTINGS, background: 'solid' })
   })
@@ -556,7 +608,12 @@ describe('state.json v5 (new tab page)', () => {
       fakeIo(
         legacyProfile(5, {
           settings: settings as unknown as Persisted['settings'],
-          newTabDevice: { shortcuts: [], hiddenHosts: ['kept.example'], hiddenModules: [] }
+          newTabDevice: {
+            shortcuts: [],
+            hiddenHosts: ['kept.example'],
+            hiddenModules: [],
+            safetyHubCard: {}
+          }
         })
       )
     )
@@ -748,6 +805,68 @@ describe('Settings.energySaver (W8-2)', () => {
     expect(stored('on-battery').settings.energySaver).toBe('on-battery')
     for (const bad of ['always', 20, true, null, { mode: 'off' }]) {
       expect(stored(bad).settings.energySaver, JSON.stringify(bad)).toBe('on-battery')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Roll's best score (ERR-03, §9.17 (i)): a synced setting, sanitised at load like the rest.
+// ---------------------------------------------------------------------------
+
+describe('Settings.gameBestScore (ERR-03)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.gameBestScore
+    else settings.gameBestScore = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships at 0 and a profile from before the game reads 0', () => {
+    expect(DEFAULT_SETTINGS.gameBestScore).toBe(0)
+    expect(stored(undefined).settings.gameBestScore).toBe(0)
+  })
+
+  it('keeps a stored whole number within the meter’s five digits, and reads anything else as 0 or the bound', () => {
+    expect(stored(420).settings.gameBestScore).toBe(420)
+    expect(stored(99999).settings.gameBestScore).toBe(99999)
+    expect(stored(12.7).settings.gameBestScore).toBe(12)
+    expect(stored(123456).settings.gameBestScore).toBe(99999)
+    for (const bad of ['420', -3, Number.NaN, null, true, { best: 3 }]) {
+      expect(stored(bad).settings.gameBestScore, JSON.stringify(bad)).toBe(0)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Delete browsing data dialog's remembered range (services pass 13, seed #20): Chrome's
+// `browser.clear_data.time_period`, the last hour by default (`pref_names.cc:23–25`) – a
+// device-local setting, sanitised at load like the rest.
+// ---------------------------------------------------------------------------
+
+describe('Settings.clearBrowsingDataRange (seed #20)', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.clearBrowsingDataRange
+    else settings.clearBrowsingDataRange = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships as the last hour, and a profile from before the key opens the dialog on it', () => {
+    expect(DEFAULT_SETTINGS.clearBrowsingDataRange).toBe('hour')
+    expect(stored(undefined).settings.clearBrowsingDataRange).toBe('hour')
+    expect(state(fakeIo()).settings.clearBrowsingDataRange).toBe('hour')
+  })
+
+  it('keeps every range the pickers offer, and reads anything else as the last hour', () => {
+    for (const range of ['15min', 'hour', 'day', 'week', 'month', 'all'] as const) {
+      expect(stored(range).settings.clearBrowsingDataRange).toBe(range)
+    }
+    for (const bad of ['year', 'Hour', '', 1, null, true, { range: 'all' }, ['all']]) {
+      expect(stored(bad).settings.clearBrowsingDataRange, JSON.stringify(bad)).toBe('hour')
     }
   })
 })

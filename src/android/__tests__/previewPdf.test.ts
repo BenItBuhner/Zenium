@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isPreviewPdfVariant,
   md5,
+  PREVIEW_FORM_FIELDS,
   PREVIEW_PDF_FILES,
   PREVIEW_PDF_VARIANTS,
   previewPdf,
@@ -54,6 +55,32 @@ describe('previewPdf', () => {
     expect(text).not.toContain('Springs and the narrows')
     // The slow document is the plain one, held back by the server rather than the writer.
     expect(previewPdf('slow')).toEqual(previewPdf('sample'))
+  })
+
+  it('writes the mooring application as a one-page AcroForm with every widget kind', () => {
+    const text = latin1(previewPdf('form'))
+    expect(text.startsWith('%PDF-1.7\n')).toBe(true)
+    expect(text).toContain('/Count 1 >>')
+    expect(text).toContain('/Title (Mooring application)')
+    expect(text).toMatch(/\/AcroForm << \/Fields \[(\d+ 0 R ?){7}\]/)
+    for (const name of Object.values(PREVIEW_FORM_FIELDS)) expect(text).toContain(`/T (${name})`)
+    // A text field, a multi-line one, the radio group's parent, the combo box, the checkbox's
+    // two appearances, the push button's reset action.
+    expect(text).toContain('/FT /Tx /T (applicant)')
+    expect(text).toContain('/FT /Tx /Ff 4096 /T (notes)')
+    expect(text).toContain('/FT /Btn /Ff 49152 /T (berth) /V /Pontoon')
+    expect(text).toContain('/FT /Ch /Ff 131072 /T (season)')
+    expect(text).toMatch(/\/AP << \/N << \/Yes \d+ 0 R \/Off \d+ 0 R >> >>/)
+    expect(text).toContain('/A << /S /ResetForm >>')
+    // The appearance streams are form XObjects with their box and fonts in the dictionary.
+    expect(text).toContain('/Type /XObject /Subtype /Form /BBox [0 0 16 16] /Resources')
+    expect(text).not.toContain('/Encrypt')
+    const xrefAt = Number(/startxref\n(\d+)\n%%EOF/.exec(text)?.[1])
+    expect(text.slice(xrefAt, xrefAt + 4)).toBe('xref')
+    const entries = [...text.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]))
+    entries.forEach((offset, i) =>
+      expect(text.slice(offset, offset + 12)).toMatch(`${i + 1} 0 obj`)
+    )
   })
 
   it('writes no PDF at all for the broken variant', () => {

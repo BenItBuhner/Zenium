@@ -145,11 +145,14 @@ import {
   depart,
   departed,
   departStore,
+  departureGone,
+  isHeld,
   rectOf,
   releaseDepartures,
   type Departure,
   type GroupDeparture
 } from './departureStore'
+import { setQuickDeleteWipe, type QuickDeleteWipe } from './quickDelete'
 import { groupActions } from './groupActions'
 import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
@@ -1279,25 +1282,29 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    * theirs (v2 §11.4: the card fades where it stood and the cells below glide up once, as for
    * any card; the card itself leaves the grid on the commit its tabs are gone, see `lost`); the
    * rest one by one. No member of such a group gets an exit of its own – the ones a query hides
-   * have no card to leave from anyway.
+   * have no card to leave from anyway. `forced` reads every tab as closing for real (Quick
+   * Delete's `closeUnrecorded` closes a pinned card too); `held` marks the exits as the wipe's,
+   * run ahead of the close (`departureStore.ts`).
    */
-  const departAll = (tabs: Tab[]): void => {
+  const exitsFor = (tabs: Tab[], forced = false, held = false): Departure[] => {
     const whole = wholeOnGridAmong(tabs)
     const asGroup = new Set(whole.flatMap((f) => liveMembersOf(f.id).map((t) => t.id)))
     const exits: Departure[] = []
+    const mark = held ? ({ held: true } as const) : {}
     for (const folder of whole) {
       const exit = groupExit(folder)
-      if (exit) exits.push(exit)
+      if (exit) exits.push({ ...exit, ...mark })
     }
     for (const tab of tabs) {
       if (asGroup.has(tab.id)) continue
-      const rect = closesForReal(tab) ? rectOf(flip.element(tab.id)) : null
-      if (rect) exits.push({ key: tab.id, kind: 'tab', tab, rect })
+      const rect = forced || closesForReal(tab) ? rectOf(flip.element(tab.id)) : null
+      if (rect) exits.push({ key: tab.id, kind: 'tab', tab, rect, ...mark })
     }
-    const plus = newTabExit(tabs)
+    const plus = newTabExit(tabs, forced)
     if (plus) exits.push(plus)
-    depart(exits)
+    return exits
   }
+  const departAll = (tabs: Tab[]): void => depart(exitsFor(tabs))
   /**
    * A close that takes the Tabs pane's every card takes the New Tab card with it (TAB-34):
    * §9.17's sentence stands in the grid's place once the tabs are gone (`TabsEmpty`), and the
@@ -1306,8 +1313,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
    * pane's last close hands the overview to the Tabs pane on the panes' cross-fade, its still
    * leaving whole, so its card needs no exit of its own.
    */
-  const newTabExit = (tabs: Tab[]): Departure | null => {
-    if (privatePane || tabs.length === 0 || !emptiesPane(tabs)) return null
+  const newTabExit = (tabs: Tab[], forced = false): Departure | null => {
+    if (privatePane || tabs.length === 0 || !emptiesPane(tabs, forced)) return null
     const rect = rectOf(flip.element(NEW_TAB_CELL))
     if (!rect) return null
     return {
@@ -1319,12 +1326,33 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
   }
   /** Whether closing `tabs` leaves the pane with no card: every tab of it closes for real. */
-  const emptiesPane = (tabs: Tab[]): boolean => {
+  const emptiesPane = (tabs: Tab[], forced = false): boolean => {
     const closing = new Set(tabs.map((t) => t.id))
     return [...essentialsAll, ...pinnedAll, ...regularAll].every(
-      (t) => closing.has(t.id) && closesForReal(t)
+      (t) => closing.has(t.id) && (forced || closesForReal(t))
     )
   }
+  /**
+   * Quick Delete's wipe (MOT-24, `quickDelete.ts`): the range's cards on this pane – a group's
+   * as one exit only when every tab of it is in range, Chrome's rule – as held exits, with the
+   * grid's visible rect for the sweep. The runner asks once the overview has landed.
+   */
+  const wipeFor = (ids: readonly string[]): QuickDeleteWipe => {
+    const inRange = new Set(ids)
+    const tabs = [...essentialsAll, ...pinnedAll, ...regularAll].filter((t) => inRange.has(t.id))
+    return { exits: exitsFor(tabs, true, true), grid: rectOf(scrollRef.current) }
+  }
+  const wipeRef = useRef(wipeFor)
+  useEffect(() => {
+    wipeRef.current = wipeFor
+  })
+  useEffect(() => {
+    setQuickDeleteWipe((ids) => wipeRef.current(ids))
+    return () => setQuickDeleteWipe(null)
+  }, [])
+  // While the wipe runs the grid takes no press: a card picked under it would leave the
+  // overview with the exits half-run over cards the core is about to close.
+  const wiping = departStore.use((s) => s.items.some(isHeld))
   /**
    * Close `tabs` as the user asks for them, with the one undo. The tabs that make up a whole
    * group among them – every live member of it – close as the group does ("Close Group", the
@@ -1574,6 +1602,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     const groupKeys = new Set(groupCards.map((g) => `group:${g.folder.id}`))
     shownCards.current = { query, ids, groups: groupKeys }
     const released: string[] = []
+    const gone: string[] = []
     for (const item of departStore.get().items) {
       // The New Tab card leaving with a close (TAB-34) is the close's exit, not the query's: it
       // stands while the card is drawn and the close is in flight, and `Departures` releases it
@@ -1584,8 +1613,14 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       if (dropped) {
         if (el) departed(item.key)
         else released.push(item.key)
-      } else if (item.kind === 'group' && !el) released.push(item.key)
+      } else if (item.kind === 'group' && !el) {
+        // A group Quick Delete wiped has run its exit already: the cell's leaving takes it
+        // (`departureGone`); any other group's exit runs on this commit, the gap's.
+        if (isHeld(item)) gone.push(item.key)
+        else released.push(item.key)
+      }
     }
+    if (gone.length) departureGone(gone)
     if (released.length) releaseDepartures(released)
     if (was.query === query || !settled) return
     const inside = new Set<string>()
@@ -2154,7 +2189,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                     // The Private pane under the lock cover (INC-05): its grid is out of reach – no
                     // focus, no touch, nothing for a screen reader – until the cover lifts; the
                     // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
-                    inert={(privatePane && locked) || undefined}
+                    // So is the grid while Quick Delete's wipe runs over it (MOT-24, `wiping`).
+                    inert={(privatePane && locked) || wiping || undefined}
                     aria-hidden={(privatePane && locked) || undefined}
                     // The card the page morphs into is scrolled into view: keep it clear of the fades.
                     style={{

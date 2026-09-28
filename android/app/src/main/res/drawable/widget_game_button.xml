@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The game widget's face under a finger (WID-04): the whole card is the button, so the press shows a
+     ripple alone in the quick actions widget's button role (widget_quick_actions_button: the system's
+     colorSurfaceContainer on Android 12+, the v2 panel below), as the extra-small row's buttons do
+     (widget_quick_actions_xsmall_button.xml), bounded by a mask at the card's radius so the ripple keeps
+     to the card's corners. No fill of its own: the card behind it is the face's colour. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/widget_quick_actions_button">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/white" />
+            <corners android:radius="@dimen/widget_game_radius" />
+        </shape>
+    </item>
+</ripple>

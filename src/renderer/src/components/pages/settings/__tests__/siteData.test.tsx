@@ -19,9 +19,10 @@ import {
  * row, a switch row per on-exit type, the viewer's row – and what each asks of the engine; the
  * Add form (§9.12: the hint, the refusal, Add at .4, the busy form, the engine's refusal back in
  * the field); and the viewer (the rows and their lines, the count aside, the cap's and the
- * sizes-unavailable notes, a row's Clear leaving the list, Clear all in the footer slot with
- * its prompt over the dialog – inert under it, Escape to the prompt alone, the focus back on
- * Clear all when it has gone).
+ * sizes-unavailable notes, a row's Delete data asking "Delete data for <site>?" first and the
+ * row leaving the list, Delete all data in the footer slot with its prompt over the dialog –
+ * inert under it, Escape to the prompt alone, the focus back on what asked when it has gone).
+ * The words are the Delete family's (W8-11); the per-site question is one form on both hosts.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -368,7 +369,7 @@ describe('the Cookies and site data groups', () => {
     expect(row.label).toBe('See all site data and permissions')
     expect(row.button).toBe('See all…')
     expect(row.form?.title).toBe('Site data')
-    expect(row.form?.description).toContain('Clearing a site signs you out of it')
+    expect(row.form?.description).toContain('Deleting a site’s data signs you out of it')
   })
 })
 
@@ -549,7 +550,7 @@ describe('the site-data viewer', () => {
     expect(el.querySelector('[data-group="site-data-origins"]')?.getAttribute('aria-busy')).toBe(
       'true'
     )
-    expect(button(el, 'Clear all').disabled).toBe(true)
+    expect(button(el, 'Delete all data').disabled).toBe(true)
     act(() => finish(listing()))
     await settle()
     expect(el.textContent).not.toContain('Reading…')
@@ -564,14 +565,14 @@ describe('the site-data viewer', () => {
       // The row is the page's static control row (§9.21, §9.34): the control the target, not the row.
       expect(row.hasAttribute('data-static')).toBe(true)
       expect(row.classList.contains('zen-v2-row')).toBe(true)
-      expect(row.querySelector('.zen-settings-control button')?.textContent).toBe('Clear')
+      expect(row.querySelector('.zen-settings-control button')?.textContent).toBe('Delete data')
       expect(row.querySelector('button')?.getAttribute('data-danger')).toBe('true')
     }
     expect(rows(el)[0]!.querySelector('button')?.getAttribute('aria-label')).toBe(
-      'Clear example.com'
+      'Delete data for example.com'
     )
-    expect(button(el, 'Clear all').disabled).toBe(false)
-    expect(button(el, 'Clear all').getAttribute('data-danger')).toBe('true')
+    expect(button(el, 'Delete all data').disabled).toBe(false)
+    expect(button(el, 'Delete all data').getAttribute('data-danger')).toBe('true')
     // Nothing under the heading: every origin sized, the listing whole.
     expect(el.querySelector('.zen-settings-group-description')).toBeNull()
   })
@@ -626,14 +627,14 @@ describe('the site-data viewer', () => {
     expect(el.textContent?.match(/unavailable/g)).toHaveLength(1)
   })
 
-  it('shows the empty line with Clear all at .4 when nothing is stored, and the failure line when the engine did not answer', async () => {
+  it('shows the empty line with Delete all data at .4 when nothing is stored, and the failure line when the engine did not answer', async () => {
     invoke.mockImplementationOnce(async () => listing({ rows: [], total: 0, sized: false }))
     const el = render(createElement(SiteDataViewer))
     await settle()
     expect(el.querySelector('.zen-settings-empty')?.textContent).toBe(
       'No site has stored anything yet'
     )
-    expect(button(el, 'Clear all').disabled).toBe(true)
+    expect(button(el, 'Delete all data').disabled).toBe(true)
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('0 sites')
     act(() => root!.unmount())
     root = null
@@ -648,9 +649,23 @@ describe('the site-data viewer', () => {
     expect(line?.dataset.tone).toBe('danger')
   })
 
-  it('clears one origin from its row: the button busy while the engine works, the row gone after, the count following', async () => {
+  /** The viewer with a host for its prompts (the primitive portals into the nearest frame dialog host). */
+  function hosted(): HTMLElement {
+    return render(
+      <FrameDialogHost>
+        <SiteDataViewer />
+      </FrameDialogHost>
+    )
+  }
+  /** A row's question, standing (a prompt on its way out is gone for this reading). */
+  const rowPrompt = (el: ParentNode, origin: string): HTMLElement | null =>
+    el.querySelector<HTMLElement>(
+      `[data-dialog="confirm:site-data-origin:${origin}:clear"]:not([data-leaving])`
+    )
+
+  it('deletes one origin from its row through its question: the button asks first, the prompt’s "Delete data" runs siteData.clearSite, the button busy while the engine works, the row gone after, the count following', async () => {
     invoke.mockImplementationOnce(async () => listing())
-    const el = render(createElement(SiteDataViewer))
+    const el = hosted()
     await settle()
     let finish: (value: unknown) => void = () => undefined
     invoke.mockImplementationOnce(
@@ -660,13 +675,22 @@ describe('the site-data viewer', () => {
         })
     )
     const clear = rows(el)[1]!.querySelector('button')!
+    expect(clear.getAttribute('aria-haspopup')).toBe('dialog')
     act(() => clear.click())
+    // The press asks; nothing runs until the question is answered.
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const p = rowPrompt(el, 'https://news.example')!
+    expect(p).not.toBeNull()
+    act(() => button(p, 'Delete data').click())
     expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
       origin: 'https://news.example'
     })
+    await settle()
+    expect(rowPrompt(el, 'https://news.example')).toBeNull()
     expect(clear.getAttribute('aria-busy')).toBe('true')
-    // A second press while busy sends nothing.
+    // A second press while busy does nothing: no question, nothing sent.
     act(() => clear.click())
+    expect(rowPrompt(el, 'https://news.example')).toBeNull()
     expect(invoke).toHaveBeenCalledTimes(2)
     act(() => finish(null))
     await settle()
@@ -674,14 +698,15 @@ describe('the site-data viewer', () => {
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('2 sites')
   })
 
-  it('keeps a row whose Clear the engine refused, its line the failure in the danger ink', async () => {
+  it('keeps a row whose Delete data the engine refused, its line the failure in the danger ink', async () => {
     invoke.mockImplementationOnce(async () => listing())
-    const el = render(createElement(SiteDataViewer))
+    const el = hosted()
     await settle()
     invoke.mockImplementationOnce(async () => {
       throw new Error('locked')
     })
     act(() => rows(el)[0]!.querySelector('button')!.click())
+    act(() => button(rowPrompt(el, 'https://example.com')!, 'Delete data').click())
     await settle()
     const row = rows(el)[0]!
     expect(rowText(row)).toEqual({
@@ -694,13 +719,14 @@ describe('the site-data viewer', () => {
 
   it('a row with the cap behind it: the total follows the row out and the cap’s line stays while more are behind', async () => {
     invoke.mockImplementationOnce(async () => listing({ total: 5, truncated: true }))
-    const el = render(createElement(SiteDataViewer))
+    const el = hosted()
     await settle()
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe(
       '1,000 of 5 sites'
     )
     invoke.mockImplementationOnce(async () => null)
     act(() => rows(el)[0]!.querySelector('button')!.click())
+    act(() => button(rowPrompt(el, 'https://example.com')!, 'Delete data').click())
     await settle()
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe(
       '1,000 of 4 sites'
@@ -751,13 +777,13 @@ describe('the site-data viewer', () => {
         '[data-dialog="confirm:site-data-clear-all"]:not([data-leaving])'
       )
 
-    it('puts Clear all in the dialog’s footer slot under the body, not in the body that scrolls', async () => {
+    it('puts Delete all data in the dialog’s footer slot under the body, not in the body that scrolls', async () => {
       invoke.mockImplementationOnce(async () => listing())
       const { el } = open()
       await settle()
       const footer = el.querySelector<HTMLElement>('[data-testid="settings-dialog-footer"]')
       expect(footer).not.toBeNull()
-      expect(footer!.querySelector('button')?.textContent).toBe('Clear all')
+      expect(footer!.querySelector('button')?.textContent).toBe('Delete all data')
       expect(footer!.closest('.zen-settings-dialog-body')).toBeNull()
       expect(footer!.previousElementSibling?.classList.contains('zen-settings-dialog-body')).toBe(
         true
@@ -780,11 +806,11 @@ describe('the site-data viewer', () => {
       expect(description?.textContent).toBe('Sites that stored cookies or data on this device.')
     })
 
-    it('prompts before clearing all: the prompt the primitive’s 320 notice over the viewer’s dialog, which stands inert; the prompt itself takes the focus, named by its title and described by its line; Enter from it is inert (destructive: no default); Escape closes the prompt alone and the focus returns to Clear all', async () => {
+    it('prompts before clearing all: the prompt the primitive’s 320 notice over the viewer’s dialog, which stands inert; the prompt itself takes the focus, named by its title and described by its line; Enter from it is inert (destructive: no default); Escape closes the prompt alone and the focus returns to Delete all data', async () => {
       invoke.mockImplementationOnce(async () => listing())
       const { el, onClose } = open()
       await settle()
-      const clearAll = button(el, 'Clear all')
+      const clearAll = button(el, 'Delete all data')
       expect(clearAll.getAttribute('aria-haspopup')).toBe('dialog')
       act(() => clearAll.focus())
       act(() => clearAll.click())
@@ -797,13 +823,13 @@ describe('the site-data viewer', () => {
       expect(p.hasAttribute('data-destructive')).toBe(true)
       const title = p.querySelector('.zen-v2-title-block-title')
       const line = p.querySelector('.zen-v2-title-block-description')
-      expect(title?.textContent).toBe('Clear all site data?')
+      expect(title?.textContent).toBe('Delete all data?')
       expect(line?.textContent).toContain('signs you out everywhere')
       // §9.20's notice: a title block and the two footer buttons, nothing else, at 320 – the
       // notice whatever it covers (the lead's ruling on #392).
       expect(p.style.width).toBe('320px')
       const [cancel, verb] = [...p.querySelectorAll<HTMLButtonElement>('button')]
-      expect([cancel, verb].map((b) => b?.textContent)).toEqual(['Cancel', 'Clear all'])
+      expect([cancel, verb].map((b) => b?.textContent)).toEqual(['Cancel', 'Delete all data'])
       expect(verb!.hasAttribute('data-danger')).toBe(true)
       expect(p.querySelector('[data-primary], .zen-settings-row, input')).toBeNull()
       expect(viewerDialog(el).hasAttribute('inert')).toBe(true)
@@ -839,14 +865,81 @@ describe('the site-data viewer', () => {
       expect(onClose).toHaveBeenCalledTimes(1)
     })
 
-    it('clears everything on the prompt’s Clear all: siteData.clearAll, then the empty line', async () => {
+    it('a row’s Delete data asks the phone page’s question as the same 320 notice over the viewer’s dialog: "Delete data for <site>?" over its line, Cancel | Delete data, the focus on the prompt itself; Escape closes the prompt alone and the focus returns to the row’s button; the prompt’s Delete data runs siteData.clearSite and the row leaves', async () => {
+      invoke.mockImplementationOnce(async () => listing())
+      const { el, onClose } = open()
+      await settle()
+      const rowButton = rows(el)[1]!.querySelector<HTMLButtonElement>('button')!
+      expect(rowButton.getAttribute('aria-haspopup')).toBe('dialog')
+      act(() => rowButton.focus())
+      act(() => rowButton.click())
+      expect(dialogs(el)).toHaveLength(2)
+      const p = el.querySelector<HTMLElement>(
+        '[data-dialog="confirm:site-data-origin:https://news.example:clear"]:not([data-leaving])'
+      )!
+      expect(p).not.toBeNull()
+      // The same primitive the footer's question is (§9.20's notice over the dialog, §9.23).
+      expect(p.getAttribute('role')).toBe('alertdialog')
+      expect(p.classList.contains('zen-confirm-dialog')).toBe(true)
+      expect(p.getAttribute('data-confirm')).toBe('site-data-origin:https://news.example:clear')
+      expect(p.hasAttribute('data-destructive')).toBe(true)
+      expect(p.style.width).toBe('320px')
+      const title = p.querySelector('.zen-v2-title-block-title')
+      const line = p.querySelector('.zen-v2-title-block-description')
+      // One confirmation form on both hosts: the phone page's question, line and action.
+      expect(title?.textContent).toBe('Delete data for news.example?')
+      expect(line?.textContent).toBe(SITE_DATA_TEXT.viewer.clearSitePrompt)
+      const [cancel, verb] = [...p.querySelectorAll<HTMLButtonElement>('button')]
+      expect([cancel, verb].map((b) => b?.textContent)).toEqual(['Cancel', 'Delete data'])
+      expect(verb!.hasAttribute('data-danger')).toBe(true)
+      expect(p.querySelector('[data-primary], .zen-settings-row, input')).toBeNull()
+      expect(viewerDialog(el).hasAttribute('inert')).toBe(true)
+      expect(document.activeElement).toBe(p)
+      expect(p.getAttribute('aria-labelledby')).toBe(title?.id)
+      expect(p.getAttribute('aria-describedby')).toBe(line?.id)
+      // Nothing ran for the press: the question stands between the button and the engine.
+      expect(invoke).toHaveBeenCalledTimes(1)
+
+      // Escape is Cancel: the prompt alone goes, the viewer stands, the focus is back on the row's button.
+      escape()
+      expect(
+        el.querySelector('[data-dialog^="confirm:site-data-origin:"]:not([data-leaving])')
+      ).toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(viewerDialog(el).hasAttribute('inert')).toBe(false)
+      await settle()
+      expect(document.activeElement).toBe(rowButton)
+      expect(rows(el)).toHaveLength(3)
+      expect(invoke).toHaveBeenCalledTimes(1)
+
+      // Asked again and answered: the engine runs, the row leaves.
+      act(() => rowButton.click())
+      const again = el.querySelector<HTMLElement>(
+        '[data-dialog="confirm:site-data-origin:https://news.example:clear"]:not([data-leaving])'
+      )!
+      invoke.mockImplementationOnce(async () => null)
+      act(() => button(again, 'Delete data').click())
+      expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
+        origin: 'https://news.example'
+      })
+      await settle()
+      expect(rows(el).map((r) => rowText(r).label)).toEqual([
+        'example.com',
+        'http://127.0.0.1:18131'
+      ])
+      expect(
+        el.querySelector('[data-dialog^="confirm:site-data-origin:"]:not([data-leaving])')
+      ).toBeNull()
+    })
+
+    it('clears everything on the prompt’s Delete all data: siteData.clearAll, then the empty line', async () => {
       invoke.mockImplementationOnce(async () => listing())
       const { el } = open()
       await settle()
-      act(() => button(el, 'Clear all').click())
+      act(() => button(el, 'Delete all data').click())
       const p = prompt(el)!
       invoke.mockImplementationOnce(async () => null)
-      act(() => button(p, 'Clear all').click())
+      act(() => button(p, 'Delete all data').click())
       expect(invoke).toHaveBeenLastCalledWith('siteData.clearAll', undefined)
       await settle()
       expect(prompt(el)).toBeNull()
@@ -855,24 +948,24 @@ describe('the site-data viewer', () => {
         'No site has stored anything yet'
       )
       expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('0 sites')
-      expect(button(el, 'Clear all').disabled).toBe(true)
+      expect(button(el, 'Delete all data').disabled).toBe(true)
     })
 
-    it('keeps the rows and says so when Clear all was refused', async () => {
+    it('keeps the rows and says so when Delete all data was refused', async () => {
       invoke.mockImplementationOnce(async () => listing())
       const { el } = open()
       await settle()
-      act(() => button(el, 'Clear all').click())
+      act(() => button(el, 'Delete all data').click())
       invoke.mockImplementationOnce(async () => {
         throw new Error('locked')
       })
-      act(() => button(prompt(el)!, 'Clear all').click())
+      act(() => button(prompt(el)!, 'Delete all data').click())
       await settle()
       expect(rows(el)).toHaveLength(3)
       const alert = el.querySelector<HTMLElement>('[role="alert"]')
       expect(alert?.textContent).toBe('That did not work. Try again.')
       expect(alert?.dataset.tone).toBe('danger')
-      expect(button(el, 'Clear all').disabled).toBe(false)
+      expect(button(el, 'Delete all data').disabled).toBe(false)
     })
   })
 })
@@ -960,7 +1053,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
   const standing = (el: ParentNode): HTMLElement[] =>
     sheets(el).filter((d) => !d.closest('[data-leaving]') && !d.hasAttribute('data-leaving'))
 
-  it('is the page: its line, "Clear all site data" as the page’s action row in the danger ink before the list, then the origins as item rows under Sites – no inline Clear on any row', async () => {
+  it('is the page: its line, "Delete all site data" as the page’s action row in the danger ink before the list, then the origins as item rows under Sites – no inline button on any row', async () => {
     invoke.mockImplementationOnce(async () => listing())
     const el = open()
     await settle()
@@ -973,7 +1066,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(clearAll.tagName).toBe('BUTTON')
     expect(clearAll.classList.contains('zen-settings-row-danger')).toBe(true)
     expect(clearAll.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(clearAll.textContent).toContain('Clear all site data')
+    expect(clearAll.textContent).toContain('Delete all site data')
     expect(page.querySelector('[data-row]')).toBe(clearAll)
     // The origins under the heading with the count aside, each an item row (a button whose
     // sheet the chevron promises), nothing pressable inside it.
@@ -994,14 +1087,14 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
       expect(row.querySelector('button')).toBeNull()
       expect(row.querySelector('.zen-settings-control')).toBeNull()
     }
-    // No button on the page but the rows themselves (§10.4: no inline Clear).
+    // No button on the page but the rows themselves (§10.4: no inline Delete).
     expect(buttons(page).filter((b) => !b.hasAttribute('data-row'))).toHaveLength(0)
     // The whole page is rows: no footer of its own, no prompt up.
     expect(el.querySelector('[data-testid="settings-dialog-footer"]')).toBeNull()
     expect(sheets(el)).toHaveLength(0)
   })
 
-  it('an origin’s row opens its item sheet: the host as the title, the storage line as its paragraph, "Clear site data" the one row – the danger action that prompts', async () => {
+  it('an origin’s row opens its item sheet: the host as the title, the storage line as its paragraph, "Delete site data" the one row – the danger action that prompts', async () => {
     invoke.mockImplementationOnce(async () => listing())
     const el = open()
     await settle()
@@ -1017,13 +1110,13 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(clear).not.toBeNull()
     expect(clear.classList.contains('zen-settings-row-danger')).toBe(true)
     expect(clear.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(clear.textContent).toContain('Clear site data')
+    expect(clear.textContent).toContain('Delete site data')
     expect(sheet.querySelectorAll('[data-row]')).toHaveLength(1)
     // Nothing was asked of the engine by opening the sheet.
     expect(invoke).toHaveBeenCalledTimes(1)
   })
 
-  it('"Clear site data" prompts over the item sheet (depth two from the page): the prompt is the title-and-notice sheet that takes the focus itself, named by its title and described by its line; its Clear runs siteData.clearSite, and the row leaves the page with its sheet', async () => {
+  it('"Delete site data" prompts over the item sheet (depth two from the page): the prompt is the title-and-notice sheet that takes the focus itself, named by its title and described by its line; its Delete runs siteData.clearSite, and the row leaves the page with its sheet', async () => {
     invoke.mockImplementationOnce(async () => listing())
     const el = open()
     await settle()
@@ -1041,10 +1134,11 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(prompt).not.toBe(item)
     const title = prompt.querySelector('.zen-sheet-title-block h2')
     const line = prompt.querySelector('.zen-sheet-title-block p')
-    expect(title?.textContent).toBe('Clear data for news.example?')
+    expect(title?.textContent).toBe('Delete data for news.example?')
     expect(line?.textContent).toBe(SITE_DATA_TEXT.viewer.clearSitePrompt)
     // §9.20's notice: a title block and the two buttons, nothing else (the chassis's handle aside).
-    expect(labels(prompt)).toEqual(['Cancel', 'Clear site data'])
+    // Cancel | "Delete data": the one form the desktop viewer's row asks too (W8-11).
+    expect(labels(prompt)).toEqual(['Cancel', 'Delete data'])
     expect(prompt.querySelector('.zen-settings-row, input')).toBeNull()
     // §9.22 as amended on #392 (the prompt primitive's shape, `ConfirmSheet`): the container
     // takes the focus, no verb preselected.
@@ -1066,7 +1160,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(invoke).toHaveBeenCalledTimes(1)
 
     invoke.mockImplementationOnce(async () => null)
-    act(() => button(prompt, 'Clear site data').click())
+    act(() => button(prompt, 'Delete data').click())
     // The prompt leaves first; the clear runs as it lands.
     await until(() => invoke.mock.calls.length === 2)
     expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
@@ -1097,7 +1191,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     invoke.mockImplementationOnce(async () => {
       throw new Error('locked')
     })
-    act(() => button(topSheet(el), 'Clear site data').click())
+    act(() => button(topSheet(el), 'Delete data').click())
     await until(() => invoke.mock.calls.length === 2)
     await settle()
     const row = pageRows(el)[0]!
@@ -1116,7 +1210,7 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(clear.dataset.tone).toBe('danger')
   })
 
-  it('"Clear all site data" prompts from the page, the prompt the same notice with the focus; its Clear all runs siteData.clearAll, then the empty line and the row at .4', async () => {
+  it('"Delete all site data" prompts from the page, the prompt the same notice with the focus; its Delete all data runs siteData.clearAll, then the empty line and the row at .4', async () => {
     invoke.mockImplementationOnce(async () => listing())
     const el = open()
     await settle()
@@ -1127,17 +1221,17 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(sheets(el)).toHaveLength(1)
     const prompt = topSheet(el)
     const title = prompt.querySelector('.zen-sheet-title-block h2')
-    expect(title?.textContent).toBe('Clear all site data?')
+    expect(title?.textContent).toBe('Delete all data?')
     expect(prompt.querySelector('.zen-sheet-title-block p')?.textContent).toContain(
       'signs you out everywhere'
     )
-    expect(labels(prompt)).toEqual(['Cancel', 'Clear all'])
+    expect(labels(prompt)).toEqual(['Cancel', 'Delete all data'])
     expect(document.activeElement).toBe(prompt)
     expect(prompt.getAttribute('aria-labelledby')).toBe(title?.id)
     expect(invoke).toHaveBeenCalledTimes(1)
 
     invoke.mockImplementationOnce(async () => null)
-    act(() => button(prompt, 'Clear all').click())
+    act(() => button(prompt, 'Delete all data').click())
     await until(() => invoke.mock.calls.length === 2)
     expect(invoke).toHaveBeenLastCalledWith('siteData.clearAll', undefined)
     await settle()

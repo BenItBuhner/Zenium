@@ -54,6 +54,7 @@ export const DESKTOP: HostCapabilities = {
   printPreview: true,
   savePageFormats: true,
   pdfViewer: false,
+  pdfPrint: false,
   agents: true,
   agentSkills: true,
   updates: true,
@@ -81,6 +82,7 @@ export const DESKTOP: HostCapabilities = {
   screenCapture: false,
   shareSheet: false,
   selectionToolbar: false,
+  selectionMenu: true,
   popupSurface: true,
   qrScan: false,
   readAloud: false,
@@ -114,6 +116,7 @@ export const ANDROID: HostCapabilities = {
   printPreview: false,
   savePageFormats: false,
   pdfViewer: true,
+  pdfPrint: false,
   agents: true,
   agentSkills: false,
   updates: true,
@@ -198,6 +201,8 @@ export interface Harness {
   focused: string[]
   /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
   spellcheckApplied: SpellcheckApplied[]
+  /** Every place the host's popup surface was put (`WindowHost.setPopupSurface`), null for down. */
+  popupCalls: Array<Rect | null>
 }
 
 export interface HarnessOptions {
@@ -243,6 +248,8 @@ export interface HarnessOptions {
   pageScript?: (code: string) => unknown
   /** Methods of the fake tab view that answer for themselves rather than record. */
   view?: Partial<TabView>
+  /** `false`: the window host has no popup surface (`WindowHost.setPopupSurface` absent); absent, it records one. */
+  popupSurface?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -269,6 +276,7 @@ export function harness(
   const focused: string[] = []
   const linkApps: string[] = []
   const spellcheckApplied: SpellcheckApplied[] = []
+  const popupCalls: Array<Rect | null> = []
   const spellcheckHost = (): SpellcheckHost => {
     const words = new Set<string>()
     const spec = opts.spellcheck!
@@ -371,6 +379,10 @@ export function harness(
             if (name === 'toast') toasts.push(payload as { message: string; kind: string })
           },
           focus: () => void focused.push(win.id),
+          // An explicit `undefined` reads as absent through the stub (the proxy answers for a
+          // missing key); the recorder otherwise.
+          setPopupSurface:
+            opts.popupSurface === false ? undefined : (bounds) => void popupCalls.push(bounds),
           ...(opts.chromeDocument
             ? {
                 menuTargetAt: (x, y) => {
@@ -450,7 +462,8 @@ export function harness(
     toasts,
     focused,
     linkApps,
-    spellcheckApplied
+    spellcheckApplied,
+    popupCalls
   }
 }
 

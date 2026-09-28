@@ -14,9 +14,11 @@ import {
   openPopoverCount,
   POPOVER_HEIGHT_FLOOR,
   POPOVER_MARGIN,
-  toRect
+  toRect,
+  viewportSize
 } from './portals'
-import { activeTab } from './selectors'
+import { activeTab, tabStateLines, tabTitle } from './selectors'
+import { createStore } from './store'
 import { captureThumbnail } from './thumbnails'
 import {
   browserStore,
@@ -260,20 +262,128 @@ export function hoverCardPreviews(state: UIState | null, tabId: string): boolean
 }
 
 /**
- * Card hosts mounted: `TabHoverCard`, which the desktop shell mounts (App.tsx) and the tablet
- * chrome does not. Every row drives the controller (`TabItem`, for a mouse pointer on any
- * chrome), and the card's dismissals live in the host – a tab coming to the front, a press, a
- * wheel, a key. With no host no card could show, while the controller's capture-and-hide of
- * the live page would still run for a pointer resting on a row, and hold past a tab switch
- * under it until the pointer left the rows – the stage empty meanwhile, the new page having no
- * capture (a mouse on the tablet chrome under Samsung DeX, OS-12). So the app's controller
- * raises nothing until a host is mounted.
+ * Card hosts mounted: `TabHoverCard`, which the desktop shell mounts (App.tsx), or the tablet
+ * chrome's headless `TabletHoverCardHost` where a native host draws the card (below). Every row
+ * drives the controller (`TabItem`, for a mouse pointer on any chrome), and the card's
+ * dismissals live in the host – a tab coming to the front, a press, a wheel, a key. With no
+ * host no card could show, while the controller's capture-and-hide of the live page would
+ * still run for a pointer resting on a row, and hold past a tab switch under it until the
+ * pointer left the rows – the stage empty meanwhile, the new page having no capture (a mouse on
+ * the tablet chrome under Samsung DeX, OS-12, before the tablet had a host). So the app's
+ * controller raises nothing until a host is mounted.
  */
 let hosts = 0
 
 /** Whether a card host is mounted: without one the controller raises no card. */
 export function hoverCardHosted(): boolean {
   return hosts > 0
+}
+
+/**
+ * The card as a host that draws it itself receives it (Android's tablet chrome, TABLET-05: the
+ * pages are layered above the chrome's WebView there, so a card the chrome drew beside the
+ * sidebar would never show over them – or would need the live page hidden behind a capture,
+ * the desktop's cost, where the ruling is that the page keeps playing under the card). The
+ * chrome keeps the card's machine – the delay, the grace, one at a time, the rows' hover and
+ * focus, the dismissals – and sends the host what to draw, per change, in CSS px of the
+ * chrome's window that the host scales by its density: the row's box and its list's, the
+ * window's size, and the card's text as the desktop card renders it. `null` takes it down.
+ */
+export interface HoverCardFrame {
+  visible: true
+  tabId: string
+  /** The row's title as the desktop card shows it (`tabTitle`). */
+  title: string
+  /** The second line: the page's site as the URL pill shows it (`hoverCardHost`). */
+  host: string
+  /** The state lines the row's tooltip carried (`tabStateLines`). */
+  lines: string[]
+  /**
+   * Whether the card pictures the page (tabs-19: a background tab with a view to picture); the
+   * host reads its own picture of the tab, stamped with `url`, and shows none when it has none.
+   */
+  preview: boolean
+  /** The tab's document. */
+  url: string
+  anchor: Rect
+  sidebar: Rect
+  axis?: 'x'
+  viewport: Size
+  by: HoverCardCause
+}
+
+/** A host that draws the card where the chrome says (Android's `boot.ts` registers its bridge). */
+export interface HoverCardHost {
+  apply(frame: HoverCardFrame | null): void
+}
+
+let nativeHost: HoverCardHost | null = null
+
+/**
+ * Register the host that draws the card, or none: the chrome's own `TabHoverCard` then does. A
+ * bounded registration with no I/O – nothing runs until a card is on its way – so it may go at
+ * construction (Android's cold-start rule).
+ */
+export function setHoverCardHost(next: HoverCardHost | null): void {
+  nativeHost = next
+}
+
+/** The host that draws the card, when one is registered. */
+export function hoverCardNativeHost(): HoverCardHost | null {
+  return nativeHost
+}
+
+/**
+ * What a native host shows: the controller's state while one is registered, kept out of the UI
+ * state – `overlayCoversContent` would count a card there as chrome over the page (the page is
+ * live under this one) – with the frame the host was last sent beside it. The tablet's host
+ * reads it to bind the dismissals for as long as a card is up; Android's root keeps the frame's
+ * text in the chrome's document (`NativeHoverCardDescription`, src/android) for the row to be
+ * described by (`useHoverCardUp`).
+ */
+export const nativeHoverCard = createStore<{ card: HoverCardState; frame: HoverCardFrame | null }>(
+  { card: HOVER_CARD_HIDDEN, frame: null },
+  'nativeHoverCard'
+)
+
+/**
+ * Whether the card stands for `tabId`, whichever host draws it – the chrome's own card in the
+ * UI state, or a native host's in `nativeHoverCard`: the row names the card's node
+ * (`#zen-tab-hover-card`) in its `aria-describedby` either way.
+ */
+export function useHoverCardUp(tabId: string): boolean {
+  const dom = uiStore.use((s) => s.hoverCard.tabId === tabId)
+  const native = nativeHoverCard.use((s) => s.card.tabId === tabId)
+  return dom || native
+}
+
+/**
+ * The frame a native host draws from the controller's state; null when no card is up, or its
+ * tab has gone (a row of a closed tab under a resting pointer).
+ */
+export function hoverCardFrame(
+  card: HoverCardState,
+  state: UIState | null,
+  viewport: Size
+): HoverCardFrame | null {
+  if (card.tabId === null || !card.anchor || !card.sidebar || !card.by) return null
+  const tab = state?.tabs[card.tabId]
+  if (!tab) return null
+  const agent = state.agents.find((a) => a.tabIds.includes(tab.id)) ?? null
+  return {
+    visible: true,
+    tabId: tab.id,
+    title: tabTitle(tab),
+    host: hoverCardHost(tab.url),
+    lines: tabStateLines(tab, agent?.name ?? null),
+    preview: hoverCardPreviews(state, tab.id),
+    url: tab.url,
+    anchor: card.anchor,
+    sidebar: card.sidebar,
+    ...(card.axis ? { axis: card.axis } : {}),
+    viewport,
+    by: card.by
+  }
 }
 
 /**
@@ -287,17 +397,30 @@ export function hoverCardHosted(): boolean {
  * its view is hidden, and Electron paints a hidden view on request (`window.snapshot(tabId,
  * fresh)`); the two captures run together, so the card waits for the slower and not the sum.
  * A host that cannot picture a hidden page answers null and the card shows no preview.
+ *
+ * With a native host registered (`setHoverCardHost`) the same machine drives that host
+ * instead: its state goes to `nativeHoverCard` and out as a frame, never to the UI state, and
+ * nothing is captured – the page keeps playing under the card, and the host pictures the tab
+ * from its own store.
  */
 export const hoverCard = new HoverCardController(
   {
-    get: () => uiStore.get().hoverCard,
+    get: () => (nativeHost ? nativeHoverCard.get().card : uiStore.get().hoverCard),
     set: (next) => {
+      const host = nativeHost
+      if (host) {
+        const frame = hoverCardFrame(next, browserStore.get().state, viewportSize())
+        nativeHoverCard.set({ card: frame ? next : HOVER_CARD_HIDDEN, frame })
+        host.apply(frame)
+        return
+      }
       uiStore.set({ hoverCard: next })
       if (next.tabId === null) invalidateSnapshot()
     }
   },
   {
     prepare: (tabId) => {
+      if (nativeHost) return Promise.resolve()
       const state = browserStore.get().state
       const cover = captureActiveTab(state ? (activeTab(state)?.id ?? null) : null)
       const preview = hoverCardPreviews(state, tabId)
@@ -308,6 +431,37 @@ export const hoverCard = new HoverCardController(
     blocked: () => !hoverCardHosted() || chromeBusy()
   }
 )
+
+/**
+ * The card's dismissals while it is up, bound by its host (`TabHoverCard`, the tablet's
+ * `TabletHoverCardHost`) for as long as a card shows; the return releases them. Any press or
+ * context menu, a wheel or a scroll anywhere, the window losing focus or changing size, and
+ * the keys: Escape, and typing – the page under the card had the keyboard until the card hid
+ * it (the desktop; above), so a letter means the user is back at the page. Arrows, Tab and
+ * Enter are the rows' own keys and move or activate instead.
+ */
+export function bindHoverCardDismissals(hide: () => void): () => void {
+  const onKey = (e: KeyboardEvent): void => {
+    const typing = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
+    if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'Delete' || typing) hide()
+  }
+  document.addEventListener('pointerdown', hide, true)
+  document.addEventListener('contextmenu', hide, true)
+  document.addEventListener('wheel', hide, { capture: true, passive: true })
+  document.addEventListener('scroll', hide, { capture: true, passive: true })
+  document.addEventListener('keydown', onKey, true)
+  window.addEventListener('blur', hide)
+  window.addEventListener('resize', hide)
+  return () => {
+    document.removeEventListener('pointerdown', hide, true)
+    document.removeEventListener('contextmenu', hide, true)
+    document.removeEventListener('wheel', hide, { capture: true })
+    document.removeEventListener('scroll', hide, { capture: true })
+    document.removeEventListener('keydown', onKey, true)
+    window.removeEventListener('blur', hide)
+    window.removeEventListener('resize', hide)
+  }
+}
 
 /**
  * A card host mounted (`TabHoverCard`'s mount effect): the controller may raise the card until

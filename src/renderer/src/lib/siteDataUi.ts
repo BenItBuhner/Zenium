@@ -82,33 +82,43 @@ export const SITE_DATA_TEXT = {
       'Choose what to delete every time you close Zenium. Saved passwords are never deleted this way.',
     pending: 'A deletion owed from the last close is still running.'
   },
+  /**
+   * The viewer speaks the Delete family's verb (W8-11, the design lead's ruling after W8-7):
+   * Chrome moved its site-data buttons with the rest in M124 – `IDS_SETTINGS_SITE_SETTINGS_DELETE`
+   * "Delete data" (the row's), `IDS_SETTINGS_SITE_SETTINGS_DELETE_ALL_STORAGE_LABEL` "Delete all
+   * data" and its dialog `IDS_SETTINGS_SITE_SETTINGS_DELETE_ALL_STORAGE_DIALOG_TITLE` "Delete all
+   * data?" – and the house lines take the verb along; the per-site question names the site,
+   * "Delete data for <site>?", over Cancel | "Delete data" (`clear`) – one confirmation form on
+   * both hosts (the lead's second ruling): the phone page's item sheet asks it as its prompt
+   * sheet, the desktop viewer's row as the dialog's 320 notice. The identifiers keep their
+   * `clear` names, as Chrome's ids do. The viewer raises no toast (the row leaving the list is
+   * the report), so it carries none.
+   */
   viewer: {
     open: 'See all site data and permissions',
     openDescription: 'Every site with cookies, stored data or permissions, the most data first',
     title: 'Site data',
     description:
-      'Sites that stored cookies or data on this device, or hold a permission. Clearing a site signs you out of it; its permissions stay.',
+      'Sites that stored cookies or data on this device, or hold a permission. Deleting a site’s data signs you out of it; its permissions stay.',
     sites: 'Sites',
     reading: 'Reading…',
     empty: 'No site has stored anything yet',
     sizeUnavailable: 'Sizes are unavailable on this device.',
     /** The cap's line under the heading: one line at 400 (the count aside carries the whole). */
     capped: (cap: string) => `Showing the ${cap} with the most data`,
-    clear: 'Clear',
-    clearAll: 'Clear all',
+    clear: 'Delete data',
+    clearAll: 'Delete all data',
     /** The phone page's action row (§10.2: the list's bulk action in the danger ink). */
-    clearAllRow: 'Clear all site data',
-    clearAllTitle: 'Clear all site data?',
+    clearAllRow: 'Delete all site data',
+    clearAllTitle: 'Delete all data?',
     clearAllDescription:
-      'Removes every site’s cookies and stored data, from every container, and signs you out everywhere. Permissions stay.',
-    /** The item sheet's danger row (§10.4) and its prompt (§9.23). */
-    clearSite: 'Clear site data',
+      'Deletes every site’s cookies and stored data, from every container, and signs you out everywhere. Permissions stay.',
+    /** The item sheet's danger row (§10.4); its prompt (§9.23) is the question below over `clear`. */
+    clearSite: 'Delete site data',
     clearSiteDescription: 'Signs you out of the site; its permissions stay.',
-    clearSiteTitle: (site: string) => `Clear data for ${site}?`,
+    clearSiteTitle: (site: string) => `Delete data for ${site}?`,
     clearSitePrompt:
-      'Removes the site’s cookies and stored data from every container and signs you out of it. Its permissions stay.',
-    cleared: (site: string) => `Cleared ${site}`,
-    clearedAll: 'Cleared every site’s cookies and data',
+      'Deletes the site’s cookies and stored data from every container and signs you out of it. Its permissions stay.',
     failed: 'That did not work. Try again.'
   },
   site: {
@@ -118,7 +128,9 @@ export const SITE_DATA_TEXT = {
     // Chrome's site-details words ("Clear on exit"), which also fit the desktop popover's
     // menulist trailing the row; the description under each says when the clear runs – on a
     // host that clears at its next start, as a sentence about the effect (the #322 ruling (d)),
-    // never a second moment in the value line.
+    // never a second moment in the value line. The never-allow line speaks the Delete family's
+    // verb, as the never list's own line does (W8-11); the Clear-on-exit lines keep Chrome's kept
+    // name and its state words.
     options: {
       default: 'Use the default',
       allow: 'Always allow',
@@ -129,7 +141,7 @@ export const SITE_DATA_TEXT = {
       allow: 'The site can always use cookies, embedded in other sites too.',
       clearOnExit: 'Its cookies and data go when Zenium closes.',
       clearOnExitNextLaunch: 'Site data from this session is cleared the next time Zenium starts.',
-      block: 'No cookies; what it stored is cleared now.'
+      block: 'No cookies; what it stored is deleted now.'
     }
   }
 } as const
@@ -194,7 +206,9 @@ export function siteDataListDescription(list: SiteDataList, nextLaunch: boolean)
         ? 'These sites keep their cookies for the session; site data from the session is cleared the next time Zenium starts.'
         : 'These sites keep their cookies for the session; the cookies and stored data go when Zenium closes.'
     case 'block':
-      return 'These sites can never use cookies. What a site stored is cleared when it is added.'
+      // The never list's line speaks the Delete verb (W8-11): "What a site stored is deleted when
+      // it is added." The clear-on-exit line above keeps Chrome's kept name for that list.
+      return 'These sites can never use cookies. What a site stored is deleted when it is added.'
   }
 }
 

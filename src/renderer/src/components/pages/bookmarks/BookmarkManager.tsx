@@ -97,9 +97,10 @@ function initialFolder(tree: BookmarkTree, platform: Platform): string {
  * (Ctrl+Enter for a new tab), and the keyboard model of a file list. Ctrl-click is not the
  * selection's here as it is in Chrome's manager: on every page row it means one thing (§10.1
  * as amended) – open it behind this tab, as a middle click does – and picks nothing. The Edit
- * dialog
- * (#271) is the frame's (`TabDialogs`): a URL edit asked for here opens it over this page; a
- * folder rename asked for by the menus is done in place when the folder is in view.
+ * dialog (#271) is the frame's (`TabDialogs`): the menus' "Edit…" opens it over this page for a
+ * bookmark and for a folder alike ("Edit folder": the name and the parent folder, W8-F13); F2
+ * renames a folder in place and sends a bookmark to the dialog; "Add New Folder" is named in
+ * place.
  */
 export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const tree = useBookmarkTree(state)
@@ -322,7 +323,7 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
     setAnchorId(next)
   }
 
-  /** Rename: a folder in place; a bookmark in the frame's Edit dialog (#271). */
+  /** F2 (bookmarks-25's inline edit): a folder in place; a bookmark in the frame's Edit dialog (#271). */
   const rename = (node: BookmarkNode): void => {
     if (isBookmarkRoot(node.id)) return
     if (node.type === 'folder') setRenamingId(node.id)
@@ -398,21 +399,20 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
     })
   }
 
-  // The menus' "Rename…" on a folder and "Add New Folder" arrive from the main process as edit
-  // requests (`bookmark.edit`, set on the store by `openBookmarkChrome`): a new folder is made
-  // and named in place, a folder in view is renamed in place; anything else – a bookmark, a
-  // folder the list does not show (the bar's, while this page is up) – is the frame's dialog.
+  // The menus' "Add New Folder" arrives from the main process as an edit request with no id
+  // (`bookmark.edit`, set on the store by `openBookmarkChrome`): the folder is made and named
+  // in place. Every other request – a bookmark, a folder (the menus' "Edit…", in view or in the
+  // tree) – is the frame's dialog: one door behind the row's one word (W8-F13); the in-place
+  // rename of a folder in view stays F2's.
   useEffect(() => {
     const unsubscribe = uiStore.subscribe(() => {
       const request = uiStore.get().bookmarkEdit
-      if (!request || request.type !== 'folder') return
-      if (request.id && !rowIds.includes(request.id)) return
+      if (!request || request.type !== 'folder' || request.id !== null) return
       closeBookmarkChrome({ bookmarkEdit: null }, { keepFocus: true })
-      if (request.id) setRenamingId(request.id)
-      else createFolder(request.parentId)
+      createFolder(request.parentId)
     })
     return unsubscribe
-  }, [rowIds, createFolder])
+  }, [createFolder])
 
   // Keyboard navigation starts in the list; the search takes over once you type.
   useEffect(() => {

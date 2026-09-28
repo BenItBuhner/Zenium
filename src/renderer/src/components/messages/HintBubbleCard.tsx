@@ -1,0 +1,54 @@
+import type { JSX } from 'react'
+import { useLayoutEffect, useRef } from 'react'
+import { HINT_BUBBLE_ID, type HintBubble } from '@renderer/lib/iph'
+import { hintBubbleLeft } from './stack'
+
+interface Props {
+  bubble: HintBubble
+  /** On its way out: the stylesheet fades it (Chrome's `textbubble_out`, 200 ms). */
+  leaving: boolean
+  /** Report the card's height once laid out (the layer sizes the page's cover from it). */
+  onMeasure?: (height: number) => void
+}
+
+/**
+ * The in-product help bubble (TB-19): one sentence in §9.33's third kind of message – the one
+ * anchored panel the phone chrome has, in §9.20's pose and without Chrome's arrow (the lead's
+ * (a) on #641): flush against the bar band's inner edge at gap 0 – the layer's edge on the
+ * bar's side is that edge – end-aligned with the button it is about, clamped 8 inside the frame;
+ * the flush edge, the alignment and the button's pulse point at the button. It is placed once,
+ * as it goes up: the anchor's box was read by the hook that showed it, the layer's and the
+ * card's own here in one layout effect – the only layout read of the whole education – and
+ * written as `left`; nothing tracks the anchor after that, because whatever moves the anchor
+ * (a touch, a scroll, a rotation, the keyboard) takes the bubble down first
+ * (`useTabSwitcherHint`). A status region – a screen reader hears the sentence as it arrives –
+ * and, by `HINT_BUBBLE_ID`, the description the Tabs button carries while the bubble stands
+ * (`aria-describedby`, PhoneShell.tsx; the lead's (j)); the card takes no focus, as Chrome's
+ * popup is not focusable.
+ */
+export function HintBubbleCard({ bubble, leaving, onMeasure }: Props): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const layer = el?.parentElement
+    if (!el || !layer) return
+    const box = layer.getBoundingClientRect()
+    const anchorEnd = bubble.anchor.x + bubble.anchor.width - box.left
+    el.style.left = `${hintBubbleLeft(anchorEnd, el.offsetWidth, box.width)}px`
+    onMeasure?.(el.offsetHeight)
+  }, [bubble, onMeasure])
+  return (
+    <div
+      ref={ref}
+      id={HINT_BUBBLE_ID}
+      className="zen-message zen-hint-bubble"
+      data-surface="page"
+      data-edge={bubble.edge}
+      data-anchor={bubble.anchorItem}
+      data-leaving={leaving ? '' : undefined}
+      role="status"
+    >
+      <span className="zen-message-text">{bubble.text}</span>
+    </div>
+  )
+}

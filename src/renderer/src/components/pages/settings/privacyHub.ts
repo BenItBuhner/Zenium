@@ -10,9 +10,10 @@ import type { ThirdPartyCookieMode } from '@shared/privacy'
  * on screen (`SectionContext.reveal`, the section's `?group=` landing), trailing the chevron
  * that says so, or opens its dialog, with §9.1's ellipsis on its name and no chevron (the #553
  * lead check's F1 and Q5: a chevron is for a landing, an ellipsis for a dialog). The groups
- * themselves stay where they are under the cards, so the section still reads whole and the
- * search still finds every row; the cards are the desktop and tablet shells' (the phone's
- * Privacy page keeps its plain list, W7-6).
+ * themselves follow under the cards in the cards' order (the same check's Q6 ruling, built in
+ * W8-8: the pane's groups take the cards' order, so the page and its hub read alike), the
+ * section still reads whole and the search still finds every row; the cards are the desktop
+ * and tablet shells' (the phone's Privacy page keeps its plain list, W7-6 – in this order too).
  *
  * Chrome's list is Delete browsing data, Privacy Guide, Third-party cookies, Ad privacy,
  * Security, Site settings, Safety check. Privacy Guide (PS-40) has no page here yet and Ad

@@ -1,0 +1,13 @@
+{
+  "id": "tablet-hover-card",
+  "class": "TabletHoverCardDemo",
+  "shard": "tablet",
+  "mirrors": "android-tablet-hover-card-demo.yml",
+  "dir": "tablet-hover-card-demo",
+  "env": {
+    "DEMO_THEME": "light",
+    "DEMO_INSTRUMENT_FLAGS": "--no-hidden-api-checks"
+  },
+  "estimate": 3,
+  "note": "TABLET-05's hover card on the tablet chrome: a mouse rests on a sidebar row and the host draws the card (TabHoverCardView.kt, fed through chrome.hoverCard) above the live page - the placement against the sidebar's inner edge, the page's picture, the title and host line, the move to the next row without a second wait, the active row without a picture, the dismissals by leaving the rows and by a press. The hover acts run with UiAutomation disconnected (a hidden method, hence --no-hidden-api-checks), as the desktop windowing demo's: a WebView hands a mouse's hover to accessibility exploration while any service is enabled. The workflow's light act measured about 90 s of driver time on run 36335779110; the nightly runs the light scheme."
+}

@@ -275,6 +275,221 @@ describe('useLightDismiss: a press outside closes on pointerdown and is consumed
   })
 })
 
+describe('a popover that closed by itself leaves no swallowed press behind (W8-F11, §9.20)', () => {
+  /*
+   * The design lead's ruling on W8-F7's observation (the zoom bubble opened from its chip, Escape,
+   * and the first press on the Share chip swallowed): "§9.20's light dismiss consumes only the
+   * press that closes an open popover; after Escape has closed the zoom bubble none is open, so
+   * the first press on Share must land; whatever `popoverStore` still holds after an Escape close
+   * is the bug, not a rule." The pins: an Escape close (the component unmounts, the hook takes the
+   * registration out) leaves no swallow armed and no listener consuming; the observation's own
+   * mechanism – the reset's `zoom.changed` raising the step's bubble again, an OPEN popover under
+   * the Share press – keeps §9.20's consumption.
+   */
+  it('REPRO: a popover self-closing while a swallow is armed leaves it armed, and swallows the next click', async () => {
+    // The registry, driven without the hook (as the suite's last test is), so the arming and the
+    // self-close interleave exactly. A popover is open; an outside `pointerdown` closes it and arms
+    // the swallow for the rest of that press (§9.20). Then another popover opens and closes itself
+    // (Escape, a row chosen, its anchor toggled) – a close that dismisses nothing, so it must arm
+    // nothing and leave nothing armed. Before the fix the self-close's `syncListeners` reads the
+    // still-armed swallow and keeps the window listeners on, so the store goes on eating events
+    // with no open popover behind it: the next event to reach the swallow – a `click` a keyboard
+    // activation raises with no `pointerdown` before it to disarm it, or the residue of the arming
+    // press – is consumed. That residue is the bug (the design lead's ruling on W8-F7).
+    const bubble = document.createElement('div')
+    const anchor = document.createElement('button')
+    const page = document.createElement('div')
+    const other = document.createElement('button')
+    const onOther = vi.fn()
+    other.addEventListener('click', () => onOther())
+    document.body.append(bubble, anchor, page, other)
+    openPopover({ element: () => bubble, anchor: () => anchor, close: () => undefined })
+    expect(openPopoverCount()).toBe(1)
+    // The press that dismisses: its `pointerdown` closes the popover and arms the swallow (§9.20).
+    const down = pointer('pointerdown', page)
+    expect(down.defaultPrevented).toBe(true)
+    expect(openPopoverCount()).toBe(0)
+    // A popover self-closes: open one, then take it out through the registry's own unregister – the
+    // path `useLightDismiss` runs on unmount (Escape, a chosen row, the anchor toggled).
+    const unregister = openPopover({
+      element: () => document.createElement('div'),
+      close: () => undefined
+    })
+    unregister()
+    expect(openPopoverCount()).toBe(0)
+    // No popover is open. A `click` on another anchor – as a keyboard activation raises, with no
+    // `pointerdown` before it – must reach the anchor, not be eaten by a swallow left behind.
+    const click = mouse('click', other)
+    expect(click.defaultPrevented, 'the click after a self-close, no popover open').toBe(false)
+    expect(onOther).toHaveBeenCalledTimes(1)
+    bubble.remove()
+    anchor.remove()
+    page.remove()
+    other.remove()
+    await tick()
+  })
+
+  function pressLandsWhole(target: Element, onClick: ReturnType<typeof vi.fn>, what: string): void {
+    const down = pointer('pointerdown', target)
+    const mousedown = mouse('mousedown', target)
+    const up = pointer('pointerup', target)
+    const mouseup = mouse('mouseup', target)
+    const click = mouse('click', target)
+    for (const [name, e] of Object.entries({ down, mousedown, up, mouseup, click })) {
+      expect(e.defaultPrevented, `${name} of the press on ${what}`).toBe(false)
+    }
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(onClick).toHaveBeenCalledWith(what)
+  }
+
+  it('Escape: the zoom bubble closes by itself, the chip takes the keyboard back, and the FIRST press on Share lands whole', () => {
+    const onDismiss = vi.fn()
+    const onClick = vi.fn()
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="zoom" onDismiss={onDismiss} anchor="star" />
+      </Chrome>
+    )
+    q('[data-row="zoom"]').focus()
+    expect(openPopoverCount()).toBe(1)
+    // Escape stays with the popover: its trap closes it (the component unmounts, `useLightDismiss`
+    // unregisters) and hands the focus to its anchor (§9.22). The registry hears nothing of it.
+    rerender(<Chrome onClick={onClick} />)
+    q('[data-anchor="star"]').focus()
+    expect(openPopoverCount()).toBe(0)
+    expect(onDismiss).not.toHaveBeenCalled()
+    // The first press on the other anchor: nothing consumed, its click its own.
+    pressLandsWhole(q('[data-anchor="folder"]'), onClick, 'folder')
+    expect(onDismiss).not.toHaveBeenCalled()
+    // And a click with no press before it (Enter or Space on the anchor) is nobody's remainder.
+    const keyboard = mouse('click', q('[data-anchor="star"]'))
+    expect(keyboard.defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenLastCalledWith('star')
+  })
+
+  it('a row chosen, the anchor toggled: the same close by the popover itself, the same first press', () => {
+    const onClick = vi.fn()
+    // A row chosen: the popover unmounts itself, a press on the page follows.
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="menu" onDismiss={vi.fn()} anchor="star" />
+      </Chrome>
+    )
+    rerender(<Chrome onClick={onClick} />)
+    pressLandsWhole(q('[data-page]'), onClick, 'page')
+    onClick.mockClear()
+    // The anchor toggled from the keyboard (its Enter): the popover goes without a press, and the
+    // next press on the anchor is a fresh press.
+    rerender(
+      <Chrome onClick={onClick}>
+        <Popover name="menu" onDismiss={vi.fn()} anchor="star" />
+      </Chrome>
+    )
+    expect(openPopoverCount()).toBe(1)
+    rerender(<Chrome onClick={onClick} />)
+    pressLandsWhole(q('[data-anchor="star"]'), onClick, 'star')
+  })
+
+  it('a child closing by itself under its parent keeps the parent’s light dismiss on', () => {
+    const bubble = vi.fn()
+    const onClick = vi.fn()
+    function Bubble(): JSX.Element {
+      const ref = useRef<HTMLDivElement>(null)
+      useLightDismiss(ref, bubble, { anchor: () => q('[data-anchor="star"]') })
+      return (
+        <ChromePortal>
+          <div ref={ref} data-popover="bubble">
+            <button type="button" data-anchor="trigger">
+              folder
+            </button>
+          </div>
+        </ChromePortal>
+      )
+    }
+    render(
+      <Chrome onClick={onClick}>
+        <Bubble />
+        <Popover name="list" onDismiss={vi.fn()} anchor="trigger" />
+      </Chrome>
+    )
+    expect(openPopoverCount()).toBe(2)
+    // The list's Escape: the list alone goes; the bubble is still open, so a press outside it is
+    // still §9.20's consumed dismiss.
+    rerender(
+      <Chrome onClick={onClick}>
+        <Bubble />
+      </Chrome>
+    )
+    expect(openPopoverCount()).toBe(1)
+    const { down, click } = press(q('[data-page]'))
+    expect(bubble).toHaveBeenCalledWith('outside')
+    expect(down.defaultPrevented).toBe(true)
+    expect(click.defaultPrevented).toBe(true)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('W8-F7’s sequence: the reset’s bubble is an OPEN popover, and the press that closes it is consumed (§9.20 kept); the press after it lands', async () => {
+    const chipBubble = vi.fn()
+    const resetBubble = vi.fn()
+    const onClick = vi.fn()
+    // The chip's bubble, closed by Escape.
+    render(
+      <Chrome onClick={onClick}>
+        <Popover key="chip" name="zoom" onDismiss={chipBubble} anchor="star" />
+      </Chrome>
+    )
+    rerender(<Chrome onClick={onClick} />)
+    expect(openPopoverCount()).toBe(0)
+    // The reset (`tab.setZoom null`, as the F7 drive invoked it) came back as a `zoom.changed`
+    // and, as `showZoomBubble` had it before W8-F12, raised the step's own bubble – a notice that
+    // opened by itself, with no chip to hang from (the chip left with the zoom) and holding no
+    // focus. Since W8-F12 a change that leaves no chip raises no bubble on any road, so this is
+    // the store's own rule for a popover standing with no anchor, as the F7 observation met it.
+    rerender(
+      <Chrome onClick={onClick}>
+        <Popover key="reset" name="zoom" onDismiss={resetBubble} />
+      </Chrome>
+    )
+    expect(openPopoverCount()).toBe(1)
+    expect(chipBubble).not.toHaveBeenCalled()
+    // The Share press under it: the light dismiss closes that bubble and consumes the press –
+    // pointerdown cancelled (so no compatibility mousedown), pointerup and click swallowed.
+    const first = press(q('[data-anchor="folder"]'))
+    expect(resetBubble).toHaveBeenCalledTimes(1)
+    expect(resetBubble).toHaveBeenCalledWith('outside')
+    expect(first.down.defaultPrevented).toBe(true)
+    expect(first.up.defaultPrevented).toBe(true)
+    expect(first.click.defaultPrevented).toBe(true)
+    expect(onClick).not.toHaveBeenCalled()
+    expect(openPopoverCount()).toBe(0)
+    // The bubble unmounts on its dismiss; the swallow ends with the release; the second press is
+    // the anchor's own – the observation's "the second press works".
+    rerender(<Chrome onClick={onClick} />)
+    await tick()
+    pressLandsWhole(q('[data-anchor="folder"]'), onClick, 'folder')
+  })
+
+  it('the swallow armed by an outside press ends with that press: a click with no press after it is not swallowed', async () => {
+    const onDismiss = vi.fn()
+    const onClick = vi.fn()
+    render(
+      <Chrome onClick={onClick}>
+        <Popover name="bubble" onDismiss={onDismiss} anchor="star" />
+      </Chrome>
+    )
+    // The press that dismisses: down (consumed), up (swallowed), click (swallowed).
+    press(q('[data-page]'))
+    expect(onDismiss).toHaveBeenCalledWith('outside')
+    expect(onClick).not.toHaveBeenCalled()
+    rerender(<Chrome onClick={onClick} />)
+    await tick()
+    // Enter on the star: a click without a pointer press. Nothing left to swallow it.
+    const keyboard = mouse('click', q('[data-anchor="star"]'))
+    expect(keyboard.defaultPrevented).toBe(false)
+    expect(onClick).toHaveBeenCalledWith('star')
+  })
+})
+
 describe('useLightDismiss: scroll, resize, one at a time', () => {
   it('closes on a scroll or a wheel outside the popover, not on its own body scrolling', () => {
     const onDismiss = vi.fn()

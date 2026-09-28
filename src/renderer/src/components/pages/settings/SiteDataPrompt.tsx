@@ -64,9 +64,10 @@ function SiteDataPromptSheet({
  * The desktop's form: the primitive over the viewer's dialog, which it covers while it stands.
  * The prompt closes first and the clear runs at once (the dialog has no motion to wait for),
  * as the dialog chassis's own dismiss orders it; the way back is the primitive's default – the
- * control that had the focus as the prompt opened, the viewer's Clear all. The `data-dialog`
- * handle the desktop smoke reads (`confirm:<name>`) rides on the root beside the primitive's
- * `data-confirm`.
+ * control that had the focus as the prompt opened, the viewer's "Delete all data" or a row's
+ * "Delete data" (W8-11: the row asks the phone page's question as this notice, one form on both
+ * hosts). The `data-dialog` handle the desktop smoke reads (`confirm:<name>`) rides on the root
+ * beside the primitive's `data-confirm`.
  */
 function SiteDataPromptDialog({
   name,

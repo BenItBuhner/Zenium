@@ -1,0 +1,112 @@
+name: Android tablet hover card demo
+
+# Records TABLET-05's HOVER CARD – the tablet tab surface's card drawn by the HOST above the page
+# (TabHoverCardView.kt, fed through `chrome.hoverCard` by the core's hover-card controller) – on
+# a hardware-accelerated emulator of the pixel_tablet profile, laid out at 1280 x 800 dp at one
+# px per dp (`wm size 1280x800`, `wm density 160`, as the tablet layout demo), and uploads the
+# video, the stills and the driver's findings. TabletHoverCardDemo drives a MOUSE through the
+# input dispatcher (DemoHarness.Mouse) with accessibility off, so the hover reaches Blink, and
+# reads each claim off the host's card view, the chrome's stores, the core's state and the page
+# views, never off the still alone; the run FAILS when one does not hold: no card view exists
+# before the first hover (the P0 boot path: the host registration alone runs at boot); the
+# pointer resting on Gamma's row raises the host's card after the desktop's 800 ms – 320 wide, the
+# §9.31 panel, the page's picture as the inner box, the title on two lines, the host de-emphasised
+# – flush against the sidebar's inner edge with its top on the row's (placeHoverCard's rule as the
+# Kotlin twin lays it), while `ui.hoverCard` stays hidden and Home's page keeps playing under it
+# (no capture, no DOM card); the pointer moving to the next row moves the card without waiting
+# and the active tab's card carries no picture; the pointer leaving the rows takes it down after
+# the leave grace, a press on a row takes it down at once and activates the row. Two acts, in
+# parallel, each on its own emulator: the light and the dark colour scheme (the same claims; the
+# stills of both are the design gate's). Dispatch-only, like the other demos: about fifteen
+# minutes an act, and it says nothing about a change being correct. The build, the emulator and
+# the Gradle cache live in android-emulator-demo.yml; this file picks the driver, the display and
+# the theme. The instrumentation runs with --no-hidden-api-checks: a mouse button's press and
+# release name their button through MotionEvent.setActionButton, a test API. One more boot per
+# act when the emulator itself went away under the driver, never when the driver failed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-hover-card-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Tablet hover card demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the card is the tablet chrome's, beside its expanded sidebar.
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletHoverCardDemo
+        DEMO_DIR=tablet-hover-card-demo
+        DEMO_OUT=artifacts/android-tablet-hover-card-demo
+        DEMO_VIDEO=android-tablet-hover-card-demo-light.mp4
+        DEMO_THEME=light
+        DEMO_DISPLAY=1280x800@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-tablet-hover-card-demo-light
+      artifact-path: artifacts/android-tablet-hover-card-demo/
+
+  light-again:
+    name: Tablet hover card demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletHoverCardDemo
+        DEMO_DIR=tablet-hover-card-demo
+        DEMO_OUT=artifacts/android-tablet-hover-card-demo
+        DEMO_VIDEO=android-tablet-hover-card-demo-light.mp4
+        DEMO_THEME=light
+        DEMO_DISPLAY=1280x800@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-tablet-hover-card-demo-light-second-boot
+      artifact-path: artifacts/android-tablet-hover-card-demo/
+
+  dark:
+    name: Tablet hover card demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletHoverCardDemo
+        DEMO_DIR=tablet-hover-card-demo
+        DEMO_OUT=artifacts/android-tablet-hover-card-demo
+        DEMO_VIDEO=android-tablet-hover-card-demo-dark.mp4
+        DEMO_THEME=dark
+        DEMO_DISPLAY=1280x800@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-tablet-hover-card-demo-dark
+      artifact-path: artifacts/android-tablet-hover-card-demo/
+
+  dark-again:
+    name: Tablet hover card demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletHoverCardDemo
+        DEMO_DIR=tablet-hover-card-demo
+        DEMO_OUT=artifacts/android-tablet-hover-card-demo
+        DEMO_VIDEO=android-tablet-hover-card-demo-dark.mp4
+        DEMO_THEME=dark
+        DEMO_DISPLAY=1280x800@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-tablet-hover-card-demo-dark-second-boot
+      artifact-path: artifacts/android-tablet-hover-card-demo/

@@ -254,9 +254,26 @@ export interface PageMessage {
      * progress, so memory pressure leaves the tab alone until its next document (OS-37).
      */
     | 'formEdited'
+    /**
+     * Roll (`shared/game/bridge.ts`), from the no-connection page or `zen://game`: the ask for
+     * the profile's best score at mount, or a run's best at a crash (`GameService`).
+     */
+    | 'game'
+    /**
+     * The top document's text selection settled, or collapsed (`shared/selectionScript`; the
+     * Electron preload alone): the selection menu's model (`core/selectionMenu`) reads it.
+     */
+    | 'selection'
   url?: string
   /** `editing`: whether a text field of the reporting frame has the keyboard. */
   editing?: boolean
+  /** `selection`: the report (`SelectionReport`, validated by the core). */
+  selection?: unknown
+  /**
+   * `selection`: the reporting frame's extension-API id (`extensionApi/frames` – 0 for the top
+   * frame), stamped by the host from the sender frame; the core takes the top frame's alone.
+   */
+  frameId?: number
   /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
   id?: string
   directive?: string | null
@@ -309,6 +326,8 @@ export interface PageMessage {
   readAloud?: unknown
   /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
   capture?: unknown
+  /** `game`: the ask or the report (`GameWindowMessage`, validated by the core). */
+  game?: unknown
 }
 
 /** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
@@ -1278,10 +1297,11 @@ export interface WindowHost {
    */
   focusedRect?(): Promise<Rect | null>
   /**
-   * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
-   * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
-   * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
-   * layered view (`HostCapabilities.popupSurface` false) leave this out.
+   * Show the popup surface – a second chrome document (`index.html?surface=popup`: the autofill
+   * picker, the selection's mini menu) floated above the page views – at `bounds` (window CSS
+   * pixels), or take it down with null. It never takes the keyboard when shown; the page the
+   * picker or the menu hangs from keeps it. Hosts without a layered view
+   * (`HostCapabilities.popupSurface` false) leave this out.
    */
   setPopupSurface?(bounds: Rect | null): void
 }
@@ -2700,6 +2720,29 @@ export interface PrintingHost {
 }
 
 /**
+ * A PDF the inline viewer shows (`capabilities.pdfViewer`; `core/pdf.ts`), for the system's
+ * print flow (`capabilities.pdfPrint`; Android's `PrintManager` with a document adapter that
+ * writes the PDF's bytes to the job – Chrome Android prints its viewer's PDF the same way). The
+ * document is exactly one of `path` and `data`; a job with both or neither is refused (the host
+ * answers false). The core hands `data` for both of its cases – the file's bytes as downloaded
+ * when the form was not touched, the bytes of a copy with the form's values written in
+ * (pdf.js's incremental save) when it was: the download's file lives in the public collection,
+ * which is no path the host takes.
+ */
+export interface PdfPrintJob {
+  tabId: string
+  /** The job's name in the print queue: the file's (the host drops a `.pdf`). */
+  name: string
+  /**
+   * A file the host holds under its own directories (its files or cache directory – the host
+   * accepts no other file through the bridge, `PdfPrint.kt`); null with `data`.
+   */
+  path: string | null
+  /** The bytes to print, base64; null with `path`. */
+  data: string | null
+}
+
+/**
  * The OS media controls on a host whose engine feeds none of its own (the Android WebView), or
  * whose own instance Zenium replaces (Linux MPRIS, so the desktop sees "Zenium" and one player;
  * Windows' SMTC and macOS's Now Playing stay Chromium's). The core resolves one session – the
@@ -3102,6 +3145,12 @@ export interface Platform {
   readonly spellcheck?: SpellcheckHost
   /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
   readonly printing?: PrintingHost
+  /**
+   * The system print flow for a PDF the inline viewer shows (`capabilities.pdfPrint`; Android).
+   * Resolves true once the job is handed to the system's print dialog, false when the host
+   * would not take it; omit where the engine prints its own PDF viewer's document.
+   */
+  readonly printPdf?: (job: PdfPrintJob) => Promise<boolean>
   /** Screens, windows and tabs a page may capture (`capabilities.screenCapture`). */
   readonly screenCapture?: ScreenCaptureHost
   /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */

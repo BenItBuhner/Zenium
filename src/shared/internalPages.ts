@@ -24,6 +24,7 @@
  * {@link INTERNAL_PAGES}, so a page can be tried against the mechanism before it is registered.
  */
 import type { FormFactor, HostCapabilities, OverlayKind, Platform } from './types'
+import { GAME_TITLE } from './game/page'
 
 /** The scheme `tab.url` carries for every internal document and page. */
 export const INTERNAL_SCHEME = 'zen'
@@ -56,6 +57,7 @@ export type InternalPageId =
   | 'pdf'
   | 'tasks'
   | 'version'
+  | 'game'
 
 /**
  * How a page's tab holds its page.
@@ -77,7 +79,8 @@ export type InternalPageRender = 'chrome' | 'document'
  * The glyph a page tab shows in its favicon slot – the pill, the sidebar row, the tab strip, the
  * overview card – named for the renderer to draw (Lucide's `settings`, `history`, `star`,
  * `download`, `scale` for the Licences page, `sparkles` for What's new, `file-text` for the
- * legal pages, `activity` for the task manager); a page tab never fetches a favicon.
+ * legal pages, `activity` for the task manager; `roll` is Roll's own picture, `shared/game/
+ * mark.ts`, not a Lucide glyph); a page tab never fetches a favicon.
  */
 export type InternalPageGlyph =
   | 'settings'
@@ -89,6 +92,7 @@ export type InternalPageGlyph =
   | 'file-text'
   | 'activity'
   | 'book-open'
+  | 'roll'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -133,8 +137,8 @@ export interface InternalPageSubpage {
 export function sectionAvailable(section: InternalPageSection, caps: HostCapabilities): boolean {
   const { requires } = section
   if (requires === undefined) return true
-  if (typeof requires === 'string') return caps[requires]
-  return requires.some((cap) => caps[cap])
+  if (typeof requires === 'string') return caps[requires] === true
+  return requires.some((cap) => caps[cap] === true)
 }
 
 export interface InternalPageDefinition {
@@ -710,6 +714,25 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     title: 'About Version',
     render: 'document',
     singleton: false,
+    pill: { showStar: true },
+    splittable: true,
+    sections: []
+  },
+  /**
+   * Roll, the offline game (`zen://game`, ERR-03 / WID-04; `shared/game/`): the game the
+   * no-connection page carries, on a page of its own – Chrome's `chrome://dino`, an ordinary
+   * page every open of which is a tab of its own (`offline.ts:1481-1493`). A document page
+   * (`zenPages.ts`'s `gamePageHtml`) on every host; `chrome://dino` typed into the bar is its
+   * alias (`shared/url.ts`); the 1×1 widget lands here. Its favicon slot wears the game's
+   * picture (§9.17: "a chrome page never wears the globe") – the ring mid-roll on its ground
+   * line, `shared/game/mark.ts`, the same picture as the widget's face.
+   */
+  game: {
+    id: 'game',
+    title: GAME_TITLE,
+    render: 'document',
+    singleton: false,
+    glyph: 'roll',
     pill: { showStar: true },
     splittable: true,
     sections: []

@@ -638,10 +638,11 @@ export class ElectronWindow implements WindowHost {
   // ---------------------------------------------------------------------------
 
   /**
-   * The picker's document in a `WebContentsView` above every page view, at `bounds` (window CSS
+   * The popup surface's document (`index.html?surface=popup`: the autofill picker, the
+   * selection's mini menu) in a `WebContentsView` above every page view, at `bounds` (window CSS
    * pixels); null hides it. Showing never moves the keyboard: the view is added without focus and
    * the page field keeps typing. Hidden, the document stays loaded for `POPUP_SURFACE_IDLE_MS` so
-   * the next picker is instant, then it is closed.
+   * the next picker or menu is instant, then it is closed.
    */
   setPopupSurface(bounds: Rect | null): void {
     if (!this.alive) return
@@ -694,11 +695,11 @@ export class ElectronWindow implements WindowHost {
     })
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       const url = new URL(process.env['ELECTRON_RENDERER_URL'])
-      url.searchParams.set('surface', 'autofill')
+      url.searchParams.set('surface', 'popup')
       void wc.loadURL(url.toString())
     } else {
       void wc.loadFile(join(__dirname, '../renderer/index.html'), {
-        query: { surface: 'autofill' }
+        query: { surface: 'popup' }
       })
     }
     return view

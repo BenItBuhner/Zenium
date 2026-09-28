@@ -796,4 +796,30 @@ describe('every native menu the core builds, marked for Windows and Linux', () =
     h.menu(pageParams({ linkURL: LINK }))
     for (const item of h.shown()) expect(item.label ?? '').not.toContain('&')
   })
+
+  it('a bookmark folder’s menu marks &Edit… by the rule (W8-F13: the one word for both types), the letter no other row of the level holds; no menu carries Rename…, so the table keeps no letter for it', () => {
+    for (const surface of ['bar', 'manager'] as const) {
+      const h = pageHarness(DESKTOP, {})
+      const folder = h.browser.bookmarks.createFolder(BOOKMARKS_BAR_ID, 'Reading')!
+      h.browser.bookmarks.create({ parentId: folder.id, title: 'A', url: LINK })
+      h.browser.handleCommand(h.win, 'bookmark.contextMenu', {
+        ids: [folder.id],
+        folderId: BOOKMARKS_BAR_ID,
+        x: 10,
+        y: 10,
+        surface
+      })
+      const out = withMnemonics(h.shown(), 'linux')
+      const labels = out.map((item) => item.label ?? '')
+      expect(labels).toContain('&Edit…')
+      expect(labels.some((l) => parseMnemonic(l).text.startsWith('Rename'))).toBe(false)
+      const letters = labels
+        .map((l) => parseMnemonic(l).mnemonic)
+        .filter((m): m is string => m !== undefined)
+      expect(letters.filter((m) => m === 'e')).toHaveLength(1)
+      expect(new Set(letters).size).toBe(letters.length)
+    }
+    expect(tableEntry('Rename…')).toBeUndefined()
+    expect(tableEntry('Edit…')).toBeUndefined()
+  })
 })

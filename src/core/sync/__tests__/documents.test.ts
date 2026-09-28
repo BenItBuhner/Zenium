@@ -150,6 +150,8 @@ describe('the open-tabs record', () => {
         id: 'new',
         url: 'https://new.example/',
         lastActiveAt: 20,
+        // Quick Delete's stamp (HB-07) is the device's own: it never travels.
+        lastNavigatedAt: 1_700_000_000_000,
         customTitle: 'Mine',
         favicon: 'https://new.example/icon.png',
         windowId: 'win_2'

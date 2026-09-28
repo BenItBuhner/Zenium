@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './extensions.css';
 @import './translate.css';
+@import './selection.css';
 /* The chrome is built from two roots (Electron renderer, Android WebView); always scan the UI. */
 @source '../';
 
@@ -28,6 +29,12 @@
   --zen-accent-rgb: 98 100 220;
   --zen-panel-rgb: 251 251 252;
   --zen-texture: 0;
+  /*
+   * Roll's mark in a favicon slot (§9.17, `shared/game/mark.ts`): the brand indigo of the widget's
+   * mark rule (`widget_search_mark`), lifted in the dark theme – not the space's accent, which the
+   * page's runner wears; `mark.test.ts` holds both values to `ROLL_MARK_INDIGO`.
+   */
+  --zen-roll-mark: #6264dc;
 
   /* Ink and fills: alphas of the foreground. */
   --zen-element-bg: rgb(var(--zen-fg-rgb) / 0.07);
@@ -99,6 +106,7 @@
 
 :root[data-theme='dark'] {
   --zen-panel-rgb: 23 23 25;
+  --zen-roll-mark: #8284f0;
   --zen-on-accent: #101010;
   --zen-ok: #6fd39a;
   --zen-ok-rgb: 111 211 154;
@@ -931,6 +939,8 @@
   --zen-accent: var(--v2-text);
   /* The chrome's easing (§7), which the v2 button's press transition reads. */
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The chrome's corner (§2: the squircle on radius 8 and up), which the game-over card reads. */
+  --zen-corner: squircle;
   height: 100%;
   color-scheme: light;
 }
@@ -1238,6 +1248,122 @@
 .zen-v2-button[data-primary] .zen-interstitial-punycode {
   color: inherit;
   opacity: 0.69;
+}
+/*
+ * Roll, the offline game (ERR-03, §9.17; `shared/game/`): the stage above the no-connection
+ * page's title, and alone on `zen://game` – a region the content column wide, at most 600 by 150
+ * (Chrome's runner's size), the runner and the cards drawn in the page's tokens by the document's
+ * inline runtime, so the stylesheet gives the stage no colour. The start hint sits across the
+ * stage's middle in the deemphasised ink; the game-over card is a v2 card at 8 (the squircle,
+ * `--zen-corner`) over the stage, "Game over" at the heading size, the score line deemphasised
+ * and tabular, Play again its one primary; the live region is the screen reader's alone.
+ * `touch-action: none` keeps a swipe on the stage the game's (a downward swipe mid-air is the
+ * speed drop). The card's arrival is the runtime's (Web Animations: a 180 ms pop, a 120 ms
+ * opacity fade under reduced motion, §11.3), not a transition here – the page's cut carries no
+ * reduced-motion remover of its own; the card is centred by its auto margins, never by a
+ * `transform`, so the pop's `scale()` composes with the centring instead of replacing it (the
+ * first line's B1 on #607: a `translateX(-50%)` here made the card arrive half its width off).
+ * The night is the region's: the runtime sets `data-theme` on `.zen-game` alone, and
+ * `zenPages.ts` restates the theme's tokens under that attribute (`gameStageThemeStyle`), so the
+ * hint, the card and the stage's palette flip while the page around them keeps its colours; the
+ * night's sky is the runtime's rounded box on the canvas (§9.31's inner box), not a rule here.
+ * The ring is the keyboard's alone (§1, A11Y-09): the runtime cancels the press and focuses the
+ * region itself, so Chromium records no pointer-made focus and `:focus-visible` reads the
+ * script's focus as the keyboard's – it rang under a finger (#607's night stills). The
+ * coarse-pointer suppressor below is the chrome's own form (the legacy buttons', further down)
+ * on the region: it stands the ring down unless the keyboard is what the user drives with
+ * (`data-input='keyboard'` on the root, which the runtime keeps in the served documents as
+ * lib/lastInput.ts does in the chrome), and never touches the pane chord's twin.
+ */
+.zen-game {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 0 24px;
+  outline: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.zen-game:focus-visible,
+.zen-game[data-keyboard-focus]:focus {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 4px;
+  border-radius: var(--v2-radius-inner);
+}
+:root[data-pointer='coarse']:where(:not([data-input='keyboard'])) .zen-game:focus-visible {
+  outline: none;
+}
+.zen-game-stage {
+  display: block;
+  max-width: 100%;
+}
+.zen-game-hint {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  left: 0;
+  margin: 0;
+  text-align: center;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  pointer-events: none;
+}
+.zen-game-hint[hidden] {
+  display: none;
+}
+.zen-game-over {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 200px;
+  max-width: 100%;
+  margin-inline: auto;
+  padding: var(--v2-card-padding);
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-card);
+  color: var(--v2-text);
+}
+.zen-game-over[hidden] {
+  display: none;
+}
+.zen-game-over-title {
+  margin: 0;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-heading);
+}
+.zen-game-over-score {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-game-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.zen-game-page main {
+  display: flex;
+  justify-content: center;
+}
+.zen-game-page .zen-game {
+  margin: 0;
 }
 
 @layer base {
@@ -1834,6 +1960,49 @@
     .zen-tab-state {
       display: none;
     }
+  }
+  /*
+   * The strip's states (parity tabs-61 / tabs-63; design language v2 §9.37, §9.29, §9.19, §11)
+   * are the sidebar's row's, laid along the caption band: rest, the hover fill, the pressed fill
+   * at full ink, the active pill separated, the group's line in the band's top inset (below) and
+   * the 24 px edge fades (`useFadeEdges` on the scroller) – with no strip surface and no
+   * hairline, so the frame colour under every state is the window's: the Space's gradient in the
+   * theme's ink, and in a private window the private theme with its accent
+   * (`.zen-window[data-window-kind='private']`, §9.19). Chromium (`chrome/browser/ui/views/tabs/
+   * tab.cc`, `.../horizontal_tab_style_views.cc`) is read for behaviour alone – what a state is
+   * and when it arrives – never for a shape or a colour.
+   *
+   * ACTIVE. The separated pill on `--v2-window-fill` (the `.zen-tab` rule above), never Chrome's
+   * merged tab-into-toolbar shape, which would need a toolbar surface the window family does not
+   * paint: the toolbar row under it is the same transparent window surface, so there is no seam
+   * to close. Like Chrome's active tab it takes no hover fill: `[data-active]` stands after
+   * `:hover` in the cascade at the same specificity.
+   *
+   * HOVER. `--v2-window-fill-hover`, arriving and leaving over §11's 120 ms on `--zen-ease` –
+   * the `.zen-tab` rule's own transition, one curve both ways (Chrome fades its hover over the
+   * `GlowHoverController`'s 200 ms; the strip keeps the sheet's one state duration) – and a cut
+   * under reduced motion: the remover at the sheet's end takes the transition, a fill change
+   * being none of the fades §11.3 keeps.
+   *
+   * PRESSED. §9.29: every window control's press takes the window's `--v2-control-fill-hover` at
+   * full ink, never `--v2-selected` – on the window family that is `--v2-window-fill-hover`, so
+   * under a pointer that hovers the press changes nothing the hover has not, and under a finger
+   * or a pen it brings the fill the hover would have. The row's ink is full at rest (§9.29:
+   * labels are full ink; the slot's glyphs are toolbar buttons on their own rule), so the press
+   * adds the fill alone. Chrome selects the tab on the press itself (`Tab::OnMousePressed` →
+   * `SelectTab`); Zenium's rows commit the activation on the click (`TabItem`), so the press is a
+   * state and not the activation, and the pill arrives with the release. The active pill changes
+   * nothing on a press, as the sidebar's does not; no scale: the press is also the drag's start
+   * (`startTabDrag`), whose ghost takes the row's box. A group's chip is a window control and
+   * takes the press; a press on a split row's segment is the row's (`:active` climbs).
+   *
+   * SEPARATORS. §9.37's are the 4 px gaps between the rows (`STRIP_GAP`, the lists' `gap-1`) –
+   * the sidebar's spacing turned, never Chrome's hairlines between inactive tabs; §9.35's 1 × 16
+   * hairline is the split group's shared edge inside one row and stays there.
+   */
+  .zen-tab-strip .zen-tab:not(.zen-split-seg, [data-active='true']):active,
+  .zen-tab-strip .zen-split-row:not([data-active='true']):active {
+    background: var(--v2-window-fill-hover);
   }
   /*
    * A group in the strip: the shell spans the band's height so the group's colour can run as
@@ -3470,6 +3639,101 @@
   }
   .zen-message-well > * {
     grid-area: 1 / 1;
+  }
+
+  /*
+   * The in-product help bubble (TB-19; components/messages/HintBubbleCard.tsx, lib/iph.ts):
+   * §9.33's third kind of message – the one anchored panel the phone chrome has, in §9.20's
+   * pose and without Chrome's arrow (the lead's (a)–(k) on #641, design-gate-requests.md):
+   * flush against the bar band's inner edge at gap 0 – the layer's edge on the bar's side is
+   * that edge – end-aligned with the button it is about and clamped 8 inside the frame (the
+   * card's layout effect writes `left`, once, as it goes up); 320 wide, §9.20's notice width,
+   * so the sentence sits on two lines inside its 288 (16 of padding a side, Chrome's own
+   * `textbubble_text.xml` l.17–23); `--v2-accent` filled with `--v2-on-accent` ink and no
+   * hairline – the fill is the edge, a tip reads as a tip and not a toast – under the panel
+   * shadow, the body 15/400 (`.zen-message`), the same tokens in dark. Motion is Chrome's:
+   * up over 200 ms as alpha 0 → 1 with 10 px of travel out of the bar's band
+   * (`textbubble_in.xml`; `--zen-hint-from` turns it round under a top-docked bar), out on a
+   * 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade §11.3
+   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down.
+   */
+  .zen-hint-bubble {
+    --zen-message-text-inset: 0;
+    --zen-hint-from: 10px;
+    position: absolute;
+    left: var(--zen-message-inset);
+    width: 320px;
+    max-width: calc(100% - 2 * var(--zen-message-inset));
+    padding: 16px;
+    border: 0;
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+    animation: zen-hint-bubble-in 200ms linear;
+  }
+  .zen-hint-bubble[data-edge='bottom'] {
+    bottom: 0;
+  }
+  .zen-hint-bubble[data-edge='top'] {
+    --zen-hint-from: -10px;
+    top: 0;
+  }
+  .zen-hint-bubble[data-leaving] {
+    animation: zen-fade-out 200ms linear forwards;
+    pointer-events: none;
+  }
+  @keyframes zen-hint-bubble-in {
+    from {
+      opacity: 0;
+      transform: translateY(var(--zen-hint-from, 10px));
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  /*
+   * The anchor's pulse while its bubble is up (Chrome's `HighlightShape.CIRCLE` on the tab
+   * switcher button: a circle in the accent at alpha 76 / 255, 16 dp growing to 19.2 dp and back
+   * over 2.5 s – `PulseDrawable.java` l.39, l.208–231, l.263, `dimens.xml` l.129): §9.23's halo,
+   * the accent at 30 % as the listening mic's (`.zen-voice-halo`) – never the page's selection
+   * token – a 32 px disc scaled 1 → 1.2 and back over 1.25 s each way, Chrome's cycle (the
+   * lead's (i)). The bar carries the item the bubble is about (`data-iph-anchor`,
+   * PhoneShell.tsx); the pulse is the bubble's and lives in its block, so the accent stays within
+   * the messages' span. The alpha is in the colour because no rule of the bar's writes an
+   * opacity but the sheet's recede (lib/__tests__/recede.test.ts). Under reduced motion the
+   * sheet's one remover takes the animation and the disc stands still at its rest.
+   */
+  .zen-phone-bar[data-iph-anchor='tabs'] [data-bar-item='tabs'] {
+    position: relative;
+  }
+  .zen-phone-bar[data-iph-anchor='tabs'] [data-bar-item='tabs']::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 32px;
+    height: 32px;
+    margin: -16px 0 0 -16px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--v2-accent) 30%, transparent);
+    pointer-events: none;
+    animation: zen-iph-pulse 1250ms cubic-bezier(0.8, 0, 0.6, 1) infinite alternate;
+  }
+  @keyframes zen-iph-pulse {
+    from {
+      transform: scale(1);
+    }
+    to {
+      transform: scale(1.2);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-hint-bubble {
+      animation: zen-fade 120ms linear !important;
+    }
+    .zen-hint-bubble[data-leaving] {
+      animation: zen-fade-out 120ms linear forwards !important;
+    }
   }
 
   .zen-suggestion {
@@ -8498,6 +8762,71 @@
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
+  /*
+   * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml`): the
+   * type's glyph in the page's own tile – 56 at radius 8 with the space's corner shape on the
+   * card surface's `--v2-fill` (the card is a page surface: the tile takes its fill, not the
+   * window's), the glyph 24 (§9.29's phone tile and its icon; the gate on #642 read a tinted
+   * 56 / 12 tile as a near-twin of the shortcuts' that isn't the same object) in the type's ink,
+   * the success ink for the permissions already removed and the accent for the two asks – and,
+   * 16 to its right, §9.23's title block: the title at 17/600 on 22 on two lines at most,
+   * balanced so a short noun never strands ('Removed permissions / for 2 sites'), over the
+   * one-line description at 15 in the deemphasised ink. Chrome's tile is 60 with a 28 glyph
+   * and a 16 radius.
+   */
+  :root[data-form-factor='phone'] .zen-mstack-safety {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-tile {
+    display: flex;
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-card);
+    corner-shape: var(--zen-corner);
+    background: var(--v2-fill);
+    color: var(--v2-accent);
+  }
+  :root[data-form-factor='phone']
+    .zen-mstack-safety[data-type='revoked-permissions']
+    .zen-mstack-safety-tile {
+    color: var(--v2-ok);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-tile > svg {
+    width: 24px;
+    height: 24px;
+    stroke-width: var(--v2-icon-stroke);
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 2px;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-title {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-heading);
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  :root[data-form-factor='phone'] .zen-mstack-safety-summary {
+    overflow: hidden;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   /* The action row at the card's foot: one hugging button, leading (§9.11's in-row form); a card whose rows are its whole act has none. */
   :root[data-form-factor='phone'] .zen-mstack-actions {
     display: flex;
@@ -9282,6 +9611,42 @@
   .zen-message-frame[data-edge='top']
   .zen-message-stack {
   transform: translate3d(0, calc((1 - var(--zen-bar-hide)) * var(--zen-bar-hide-travel)), 0);
+}
+/*
+ * The toast frame lifted above the sheet host (v2 §9.33, `PhoneMessages`): a toast up while a
+ * sheet stands – raised by an act taken in it, or up already as it opened – stands above that
+ * sheet for its clock, 8 over the sheet's edge and its content – the frame's bottom is the
+ * inset's line, where the sheet's own edge is (the sheet pads its content 8 + inset; the
+ * keyboard is in the inset, so a raised keyboard lifts the toast with the sheet's edge), the
+ * card the layer's usual 8 inside it, the same side insets, cap and centring as under the bar –
+ * and never over a footer's actions: a sheet with a footer band publishes where the band's top
+ * edge stands over its bottom edge (the recede registry's `footer`, the host writes it on the
+ * frame as `--zen-sheet-footer`), and the frame's bottom stands there instead, the card 8 over
+ * the band. It does not recede: it is over the sheet, not under it. As the sheet moves, the
+ * frame rides the sheet's own progress between the seat over the sheet and the normal seat,
+ * `(foot − footer) × (p − 1)` (`--zen-recede` is written on the frame, a registered surface:
+ * the value does not inherit), so its box at p = 0 is the normal seat's box: a toast up as the
+ * sheet rises goes with it to the sheet's edge, and at the landing, when the host seats it
+ * normally again, the re-seat moves nothing – `--zen-recede` is 0 on the frame from the
+ * registry clearing it to the host's re-seat (the property's initial value), and the box is the
+ * same. `--zen-message-foot` is what the normal seat's bottom edge stands over the inset by –
+ * the bar band on the bar's edge, the gutter elsewhere – said on the lifted frame alone; the
+ * normal seat's rules above are #202's, unchanged.
+ */
+:root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge='bottom'] {
+  --zen-message-foot: var(--zen-phone-band);
+}
+:root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge='top'],
+:root[data-form-factor='phone'][data-bar-away] .zen-message-frame[data-lifted][data-edge='bottom'] {
+  --zen-message-foot: var(--zen-padding);
+}
+:root[data-form-factor='phone'] .zen-message-frame[data-lifted][data-edge] {
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-sheet-footer, 0px));
+  transform: translate3d(
+    0,
+    calc((var(--zen-message-foot) - var(--zen-sheet-footer, 0px)) * (var(--zen-recede, 0) - 1)),
+    0
+  );
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */

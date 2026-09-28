@@ -66,4 +66,14 @@
     <dimen name="widget_quick_actions_medium_button_margin">3dp</dimen>
     <dimen name="widget_quick_actions_medium_button_radius">27dp</dimen>
     <dimen name="widget_quick_actions_medium_button_padding">17dp</dimen>
+
+    <!-- The game widget (GameWidgetProvider, res/layout/widget_game.xml; WID-04): one cell, whose minimum the
+         platform states as 70 dp a cell less 30 (40 dp); the card fills the cell the launcher gives and is
+         clipped to the extra-small card's 16 dp radius (the system's widget radius on Android 12+,
+         values-v31/dimens.xml); the glyph – the mark rolling on its ground line – a 32 dp box at the card's
+         centre; the picker's preview a 64 dp square where the picker renders the layout (API 31). -->
+    <dimen name="widget_game_size">40dp</dimen>
+    <dimen name="widget_game_radius">16dp</dimen>
+    <dimen name="widget_game_glyph">32dp</dimen>
+    <dimen name="widget_game_preview">64dp</dimen>
 </resources>

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { BottomSheet, SHEET_EDGE_PAD } from '../sheet/BottomSheet'
+import { recedeDepth, recedeFooter } from '@renderer/lib/motion/recede'
 import { uiStore } from '@renderer/lib/ui'
 
 /*
@@ -66,7 +67,7 @@ afterEach(() => {
   act(() => uiStore.set({ insets: { top: 0, right: 0, bottom: 0, left: 0 } }))
 })
 
-function renderSheet(): HTMLElement {
+function renderSheet(withFooter = true): HTMLElement {
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
@@ -75,14 +76,16 @@ function renderSheet(): HTMLElement {
       <BottomSheet
         onDismissed={() => undefined}
         footer={
-          <>
-            <button type="button" className="zen-v2-button">
-              Cancel
-            </button>
-            <button type="button" className="zen-v2-button" data-primary>
-              Save
-            </button>
-          </>
+          withFooter ? (
+            <>
+              <button type="button" className="zen-v2-button">
+                Cancel
+              </button>
+              <button type="button" className="zen-v2-button" data-primary>
+                Save
+              </button>
+            </>
+          ) : undefined
         }
       >
         <p>A notice.</p>
@@ -90,6 +93,13 @@ function renderSheet(): HTMLElement {
     )
   )
   return document.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')!
+}
+
+function unmountSheet(): void {
+  act(() => root!.unmount())
+  root = null
+  mount?.remove()
+  mount = null
 }
 
 describe("the footer's edge (§9.25)", () => {
@@ -105,10 +115,37 @@ describe("the footer's edge (§9.25)", () => {
       // The sheet pads for the inset in full over its own 8: never an 8 floor the inset replaces.
       expect(parseFloat(sheet.style.paddingBottom)).toBe(SHEET_EDGE_PAD + inset)
       expect(bottom + parseFloat(sheet.style.paddingBottom)).toBe(edge)
-      act(() => root!.unmount())
-      root = null
-      mount?.remove()
-      mount = null
+      unmountSheet()
+    }
+  })
+
+  it("a sheet with the actions band publishes the band's top edge to the recede registry – its height on the chassis's 8, the inset left out – and one without says 0 (§9.33)", () => {
+    // happy-dom lays nothing out: the band's box is given, everything else measures 0.
+    const BAND = 56 // `.zen-sheet-footer`'s 16 + a 40 button + its 8 under
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-sheet-footer') ? BAND : 0
+      }
+    })
+    try {
+      for (const [inset] of HOSTS) {
+        act(() => uiStore.set({ insets: { top: 0, right: 0, bottom: inset, left: 0 } }))
+        renderSheet()
+        expect(recedeDepth()).toBe(1)
+        // The inset is the frame's own (`--zen-inset-bottom`): the band stands over it by this.
+        expect(recedeFooter()).toBe(BAND + SHEET_EDGE_PAD)
+        unmountSheet()
+        expect(recedeDepth()).toBe(0)
+        expect(recedeFooter()).toBe(0)
+      }
+      // No actions under the body: the sheet's edge is where a message over it stands.
+      renderSheet(false)
+      expect(recedeDepth()).toBe(1)
+      expect(recedeFooter()).toBe(0)
+      unmountSheet()
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight
     }
   })
 

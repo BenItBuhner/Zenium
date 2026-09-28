@@ -88,9 +88,12 @@ import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
 import { CaretBrowsing } from './caretBrowsing'
 import { ReadAloudService } from './readAloud'
+import { SelectionMenuService } from './selectionMenu'
+import { DefineService } from './define'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
 import { ShareService } from './share'
+import { GameService } from './game'
 import { TextFragments } from './textFragments'
 import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
@@ -159,6 +162,7 @@ import {
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
+import { sanitizeGameBestScore } from '../shared/game/bridge'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
 import {
   DEFAULT_SETTINGS,
@@ -176,11 +180,16 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { sanitizeIphState } from '../shared/iph'
 import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
-import { sanitizePreloadPages, sanitizePrivacySettings } from '../shared/privacy'
+import {
+  sanitizeClearBrowsingDataRange,
+  sanitizePreloadPages,
+  sanitizePrivacySettings
+} from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
@@ -370,6 +379,10 @@ export class Browser {
   readonly caretBrowsing: CaretBrowsing
   /** Read aloud: the one session's text, playback and highlight state over the host's speech engine. */
   readonly readAloud: ReadAloudService
+  /** The mini menu over a settled text selection (CT-39): the one model, from the page's report. */
+  readonly selectionMenu: SelectionMenuService
+  /** Define (CT-39): the word's definitions through Wiktionary's REST endpoint, cached a day. */
+  readonly define: DefineService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
   readonly webNotifications: WebNotificationService
   /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
@@ -380,6 +393,8 @@ export class Browser {
   readonly shares: ShareService
   /** Links to a highlight: the selection's `#:~:text=` directive, made by the page (SH-11). */
   readonly textFragments: TextFragments
+  /** Roll's best score, the profile's and synced, answered to the pages that carry the game (ERR-03). */
+  readonly game: GameService
   /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
   readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
@@ -399,8 +414,16 @@ export class Browser {
   private quitCheck: Promise<boolean> | null = null
   /** Images shared into the browser, shown by `zen://image?id=…` while the app runs. */
   private readonly sharedImages = new Map<string, string>()
-  /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
-  private readonly urlbarOnReady = new Set<string>()
+  /**
+   * The fresh tab a window is to announce once its chrome is up (`revealFreshTab`: the new tab
+   * page's own announcement, or the URL bar in new-tab mode), by window id – the tab the blank /
+   * private start or `openFreshTab` made before the chrome could hear of it. Armed on the TAB,
+   * not the window: a launch that carries a URL takes that tab (`openLaunchUrls`) or puts a
+   * page beside it before the chrome is ready, and the bar then stays closed over the page
+   * (`onChromeReady`), as Chrome launched with a URL shows the page and no omnibox dropdown.
+   * `url` is the page the tab was made on, for the "still fresh" reading there.
+   */
+  private readonly urlbarOnReady = new Map<string, { tabId: string; url: string }>()
   /** The shortcut table last handed to the host (`syncShortcuts`). */
   private syncedShortcuts: Shortcut[] | null = null
   /**
@@ -601,11 +624,14 @@ export class Browser {
     this.mediaSession = new MediaSessionService(this)
     this.caretBrowsing = new CaretBrowsing(this)
     this.readAloud = new ReadAloudService(this)
+    this.selectionMenu = new SelectionMenuService(this)
+    this.define = new DefineService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
     this.screenCapture = new ScreenCaptureService(this)
     this.shares = new ShareService(this)
     this.textFragments = new TextFragments(this)
+    this.game = new GameService(this)
     this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
@@ -646,6 +672,7 @@ export class Browser {
       translate: this.translate.uiState(),
       spellcheck: this.spellcheck.uiState(),
       readAloud: this.readAloud.uiState(),
+      selectionMenu: this.selectionMenu.uiState(win),
       import: this.imports.uiState()
     })
     this.handlers = this.commandHandlers()
@@ -1028,7 +1055,7 @@ export class Browser {
       const url = this.newTab.homeUrl() ?? BLANK_URL
       const tab = this.tabs.createTab({ url, active: true, load: false }, win)
       win.select(localSpace, tab.id)
-      this.urlbarOnReady.add(win.id)
+      this.urlbarOnReady.set(win.id, { tabId: tab.id, url })
     } else if (!localSpace && !opts.empty) {
       // A synced window into a space with nothing in it (New Window, the first browser window
       // of a run that began on an app window) comes up with a tab all the same, as Chrome's do.
@@ -1058,13 +1085,20 @@ export class Browser {
   onChromeReady(win: ZenWindow): void {
     if (this.state.settings.onboardingDone && !this.session.holdsPages())
       this.tabs.claimVisible(win)
-    if (this.urlbarOnReady.delete(win.id)) {
-      const active = this.tabs.activeTabFor(win)
+    const armed = this.urlbarOnReady.get(win.id)
+    if (armed !== undefined) {
+      this.urlbarOnReady.delete(win.id)
       setTimeout(() => {
         if (!win.alive) return
-        if (active && isEmptyTabUrl(active.url) && this.newTab.enabled)
-          this.emit('newtab.opened', { tabId: active.id }, win)
-        else this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        // The fresh tab's announcement is the fresh tab's alone: only while it is still the tab
+        // in front and still on the page it was made on. A URL the launch carried into it
+        // (`openLaunchUrls`), or a page opened beside it before the chrome was ready, is the
+        // content, and nothing opens over it (W8-F14 – the bar used to open over the launched
+        // page, bound to no tab).
+        const tab = this.tabs.activeTabFor(win)
+        if (!tab || tab.id !== armed.tabId) return
+        const fresh = isEmptyTabUrl(armed.url) ? isEmptyTabUrl(tab.url) : tab.url === armed.url
+        if (fresh) this.revealFreshTab(tab, win)
       }, 150)
     }
     this.newTab.onChromeReady(win)
@@ -1090,7 +1124,7 @@ export class Browser {
     const url = override ?? this.newTab.homeUrl() ?? BLANK_URL
     const tab = this.tabs.createTab({ url, active: true, load: false }, win)
     if (!win.chromeReady) {
-      this.urlbarOnReady.add(win.id)
+      this.urlbarOnReady.set(win.id, { tabId: tab.id, url })
       return
     }
     setTimeout(() => {
@@ -1802,6 +1836,7 @@ export class Browser {
     this.fullscreen.onNavigated(tabId)
     this.geolocation.onNavigated(tabId, inPage)
     this.readAloud.onNavigated(tabId, inPage)
+    this.selectionMenu.onNavigated(tabId, inPage)
     if (!inPage) {
       this.screenCapture.cancelForTab(tabId)
       this.shares.cancelForTab(tabId)
@@ -2559,6 +2594,41 @@ export class Browser {
   }
 
   /**
+   * The URLs a launch carries into `win` – `zenium <url…>`, another app's link with Zenium as
+   * the default browser, a dropped file (`src/main/index.ts` `openLaunch`). The first takes the
+   * window's fresh empty tab when one stands in front ({@link freshTabIn}: the tab a blank or
+   * private window starts with, the one `ensureFirstTab` gave a synced window into an empty
+   * space, a new tab page the user has not left), whatever the window's kind – a launch with a
+   * URL shows that page in the one tab and no new tab page beside it, as Chrome's does; the
+   * rest open beside it (`openExternalUrl`). W8-F14: since W5-F2 the synced startup window got
+   * its fresh tab from `ensureFirstTab` and the URL as a second tab, the bar armed for the
+   * window then opening over the page. The visit is recorded as a link's, as `openExternalUrl`
+   * records it, not as typed.
+   */
+  openLaunchUrls(urls: readonly string[], win: ZenWindow): void {
+    const starter = this.freshTabIn(win)
+    urls.forEach((url, index) => {
+      if (index === 0 && starter) this.tabs.navigate(starter.id, url, { transition: 'link' })
+      else this.openExternalUrl(url, win)
+    })
+  }
+
+  /**
+   * The window's active tab when it is a fresh empty one a launch URL may take: on the blank
+   * page or the new tab page, never navigated (no back / forward entry, none kept for it in the
+   * profile from the last session), and neither pinned nor an Essential – those are the user's
+   * to keep, and a URL opens beside them.
+   */
+  freshTabIn(win: ZenWindow): Tab | null {
+    const tab = this.tabs.activeTabFor(win)
+    if (!tab || !isEmptyTabUrl(tab.url) || tab.pinned || tab.essential) return null
+    if (tab.canGoBack || tab.canGoForward) return null
+    const stack = this.state.tabNavigation.get(tab.id)
+    if (stack?.entries.some((entry) => !isEmptyTabUrl(entry.url))) return null
+    return tab
+  }
+
+  /**
    * Open a URL from outside the browser (command line, Android intent, share sheet, a page of
    * ours such as the release notes). `fromIntent` marks a tab another app sent (Android's view
    * and share intents): mobile system back at its first page returns to that app; it is not set
@@ -3188,12 +3258,20 @@ export class Browser {
       this.textFragments.handleMessage(tabId, message)
       return
     }
+    if (message.type === 'game') {
+      this.game.handleMessage(tabId, message.game)
+      return
+    }
     if (message.type === 'geolocation') {
       this.geolocation.handleMessage(tabId, message.geolocation)
       return
     }
     if (message.type === 'readAloud') {
       this.readAloud.handleMessage(tabId, message.readAloud)
+      return
+    }
+    if (message.type === 'selection') {
+      this.selectionMenu.onSelection(tabId, message)
       return
     }
     if (message.type === 'zap') {
@@ -3344,6 +3422,7 @@ export class Browser {
       'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
+      'privacy.tabsInRange': ({ range }) => this.privacy.tabsInRange(range),
       'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
       'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
         this.protection.setThirdPartyCookiesPrivate(mode, win),
@@ -3817,6 +3896,8 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.undoRemove': ({ url }) => this.newTab.undoRemove(url),
       'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
+      'newtab.setSafetyHubCardMemory': ({ memories }) =>
+        this.newTab.setSafetyHubCardMemories(memories),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
@@ -3996,6 +4077,8 @@ export class Browser {
       'print.close': ({ tabId }) => this.print.close(tabId),
       'pdf.openWith': ({ tabId }) => this.pdf.openWith(tabId),
       'pdf.share': ({ tabId }) => this.pdf.share(tabId),
+      'pdf.save': ({ tabId }) => this.pdf.save(tabId),
+      'pdf.print': ({ tabId }) => this.pdf.print(tabId),
       'pdf.state': ({ tabId }) => this.pdf.report(tabId),
       'pdf.command': ({ tabId, command }) => this.pdf.command(tabId, command),
       'page.savePage': ({ tabId }, win) =>
@@ -4051,6 +4134,12 @@ export class Browser {
       'readAloud.setVoice': ({ voiceId, lang }) => this.readAloud.setVoice({ voiceId, lang }),
       'readAloud.setHighlight': ({ mode }) => this.readAloud.setHighlight({ mode }),
       'readAloud.voices': () => this.readAloud.voicesResult(),
+
+      'selectionMenu.run': ({ tabId, id }) => this.selectionMenu.run(tabId, id),
+      'selectionMenu.dismiss': ({ tabId }) => this.selectionMenu.dismiss(tabId),
+      'selectionMenu.surfaceSize': ({ tabId, width, height, folded }) =>
+        this.selectionMenu.surfaceSize(tabId, width, height, folded === true),
+      'define.lookup': ({ term, lang }) => this.define.lookup(term, lang),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {
         let id = folderId
@@ -4373,7 +4462,8 @@ export class Browser {
       readAloud: JSON.stringify(s.readAloud),
       fonts: JSON.stringify(s.fonts),
       languages: s.languages.join(','),
-      caretBrowsing: s.caretBrowsing === true
+      caretBrowsing: s.caretBrowsing === true,
+      selectionMenu: s.showSelectionMenu !== false
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -4437,6 +4527,10 @@ export class Browser {
           ...s.defaultBrowserPromo,
           ...(value as Partial<Settings['defaultBrowserPromo']>)
         })
+      } else if (key === 'iph' && value && typeof value === 'object') {
+        // A one-bubble patch (the tab switcher's stamp or `shown`) keeps the other bubbles'
+        // records; every record comes back sanitised (TB-19, `shared/iph.ts`).
+        s.iph = sanitizeIphState({ ...s.iph, ...(value as Partial<Settings['iph']>) })
       } else if (key === 'blocking' && value && typeof value === 'object') {
         s.blocking = sanitizeBlockingSettings({
           ...s.blocking,
@@ -4460,6 +4554,9 @@ export class Browser {
         })
       } else if (key === 'preloadPages') {
         s.preloadPages = sanitizePreloadPages(value)
+      } else if (key === 'clearBrowsingDataRange') {
+        // The dialog's Delete sends the range it deleted with; anything else reads the last hour.
+        s.clearBrowsingDataRange = sanitizeClearBrowsingDataRange(value)
       } else if (key === 'spellcheck' && value && typeof value === 'object') {
         s.spellcheck = sanitizeSpellcheck({
           ...s.spellcheck,
@@ -4495,6 +4592,9 @@ export class Browser {
       } else if (key === 'toolbarPins') {
         // The Customise toolbar dialog writes the whole record; only known controls' folds stay.
         s.toolbarPins = sanitizeToolbarPins(value)
+      } else if (key === 'gameBestScore') {
+        // Roll's best (ERR-03): a whole number in the meter's range, else nothing (`GameService`).
+        s.gameBestScore = sanitizeGameBestScore(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -4560,6 +4660,8 @@ export class Browser {
     if (before.fonts !== JSON.stringify(s.fonts)) this.pageFonts.onSettingsChanged()
     if (before.languages !== s.languages.join(',')) this.languages.onSettingsChanged()
     if (before.caretBrowsing !== (s.caretBrowsing === true)) this.caretBrowsing.onSettingsChanged()
+    if (before.selectionMenu !== (s.showSelectionMenu !== false))
+      this.selectionMenu.onSettingsChanged()
     this.state.commit()
   }
 

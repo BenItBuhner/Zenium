@@ -19,6 +19,11 @@ import type {
   NewTabShortcutsMode
 } from './types'
 import { newId } from './ids'
+import {
+  sameSafetyHubCardMemories,
+  sanitizeSafetyHubCardMemories,
+  type SafetyHubCardMemories
+} from './safetyHubCard'
 
 // ---------------------------------------------------------------------------
 // Constants and defaults
@@ -35,12 +40,15 @@ export const MAX_NEW_TAB_HIDDEN_HOSTS = 500
 
 /**
  * The Magic Stack's modules in the order the stack pages through them (NTP-16): the cards with
- * the user's own content first, the promo last. The Customise sheet lists them in this order too.
+ * the user's own content first, the Safety check card after them and the promo last – Chrome's
+ * `ModuleType` order (`ModuleDelegate.java:29-49`: SINGLE_TAB, …, SAFETY_HUB, …,
+ * DEFAULT_BROWSER_PROMO). The Customise sheet lists them in this order too.
  */
 export const MAGIC_STACK_MODULE_IDS: readonly MagicStackModuleId[] = [
   'continue',
   'downloads',
   'bookmarks',
+  'safety-hub',
   'default-browser'
 ]
 
@@ -83,7 +91,7 @@ export const DEFAULT_NEW_TAB_SETTINGS: NewTabSettings = {
 }
 
 export function emptyNewTabDevice(): NewTabDeviceState {
-  return { shortcuts: [], hiddenHosts: [], hiddenModules: [] }
+  return { shortcuts: [], hiddenHosts: [], hiddenModules: [], safetyHubCard: {} }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +204,8 @@ export function sanitizeNewTabDevice(raw: unknown): NewTabDeviceState {
   return {
     shortcuts: sanitizeNewTabShortcuts(r.shortcuts),
     hiddenHosts: sanitizeHiddenHosts(r.hiddenHosts),
-    hiddenModules: sanitizeHiddenModules(r.hiddenModules)
+    hiddenModules: sanitizeHiddenModules(r.hiddenModules),
+    safetyHubCard: sanitizeSafetyHubCardMemories(r.safetyHubCard)
   }
 }
 
@@ -210,6 +219,19 @@ export function setModuleHidden(
   if (current === hidden) return device
   const next = hidden ? [...device.hiddenModules, id] : device.hiddenModules.filter((m) => m !== id)
   return { ...device, hiddenModules: sanitizeHiddenModules(next) }
+}
+
+/**
+ * The Safety check card's memory replaced whole (NTP-19), as the renderer's machine left it after
+ * an impression or a dismissal; the same record back returns the device it was given.
+ */
+export function setSafetyHubCardMemories(
+  device: NewTabDeviceState,
+  memories: SafetyHubCardMemories
+): NewTabDeviceState {
+  const next = sanitizeSafetyHubCardMemories(memories)
+  if (sameSafetyHubCardMemories(device.safetyHubCard, next)) return device
+  return { ...device, safetyHubCard: next }
 }
 
 // ---------------------------------------------------------------------------
@@ -548,14 +570,16 @@ export function migrateNewTabDevice(
       : {
           shortcuts: sanitizeNewTabShortcuts(sources.newTabShortcuts),
           hiddenHosts: sanitizeHiddenHosts(sources.newTabHiddenHosts),
-          hiddenModules: []
+          hiddenModules: [],
+          safetyHubCard: {}
         }
   const phone = readLegacyPhone(sources.newTabPhone)
   if (!phone) return current
   let device: NewTabDeviceState = {
     shortcuts: current.shortcuts,
     hiddenHosts: sanitizeHiddenHosts([...current.hiddenHosts, ...phone.hiddenHosts]),
-    hiddenModules: current.hiddenModules
+    hiddenModules: current.hiddenModules,
+    safetyHubCard: current.safetyHubCard
   }
   for (const pin of phone.pinned)
     device = pinShortcut(device, {

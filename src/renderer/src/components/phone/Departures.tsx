@@ -6,14 +6,19 @@ import { groupColorVars } from '@renderer/lib/groups'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { GroupGlyph } from '../GroupGlyph'
-import { departed, departStore, releaseDepartures, type Departure } from './departureStore'
+import {
+  departed,
+  departStore,
+  departureGone,
+  isHeld,
+  releaseDepartures,
+  restDeparture,
+  type Departure
+} from './departureStore'
+import { EXIT_TRAVEL, exitFrame } from './exitSpring'
 import { GROUP_PAD } from './GroupCard'
 import { CARD_ASPECT, CardBody, NewTabFace } from './OverviewCard'
 
-/** Travel (px) of the exit spring: its progress is 1 − position / this. */
-const EXIT_TRAVEL = 120
-/** How far a card shrinks on its way out. */
-const EXIT_SCALE = 0.1
 /** How long an exit waits for the browser to show the close before it runs regardless. */
 export const EXIT_WAIT_MS = 900
 /** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
@@ -35,6 +40,12 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
  * as it is, and stands unmoved when the user stays – a tab's own close, or a group's whose last
  * shown card was swiped or closed under a query (`tab.close`); a whole group's X, Close Group and
  * a close-all go through `folder.close`, which closes its members without the ask.
+ *
+ * Quick Delete's exits (`held`, MOT-24) run the other way round: the wipe releases each in its
+ * turn BEFORE the browser closes the tab, the exit rests out of view over the slot its card
+ * still holds, and the close that follows takes the slot – the exit going on that commit, the
+ * neighbours gliding into the gap – or keeps the tab, on which the exit runs back to the card
+ * (`restoring`). Nothing else releases a held exit: no wait runs out on it.
  */
 export function Departures({
   state,
@@ -55,7 +66,7 @@ export function Departures({
           ? !state.folders[item.folder.id]
           : item.with !== undefined && item.with.every((id) => !state.tabs[id])
     )
-    if (gone.length > 0) releaseDepartures(gone.map((item) => item.key))
+    if (gone.length > 0) departureGone(gone.map((item) => item.key))
   })
   if (items.length === 0) return null
   // The New Tab card has no page to ask of its own; leaving with a close, it waits on the pages
@@ -90,13 +101,20 @@ function Exit({
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const released = departStore.use((s) => s.released.has(item.key))
+  const restoring = departStore.use((s) => s.restoring.has(item.key))
+  const held = isHeld(item)
+  // A held exit frozen at a frame of its run (the preview host's still): drawn there, never run.
+  const frozen = held && item.kind !== 'new-tab' ? item.frozen : undefined
   const wasAsked = useRef(false)
+  // The exit's spring, kept so a restore sets off from wherever the run left it.
+  const spring = useRef<SpringAnimation | null>(null)
   // The browser may never show the close (the command failed): the exit runs anyway, and the
   // card is back once it has. Not while the close is in flight – its page may be asking "Leave
   // site?", the close waiting on the user – and once it is through a tab still here after the
   // same wait is one the user stayed on: its card is back where it stands, no exit run over it.
+  // A held exit waits on nothing but the wipe's schedule.
   useEffect(() => {
-    if (released) return
+    if (released || held) return
     if (asked) {
       wasAsked.current = true
       return
@@ -106,39 +124,51 @@ function Exit({
       EXIT_WAIT_MS
     )
     return () => clearTimeout(timer)
-  }, [released, asked, item.key])
+  }, [released, held, asked, item.key])
   useLayoutEffect(() => {
-    if (!released) return
+    if (frozen === undefined) return
+    exitFrame(ref.current)(EXIT_TRAVEL * (1 - frozen))
+  }, [frozen])
+  useLayoutEffect(() => {
+    if (!released || restoring || frozen !== undefined) return
     const el = ref.current
+    // A card's exit is done at rest; a held one rests where it is, out of view, until the
+    // browser's close takes its slot (or keeps its tab).
+    const rest = (): void => (held ? restDeparture(item.key) : departed(item.key))
     if (reducedMotion()) {
       const fade = el?.animate?.([{ opacity: 1 }, { opacity: 0 }], {
         duration: REDUCED_FADE_MS,
         easing: EASE,
         fill: 'forwards'
       })
-      const done = (): void => departed(item.key)
-      if (fade) fade.onfinish = done
-      const timer = fade ? null : setTimeout(done, REDUCED_FADE_MS)
+      if (fade) fade.onfinish = rest
+      const timer = fade ? null : setTimeout(rest, REDUCED_FADE_MS)
       return () => {
         fade?.cancel()
         if (timer !== null) clearTimeout(timer)
       }
     }
-    const spring = new SpringAnimation(
-      SPRING_SNAPPY,
-      (x) => {
-        if (!el) return
-        const t = 1 - x / EXIT_TRAVEL
-        el.style.transform = `scale(${1 - EXIT_SCALE * t})`
-        el.style.opacity = String(Math.max(0, 1 - t))
-      },
-      () => departed(item.key)
-    )
-    spring.start(EXIT_TRAVEL, 0, 0)
+    const run = new SpringAnimation(SPRING_SNAPPY, exitFrame(el), rest)
+    spring.current = run
+    run.start(EXIT_TRAVEL, 0, 0)
     return () => {
-      spring.stop()
+      run.stop()
     }
-  }, [item.key, released])
+  }, [item.key, released, restoring, held, frozen])
+  // The browser kept the tab: the exit runs back to the card from where its run left it, and
+  // goes once it is there – the card, hidden behind it all along, showing again on that commit.
+  // Under reduced motion the spring lands at once: the card is back in a cut.
+  useLayoutEffect(() => {
+    if (!restoring) return
+    const el = ref.current
+    const from = spring.current?.current.x ?? 0
+    const back = new SpringAnimation(SPRING_SNAPPY, exitFrame(el), () => departed(item.key))
+    spring.current = back
+    back.start(from, 0, EXIT_TRAVEL)
+    return () => {
+      back.stop()
+    }
+  }, [item.key, restoring])
   if (item.kind === 'new-tab')
     return (
       <div

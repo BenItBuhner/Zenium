@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
 import { QUIT_HOLD_FONT, QUIT_HOLD_PANEL } from '@shared/quitHoldPanel'
 import { REDUCED_FADE_MS, TOAST_CARD, TOAST_SHOW_MS } from '@shared/toastCard'
-import { MESSAGE_INSET } from '../../components/messages/stack'
+import {
+  HINT_BUBBLE_PADDING,
+  HINT_BUBBLE_WIDTH,
+  MESSAGE_INSET
+} from '../../components/messages/stack'
 import { FULLSCREEN_RETURN_MS } from '../../components/phone/useFullscreenReturn'
 import { TOOLBAR_STROKE } from '../../components/v2/controls'
 import { TOAST_DURATION } from '../ui'
@@ -222,6 +226,9 @@ const V2_FILES: ReadonlyArray<string> = [
   // the translation bar, the selection popover and sheet, the language menulist's list and
   // picker sheet, the desktop Languages pane.
   'assets/translate.css',
+  // The selection surfaces' stylesheet, imported by main.css (components/selection/*, CT-39):
+  // the mini menu's pill over a text selection and the Define popover's and sheet's body.
+  'assets/selection.css',
   // The autofill surfaces' own stylesheet, imported by components/autofill/controls.tsx (#145):
   // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
   // Settings > Autofill with its managers.
@@ -1592,7 +1599,12 @@ describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 sl
     // One token, `--zen-corner: squircle`, declared once in the theme block; a chassis class of
     // radius 8 and up carries it as `corner-shape: var(--zen-corner)` beside its radius token –
     // the popover and toolbar chassis (`.zen-v2-panel`, extensions.css) the pattern followed.
-    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(1)
+    // The served documents' root (`.zen-error-document`, the slice zenPages.ts cuts for the
+    // error pages and `zen://game`, which the theme block never reaches) restates it as it
+    // restates `--zen-ease`, so Roll's game-over card at radius 8 draws the squircle there too
+    // (ERR-03, §9.17 (c)); that is the token's one other declaration.
+    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(2)
+    expect(block('.zen-error-document')).toMatch(/^ {2}--zen-corner: squircle;$/m)
     expect(declarations(extensions, '.zen-v2-panel')).toEqual(
       expect.arrayContaining([
         'border-radius: var(--v2-radius-card);',
@@ -2017,6 +2029,18 @@ describe('the chrome tooltip (§9.31, a11y-26)', () => {
     expect(tip).toMatch(/^ {4}background: var\(--v2-panel\);$/m)
     expect(tip).toMatch(/^ {4}border: 1px solid var\(--v2-border\);$/m)
     expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-control: 4px;$/m)
+  })
+})
+
+describe('the in-product help bubble (TB-19, §9.20’s anchored pose)', () => {
+  it("is §9.20's notice width by value: the stylesheet's 320 and its 16 of padding are the chrome's constants, not copies (#641's first line, N1)", () => {
+    // The rule sits inside `@layer components`: its own close is the indented one.
+    const whole = block('.zen-hint-bubble')
+    const card = whole.slice(0, whole.indexOf('\n  }'))
+    expect(card).toMatch(new RegExp(`^ {4}width: ${HINT_BUBBLE_WIDTH}px;$`, 'm'))
+    expect(card).toMatch(new RegExp(`^ {4}padding: ${HINT_BUBBLE_PADDING}px;$`, 'm'))
+    // The sentence's measure inside the padding: 288, two lines (the lead's (c)).
+    expect(HINT_BUBBLE_WIDTH - 2 * HINT_BUBBLE_PADDING).toBe(288)
   })
 })
 

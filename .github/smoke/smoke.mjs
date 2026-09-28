@@ -51,7 +51,8 @@
 //                (no serious or critical violation; .github/smoke/aria/axe-known.json names the
 //                tolerated ones on surfaces the chrome does not own), Ctrl+F (the field takes
 //                the keyboard, Escape closes the bar and hands it back to the page),
-//                Ctrl+plus/minus/0 with the zoom bubble, Ctrl+Shift+S's Web capture overlay
+//                Ctrl+plus/minus with the zoom bubble and Ctrl+0 ending it with the zoom chip
+//                (nothing rises at the default zoom, W8-F12), Ctrl+Shift+S's Web capture overlay
 //                over the page's picture (its toolbar, the chrome inert, the view out of its
 //                box – parked in a corner or hidden) and Escape taking it down whole, F11,
 //                Ctrl+N, Ctrl+Shift+N, Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu
@@ -80,6 +81,12 @@
 //                four launches: clear-on-exit, clear-on-exit-relaunch, clear-on-exit-owed-seed,
 //                clear-on-exit-owed-launch)
 //   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
+//   launch-url   a fresh profile past onboarding launched with the fixture's first page on the
+//                command line (`zenium <url>`: the default-browser path with Zenium closed, a
+//                dropped file; W8-F14) comes up as Chrome does – ONE tab, on the page, one
+//                sidebar row, and no URL bar over it once the fresh tab's announcement would have
+//                been due (W5-F2's fresh tab took the launch as a second tab and the bar armed for
+//                the window opened over the page, bound to no tab); then a graceful quit
 //   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
 //   mv3-worker   Zenium's chrome.* layer for MV3 background workers (the service-worker preload
 //                of src/preload/extension.ts): a profile past onboarding installs the unpacked
@@ -357,6 +364,8 @@ import {
   stateSource
 } from './profile-state.mjs'
 import {
+  CARET_BUDGET_MS,
+  CARET_POLL_EVERY_MS,
   URLBAR_FIELD_OWNER,
   caretVerdict,
   isNewTabUrl,
@@ -366,11 +375,13 @@ import {
   waitForTabWithRetry
 } from './navigation.mjs'
 import {
+  HOLD_RELEASE_ATTEMPTS,
   HOLD_RELEASE_AT_MS,
   QUIT_HOLD_MS,
   QUIT_TRACE_EVERY_MS,
   exitWithin,
   formatQuitTrace,
+  holdReleaseRedrives,
   judgeHoldRelease,
   mainProcessState,
   probeOutcome,
@@ -387,7 +398,7 @@ import {
   withOwedClear
 } from './site-data.mjs'
 import { startVideoFixture } from './video-fixture.mjs'
-import { viewInBox } from './views.mjs'
+import { isPopupSurfaceUrl, isWindowChromeUrl, viewInBox } from './views.mjs'
 import { VISIBILITY_SCENARIO, scenarioVisibility } from './visibility-scenario.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -1403,8 +1414,16 @@ class Session {
     })
   }
 
+  /**
+   * The windows' chrome pages: the renderer's `index.html` loaded as a window's chrome. Not the
+   * popup surface's document (`index.html?surface=popup`, `isPopupSurfaceUrl`): a view inside a
+   * window for the autofill picker and the selection's mini menu, without a chrome root, and
+   * alive for a while after what it showed went – the walkthrough's find bar leaves a selection
+   * behind that puts the mini menu up, and every step that walks the chrome pages for their root
+   * (new-window, private-window) would otherwise wait on a page that never has one.
+   */
   chromePages() {
-    return this.app.windows().filter((p) => /^file:.*index\.html/.test(p.url()))
+    return this.app.windows().filter((p) => isWindowChromeUrl(p.url()))
   }
 
   async waitForChromePage(timeoutMs) {
@@ -1539,9 +1558,12 @@ class Session {
     return this.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
   }
 
-  /** Tab pages: every webContents that is not a window's chrome page and not devtools. */
-  tabs() {
-    return this.app.evaluate(({ webContents, BrowserWindow }) => {
+  /**
+   * Tab pages: every webContents that is not a window's chrome page, not the popup surface's
+   * document (`isPopupSurfaceUrl`; a view of the window's, not a page of it) and not devtools.
+   */
+  async tabs() {
+    const views = await this.app.evaluate(({ webContents, BrowserWindow }) => {
       const chromeIds = new Set(BrowserWindow.getAllWindows().map((w) => w.webContents.id))
       return webContents
         .getAllWebContents()
@@ -1560,6 +1582,7 @@ class Session {
           zoomFactor: wc.getZoomFactor()
         }))
     })
+    return views.filter((view) => !isPopupSurfaceUrl(view.url))
   }
 
   async waitForTab(urlPrefix, timeoutMs = 30000) {
@@ -2133,33 +2156,46 @@ class Session {
   /**
    * The caret of the URL bar that is up: whether its field holds the keyboard – the chrome page
    * has it, not a page's view, and the field is the document's active element (keyboardOwner
-   * `chrome:urlbar-input`) – waited for up to `timeoutMs`, because the bar taking the keyboard
-   * back from the new tab's view (lib/panes.ts pageTookKeyboard → focus.chrome) is an IPC round
-   * trip away. `{ focused, owner, ms, bar }` for the step's detail, `owner` the last reading and
-   * `bar` how the bar came to be up (`found-up`, `accel-t`); navigation.mjs caretVerdict judges it.
-   * A caret that does not come carries the case for the verdict: `owners`, every reading the
-   * owner changed with, and `facts` – the main process's view of the keyboard (keyboardFacts),
-   * its keyboard moves of the last ten seconds (hookMain's `keyboard` events) and the chrome's
-   * own trace of them (traceFocus).
+   * `chrome:urlbar-input`, which reads `webContents.isFocused()` in the main process and the
+   * renderer's `document.activeElement`) – read every `everyMs` to a `budgetMs` budget, because
+   * the bar taking the keyboard back from the new tab's view (lib/panes.ts pageTookKeyboard →
+   * focus.chrome) is an IPC round trip away, and on the windows-arm64 legs (the slow Intel-emulated
+   * runner) it took longer than a fixed 3 s wait allowed – the bar found up with no caret after
+   * 3097 ms, three times on 2026-09-27 (W8-F10). `{ focused, owner, ms, bar, trace }` for the
+   * step's detail: `owner` the last reading, `bar` how the bar came to be up (`found-up`,
+   * `accel-t`) and `trace` the stamped polls (`{ ms, owner }`, one per poll); navigation.mjs
+   * caretVerdict judges it and its failure carries the trace (the step's own screenshot the still).
+   * A caret that does not come also carries the case for the verdict: `owners`, every reading the
+   * owner changed with, and `facts` – the main process's view of the keyboard (keyboardFacts, with
+   * the field's own focus and selection), its keyboard moves through the budget (hookMain's
+   * `keyboard` events) and the chrome's own trace of them (traceFocus).
    */
-  async urlbarCaret(bar, timeoutMs = 3000) {
+  async urlbarCaret(bar, budgetMs = CARET_BUDGET_MS, everyMs = CARET_POLL_EVERY_MS) {
     const t0 = Date.now()
     const owners = []
+    const trace = []
     for (;;) {
       const owner = await this.keyboardOwner()
       const ms = Date.now() - t0
       if (!owners.length || owners[owners.length - 1].owner !== owner) owners.push({ ms, owner })
-      if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar }
-      if (ms >= timeoutMs) {
+      trace.push({ ms, owner })
+      if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar, trace }
+      if (ms >= budgetMs) {
         const since = t0 - 10000
         const main = await this.keyboardFacts().catch((e) => ({ error: String(e.message || e) }))
         const chrome = await this.chrome
           .evaluate((since) => {
             const el = document.activeElement
+            const field = document.querySelector('[data-testid="urlbar-input"]')
+            const selection =
+              field && typeof field.selectionStart === 'number'
+                ? { start: field.selectionStart, end: field.selectionEnd, active: el === field }
+                : null
             return {
               hasFocus: document.hasFocus(),
               active:
                 el && el !== document.body ? el.getAttribute('data-testid') || el.tagName : null,
+              selection,
               trace: (window.__zenSmokeFocus || []).filter((e) => e.at >= since).slice(-200)
             }
           }, since)
@@ -2167,9 +2203,9 @@ class Session {
         const keyboard = this.readEvents()
           .filter((e) => e.type === 'keyboard' && e.t >= since)
           .map(({ t, wc, chrome, took, visible, url }) => ({ t, wc, chrome, took, visible, url }))
-        return { focused: false, owner, ms, bar, owners, facts: { main, chrome, keyboard } }
+        return { focused: false, owner, ms, bar, owners, trace, facts: { main, chrome, keyboard } }
       }
-      await delay(100)
+      await delay(everyMs)
     }
   }
 
@@ -4045,6 +4081,7 @@ async function scenarioWalkthrough() {
       await s.reset()
       const zoom = async () => (await s.tabs()).find((t) => t.url.startsWith(page.url))?.zoomFactor
       const bubble = s.chrome.locator('[data-zoom-bubble]')
+      const chip = s.chrome.locator('[data-zoom-chip]')
       const level = bubble.locator('#zen-zoom-level')
       /** The bubble is up and says `percent`; the page's factor agrees. */
       const expectZoom = async (factor, what) => {
@@ -4073,11 +4110,27 @@ async function scenarioWalkthrough() {
       await s.shot('03-zoom-bubble')
       await s.press(`${ACCEL}+-`)
       const z3 = await expectZoom(1.1, 'Ctrl+minus')
+      // Ctrl+0 lands on the default zoom: the pill's zoom chip goes (§9.29) and the bubble ends
+      // with it – a change that leaves no chip raises no bubble on any road (W8-F12, #654);
+      // Chrome's clocked 100 % notice is not owed. Nothing rises in the time it would have taken.
       await s.press(`${ACCEL}+0`)
-      const z4 = await expectZoom(1, 'Ctrl+0')
-      // Left alone the bubble goes on its own (1.5 s; up to 5 s once its buttons were used).
-      await bubble.first().waitFor({ state: 'hidden', timeout: 8000 })
-      return { z0, z1, z2, z3, z4, bubbleGone: true }
+      const z4 = await waitFor(
+        async () => {
+          const z = await zoom()
+          return z !== undefined && Math.abs(z - 1) < 0.01 ? z : null
+        },
+        8000,
+        'Ctrl+0: page zoom 1'
+      )
+      await bubble.first().waitFor({ state: 'hidden', timeout: 5000 })
+      await chip.first().waitFor({ state: 'hidden', timeout: 5000 })
+      await delay(1600)
+      const bubblesAfter = await bubble.count()
+      if (bubblesAfter) {
+        const text = ((await level.textContent()) ?? '').trim()
+        throw new Error(`Ctrl+0: a zoom bubble rose with no chip to hang from ("${text}")`)
+      }
+      return { z0, z1, z2, z3, z4, bubbleGone: true, chipGone: true }
     })
 
     // Web capture (Edge's; the desktop's overlay of components/capture/CaptureOverlay.tsx over
@@ -5768,6 +5821,60 @@ async function scenarioScale() {
       await s.step('quit', async () => s.quitGracefully())
     }
   )
+}
+
+/**
+ * `zenium <url>` on a fresh profile past onboarding (W8-F14): the default-browser path with
+ * Zenium closed – another app's link, a dropped file – comes up as Chrome does, with the one tab
+ * on the page and nothing over it. The main process starts the window with its fresh tab
+ * (`ensureFirstTab`), then `openLaunch` carries the URL into that tab (`Browser.openLaunchUrls`),
+ * and the fresh tab's announcement – armed for the tab, 150 ms after the chrome is ready – finds
+ * a page in its place and stays silent. Since W5-F2 (#490) and until this slice the URL opened as
+ * a SECOND tab beside the fresh `zen://newtab` one, and the bar armed for the window opened over
+ * the page, bound to no tab (`data-attached="false"`; its layer took the pointer in the drives).
+ * Read after the page has loaded and a quiet second past it, so a bar due at chrome-ready has had
+ * its moment: the tabs through app.getState (one, the launched page, active), the sidebar rows
+ * (one) and the URL bar's field (none), then a graceful quit that keeps the page.
+ */
+async function scenarioLaunchUrl() {
+  const userData = freshProfile('profile-launch-url', { onboardingDone: true })
+  const page = bootSite.first
+  return runScenario('launch-url', userData, { args: [page.url] }, async (s, out) => {
+    out.fixture = { origin: bootSite.origin, page: page.url }
+    await s.step('one-tab-no-bar', async () => {
+      const tab = await s.waitForTab(page.url, 30000)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
+      // Chrome-ready's 150 ms and the state broadcasts behind it: nothing due may still be due.
+      await delay(1500)
+      await s.settle()
+      const state = await s.chrome.evaluate(() => window.zen.invoke('app.getState'))
+      const activeIds = new Set((state.spaces ?? []).map((space) => space.activeTabId))
+      const tabs = Object.values(state.tabs ?? {}).map((t) => ({
+        url: t.url,
+        active: activeIds.has(t.id)
+      }))
+      const bar = await s.urlbarState()
+      const sidebarTabs = await s.sidebarTabCount()
+      await s.shot('01-launched-page')
+      if (tabs.length !== 1 || !tabs[0].url.startsWith(page.url) || !tabs[0].active) {
+        throw new Error(
+          `expected the one launched tab, active; state has ${JSON.stringify(tabs)} (W5-F2's fresh tab beside the page)`
+        )
+      }
+      if (sidebarTabs !== 1) throw new Error(`${sidebarTabs} sidebar rows for the one launched tab`)
+      if (bar.barVisible) {
+        throw new Error(
+          `the URL bar is open over the launched page (submit tab ${bar.submitTabId ?? 'none'}: the bar armed for the window, W8-F14)`
+        )
+      }
+      return { loaded: tab.url, tabs, sidebarTabs, bar }
+    })
+    await s.step('window', () => assertMainWindow(s))
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      return { ...r, state: assertCleanState(userData, page.url) }
+    })
+  })
 }
 
 // OS dark mode. Windows: the Personalize registry keys Chromium watches. macOS: System Events
@@ -7649,6 +7756,78 @@ async function warnBeforeQuittingRow(s) {
   }
 }
 
+/**
+ * One drive of the quit chord for `hold-release` (W8-F9): the keys down, and up again
+ * HOLD_RELEASE_AT_MS later by the app's own clock (`Session.holdKeysFor`), the chrome's
+ * `window.quitHold` polled every 50 ms meanwhile. Resolves with `{ held, polls }` – `held` what
+ * the evaluate returned (`{ downAt, upAt, released, error }`), or null when it lost its target
+ * before its timer fired (the app quit under the chord) – for `judgeHoldRelease`.
+ */
+async function driveHoldRelease(s) {
+  const polls = []
+  let polling = true
+  const holding = unlessTargetClosed(s.holdKeysFor(QUIT_COMBO, HOLD_RELEASE_AT_MS), null)
+  const polled = (async () => {
+    while (polling) {
+      const askedAt = Date.now()
+      const quitHold = await s.appState().then(
+        (st) => st.window.quitHold,
+        (e) => ({ error: String(e && e.message ? e.message : e) })
+      )
+      polls.push({ askedAt, answeredAt: Date.now(), quitHold })
+      if (polling) await delay(50)
+    }
+  })()
+  const held = await holding
+  polling = false
+  await polled
+  return { held, polls }
+}
+
+/**
+ * Between two drives of the chord in `hold-release` (W8-H1), after one whose only problem was
+ * the runner's key-up timer overshooting the hold (`attempts`, the verdicts so far, the last
+ * theirs): the app must still be up with the hold cleared before the chord goes down again. The
+ * late key up released the hold before the hold's own timer ran (Node fires two expired timers
+ * in the order they were due, the key up's first) – or the hold fired and the app is quitting.
+ * Resolves once the chrome's state reads no hold and no exit has come; throws, with every
+ * attempt's verdict in `detail.attempts`, when the app went away under the chord (the read lost
+ * its target, or an exit came) or the hold did not clear within its wait.
+ */
+async function holdClearedForRedrive(s, attempts) {
+  const last = attempts[attempts.length - 1]
+  const next = `${last.attempt + 1}/${HOLD_RELEASE_ATTEMPTS}`
+  const fail = (message) => {
+    const err = new Error(message)
+    err.detail = { ...last, attempts }
+    return err
+  }
+  let cleared
+  try {
+    cleared = await unlessTargetClosed(
+      waitFor(
+        async () => ((await s.appState()).window.quitHold === null ? { cleared: true } : null),
+        2000,
+        `the hold released before attempt ${next}`,
+        50
+      ),
+      null
+    )
+  } catch (e) {
+    throw fail(`${last.problems.join('; ')}; no re-drive: ${e && e.message ? e.message : e}`)
+  }
+  // The read lost its target, or the process is gone: the hold quit the app after all.
+  const exit = await exitWithin(s.exitPromise, cleared ? 0 : 5000, Date.now())
+  if (!cleared || exit) {
+    throw fail(
+      `the app went away under the chord: the keys came up ${last.heldForMs} ms after they went down, at or past the hold's ${QUIT_HOLD_MS} ms (attempt ${last.attempt}/${HOLD_RELEASE_ATTEMPTS}; exit ${JSON.stringify(exit)})`
+    )
+  }
+  log(
+    `hold-release attempt ${last.attempt}/${HOLD_RELEASE_ATTEMPTS} overshot the hold on the runner's timer (${last.lateByMs} ms of slack past the release at ${HOLD_RELEASE_AT_MS} ms), the app up and the hold cleared: driving the chord again (attempt ${next})`
+  )
+}
+
 async function scenarioQuitHold() {
   if (!IS_MAC) {
     const note =
@@ -7699,46 +7878,59 @@ async function scenarioQuitHold() {
       // judgeHoldRelease): a poll that saw the hold proves the arming, a null read whose whole
       // round trip fell inside the hold disproves it, and a poll that answered after the
       // release proves nothing – recorded as `arming: 'unproven'`, not failed (every other
-      // scenario's full hold proves the arming with a still, each run). Then the release's own
-      // checks: the state reads no hold, nothing quits by where the hold would have, the main
-      // process answers.
-      const polls = []
-      let polling = true
-      const holding = unlessTargetClosed(s.holdKeysFor(QUIT_COMBO, HOLD_RELEASE_AT_MS), null)
-      const polled = (async () => {
-        while (polling) {
-          const askedAt = Date.now()
-          const quitHold = await s.appState().then(
-            (st) => st.window.quitHold,
-            (e) => ({ error: String(e && e.message ? e.message : e) })
+      // scenario's full hold proves the arming with a still, each run).
+      //
+      // The runner's timer slack is the one thing the app's clock does not take out (W8-H1):
+      // the key up is a 500 ms setTimeout in the app's main process, and on a starved runner it
+      // fires late – run 36359347441, macos-x64: "the keys were down 1507 ms by the app's clock
+      // (release at 500 ms, 1007 ms of timer slack); arming armed", a 7 ms overshoot of the
+      // hold's 1500 ms, the other four legs green. When the verdict's ONLY problem is that
+      // overshoot (quit.mjs holdReleaseRedrives) the chord is driven again, up to
+      // HOLD_RELEASE_ATTEMPTS times, once the app has shown it is still up with the hold cleared
+      // (holdClearedForRedrive); every attempt is logged, any other problem fails at once, and
+      // the last attempt's overshoot fails with every attempt's verdict in the detail. Then the
+      // release's own checks: the state reads no hold, nothing quits by where the hold would
+      // have, the main process answers.
+      const attempts = []
+      let held
+      let judged
+      for (let attempt = 1; ; attempt++) {
+        const drive = await driveHoldRelease(s)
+        held = drive.held
+        if (!held) {
+          // The evaluate lost its target before its timer fired: the app quit under the chord.
+          const exit = await exitWithin(s.exitPromise, 5000, Date.now())
+          const err = new Error(
+            `the app went away under the chord before the key up at ${HOLD_RELEASE_AT_MS} ms (attempt ${attempt}/${HOLD_RELEASE_ATTEMPTS}; exit ${JSON.stringify(exit)}; polls ${JSON.stringify(drive.polls.map((p) => p.quitHold))})`
           )
-          polls.push({ askedAt, answeredAt: Date.now(), quitHold })
-          if (polling) await delay(50)
+          err.detail = { attempts: [...attempts, { attempt, polls: drive.polls }] }
+          throw err
         }
-      })()
-      const held = await holding
-      polling = false
-      await polled
-      if (!held) {
-        // The evaluate lost its target before its timer fired: the app quit under the chord.
-        const exit = await exitWithin(s.exitPromise, 5000, Date.now())
-        const err = new Error(
-          `the app went away under the chord before the key up at ${HOLD_RELEASE_AT_MS} ms (exit ${JSON.stringify(exit)}; polls ${JSON.stringify(polls.map((p) => p.quitHold))})`
+        judged = judgeHoldRelease(
+          { ...held, polls: drive.polls },
+          { chord: QUIT_HOLD_CHORD, durationMs: QUIT_HOLD_MS }
         )
-        err.detail = { polls }
-        throw err
+        attempts.push({ attempt, ...judged })
+        log(
+          `hold-release attempt ${attempt}/${HOLD_RELEASE_ATTEMPTS}: the keys were down ${judged.heldForMs} ms by the app's clock (release at ${HOLD_RELEASE_AT_MS} ms, ${judged.lateByMs} ms of timer slack); arming ${judged.arming}${judged.note ? ` (${judged.note})` : ''}`
+        )
+        if (!judged.problems.length) break
+        if (!holdReleaseRedrives(judged) || attempt === HOLD_RELEASE_ATTEMPTS) {
+          const earlier =
+            attempt === 1
+              ? ''
+              : ` (attempt ${attempt}/${HOLD_RELEASE_ATTEMPTS}; ${attempts.every((a) => holdReleaseRedrives(a)) ? 'every attempt' : `the ${attempt - 1} before it`} overshot the hold on the runner's timer – the keys were down ${attempts.map((a) => a.heldForMs).join(', ')} ms by the app's clock)`
+          const err = new Error(`${judged.problems.join('; ')}${earlier}`)
+          err.detail = { ...judged, attempts }
+          throw err
+        }
+        await holdClearedForRedrive(s, attempts)
       }
-      const judged = judgeHoldRelease(
-        { ...held, polls },
-        { chord: QUIT_HOLD_CHORD, durationMs: QUIT_HOLD_MS }
-      )
-      log(
-        `hold-release: the keys were down ${judged.heldForMs} ms by the app's clock (release at ${HOLD_RELEASE_AT_MS} ms, ${judged.lateByMs} ms of timer slack); arming ${judged.arming}${judged.note ? ` (${judged.note})` : ''}`
-      )
-      if (judged.problems.length) {
-        const err = new Error(judged.problems.join('; '))
-        err.detail = judged
-        throw err
+      if (attempts.length > 1) {
+        const overshot = attempts.slice(0, -1)
+        log(
+          `hold-release: attempt ${attempts.length}/${HOLD_RELEASE_ATTEMPTS} passed; the ${overshot.length} before it overshot the hold on the runner's timer, not the app (the keys were down ${overshot.map((a) => a.heldForMs).join(', ')} ms by the app's clock, ${overshot.map((a) => a.lateByMs).join(', ')} ms of slack)`
+        )
       }
       // The key up ended the hold: the state reads none.
       await waitFor(
@@ -7753,7 +7945,7 @@ async function scenarioQuitHold() {
         const err = new Error(
           `the app quit (${JSON.stringify(exit)}) although the chord was released at ${judged.heldForMs} ms`
         )
-        err.detail = judged
+        err.detail = { ...judged, attempts }
         throw err
       }
       const main = await mainProcessState(
@@ -7761,7 +7953,7 @@ async function scenarioQuitHold() {
         3000
       )
       if (main !== 'responsive') throw new Error(`main process ${main} after the release`)
-      return { ...judged, main }
+      return { ...judged, main, attempts }
     })
     await s.step('toggle-off', async () => {
       // The checkbox picked as a mouse picks it: the item's click flips its check and runs the
@@ -7925,6 +8117,7 @@ async function main() {
       crash: scenarioCrash,
       'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
+      'launch-url': scenarioLaunchUrl,
       dark: scenarioDark,
       'mv3-worker': scenarioMv3Worker,
       pip: scenarioPip,
@@ -7966,10 +8159,11 @@ async function main() {
         scenarioRestartRegistration({
           freshProfile,
           runScenario,
-          waitFor,
           delay,
           log,
           ps,
+          // For the `reg.exe query` cross-read when a RunOnce read comes up short (W8-F10).
+          sh,
           isWin: IS_WIN
         }),
       [PRIVATE_TASKBAR_SCENARIO]: () =>

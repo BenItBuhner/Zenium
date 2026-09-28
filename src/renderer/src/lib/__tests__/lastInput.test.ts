@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { LAST_INPUT_ATTRIBUTE, lastInputKindOf } from '@shared/game/runtime'
 import { inputKindOf, noteInput, watchLastInput } from '../lastInput'
 
 /*
@@ -48,6 +49,30 @@ describe('inputKindOf', () => {
   it('reads any pointer down as a touch', () => {
     expect(inputKindOf({ type: 'pointerdown' })).toBe('touch')
     expect(inputKindOf({ type: 'pointerup' })).toBeNull()
+  })
+
+  it('is the rule Roll’s runtime keeps in the served documents, to the letter (`lastInputKindOf`; shared code imports nothing of the renderer, so the two are held here)', () => {
+    const events = [
+      { type: 'pointerdown' },
+      { type: 'pointerup' },
+      ...['Tab', 'ArrowUp', 'ArrowDown', 'Home', 'PageDown', 'Escape', 'F6', 'F12'].map((k) => ({
+        type: 'keydown',
+        key: k
+      })),
+      { type: 'keydown', key: 'l', ctrlKey: true },
+      { type: 'keydown', key: 'd', altKey: true },
+      { type: 'keydown', key: 'Tab', metaKey: true },
+      { type: 'keydown', key: 'Control', ctrlKey: true },
+      { type: 'keydown', key: 'Shift', altKey: true },
+      ...['a', 'Z', '1', 'Enter', 'Backspace', ' ', 'Unidentified'].map((k) => ({
+        type: 'keydown',
+        key: k
+      })),
+      { type: 'keydown', key: 'Tab', isComposing: true },
+      { type: 'keyup', key: 'Tab' }
+    ]
+    for (const e of events) expect(lastInputKindOf(e), JSON.stringify(e)).toBe(inputKindOf(e))
+    expect(LAST_INPUT_ATTRIBUTE).toBe('data-input')
   })
 })
 

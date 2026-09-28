@@ -13,6 +13,7 @@ import type {
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { UpdateDotRecord } from '../core/updateDot'
+import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
@@ -162,6 +163,12 @@ export interface HostCapabilities {
    * viewer and leave this off.
    */
   pdfViewer: boolean
+  /**
+   * The host prints a PDF the inline viewer shows through the system's print flow
+   * (`Platform.printPdf`; Android's `PrintManager`): the viewer's Print row. Off on a host
+   * without the verb, and on the desktop, where Chromium's viewer prints its own document.
+   */
+  pdfPrint: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
   /**
@@ -275,6 +282,16 @@ export interface HostCapabilities {
    */
   selectionToolbar: boolean
   /**
+   * Selected page text gets the chrome's mini menu over it (CT-39; Edge's mini menu: Copy,
+   * Search, Define, Translate, Read aloud): the page script reports the settled selection
+   * (`shared/selectionScript`), the core publishes `UIState.selectionMenu` and the chrome draws
+   * the pill. Desktop hosts declare it; a host without it – the phone, whose system toolbar is
+   * its selection menu – leaves it out, and the core drops a `selection` report unread. The one
+   * capability a host may leave out: a desktop-only surface must not write a `false` into the
+   * phone's boot path for its sake.
+   */
+  selectionMenu?: boolean
+  /**
    * The host can float a second chrome document above the page views (`WindowHost.setPopupSurface`):
    * the autofill picker hangs from a page field there, over a page the user keeps typing into.
    * Hosts without it (phones) draw the picker in the chrome's own document beside the page.
@@ -343,6 +360,84 @@ export interface HostCapabilities {
    */
   placementAnswered: boolean
 }
+
+// ---------------------------------------------------------------------------
+// The mini menu over a text selection, and Define (CT-39)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the mini menu offers, by id, in its order (Edge's: Copy, Search, Define, then the two
+ * the services core adds): each runs the page context menu's own selection action
+ * (`Menus.selectionActions`); `copy` is the engine's copy of the selection.
+ */
+export type SelectionMenuActionId = 'copy' | 'search' | 'define' | 'translate' | 'readAloud'
+
+/** One chip of the mini menu: the id handed back to `selectionMenu.run` and the action's short title. */
+export interface SelectionMenuAction {
+  id: SelectionMenuActionId
+  title: string
+}
+
+/**
+ * `UIState.selectionMenu`: the settled selection the chrome draws the mini menu for, from the
+ * page script's report (`shared/selectionScript`); null while nothing is selected, once the
+ * selection collapses or an action ran, and on hosts without `capabilities.selectionMenu`.
+ */
+export interface SelectionMenuState {
+  tabId: string
+  /** The selected text, whitespace folded, cut at the page script's cap. */
+  text: string
+  /** Where the selection is, in CSS pixels of the page view; null when the page could not say. */
+  rect: Rect | null
+  /** The chips, in order; never empty (an empty list clears the state instead). */
+  actions: SelectionMenuAction[]
+  /**
+   * Whether the pill is folded to its glyphs: the page view is narrower than the pill at full
+   * width plus its margins, so the whole row is 28 px glyph buttons with the titles as tooltips
+   * (`SelectionMenuService`, `miniMenuFolds`). One fold for the row, never chip by chip.
+   */
+  folded: boolean
+}
+
+/**
+ * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
+ * than three words, no letters, an address), Wiktionary has no page for it (`not-found`), the
+ * network did not answer (`offline`), it answered with an error (`unavailable`) or with
+ * something that is not its definition JSON (`malformed`).
+ */
+export type DefineRefusal = 'invalid-term' | 'not-found' | 'offline' | 'unavailable' | 'malformed'
+
+export interface DefineDefinition {
+  /** The sense, as plain text (Wiktionary's HTML stripped). */
+  text: string
+  /** Up to two usage examples, plain text. */
+  examples: string[]
+}
+
+export interface DefineEntry {
+  /** Wiktionary's part of speech heading: `Noun`, `Verb`, `Adjective`, … */
+  partOfSpeech: string
+  /** The language the entry defines the term in, as Wiktionary names it (`English`). */
+  language: string
+  definitions: DefineDefinition[]
+}
+
+/** A definition from Wiktionary (`core/define.ts`); the attribution its licence asks for rides with it. */
+export interface DefineResult {
+  /** The term as looked up (whitespace folded, trimmed). */
+  term: string
+  /** The language code of the section shown (`en`), the reader's when Wiktionary has it. */
+  lang: string
+  entries: DefineEntry[]
+  attribution: {
+    source: 'Wiktionary'
+    licence: 'CC BY-SA 4.0'
+    /** The term's page on Wiktionary, for "See more". */
+    url: string
+  }
+}
+
+export type DefineLookup = { ok: true; result: DefineResult } | { ok: false; reason: DefineRefusal }
 
 export interface Rect {
   x: number
@@ -678,6 +773,19 @@ export interface Tab {
   splitGroupId: string | null
   createdAt: number
   lastActiveAt: number
+  /**
+   * When the tab's main frame last committed a navigation (ms since the epoch): a document, or
+   * a same-document move – a `pushState`, a fragment – as Chrome Android stamps its tab on
+   * every committed navigation (`TabImpl.handleDidFinishNavigation`, the tab's
+   * `lastNavigationCommittedTimestampMillis`, which `TabWebContentsObserver` calls for any
+   * commit of the primary main frame). Quick Delete's tab half reads it (HB-07, `'tabs'`): a
+   * tab is in a range when this stands at or after the range's start. `lastActiveAt` is the
+   * tab's activation, not its navigation. Set by the core at the commit (`Tabs.onNavigated`),
+   * persisted with the tab so a restart keeps it (Chrome's `TabState` keeps its stamp too),
+   * DEVICE-LOCAL: never part of the `open-tabs` sync record. Null on a tab that never committed
+   * this way; absent on records older than the field and read as null – in no bounded range.
+   */
+  lastNavigatedAt?: number | null
   /** Set when a navigation failed – rendered by the zen://error page. */
   errorCode: number | null
   /**
@@ -2745,15 +2853,24 @@ export interface NewTabDeviceState {
    * are. Ids from `MAGIC_STACK_MODULE_IDS` (`shared/newTab.ts`).
    */
   hiddenModules: MagicStackModuleId[]
+  /**
+   * The Safety check card's memory (NTP-19; `shared/safetyHubCard.ts`): per type, the run being
+   * shown and its impressions, the runs so far, when it may show again – Chrome's
+   * `safety_hub.menu_notifications` pref, per device as that is.
+   */
+  safetyHubCard: SafetyHubCardMemories
 }
 
 /**
  * The Magic Stack's modules (NTP-16): the contextual cards the phone's new tab page pages
  * through under its tiles. `continue` is the recently closed tab (Chrome's local tab
  * resumption), `downloads` the last completed download, `bookmarks` the newest bookmark,
- * `default-browser` the "Set Zenium as your default browser" promo (DEF-04).
+ * `safety-hub` the Safety check card (NTP-19: revoked permissions, Safe Browsing off, compromised
+ * passwords – one at a time), `default-browser` the "Set Zenium as your default browser" promo
+ * (DEF-04).
  */
-export type MagicStackModuleId = 'continue' | 'downloads' | 'bookmarks' | 'default-browser'
+export type MagicStackModuleId =
+  'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'default-browser'
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
 export interface NewTabPageShortcut extends NewTabShortcut {
@@ -3100,6 +3217,13 @@ export interface Settings {
    */
   caretBrowsingConfirm?: boolean
   /**
+   * The mini menu comes up over text selected in a page (CT-39; Edge's Appearance › "Show mini
+   * menu when selecting text"): Copy, Search, Define, Translate, Listen as chips over the
+   * selection (`UIState.selectionMenu`). Hosts with `capabilities.selectionMenu` alone read it;
+   * absent in profiles from before it existed (read as true).
+   */
+  showSelectionMenu?: boolean
+  /**
    * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
    * again" turns this off. Absent in profiles from before it existed (read as true).
    */
@@ -3176,6 +3300,19 @@ export interface Settings {
    */
   autoRevokeUnusedPermissions: boolean
   /**
+   * The time range the Delete browsing data dialog opens on: the one the user last deleted
+   * with, as Chrome's desktop dialog remembers its `browser.clear_data.time_period`
+   * (`clear_browsing_data_time_picker.ts` mirrors the pref into the picker and `sendPrefChange`
+   * writes it when Delete is pressed, `clear_browsing_data_dialog.ts` `onDeleteBrowsingDataClick_`).
+   * One key over Basic and Advanced, which share the range row – Chrome kept one too since its
+   * dialog lost the tabs (CL 7857508 retired `time_period_basic`). The last hour until then
+   * (`DEFAULT_CLEAR_BROWSING_DATA_RANGE`; an unknown value reads so, `sanitizeClearBrowsingDataRange`).
+   * Device-local (`DEVICE_LOCAL_SETTINGS`): Chrome stopped syncing the dialog's choices in
+   * CL 5398105 ("[CBD] Make options not syncable"). The phone's Quick Delete form opens on its
+   * own 15 minutes and neither reads nor writes it (`QUICK_DELETE_FORM`).
+   */
+  clearBrowsingDataRange: BrowsingDataRange
+  /**
    * The new tab page, both platforms' (`shared/newTab.ts`): whether it opens (desktop), its
    * layout preset and sections, what its grid shows, what it paints behind. The user's shortcuts
    * and removed hosts are device-local (`NewTabDeviceState`), not here.
@@ -3185,6 +3322,13 @@ export interface Settings {
   gestureHintDone: boolean
   /** The one-time exit hint for a video in fullscreen (GN-20) has been shown (phones). */
   fullscreenHintDone: boolean
+  /**
+   * The phone's in-product help bubbles (TB-19, `shared/iph.ts`): one record per bubble Chrome
+   * Android shows on its toolbar. Device-local (`DEVICE_LOCAL_SETTINGS`), as Chrome's feature
+   * engagement store is the profile's own; a profile from before it reads the defaults
+   * (`sanitizeIphState`).
+   */
+  iph: IphState
   /**
    * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
    * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
@@ -3212,6 +3356,14 @@ export interface Settings {
    * in profiles from before it existed: filled from the OS locales (`defaultLanguages`). Synced.
    */
   languages: string[]
+  /**
+   * Roll's best score (ERR-03, design language v2 §9.17): the profile's, host-kept and synced
+   * like Chrome's `net.easter_egg_high_score` – one number across the no-connection page and
+   * `zen://game` on every device – never a document origin's storage. A whole number in the
+   * meter's range (0 to 99999; `sanitizeGameBestScore`), 0 in profiles from before it existed.
+   * The core's `GameService` answers the pages and only ever raises it.
+   */
+  gameBestScore: number
 }
 
 // ---------------------------------------------------------------------------
@@ -3403,6 +3555,36 @@ export interface DefaultBrowserPromoState {
 
 /** What the chrome should show for the default-browser prompts right now. */
 export type DefaultBrowserPrompt = 'sheet' | 'banner' | null
+
+// ---------------------------------------------------------------------------
+// In-product help (the phone's hint bubbles, TB-19)
+// ---------------------------------------------------------------------------
+
+/**
+ * One hint bubble's record (`shared/iph.ts`), device-local. Chrome's feature engagement tracker
+ * keeps the same two things per IPH feature: the day it became available, and whether it has
+ * been triggered or its subject used.
+ */
+export interface IphBubbleState {
+  /**
+   * When the bubble became available on this device (ms since the epoch): stamped by the first
+   * deferred arm of a build that has the bubble; Chrome's `availability` clock starts the same
+   * day. `null` until then.
+   */
+  availableAt: number | null
+  /**
+   * The bubble has been shown – or the user did what it teaches before it was due (Chrome's
+   * `used` event: `tab_switcher_button_clicked` holds the tab switcher bubble back). Either way
+   * it is spent and never shows.
+   */
+  shown: boolean
+}
+
+/** The bubbles, one record each: the ones Chrome Android 152 shows by default. */
+export interface IphState {
+  /** Chrome's `IPH_TabSwitcherButton`: the bubble on the bar's Tabs button. */
+  tabSwitcher: IphBubbleState
+}
 
 export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
@@ -3901,16 +4083,25 @@ export interface WindowState {
 }
 
 /**
- * A tab with media: on every host the tab and whether it is audible; on hosts whose page script
- * reports the Media Session (Android) also what the OS controls show – the page's metadata (or
- * the tab's title and site), the artwork, the position as of `positionAt` (epoch ms; the chrome
- * extrapolates from it at `playbackRate`), the actions the page handles, and whether the
- * window is in picture-in-picture for its video. A chrome player on the tab (the read-aloud
- * player, `source: 'chrome'`) is the tab's entry while its page has no media of its own.
+ * A tab with media: on every host the tab, whether it is audible and whether the tab is muted;
+ * on hosts whose page script reports the Media Session (Android) also what the OS controls
+ * show – the page's metadata (or the tab's title and site), the artwork, the position as of
+ * `positionAt` (epoch ms; the chrome extrapolates from it at `playbackRate`), the actions the
+ * page handles, and whether the window is in picture-in-picture for its video. A chrome player
+ * on the tab (the read-aloud player, `source: 'chrome'`) is the tab's entry while its page has
+ * no media of its own.
  */
 export interface MediaState {
   tabId: string
   playing: boolean
+  /**
+   * The tab's sound is off (`Tab.muted`, W8-8): the desktop host's `webContents.isAudioMuted()`,
+   * the Android host's WebView mute – the tab's mute, not the element's own (`MediaReport.muted`
+   * is the page's). Read with `playing`, so the hub tells a playing tab that is muted (Pause,
+   * the crossed speaker) from a paused one (Play, the speaker); a host's field arrives
+   * null-safe, false where the tab carries none.
+   */
+  muted: boolean
   title?: string
   artist?: string
   album?: string
@@ -4205,12 +4396,21 @@ export interface DevicePairingResponse {
 // Clear browsing data and Safety check
 // ---------------------------------------------------------------------------
 
-/** Chrome's time ranges: the last hour, 24 hours, 7 days, 4 weeks, or everything. */
-export type BrowsingDataRange = 'hour' | 'day' | 'week' | 'month' | 'all'
+/**
+ * Chrome's time ranges: the last 15 minutes, hour, 24 hours, 7 days, 4 weeks, or everything
+ * (`browsing_data::TimePeriod`, `components/browsing_data/core/browsing_data_utils.h`:
+ * `LAST_15_MINUTES` beside `LAST_HOUR` … `ALL_TIME`; both hosts' dialogs offer the 15 minutes –
+ * `IDS_SETTINGS_CLEAR_PERIOD_15_MINUTES` on the desktop, `IDS_CLEAR_BROWSING_DATA_TAB_PERIOD_
+ * 15_MINUTES` on Android, where it is Quick Delete's default).
+ */
+export type BrowsingDataRange = '15min' | 'hour' | 'day' | 'week' | 'month' | 'all'
 
 /**
  * What "Clear browsing data" can remove. `history`, `cookies` and `cache` are Chrome's Basic
- * set; the rest is Advanced. `cookies` covers cookies and every other kind of site data.
+ * set; the rest of the dialog's list is Advanced. `cookies` covers cookies and every other kind
+ * of site data. `tabs` is the phone's alone (Chrome Android's Quick Delete, HB-07 – its Tabs
+ * row; Chrome's desktop dialog closes no tabs, so it is in neither set): the tabs whose last
+ * committed navigation falls in the range close, with no undo and no "Recently closed" entry.
  */
 export type BrowsingDataType =
   | 'history'
@@ -4221,6 +4421,7 @@ export type BrowsingDataType =
   | 'autofill'
   | 'sitePermissions'
   | 'recentlyClosed'
+  | 'tabs'
 
 export const BROWSING_DATA_BASIC: readonly BrowsingDataType[] = ['history', 'cookies', 'cache']
 export const BROWSING_DATA_ADVANCED: readonly BrowsingDataType[] = [
@@ -4239,7 +4440,7 @@ export interface BrowsingDataCount {
   type: BrowsingDataType
   /** Items of `unit` in the range; null when the engine cannot count this type. */
   count: number | null
-  unit: 'visits' | 'sites' | 'bytes' | 'downloads' | 'logins' | 'entries' | 'permissions'
+  unit: 'visits' | 'sites' | 'bytes' | 'downloads' | 'logins' | 'entries' | 'permissions' | 'tabs'
   /** False when the engine cannot limit this type to the range: clearing removes all of it. */
   rangeApplies: boolean
   /** Why the type cannot be cleared right now (the vault is locked), or null. */
@@ -4505,6 +4706,8 @@ export interface UIState {
   newTabHiddenHosts: string[]
   /** The Magic Stack's modules hidden on this device (NTP-16; the phone's page and its Customise sheet). */
   newTabHiddenModules: MagicStackModuleId[]
+  /** The Safety check card's memory on this device (NTP-19; `NewTabDeviceState.safetyHubCard`). */
+  newTabSafetyHubCard: SafetyHubCardMemories
   /**
    * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
    * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
@@ -4642,6 +4845,11 @@ export interface UIState {
   readAloud: ReadAloudState | null
   /** The import from another browser or file that is running or just finished; null otherwise. */
   import: ImportProgress | null
+  /**
+   * The settled text selection the chrome's mini menu stands over (CT-39): its tab, text, box
+   * and chips; null while nothing is selected. Desktop hosts with `capabilities.selectionMenu`.
+   */
+  selectionMenu: SelectionMenuState | null
 }
 
 export interface FindResult {
@@ -5519,17 +5727,32 @@ export interface Commands {
   /**
    * Clear browsing data of the chosen types in the range. Passwords need re-authentication
    * (`passphrase` carries the vault passphrase when the chrome was asked for it); when it fails
-   * nothing is cleared and the outcome says which step is needed.
+   * nothing is cleared and the outcome says which step is needed. With `'tabs'` among the types
+   * (the phone's Quick Delete, HB-07) the tabs the range holds AT THIS MOMENT close last, after
+   * the data – the set `privacy.tabsInRange` named a moment earlier, give or take a tab that
+   * navigated in between – with no undo and no "Recently closed" entry (Chrome's
+   * `QuickDeleteTabsFilter`: `allowUndo(false).saveToTabRestoreService(false)`).
    */
   'privacy.clearBrowsingData': {
     args: { range: BrowsingDataRange; types: BrowsingDataType[]; passphrase?: string }
     result: ReauthOutcome<ClearBrowsingDataResult>
   }
-  /** How much of each type the range holds, for the dialog's preview lines. */
+  /** How much of each type the range holds, for the dialog's preview lines (the `tabs` row last). */
   'privacy.clearBrowsingDataCounts': {
     args: { range: BrowsingDataRange }
     result: BrowsingDataCount[]
   }
+  /**
+   * The tabs Quick Delete would close for the range right now (HB-07 / MOT-24), as ids in the
+   * order the overview lists them: every tab of every space and window whose last committed
+   * navigation (`Tab.lastNavigatedAt`) is at or after the range's start – pinned and essential
+   * tabs among them, private tabs never – or, for `'all'`, every tab (Chrome's ALL_TIME takes the
+   * whole model). The chrome asks BEFORE `privacy.clearBrowsingData` with `'tabs'`, as Chrome
+   * shows the tab switcher and runs its motion on the cards first, then closes; the clear takes
+   * the set as it stands at clear time, so a tab that navigates between the two calls joins or
+   * leaves it – the motion's list may differ by that tab, as Chrome's may (cosmetic).
+   */
+  'privacy.tabsInRange': { args: { range: BrowsingDataRange }; result: string[] }
 
   /**
    * Cookies and site data (Chrome's `chrome://settings/content/siteData`): the default for sites
@@ -5790,6 +6013,12 @@ export interface Commands {
   'newtab.undoRemove': { args: { url: string }; result: boolean }
   /** Hide or show one of the Magic Stack's modules on this device (NTP-16). */
   'newtab.setModuleHidden': { args: { id: MagicStackModuleId; hidden: boolean }; result: void }
+  /**
+   * The Safety check card's memory after an impression or a dismissal (NTP-19): the renderer
+   * runs the machine (`shared/safetyHubCard.ts`) over the published state and writes the record
+   * back whole; the core sanitises and keeps it with the device's other new-tab sets.
+   */
+  'newtab.setSafetyHubCardMemory': { args: { memories: SafetyHubCardMemories }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }
@@ -6218,7 +6447,21 @@ export interface Commands {
   'pdf.openWith': { args: { tabId: string }; result: void }
   /** The system share sheet with the PDF file the tab shows. */
   'pdf.share': { args: { tabId: string }; result: void }
-  /** What the viewer in the tab last reported (page, zoom, find, outline); null before it did. */
+  /**
+   * Save a copy of the PDF with the form's values written in (pdf.js's incremental save) to the
+   * downloads location under the file's name, listed as a completed download; the viewer's
+   * form reads unmodified once it is written. The path the copy was written under (a `content:`
+   * address on a host that names none), or null when the tab shows no viewer, the host cannot
+   * write files, or the copy could not be made or written.
+   */
+  'pdf.save': { args: { tabId: string }; result: string | null }
+  /**
+   * The system print flow with the PDF the tab shows (`capabilities.pdfPrint`): the file as
+   * downloaded, or – the form edited – a copy with its values written in. False when the tab
+   * shows no viewer, the host cannot print, or the edited copy could not be made.
+   */
+  'pdf.print': { args: { tabId: string }; result: boolean }
+  /** What the viewer in the tab last reported (page, zoom, find, outline, form); null before it did. */
   'pdf.state': { args: { tabId: string }; result: PdfViewerReport | null }
   /** Drive the viewer in the tab (zoom, fit, go to a page, find, rotate); false when it has none. */
   'pdf.command': { args: { tabId: string; command: PdfViewerCommand }; result: boolean }
@@ -6300,6 +6543,32 @@ export interface Commands {
   'readAloud.setHighlight': { args: { mode: ReadAloudHighlightMode }; result: void }
   /** The host's voices and the per-language default among them (the pickers). */
   'readAloud.voices': { args: void; result: ReadAloudVoicesResult }
+
+  /**
+   * The mini menu's chip `id` was pressed over the selection `UIState.selectionMenu` holds for
+   * `tabId` (CT-39): the matching page-menu selection action runs (`Menus.selectionActions`,
+   * the one list) and the state clears. False when the state is another tab's or gone.
+   */
+  'selectionMenu.run': { args: { tabId: string; id: SelectionMenuActionId }; result: boolean }
+  /** The mini menu was dismissed (Escape in the pill's document): the state clears, the page has the keyboard back. */
+  'selectionMenu.dismiss': { args: { tabId: string }; result: void }
+  /**
+   * The pill's document measured the size its content wants (CSS px, the pill's box without the
+   * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`, in the
+   * pose it drew (`folded`: the glyph row, or the full pill); the core keeps one measurement per
+   * pose and places the popup surface to fit (`SelectionMenuService.surfaceSize`).
+   */
+  'selectionMenu.surfaceSize': {
+    args: { tabId: string; width: number; height: number; folded: boolean }
+    result: void
+  }
+  /**
+   * A definition of `term` from Wiktionary (`core/define.ts`; English Wiktionary's REST
+   * definitions, the reader's language section when it has one, `lang` defaulting to the first
+   * preferred language). The answer carries the attribution the licence asks for, or a typed
+   * refusal; cached for a day.
+   */
+  'define.lookup': { args: { term: string; lang?: string }; result: DefineLookup }
   'reader.toggle': { args: { tabId: string }; result: void }
   /** Change Reader View's text preferences; every open reader page follows at once. */
   'reader.setPreferences': { args: Partial<ReaderPreferences>; result: void }
@@ -6556,8 +6825,8 @@ export interface Commands {
     result: ReauthOutcome<null>
   }
   /**
-   * The desktop picker's document (`?surface=autofill`) reports the height its content wants;
-   * the core sizes and places the popup surface from it (`placePickerSurface`).
+   * The desktop picker's document (`?surface=popup`, `PickerSurface`) reports the height its
+   * content wants; the core sizes and places the popup surface from it (`placePickerSurface`).
    */
   'autofill.surfaceSize': { args: { id: string; height: number }; result: void }
   /**
@@ -7141,6 +7410,15 @@ export interface Events {
    * asked, in CSS pixels of the page view, when known.
    */
   'translate.selection': { tabId: string; text: string; x: number | null; y: number | null }
+  /**
+   * Show the definition surface for `term` in the tab (CT-39's Define, from the mini menu, the
+   * desktop's page context menu or the phone's selection toolbar): the chrome looks the term up
+   * (`define.lookup`) and shows the answer over `rect` – the selection's box in CSS pixels of
+   * the page view, which the page's zoom scales – or, with null, hanging from `at` (the context
+   * menu's click in the view's own pixels, unscaled, as `translate.selection`'s point) when there
+   * is one, and in its sheet otherwise (the toolbar's touch anchors nothing).
+   */
+  'define.show': { tabId: string; term: string; rect: Rect | null; at?: { x: number; y: number } }
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }

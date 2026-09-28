@@ -75,6 +75,7 @@ import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
 import { openTranslateSelection } from '@renderer/lib/translate'
+import { openDefine } from '@renderer/lib/define'
 import { browserStore } from '@renderer/lib/ui'
 import { voiceEvent } from '@renderer/lib/voiceSearch'
 import { showQrCode } from '@renderer/lib/qrCode'
@@ -410,7 +411,7 @@ export function useMainEvents(): void {
       onEvent('bookmark.edit', (edit) => {
         // Over the phone's bookmarks panel the request is the panel's sheet, with the panel's
         // own picture behind it; anywhere else it is a dialog over the page (the manager page
-        // renames a folder in view in place and lets the rest through to it).
+        // takes a new folder's request to name it in place and lets the rest through to it).
         if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
         else void openBookmarkChrome({ bookmarkEdit: edit }, currentActiveTabId())
       }),
@@ -495,6 +496,12 @@ export function useMainEvents(): void {
       onEvent('translate.selection', ({ tabId, text, x, y }) => {
         closeUrlbar()
         openTranslateSelection({ tabId, text, x, y })
+      }),
+      // The Define surface (CT-39): the mini menu's chip, the desktop's page context menu or the
+      // phone's selection toolbar asked.
+      onEvent('define.show', ({ tabId, term, rect, at }) => {
+        closeUrlbar()
+        openDefine(at ? { tabId, term, rect, at } : { tabId, term, rect })
       }),
       // The root's `--zen-inset-*` and the store, when the numbers changed (lib/insets.ts).
       onEvent('insets', (insets) => applyHostInsets(insets)),

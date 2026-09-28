@@ -3099,6 +3099,11 @@ class TabWebView(
             failLoad(failure.code, failure.name ?: error.description.toString(), url)
         }
 
+        /** The document's own error status (a 404, a 5xx) is the host's to note; a subresource's is nobody's. */
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+            if (request.isForMainFrame) host.documentHttpError(this@TabWebView, request.url.toString(), errorResponse.statusCode)
+        }
+
         /**
          * A certificate that failed verification. The load goes ahead when the user proceeded past
          * the interstitial for the site and certificate this session (`Security.certificateExceptions`,

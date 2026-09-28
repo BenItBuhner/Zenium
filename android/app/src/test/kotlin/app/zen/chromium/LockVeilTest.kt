@@ -138,6 +138,14 @@ class LockVeilTest {
         // ACTION_CANCEL ends the drag (`HistoryNavGesture` → the chrome's `retract`) and the disc
         // goes down – and it takes no touch.
         //
+        // Outside `root` as well: the tablet's tab hover card (TABLET-05, `TabHoverCardView`),
+        // whose 2 dp is `--v2-shadow-panel`'s offset, the card's shadow, not an order. Its layer
+        // sits in the shell under the fullscreen layer, over the veil by parent, and it pictures a
+        // page (the host's own thumbnail of the tab): so the host takes it down as the window
+        // leaves (`onStop`) and as the private lock arms (`onPrivateLockArmed`), the pointer that
+        // raised it gone with the window – it is never the first frame back – and it takes no
+        // touch and no hover.
+        //
         // Outside the browser window altogether: the toast card an installed web app's own window
         // draws (PWA-13, `NativeToastCard` in `WebAppActivity`'s shell), whose 2 dp is
         // `--v2-shadow-panel`'s offset, the card's shadow. No page of the browser's and no veil
@@ -148,7 +156,8 @@ class LockVeilTest {
             listOf(
                 "HistoryNavBubbleView.kt: elevation = SHADOW_ELEVATION_DP * density",
                 "Host.kt: it.elevation = LockVeil.Z_PX",
-                "NativeToastCard.kt: view.elevation = dp(ToastCardSpec.SHADOW_Y_DP).toFloat()"
+                "NativeToastCard.kt: view.elevation = dp(ToastCardSpec.SHADOW_Y_DP).toFloat()",
+                "TabHoverCardView.kt: card.elevation = dp(TabHoverCardSpec.SHADOW_Y_DP).toFloat()"
             ),
             lifts
         )

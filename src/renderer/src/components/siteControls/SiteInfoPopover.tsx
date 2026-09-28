@@ -76,7 +76,7 @@ import {
  * data, Permissions (each a level away, pushing in on the spring), a Trackers blocked row where
  * the engine counts them, Reset permissions, and Site settings (Chrome's last row of page info,
  * omnibox-28: Settings › Privacy and security as a tab, on the site's landing); and the panel
- * form of footer (§9.20) – a hairline in the gutter under the rows, then Clear site data and
+ * form of footer (§9.20) – a hairline in the gutter under the rows, then Delete site data and
  * Reload at 12. The detail levels answer the same commands the Android sheet does (`site.*`,
  * `permissions.*`), so the two surfaces show one site the same way. Everything it shows comes
  * from one `siteInfo.snapshot` reading, taken again after every action. The pill's site-
@@ -162,10 +162,14 @@ export function SiteInfoPopover({
   const clearCookies = (): Promise<void> =>
     act(async () => {
       const { removed } = await cmd('site.clearCookies', { tabId: tab.id })
+      // The cookies level is the Delete family's too (W8-11, the design lead's ruling: cookies
+      // are site data, one level above "Delete site data"): the toast names the data, said as done.
       pushToast(
         removed === 0
-          ? 'No cookies to remove'
-          : `Removed ${removed} cookie${removed === 1 ? '' : 's'}`
+          ? 'No cookies to delete'
+          : removed === 1
+            ? '1 cookie deleted'
+            : `${removed} cookies deleted`
       )
       refreshSiteInfo()
       go('cookies')
@@ -173,7 +177,9 @@ export function SiteInfoPopover({
   const clearData = (): Promise<void> =>
     act(async () => {
       await cmd('site.clearData', { tabId: tab.id })
-      pushToast(`Cleared everything ${site.site || 'this site'} stored`)
+      // The toast names the data, not the site (W8-11, the design lead's ruling): Chrome's
+      // compound from `IDS_SETTINGS_SITE_SETTINGS_COOKIE_REMOVE_SITE`, said as done.
+      pushToast('Site data and permissions deleted')
       onDismiss()
     })
   const resetPermissions = (): Promise<void> =>
@@ -391,7 +397,7 @@ export function SiteInfoPopover({
               >
                 {site.web && (
                   <V2Button variant="danger" disabled={busy} onClick={() => go('clear-data')}>
-                    Clear site data
+                    Delete site data
                   </V2Button>
                 )}
                 <V2Button disabled={busy} onClick={reload} aria-label="Reload page">
@@ -451,9 +457,9 @@ export function SiteInfoPopover({
             <ConfirmLevel
               id={titleId}
               name="clear-data"
-              title="Clear site data?"
-              description={`Removes cookies, stored data and permissions of ${site.site || 'this site'}, then reloads the page.`}
-              action="Clear site data"
+              title="Delete site data?"
+              description={`Deletes cookies, stored data and permissions of ${site.site || 'this site'}, then reloads the page.`}
+              action="Delete site data"
               busy={busy}
               onCancel={() => cancelConfirm('overview')}
               onConfirm={() => void clearData()}
@@ -464,9 +470,9 @@ export function SiteInfoPopover({
             <ConfirmLevel
               id={titleId}
               name="clear-cookies"
-              title="Clear cookies?"
-              description={`Removes ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} and signs you out of ${site.site || 'this site'}.`}
-              action="Clear cookies"
+              title="Delete cookies?"
+              description={`Deletes ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} and signs you out of ${site.site || 'this site'}.`}
+              action="Delete cookies"
               busy={busy}
               onCancel={() => cancelConfirm('cookies')}
               onConfirm={() => void clearCookies()}
@@ -718,7 +724,7 @@ function CookiesLevel({
       {cookies.length > 0 && (
         <Footer count={1}>
           <V2Button variant="danger" disabled={busy} onClick={onClear}>
-            Clear cookies
+            Delete cookies
           </V2Button>
         </Footer>
       )}
@@ -921,7 +927,7 @@ function DevicesLevel({
  * Escape is one hop back, the level's Escape standing above the popover's on the stack (the
  * popover stays up and takes the next press), and – as Cancel's button does – it hands the focus
  * to the control the level opened from (§10.4 as the lead read it: the control that opened it –
- * here the footer's danger verb of the level under it, "Clear site data", "Clear cookies"): the
+ * here the footer's danger verb of the level under it, "Delete site data", "Delete cookies"): the
  * popover's `cancelConfirm`, which names that control as the arriving level's landing. While the
  * deed is at work (§9.30) Cancel is disabled and Escape is inert with it. The container carries
  * `data-confirm="<name>"`, the primitive's handle.
@@ -1037,8 +1043,8 @@ function returnTargetOf(opener: ConfirmOpener | null): HTMLElement | null {
 
 /**
  * The fallback for `returnTargetOf` – a heuristic, right for the popover as drawn: the ONE
- * danger verb in the footer of the level standing then – the overview's "Clear site data", the
- * cookies level's "Clear cookies" (the confirm level's own verb is out of the document by the
+ * danger verb in the footer of the level standing then – the overview's "Delete site data", the
+ * cookies level's "Delete cookies" (the confirm level's own verb is out of the document by the
  * time the level under it arrives). It assumes one danger verb per level's footer, and takes the
  * first were there two; the recorded opener above is what tells them apart. Null when that level
  * draws no such footer (the cookies went).
