@@ -36,8 +36,9 @@ import java.util.concurrent.TimeUnit
  *     the offer's clock (its age at the tap is reported); the chrome's crossing layer runs
  *     `covering` → `loading` (the reader's surface shown over the page's picture) → `landing`
  *     and leaves once the host has drawn the `zen://reader` document; the reader document up
- *     with the article's title; the offer gone; the pill at rest still the favicon, the host and
- *     the one site-information glyph (no reader chip) – and THE FAVICON THE SITE'S STILL: the
+ *     with the article's title; the offer gone; the pill at rest the favicon, the host and the
+ *     lit Reader View exit (the reader chip pressed, `aria-pressed="true"` – the design lead's
+ *     fold (e) on #658; no Text preferences chip) – and THE FAVICON THE SITE'S STILL: the
  *     pill's icon in Reader View is the article's icon, the same address as before the finger,
  *     never the globe of a siteless page (the design gate for #491's root addition; the core
  *     keeps `favicon` over the reader's navigation, `Favicon.tsx` reads the identity through the
@@ -292,9 +293,11 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
     }
 
     /**
-     * The reader document up: its title the article's; the pill at rest the favicon, the host
-     * and the one site-information glyph – and the favicon the site's still, the same address the
-     * pill drew on the article (`pillBefore`), never the globe or a letter tile in its place.
+     * The reader document up: its title the article's; the pill at rest the favicon, the host,
+     * the one site-information glyph and the lit Reader View exit (§9.29 as amended, the design
+     * lead's fold (e) on #658: the reader chip pressed on `zen://reader`, no Text preferences
+     * chip) – and the favicon the site's still, the same address the pill drew on the article
+     * (`pillBefore`), never the globe or a letter tile in its place.
      */
     private fun readerChecks(pillBefore: JSONObject) {
         val probe = readerProbe()
@@ -302,7 +305,10 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         check("the reader document carries the article's title", probe.optString("title").startsWith("The lighthouse keeper") || probe.optString("title").startsWith("a long night of tides") || probe.optString("title").startsWith("The harbourmaster"))
         val pill = pillProbe()
         finding("  the pill at rest in Reader View: $pill; the tab's favicon as the core holds it: ${tab()?.optString("favicon")?.take(72)}")
-        check("the pill at rest is the favicon, the host and one site-information glyph: no reader chip (ReaderUiDemo's contract)", pill.optInt("chips") == 1 && pill.optInt("siteInfo") == 1 && pill.optInt("readerChip") == 0)
+        check(
+            "the pill at rest is the favicon, the host and the lit Reader View exit (aria-pressed=\"true\"): two chips, one site-information glyph, no Text preferences chip (ReaderUiDemo's contract)",
+            pill.optInt("chips") == 2 && pill.optInt("siteInfo") == 1 && pill.optInt("readerExit") == 1 && pill.optString("pressed") == "true" && pill.optInt("readerChip") == 0
+        )
         val icon = pill.optString("favicon")
         check(
             "the pill keeps the site's favicon through Reader View: an icon drawn (no globe, no letter tile), the same as on the article",
@@ -786,15 +792,19 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     /**
      * The phone pill's chips, from the chrome's document: how many, the site-information glyph,
-     * any reader chip; and the favicon slot – the icon's address when an image is drawn
-     * (`img.zen-tab-favicon`), a letter tile's letter, the globe's presence.
+     * the desktop's Text preferences chip (`readerChip`, never drawn on the phone), the Reader View
+     * chip (`readerExit`: `[data-reader-chip]`) with its `aria-pressed` (`pressed`, `"true"` on the
+     * reader document – the lit exit) and its hint (`hint`, the tooltip's text); and the favicon
+     * slot – the icon's address when an image is drawn (`img.zen-tab-favicon`), a letter tile's
+     * letter, the globe's presence.
      */
     private fun pillProbe(): JSONObject {
         val raw = jsonString(chromeJs(
-            "(function(){var p=document.querySelector('.zen-phone-pill');if(!p)return '{}';" +
+            "(function(){var p=document.querySelector('.zen-phone-pill');if(!p)return '{}';var r=p.querySelector('[data-reader-chip]');" +
                 "var img=p.querySelector('img.zen-tab-favicon');var tile=p.querySelector('.zen-tab-favicon.zen-squircle');" +
                 "return JSON.stringify({chips:p.querySelectorAll('[data-pill-chip]').length,siteInfo:p.querySelectorAll('[data-site-info]').length," +
-                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,text:(p.textContent||'').trim().slice(0,40)," +
+                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,readerExit:p.querySelectorAll('[data-reader-chip]').length," +
+                "pressed:r?(r.getAttribute('aria-pressed')||''):'',hint:r?(r.getAttribute('data-tooltip')||''):'',text:(p.textContent||'').trim().slice(0,40)," +
                 "favicon:img?(img.getAttribute('src')||'').slice(0,80):'',letter:tile?(tile.textContent||'').trim():'',globe:p.querySelectorAll('svg.lucide-globe').length})})()"
         ))
         return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())

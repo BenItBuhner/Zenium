@@ -22,7 +22,12 @@ import {
   type PillFold
 } from '@renderer/lib/pillChips'
 import { readerArticleTab } from '@renderer/lib/readerEntry'
-import { crossReaderView } from '@renderer/lib/readerTransition'
+import {
+  crossReaderView,
+  isReaderUrl,
+  readerCrossingOf,
+  readerCrossingStore
+} from '@renderer/lib/readerTransition'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
@@ -50,7 +55,8 @@ import { PillChip } from '../urlbar/PillChip'
  * verdict cross-fades the slot (§11.4) as the lock and the media chip do. `save-prompt` is
  * §9.29's other state chip – a save-password or save-address key – for when the phone grows one
  * (the desktop has `AutofillChip`); the slot rule already holds for it. `reader` is §9.29's
- * reader chip: the sheet's Reader View row on an article page (PUI-14), never drawn in the pill.
+ * reader chip: the sheet's Reader View row on an article page (PUI-14) and the slot's one offer
+ * there (CT-37), and on `zen://reader` the lit exit in the same slot.
  */
 export type PillChipId =
   | 'lock'
@@ -74,6 +80,14 @@ export const NOTIFICATIONS_BLOCKED_LABEL = 'Notifications blocked'
  */
 export const READER_ROW_LABEL = 'Reader View'
 export const READER_ROW_SPOKEN = 'Reader View available'
+/** The reader chip's description (its tooltip on a mouse or keyboard, §9.31): the desktop chip's words (`SidebarTop`). */
+export const READER_CHIP_HINT = 'Enter Reader View'
+/** The lit exit's words on `zen://reader` (§9.29's checked exit; the desktop chip's other title). */
+export const READER_EXIT_HINT = 'Exit Reader View'
+/** What the address speaks of the lit exit while a live state holds its slot: the page's state, not an offer. */
+export const READER_ON_SPOKEN = 'Reader View on'
+/** The sheet row's value on `zen://reader`: the state the exit row reports, as the translate row reports its languages. */
+export const READER_ON_VALUE = 'On'
 
 /** The glyph slot's chip id for a connection state that has a verdict to draw. */
 const VERDICT_CHIP_IDS = {
@@ -120,6 +134,12 @@ export interface PillChipContext {
    * state (Now playing) is not identity and stays, as Chrome's media notification does.
    */
   locked?: boolean
+  /**
+   * The §9.33 "Show Reader View?" strip (PUI-14's auto-offer) stands under the pill for this
+   * tab: the reader chip waits in the sheet while the strip asks the same question, and takes
+   * the slot when the strip leaves by any end (CT-37's coexistence; the design gate rules on it).
+   */
+  readerOfferUp?: boolean
 }
 
 /** A §9.3 44 × 44 box laid over the pill's 28 pitch (#237): the negative margins carry the difference. */
@@ -156,6 +176,35 @@ function translateValue(translation: TranslateTabState): string | undefined {
     default:
       return undefined
   }
+}
+
+/**
+ * Reader View for `tabId` from the pill's chip or the sheet's row (PUI-14, CT-37): the crossing
+ * where it runs (`crossReaderView`, MOT-36), begun on the picture the sheet holds of the page
+ * when the sheet is up – so the page is never let back between the sheet's going and the
+ * surface's coming (the menu row's way, `lib/ui.ts` `pickMenuItem`) – and on the crossing's own
+ * picture from the pill, where no sheet stands; the sheet, if up, leaves with its spring. On
+ * `zen://reader` the same crossing is the exit: the core's toggle uncovers the page (the lit
+ * chip's tap, the sheet's row, the app menu's row and Back are that one door). A second tap
+ * while the tab's crossing runs – the chip under a finger as the offer's strip leaves, a quick
+ * double-tap – asks nothing more: `crossReaderView` makes a call during a crossing the plain
+ * toggle, and a second extraction is not what the finger meant.
+ */
+export function enterReaderView(tabId: string): void {
+  const ui = uiStore.get()
+  const picture = ui.snapshotTabId === tabId ? ui.snapshot : null
+  closeSiteInfo()
+  if (readerCrossingOf(readerCrossingStore.get(), tabId) !== null) return
+  void crossReaderView(tabId, { picture })
+}
+
+/**
+ * Whether the reader chip stands on `tab`: an article page – the probe's word, `readerArticleTab`
+ * – where it is the offer, or Reader View itself, where it is the lit exit (§9.29). The pill's
+ * tap route (`PhoneShell`) and the chip's builder ask the one question.
+ */
+export function readerChipTab(tab: Pick<Tab, 'url' | 'readerable' | 'discarded'> | null): boolean {
+  return tab !== null && (isReaderUrl(tab.url) || readerArticleTab(tab))
 }
 
 /**
@@ -340,30 +389,72 @@ export function phonePillChips(
     })
   }
 
-  // Reader View (PUI-14; §9.29's reader chip): on an article page – the reader core's probe said
-  // so at its dom-ready (`readerArticleTab`, the same predicate the §9.33 offer stands on; the
-  // verdict consumed, never re-run) – the sheet lists the Reader View row, the same door the
-  // offer's action and the app menu's row open: Reader View for this tab through the crossing
-  // where it runs (`crossReaderView`, MOT-36), begun on the picture the sheet already holds of
-  // the page so the page is never let back between the sheet's going and the surface's coming
-  // (the menu row's way, `lib/ui.ts` `pickMenuItem`); the sheet leaves with its spring. Never in
-  // the pill (the fixed phone pill; the design gate for #491 held to it), and not on a page the
-  // probe did not read as an article, nor in Reader View itself, whose exit is the menu's row.
-  if (identity && !page && !extension && readerArticleTab(tab)) {
+  // Reader View (PUI-14; §9.29's reader chip; CT-37's phone half): on an article page – the
+  // reader core's probe said so at its dom-ready (`readerArticleTab`, the same predicate the
+  // §9.33 offer stands on; the verdict consumed, never re-run) – the sheet lists the Reader View
+  // row, the same door the offer's action and the app menu's row open: Reader View for this tab
+  // through the crossing where it runs (`crossReaderView`, MOT-36), begun on the picture the
+  // sheet already holds of the page so the page is never let back between the sheet's going and
+  // the surface's coming (the menu row's way, `lib/ui.ts` `pickMenuItem`); the sheet leaves with
+  // its spring. Not on a page the probe did not read as an article; in Reader View itself the
+  // same chip is the exit (below).
+  //
+  // The pill's readerable indicator (CT-37; Chrome Android's adaptive-toolbar Reader mode button
+  // – `AdaptiveToolbarButtonVariant.READER_MODE`, `ReaderModeToolbarButtonController` – which
+  // appears on a distillable page and opens the simplified view; Zenium's phone bar has no
+  // toolbar slot, so the pill's glyph slot is the seat, the least deviation from §9.29's fixed
+  // pill): the same chip is the one offer of `lib/pillChips.ts` – drawn in the slot while the
+  // slot is quiet, the sheet's row always. It never displaces a status glyph (the open lock, the
+  // triangle, the Safe Browsing shield: the identity's state beats an offer, as it beats the
+  // quiet bell), and it waits in the sheet while the §9.33 strip asks the same question under
+  // the pill (`readerOfferUp`), taking the slot when the strip leaves by any end – a muted site
+  // has the chip from dom-ready, the strip never comes. The glyph is the desktop chip's
+  // (`BookOpenText`, `SidebarTop`), in the slot's rest ink as the lock and the bell are – the
+  // deemphasised window ink, `.zen-phone-pill .zen-pill-quiet` (the press fill is the docked
+  // pill's own, `.zen-phone-pill-docked:active`); its name is the row's, its description the desktop chip's
+  // vocabulary ("Enter Reader View") without the desktop's chord – the phone's chips carry none,
+  // and §9.31's tooltip is a mouse's or a keyboard's, so here the words are TalkBack's alone.
+  // The tap is routed by `PhoneShell`'s pill (`data-reader-chip`) to the same crossing.
+  //
+  // The lit exit (§9.29 as amended; the design lead's one fold on CT-37's gate): on `zen://reader`
+  // the same chip stays in the slot, lit in the accent with `aria-pressed` – the phone's twin of
+  // the desktop's lit Reader View exit (`SidebarTop`) and of Chrome's checked "Hide Reading mode"
+  // – and its tap runs the same crossing, which the core's toggle takes back to the page
+  // (`reader.toggle` uncovers a reader URL, `src/core/reader.ts`). The reader URL alone decides
+  // (`isReaderUrl`: the probe's flag is the article's and may be stale); the fold is the article
+  // page's – the offer's kind, the identity's warn or danger glyph keeping the slot, a live state
+  // folding it to the sheet, where its row is listed under every state as on the article page,
+  // its value the state it reports ("On") and its tap the same exit; the app menu's row and Back
+  // are the core's other doors. The §9.33 strip never stands on the reader page, so
+  // `readerOfferUp` is the article's alone. The lit ink is the window family's accent, the Now
+  // playing chip's while it plays; the desktop chip's title is the exit's description.
+  const inReader = isReaderUrl(tab.url)
+  if (identity && !page && !extension && readerChipTab(tab)) {
+    const quietSlot = verdict === null || verdict.tone === 'neutral'
     chips.push({
       id: 'reader',
-      fold: pillChipFold('reader'),
-      spoken: READER_ROW_SPOKEN,
+      fold:
+        quietSlot && (inReader || ctx.readerOfferUp !== true) ? pillChipFold('reader') : 'sheet',
+      spoken: inReader ? READER_ON_SPOKEN : READER_ROW_SPOKEN,
       row: {
-        glyph: <BookOpenText />,
+        glyph: <BookOpenText className={inReader ? 'text-[var(--zen-accent)]' : undefined} />,
         label: READER_ROW_LABEL,
-        activate: () => {
-          const ui = uiStore.get()
-          const picture = ui.snapshotTabId === tab.id ? ui.snapshot : null
-          closeSiteInfo()
-          void crossReaderView(tab.id, { picture })
-        }
-      }
+        value: inReader ? READER_ON_VALUE : undefined,
+        activate: () => enterReaderView(tab.id)
+      },
+      render: (interactive) => (
+        <PillChip
+          inert={!interactive}
+          label={READER_ROW_LABEL}
+          title={inReader ? READER_EXIT_HINT : READER_CHIP_HINT}
+          pressed={inReader || undefined}
+          data-reader-chip
+          data-testid="reader-chip"
+          className={cn(CHIP_CLASS, inReader ? 'text-[var(--zen-accent)]' : 'zen-pill-quiet')}
+        >
+          <BookOpenText className="h-3.5 w-3.5" />
+        </PillChip>
+      )
     })
   }
 
@@ -463,10 +554,13 @@ export function pillChipRows(
  * count: "2 more in site information" would send the user to the sheet to learn what a glance
  * at its rows tells a sighted user; the states say it here. A chip with nothing to report
  * (nothing blocked yet) says nothing, so the label on a quiet page is #237's alone. A live state
- * waiting in the sheet is spoken here too ("Now playing"); the one in the pill has its own stop.
+ * waiting in the sheet is spoken here too ("Now playing"); the one in the pill has its own stop –
+ * as the reader chip does while the pill draws it (an offer is the sheet's row even then, and
+ * would be heard twice: at its own stop and here).
  */
 export function pillChipsSpoken(chips: readonly PillChipModel[]): string[] {
-  return foldPhonePillChips(chips).folded.map((chip) => chip.spoken)
+  const fold = foldPhonePillChips(chips)
+  return fold.folded.filter((chip) => !fold.shown.includes(chip)).map((chip) => chip.spoken)
 }
 
 // ---------------------------------------------------------------------------
