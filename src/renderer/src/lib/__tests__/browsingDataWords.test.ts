@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 /**
  * The words of the Delete browsing data family, swept (W8-7). Chrome renamed the family in M124
@@ -90,7 +90,17 @@ function walk(path: string): string[] {
   return out
 }
 
-const rel = (file: string): string => relative(repo, file).split('\\').join('/')
+// Read once per file: the look-ups below ask for a literal's repo path tens of thousands of
+// times, and `relative()` on every ask was most of the sweep's time on a loaded CI runner.
+const relOf = new Map<string, string>()
+const rel = (file: string): string => {
+  let r = relOf.get(file)
+  if (r === undefined) {
+    r = relative(repo, file).split('\\').join('/')
+    relOf.set(file, r)
+  }
+  return r
+}
 
 /** The user's literals of a TypeScript file: strings, template text and JSX text, never a comment. */
 export function literalsOfTs(file: string, source: string): Literal[] {
@@ -147,6 +157,39 @@ function literalsOf(file: string): Literal[] {
   return /\.tsx?$/.test(file) ? literalsOfTs(file, source) : literalsOfOther(file, source)
 }
 
+/**
+ * The sweep, read once for the whole file: the roots walked, every file parsed, the texts indexed
+ * by repo path. The two describe blocks share it – parsing the tree is the file's one real cost,
+ * and doing it twice at collection, then scanning every literal per look-up, put the W8-11 tests
+ * past vitest's 5 s on a loaded CI runner (main `53ce51386`, #655's first run).
+ */
+interface Swept {
+  files: string[]
+  literals: Literal[]
+  texts: Map<string, Set<string>>
+}
+let swept: Swept | null = null
+function sweep(): Swept {
+  if (swept) return swept
+  const files = SWEPT.flatMap((p) => walk(join(repo, p)))
+  const literals = files.flatMap(literalsOf)
+  const texts = new Map<string, Set<string>>()
+  for (const l of literals) {
+    const file = rel(l.file)
+    let set = texts.get(file)
+    if (!set) texts.set(file, (set = new Set()))
+    set.add(l.text)
+  }
+  swept = { files, literals, texts }
+  return swept
+}
+
+/** Whether the file at the repo path carries `text` as one whole user-facing literal. */
+const has = (file: string, text: string): boolean => sweep().texts.get(file)?.has(text) ?? false
+
+// Room for a loaded runner: the parse is measured in seconds there, not vitest's default 5.
+vi.setConfig({ testTimeout: 60_000 })
+
 /** The family's name in Chrome's pre-M124 words, in any casing ("Clear browsing data", "Clear Browsing Data…"). */
 const OLD_NAME = /clear browsing data/i
 
@@ -193,8 +236,7 @@ const KEPT_TOAST_SHAPES = new Set([
 const at = (l: Literal): string => `${rel(l.file)}:${l.line}: "${l.text}"`
 
 describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on every surface', () => {
-  const files = SWEPT.flatMap((p) => walk(join(repo, p)))
-  const literals = files.flatMap(literalsOf)
+  const { files, literals } = sweep()
 
   it('reads the swept files – the renderer, the shared and core sources, the Android chrome, the Kotlin – and finds the new words', () => {
     const paths = files.map(rel)
@@ -208,8 +250,7 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
     )
     expect(paths.some((p) => p.includes('__tests__') || /\.test\.tsx?$/.test(p))).toBe(false)
     // The extractor finds the words on each surface: a broken read would pass an empty sweep.
-    const find = (file: string, text: string): boolean =>
-      literals.some((l) => rel(l.file) === file && l.text === text)
+    const find = has
     expect(
       find(
         'src/renderer/src/components/siteControls/ClearBrowsingDataDialog.tsx',
@@ -303,10 +344,8 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
 })
 
 describe('the verb’s remainder (W8-11): the site-data viewer, History’s pair, the never list’s line, the cookies level, the containers’ lines', () => {
-  const files = SWEPT.flatMap((p) => walk(join(repo, p)))
-  const literals = files.flatMap(literalsOf)
-  const find = (file: string, text: string): boolean =>
-    literals.some((l) => rel(l.file) === file && l.text === text)
+  const { literals } = sweep()
+  const find = has
   const SITE_DATA_UI = 'src/renderer/src/lib/siteDataUi.ts'
   const POPOVER = 'src/renderer/src/components/siteControls/SiteInfoPopover.tsx'
   const SHEET = 'src/renderer/src/components/siteinfo/SiteInfoSheet.tsx'
