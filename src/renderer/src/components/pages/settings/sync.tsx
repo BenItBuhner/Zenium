@@ -153,6 +153,9 @@ function folderDraftRow(pending: string | null): SettingsRow {
     id: 'sync-folder',
     label: SYNC_COPY.folder,
     description: pending ? downloadFolderLabel(pending) : SYNC_COPY.folderUnset,
+    // A path once a folder is chosen (§9.2's exception: one line, its start shortened); the
+    // "Not set" line before is prose.
+    address: pending !== null,
     keywords: FOLDER_KEYWORDS,
     // The desktop's button (§10.5): the Downloads folder row's verb once a folder is set.
     button: pending ? 'Change…' : 'Choose…',
@@ -215,6 +218,9 @@ function webDavRows(draft: SyncSetupDraft): SettingsRow[] {
       label: SYNC_COPY.server,
       description: SYNC_COPY.serverHint,
       display: webdav.url || SYNC_COPY.serverHint,
+      // The phone's row shows the address once one is in (§9.2's exception: one line, its
+      // start shortened, the host and path readable); the hint before it is prose.
+      address: webdav.url !== '',
       keywords: ['webdav', 'nextcloud', 'url', 'dav'],
       value: webdav.url,
       input: 'url',
@@ -263,6 +269,8 @@ function webDavRows(draft: SyncSetupDraft): SettingsRow[] {
       id: 'sync-webdav-folder',
       label: SYNC_COPY.serverFolder,
       description: SYNC_COPY.serverFolderHint,
+      // The phone's row shows the folder as typed: a path (§9.2's exception).
+      address: true,
       keywords: ['folder', 'directory', 'path'],
       value: webdav.folder,
       input: 'text',
@@ -390,6 +398,8 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
                 id: 'sync-folder',
                 label: SYNC_COPY.folder,
                 description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
+                // A path while a folder is set (§9.2's exception); "Not set" is prose.
+                address: Boolean(sync.folderName ?? sync.folder),
                 keywords: FOLDER_KEYWORDS,
                 button: 'Change…',
                 onPress: () => {
@@ -461,6 +471,10 @@ function serverRows(
       }
     })
   }
+  // The folder as a path (§9.2's exception: one line, its start shortened, the leaf readable)
+  // – unless it is the root, whose line is a sentence. The Server row's line is a phrase about
+  // the account ("alice on cloud.example.com"), prose to §9.2.
+  const folderLine = webDavFolderLine(server.folder)
   rows.push(
     {
       kind: 'info',
@@ -473,7 +487,8 @@ function serverRows(
       kind: 'info',
       id: 'sync-server-folder',
       label: SYNC_COPY.serverFolder,
-      description: webDavFolderLine(server.folder),
+      description: folderLine,
+      address: folderLine !== SYNC_COPY.serverRootFolder,
       keywords: ['folder', 'directory', 'path']
     }
   )

@@ -10,12 +10,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ADOPT_RACE,
   DEFAULTS,
+  ENDPOINT_PHASE_SAID,
   FIXTURE,
   HttpClient,
   Latencies,
+  SNAPSHOT_SETTLE,
   SOFT_CHECKS,
   SoakError,
   Verdict,
+  endpointPhase,
   fixturePage,
   formatTable,
   hasImage,
@@ -31,13 +34,15 @@ import {
   readDiagnostics,
   readEndpoint,
   resurrectionProbes,
+  snapshotLaidOut,
   soakDropLeg,
   soakMainLeg,
   soakSession,
   startFixture,
   summarizeDiagnostics,
   textOf,
-  tidy
+  tidy,
+  waitForEndpoint
 } from './mcp-soak.mjs'
 
 // ---------------------------------------------------------------------------------------------
@@ -215,6 +220,43 @@ describe('parseSnapshot', () => {
   })
 })
 
+describe('snapshotLaidOut', () => {
+  const built = { custom: false }
+  const custom = { custom: true }
+  const laidOut = parseSnapshot(
+    `- Viewport: 1000×800 CSS px, scrolled to 0 of 0 (bottom)\n\`\`\`yaml\n- heading "${FIXTURE.heading}" [level=1] [ref=e1]\n\`\`\``
+  )
+
+  it('is the background-snapshot check itself: a non-zero viewport and the fixture’s heading', () => {
+    expect(snapshotLaidOut(laidOut, built)).toBe(true)
+    expect(snapshotLaidOut(laidOut, custom)).toBe(true)
+  })
+
+  it('is false before the staged view has laid out – 0×0, no viewport, or no heading yet', () => {
+    const unpainted = parseSnapshot(
+      '- Viewport: 0×0 CSS px, scrolled to 0 of 0 (bottom)\n```yaml\n(nothing visible yet)\n```'
+    )
+    expect(snapshotLaidOut(unpainted, built)).toBe(false)
+    expect(snapshotLaidOut(parseSnapshot('The page could not be read'), built)).toBe(false)
+    // Laid out, but not the fixture's heading: a built-in fixture wants its own heading; a
+    // custom one any heading at all.
+    const other = parseSnapshot(
+      '- Viewport: 1000×800 CSS px, scrolled to 0 of 0 (bottom)\n```yaml\n- heading "Elsewhere" [level=1] [ref=e1]\n```'
+    )
+    expect(snapshotLaidOut(other, built)).toBe(false)
+    expect(snapshotLaidOut(other, custom)).toBe(true)
+    const headless = parseSnapshot(
+      '- Viewport: 1000×800 CSS px, scrolled to 0 of 0 (bottom)\n```yaml\n- main [ref=e1]\n```'
+    )
+    expect(snapshotLaidOut(headless, custom)).toBe(false)
+  })
+
+  it('has a bounded settle: a handful of tries a beat apart, two seconds at most', () => {
+    expect(SNAPSHOT_SETTLE.attempts).toBeGreaterThan(1)
+    expect(SNAPSHOT_SETTLE.attempts * SNAPSHOT_SETTLE.ms).toBeLessThanOrEqual(2000)
+  })
+})
+
 describe('parseGroups', () => {
   it('reads every header line with its flags', () => {
     const text = [
@@ -321,6 +363,108 @@ describe('readEndpoint', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('endpointPhase', () => {
+  const url = 'http://127.0.0.1:41735/mcp'
+
+  it('names the four ways a server can be not-there, and the one way it is there', () => {
+    expect(endpointPhase(null, false)).toBe('absent')
+    expect(endpointPhase({ token: 't', running: false, url: null }, false)).toBe('not-running')
+    expect(endpointPhase({ token: 't', running: true, url: null }, false)).toBe('url-missing')
+    expect(endpointPhase({ token: 't', running: true, url }, false)).toBe('url-silent')
+    expect(endpointPhase({ token: 't', running: true, url }, true)).toBe('answered')
+  })
+
+  it('has words for every phase', () => {
+    for (const phase of ['absent', 'not-running', 'url-missing', 'url-silent', 'answered'])
+      expect(typeof ENDPOINT_PHASE_SAID[phase]).toBe('string')
+    expect(ENDPOINT_PHASE_SAID['not-running']).toMatch(/port was taken/)
+  })
+})
+
+describe('waitForEndpoint', () => {
+  const url = 'http://127.0.0.1:41735/mcp'
+  let dir = null
+  const write = (doc) => {
+    fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'zen', 'agent.json'), JSON.stringify(doc))
+  }
+  afterEach(() => {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true })
+    dir = null
+  })
+
+  it('logs each phase it passes through, with its offset, and returns the endpoint once the url answers', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    const lines = []
+    let answering = false
+    // The app's boot, as the poll sees it: no file, then the file saying not running (the
+    // server not bound yet), then running with a url that is silent for a beat, then answering.
+    // The script advances one line per sleep between polls; the clock ticks 100 ms a reading.
+    const script = [
+      () => write({ token: 't'.repeat(32), running: false, url: null }),
+      () => write({ token: 't'.repeat(32), running: true, url }),
+      () => {
+        answering = true
+      }
+    ]
+    const probe = async (u) => {
+      expect(u).toBe(url)
+      return answering
+    }
+    let t = 0
+    const now = () => (t += 100)
+    const sleep = async (ms) => {
+      expect(ms).toBe(7)
+      script.shift()?.()
+    }
+    const got = await waitForEndpoint(dir, 60_000, {
+      log: (l) => lines.push(l),
+      now,
+      probe,
+      pollMs: 7,
+      sleep
+    })
+    expect(got).toEqual({ url, token: 't'.repeat(32) })
+    expect(script).toHaveLength(0)
+    const phases = lines.map((l) => l.replace(/^server-up: /, '').replace(/ \(after \d+ ms\)$/, ''))
+    expect(phases).toEqual([
+      ENDPOINT_PHASE_SAID.absent,
+      ENDPOINT_PHASE_SAID['not-running'],
+      ENDPOINT_PHASE_SAID['url-silent'],
+      ENDPOINT_PHASE_SAID.answered
+    ])
+    const offsets = lines.map((l) => Number(l.match(/\(after (\d+) ms\)$/)[1]))
+    for (let i = 1; i < offsets.length; i++) expect(offsets[i]).toBeGreaterThan(offsets[i - 1])
+  })
+
+  it('at the deadline, says which phase it stood in and what agent.json said', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    let t = 0
+    const now = () => (t += 30_001)
+    await expect(
+      waitForEndpoint(dir, 60_000, { now, probe: async () => true, pollMs: 0 })
+    ).rejects.toThrow(/absent or unreadable \(no server file written yet\)/)
+
+    // The port was taken before the app bound it: agent.json says running: false, and the wait
+    // says so instead of "timed out".
+    write({ token: 't'.repeat(32), running: false, url: null })
+    const lines = []
+    t = 0
+    await expect(
+      waitForEndpoint(dir, 60_000, {
+        log: (l) => lines.push(l),
+        now,
+        probe: async () => true,
+        pollMs: 0
+      })
+    ).rejects.toThrow(
+      /no MCP server answered within 60000 ms: agent\.json says the server is not running .* \(.*agent\.json: running false, url null\)/
+    )
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/^server-up: agent\.json says the server is not running/)
   })
 })
 
@@ -481,16 +625,19 @@ class FakeZenium {
   /**
    * `screenshots`: 'image' (always an image), 'hidden-error' (an error while the session is in
    * background mode, as PR-A does), 'error' (always). `hiddenSnapshot`: a 0×0 viewport and no
-   * refs in background mode (PR-A). `forceAdopt`: adopt with force: true takes a live agent's
-   * group (PR-E). `resurrect`: unknown ids with the token are resumed (PR-A); false 404s them.
+   * refs in background mode (PR-A). `laysOutAfter`: that many background snapshots of a tab read
+   * 0×0 before the page lays out (the staged view a beat after the tab opens, run 36371842431).
+   * `forceAdopt`: adopt with force: true takes a live agent's group (PR-E). `resurrect`: unknown
+   * ids with the token are resumed (PR-A); false 404s them.
    */
   constructor({
     screenshots = 'image',
     hiddenSnapshot = false,
+    laysOutAfter = 0,
     forceAdopt = false,
     resurrect = true
   } = {}) {
-    this.options = { screenshots, hiddenSnapshot, forceAdopt, resurrect }
+    this.options = { screenshots, hiddenSnapshot, laysOutAfter, forceAdopt, resurrect }
     this.sessions = new Map()
     this.groups = new Map()
     this.tabs = new Map()
@@ -691,7 +838,10 @@ class FakeZenium {
   snapshot(s, tabId) {
     const tab = this.tabs.get(tabId)
     if (!tab) throw new Error(`Unknown tab ${tabId}`)
-    const hidden = this.options.hiddenSnapshot && s.mode === 'background'
+    tab.snapshots = (tab.snapshots ?? 0) + 1
+    const hidden =
+      s.mode === 'background' &&
+      (this.options.hiddenSnapshot || tab.snapshots <= this.options.laysOutAfter)
     const tree = hidden
       ? '(nothing visible yet)'
       : [
@@ -851,7 +1001,13 @@ class FakeZenium {
 
 const silent = () => undefined
 
-function context(fake, { fixture, secrets = [TOKEN] } = {}) {
+/** A settle for the tests: as many tries as the real one, a millisecond apart. */
+const QUICK_SETTLE = Object.freeze({ attempts: SNAPSHOT_SETTLE.attempts, ms: 1 })
+
+function context(
+  fake,
+  { fixture, secrets = [TOKEN], snapshotSettle = QUICK_SETTLE, log = silent } = {}
+) {
   return {
     endpoint: { url: fake.url, token: TOKEN },
     fixture: fixture ?? {
@@ -862,9 +1018,10 @@ function context(fake, { fixture, secrets = [TOKEN] } = {}) {
     },
     verdict: new Verdict({ secrets }),
     latencies: new Latencies(),
-    log: silent,
+    log,
     verbose: silent,
-    extraArgs: []
+    extraArgs: [],
+    snapshotSettle
   }
 }
 
@@ -952,6 +1109,54 @@ describe('soakSession', () => {
     expect(fake.tabs.size).toBe(0)
   })
 
+  it('re-snapshots a staged page that lays out a beat late, and judges the settled one (run 36371842431)', async () => {
+    // Two background snapshots read 0×0 with no heading – the staged view before its layout –
+    // and the third has the page. An immediate snapshot failed the hard check on main.
+    fake = await new FakeZenium({ laysOutAfter: 2 }).start()
+    const lines = []
+    const ctx = context(fake, { log: (l) => lines.push(l) })
+    const client = new HttpClient({
+      ...ctx.endpoint,
+      name: 'soak-http-1',
+      latencies: ctx.latencies
+    })
+    await soakSession(client, ctx, { index: 0, leg: 'http' })
+    const v = ctx.verdict
+    expect(v.hardFailures).toBe(0)
+    const s = v.summary()
+    expect(s.ok).toBe(true)
+    expect(s.checks['background-snapshot']).toMatchObject({ kind: 'hard', pass: 1, fail: 0 })
+    expect(s.checks['background-snapshot'].samples).toEqual([])
+    expect(ctx.latencies.summary().http.browser_snapshot.count).toBe(3)
+    expect(lines).toContainEqual(
+      expect.stringMatching(/background snapshot laid out after 3 tries$/)
+    )
+    // The settled snapshot is the one the form is driven from: refs, not selectors.
+    expect(v.counters.formViaSelector ?? 0).toBe(0)
+    expect(s.checks.browser_type).toMatchObject({ pass: 1 })
+  })
+
+  it('gives a page that never lays out every try, then fails at the bound', async () => {
+    fake = await new FakeZenium({ hiddenSnapshot: true }).start()
+    const lines = []
+    const ctx = context(fake, { log: (l) => lines.push(l), snapshotSettle: { attempts: 3, ms: 1 } })
+    const client = new HttpClient({
+      ...ctx.endpoint,
+      name: 'soak-http-1',
+      latencies: ctx.latencies
+    })
+    await soakSession(client, ctx, { index: 0, leg: 'http' })
+    const s = ctx.verdict.summary()
+    expect(s.checks['background-snapshot']).toMatchObject({ kind: 'hard', fail: 1 })
+    expect(s.checks['background-snapshot'].samples[0]).toMatch(
+      /viewport 0×0, headings \[\], 0 refs after 3 tries/
+    )
+    expect(ctx.latencies.summary().http.browser_snapshot.count).toBe(3)
+    expect(lines).toContainEqual(
+      expect.stringMatching(/background snapshot never laid out in 3 tries$/)
+    )
+  })
+
   it('fails hard on a server that cannot see a hidden page (pre-B) and falls back to CSS selectors', async () => {
     fake = await new FakeZenium({ screenshots: 'hidden-error', hiddenSnapshot: true }).start()
     const ctx = context(fake)
@@ -966,8 +1171,14 @@ describe('soakSession', () => {
     expect(v.softFailures).toBe(0)
     const s = v.summary()
     expect(s.ok).toBe(false)
+    // The settle gave the page every try it has, and the page never laid out: the check fails
+    // at the bound and says so.
     expect(s.checks['background-snapshot']).toMatchObject({ kind: 'hard', fail: 1 })
     expect(s.checks['background-snapshot'].samples[0]).toContain('viewport 0×0')
+    expect(s.checks['background-snapshot'].samples[0]).toContain(
+      `after ${SNAPSHOT_SETTLE.attempts} tries`
+    )
+    expect(ctx.latencies.summary().http.browser_snapshot.count).toBe(SNAPSHOT_SETTLE.attempts)
     expect(s.checks['background-screenshot']).toMatchObject({ kind: 'hard', fail: 1 })
     expect(s.checks['foreground-screenshot']).toMatchObject({ kind: 'hard', pass: 1, fail: 0 })
     // The rest of the session goes on past the failed checks.

@@ -898,6 +898,8 @@ describe('the section model', () => {
     const folder = row(downloads, 'download-directory')
     expect(folder.label).toBe('Location')
     expect(folder.description).toBe('The system Downloads folder')
+    // …and those words are prose: they keep §9.2's two lines, not the path's one (seed #29).
+    expect(folder.address).toBe(false)
     // No Use the default folder row while the default is in force (§10.4): the row is there only
     // once a folder has been picked, and then as a plain action row, never a disabled one.
     expect(
@@ -925,6 +927,8 @@ describe('the section model', () => {
       }
     )
     expect(row(resolved, 'download-directory').description).toBe('/home/bennett/Downloads')
+    // A path: one line, shortened from its start so the folder's name stays (§9.2's exception).
+    expect(row(resolved, 'download-directory').address).toBe(true)
     // An empty answer (a host that cannot name one) leaves the setting's words.
     const unnamed = buildSection(
       PAGE.sections.find((x) => x.id === 'downloads')!,
@@ -934,6 +938,7 @@ describe('the section model', () => {
       }
     )
     expect(row(unnamed, 'download-directory').description).toBe('The system Downloads folder')
+    expect(row(unnamed, 'download-directory').address).toBe(false)
     // A folder picked on Android is a document-tree URI: the row reads its relative path (#93).
     const pickedCtx = context(
       state(
@@ -952,6 +957,7 @@ describe('the section model', () => {
       pickedCtx.ctx
     )
     expect(row(picked, 'download-directory').description).toBe('Download/Zenium')
+    expect(row(picked, 'download-directory').address).toBe(true)
     // …and the way back appears under it, enabled: Use the default folder clears the setting.
     const useDefault = row(picked, 'download-directory-default')
     expect(useDefault.disabled).toBeUndefined()
@@ -4356,6 +4362,10 @@ describe('what a row does', () => {
     expect(picker.options.find((o) => o.value === forum.id)?.description).toBe('forum.example')
     expect(picker.options.find((o) => o.value === mine.id)?.description).toBe('mine.example')
     expect(picker.options.find((o) => o.value === 'google')?.description).toBeUndefined()
+    // A host is an address: one line kept from its end (§9.2's exception); an option with no
+    // line under it carries no flag.
+    expect(picker.options.find((o) => o.value === forum.id)?.address).toBe(true)
+    expect(picker.options.find((o) => o.value === 'google')?.address).toBe(false)
     picker.onChange(forum.id)
     expect(c.patches).toEqual([{ searchEngineId: forum.id }])
 
@@ -7365,7 +7375,9 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(folder).toMatchObject({
       kind: 'action',
       label: 'Sync folder',
-      description: 'Choose a folder that your cloud drive keeps in sync.'
+      description: 'Choose a folder that your cloud drive keeps in sync.',
+      // The invitation is prose (§9.2's two lines); only a chosen folder is a path.
+      address: false
     })
     const turnOn = row(model, 'sync-turn-on')
     if (turnOn.kind !== 'action') throw new Error('not an action')
@@ -7391,6 +7403,8 @@ describe('ID-08’s Sync category on a phone', () => {
 
     const chosen = section('sync', syncState(syncStatus()))
     expect(row(chosen, 'sync-folder').description).toBe('Drive/Zenium')
+    // …one line kept from its end, as every path the settings show (§9.2's exception).
+    expect(row(chosen, 'sync-folder').address).toBe(true)
     const ready = row(chosen, 'sync-turn-on')
     if (ready.kind !== 'action') throw new Error('not an action')
     expect(ready.disabled).toBe(false)
@@ -8268,14 +8282,18 @@ describe('ID-08’s Sync category on a phone', () => {
       label: 'WebDAV server',
       description: 'alice on cloud.example.com'
     })
+    // The account's phrase is prose – a name, a word, a host – so it keeps §9.2's two lines;
+    // the folder under it is a path and keeps its end on one line (seed #29).
+    expect(server.address).toBeUndefined()
     expect(server.keywords).toContain(DAV_ROOT)
     expect(server.leading).toBeUndefined()
     expect(server.trailing).toBeUndefined()
     const folder = row(model, 'sync-server-folder')
     if (folder.kind !== 'info') throw new Error('not an info row')
     // The folder by its NAME – `Zenium`, no trailing slash: the string the setup's Folder field
-    // started with, read back (seed #28: one value on both surfaces).
-    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium' })
+    // started with, read back (seed #28: one value on both surfaces) – a path, so one line kept
+    // from its end (seed #29).
+    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium', address: true })
     expect(folder.description).toBe(DEFAULT_WEBDAV_FOLDER)
     expect(folder.trailing).toBeUndefined()
     // The same string the form's Folder field holds at a fresh setup: the two surfaces agree.
@@ -8292,6 +8310,7 @@ describe('ID-08’s Sync category on a phone', () => {
       syncState(onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } }))
     )
     expect(row(nested, 'sync-server-folder').description).toBe('Backups/Zenium')
+    expect(row(nested, 'sync-server-folder').address).toBe(true)
     const typed = section(
       'sync',
       syncState(onServer({ webdav: { ...SERVER, folder: 'Zenium/sub' } }))
@@ -8313,10 +8332,13 @@ describe('ID-08’s Sync category on a phone', () => {
       )
     )
     expect(row(root, 'sync-server-folder').description).toBe('The top level of your files')
-    // A folder transport keeps its heading and its row.
+    // …and that sentence is prose, not a path: no start-ellipsis on it.
+    expect(row(root, 'sync-server-folder').address).toBe(false)
+    // A folder transport keeps its heading and its row, its folder's name a path.
     const viaFolder = section('sync', syncState(connected()))
     expect(viaFolder.groups.find((g) => g.id === 'sync-where')?.heading).toBe('Folder and device')
     expect(row(viaFolder, 'sync-folder').kind).toBe('action')
+    expect(row(viaFolder, 'sync-folder').address).toBe(true)
     // Sync now reads the status as with a folder; a round that fails for a reason that is not
     // the sign-in puts the page's sentence for the server's answer under it in the danger ink
     // (`lastErrorKind` through the one mapping), never the engine's method and status; an
@@ -8533,6 +8555,14 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
       placeholder: 'example.com',
       layouts: ['phone']
     })
+    // "Not set" is a word, not an address: no start-ellipsis until a page is held (seed #29).
+    expect(address.address).toBe(false)
+    const specific = group.rows[0]
+    if (specific.kind !== 'value') throw new Error('not a value row')
+    expect(specific.options[2]).toMatchObject({
+      description: 'Enter an address below, or use the current page.',
+      address: false
+    })
   })
 
   it('the Address sheet refuses what is not a web page and keeps the sheet up; a host becomes its https page', () => {
@@ -8554,12 +8584,15 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     expect(currentOptionLabel(homepage)).toBe('Specific page')
     expect(homepage.options[2]).toMatchObject({
       label: 'Specific page',
-      description: 'news.ycombinator.com'
+      description: 'news.ycombinator.com',
+      // An address: one line, shortened from its start so the page's end stays (seed #29).
+      address: true
     })
     const address = group.rows[1]
     if (address.kind !== 'field') throw new Error('not a field row')
     expect(address.value).toBe('news.ycombinator.com')
     expect(address.display).toBe('news.ycombinator.com')
+    expect(address.address).toBe(true)
   })
 
   it('Use current page names the page Settings was opened from and writes it; without one it is disabled and says what to do', () => {
@@ -8570,6 +8603,7 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     // The Settings tab's opener is the site (`SETTINGS.openerTabId`).
     expect(current.disabled).toBe(false)
     expect(current.description).toBe('news.example')
+    expect(current.address).toBe(true)
     current.onPress?.()
     expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://news.example/' } }])
 
@@ -8583,6 +8617,7 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     if (idle.kind !== 'action') throw new Error('not an action row')
     expect(idle.disabled).toBe(true)
     expect(idle.description).toBe('Open a page, then come back to Settings from it.')
+    expect(idle.address).toBe(false)
 
     // An opener that is an internal page is no page of the user's either…
     const internal = withHomepage(

@@ -6,11 +6,13 @@ name: Android sync WebDAV demo
 # probe through the bridge, the setup's PROPFIND / MKCOL / PUT-then-MOVE, a MOVE answered 412 and
 # the engine's quiet retry, a revoked app password (authRefused) and the new one sealed under the
 # Keystore, a relaunch that reads it back through `secrets.get`, and the disconnect that removes
-# this device's documents and forgets the secret. The phone's Settings has no transport choice
-# yet, so the engine is driven through the core's commands and the Sync section photographed as
-# it reflects each state. Dispatch-only, like the other demos: it takes a few minutes and says
-# nothing about a change being correct. The build, the emulator and the Gradle cache live in
-# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+# this device's documents and forgets the secret. Since #628 gave the phone's Settings › Sync
+# its transport choice, the driver works the page under a finger – the Sync through picker, the
+# server form's sheets, Test connection, Turn on sync, the App password row, Turn off sync – and
+# photographs each state; the core's commands stand in only where the page has no control.
+# Dispatch-only, like the other demos: it takes a few minutes and says nothing about a change
+# being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
 

@@ -11,7 +11,6 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import app.zen.chromium.BuildConfig
 import app.zen.chromium.Host
 import app.zen.chromium.Profiles
 import app.zen.chromium.UserAgent
@@ -54,7 +53,7 @@ class ExtensionAuthSheet(
             loadWithOverviewMode = true
             useWideViewPort = true
         }
-        UserAgent.apply(webView.settings, BuildConfig.VERSION_NAME)
+        UserAgent.apply(webView.settings)
         webView.setBackgroundColor(Color.WHITE)
         webView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         webView.webViewClient = Client()

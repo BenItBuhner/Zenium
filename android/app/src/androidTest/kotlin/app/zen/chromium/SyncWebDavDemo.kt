@@ -26,8 +26,10 @@ import kotlin.math.roundToInt
  * a real touch ([DemoHarness.Finger]) whose effect is read back from the chrome's document or
  * the core's state; a touch that does not take is a [touchFault] (the run fails) and the scene
  * goes on with a second finger, or a row's click, so the recording covers the rest – never a
- * key or a document click in a control's place. The core's own commands remain for what the
- * page has no control for (the probe's three answers, `bookmark.create`) and as the ways on.
+ * key or a document click in a control's place, and every way on (a row's click, a core
+ * command, a value set through the document) is a FAIL first, so a control the finger never
+ * reached fails the run too. The core's own commands remain for what the page has no control
+ * for (the probe's three answers, `bookmark.create`) and as the ways on.
  *
  * A finger on a sheet's button lands where the button IS, not where it was: after the keyboard
  * goes the chassis re-measures its detents against the grown layer and springs the sheet to
@@ -133,6 +135,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val pickerUp = touchSettingsRowExpecting(TRANSPORT_LABEL, "the Sync through picker is up", 8_000) { sheetPresented(TRANSPORT_LABEL) }
         if (!pickerUp && !sheetPresented(TRANSPORT_LABEL)) {
             note("  the picker did not come up under a finger; the row's click is the way on")
+            check("the $TRANSPORT_LABEL row took a finger", false)
             clickSettingsRow(TRANSPORT_LABEL)
             awaitSheet(TRANSPORT_LABEL, 8_000)
         }
@@ -142,6 +145,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val picked = touchSettingsRowExpecting(TRANSPORT_WEBDAV, "the picker closed on the server form", 8_000) { !sheetPresented(TRANSPORT_LABEL) && rowListed("sync-webdav-url") }
         if (!picked && !rowListed("sync-webdav-url")) {
             note("  the option did not take under a finger; the row's click is the way on")
+            check("the $TRANSPORT_WEBDAV row took a finger", false)
             clickSettingsRow(TRANSPORT_WEBDAV)
             poll(8_000) { !sheetPresented(TRANSPORT_LABEL) && rowListed("sync-webdav-url") }
         }
@@ -176,6 +180,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val tested = touchSettingsRowExpecting(TEST_LABEL, "the row reads Connected.", 20_000) { settingsRowValue(TEST_LABEL) == CONNECTED }
         if (!tested && settingsRowValue(TEST_LABEL) != CONNECTED) {
             note("  Test connection did not take under a finger; the row's click is the way on")
+            check("the $TEST_LABEL row took a finger", false)
             clickSettingsRow(TEST_LABEL)
             poll(20_000) { settingsRowValue(TEST_LABEL) == CONNECTED }
         }
@@ -244,9 +249,11 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         )
         check("Sync now is not pressable while the sign-in is refused, and carries no line of its own", rowDisabled("sync-now") == true && rowTone("sync-now") == null)
         val words = pageWords()
+        val markup = pageMarkup()
         check(
             "neither PROPFIND nor 401 reaches the page: not in its text, its labels, its markup",
-            !words.contains("PROPFIND") && !STATUS_CODE_401.containsMatchIn(words) && chromeJs("document.body.innerHTML.indexOf('PROPFIND')<0") == "true"
+            !words.contains("PROPFIND") && !STATUS_CODE_401.containsMatchIn(words) &&
+                markup != null && !markup.contains("PROPFIND") && !STATUS_CODE_401.containsMatchIn(markup)
         )
         check("the app passwords reach nothing on the page", !words.contains(PASSWORD) && !words.contains(ROTATED))
         scene("refused")
@@ -333,6 +340,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
             settingsSectionIs("sync") -> "already up"
             openSettingsSection("sync", 10_000) -> "the app menu's Settings row and the landing's Sync row under a finger"
             else -> {
+                check("the app menu's Settings row and the landing's Sync row took a finger", false)
                 coreInvoke("page.open", """{"id":"settings","section":"sync"}""")
                 poll(12_000) { settingsSectionIs("sync") }
                 "page.open (the fingers' way did not come up)"
@@ -359,6 +367,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val up = touchSettingsRowExpecting(label, "the $label sheet is up", 8_000) { sheetPresented(label) }
         if (!up && !sheetPresented(label)) {
             note("  the $label row did not open its sheet under a finger; the row's click is the way on")
+            check("the $label row took a finger", false)
             clickSettingsRow(label)
             if (!awaitSheet(label, 8_000)) {
                 note("  no $label sheet came up")
@@ -384,6 +393,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val up = touchSettingsRowExpecting(TURN_ON_LABEL, "the passphrase sheet is up", 10_000) { sheetPresented(PASSPHRASE_TITLE) }
         if (!up && !sheetPresented(PASSPHRASE_TITLE)) {
             note("  Turn on sync did not open its sheet under a finger; the row's click is the way on")
+            check("the $TURN_ON_LABEL row took a finger", false)
             clickSettingsRow(TURN_ON_LABEL)
             awaitSheet(PASSPHRASE_TITLE, 8_000)
         }
@@ -408,6 +418,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val took = touchSettingsRowExpecting(SYNC_NOW_LABEL, effect, timeoutMs) { settled(syncStatus()) }
         if (!took && !settled(syncStatus())) {
             note("  Sync now did not take under a finger; sync.now through the core is the way on")
+            check("the $SYNC_NOW_LABEL row took a finger", false)
             coreInvoke("sync.now")
             poll(timeoutMs) { settled(syncStatus()) }
         }
@@ -421,6 +432,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val up = touchSettingsRowExpecting(TURN_OFF_LABEL, "the Turn off sync? prompt is up", 10_000) { sheetPresented(TURN_OFF_TITLE) }
         if (!up && !sheetPresented(TURN_OFF_TITLE)) {
             note("  Turn off sync did not open its prompt under a finger; the row's click is the way on")
+            check("the $TURN_OFF_LABEL row took a finger", false)
             clickSettingsRow(TURN_OFF_LABEL)
             awaitSheet(TURN_OFF_TITLE, 8_000)
         }
@@ -446,6 +458,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val off = touchSheetButton(TURN_OFF_ACTION, "sync is off", 15_000) { !syncStatus().optBoolean("enabled") }
         if (!off && syncStatus().optBoolean("enabled")) {
             note("  Turn off did not take under a finger; sync.disconnect through the core is the way on")
+            check("the sheet's $TURN_OFF_ACTION button took a finger", false)
             coreInvoke("sync.disconnect", """{"wipeRemote":true}""")
         }
         awaitSheetGone(TURN_OFF_TITLE, 10_000)
@@ -550,14 +563,15 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
     // --- the keyboard ----------------------------------------------------------------------------
 
     /**
-     * `text` typed into the field `id`: focused under a finger ([focusField]; a touch that does
-     * not focus it is a [touchFault]), any text the field holds already deleted (the Folder
-     * field opens on `Zenium/`), the keys injected and the field read back, up to four rounds,
-     * then set through the document as the way on. A secret's length is noted, never its text.
-     * True once the field holds `text`.
+     * `text` typed into the field `id`: focused under a finger ([focusField]; every touch that
+     * does not focus it is a [touchFault], and no finger reaching the field at all is a FAIL),
+     * any text the field holds already deleted (the Folder field opens on `Zenium/`), the keys
+     * injected and the field read back, up to four rounds, then set through the document as the
+     * way on – a FAIL, since a document event stood in for the keyboard. A secret's length is
+     * noted, never its text. True once the field holds `text`.
      */
     private fun typeInto(id: String, text: String, what: String, secret: Boolean): Boolean {
-        if (!focusField(id)) touchFault("a touch on $what did not focus it")
+        if (!focusField(id, what)) check("a finger focused $what", false)
         val held = fieldValue(id) ?: ""
         if (held == text) {
             note("  $what holds its ${text.length} characters already")
@@ -570,7 +584,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         }
         var typed = 0
         for (attempt in 1..4) {
-            if (!fieldFocused(id)) focusField(id)
+            if (!fieldFocused(id)) focusField(id, what)
             typeText(text.substring(typed))
             SystemClock.sleep(600)
             val value = fieldValue(id)
@@ -588,16 +602,21 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
             }
         }
         note("  $what never took the keys${if (secret) "" else " for '$text'"}; set through the document as the way on")
+        check("the keys landed in $what", false)
         return setFieldValue(id, text)
     }
 
     /**
-     * A finger on the field `id`; true once the chrome's focus is in it. The keyboard is a
-     * window of its own and takes a touch inside it: when the field sits under it, one back
-     * lowers the keyboard first – the IME consumes that back, the sheet stays
-     * (SettingsTouchDemo's rule for its Cancel).
+     * A finger on the field `id` (`what` names it in a fault); true once the chrome's focus is in
+     * it. The keyboard is a window of its own and takes a touch inside it: when the field sits
+     * under it, one back lowers the keyboard first – the IME consumes that back, the sheet stays
+     * (SettingsTouchDemo's rule for its Cancel). Every finger that went in and did not focus the
+     * field is a [touchFault] (the sibling drivers' rule: a miss is counted, never retried
+     * quietly); the next finger, up to four, is the way on. False, and no touch, when the
+     * document has no such field or it stands outside the touchable window.
      */
-    private fun focusField(id: String): Boolean {
+    private fun focusField(id: String, what: String): Boolean {
+        var fingers = 0
         for (attempt in 1..4) {
             if (fieldFocused(id)) return true
             awaitSheetSettled(6_000)
@@ -614,13 +633,16 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
                 Log.w(tag, "the field '$id' at $point is outside the touchable window $touchable")
                 return false
             }
-            Log.i(tag, "touch at ${point.x},${point.y} on the field '$id'")
+            fingers++
+            Log.i(tag, "touch at ${point.x},${point.y} on the field '$id'${if (fingers > 1) " (finger $fingers)" else ""}")
             Finger().tap(point.x, point.y)
             if (awaitTrue(4_000) { fieldFocused(id) }) {
+                if (fingers > 1) note("  finger $fingers on $what took")
                 awaitIme(shown = true, timeoutMs = 4_000)
                 SystemClock.sleep(500)
                 return true
             }
+            touchFault("a touch on $what did not focus it (finger $fingers at ${point.x},${point.y}; sheet ${sheetGeometry()}; keyboard ${if (imeShown()) "up" else "down"})")
             SystemClock.sleep(500)
         }
         return fieldFocused(id)
@@ -739,6 +761,14 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         ) ?: ""
 
     /**
+     * The Settings page's markup (`.zen-settings-phone`'s `innerHTML` – the page's own, not the
+     * body's, whose unrelated markup could carry a stray number), or null when the page is not
+     * up, so the refused scene's markup check never passes on a page that is not there.
+     */
+    private fun pageMarkup(): String? =
+        chromeJsString("(function(){var root=document.querySelector('.zen-settings-phone');return root?root.innerHTML:null})()")
+
+    /**
      * Where the element `elementJs` evaluates to is on screen: scrolled into view if it is not
      * (then `settleMs` for the scroll to land), its box's middle in CSS px scaled into the
      * chrome view's place on screen. Null when the document has no such element.
@@ -771,7 +801,10 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         note("  stills $n-$name-light, $n-$name-dark")
     }
 
-    /** Switch the chrome's colour scheme through the core and wait for the root to carry it. */
+    /**
+     * Switch the chrome's colour scheme through the core and wait for the root to carry it: a
+     * flip that never lands is a FAIL, so a `-dark` still cannot be light and the run pass.
+     */
     private fun theme(scheme: String): Boolean {
         if (themeAttribute() == scheme) return true
         coreInvoke("settings.update", JSONObject().put("colorScheme", scheme).toString())
@@ -779,6 +812,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         // The 240 ms theme blend (§11), the page's repaint on the software GPU, then a frame.
         SystemClock.sleep(1_500)
         if (!took) note("  (the scheme did not flip to $scheme: theme attribute '${themeAttribute()}')")
+        check("the scheme flipped to $scheme", took)
         return took
     }
 

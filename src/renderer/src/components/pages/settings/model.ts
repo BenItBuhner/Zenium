@@ -25,6 +25,20 @@ export interface RowBase {
   label: string
   /** 13 at 69% under the label, at most two lines (§9.2). */
   description?: string
+  /**
+   * The description is a path or an address – a folder, a server's URL, a page's address, a
+   * host – not prose: ONE line that never wraps, shortened from its START so the end stays
+   * readable (§9.2's exception, the lead's ruling on #677: a path keeps its end – the leaf, the
+   * page – as Chromium's views keep a string's end with `ELIDE_HEAD`, ui/gfx/text_constants.h;
+   * a prose description keeps §9.2's two lines and the end ellipsis). The ellipsis is drawn,
+   * not written (`.zen-settings-description-address`): the whole value stays in the DOM for a
+   * reader, a search and a copy, and the row that holds it opens where it stands in full – its
+   * field, its sheet. For a field row this names the VALUE the phone's row shows in the
+   * description's place (`display ?? value`: a folder, a server's address); the hint the
+   * desktop draws beside its field is prose and keeps §9.2. Never on a prose line, however
+   * short: a builder whose line is a path only once one is chosen sets it by the value.
+   */
+  address?: boolean
   /** The description in a §1 status ink (text only): a load error, a retirement notice. */
   tone?: 'warn' | 'danger'
   /** Terms the search matches besides the visible text. */
@@ -121,6 +135,11 @@ export interface RowOption {
   label: string
   /** 13/69% under the option's label in the picker sheet. */
   description?: string
+  /**
+   * The option's description is an address (the homepage's own page, an engine's host): one
+   * line shortened from its start, as `RowBase.address` has it (§9.2's exception).
+   */
+  address?: boolean
   /** A 16 px glyph between the radio and the label (a search engine's favicon). */
   leading?: ReactNode
   /**
