@@ -12172,6 +12172,26 @@
   -webkit-line-clamp: none;
 }
 /*
+ * §9.2's exception for a path or an address (`RowBase.address`; the lead's ruling on #677): ONE
+ * line that never wraps, its START shortened so the end – a folder's leaf, an address's last
+ * part – stays readable, as Chromium's views elide a string with `ELIDE_HEAD`
+ * (ui/gfx/text_constants.h). CSS alone, nothing measured: `text-overflow` draws its ellipsis at
+ * the block's END edge, so the span is a right-to-left block – its end is the left – and the
+ * value inside it a left-to-right isolate (`Description`'s `<bdi dir="ltr">`) laid out in its
+ * own order. `direction: rtl` on the text itself would send a leading "/" or a trailing ")"
+ * across the line (the bidi algorithm gives a neutral at a paragraph's edge the paragraph's
+ * direction); the isolate keeps them in place. `text-align: left` seats a value that fits where
+ * every description starts; the chassis is left-to-right.
+ */
+.zen-settings-description-address {
+  display: block;
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: none;
+}
+/*
  * A description that reports a status (a load error, a retirement notice, the folder-lost
  * sentence): §1 status ink, text only, read off the row's one `data-tone` – the primitive's
  * attribute above – not off the span.

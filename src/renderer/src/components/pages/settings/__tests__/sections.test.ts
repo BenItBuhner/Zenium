@@ -26,6 +26,7 @@ import type {
 } from '@shared/types'
 import type { InstalledWebApp } from '@shared/webApp'
 import { defaultScope } from '@core/sync/records'
+import { DEFAULT_WEBDAV_FOLDER } from '@core/sync/webdav'
 import { PROXY_MODES, type ProxyMode } from '@core/extensions/api/proxy'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
@@ -79,6 +80,7 @@ const {
   buildSection,
   buildSections,
   autoCloseDescription,
+  MOD_PICTURE_HINT,
   PROXY_SETTINGS_COPY,
   proxyHeldDescription
 } = await import('../sections')
@@ -897,6 +899,8 @@ describe('the section model', () => {
     const folder = row(downloads, 'download-directory')
     expect(folder.label).toBe('Location')
     expect(folder.description).toBe('The system Downloads folder')
+    // …and those words are prose: they keep §9.2's two lines, not the path's one (seed #29).
+    expect(folder.address).toBe(false)
     // No Use the default folder row while the default is in force (§10.4): the row is there only
     // once a folder has been picked, and then as a plain action row, never a disabled one.
     expect(
@@ -924,6 +928,8 @@ describe('the section model', () => {
       }
     )
     expect(row(resolved, 'download-directory').description).toBe('/home/bennett/Downloads')
+    // A path: one line, shortened from its start so the folder's name stays (§9.2's exception).
+    expect(row(resolved, 'download-directory').address).toBe(true)
     // An empty answer (a host that cannot name one) leaves the setting's words.
     const unnamed = buildSection(
       PAGE.sections.find((x) => x.id === 'downloads')!,
@@ -933,6 +939,7 @@ describe('the section model', () => {
       }
     )
     expect(row(unnamed, 'download-directory').description).toBe('The system Downloads folder')
+    expect(row(unnamed, 'download-directory').address).toBe(false)
     // A folder picked on Android is a document-tree URI: the row reads its relative path (#93).
     const pickedCtx = context(
       state(
@@ -951,6 +958,7 @@ describe('the section model', () => {
       pickedCtx.ctx
     )
     expect(row(picked, 'download-directory').description).toBe('Download/Zenium')
+    expect(row(picked, 'download-directory').address).toBe(true)
     // …and the way back appears under it, enabled: Use the default folder clears the setting.
     const useDefault = row(picked, 'download-directory-default')
     expect(useDefault.disabled).toBeUndefined()
@@ -4355,6 +4363,10 @@ describe('what a row does', () => {
     expect(picker.options.find((o) => o.value === forum.id)?.description).toBe('forum.example')
     expect(picker.options.find((o) => o.value === mine.id)?.description).toBe('mine.example')
     expect(picker.options.find((o) => o.value === 'google')?.description).toBeUndefined()
+    // A host is an address: one line kept from its end (§9.2's exception); an option with no
+    // line under it carries no flag.
+    expect(picker.options.find((o) => o.value === forum.id)?.address).toBe(true)
+    expect(picker.options.find((o) => o.value === 'google')?.address).toBe(false)
     picker.onChange(forum.id)
     expect(c.patches).toEqual([{ searchEngineId: forum.id }])
 
@@ -4417,6 +4429,33 @@ describe('what a row does', () => {
     expect(added.rows).toEqual([])
     expect(groupShows(added)).toBe(true)
     expect(added.empty).toBe('No search engines added yet')
+  })
+
+  describe('Mods › the CSS field (services pass 15, ID-43)', () => {
+    it('carries the lead’s §9.12 hint about pictures under the field, one line in one place', () => {
+      const model = section(
+        'mods',
+        state({
+          mods: [
+            { id: 'm1', name: 'Round tabs', source: null, css: '', enabled: true, updatedAt: 1 }
+          ]
+        })
+      )
+      const css = row(model, 'mod:m1:css')
+      if (css.kind !== 'custom') throw new Error('not a custom row')
+      expect(css.label).toBe('CSS')
+      const html = renderToStaticMarkup(createElement(() => css.render()))
+      expect(html).toContain('aria-label="CSS"')
+      // A Mod syncs as its CSS text (#682): a picture stored on this device never travels, so the
+      // field says so – the lead's words verbatim, a §9.12 full-width hint under the textarea.
+      expect(MOD_PICTURE_HINT).toBe(
+        'A picture stored on this device stays on it; other devices need a web address.'
+      )
+      expect(html).toContain(
+        `<span class="zen-settings-description zen-settings-description-full">${MOD_PICTURE_HINT}</span>`
+      )
+      expect(html.indexOf('</textarea>')).toBeLessThan(html.indexOf(MOD_PICTURE_HINT))
+    })
   })
 
   describe('Search › site search management on the desktop (omnibox-09, settings-43)', () => {
@@ -7364,7 +7403,9 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(folder).toMatchObject({
       kind: 'action',
       label: 'Sync folder',
-      description: 'Choose a folder that your cloud drive keeps in sync.'
+      description: 'Choose a folder that your cloud drive keeps in sync.',
+      // The invitation is prose (§9.2's two lines); only a chosen folder is a path.
+      address: false
     })
     const turnOn = row(model, 'sync-turn-on')
     if (turnOn.kind !== 'action') throw new Error('not an action')
@@ -7390,6 +7431,8 @@ describe('ID-08’s Sync category on a phone', () => {
 
     const chosen = section('sync', syncState(syncStatus()))
     expect(row(chosen, 'sync-folder').description).toBe('Drive/Zenium')
+    // …one line kept from its end, as every path the settings show (§9.2's exception).
+    expect(row(chosen, 'sync-folder').address).toBe(true)
     const ready = row(chosen, 'sync-turn-on')
     if (ready.kind !== 'action') throw new Error('not an action')
     expect(ready.disabled).toBe(false)
@@ -7446,6 +7489,16 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(readingList.description).toBeUndefined()
     readingList.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { readingList: false })
+    // The Mods (services pass 15, ID-43): on by default as Chrome's Themes type is a toggle of
+    // its own; the row is the label and the switch alone, seated last, after Boosts – the
+    // chrome's CSS mods beside the per-site Boosts, Zenium's own types together.
+    expect(scope?.rows.map((r) => r.label).slice(-2)).toEqual(['Boosts', 'Mods'])
+    const mods = row(model, 'sync-scope:mods')
+    if (mods.kind !== 'switch') throw new Error('not a switch')
+    expect(mods.checked).toBe(true)
+    expect(mods.description).toBeUndefined()
+    mods.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { mods: false })
     // The same group, same order, once connected.
     const on = section('sync', syncState(connected()))
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(
@@ -8050,13 +8103,18 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(rowText(set)).not.toContain('app-pass')
     expect(rowText(set)).toContain('App password')
 
+    // The folder starts as the engine's default by its NAME – `Zenium`, no trailing slash – the
+    // one string the connected page's Folder row reads back for it (seed #28: the two surfaces
+    // said `Zenium/` and could drift apart; one value now, in one place).
     const folder = fieldRow(model, 'sync-webdav-folder')
     expect(folder).toMatchObject({
       label: 'Folder',
       description: 'Where the zenium-sync folder is kept on the server.',
-      value: 'Zenium/',
+      value: 'Zenium',
       input: 'text'
     })
+    expect(folder.value).toBe(DEFAULT_WEBDAV_FOLDER)
+    expect(folder.display).toBeUndefined()
     expect(folder.onCommit('Backups/Zenium')).toBeUndefined()
     expect(syncSetupStore.get().webdav.folder).toBe('Backups/Zenium')
 
@@ -8262,20 +8320,45 @@ describe('ID-08’s Sync category on a phone', () => {
       label: 'WebDAV server',
       description: 'alice on cloud.example.com'
     })
+    // The account's phrase is prose – a name, a word, a host – so it keeps §9.2's two lines;
+    // the folder under it is a path and keeps its end on one line (seed #29).
+    expect(server.address).toBeUndefined()
     expect(server.keywords).toContain(DAV_ROOT)
     expect(server.leading).toBeUndefined()
     expect(server.trailing).toBeUndefined()
     const folder = row(model, 'sync-server-folder')
     if (folder.kind !== 'info') throw new Error('not an info row')
-    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium/' })
+    // The folder by its NAME – `Zenium`, no trailing slash: the string the setup's Folder field
+    // started with, read back (seed #28: one value on both surfaces) – a path, so one line kept
+    // from its end (seed #29).
+    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium', address: true })
+    expect(folder.description).toBe(DEFAULT_WEBDAV_FOLDER)
     expect(folder.trailing).toBeUndefined()
-    // The folder as the engine reads it: empty and dot segments dropped, one trailing slash;
-    // the account's top level named for none.
+    // The same string the form's Folder field holds at a fresh setup: the two surfaces agree.
+    clearSyncSetup()
+    syncSetupStore.set({ transport: 'webdav' })
+    const setup = section('sync', withServer())
+    expect(fieldRow(setup, 'sync-webdav-folder').value).toBe(folder.description)
+    clearSyncSetup()
+    // The folder as the engine reads it (`webDavFolderSegments`): empty and dot segments
+    // dropped, the segments joined with `/`, no trailing slash whatever was typed; the account's
+    // top level named for none.
     const nested = section(
       'sync',
       syncState(onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } }))
     )
-    expect(row(nested, 'sync-server-folder').description).toBe('Backups/Zenium/')
+    expect(row(nested, 'sync-server-folder').description).toBe('Backups/Zenium')
+    expect(row(nested, 'sync-server-folder').address).toBe(true)
+    const typed = section(
+      'sync',
+      syncState(onServer({ webdav: { ...SERVER, folder: 'Zenium/sub' } }))
+    )
+    expect(row(typed, 'sync-server-folder').description).toBe('Zenium/sub')
+    const slashed = section(
+      'sync',
+      syncState(onServer({ webdav: { ...SERVER, folder: 'Zenium/' } }))
+    )
+    expect(row(slashed, 'sync-server-folder').description).toBe('Zenium')
     const root = section(
       'sync',
       syncState(
@@ -8287,10 +8370,13 @@ describe('ID-08’s Sync category on a phone', () => {
       )
     )
     expect(row(root, 'sync-server-folder').description).toBe('The top level of your files')
-    // A folder transport keeps its heading and its row.
+    // …and that sentence is prose, not a path: no start-ellipsis on it.
+    expect(row(root, 'sync-server-folder').address).toBe(false)
+    // A folder transport keeps its heading and its row, its folder's name a path.
     const viaFolder = section('sync', syncState(connected()))
     expect(viaFolder.groups.find((g) => g.id === 'sync-where')?.heading).toBe('Folder and device')
     expect(row(viaFolder, 'sync-folder').kind).toBe('action')
+    expect(row(viaFolder, 'sync-folder').address).toBe(true)
     // Sync now reads the status as with a folder; a round that fails for a reason that is not
     // the sign-in puts the page's sentence for the server's answer under it in the danger ink
     // (`lastErrorKind` through the one mapping), never the engine's method and status; an
@@ -8434,13 +8520,14 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(searchRows(on, 'webdav server').map((h) => h.row.id)).toContain('sync-server')
   })
 
-  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder written as Zenium/, no test asked – and is cleared whole, the typed app password with it', () => {
+  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder by its name, Zenium, no test asked – and is cleared whole, the typed app password with it', () => {
     expect(emptySyncSetup()).toEqual({
       folder: null,
       transport: 'folder',
-      webdav: { url: '', username: '', password: '', folder: 'Zenium/' },
+      webdav: { url: '', username: '', password: '', folder: 'Zenium' },
       probe: { state: 'idle' }
     })
+    expect(emptySyncSetup().webdav.folder).toBe(DEFAULT_WEBDAV_FOLDER)
     syncSetupStore.set({
       folder: TREE,
       transport: 'webdav',
@@ -8506,6 +8593,14 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
       placeholder: 'example.com',
       layouts: ['phone']
     })
+    // "Not set" is a word, not an address: no start-ellipsis until a page is held (seed #29).
+    expect(address.address).toBe(false)
+    const specific = group.rows[0]
+    if (specific.kind !== 'value') throw new Error('not a value row')
+    expect(specific.options[2]).toMatchObject({
+      description: 'Enter an address below, or use the current page.',
+      address: false
+    })
   })
 
   it('the Address sheet refuses what is not a web page and keeps the sheet up; a host becomes its https page', () => {
@@ -8527,12 +8622,15 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     expect(currentOptionLabel(homepage)).toBe('Specific page')
     expect(homepage.options[2]).toMatchObject({
       label: 'Specific page',
-      description: 'news.ycombinator.com'
+      description: 'news.ycombinator.com',
+      // An address: one line, shortened from its start so the page's end stays (seed #29).
+      address: true
     })
     const address = group.rows[1]
     if (address.kind !== 'field') throw new Error('not a field row')
     expect(address.value).toBe('news.ycombinator.com')
     expect(address.display).toBe('news.ycombinator.com')
+    expect(address.address).toBe(true)
   })
 
   it('Use current page names the page Settings was opened from and writes it; without one it is disabled and says what to do', () => {
@@ -8543,6 +8641,7 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     // The Settings tab's opener is the site (`SETTINGS.openerTabId`).
     expect(current.disabled).toBe(false)
     expect(current.description).toBe('news.example')
+    expect(current.address).toBe(true)
     current.onPress?.()
     expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://news.example/' } }])
 
@@ -8556,6 +8655,7 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     if (idle.kind !== 'action') throw new Error('not an action row')
     expect(idle.disabled).toBe(true)
     expect(idle.description).toBe('Open a page, then come back to Settings from it.')
+    expect(idle.address).toBe(false)
 
     // An opener that is an internal page is no page of the user's either…
     const internal = withHomepage(

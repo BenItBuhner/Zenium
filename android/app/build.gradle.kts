@@ -365,6 +365,10 @@ dependencies {
     // coroutine code of ours; the library still pulls kotlinx-coroutines in, which R8 trims.
     implementation("androidx.window:window:1.3.0")
     implementation("androidx.window:window-java:1.3.0")
+    // The WebDAV sync transport's HTTP verbs (SyncFetch.kt, `sync.fetch` on the bridge): PROPFIND,
+    // MKCOL and MOVE, which the platform's HttpURLConnection refuses. Built on the first sync call,
+    // never at boot. Redirects off, no cookie jar, no cache; the platform's TLS.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
     // vault key wrapping format. The extension and vault tests build org.json documents, which
@@ -373,6 +377,8 @@ dependencies {
     // The request engine's rule sets are org.json documents; the real library stands in for the
     // android.jar stubs (which throw) so the blocking tests can parse them on the JVM.
     testImplementation("org.json:json:20250107")
+    // A loopback WebDAV server for the SyncFetch tests: the request as it went on the wire.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     // On-device driver for the gesture demo recording (.github/workflows/android-gesture-demo.yml).
     androidTestImplementation("androidx.test:runner:1.6.2")
