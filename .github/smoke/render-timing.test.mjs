@@ -80,14 +80,15 @@ describe('render-timing: the handshake note', () => {
       pidMs: 4,
       chromePageMs: 60,
       rootAttachMs: 38,
+      paintReadMs: 12,
       processStartMs: 41,
       nodeStartMs: 120,
       chromeNavStartMs: 610
     }
     expect(launchHandshakeNote(timings, 10000)).toBe(
       'launch handshake 10154 ms over the render budget (10000 ms) while the chrome painted at 1102 ms; ' +
-        'electron.launch 10020 ms, hook 32 ms, pid 4 ms, page 60 ms, root 38 ms, process at 41 ms, ' +
-        'node at 120 ms, chrome document at 610 ms'
+        'electron.launch 10020 ms, hook 32 ms, pid 4 ms, page 60 ms, root 38 ms, paint read 12 ms, ' +
+        'process at 41 ms, node at 120 ms, chrome document at 610 ms'
     )
   })
 

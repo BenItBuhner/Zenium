@@ -54,9 +54,13 @@ Every scenario's `launch` step bounds how long the chrome takes to be on screen:
 launch of a build is the cold one (`--first-launch-render-budget-ms`, 20 s; nothing has mapped the
 build's pages yet), every launch after it the warm one (`--render-budget-ms`, 10 s). The budget
 guards the chrome's **first paint** and a regression in what the chrome does before it, so it is
-judged on the renderer's own paint timeline: `Session.readFirstPaintMs` reads `performance.timeOrigin`
+judged on the renderer's own paint timeline: `Session.readChromePaint` reads `performance.timeOrigin`
 plus the latest `paint` entry off the chrome page and reports `firstPaintMs`, the offset from the
-launch's start. That reading is the renderer thread's, not the main process's.
+launch's start. That reading is the renderer thread's, not the main process's. The root attaches
+before the frame that shows it is presented (run 36366601282: the entry landed 39–47 ms before the
+read on several windows-x64 launches, after it on `restore`'s), so a document without the entry yet
+is watched for it – what is left of the budget, between 0.5 s and 5 s (`PAINT_READ_GRACE_MS`,
+`PAINT_READ_MAX_MS`); `paintReadMs` says how long that took.
 
 It has to be, because the harness reaches the render through a handshake. `electron.launch()`
 spawns the app (through `cmd.exe` on Windows), waits for its two debugger lines, opens both sockets,
@@ -85,11 +89,14 @@ runs over the budget behind a paint within it, the launch step logs `launch hand
 render budget … while the chrome painted at M ms` with every timed phase, and each scenario's
 `result.json` and the summary carry `chromeRenderedMs` beside `firstPaintMs`. The phases split the
 handshake so the next occurrence names its own: on the harness's side `launchResolveMs`
-(`electron.launch()`), `hookMs`, `pidMs`, `chromePageMs`, `rootAttachMs`; on the app's, against the
-same launch clock, `processStartMs` (the OS's creation time of the browser process – a wait before
-the app existed), `nodeStartMs` (Node up in the main process), `chromeNavStartMs` (the chrome
-document loading – the window was up) and `firstPaintMs`. The composite is still the verdict when the
-renderer reported no paint entry.
+(`electron.launch()`), `hookMs`, `pidMs`, `chromePageMs`, `rootAttachMs`, `paintReadMs`; on the
+app's, against the same launch clock, `processStartMs` (the OS's creation time of the browser
+process – a wait before the app existed), `nodeStartMs` (Node up in the main process),
+`chromeNavStartMs` (the chrome document loading – the window was up) and `firstPaintMs`. The
+composite is still the verdict when the renderer reported no paint entry in the wait. The leg's
+normal shape, run 36366601282 windows-x64 unpacked: process at 14–27 ms, Node at 44–59 ms, chrome
+document at 407–480 ms, paint at 0.99–1.33 s, `electron.launch()` back at 0.68–1.33 s, `hookMain`
+8–17 ms (the cold first launch: 82 / 124 / 556 ms, paint 3.86 s, `electron.launch()` 3.90 s).
 
 ## reCAPTCHA v2 (`recaptcha`, allow-network)
 

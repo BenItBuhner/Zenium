@@ -85,6 +85,7 @@ const HANDSHAKE_PHASES = [
   ['pidMs', 'pid'],
   ['chromePageMs', 'page'],
   ['rootAttachMs', 'root'],
+  ['paintReadMs', 'paint read'],
   ['processStartMs', 'process at'],
   ['nodeStartMs', 'node at'],
   ['chromeNavStartMs', 'chrome document at']

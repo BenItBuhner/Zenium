@@ -469,6 +469,15 @@ const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
 const FIRST_LAUNCH_RENDER_BUDGET_MS = Number(opts['first-launch-render-budget-ms'] ?? 20000)
 // The longest a launch waits for the chrome page at all; past it the launch step fails outright.
 const RENDER_WAIT_MS = Math.max(RENDER_BUDGET_MS, FIRST_LAUNCH_RENDER_BUDGET_MS) * 3
+// How long the launch waits for the chrome's first `paint` entry once its root is attached: the
+// frame that shows the root is presented after the root is (W8-H2, run 36366601282: the entry
+// landed 39–47 ms before the read on several launches, after it on `restore`'s). What is left
+// of the render budget, but at least the grace (a budget already spent still gets the entry a
+// presented frame is about to record) and at most the ceiling (a document that records none –
+// none has been seen – does not hold the scenario for a first launch's whole budget; the
+// composite is the verdict then, as before).
+const PAINT_READ_GRACE_MS = 500
+const PAINT_READ_MAX_MS = 5000
 // From the quit chord (or the Quit button) to the process's exit event. The app itself quits
 // within a second; the rest is Electron's teardown after the last window closes, which took 6 s
 // on windows-11-arm (#148, #157) against the 5 s this used to be. Only a process still alive
@@ -1416,9 +1425,20 @@ class Session {
     // like `t0`), so it is the renderer thread's answer and not gated on the main process the
     // evaluates above wait on. The render budget is judged on this; `chromeRenderedMs` and the
     // per-phase timings stay as the launch handshake's record (`readChromePaint`, render-timing.mjs).
-    const paint = await this.readChromePaint(t0)
+    // The root attaches before the frame that shows it is presented – the paint entry landed
+    // 39–47 ms before this read on several windows-x64 launches and after it on `restore`'s (run
+    // 36366601282) – so the read waits for the entry: what is left of the budget, within
+    // [PAINT_READ_GRACE_MS, PAINT_READ_MAX_MS].
+    const paint = await this.readChromePaint(
+      t0,
+      Math.min(
+        PAINT_READ_MAX_MS,
+        Math.max(PAINT_READ_GRACE_MS, this.renderBudgetMs - (Date.now() - t0))
+      )
+    )
     this.timings.chromeNavStartMs = paint.chromeNavStartMs
     this.timings.firstPaintMs = paint.firstPaintMs
+    this.timings.paintReadMs = paint.waitedMs
     await this.traceFocus()
     this.mainWindowId = await this.app.evaluate(({ BrowserWindow }) => {
       const wins = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)
@@ -1444,18 +1464,43 @@ class Session {
    * minus `t0` (also `Date.now()` epoch ms on the same machine, so the two are comparable across
    * processes); `firstPaintMs` adds the latest `paint` entry's `startTime`. The evaluate runs on
    * the renderer thread, so it is not delayed by a busy main process the way `chromeRenderedMs`
-   * is. Each reads null when the renderer reported no such entry or could not answer – the
+   * is. A document with no paint entry yet is watched for one (`PerformanceObserver`, the
+   * buffered entries included) up to `waitMs`, and `waitedMs` says how long that took. Each
+   * reads null when the renderer reported no such entry in that time or could not answer – the
    * caller then judges the budget on `chromeRenderedMs`, as before (render-timing.mjs
    * `renderTimeForBudget`).
    */
-  async readChromePaint(t0) {
-    const out = { chromeNavStartMs: null, firstPaintMs: null }
+  async readChromePaint(t0, waitMs = PAINT_READ_GRACE_MS) {
+    const out = { chromeNavStartMs: null, firstPaintMs: null, waitedMs: null }
+    const started = Date.now()
     try {
-      const reading = await this.chrome.evaluate(() => {
-        const paints = performance.getEntriesByType('paint')
-        const last = paints.length ? Math.max(...paints.map((p) => p.startTime)) : null
-        return { timeOrigin: performance.timeOrigin, paint: last }
-      })
+      const reading = await this.chrome.evaluate(
+        (limitMs) =>
+          new Promise((resolve) => {
+            const latest = () => {
+              const paints = performance.getEntriesByType('paint')
+              return paints.length ? Math.max(...paints.map((p) => p.startTime)) : null
+            }
+            let settled = false
+            let observer = null
+            const finish = () => {
+              if (settled) return
+              settled = true
+              if (observer) observer.disconnect()
+              resolve({ timeOrigin: performance.timeOrigin, paint: latest() })
+            }
+            if (latest() !== null) return finish()
+            try {
+              observer = new PerformanceObserver(() => finish())
+              observer.observe({ type: 'paint', buffered: true })
+            } catch {
+              observer = null
+            }
+            setTimeout(finish, limitMs)
+          }),
+        Math.max(0, Math.round(waitMs))
+      )
+      out.waitedMs = Date.now() - started
       if (reading && typeof reading.timeOrigin === 'number') {
         out.chromeNavStartMs = Math.max(0, Math.round(reading.timeOrigin - t0))
         if (typeof reading.paint === 'number') {
@@ -1464,6 +1509,7 @@ class Session {
       }
     } catch {
       // A page gone or an evaluate refused: fall back to the composite reading.
+      out.waitedMs = Date.now() - started
     }
     return out
   }
