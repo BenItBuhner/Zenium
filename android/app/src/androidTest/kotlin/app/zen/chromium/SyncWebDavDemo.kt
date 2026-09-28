@@ -25,8 +25,20 @@ import kotlin.math.roundToInt
  * sheet, Sync now, the App password row after a refusal, Turn off sync's prompt. Every finger is
  * a real touch ([DemoHarness.Finger]) whose effect is read back from the chrome's document or
  * the core's state; a touch that does not take is a [touchFault] (the run fails) and the scene
- * goes on another way so the recording covers the rest. The core's own commands remain for what
- * the page has no control for (the probe's three answers, `bookmark.create`) and as the ways on.
+ * goes on with a second finger, or a row's click, so the recording covers the rest – never a
+ * key or a document click in a control's place. The core's own commands remain for what the
+ * page has no control for (the probe's three answers, `bookmark.create`) and as the ways on.
+ *
+ * A finger on a sheet's button lands where the button IS, not where it was: after the keyboard
+ * goes the chassis re-measures its detents against the grown layer and springs the sheet to
+ * them (BottomSheet.tsx, the layer's ResizeObserver → `measure()`), and the window's insets say
+ * the keyboard is down at the start of that, not the end. On the recipe's software GPU that
+ * settle runs for seconds, and run 36386841231's first driver read Save's centre 38 px above
+ * its rest and tapped 3 px over the button's top edge, twice (the Folder sheet's Save, the
+ * passphrase sheet's Turn on sync: the field under the finger took the focus, the button
+ * nothing). So every finger on a sheet waits for the sheet's geometry to hold still
+ * ([awaitSheetSettled]: the sheet's height, transform and box unchanged across 400 ms) and
+ * for the button's own point to read the same twice ([stablePointOf]), and lands at once.
  *
  * Every scene is a still in the light scheme and one in the dark
  * (`sync-webdav-NN-<scene>-{light,dark}.png`): the section with its Sync through row, the
@@ -336,10 +348,11 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
     /**
      * A field row's one-field sheet (§9.12): a finger on the row opens it, a finger on the field
      * focuses it (the keyboard lowered first when it stands over the field: the IME takes that
-     * back, the sheet stays), `text` typed as key events and read back from the field, the
-     * keyboard lowered, and a finger on Save, which must close the sheet within `saveTimeoutMs`
-     * (the App password row's Save runs a round first: §9.30's busy form). A secret's text is
-     * never noted, only its length. True once the sheet is gone.
+     * back, the sheet stays), `text` typed as key events and read back from the field (a field
+     * that holds text already – the Folder row's `Zenium/` – is cleared first), the keyboard
+     * lowered, the sheet left to settle, and a finger on Save, which must close the sheet within
+     * `saveTimeoutMs` (the App password row's Save runs a round first: §9.30's busy form). A
+     * secret's text is never noted, only its length. True once the sheet is gone.
      */
     private fun fillField(label: String, rowId: String, text: String, secret: Boolean = false, saveTimeoutMs: Long = 15_000): Boolean {
         val id = "settings-field-$rowId"
@@ -355,13 +368,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         awaitSheetAtRest(6_000)
         typeInto(id, text, "the $label field", secret)
         lowerKeyboard()
-        val saved = touchSheetButton("Save", "the $label sheet closed", saveTimeoutMs) { !sheetPresented(label) }
-        if (!saved && sheetPresented(label)) {
-            note("  Save did not take under a finger; Enter in the field is the way on")
-            focusField(id)
-            pressKey(KeyEvent.KEYCODE_ENTER)
-            awaitSheetGone(label, saveTimeoutMs)
-        }
+        touchSheetButton("Save", "the $label sheet closed", saveTimeoutMs) { !sheetPresented(label) }
         SystemClock.sleep(800)
         return !sheetPresented(label)
     }
@@ -385,12 +392,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         typeInto("sync-confirm", PASSPHRASE, "the confirmation field", secret = true)
         lowerKeyboard()
         val touched = SystemClock.uptimeMillis()
-        val took = touchSheetButton(TURN_ON_LABEL, "the form is busy or sync is on", 8_000) { formBusy() || syncStatus().optBoolean("enabled") }
-        if (!took && !formBusy() && !syncStatus().optBoolean("enabled")) {
-            note("  the sheet's Turn on sync did not take under a finger; Enter in the field is the way on")
-            focusField("sync-confirm")
-            pressKey(KeyEvent.KEYCODE_ENTER)
-        }
+        touchSheetButton(TURN_ON_LABEL, "the form is busy or sync is on", 8_000) { formBusy() || syncStatus().optBoolean("enabled") }
         val on = poll(150_000) { val s = syncStatus(); s.optBoolean("enabled") && !s.isNull("lastSyncAt") && !s.optBoolean("syncing", false) }
         note("  sync ${if (on) "on, the first round done," else "NOT on"} ${SystemClock.uptimeMillis() - touched} ms after the touch; form ${formState()}")
         awaitSheetGone(PASSPHRASE_TITLE, 10_000)
@@ -423,17 +425,21 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
             awaitSheet(TURN_OFF_TITLE, 8_000)
         }
         awaitSheetAtRest(6_000)
-        val box = chromePointOf("document.querySelector('$SHEET .zen-v2-check-row')")
-        if (box != null && touchable.contains(box.x.roundToInt(), box.y.roundToInt())) {
+        for (finger in 1..2) {
+            val box = stablePointOf("document.querySelector('$SHEET .zen-v2-check-row')", 4_000)
+            if (box == null || !touchable.contains(box.x.roundToInt(), box.y.roundToInt())) {
+                note("  the wipe's checkbox row is not in the document's touchable window ($box); the tree's node instead")
+                touchTapLabelExpecting(WIPE_LABEL, "the wipe is checked", 4_000, prefix = true) { wipeChecked() }
+                break
+            }
+            Log.i(tag, "touch at ${box.x},${box.y} on the wipe's checkbox row${if (finger > 1) " (a second finger)" else ""}")
             Finger().tap(box.x, box.y)
-            if (!awaitTrue(4_000) { wipeChecked() }) touchFault("a touch on the wipe's checkbox row did not check it")
-        } else {
-            touchTapLabelExpecting(WIPE_LABEL, "the wipe is checked", 4_000, prefix = true) { wipeChecked() }
-        }
-        if (!wipeChecked()) {
-            note("  the wipe's box did not take a finger; checked through the document as the way on")
-            chromeJs("(function(){var b=document.querySelector('$SHEET input.zen-v2-checkbox');if(b&&!b.checked)b.click();return !!b})()")
-            poll(2_000) { wipeChecked() }
+            if (awaitTrue(4_000) { wipeChecked() }) {
+                if (finger > 1) note("  the second finger on the wipe's checkbox row took")
+                break
+            }
+            touchFault("a touch on the wipe's checkbox row did not check it (finger $finger at ${box.x},${box.y}; sheet ${sheetGeometry()})")
+            awaitSheetSettled(6_000)
         }
         check("the wipe's checkbox row is checked before Turn off", wipeChecked())
         SystemClock.sleep(600)
@@ -448,31 +454,40 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
     /**
      * A finger on the presented sheet's action button reading `text` (Cancel, Save, Turn on sync,
      * Turn off: `.zen-settings-sheet-actions`, blocks.tsx), where the document has it; then up to
-     * `timeoutMs` for `took` – the step's claim, named by `effect`. The tree's node when the
-     * document has no such button. A touch that went in and never took is a [touchFault].
+     * `timeoutMs` for `took` – the step's claim, named by `effect`. The finger waits for the
+     * sheet to hold still after the keyboard ([awaitSheetSettled]) and for the button's point to
+     * read the same twice ([stablePointOf]), then lands at once. A touch that went in and never
+     * took is a [touchFault]; a second finger, the same way, is the way on – and its own fault
+     * when it does not take either. The tree's node when the document has no such button.
      */
     private fun touchSheetButton(text: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
-        val point = chromePointOf(
-            "Array.prototype.find.call(document.querySelectorAll('$SHEET .zen-settings-sheet-actions button')," +
-                "function(b){return (b.textContent||'').trim()===${JSONObject.quote(text)}})"
-        )
-        if (point == null || !touchable.contains(point.x.roundToInt(), point.y.roundToInt())) {
-            note("  no '$text' button in the sheet's document within the touchable window (${point ?: "none"}); the tree's node instead")
-            return touchTapLabelExpecting(text, effect, timeoutMs, took = took)
+        val button = "Array.prototype.find.call(document.querySelectorAll('$SHEET .zen-settings-sheet-actions button')," +
+            "function(b){return (b.textContent||'').trim()===${JSONObject.quote(text)}})"
+        for (finger in 1..2) {
+            // A first finger that fell on a field brought the keyboard back: down again first.
+            lowerKeyboard()
+            if (!awaitSheetSettled(10_000)) note("  the sheet did not hold still within 10 s before the finger on '$text' (${sheetGeometry()})")
+            val point = stablePointOf(button, 4_000)
+            if (point == null || !touchable.contains(point.x.roundToInt(), point.y.roundToInt())) {
+                note("  no '$text' button in the sheet's document within the touchable window (${point ?: "none"}); the tree's node instead")
+                return touchTapLabelExpecting(text, effect, timeoutMs, took = took)
+            }
+            Log.i(tag, "touch at ${point.x},${point.y} on the sheet's '$text'${if (finger > 1) " (a second finger)" else ""} (sheet ${sheetGeometry()})")
+            Finger().tap(point.x, point.y)
+            if (awaitTrue(timeoutMs, took)) {
+                Log.i(tag, "the touch on the sheet's '$text' took: $effect")
+                if (finger > 1) note("  the second finger on the sheet's '$text' took")
+                return true
+            }
+            touchFault("a touch on the sheet's '$text' did not take: not $effect within $timeoutMs ms (finger $finger at ${point.x},${point.y}; sheet now ${sheetGeometry()}; keyboard ${if (imeShown()) "up" else "down"})")
         }
-        Log.i(tag, "touch at ${point.x},${point.y} on the sheet's '$text'")
-        Finger().tap(point.x, point.y)
-        if (awaitTrue(timeoutMs, took)) {
-            Log.i(tag, "the touch on the sheet's '$text' took: $effect")
-            return true
-        }
-        touchFault("a touch on the sheet's '$text' did not take: not $effect within $timeoutMs ms")
         return false
     }
 
     /**
      * The sheet's spring has landed: the chassis holds `--zen-recede` at 1 once a sheet rests
-     * (§11.1), and a finger landing on a moving sheet catches it instead of tapping.
+     * (§11.1), and the sheet's own geometry holds still ([awaitSheetSettled]); a finger landing
+     * on a moving sheet catches it instead of tapping.
      */
     private fun awaitSheetAtRest(timeoutMs: Long): Boolean {
         val rested = poll(timeoutMs) {
@@ -481,20 +496,78 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
                     "Number(document.documentElement.style.getPropertyValue('--zen-recede'))>=0.99"
             ) == "true"
         }
-        SystemClock.sleep(800)
-        return rested
+        val settled = awaitSheetSettled(timeoutMs)
+        SystemClock.sleep(400)
+        return rested && settled
+    }
+
+    /**
+     * The presented sheet's geometry as one line – the height and transform the chassis writes
+     * per frame of its spring (BottomSheet.tsx `paint`) and its box – or null without a sheet.
+     */
+    private fun sheetGeometry(): String? =
+        chromeJsString(
+            "(function(){var s=document.querySelector('$SHEET');if(!s)return null;var r=s.getBoundingClientRect();" +
+                "return [s.style.height,s.style.transform,r.top.toFixed(1),r.height.toFixed(1)].join('|')})()"
+        )
+
+    /**
+     * The sheet's geometry unchanged across 400 ms, the Settings panes at rest too: what a
+     * finger on the sheet waits for after the keyboard leaves (the class comment). True once it
+     * holds still within `timeoutMs`; false – and the finger goes in anyway – when it never did.
+     */
+    private fun awaitSheetSettled(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = sheetGeometry()
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(400)
+            val now = sheetGeometry()
+            if (now != null && now == last && settingsAtRest()) return true
+            last = now
+        }
+        return false
+    }
+
+    /**
+     * Where the element `elementJs` evaluates to is on screen, read twice 300 ms apart and
+     * returned once both reads agree (within a pixel) – the point a finger goes to at once,
+     * with no wait between the read and the touch. The last read when they never agreed within
+     * `timeoutMs`; null when the document has no such element.
+     */
+    private fun stablePointOf(elementJs: String, timeoutMs: Long): PointF? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = chromePointOf(elementJs, settleMs = 0) ?: return null
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            val now = chromePointOf(elementJs, settleMs = 0) ?: return null
+            if (kotlin.math.abs(now.x - last.x) <= 1f && kotlin.math.abs(now.y - last.y) <= 1f) return now
+            last = now
+        }
+        Log.w(tag, "the point of ($elementJs) never read the same twice within $timeoutMs ms; the last read $last")
+        return last
     }
 
     // --- the keyboard ----------------------------------------------------------------------------
 
     /**
      * `text` typed into the field `id`: focused under a finger ([focusField]; a touch that does
-     * not focus it is a [touchFault]), the keys injected and the field read back, up to four
-     * rounds, then set through the document as the way on. A secret's length is noted, never
-     * its text. True once the field holds `text`.
+     * not focus it is a [touchFault]), any text the field holds already deleted (the Folder
+     * field opens on `Zenium/`), the keys injected and the field read back, up to four rounds,
+     * then set through the document as the way on. A secret's length is noted, never its text.
+     * True once the field holds `text`.
      */
     private fun typeInto(id: String, text: String, what: String, secret: Boolean): Boolean {
         if (!focusField(id)) touchFault("a touch on $what did not focus it")
+        val held = fieldValue(id) ?: ""
+        if (held == text) {
+            note("  $what holds its ${text.length} characters already")
+            return true
+        }
+        if (held.isNotEmpty()) {
+            clearField(held.length)
+            SystemClock.sleep(400)
+            note("  $what held ${held.length} characters; cleared (now ${fieldValue(id)?.length ?: "no"})")
+        }
         var typed = 0
         for (attempt in 1..4) {
             if (!fieldFocused(id)) focusField(id)
@@ -527,19 +600,21 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
     private fun focusField(id: String): Boolean {
         for (attempt in 1..4) {
             if (fieldFocused(id)) return true
-            val point = chromePointOf("document.getElementById(${JSONObject.quote(id)})") ?: return false
+            awaitSheetSettled(6_000)
+            val point = stablePointOf("document.getElementById(${JSONObject.quote(id)})", 3_000) ?: return false
             val inset = imeInset()
             if (inset > 0 && point.y > height - inset) {
                 back()
                 val down = awaitIme(shown = false, timeoutMs = 6_000)
                 note("  the keyboard was over the field: lowered first (${if (down) "down" else "still up"})")
-                SystemClock.sleep(700)
+                awaitSheetSettled(6_000)
                 continue
             }
             if (!touchable.contains(point.x.roundToInt(), point.y.roundToInt())) {
                 Log.w(tag, "the field '$id' at $point is outside the touchable window $touchable")
                 return false
             }
+            Log.i(tag, "touch at ${point.x},${point.y} on the field '$id'")
             Finger().tap(point.x, point.y)
             if (awaitTrue(4_000) { fieldFocused(id) }) {
                 awaitIme(shown = true, timeoutMs = 4_000)
@@ -664,11 +739,11 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         ) ?: ""
 
     /**
-     * Where the element `elementJs` evaluates to is on screen: scrolled into view if it is not,
-     * its box's middle in CSS px scaled into the chrome view's place on screen. Null when the
-     * document has no such element.
+     * Where the element `elementJs` evaluates to is on screen: scrolled into view if it is not
+     * (then `settleMs` for the scroll to land), its box's middle in CSS px scaled into the
+     * chrome view's place on screen. Null when the document has no such element.
      */
-    private fun chromePointOf(elementJs: String): PointF? {
+    private fun chromePointOf(elementJs: String, settleMs: Long = 400): PointF? {
         val raw = chromeJs(
             "(function(){var e=($elementJs);if(!e)return null;e.scrollIntoView({block:'nearest',behavior:'instant'});" +
                 "var r=e.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
@@ -676,7 +751,7 @@ class SyncWebDavDemo : DemoHarness("sync-demo-state.json", "sync-webdav", "sync-
         val point = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 2 } ?: return null
         var origin = IntArray(2)
         instrumentation.runOnMainSync { origin = IntArray(2).also((activity as MainActivity).host.chrome::getLocationOnScreen) }
-        SystemClock.sleep(400)
+        if (settleMs > 0) SystemClock.sleep(settleMs)
         return PointF(origin[0] + point.getDouble(0).toFloat() * density, origin[1] + point.getDouble(1).toFloat() * density)
     }
 

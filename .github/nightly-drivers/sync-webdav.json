@@ -1,9 +1,9 @@
 {
   "id": "sync-webdav",
   "class": "SyncWebDavDemo",
-  "shard": "phone-a",
+  "shard": "phone-g",
   "mirrors": "android-sync-webdav-demo.yml",
   "dir": "sync-webdav-demo",
-  "estimate": 6,
-  "note": "ID-32's Android half: the WebDAV transport over sync.fetch / secrets.* against a WebDAV server on the device's loopback, driven through Settings › Sync under a finger (the Sync through picker, the server form's sheets, Test connection, Turn on sync, Sync now, the App password row after a refusal, Turn off sync); 9 scenes, each a light and a dark still (18), plus the core's probe checks off camera."
+  "estimate": 10,
+  "note": "ID-32's Android half: the WebDAV transport over sync.fetch / secrets.* against a WebDAV server on the device's loopback, driven through Settings › Sync under a finger (the Sync through picker, the server form's sheets typed and saved by touch, Test connection, Turn on sync, Sync now, the App password row after a refusal, Turn off sync); 9 scenes, each a light and a dark still (18), plus the core's probe checks off camera. 472 s on the recipe's emulator (run 36386841231): the typing under the software GPU and the scrypt of Turn on sync are the time; on phone-g, the shard with the room, since phone-a would sit at 67.5 of its 68 with it."
 }
