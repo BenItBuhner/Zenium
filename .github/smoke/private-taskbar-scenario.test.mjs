@@ -53,7 +53,10 @@ describe('the scenario constants', () => {
     // launch and the scenario keys the window enumeration on it (run 36020202657 read no
     // windows under the shell's pid).
     const harness = read('.github/smoke/smoke.mjs')
-    expect(harness).toContain('this.appPid = await this.app.evaluate(() => process.pid)')
+    expect(harness).toMatch(
+      /const main = await this\.app\.evaluate\(\(\) => \(\{\s*pid: process\.pid,/
+    )
+    expect(harness).toContain('this.appPid = main.pid')
     const scenario = read('.github/smoke/private-taskbar-scenario.mjs')
     expect(scenario).toContain('const pid = s.appPid ?? s.pid')
     expect(scenario).toContain("['-Action', 'windows', '-ProcessId', String(pid)]")

@@ -30,7 +30,9 @@ import java.util.concurrent.TimeUnit
  *  1. Reader View from the app menu (a real touch): the `zen://reader` document comes up with the
  *     title, the byline and the reading time, and with no toolbar in it (the four segmented
  *     groups are off the document; the Text preferences sheet is their one home). The pill at
- *     rest stays the favicon, the host and the one site-information glyph: no reader chip.
+ *     rest is the favicon, the host and the lit Reader View exit – the reader chip pressed
+ *     (`aria-pressed="true"`; the design lead's fold (e) on #658, §9.29 as amended) – and no
+ *     Text preferences chip: the sheet is the phone's one way to the text controls.
  *  2. The app menu's Text Preferences… (the phone's way in): the §9.13 sheet with the read-aloud
  *     row first, the four picker rows, then the extras – Text spacing, Line focus, Lines in
  *     focus, Syllables. The sheet opens at its peek, where the last rows sit below the fold; a
@@ -301,7 +303,13 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         check("the document carries no toolbar of its own (§10.1)", mounted && !probe.optBoolean("toolbar"))
         val pill = pillProbe()
         finding("  the pill at rest: $pill")
-        check("the pill at rest is the favicon, the host and one site-information glyph: no reader chip", pill.optInt("chips") == 1 && pill.optInt("siteInfo") == 1 && pill.optInt("readerChip") == 0)
+        // §9.29 as amended (the design lead's fold (e) on #658): on `zen://reader` the reader chip is
+        // the lit exit – pressed, "Exit Reader View" – in the slot after the site-information glyph;
+        // the Text preferences chip is the desktop pill's and never the phone's (the sheet is its home).
+        check(
+            "the pill at rest is the favicon, the host and the lit Reader View exit (aria-pressed=\"true\"): two chips, one site-information glyph, no Text preferences chip",
+            pill.optInt("chips") == 2 && pill.optInt("siteInfo") == 1 && pill.optInt("readerExit") == 1 && pill.optString("pressed") == "true" && pill.optInt("readerChip") == 0
+        )
         SystemClock.sleep(1_000)
         snap("reader-document")
         beat()
@@ -742,12 +750,18 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
 
     // --- the pill ------------------------------------------------------------------------------------
 
-    /** The phone pill's chips, from the chrome's document: how many, the site-information glyph, any reader chip. */
+    /**
+     * The phone pill's chips, from the chrome's document: how many, the site-information glyph, the
+     * desktop's Text preferences chip (`readerChip`, never drawn on the phone), and the Reader View
+     * chip (`readerExit`: `[data-reader-chip]`) with its `aria-pressed` (`pressed`, `"true"` on the
+     * reader document – the lit exit) and its hint (`hint`, the tooltip's text).
+     */
     private fun pillProbe(): JSONObject {
         val raw = jsonString(chromeJs(
-            "(function(){var p=document.querySelector('.zen-phone-pill');if(!p)return '{}';" +
+            "(function(){var p=document.querySelector('.zen-phone-pill');if(!p)return '{}';var r=p.querySelector('[data-reader-chip]');" +
                 "return JSON.stringify({chips:p.querySelectorAll('[data-pill-chip]').length,siteInfo:p.querySelectorAll('[data-site-info]').length," +
-                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,text:(p.textContent||'').trim().slice(0,40)})})()"
+                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,readerExit:p.querySelectorAll('[data-reader-chip]').length," +
+                "pressed:r?(r.getAttribute('aria-pressed')||''):'',hint:r?(r.getAttribute('data-tooltip')||''):'',text:(p.textContent||'').trim().slice(0,40)})})()"
         ))
         return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
     }

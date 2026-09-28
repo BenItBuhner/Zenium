@@ -128,7 +128,9 @@ export function useTabSwitcherHint(state: UIState, edge: PhoneBarPosition, calm:
     if (!calm || loading || cardsUp || barHidden || moved) dismissHintBubble()
   }, [up, calm, loading, tabId, edge, insets, cardsUp, barHidden])
 
-  // A touch anywhere: on the chrome, or – as far as the host tells – on the page.
+  // A touch anywhere: on the chrome, or on the page – the host reports a finger's down on the
+  // page whatever the hide-on-scroll setting (`BarHideGesture.reports`), as Chrome's bubble takes
+  // the `ACTION_OUTSIDE` a page touch delivers to it.
   useEffect(() => {
     if (!up) return
     const down = (): void => dismissHintBubble()

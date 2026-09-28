@@ -55,7 +55,10 @@ describe('the scenario constants', () => {
     // left the app running (run 36020202657's leftover processes): the harness kills the main
     // process's own pid, which it resolves after the launch.
     const harness = read('.github/smoke/smoke.mjs')
-    expect(harness).toContain('this.appPid = await this.app.evaluate(() => process.pid)')
+    expect(harness).toMatch(
+      /const main = await this\.app\.evaluate\(\(\) => \(\{\s*pid: process\.pid,/
+    )
+    expect(harness).toContain('this.appPid = main.pid')
     expect(harness).toMatch(/async kill\(\) \{[^}]*const pid = this\.appPid \?\? this\.pid/)
     expect(read('.github/smoke/restart-scenario.mjs')).toContain('const exit = await s.kill()')
   })

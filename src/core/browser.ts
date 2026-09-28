@@ -96,6 +96,7 @@ import { ShareService } from './share'
 import { GameService } from './game'
 import { TextFragments } from './textFragments'
 import { GeolocationService } from './geolocation'
+import { ClipboardReadService } from './clipboardRead'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -397,6 +398,8 @@ export class Browser {
   readonly game: GameService
   /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
   readonly geolocation: GeolocationService
+  /** `navigator.clipboard.read()` behind the `clipboard-read` prompt where the engine refuses every read (MW-38). */
+  readonly clipboardRead: ClipboardReadService
   readonly windows = new Map<string, ZenWindow>()
   /**
    * The pages' utility windows by page id (`WindowChrome` `page`; the task manager's, W5-18): one
@@ -633,6 +636,7 @@ export class Browser {
     this.textFragments = new TextFragments(this)
     this.game = new GameService(this)
     this.geolocation = new GeolocationService(this)
+    this.clipboardRead = new ClipboardReadService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -3266,6 +3270,10 @@ export class Browser {
       this.geolocation.handleMessage(tabId, message.geolocation)
       return
     }
+    if (message.type === 'clipboardRead') {
+      this.clipboardRead.handleMessage(tabId, message.clipboardRead)
+      return
+    }
     if (message.type === 'readAloud') {
       this.readAloud.handleMessage(tabId, message.readAloud)
       return
@@ -4218,6 +4226,8 @@ export class Browser {
       'sync.now': () => this.sync.syncNow(),
       'sync.confirmMerge': ({ merge }) => this.sync.confirmMerge(merge),
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
+      'sync.testWebDav': (credentials) => this.sync.testWebDav(credentials),
+      'sync.setWebDavPassword': ({ password }) => this.sync.setWebDavPassword(password),
       'sync.tabsFromDevices': () => this.sync.tabsFromDevices(),
       'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 

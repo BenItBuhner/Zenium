@@ -19,6 +19,8 @@
 //                                 with the OS sandbox on, under --no-sandbox by the app's switch)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
+//        (the render budget is judged on the renderer's own first paint – `firstPaintMs`, read
+//         off its performance timeline – not on the main-process launch handshake; render-timing.mjs)
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
 //        [--force-urlbar-blur]   (the URL bar's field let go of the keyboard and the chrome told
 //                                 the new tab's view took it, before the harness acts on the bar:
@@ -390,6 +392,12 @@ import {
 } from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
+  launchHandshakeNote,
+  renderBudgetError,
+  renderSignal,
+  renderTimeForBudget
+} from './render-timing.mjs'
+import {
   SITE_DATA_FILE,
   cookieRequests,
   owedClear,
@@ -461,6 +469,15 @@ const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
 const FIRST_LAUNCH_RENDER_BUDGET_MS = Number(opts['first-launch-render-budget-ms'] ?? 20000)
 // The longest a launch waits for the chrome page at all; past it the launch step fails outright.
 const RENDER_WAIT_MS = Math.max(RENDER_BUDGET_MS, FIRST_LAUNCH_RENDER_BUDGET_MS) * 3
+// How long the launch waits for the chrome's first `paint` entry once its root is attached: the
+// frame that shows the root is presented after the root is (W8-H2, run 36366601282: the entry
+// landed 39–47 ms before the read on several launches, after it on `restore`'s). What is left
+// of the render budget, but at least the grace (a budget already spent still gets the entry a
+// presented frame is about to record) and at most the ceiling (a document that records none –
+// none has been seen – does not hold the scenario for a first launch's whole budget; the
+// composite is the verdict then, as before).
+const PAINT_READ_GRACE_MS = 500
+const PAINT_READ_MAX_MS = 5000
 // From the quit chord (or the Quit button) to the process's exit event. The app itself quits
 // within a second; the rest is Electron's teardown after the last window closes, which took 6 s
 // on windows-11-arm (#148, #157) against the 5 s this used to be. Only a process still alive
@@ -1324,6 +1341,7 @@ class Session {
     this.renderBudgetMs = launchesSoFar === 0 ? FIRST_LAUNCH_RENDER_BUDGET_MS : RENDER_BUDGET_MS
     launchesSoFar++
     log(`launching ${opts.exe} ${this.launchArgs().join(' ')} (${this.scenario})`)
+    const tLaunch = Date.now()
     this.app = await electron.launch({
       executablePath: opts.exe,
       args: this.launchArgs(),
@@ -1338,6 +1356,15 @@ class Session {
       colorScheme: null,
       timeout: 90000
     })
+    // Every launch phase, timed: which one ate the wait is the evidence a render-budget failure
+    // needs (W8-H2: two isolated ~10.05–10.09 s `launchMs` on windows-x64 unpacked, app painted
+    // meanwhile, phase unknown). `launchResolveMs` is Playwright's own handshake – the spawn, the
+    // two debugger lines, both sockets, the CDP attach and its first two main-process commands;
+    // the evaluates below run against the MAIN process too. The app's side of the same clock is
+    // read where it stands: the OS's process creation and Node's start (`processStartMs`,
+    // `nodeStartMs`, off the pid evaluate) and the chrome document's start and paint
+    // (`chromeNavStartMs`, `firstPaintMs`, off its performance timeline).
+    this.timings.launchResolveMs = Date.now() - tLaunch
     // A main process blocked by a synchronous native dialog never answers an evaluate: fence
     // every call so the step fails instead of the whole run stalling.
     const rawEvaluate = this.app.evaluate.bind(this.app)
@@ -1355,22 +1382,63 @@ class Session {
     })
     this.app.on('window', (page) => this.attachPage(page))
     for (const p of this.app.windows()) this.attachPage(p)
+    const tHook = Date.now()
     this.hookResult = await this.app.evaluate(hookMain, {
       eventsFile: this.eventsFile,
       workerPartitions: [DEFAULT_CONTAINER_PARTITION]
     })
+    this.timings.hookMs = Date.now() - tHook
     this.timings.launchMs = Date.now() - t0
     // The browser process's own pid. Playwright 1.63 launches Electron on Windows through
     // cmd.exe (`shell: true` in its Electron launcher), so `proc.pid` is the shell's there and
     // a taskkill or a window enumeration keyed on it misses the app (run 36020202657 saw no
     // windows under it and a kill that left the app running); on Linux and macOS both are one.
-    this.appPid = await this.app.evaluate(() => process.pid)
+    const tPid = Date.now()
+    const main = await this.app.evaluate(() => ({
+      pid: process.pid,
+      // Electron's `process.getCreationTime`: the OS's creation time of this process, epoch ms.
+      createdAt: typeof process.getCreationTime === 'function' ? process.getCreationTime() : null,
+      uptimeMs: Math.round(process.uptime() * 1000)
+    }))
+    this.timings.pidMs = Date.now() - tPid
+    this.appPid = main.pid
+    // The app's own clock against the launch's: when the OS created the browser process (the
+    // spawn through cmd.exe and anything that held the executable before it ran) and when Node
+    // started in it – both offsets from `t0`, so a wait before the app existed reads apart from
+    // one while it was booting.
+    if (typeof main.createdAt === 'number' && Number.isFinite(main.createdAt)) {
+      this.timings.processStartMs = Math.max(0, Math.round(main.createdAt - t0))
+    }
+    this.timings.nodeStartMs = Math.max(0, Date.now() - t0 - main.uptimeMs)
+    const tPage = Date.now()
     this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
+    this.timings.chromePageMs = Date.now() - tPage
+    const tRoot = Date.now()
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
       state: 'attached',
       timeout: RENDER_WAIT_MS
     })
+    this.timings.rootAttachMs = Date.now() - tRoot
     this.timings.chromeRenderedMs = Date.now() - t0
+    // The renderer's own first paint, relative to this launch's start: read cross-process from the
+    // chrome page's performance timeline (`timeOrigin` + the paint entry, both wall-clock epoch ms
+    // like `t0`), so it is the renderer thread's answer and not gated on the main process the
+    // evaluates above wait on. The render budget is judged on this; `chromeRenderedMs` and the
+    // per-phase timings stay as the launch handshake's record (`readChromePaint`, render-timing.mjs).
+    // The root attaches before the frame that shows it is presented – the paint entry landed
+    // 39–47 ms before this read on several windows-x64 launches and after it on `restore`'s (run
+    // 36366601282) – so the read waits for the entry: what is left of the budget, within
+    // [PAINT_READ_GRACE_MS, PAINT_READ_MAX_MS].
+    const paint = await this.readChromePaint(
+      t0,
+      Math.min(
+        PAINT_READ_MAX_MS,
+        Math.max(PAINT_READ_GRACE_MS, this.renderBudgetMs - (Date.now() - t0))
+      )
+    )
+    this.timings.chromeNavStartMs = paint.chromeNavStartMs
+    this.timings.firstPaintMs = paint.firstPaintMs
+    this.timings.paintReadMs = paint.waitedMs
     await this.traceFocus()
     this.mainWindowId = await this.app.evaluate(({ BrowserWindow }) => {
       const wins = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)
@@ -1387,6 +1455,63 @@ class Session {
       })
     }
     return this
+  }
+
+  /**
+   * The chrome document's own clock as millisecond offsets from this launch's `t0`, read from
+   * the renderer's `performance` timeline: `chromeNavStartMs` is `timeOrigin` (the document's
+   * navigation start, wall-clock epoch ms – when the main process had the window up and loading)
+   * minus `t0` (also `Date.now()` epoch ms on the same machine, so the two are comparable across
+   * processes); `firstPaintMs` adds the latest `paint` entry's `startTime`. The evaluate runs on
+   * the renderer thread, so it is not delayed by a busy main process the way `chromeRenderedMs`
+   * is. A document with no paint entry yet is watched for one (`PerformanceObserver`, the
+   * buffered entries included) up to `waitMs`, and `waitedMs` says how long that took. Each
+   * reads null when the renderer reported no such entry in that time or could not answer – the
+   * caller then judges the budget on `chromeRenderedMs`, as before (render-timing.mjs
+   * `renderTimeForBudget`).
+   */
+  async readChromePaint(t0, waitMs = PAINT_READ_GRACE_MS) {
+    const out = { chromeNavStartMs: null, firstPaintMs: null, waitedMs: null }
+    const started = Date.now()
+    try {
+      const reading = await this.chrome.evaluate(
+        (limitMs) =>
+          new Promise((resolve) => {
+            const latest = () => {
+              const paints = performance.getEntriesByType('paint')
+              return paints.length ? Math.max(...paints.map((p) => p.startTime)) : null
+            }
+            let settled = false
+            let observer = null
+            const finish = () => {
+              if (settled) return
+              settled = true
+              if (observer) observer.disconnect()
+              resolve({ timeOrigin: performance.timeOrigin, paint: latest() })
+            }
+            if (latest() !== null) return finish()
+            try {
+              observer = new PerformanceObserver(() => finish())
+              observer.observe({ type: 'paint', buffered: true })
+            } catch {
+              observer = null
+            }
+            setTimeout(finish, limitMs)
+          }),
+        Math.max(0, Math.round(waitMs))
+      )
+      out.waitedMs = Date.now() - started
+      if (reading && typeof reading.timeOrigin === 'number') {
+        out.chromeNavStartMs = Math.max(0, Math.round(reading.timeOrigin - t0))
+        if (typeof reading.paint === 'number') {
+          out.firstPaintMs = Math.max(0, Math.round(reading.timeOrigin + reading.paint - t0))
+        }
+      }
+    } catch {
+      // A page gone or an evaluate refused: fall back to the composite reading.
+      out.waitedMs = Date.now() - started
+    }
+    return out
   }
 
   attachPage(page) {
@@ -2802,12 +2927,25 @@ async function runScenario(name, userData, sessionOptions, body) {
         if (!realPath(facts.userData).startsWith(realPath(profileRoot))) {
           throw new Error(`profile not isolated: userData is ${facts.userData}`)
         }
-        if (s.timings.chromeRenderedMs > s.renderBudgetMs) {
-          throw new Error(
-            `chrome rendered after ${s.timings.chromeRenderedMs} ms (budget ${s.renderBudgetMs} ms${s.renderBudgetMs === RENDER_BUDGET_MS ? '' : ' for the first launch of the run'})`
-          )
+        // The budget is judged on the renderer's own first paint where it was read, else on the
+        // composite `chromeRenderedMs`: a launch handshake that waits on the main process (or on
+        // anything before Playwright is attached) inflates the composite but not the paint
+        // (render-timing.mjs; W8-H2). The composite and the per-phase timings stay in the detail
+        // as the handshake's record, and a handshake over the budget is named in the log so the
+        // record is read even on a green launch.
+        const renderError = renderBudgetError(s.timings, s.renderBudgetMs, {
+          firstLaunch: s.renderBudgetMs !== RENDER_BUDGET_MS
+        })
+        if (renderError) throw new Error(renderError)
+        const handshake = launchHandshakeNote(s.timings, s.renderBudgetMs)
+        if (handshake) log(`${name}: ${handshake}`)
+        return {
+          ...s.timings,
+          renderBudgetMs: s.renderBudgetMs,
+          renderMs: renderTimeForBudget(s.timings),
+          renderSignal: renderSignal(s.timings),
+          ...facts
         }
-        return { ...s.timings, renderBudgetMs: s.renderBudgetMs, ...facts }
       },
       { timeoutMs: RENDER_WAIT_MS + 90000, fatal: true }
     )
@@ -8054,7 +8192,7 @@ function finish(exitCode) {
     const t = sc.session?.timings ?? {}
     log(
       `${name.padEnd(8)} steps ${steps.length} failed ${failed.length}${failed.length ? ` (${failed.join(', ')})` : ''}` +
-        ` chrome ${t.chromeRenderedMs ?? '-'} ms` +
+        ` paint ${t.firstPaintMs ?? '-'} ms chrome ${t.chromeRenderedMs ?? '-'} ms` +
         (sc.session?.exit ? ` exit ${sc.session.exit.code}` : '') +
         (sc.note ? ` ${sc.note}` : '') +
         (sc.fatal ? ` FATAL ${sc.fatal.split('\n')[0]}` : '')

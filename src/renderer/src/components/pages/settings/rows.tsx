@@ -21,6 +21,7 @@ import { Slider } from '../../ui/slider'
 import {
   controlledRuns,
   currentOptionLabel,
+  fieldInputType,
   groupShows,
   itemMenuItems,
   type ActionRow,
@@ -370,11 +371,14 @@ function PlainRowView({
       )
     }
     case 'field':
+      // The row stands in for the field on the phone: its warning (`FieldRow.warning`) is the
+      // line under the value it shows, where the desktop's stands under the field.
       return (
         <PressableRow
           row={row}
           caption={caption}
           description={row.display ?? row.value}
+          warning={row.warning}
           haspopup="dialog"
           onPress={() => ctx.open({ kind: 'field', rowId: row.id })}
         />
@@ -1288,7 +1292,10 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
  * (`StackedFieldRow`) the column spans the row's content width and the field and its message
  * with it. In either form the row's visible label is the field's `<label for>` (§9.12's
  * association; #453 for the stacked row, the sweep for the inline one): the input carries
- * `fieldId`, the id the label names, and no `aria-label` to override the name it gives.
+ * `fieldId`, the id the label names, and no `aria-label` to override the name it gives. A
+ * row's `warning` is the same line in the warn ink under the field, named by the field the
+ * same way, while the field holds the row's committed value – never while typing, and never
+ * beside a refusal.
  */
 function InlineField({
   row,
@@ -1301,6 +1308,7 @@ function InlineField({
   fieldId: string
 }): JSX.Element {
   const errorId = `${useId()}-error`
+  const warningId = `${useId()}-warning`
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -1312,6 +1320,10 @@ function InlineField({
     setSeen(row.value)
     if (!editing) setValue(row.value)
   }
+  // The row's warning (`FieldRow.warning`) stands under the field while the field holds the
+  // value the row kept – the field left with it, or not yet touched – and goes while the text
+  // differs (typing) or a refusal has the line.
+  const warning = row.warning && !error && !busy && value === row.value ? row.warning : null
   // Escape leaves the field through `blur()`, whose commit would otherwise run over the value
   // this render's closure still holds – the text the key just put away – and, for a refused
   // one, raise the error the key just cleared (the W8-3 drive's Address field: the row's value
@@ -1343,13 +1355,13 @@ function InlineField({
           row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
           row.secret && 'zen-settings-field-secret'
         )}
-        type={row.input === 'number' ? 'number' : 'text'}
+        type={fieldInputType(row)}
         inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
         min={row.min}
         max={row.max}
         placeholder={row.placeholder}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={error ? errorId : warning ? warningId : undefined}
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
@@ -1386,6 +1398,14 @@ function InlineField({
       {error && (
         <ValidationMessage id={errorId} message={error} className="zen-settings-inline-error" />
       )}
+      {warning && (
+        <ValidationMessage
+          id={warningId}
+          message={warning}
+          tone="warn"
+          className="zen-settings-inline-error"
+        />
+      )}
     </span>
   )
 }
@@ -1420,6 +1440,7 @@ function PressableRow({
   row,
   caption,
   description,
+  warning,
   name,
   leading,
   trailing,
@@ -1434,6 +1455,8 @@ function PressableRow({
   row: SettingsRow
   caption?: string
   description?: string
+  /** A field row's warning line under the description (`FieldRow.warning`). */
+  warning?: string
   name?: string
   leading?: ReactNode
   trailing?: ReactNode
@@ -1474,7 +1497,7 @@ function PressableRow({
           {leading}
         </span>
       )}
-      <RowText label={row.label} description={description} caption={caption} />
+      <RowText label={row.label} description={description} warning={warning} caption={caption} />
       {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
@@ -1487,19 +1510,23 @@ function PressableRow({
  * `<label for>` of the control with that id (a field row's, §9.12), the same class and so the
  * same line; every style hangs on the class, so the element makes no difference. With `labelId`
  * the label carries that id, for a button-like control's `aria-labelledby` (a menulist, a
- * slider's thumb) to name itself by the visible label.
+ * slider's thumb) to name itself by the visible label. A `warning` is §9.12's line in the warn
+ * ink under the description (the phone field row's, `FieldRow.warning`): a third line of the
+ * block, not a third line of the description.
  */
 export function RowText({
   label,
   labelFor,
   labelId,
   description,
+  warning,
   caption
 }: {
   label: string
   labelFor?: string
   labelId?: string
   description?: string
+  warning?: string
   caption?: string
 }): JSX.Element {
   return (
@@ -1515,6 +1542,7 @@ export function RowText({
         </span>
       )}
       {description && <span className="zen-settings-description">{description}</span>}
+      {warning && <ValidationMessage message={warning} tone="warn" />}
     </span>
   )
 }

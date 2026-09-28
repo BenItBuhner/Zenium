@@ -1,8 +1,8 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { SyncScope } from '@shared/types'
+import type { SyncScope, WebDavSyncCredentials } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { SYNC_COPY, SYNC_PASSPHRASE_MIN, syncSetupStore, turnOnSync } from '@renderer/lib/syncSetup'
+import { SYNC_COPY, SYNC_PASSPHRASE_MIN, clearSyncSetup, turnOnSync } from '@renderer/lib/syncSetup'
 import { cn } from '@renderer/lib/utils'
 import { V2CheckRow } from '../../extensions/v2'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
@@ -19,15 +19,20 @@ import { useSheetRelayout } from './sheetContext'
  * anything is sent (§9.12); then the §9.30 busy form while the engine derives the key and reads
  * the folder – fields read-only with their values, the primary busy, Cancel at .4 – and a
  * refusal from the engine clears both fields, gives the first the focus and shows its reason
- * under it. Sync on, the sheet closes (its row is gone from the page with it).
+ * under it. Sync on, the sheet closes (its row is gone from the page with it) and the setup
+ * draft is cleared whole – with a server, the app password typed into the form leaves this
+ * process's memory here; the engine holds it in the host's secret store from now on.
  */
 export function SyncPassphraseForm({
   folder,
+  webdav,
   deviceName,
   scope,
   close
 }: {
   folder: string
+  /** The WebDAV server and its app password (ID-32): setup goes through the server, not a folder. */
+  webdav?: WebDavSyncCredentials
   deviceName: string
   scope: SyncScope
   close: () => void
@@ -66,9 +71,10 @@ export function SyncPassphraseForm({
     }
     setBusy(true)
     setError(null)
-    void turnOnSync({ folder, passphrase, deviceName, scope }).then((refusal) => {
+    const target = webdav ? { folder: '', transport: 'webdav' as const, webdav } : { folder }
+    void turnOnSync({ ...target, passphrase, deviceName, scope }).then((refusal) => {
       if (refusal === null) {
-        syncSetupStore.set({ folder: null })
+        clearSyncSetup()
         close()
         return
       }
@@ -190,7 +196,7 @@ export function SyncDisconnectForm({ close }: { close: () => void }): JSX.Elemen
         onCancel={close}
         onAction={() => {
           run('sync.disconnect', { wipeRemote })
-          syncSetupStore.set({ folder: null })
+          clearSyncSetup()
           close()
         }}
       />

@@ -7,7 +7,9 @@ import type {
 import { Browser } from '../../browser'
 import type {
   Platform,
+  SecretStore,
   StoreIO,
+  SyncFetch,
   SyncPlatformHost,
   SyncTransport,
   TabView,
@@ -60,12 +62,26 @@ const fastScrypt: SyncPlatformHost['scrypt'] = async (passphrase, salt) => {
   return new Uint8Array(digest)
 }
 
+/** A transport the suite can take the folder away from (`MemoryTransport.lost`, the folder transport's SAF/path loss). */
+export type HarnessTransport = SyncTransport & { lost: boolean }
+
+/**
+ * What `device()` hands the engine for a folder: the in-memory folder transport, or – when a
+ * suite sets one (`engineWebDav.test.ts`) – another transport over the same folder map, so the
+ * convergence scenarios run unchanged over it.
+ */
+let transportFactory: ((folder: string) => HarnessTransport) | null = null
+
+export function setTransportFactory(factory: ((folder: string) => HarnessTransport) | null): void {
+  transportFactory = factory
+}
+
 export interface Device {
   name: string
   browser: Browser
   engine: SyncEngine
   host: SyncPlatformHost
-  transports: MemoryTransport[]
+  transports: HarnessTransport[]
   toasts: string[]
   win: ZenWindow
   io: StoreIO & { files: Record<string, string> }
@@ -100,9 +116,13 @@ export function device(
     notifications?: boolean
     /** What the host says the device is; absent for a host (an older build) that says nothing. */
     kind?: SyncDeviceKind
+    /** The host's HTTP for a WebDAV server (ID-32); absent for a host without one (the phone today). */
+    fetch?: SyncFetch
+    /** The host's secret store (the app password's home); absent for a host without one. */
+    secrets?: SecretStore
   } = {}
 ): Device {
-  const transports: MemoryTransport[] = []
+  const transports: HarnessTransport[] = []
   const io = options.io ?? memoryIo()
   const keys = options.keys ?? new FakeKeyWrap()
   const notifications: Array<Record<string, unknown>> = []
@@ -124,12 +144,15 @@ export function device(
     deviceNameDefault: () => name,
     ...(kind ? { deviceKind: () => kind } : {}),
     createTransport: (folder): SyncTransport => {
-      const t = new MemoryTransport(folderFiles(folder))
+      const t = transportFactory
+        ? transportFactory(folder)
+        : new MemoryTransport(folderFiles(folder))
       transports.push(t)
       return t
     },
     scrypt: fastScrypt,
-    pollMs: options.pollMs ?? 0
+    pollMs: options.pollMs ?? 0,
+    ...(options.fetch ? { fetch: options.fetch } : {})
   }
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
@@ -169,6 +192,7 @@ export function device(
       reauth: { available: async () => false, verify: async () => false }
     },
     sync: host,
+    ...(options.secrets ? { secrets: options.secrets } : {}),
     readabilitySource: () => null,
     ...(webNotifications ? { webNotifications } : {})
   }

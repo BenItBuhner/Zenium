@@ -394,31 +394,29 @@ describe('phonePillChips: the chips as data', () => {
   })
 
   /*
-   * PUI-14 (§9.29's reader chip; the design gate for #491): on an article page – the reader
-   * probe's verdict on the tab, the same predicate the §9.33 offer stands on – the sheet lists
-   * a Reader View row after the translate offer, spoken at the address as the offer is; the
-   * pill draws nothing for it. Not on a page the probe did not read as an article, not in
-   * Reader View itself, not on an internal page.
+   * PUI-14 (§9.29's reader chip; the design gate for #491) as CT-37's phone half amends it: on
+   * an article page – the reader probe's verdict on the tab, the same predicate the §9.33 offer
+   * stands on – the sheet lists a Reader View row after the translate offer, and the pill draws
+   * the chip in the glyph slot while the slot is quiet (the readerable indicator), the lock
+   * giving way; its own stop speaks it, so the address does not. Not on a page the probe did
+   * not read as an article, not in Reader View itself, not on an internal page.
    */
-  it('lists the Reader View row on an article page, after the offer, spoken at the address and never drawn', () => {
+  it('lists the Reader View row on an article page, after the offer, and draws the chip in the quiet slot (CT-37)', () => {
     const article = tab('https://news.example.com/story', { readerable: true, blockedCount: 5 })
     const chips = phonePillChips(offered(state(article)), article, ctx)
     expect(chips.map((c) => [c.id, c.fold])).toEqual([
       ['lock', 'glyph'],
       ['blocked', 'sheet'],
       ['translate', 'sheet'],
-      ['reader', 'sheet']
+      ['reader', 'offer']
     ])
     const reader = chips.find((c) => c.id === 'reader')!
-    expect(reader.render).toBeUndefined()
+    expect(reader.render).toBeDefined()
     expect(reader.row?.label).toBe('Reader View')
     expect(reader.row?.value).toBeUndefined()
-    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['lock'])
-    expect(pillChipsSpoken(chips)).toEqual([
-      '5 requests blocked',
-      'Translation offered',
-      'Reader View available'
-    ])
+    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['reader'])
+    // Spoken at its own stop, not at the address (it would be heard twice).
+    expect(pillChipsSpoken(chips)).toEqual(['5 requests blocked', 'Translation offered'])
     expect(pillChipRows(offered(state(article)), article, ctx).map((r) => r.id)).toEqual([
       'blocked',
       'translate',
@@ -426,7 +424,7 @@ describe('phonePillChips: the chips as data', () => {
     ])
   })
 
-  it('has no Reader View row on a page that is no article, in Reader View itself, or on an internal page', () => {
+  it('has no Reader View row on a page that is no article or on an internal page; in Reader View itself the row is the exit’s', () => {
     const ids = (t: Tab): string[] => phonePillChips(state(t), t, ctx).map((c) => c.id)
     expect(ids(page)).toEqual(['lock', 'blocked'])
     expect(
@@ -435,8 +433,14 @@ describe('phonePillChips: the chips as data', () => {
     const reader = tab('zen://reader?id=article_1&url=https%3A%2F%2Fnews.example.com%2Fstory', {
       readerable: true
     })
-    // Reader View's own pill reads the article's identity (the lock); the row is not its.
-    expect(ids(reader)).not.toContain('reader')
+    // Reader View's own pill reads the article's identity (the lock) and lists the row as the
+    // exit, its value the state it reports (§9.29 as amended: the lit exit's row under every state).
+    // (No shield: the reader page has no site of its own to block for, as before.)
+    expect(ids(reader)).toEqual(['lock', 'reader'])
+    const rows = pillChipRows(state(reader), reader, ctx)
+    expect(rows.map((r) => [r.id, r.row.label, r.row.value])).toEqual([
+      ['reader', 'Reader View', 'On']
+    ])
     expect(ids(tab('zen://settings', { readerable: true }))).toEqual([])
   })
 
@@ -583,6 +587,378 @@ describe('the quiet notification ask in the pill (NOT-03)', () => {
   })
 })
 
+describe('the readerable indicator in the pill (CT-37; Chrome’s adaptive Reader mode button)', () => {
+  const article = tab('https://news.example.com/story', { readerable: true })
+  const readerChip = (el: ParentNode): HTMLButtonElement | null =>
+    el.querySelector<HTMLButtonElement>('[data-reader-chip]')
+
+  it('appears when the probe reads the page as an article: the one offer, in the glyph slot, the lock giving way; the row stays', () => {
+    const chips = phonePillChips(state(article), article, ctx)
+    expect(chips.map((c) => [c.id, c.fold])).toEqual([
+      ['lock', 'glyph'],
+      ['blocked', 'sheet'],
+      ['reader', 'offer']
+    ])
+    const fold = foldPhonePillChips(chips)
+    expect(fold.shown.map((c) => c.id)).toEqual(['reader'])
+    expect(fold.yielded.map((c) => c.id)).toEqual(['lock'])
+    // Mutant M1 (the chip built without `render`): the slot would draw nothing for the offer.
+    expect(fold.shown[0]!.render).toBeDefined()
+    // Mutant M2 (the offer dropped from `folded` while drawn): #491's sheet row would go.
+    expect(pillChipRows(state(article), article, ctx).map((r) => r.id)).toEqual([
+      'blocked',
+      'reader'
+    ])
+  })
+
+  it('disappears when the verdict flips back – a navigation resets `readerable` – and the lock returns', () => {
+    const plain = { ...article, readerable: false }
+    const fold = foldPhonePillChips(phonePillChips(state(plain), plain, ctx))
+    expect(fold.shown.map((c) => c.id)).toEqual(['lock'])
+    expect(fold.yielded).toEqual([])
+    expect(pillChipRows(state(plain), plain, ctx).map((r) => r.id)).toEqual(['blocked'])
+  })
+
+  it('is drawn with the book glyph in the slot’s rest ink, named Reader View, described in the desktop chip’s words, its own stop', () => {
+    const el = render(
+      <PillContent state={state(article)} tab={article} space={space} interactive />
+    )
+    expect(shown(el)).toEqual(['reader'])
+    const chip = readerChip(el)!
+    expect(chip.tagName).toBe('BUTTON')
+    expect(chip.getAttribute('aria-label')).toBe('Reader View')
+    expect(chip.getAttribute('aria-description')).toBe('Enter Reader View')
+    expect(chip.getAttribute('data-tooltip')).toBe('Enter Reader View')
+    expect(chip.getAttribute('aria-haspopup')).toBeNull()
+    expect(chip.classList.contains('zen-pill-quiet')).toBe(true)
+    expect(chip.querySelector('svg.lucide-book-open-text')).not.toBeNull()
+    expect(labels(el)).toEqual([
+      'Address, news.example.com, Connection is secure',
+      'Site information',
+      'Reader View'
+    ])
+    // Mutant M3 (`pillChipsSpoken` speaking every folded chip): "Reader View available" twice.
+    expect(addressLabel(el)).not.toContain('Reader View')
+    // No lock beside it: the run is the one glyph slot (§9.29).
+    expect(el.querySelector('[data-site-info][data-verdict]')).toBeNull()
+  })
+
+  it('the carried pill draws it inert, a picture of the docked one', () => {
+    const el = render(
+      <PillContent state={state(article)} tab={article} space={space} interactive={false} />
+    )
+    expect(shown(el)).toEqual(['reader'])
+    expect(readerChip(el)).toBeNull()
+    expect(el.querySelector('[data-testid="pill-chips"] [aria-hidden="true"]')).not.toBeNull()
+  })
+
+  it('a tap opens Reader View by the same door as the sheet’s row and the app menu (the crossing’s toggle)', async () => {
+    const chips = phonePillChips(state(article), article, ctx)
+    const reader = chips.find((c) => c.id === 'reader')!
+    reader.row!.activate()
+    await vi.waitFor(() =>
+      expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+    )
+    expect(invoke.mock.calls.find(([name]) => name === 'reader.toggle')![1]).toEqual({
+      tabId: 't1'
+    })
+    // The pill's own route (`PhoneShell`'s tap): the same helper, no sheet to close first.
+    invoke.mockClear()
+    const { enterReaderView } = await import('../pillChips')
+    enterReaderView('t1')
+    await vi.waitFor(() =>
+      expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+    )
+    expect(uiStore.get().siteInfoOpen).toBe(false)
+  })
+
+  it('never displaces a status glyph: on a plain http article the open lock keeps the slot and the chip is the sheet’s row (Mutant M4: the tone check dropped)', () => {
+    const http = tab('http://news.example.com/story', { readerable: true })
+    const chips = phonePillChips(state(http), http, ctx)
+    expect(chips.map((c) => [c.id, c.fold])).toEqual([
+      ['not-secure', 'glyph'],
+      ['blocked', 'sheet'],
+      ['reader', 'sheet']
+    ])
+    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['not-secure'])
+    expect(pillChipRows(state(http), http, ctx).map((r) => r.id)).toEqual(['blocked', 'reader'])
+    // Spoken at the address while it is the sheet's alone.
+    expect(pillChipsSpoken(chips)).toEqual(['', 'Reader View available'])
+    // Over a failed certificate the same: the identity in question beats an offer.
+    const failed = tab('https://news.example.com/story', { readerable: true, errorCode: -201 })
+    expect(pillChipsDrawn(phonePillChips(state(failed), failed, ctx)).map((c) => c.id)).toEqual([
+      'certificate-error'
+    ])
+  })
+
+  it('is not on an error page, an internal page or an extension’s, whatever a stale flag says (Reader View’s own page has the exit, below)', () => {
+    const ids = (t: Tab): string[] =>
+      pillChipsDrawn(phonePillChips(state(t), t, ctx)).map((c) => c.id)
+    const failed = tab('zen://error?code=-105&url=https%3A%2F%2Fnews.example.com%2Fstory', {
+      readerable: true,
+      errorCode: -105
+    })
+    expect(phonePillChips(state(failed), failed, ctx)).toEqual([])
+    expect(
+      phonePillChips(
+        state(tab('zen://settings', { readerable: true })),
+        tab('zen://settings', { readerable: true }),
+        ctx
+      )
+    ).toEqual([])
+    // A discarded tab's verdict is stale (the predicate's rule).
+    const discarded = tab('https://news.example.com/story', { readerable: true, discarded: true })
+    expect(ids(discarded)).toEqual(['lock'])
+  })
+
+  it('says nothing of the article under the private lock (INC-05), and the lock’s passing brings it', () => {
+    expect(phonePillChips(state(article), article, { ...ctx, locked: true })).toEqual([])
+    expect(pillChipsDrawn(phonePillChips(state(article), article, ctx)).map((c) => c.id)).toEqual([
+      'reader'
+    ])
+  })
+
+  it('waits in the sheet while the §9.33 strip asks the same question, and takes the slot as the strip leaves (Mutant M5: `readerOfferUp` ignored)', () => {
+    const up = phonePillChips(state(article), article, { ...ctx, readerOfferUp: true })
+    expect(up.find((c) => c.id === 'reader')!.fold).toBe('sheet')
+    expect(pillChipsDrawn(up).map((c) => c.id)).toEqual(['lock'])
+    expect(
+      pillChipRows(state(article), article, { ...ctx, readerOfferUp: true }).map((r) => r.id)
+    ).toEqual(['blocked', 'reader'])
+    const down = phonePillChips(state(article), article, { ...ctx, readerOfferUp: false })
+    expect(pillChipsDrawn(down).map((c) => c.id)).toEqual(['reader'])
+  })
+
+  it('PillContent reads the strip off the banner stack: the reader banner standing folds the chip, a leaving one frees the slot', () => {
+    uiStore.set({
+      banners: [
+        { id: 1, title: 'Show Reader View?', key: 'reader', duration: 10_000 }
+      ] as unknown as ReturnType<typeof uiStore.get>['banners']
+    })
+    const el = render(
+      <PillContent state={state(article)} tab={article} space={space} interactive />
+    )
+    expect(shown(el)).toEqual(['lock'])
+    expect(addressLabel(el)).toContain('Reader View available')
+    act(() =>
+      uiStore.set({
+        banners: [
+          { id: 1, title: 'Show Reader View?', key: 'reader', duration: 10_000, leaving: true }
+        ] as unknown as ReturnType<typeof uiStore.get>['banners']
+      })
+    )
+    expect(shown(el)).toEqual(['reader'])
+    expect(addressLabel(el)).not.toContain('Reader View')
+    // Another banner under another key is not the strip.
+    act(() =>
+      uiStore.set({
+        banners: [
+          { id: 2, title: 'You are offline', key: 'offline', duration: null }
+        ] as unknown as ReturnType<typeof uiStore.get>['banners']
+      })
+    )
+    expect(shown(el)).toEqual(['reader'])
+    uiStore.set({ banners: [] })
+  })
+
+  it('folds to the sheet under a live state and a quiet one, and is the slot’s again when they end (the fold’s precedence)', () => {
+    const during = foldPhonePillChips(phonePillChips(playing(state(article)), article, ctx))
+    expect(during.shown.map((c) => c.id)).toEqual(['media'])
+    expect(during.folded.map((c) => c.id)).toEqual(['blocked', 'reader'])
+    const after = foldPhonePillChips(phonePillChips(state(article), article, ctx))
+    expect(after.shown.map((c) => c.id)).toEqual(['reader'])
+  })
+
+  it('arrives and leaves on the run’s 120 ms cross-fade, in place (§11.4; the same under reduced motion)', () => {
+    vi.useFakeTimers()
+    const plain = { ...article, readerable: false }
+    const el = render(<PillContent state={state(plain)} tab={plain} space={space} interactive />)
+    expect(shown(el)).toEqual(['lock'])
+    act(() =>
+      root!.render(<PillContent state={state(article)} tab={article} space={space} interactive />)
+    )
+    expect(shown(el)).toEqual(['reader'])
+    // The lock's ghost over the new run, where the lock stood; gone after the fade.
+    const ghost = el.querySelector('.zen-pill-run-ghost')
+    expect(ghost).not.toBeNull()
+    expect(ghost!.querySelector('svg.lucide-lock')).not.toBeNull()
+    expect(ghost!.querySelector('svg.lucide-book-open-text')).toBeNull()
+    act(() => vi.advanceTimersByTime(CHIP_FOLD_FADE_MS))
+    expect(el.querySelector('.zen-pill-run-ghost')).toBeNull()
+    // And the way back: the book's ghost as the lock returns.
+    act(() =>
+      root!.render(<PillContent state={state(plain)} tab={plain} space={space} interactive />)
+    )
+    expect(shown(el)).toEqual(['lock'])
+    expect(el.querySelector('.zen-pill-run-ghost svg.lucide-book-open-text')).not.toBeNull()
+  })
+
+  describe('the lit exit on zen://reader (§9.29 as amended; the design lead’s fold (e))', () => {
+    const readerUrl = 'zen://reader?id=article_1&url=https%3A%2F%2Fnews.example.com%2Fstory'
+    const reader = tab(readerUrl, { readerable: true })
+
+    it('stays in the slot on the reader tab, lit in the accent with aria-pressed, the lock giving way (Mutant M7: the reader-tab branch dropped; M8: `pressed` dropped)', () => {
+      const chips = phonePillChips(state(reader), reader, ctx)
+      expect(chips.map((c) => [c.id, c.fold])).toEqual([
+        ['lock', 'glyph'],
+        ['reader', 'offer']
+      ])
+      const fold = foldPhonePillChips(chips)
+      expect(fold.shown.map((c) => c.id)).toEqual(['reader'])
+      expect(fold.yielded.map((c) => c.id)).toEqual(['lock'])
+      const el = render(
+        <PillContent state={state(reader)} tab={reader} space={space} interactive />
+      )
+      expect(shown(el)).toEqual(['reader'])
+      const chip = readerChip(el)!
+      expect(chip.tagName).toBe('BUTTON')
+      expect(chip.getAttribute('aria-pressed')).toBe('true')
+      expect(chip.getAttribute('aria-label')).toBe('Reader View')
+      // The desktop's lit exit's words (`SidebarTop`), Chrome's "Hide Reading mode".
+      expect(chip.getAttribute('aria-description')).toBe('Exit Reader View')
+      expect(chip.getAttribute('data-tooltip')).toBe('Exit Reader View')
+      expect(chip.getAttribute('aria-haspopup')).toBeNull()
+      // Lit: the window family's accent (the Now playing chip's while it plays), not the rest ink.
+      expect(chip.classList.contains('text-[var(--zen-accent)]')).toBe(true)
+      expect(chip.classList.contains('zen-pill-quiet')).toBe(false)
+      expect(chip.querySelector('svg.lucide-book-open-text')).not.toBeNull()
+      expect(labels(el)).toEqual([
+        'Address, news.example.com, Connection is secure',
+        'Site information',
+        'Reader View'
+      ])
+      // Its own stop: the address does not speak it while the pill draws it.
+      expect(addressLabel(el)).not.toContain('Reader View')
+      expect(el.querySelector('[data-site-info][data-verdict]')).toBeNull()
+    })
+
+    it('its tap runs the crossing’s toggle back to the page – the one door the sheet’s row, the app menu’s row and Back share (Mutant M9: the tap wired to an entry alone)', async () => {
+      const { enterReaderView, readerChipTab } = await import('../pillChips')
+      // The pill's route (`PhoneShell`'s tap) asks the one question the builder asks, and the
+      // reader tab answers it; an internal page and no tab do not.
+      expect(readerChipTab(reader)).toBe(true)
+      expect(readerChipTab(article)).toBe(true)
+      expect(readerChipTab(tab('zen://settings', { readerable: true }))).toBe(false)
+      expect(readerChipTab(null)).toBe(false)
+      enterReaderView('t1')
+      await vi.waitFor(() =>
+        expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+      )
+      expect(invoke.mock.calls.find(([name]) => name === 'reader.toggle')![1]).toEqual({
+        tabId: 't1'
+      })
+      expect(invoke.mock.calls.map(([name]) => name)).not.toContain('reader.open')
+      // The sheet's row on the reader tab is the same exit, its value the state it reports.
+      invoke.mockClear()
+      uiStore.set({ siteInfoOpen: true })
+      siteInfoStore.set({ tabId: 't1', anchor: null })
+      const rows = pillChipRows(state(reader), reader, ctx)
+      const row = rows.find((r) => r.id === 'reader')!
+      expect(row.row.label).toBe('Reader View')
+      expect(row.row.value).toBe('On')
+      row.row.activate()
+      expect(uiStore.get().siteInfoOpen).toBe(false)
+      await vi.waitFor(() =>
+        expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+      )
+      expect(invoke.mock.calls.find(([name]) => name === 'reader.toggle')![1]).toEqual({
+        tabId: 't1'
+      })
+    })
+
+    it('a second tap while the tab’s crossing runs asks nothing more of the core: no second toggle, no second extraction (the first line’s nit 3 on #658)', async () => {
+      const { enterReaderView } = await import('../pillChips')
+      const { readerCrossingStore } = await import('@renderer/lib/readerTransition')
+      // The strip's Show (or a first tap) began the crossing; the chip is under the finger again
+      // as the strip leaves.
+      readerCrossingStore.set({
+        crossing: {
+          tabId: 't1',
+          crossing: 'enter',
+          phase: 'covering',
+          picture: null,
+          surface: '#fff'
+        }
+      })
+      uiStore.set({ siteInfoOpen: true })
+      siteInfoStore.set({ tabId: 't1', anchor: null })
+      try {
+        enterReaderView('t1')
+        // The sheet, if up, still leaves – the finger meant the reader, which is on its way.
+        expect(uiStore.get().siteInfoOpen).toBe(false)
+        await new Promise((r) => setTimeout(r, 30))
+        expect(invoke.mock.calls.map(([name]) => name)).not.toContain('reader.toggle')
+        // Another tab's crossing is not this tab's: the door stays open for this one.
+        readerCrossingStore.set({
+          crossing: {
+            tabId: 't2',
+            crossing: 'enter',
+            phase: 'covering',
+            picture: null,
+            surface: '#fff'
+          }
+        })
+        enterReaderView('t1')
+        await vi.waitFor(() =>
+          expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+        )
+        expect(invoke.mock.calls.filter(([name]) => name === 'reader.toggle')).toHaveLength(1)
+      } finally {
+        readerCrossingStore.set({ crossing: null })
+      }
+    })
+
+    it('off the reader tab the chip carries no aria-pressed: the offer is no toggle, its words the entry’s', () => {
+      const el = render(
+        <PillContent state={state(article)} tab={article} space={space} interactive />
+      )
+      const chip = readerChip(el)!
+      expect(chip.hasAttribute('aria-pressed')).toBe(false)
+      expect(chip.getAttribute('aria-description')).toBe('Enter Reader View')
+      expect(chip.classList.contains('text-[var(--zen-accent)]')).toBe(false)
+      const [offer] = phonePillChips(state(article), article, ctx).filter((c) => c.id === 'reader')
+      expect(offer!.spoken).toBe('Reader View available')
+      expect(offer!.row?.value).toBeUndefined()
+    })
+
+    it('the reader URL alone decides: the probe’s flag is the article’s, stale either way', () => {
+      const unflagged = tab(readerUrl, { readerable: false })
+      const chips = phonePillChips(state(unflagged), unflagged, ctx)
+      expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['reader'])
+      expect(chips.find((c) => c.id === 'reader')!.spoken).toBe('Reader View on')
+      // The §9.33 strip is the article page's; on the reader page its flag folds nothing.
+      const up = phonePillChips(state(reader), reader, { ...ctx, readerOfferUp: true })
+      expect(pillChipsDrawn(up).map((c) => c.id)).toEqual(['reader'])
+    })
+
+    it('keeps the fold’s precedence on the reader tab: the identity’s warn or danger glyph holds the slot, a live state folds the exit to the sheet’s row, spoken at the address', () => {
+      const http = tab('zen://reader?id=article_1&url=http%3A%2F%2Fnews.example.com%2Fstory', {
+        readerable: true
+      })
+      const chips = phonePillChips(state(http), http, ctx)
+      expect(chips.map((c) => [c.id, c.fold])).toEqual([
+        ['not-secure', 'glyph'],
+        ['reader', 'sheet']
+      ])
+      expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['not-secure'])
+      expect(pillChipRows(state(http), http, ctx).map((r) => [r.id, r.row.value])).toEqual([
+        ['reader', 'On']
+      ])
+      const failed = tab(readerUrl, { readerable: true, errorCode: -201 })
+      expect(pillChipsDrawn(phonePillChips(state(failed), failed, ctx)).map((c) => c.id)).toEqual([
+        'certificate-error'
+      ])
+      // A live state takes the slot; the exit waits as the sheet's row and the address says it.
+      const live = phonePillChips(playing(state(reader)), reader, ctx)
+      expect(pillChipsDrawn(live).map((c) => c.id)).toEqual(['media'])
+      expect(pillChipsSpoken(live)).toEqual(['Reader View on'])
+      expect(foldPhonePillChips(live).folded.map((c) => c.id)).toEqual(['reader'])
+      // And nothing under the private lock (INC-05).
+      expect(phonePillChips(state(reader), reader, { ...ctx, locked: true })).toEqual([])
+    })
+  })
+})
+
 describe('pillChipRows: what the sheet lists', () => {
   it('is the shield and the translate offer of this tab, in the pill’s order, whatever else is up', () => {
     const rows = pillChipRows(playing(offered(state(counted))), counted, ctx)
@@ -593,6 +969,23 @@ describe('pillChipRows: what the sheet lists', () => {
   it('is the shield alone without an offer, and empty for an internal page', () => {
     expect(pillChipRows(state(page), page, ctx).map((r) => r.id)).toEqual(['blocked'])
     expect(pillChipRows(state(tab('zen://settings')), tab('zen://settings'), ctx)).toEqual([])
+  })
+
+  it('is form-factor-blind: under the tablet viewport it lists the Reader View row once, as on the phone', () => {
+    // The sheet that reads the rows is the phone's (`SiteInfoSheet` mounts the desktop layer for
+    // every other form factor); the rows themselves never ask, so whichever finger layout lists
+    // them lists the same.
+    const article = tab('https://news.example.com/story', { readerable: true })
+    const initial = viewportStore.get()
+    viewportStore.set({ ...initial, formFactor: 'tablet' })
+    try {
+      const rows = pillChipRows(state(article), article, ctx)
+      expect(rows.map((r) => r.id)).toEqual(['blocked', 'reader'])
+      expect(rows.filter((r) => r.id === 'reader')).toHaveLength(1)
+      expect(rows.find((r) => r.id === 'reader')!.row.label).toBe('Reader View')
+    } finally {
+      viewportStore.set(initial)
+    }
   })
 
   it('pillChipsDrawn is the pill’s side of the same rule: the media chip in the lock’s slot while it plays', () => {

@@ -646,8 +646,10 @@ function publishHidden(hidden: boolean): void {
 /**
  * Chrome listeners for a finger landing on the active page – the host's `'start'` report, the
  * one word the chrome hears of a touch on the page's view (the in-product help bubble goes at
- * it, `components/phone/useTabSwitcherHint.ts`, as Chrome's dismisses on any touch). Heard only
- * while the host streams the page's touches: while the hide-on-scroll gate is open.
+ * it, `components/phone/useTabSwitcherHint.ts`, as Chrome's dismisses on any touch). Heard
+ * whatever the hide-on-scroll gate: the host reports a finger's down whether or not the bar may
+ * hide (`BarHideGesture.reports`) – the down alone; the rest of the stream comes only with the
+ * gate open, and the machine ignores a `'start'` while its gate is closed.
  */
 const scrollStartListeners = new Set<() => void>()
 

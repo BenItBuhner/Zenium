@@ -56,10 +56,14 @@ import type {
   SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
+  SyncSetupRefusal,
   SyncStatus,
+  SyncTransportKind,
   Tab,
   TaskKind,
   ThumbnailPicture,
+  WebDavProbe,
+  WebDavSyncCredentials,
   WindowChrome,
   WindowMaterial
 } from '../shared/types'
@@ -235,6 +239,12 @@ export interface PageMessage {
     | 'share'
     /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
     | 'geolocation'
+    /**
+     * The page's `navigator.clipboard.read()` / `readText()` shim asks for the clipboard's
+     * text (`shared/clipboardRead`; hosts whose engine refuses every read, MW-38): the
+     * `clipboard-read` permission decides, the host's clipboard answers.
+     */
+    | 'clipboardRead'
     /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
     | 'readAloud'
     /**
@@ -322,6 +332,8 @@ export interface PageMessage {
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */
   geolocation?: unknown
+  /** `clipboardRead`: the shim's call (`ClipboardReadCall`, validated by the core). */
+  clipboardRead?: unknown
   /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
   readAloud?: unknown
   /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
@@ -352,6 +364,18 @@ export interface GeolocationHostMessage {
   error?: { code: GeolocationErrorCode; message: string }
 }
 
+/**
+ * The answer to one call of the page's clipboard-read shim (`shared/clipboardRead`): the
+ * clipboard's text when the `clipboard-read` permission allowed it, `denied` when it did not
+ * (the shim rejects with Chrome's `NotAllowedError`).
+ */
+export interface ClipboardReadHostMessage {
+  type: 'clipboardRead'
+  id: string
+  text?: string
+  error?: 'denied'
+}
+
 /** The page's `display-mode` changed (`shared/displayMode`): its window went fullscreen, or it moved. */
 export interface DisplayModeHostMessage {
   type: 'display-mode'
@@ -361,10 +385,10 @@ export interface DisplayModeHostMessage {
 /**
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
- * the notification polyfill's answers and events, a share call's outcome, a position, the
- * page's display mode, read aloud's extraction request and highlight, the request for the
- * selection's text directive (a link to the highlight, SH-11), and where a Tab entering the
- * page from the chrome lands (`focus`, A11Y-09).
+ * the notification polyfill's answers and events, a share call's outcome, a position, a
+ * clipboard read's text, the page's display mode, read aloud's extraction request and
+ * highlight, the request for the selection's text directive (a link to the highlight, SH-11),
+ * and where a Tab entering the page from the chrome lands (`focus`, A11Y-09).
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -372,6 +396,7 @@ export type PageHostMessage =
   | NotificationHostMessage
   | ShareHostMessage
   | GeolocationHostMessage
+  | ClipboardReadHostMessage
   | DisplayModeHostMessage
   | ReadAloudHostMessage
   | TextFragmentHostMessage
@@ -2271,9 +2296,23 @@ export interface SyncHost {
   status(): SyncStatus
   chooseFolder(win: ZenWindow): Promise<string | null>
   setup(
-    opts: { folder: string; passphrase: string; deviceName: string; scope: SyncScope },
+    opts: {
+      folder: string
+      passphrase: string
+      deviceName: string
+      scope: SyncScope
+      transport?: SyncTransportKind
+      webdav?: WebDavSyncCredentials
+    },
     win: ZenWindow
-  ): Promise<void>
+  ): Promise<SyncSetupRefusal | null>
+  /** Reach a WebDAV server once with these credentials; nothing is created or kept (ID-32). */
+  testWebDav(credentials: WebDavSyncCredentials): Promise<WebDavProbe>
+  /**
+   * A new app password for the configured WebDAV server; the round runs again with it. A secret
+   * store that cannot keep it is the typed refusal (as `setup`'s), never a rejection.
+   */
+  setWebDavPassword(password: string): Promise<SyncSetupRefusal | null>
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
   /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */
@@ -2344,6 +2383,47 @@ export interface SyncPlatformHost {
   pollMs?: number
   /** False while the app is in the background: the poll skips its turn (Android, no service). */
   foreground?(): boolean
+  /**
+   * The HTTP behind the WebDAV transport (ID-32, `core/sync/webdav.ts`): a fetch that reaches
+   * any server with any method (PROPFIND, MKCOL, MOVE), from a process no page origin binds.
+   * Together with `Platform.secrets` it makes the WebDAV choice available; hosts without one
+   * offer the folder transport only.
+   */
+  fetch?: SyncFetch
+}
+
+/**
+ * The request the WebDAV transport makes: the standard `fetch`'s shape narrowed to what it uses,
+ * so a host whose fetch is the standard one (Electron's `net.fetch` in the main process) passes
+ * it as it is, and a host without one builds it over its own client.
+ */
+export interface SyncFetchInit {
+  method: string
+  headers: Record<string, string>
+  body?: string
+  signal?: AbortSignal
+  cache?: 'no-store'
+}
+
+/** What the transport reads of a response: the status, the headers by name, the body as text. */
+export interface SyncFetchResponse {
+  status: number
+  headers: { get(name: string): string | null }
+  text(): Promise<string>
+}
+
+export type SyncFetch = (url: string, init: SyncFetchInit) => Promise<SyncFetchResponse>
+
+/**
+ * Small secrets the core keeps outside its JSON stores – a WebDAV app password – encrypted at
+ * rest by the host: Electron's `safeStorage` (Keychain, DPAPI, libsecret) on desktop,
+ * `EncryptedSharedPreferences` on Android. Keys are the core's own names (`sync.webdav.password`);
+ * a value that cannot be opened any more reads as absent, never as an error.
+ */
+export interface SecretStore {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+  delete(key: string): Promise<void>
 }
 
 /**
@@ -3161,6 +3241,8 @@ export interface Platform {
   readonly geolocation?: GeolocationHost
   /** The folder picker, device name and folder transport behind cross-device sync (`capabilities.sync`). */
   readonly sync?: SyncPlatformHost
+  /** Secrets encrypted at rest by the host (a WebDAV app password, ID-32); hosts without one offer no WebDAV sync. */
+  readonly secrets?: SecretStore
   /** Other browsers' profiles on this machine (desktop); hosts without it import from files only. */
   readonly importHost?: ImportHost
   /** The background worker and the demo harness's hold on the startup sweeps; omit for neither. */
