@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TabViewEvents } from '@core/platform'
 import type { Bridge } from '../bridge'
-import { AndroidTabView, type ContentRulesResolver } from '../views'
+import { AndroidTabView, blockedSourcesOf, type ContentRulesResolver } from '../views'
 import type { ResolvedContentRules } from '@shared/contentRules'
 
 /** Core-side view events that only record which of them Kotlin's events reached. */
@@ -137,6 +137,40 @@ describe('AndroidTabView.dispatch', () => {
     canGoBack: false,
     canGoForward: false
   }
+
+  it("carries a `blocked` beat's hosts to the core's tracker report, an older APK's none", () => {
+    const { bridge } = fakeBridge()
+    const got: Array<[number, unknown]> = []
+    const view = new AndroidTabView('tab_1', bridge)
+    view.events = {
+      onRequestsBlocked: (count, sources) => void got.push([count, sources])
+    } as unknown as TabViewEvents
+    view.dispatch('blocked', { count: 3 })
+    view.dispatch('blocked', {
+      count: 4,
+      hosts: [
+        { host: 'stats.g.doubleclick.net', set: 'filter-text', count: 3 },
+        { host: 'cdn.example.com', set: null, count: 1 },
+        { host: '', count: 2 },
+        'junk'
+      ]
+    })
+    view.dispatch('blocked', { count: 0, hosts: [{ host: 'never.example' }] })
+    expect(got).toEqual([
+      [3, undefined],
+      [
+        4,
+        [
+          { host: 'stats.g.doubleclick.net', setId: 'filter-text', count: 3 },
+          { host: 'cdn.example.com', setId: undefined, count: 1 }
+        ]
+      ]
+    ])
+    expect(blockedSourcesOf(undefined)).toBeUndefined()
+    expect(blockedSourcesOf([{ host: 'a.example', count: 2.7 }])).toEqual([
+      { host: 'a.example', setId: undefined, count: 2 }
+    ])
+  })
 
   it("routes Kotlin's domReady to the core's onDomReady, between startLoading and stopLoading", () => {
     const { bridge } = fakeBridge()

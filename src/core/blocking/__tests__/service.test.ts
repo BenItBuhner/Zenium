@@ -937,4 +937,27 @@ describe('BlockingService counters', () => {
     expect(service.status().sessionBlocked).toBe(9)
     service.onNavigated('tab-missing')
   })
+
+  it('keeps the tracker report beside the count, on its commit beat, and resets it with it', async () => {
+    const h = harness()
+    const service = start(h)
+    h.tabs.set('tab-1', { id: 'tab-1', blockedCount: 0 } as Tab)
+    const before = h.commits.volatile
+    service.recordBlocked('tab-1', 1, [{ host: 'stats.g.doubleclick.net', setId: TEXT_MATCH_SET_ID }])
+    service.recordBlocked('tab-1', 2, [{ host: 'ad.doubleclick.net', setId: TEXT_MATCH_SET_ID, count: 2 }])
+    service.recordBlocked('tab-1', 1, [{ host: 'cdn.example.com', setId: USER_RULE_SET_ID }])
+    service.recordBlocked('tab-1', 1)
+    service.recordBlocked(undefined, 1, [{ host: 'nobody.example' }])
+    expect(h.tabs.get('tab-1')?.blockedCount).toBe(5)
+    expect(h.tabs.get('tab-1')?.blockedSites).toEqual([
+      { domain: 'doubleclick.net', category: 'tracker', count: 3 },
+      { domain: 'example.com', category: 'user', count: 1 }
+    ])
+    expect(h.commits.volatile).toBe(before)
+    await new Promise((r) => setTimeout(r, 250))
+    expect(h.commits.volatile).toBe(before + 1)
+    service.onNavigated('tab-1')
+    expect(h.tabs.get('tab-1')?.blockedCount).toBe(0)
+    expect(h.tabs.get('tab-1')).not.toHaveProperty('blockedSites')
+  })
 })
