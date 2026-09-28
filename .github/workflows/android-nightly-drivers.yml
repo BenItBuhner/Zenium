@@ -159,7 +159,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Fetch the shards' findings
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         # A shard that never uploaded (no boot, a lost runner) is missing here and the table says so.
         continue-on-error: true
         with:
