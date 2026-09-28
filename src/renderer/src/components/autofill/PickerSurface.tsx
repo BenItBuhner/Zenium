@@ -90,12 +90,14 @@ export function PickerSurface({ picker }: { picker: AutofillPicker }): JSX.Eleme
   // panel to the size at rest the word says.
   const report = useCallback(
     (height: number | null): void => {
-      const popover = popoverRef.current
       const last = reported.current
       const wanted = height ?? last?.height ?? 0
-      if (!popover || wanted <= 0) return
-      const control = wantedControl()
-      const room = control ? tooltipRoom(popover, control) : null
+      if (wanted <= 0) return
+      // The content's ref is attached before the panel's (a child's first): the first
+      // measurement goes out with no room, as it should – nothing is armed yet.
+      const popover = popoverRef.current
+      const control = popover ? wantedControl() : null
+      const room = popover && control ? tooltipRoom(popover, control) : null
       if (last && last.height === wanted && sameRoom(last.room, room)) return
       reported.current = { height: wanted, room }
       const answer = cmd('autofill.surfaceSize', { id: picker.id, height: wanted, room })
@@ -105,7 +107,10 @@ export function PickerSurface({ picker }: { picker: AutofillPicker }): JSX.Eleme
       }
       release()
       void answer.then(
-        (size) => pinPanel(popover, size),
+        (size) => {
+          const el = popoverRef.current
+          if (el) pinPanel(el, size)
+        },
         () => undefined
       )
     },

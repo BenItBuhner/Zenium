@@ -3492,8 +3492,7 @@ export class Browser {
       'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
       'autofill.pick': ({ id, itemId, passphrase }, win) =>
         this.autofill.pick(id, itemId, passphrase, win),
-      'autofill.surfaceSize': ({ id, height, room }) =>
-        this.autofill.surfaceSize(id, height, room),
+      'autofill.surfaceSize': ({ id, height, room }) => this.autofill.surfaceSize(id, height, room),
       'autofill.surfaceFocus': ({ id, focused }) => this.autofill.surfaceFocus(id, focused),
       'autofill.manage': (_args, win) => this.autofill.manage(win),
       'autofill.listAddresses': () => this.autofill.listAddresses(),

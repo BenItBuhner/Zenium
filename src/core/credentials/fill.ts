@@ -181,10 +181,7 @@ export function placePickerSurface(
     height: Math.round(height + pad * 2)
   }
   if (!room) return box
-  const under = Math.max(
-    0,
-    Math.min(Math.ceil(room.below), viewport.height - (box.y + box.height))
-  )
+  const under = Math.max(0, Math.min(Math.ceil(room.below), viewport.height - (box.y + box.height)))
   const margin = Math.min(box.x, viewport.width - (box.x + box.width))
   let extra = Math.max(0, Math.min(Math.ceil(room.width) - box.width, 2 * Math.floor(margin)))
   if (extra % 2 === 1) extra += 1
