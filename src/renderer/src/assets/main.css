@@ -4953,7 +4953,11 @@
     line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-sheet-item:active:not(:disabled) {
+  /*
+   * The press fill is the row's one tone; a row that is not a target – the static form,
+   * `data-static` (§9.34), as the shared row's – takes none of it, as a disabled row takes none.
+   */
+  .zen-sheet-item:active:not(:disabled, [data-static]) {
     background: var(--v2-fill);
   }
   .zen-sheet-item-secondary {

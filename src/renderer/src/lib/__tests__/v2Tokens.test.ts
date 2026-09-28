@@ -1059,12 +1059,15 @@ describe('the v2 primitives (§9.34)', () => {
 
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
     // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
-    // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of
+    // exactly four places, each in a chassis row's own rule set – the phone sheet row's press
+    // gate (`.zen-sheet-item`, the sheet chassis's row: its static form, `SheetRow` without a
+    // press, takes no fill), and in the shared row's set the static rule and the `:not()` of
     // the press gate and of the hover gate, the latter gated on the root's live `data-hover`
     // as every hover rule is (OS-12; `:where()` adds no specificity) – so no surface has to
     // fight the fill with a rule of its own, and nothing elsewhere gates on it.
-    // (The test above already holds each of them unlayered and free of literal colour.)
+    // (The test above already holds each of the row's unlayered and free of literal colour.)
     expect([...bare.matchAll(/[^\n]*\[data-static\][^{]*\{/g)].map((m) => m[0].trim())).toEqual([
+      '.zen-sheet-item:active:not(:disabled, [data-static]) {',
       '.zen-v2-row[data-static] {',
       ".zen-v2-row:active:not([aria-disabled='true'], [data-static]) {",
       ":where(:root[data-hover='hover']) .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {"

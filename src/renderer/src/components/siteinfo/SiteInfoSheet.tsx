@@ -1283,7 +1283,11 @@ function BackgroundVideoSwitchRow({
   )
 }
 
-/** A chassis row (§9.2, §9.18): 44 tall, glyph 20, label 15, a 13/69% value, a chevron when it leads on. */
+/**
+ * A chassis row (§9.2, §9.18): 44 tall, glyph 20, label 15, a 13/69% value, a chevron when it
+ * leads on. Without `onClick` it is the static form (§9.34): `data-static`, which keeps the
+ * chassis's press fill off a row that is not a target.
+ */
 function SheetRow({
   glyph,
   tone,
@@ -1363,7 +1367,7 @@ function SheetRow({
       </button>
     )
   return (
-    <div className={className} data-danger={danger || undefined}>
+    <div className={className} data-danger={danger || undefined} data-static="">
       {body}
     </div>
   )

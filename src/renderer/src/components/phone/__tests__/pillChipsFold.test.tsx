@@ -1450,8 +1450,12 @@ describe('the site-information sheet lists the chips as rows', () => {
     ])
     expect(report.querySelector('.zen-sheet-empty')).toBeNull()
     expect(report.querySelector('.zen-sheet-sep')).not.toBeNull()
-    // One level and no deeper (§9.24): the report's rows open nothing.
+    // One level and no deeper (§9.24): the report's rows open nothing – the chassis row's static
+    // form (§9.34: `data-static`, no press fill under a finger); the footer row is the level's
+    // one control, and the keyboard lands on it as the level opens.
     expect(items.slice(0, 2).every((el) => el.tagName === 'DIV')).toBe(true)
+    expect(items.map((el) => el.hasAttribute('data-static'))).toEqual([true, true, false])
+    await vi.waitFor(() => expect(document.activeElement).toBe(items[2]))
     act(() => (items[2] as HTMLButtonElement).click())
     await vi.waitFor(() => expect(commands()).toContain('page.open'))
     const [, args] = invoke.mock.calls.find(([name]) => name === 'page.open')!
