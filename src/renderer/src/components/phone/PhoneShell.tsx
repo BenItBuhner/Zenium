@@ -67,7 +67,6 @@ import {
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
-import { MessageLayer } from '../messages/MessageLayer'
 import { FakeboxMorphLayer } from '../newtab/FakeboxMorphLayer'
 import { Onboarding } from '../overlays/Onboarding'
 import { PhoneSearchChoiceScreen } from '../overlays/PhoneSearchChoice'
@@ -80,6 +79,7 @@ import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
 import { GroupStrip } from './GroupStrip'
 import { ChipRun, phonePillChips, pillChipsDrawn, pillChipsSpoken } from './pillChips'
+import { PhoneMessages } from './PhoneMessages'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -281,12 +281,14 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     return holdChromeInert()
   }, [htmlFullscreen])
   useEffect(() => () => settleChromeAway(false), [])
+  // The holds on the chrome that are not a sheet's: this fullscreen hold, and the capture
+  // overlay's own (`CaptureOverlay`, mounted through `TabDialogs` while `ui.capture` stands; on
+  // its own scrim, off the sheet chassis). The toast frame is no shell chrome – a toast above a
+  // sheet must stay in reach (§9.33) – so the shell tells it of these holds itself, and it goes
+  // inert at the normal seat with the rest of the chrome (never while lifted).
+  const chromeHeld = htmlFullscreen || ui.capture !== null
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId, bringChromeBack)
-  // The message layer sits on the frame's edges and recedes with it (main.css reads
-  // `--zen-recede` on it).
-  const messageFrameRef = useRef<HTMLDivElement>(null)
-  useRecedeSurface(messageFrameRef)
   // The chrome is calm: a page in view under nothing, the bar and its pill in place, no drag,
   // overview or prompt. The one-time gesture hint (FRE-07), a toast on the message cards, and
   // the tab switcher's in-product help bubble (TB-19, `useTabSwitcherHint`) are owed on it.
@@ -367,20 +369,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           />
         )}
       </main>
-      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets.
-          Its box is the stylesheet's, by the bar's edge (`data-edge`) and the root's
-          `data-bar-away` (lib/barHide.ts): the content column's edge at either rest, the page's
-          tall box for the whole of a hide gesture, with the cards on the bar's edge riding the
-          bar by transform – so a toast showing mid-gesture moves with the bar instead of jumping
-          the band at the rest, and nothing in the frame is laid out per frame (main.css). */}
-      <div
-        ref={messageFrameRef}
-        data-shell-chrome
-        data-edge={edge}
-        className="zen-message-frame pointer-events-none absolute z-[36]"
-      >
-        <MessageLayer />
-      </div>
+      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets –
+          except a toast up while a sheet stands, raised by the sheet's act or up already as it
+          opened, which stands above the sheet (§9.33; the frames and their seats are
+          PhoneMessages'). */}
+      <PhoneMessages edge={edge} inert={chromeHeld} />
       <PhoneStage state={state} />
       {/* The bar's opacity is the chassis rule in main.css: docked at the bottom edge, where a
           sheet arrives, it fades by `1 − recede`, the sheet's progress (v2 draft §11.1); docked

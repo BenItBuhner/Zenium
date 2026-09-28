@@ -9,11 +9,14 @@ import {
   RECEDE_SCALE,
   recedeDepth,
   recedeFade,
+  recedeFooter,
   recedeFrame,
   recedeScale,
   registerRecedeLayer,
   registerRecedeSurface,
   subscribePageRecede,
+  subscribeRecedeDepth,
+  subscribeRecedeFooter,
   type RecedeHandle,
   type RecedeLayerFrame
 } from '../motion/recede'
@@ -463,6 +466,86 @@ describe('the registry', () => {
     k.release()
     expect(heard).toHaveLength(5)
     release()
+  })
+})
+
+/*
+ * What stands over the stack (v2 draft §9.33, the phone's toast frame): whether a sheet stands
+ * at all – the stack's depth, which a sheet registering at presence 0 or releasing at 0 moves
+ * without moving the page – and, for the seat's bottom edge, the top sheet's footer band: the
+ * one registry field a sheet with actions under its body publishes (`RecedeHandle.footer`),
+ * where the band's top edge stands over the sheet's bottom edge with the inset left out, so a
+ * message over the sheet stands on the band and never over the actions.
+ */
+describe('the depth and the footer band over the stack (§9.33)', () => {
+  it('tells a subscriber the depth as it changes – a sheet registering or releasing, at any presence – and never of a frame', () => {
+    const heard: number[] = []
+    const unsubscribe = subscribeRecedeDepth((depth) => heard.push(depth))
+    const a = layer()
+    expect(heard).toEqual([1])
+    a.progress(0.5)
+    a.progress(1)
+    const b = layer()
+    expect(heard).toEqual([1, 2])
+    b.progress(1)
+    b.progress(0)
+    b.release()
+    expect(heard).toEqual([1, 2, 1])
+    a.release()
+    expect(heard).toEqual([1, 2, 1, 0])
+    expect(recedeDepth()).toBe(0)
+    unsubscribe()
+    layer().release()
+    expect(heard).toHaveLength(4)
+  })
+
+  it('a sheet says its footer band, the registry answers with the top sheet’s, and tells a subscriber of changes alone', () => {
+    const heard: number[] = []
+    const unsubscribe = subscribeRecedeFooter((footer) => heard.push(footer))
+    expect(recedeFooter()).toBe(0)
+    const lower = layer()
+    // A sheet registers with no band said: nothing to hear.
+    expect(recedeFooter()).toBe(0)
+    expect(heard).toEqual([])
+    // The sheet measures: a 56 band on the chassis's 8.
+    lower.footer(64)
+    expect(recedeFooter()).toBe(64)
+    lower.footer(64)
+    expect(heard).toEqual([64])
+    // A sheet above takes the top: its band (none yet) is the one over the stack.
+    const upper = layer()
+    expect(recedeFooter()).toBe(0)
+    upper.footer(40)
+    expect(recedeFooter()).toBe(40)
+    // A frame moves nothing here.
+    upper.progress(1)
+    upper.progress(0.4)
+    expect(heard).toEqual([64, 0, 40])
+    // The upper sheet lands away: the lower one's band is over the stack again.
+    upper.release()
+    expect(recedeFooter()).toBe(64)
+    // The stack empties: 0 once more.
+    lower.release()
+    expect(recedeFooter()).toBe(0)
+    expect(heard).toEqual([64, 0, 40, 64, 0])
+    unsubscribe()
+    const k = layer()
+    k.footer(24)
+    k.release()
+    expect(heard).toHaveLength(5)
+  })
+
+  it('a band it cannot stand on is none; a released handle says nothing', () => {
+    const h = layer()
+    h.footer(-8)
+    expect(recedeFooter()).toBe(0)
+    h.footer(Number.NaN)
+    expect(recedeFooter()).toBe(0)
+    h.footer(64)
+    expect(recedeFooter()).toBe(64)
+    h.release()
+    h.footer(72)
+    expect(recedeFooter()).toBe(0)
   })
 })
 

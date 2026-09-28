@@ -371,6 +371,19 @@ describe('parsePreviewSpec', () => {
     ])
   })
 
+  it('raises a toast at a point of the walk (`toast:<text>|<action>`); a blank text is no step, a blank action none', () => {
+    expect(
+      parsePreviewSteps(
+        'tap:Site permissions;toast:Review complete for 2 sites|Undo;toast:Link copied;toast: | Undo;toast:Saved|'
+      )
+    ).toEqual([
+      { kind: 'tap', text: 'Site permissions' },
+      { kind: 'toast', text: 'Review complete for 2 sites', action: 'Undo' },
+      { kind: 'toast', text: 'Link copied', action: null },
+      { kind: 'toast', text: 'Saved', action: null }
+    ])
+  })
+
   it('opens an extension’s page as a tab by id and path, behind an internal page but ahead of a group', () => {
     const id = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
     expect(parsePreviewSpec(`extension-page=${id}/ui/options/index.html`)).toEqual({
