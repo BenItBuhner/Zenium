@@ -866,6 +866,48 @@ describe('the readerable indicator in the pill (CT-37; Chrome’s adaptive Reade
       })
     })
 
+    it('a second tap while the tab’s crossing runs asks nothing more of the core: no second toggle, no second extraction (the first line’s nit 3 on #658)', async () => {
+      const { enterReaderView } = await import('../pillChips')
+      const { readerCrossingStore } = await import('@renderer/lib/readerTransition')
+      // The strip's Show (or a first tap) began the crossing; the chip is under the finger again
+      // as the strip leaves.
+      readerCrossingStore.set({
+        crossing: {
+          tabId: 't1',
+          crossing: 'enter',
+          phase: 'covering',
+          picture: null,
+          surface: '#fff'
+        }
+      })
+      uiStore.set({ siteInfoOpen: true })
+      siteInfoStore.set({ tabId: 't1', anchor: null })
+      try {
+        enterReaderView('t1')
+        // The sheet, if up, still leaves – the finger meant the reader, which is on its way.
+        expect(uiStore.get().siteInfoOpen).toBe(false)
+        await new Promise((r) => setTimeout(r, 30))
+        expect(invoke.mock.calls.map(([name]) => name)).not.toContain('reader.toggle')
+        // Another tab's crossing is not this tab's: the door stays open for this one.
+        readerCrossingStore.set({
+          crossing: {
+            tabId: 't2',
+            crossing: 'enter',
+            phase: 'covering',
+            picture: null,
+            surface: '#fff'
+          }
+        })
+        enterReaderView('t1')
+        await vi.waitFor(() =>
+          expect(invoke.mock.calls.map(([name]) => name)).toContain('reader.toggle')
+        )
+        expect(invoke.mock.calls.filter(([name]) => name === 'reader.toggle')).toHaveLength(1)
+      } finally {
+        readerCrossingStore.set({ crossing: null })
+      }
+    })
+
     it('off the reader tab the chip carries no aria-pressed: the offer is no toggle, its words the entry’s', () => {
       const el = render(
         <PillContent state={state(article)} tab={article} space={space} interactive />

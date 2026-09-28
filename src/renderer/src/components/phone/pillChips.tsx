@@ -22,7 +22,12 @@ import {
   type PillFold
 } from '@renderer/lib/pillChips'
 import { readerArticleTab } from '@renderer/lib/readerEntry'
-import { crossReaderView, isReaderUrl } from '@renderer/lib/readerTransition'
+import {
+  crossReaderView,
+  isReaderUrl,
+  readerCrossingOf,
+  readerCrossingStore
+} from '@renderer/lib/readerTransition'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
@@ -180,12 +185,16 @@ function translateValue(translation: TranslateTabState): string | undefined {
  * surface's coming (the menu row's way, `lib/ui.ts` `pickMenuItem`) – and on the crossing's own
  * picture from the pill, where no sheet stands; the sheet, if up, leaves with its spring. On
  * `zen://reader` the same crossing is the exit: the core's toggle uncovers the page (the lit
- * chip's tap, the sheet's row, the app menu's row and Back are that one door).
+ * chip's tap, the sheet's row, the app menu's row and Back are that one door). A second tap
+ * while the tab's crossing runs – the chip under a finger as the offer's strip leaves, a quick
+ * double-tap – asks nothing more: `crossReaderView` makes a call during a crossing the plain
+ * toggle, and a second extraction is not what the finger meant.
  */
 export function enterReaderView(tabId: string): void {
   const ui = uiStore.get()
   const picture = ui.snapshotTabId === tabId ? ui.snapshot : null
   closeSiteInfo()
+  if (readerCrossingOf(readerCrossingStore.get(), tabId) !== null) return
   void crossReaderView(tabId, { picture })
 }
 
