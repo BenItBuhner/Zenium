@@ -188,7 +188,7 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
                     tab.onDocumentBlocked(req.url)
                     Answer.empty(204, "No Content")
                 } else {
-                    tab.onRequestsBlocked(1)
+                    tab.onRequestBlocked(req.url, decision.matchedSet)
                     Answer.empty(403, "Forbidden")
                 }
             }

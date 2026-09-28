@@ -68,6 +68,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { BlockedRequestSource } from './blocking/report'
 import type { PageViewport } from '../shared/capture'
 import type { ContentRules } from '../shared/contentRules'
 import type { DisplayMode } from '../shared/displayMode'
@@ -762,8 +763,11 @@ export interface TabViewEvents {
   onResponsive?(): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
-  /** The host's own request engine blocked `count` more requests of this page (Android). */
-  onRequestsBlocked(count: number): void
+  /**
+   * The host's own request engine blocked `count` more requests of this page (Android), `sources`
+   * saying which hosts they went to and which set matched, for the tracker report.
+   */
+  onRequestsBlocked(count: number, sources?: readonly BlockedRequestSource[]): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
   /**
@@ -2439,7 +2443,12 @@ export interface SecretStore {
  * turns HTTP requests into responses); hosts only listen on a socket and hand requests over.
  */
 export interface AgentTransport {
-  /** Listen and resolve with the port actually bound plus the LAN addresses (when `lan`). */
+  /**
+   * Listen and resolve with the port actually bound plus the LAN addresses (when `lan`). A bind
+   * that fails rejects with an error whose message the Settings row shows; a host that can
+   * name the failure puts `code` (`EADDRINUSE`, `EACCES`), `address` and `port` on the error,
+   * and the core carries them into `agent.json` and its log line (`AgentService.startServer`).
+   */
   start(options: {
     port: number
     lan: boolean

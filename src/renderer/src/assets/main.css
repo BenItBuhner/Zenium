@@ -4991,7 +4991,11 @@
     line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-sheet-item:active:not(:disabled) {
+  /*
+   * The press fill is the row's one tone; a row that is not a target – the static form,
+   * `data-static` (§9.34), as the shared row's – takes none of it, as a disabled row takes none.
+   */
+  .zen-sheet-item:active:not(:disabled, [data-static]) {
     background: var(--v2-fill);
   }
   .zen-sheet-item-secondary {
@@ -15114,6 +15118,29 @@ ol.zen-page-prose-list {
 }
 :root[data-form-factor='phone'] .zen-v2-blocked-chip {
   border-radius: var(--v2-radius-card);
+}
+/*
+ * The shield's count on the desktop (PS-33): a pill of its own beside the shield – the §9.19
+ * badge in a 28 box with the chip's hover and pressed fills and tabular figures – that opens
+ * the tracker report (components/siteControls/TrackersPopover.tsx).
+ */
+.zen-v2-blocked-count {
+  display: inline-flex;
+  height: var(--v2-icon-button);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: var(--v2-radius-inner);
+  font-variant-numeric: tabular-nums;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-blocked-count[aria-expanded='true'],
+.zen-v2-blocked-count:active {
+  background: var(--v2-control-fill-hover);
+}
+:where(:root[data-hover='hover']) .zen-v2-blocked-count:hover {
+  background: var(--v2-control-fill-hover);
 }
 
 /*

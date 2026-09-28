@@ -4,6 +4,7 @@ import { gzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RuleEngine, TEXT_MATCH_SET_ID } from '../../../core/blocking/engine'
+import type { BlockedRequestSource } from '../../../core/blocking/report'
 import type { Decision, RequestContext, RuleSet } from '../../../core/blocking/rules'
 import { RuleSetStore } from '../../../core/blocking/store'
 import type { StoreIO } from '../../../core/platform'
@@ -82,22 +83,30 @@ describe('BlockingHandler', () => {
   ): {
     handler: InstanceType<typeof BlockingHandler>
     blocked: Array<string | undefined>
+    sources: Array<BlockedRequestSource | undefined>
   } {
     const blocked: Array<string | undefined> = []
+    const sources: Array<BlockedRequestSource | undefined> = []
     const h = new BlockingHandler(
       {
         decide,
-        recordBlocked: (tabId, count = 1) =>
+        recordBlocked: (tabId, count = 1, source) => {
           blocked.push(...Array<string | undefined>(count).fill(tabId))
+          sources.push(source)
+        }
       },
       { cspDirectives: () => csp },
       observer
     )
-    return { handler: h, blocked }
+    return { handler: h, blocked, sources }
   }
 
   it('cancels blocked requests and counts them against the tab', () => {
-    const { handler: h, blocked } = handler(() => ({
+    const {
+      handler: h,
+      blocked,
+      sources
+    } = handler(() => ({
       action: 'block',
       matched: { setId: 'easylist' }
     }))
@@ -108,6 +117,11 @@ describe('BlockingHandler', () => {
       cancel: true
     })
     expect(blocked).toEqual(['tab-1', undefined])
+    // The tracker report gets the blocked request's host and the set that matched.
+    expect(sources).toEqual([
+      { host: 'ads.example', setId: 'easylist' },
+      { host: 'ads.example', setId: 'easylist' }
+    ])
     // Non-web schemes never reach the engine.
     expect(h.onBeforeRequest(hostRequest(ctx('zen://blank')))).toBeUndefined()
     expect(h.onBeforeRequest(hostRequest(ctx('chrome-extension://abc/x.js')))).toBeUndefined()

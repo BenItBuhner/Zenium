@@ -1526,7 +1526,8 @@ export class TabManager {
         this.browser.governor.onMedia(tabId, playing)
         this.browser.updateMedia()
       },
-      onRequestsBlocked: (count) => this.browser.blocking.recordBlocked(tabId, count),
+      onRequestsBlocked: (count, sources) =>
+        this.browser.blocking.recordBlocked(tabId, count, sources),
       onEnterHtmlFullscreen: () => {
         const win = ownerWindow()
         // Zen: going fullscreen inside a Glance page expands it into a real tab first.

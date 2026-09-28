@@ -100,6 +100,8 @@ class TabWebView(
     private var committedGeneration = 0L
     private val blockedPending = AtomicInteger(0)
     private val blockedFlushScheduled = AtomicBoolean(false)
+    /** The beat's blocked requests by host, for the chrome's tracker report; guarded by itself. */
+    private val blockedHosts = LinkedHashMap<String, BlockedHostTally>()
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     var radiusPx = 0f
@@ -2641,9 +2643,37 @@ class TabWebView(
             Handler(Looper.getMainLooper()).postDelayed({
                 blockedFlushScheduled.set(false)
                 val n = blockedPending.getAndSet(0)
-                if (n > 0) host.viewEvent(tabId, "blocked", json("count" to n))
+                val hosts = synchronized(blockedHosts) {
+                    if (blockedHosts.isEmpty()) null else blockedHosts.values.toList().also { blockedHosts.clear() }
+                }
+                if (n > 0) {
+                    val event = json("count" to n)
+                    if (hosts != null) {
+                        event.put("hosts", JSONArray().apply {
+                            for (tally in hosts) put(json("host" to tally.host, "set" to tally.set, "count" to tally.count))
+                        })
+                    }
+                    host.viewEvent(tabId, "blocked", event)
+                }
             }, BLOCKED_FLUSH_MS)
         }
+    }
+
+    /** A blocked request's host joins the beat's tally before the count is scheduled as before. */
+    override fun onRequestBlocked(url: String, set: String?) {
+        val hostName = runCatching { Uri.parse(url).host }.getOrNull()
+        if (!hostName.isNullOrEmpty()) {
+            synchronized(blockedHosts) {
+                val tally = blockedHosts.getOrPut(hostName) { BlockedHostTally(hostName, set) }
+                tally.count += 1
+            }
+        }
+        onRequestsBlocked(1)
+    }
+
+    /** One host's blocked requests within a beat, with the set that matched its first one. */
+    private class BlockedHostTally(val host: String, val set: String?) {
+        var count = 0
     }
 
     /** The engine stopped a navigation: the core shows the Zenium blocked page for `url`. */
