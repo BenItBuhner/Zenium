@@ -49,8 +49,6 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     // The worker's page stands at the script's URL, where Chrome's `self.location` points.
     expect(served.backgroundUrl).toBe(`https://${ID}.ext.zenium.invalid/bg.js`)
     expect(String(served.backgroundHtml)).toContain('<script src="/bg.js"></script>')
-    // The host serves the worker's page cross-origin isolated (R24-2): the flag travels with the plan.
-    expect(served.backgroundIsolated).toBe(true)
     const late = JSON.parse(String(served.late)) as Record<string, unknown>
     expect(late.late).toBe(true)
     expect((late.extension as Record<string, unknown>).groups).toEqual([])

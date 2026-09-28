@@ -694,30 +694,6 @@ object ExtensionScripts {
         return "if(!(globalThis.__zenExtChunk&&await globalThis.__zenExtChunk($id,${JSONObject.quote(url)})))await import($plain);\n"
     }
 
-    /**
-     * The response headers of a background document beyond the runtime's usual ones: the
-     * cross-origin isolation pair for the page that stands in for an MV3 worker, asked for as a
-     * document (`isolated` is the core's `served.backgroundIsolated`; `mainFrame` the request's).
-     * Chrome exposes `SharedArrayBuffer` in every `chrome-extension://` context (the scheme is
-     * registered as allowing it; Paperpile's worker builds one at its start, compat round 24);
-     * a WebView document on the emulated https origin gets it from `Cross-Origin-Opener-Policy:
-     * same-origin` with `Cross-Origin-Embedder-Policy: credentialless` alone. `credentialless`
-     * rather than `require-corp`: the worker's cross-origin no-cors loads go without credentials
-     * instead of needing a `Cross-Origin-Resource-Policy` the web does not send; its same-origin
-     * loads, its `fetch()` through the host's CORS proxy (a CORS response) and its `importScripts`
-     * (extension-origin, synchronous) are untouched by either. The worker script asked for as a
-     * sub-resource of the page, the MV2 generated page and every other document of the
-     * extension are served without the pair (a document that may frame others would have its
-     * frames blocked by the embedder policy).
-     */
-    fun backgroundDocumentHeaders(isolated: Boolean, mainFrame: Boolean): Map<String, String> =
-        if (isolated && mainFrame) CROSS_ORIGIN_ISOLATION else emptyMap()
-
-    private val CROSS_ORIGIN_ISOLATION: Map<String, String> = mapOf(
-        "Cross-Origin-Opener-Policy" to "same-origin",
-        "Cross-Origin-Embedder-Policy" to "credentialless"
-    )
-
     /** `Content-Type` for a file inside the extension directory, by extension. */
     fun mimeType(path: String): String {
         val ext = path.substringAfterLast('.', "").lowercase()

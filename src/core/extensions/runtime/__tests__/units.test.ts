@@ -265,9 +265,6 @@ describe('planUnits', () => {
     // The worker's page is served at the script's URL: `self.location` as in Chrome.
     expect(planned.served.backgroundUrl).toBe(`https://${ID}.ext.zenium.invalid/sw.js`)
     expect(planned.served.backgroundHtml).toContain('<script type="module" src="/sw.js">')
-    // The worker's page alone is served cross-origin isolated (SharedArrayBuffer, as in every
-    // chrome-extension:// context; compat round 24, R24-2).
-    expect(planned.served.backgroundIsolated).toBe(true)
     const page = JSON.parse(planned.served.page) as {
       kind: string
       extension: { groups: unknown[] }
@@ -319,8 +316,6 @@ describe('planUnits', () => {
     expect(planned.served.backgroundHtml).toContain(
       '<script src="/a.js"></script><script src="/b.js"></script>'
     )
-    // A document that may frame others: not isolated (its frames would need the policy too).
-    expect(planned.served.backgroundIsolated).toBe(false)
   })
 
   it('uses the MV2 background page URL as is', () => {
@@ -337,15 +332,6 @@ describe('planUnits', () => {
     const planned = planUnits(boot, manifest, env)
     expect(planned.served.backgroundHtml).toBeNull()
     expect(planned.served.backgroundUrl).toBe(`https://${ID}.ext.zenium.invalid/bg.html`)
-    expect(planned.served.backgroundIsolated).toBe(false)
-  })
-
-  it('isolates no background document of an extension without one', () => {
-    const boot = buildExtensionBoot(ID, manifestOf({}), null, [], 'world')
-    const planned = planUnits(boot, manifestOf({}), env)
-    expect(planned.served.backgroundHtml).toBeNull()
-    expect(planned.served.backgroundUrl).toBeNull()
-    expect(planned.served.backgroundIsolated).toBe(false)
   })
 
   it('compares plans structurally so a no-op reconfigure never reaches the host', () => {

@@ -188,11 +188,6 @@ class Extensions(private val host: Host) {
         /** The generated background page, or null when the extension has none / an MV2 page. */
         val backgroundHtml: String?,
         val backgroundUrl: String?,
-        /**
-         * Whether the background document is served cross-origin isolated (the MV3 worker's page
-         * alone; `ExtensionScripts.backgroundDocumentHeaders`): the core's word, off the manifest.
-         */
-        val backgroundIsolated: Boolean = false,
         /** Page-mode boot config (JSON) without `context`; set per WebView kind. */
         val pageConfig: String,
         /** Content-mode boot config (JSON) of a late boot: no groups, `with` isolation. */
@@ -792,7 +787,6 @@ class Extensions(private val host: Host) {
                 hosts = s.arr("hosts").let { a -> MatchPattern.compileAll(List(a.length()) { i -> a.optString(i, "") }) },
                 backgroundHtml = s.strOrNull("backgroundHtml"),
                 backgroundUrl = s.strOrNull("backgroundUrl"),
-                backgroundIsolated = s.bool("backgroundIsolated", false),
                 pageConfig = s.str("page", "{}"),
                 lateConfig = s.str("late", "{}"),
                 cssMessages = s.obj("cssMessages").let { m -> m.keys().asSequence().associateWith { k -> m.optString(k, "") } }
@@ -1974,15 +1968,7 @@ class Extensions(private val host: Host) {
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 if (request.isForMainFrame) {
                     workerScriptGate.documentServed(id)
-                    // The worker's page is served cross-origin isolated (SharedArrayBuffer, as in
-                    // Chrome's extension contexts): the pair on the document alone, compat round 24.
-                    return recorded(
-                        id, request, foreign,
-                        response(
-                            "text/html", 200, "OK", ext.backgroundHtml.toByteArray(),
-                            ExtensionScripts.backgroundDocumentHeaders(ext.backgroundIsolated, mainFrame = true)
-                        )
-                    )
+                    return recorded(id, request, foreign, response("text/html", 200, "OK", ext.backgroundHtml.toByteArray()))
                 }
                 // The background document's own path asked for as a sub-resource of itself: the
                 // generated page's own `<script src>` for the worker script once, and after it

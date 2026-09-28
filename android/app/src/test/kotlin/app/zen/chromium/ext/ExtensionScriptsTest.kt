@@ -527,22 +527,4 @@ class ExtensionScriptsTest {
         assertTrue(stub.all { it.code < 128 })
         assertEquals(1, stub.trimEnd().lines().size)
     }
-
-    @Test
-    fun theWorkerPageAloneIsServedCrossOriginIsolatedAsADocument() {
-        // The MV3 worker's page, asked for as the background view's document: the pair that gives
-        // the realm `SharedArrayBuffer` (compat round 24, R24-2 – Paperpile's worker).
-        val worker = ExtensionScripts.backgroundDocumentHeaders(isolated = true, mainFrame = true)
-        assertEquals(
-            mapOf("Cross-Origin-Opener-Policy" to "same-origin", "Cross-Origin-Embedder-Policy" to "credentialless"),
-            worker
-        )
-        // `credentialless`, never `require-corp`: the web's no-cors resources send no CORP.
-        assertFalse(worker.values.any { it.contains("require-corp") })
-        // The worker script asked for as the page's own sub-resource: none of it.
-        assertEquals(emptyMap<String, String>(), ExtensionScripts.backgroundDocumentHeaders(isolated = true, mainFrame = false))
-        // The MV2 generated page and every other document the core does not mark: served as before.
-        assertEquals(emptyMap<String, String>(), ExtensionScripts.backgroundDocumentHeaders(isolated = false, mainFrame = true))
-        assertEquals(emptyMap<String, String>(), ExtensionScripts.backgroundDocumentHeaders(isolated = false, mainFrame = false))
-    }
 }

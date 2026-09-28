@@ -78,17 +78,6 @@ export interface ServedConfig {
   /** The generated background page, or null when the extension has none or an MV2 page. */
   backgroundHtml: string | null
   backgroundUrl: string | null
-  /**
-   * Whether the host serves the background document cross-origin isolated (`Cross-Origin-Opener-
-   * Policy: same-origin`, `Cross-Origin-Embedder-Policy: credentialless`): true for the page
-   * standing in for an MV3 worker alone. Chrome exposes `SharedArrayBuffer` in every
-   * `chrome-extension://` context without isolation (the scheme is registered as allowing it); a
-   * WebView document on the emulated origin gets it from isolation only. A worker has no frames
-   * for the embedder policy to block, where an MV2 background page may have them (its frames'
-   * responses would need the policy too), so the MV2 generated page and the extension's other
-   * documents are served as they were.
-   */
-  backgroundIsolated: boolean
   /** Page-mode boot config (JSON) without `context`; the host sets it per page kind. */
   page: string
 }
@@ -514,7 +503,6 @@ export function planUnits(
             ? extensionUrl(boot.id, background.script)
             : extensionUrl(boot.id, '_generated_background_page.html')
         : null,
-      backgroundIsolated: background?.kind === 'service_worker',
       page: latin1Json(page)
     }
   }

@@ -904,9 +904,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // round 16's engine-line row (Adobe Photoshop's worker) is this column going PARTIAL -> P
         // with the name listed here.
         detail.put("polyfills", runCatching { json(tabEval(view, POLYFILLS_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) })
-        // The realm's isolation (compat round 24, R24-2): the worker's page is served with the
-        // cross-origin isolation pair so `SharedArrayBuffer` is there, as in every extension
-        // context of Chrome; a WebView that did not honour `credentialless` reads false here.
+        // The realm's isolation (compat round 24, R24-2): Chrome exposes `SharedArrayBuffer` in
+        // every extension context; a WebView page gets it from cross-origin isolation alone, and
+        // WebView disables COOP outright (`aw_field_trials.cc`, `kCrossOriginOpenerPolicy` off:
+        // "COOP is not supported on WebView yet"), so the header pair the round served was inert
+        // on both WebViews and was taken back. Read on every run: the day a WebView honours COOP
+        // this column says so (Paperpile's worker reads `SharedArrayBuffer.prototype` at its start).
         val isolation = runCatching { json(tabEval(view, ISOLATION_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) }
         detail.put("isolation", isolation)
         stage(
