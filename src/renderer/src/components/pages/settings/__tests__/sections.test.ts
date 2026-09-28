@@ -26,6 +26,7 @@ import type {
 } from '@shared/types'
 import type { InstalledWebApp } from '@shared/webApp'
 import { defaultScope } from '@core/sync/records'
+import { DEFAULT_WEBDAV_FOLDER } from '@core/sync/webdav'
 import { PROXY_MODES, type ProxyMode } from '@core/extensions/api/proxy'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
@@ -8050,13 +8051,18 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(rowText(set)).not.toContain('app-pass')
     expect(rowText(set)).toContain('App password')
 
+    // The folder starts as the engine's default by its NAME – `Zenium`, no trailing slash – the
+    // one string the connected page's Folder row reads back for it (seed #28: the two surfaces
+    // said `Zenium/` and could drift apart; one value now, in one place).
     const folder = fieldRow(model, 'sync-webdav-folder')
     expect(folder).toMatchObject({
       label: 'Folder',
       description: 'Where the zenium-sync folder is kept on the server.',
-      value: 'Zenium/',
+      value: 'Zenium',
       input: 'text'
     })
+    expect(folder.value).toBe(DEFAULT_WEBDAV_FOLDER)
+    expect(folder.display).toBeUndefined()
     expect(folder.onCommit('Backups/Zenium')).toBeUndefined()
     expect(syncSetupStore.get().webdav.folder).toBe('Backups/Zenium')
 
@@ -8267,15 +8273,35 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(server.trailing).toBeUndefined()
     const folder = row(model, 'sync-server-folder')
     if (folder.kind !== 'info') throw new Error('not an info row')
-    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium/' })
+    // The folder by its NAME – `Zenium`, no trailing slash: the string the setup's Folder field
+    // started with, read back (seed #28: one value on both surfaces).
+    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium' })
+    expect(folder.description).toBe(DEFAULT_WEBDAV_FOLDER)
     expect(folder.trailing).toBeUndefined()
-    // The folder as the engine reads it: empty and dot segments dropped, one trailing slash;
-    // the account's top level named for none.
+    // The same string the form's Folder field holds at a fresh setup: the two surfaces agree.
+    clearSyncSetup()
+    syncSetupStore.set({ transport: 'webdav' })
+    const setup = section('sync', withServer())
+    expect(fieldRow(setup, 'sync-webdav-folder').value).toBe(folder.description)
+    clearSyncSetup()
+    // The folder as the engine reads it (`webDavFolderSegments`): empty and dot segments
+    // dropped, the segments joined with `/`, no trailing slash whatever was typed; the account's
+    // top level named for none.
     const nested = section(
       'sync',
       syncState(onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } }))
     )
-    expect(row(nested, 'sync-server-folder').description).toBe('Backups/Zenium/')
+    expect(row(nested, 'sync-server-folder').description).toBe('Backups/Zenium')
+    const typed = section(
+      'sync',
+      syncState(onServer({ webdav: { ...SERVER, folder: 'Zenium/sub' } }))
+    )
+    expect(row(typed, 'sync-server-folder').description).toBe('Zenium/sub')
+    const slashed = section(
+      'sync',
+      syncState(onServer({ webdav: { ...SERVER, folder: 'Zenium/' } }))
+    )
+    expect(row(slashed, 'sync-server-folder').description).toBe('Zenium')
     const root = section(
       'sync',
       syncState(
@@ -8434,13 +8460,14 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(searchRows(on, 'webdav server').map((h) => h.row.id)).toContain('sync-server')
   })
 
-  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder written as Zenium/, no test asked – and is cleared whole, the typed app password with it', () => {
+  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder by its name, Zenium, no test asked – and is cleared whole, the typed app password with it', () => {
     expect(emptySyncSetup()).toEqual({
       folder: null,
       transport: 'folder',
-      webdav: { url: '', username: '', password: '', folder: 'Zenium/' },
+      webdav: { url: '', username: '', password: '', folder: 'Zenium' },
       probe: { state: 'idle' }
     })
+    expect(emptySyncSetup().webdav.folder).toBe(DEFAULT_WEBDAV_FOLDER)
     syncSetupStore.set({
       folder: TREE,
       transport: 'webdav',
