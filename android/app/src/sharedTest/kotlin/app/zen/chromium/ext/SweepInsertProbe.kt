@@ -61,7 +61,7 @@ object SweepInsertProbe {
             legs.world != Verdict.LOAD && legs.worldOrigin == Verdict.LOAD ->
                 "the world's getURL spelling is the miss: the served origin loads from the world (${entryWord(legs.worldOriginEntry)}) where the getURL string ${legs.world.name.lowercase()} (${entryWord(legs.worldEntry)})"
             worldLoads && legs.page == Verdict.LOAD && !worldEntries && legs.pageEntry ->
-                "the same insertion loads from the world and the page now, and the world's load leaves no timeline entry where the page's leaves one: the row's timeline read is blind to a world load on this lane – the extension's own document_start insertion is unread, not shown missing (a read of the served-resource record, not the page's timeline, is the row's next shape)"
+                "the same insertion loads from the world and the page now, and the world's load leaves no timeline entry where the page's leaves one: the row's timeline read is blind to a world load on this lane – the extension's own document_start insertion is unread, not shown missing (Chrome's timeline is blind to it by the same rule; the served-resource record is the row's read)"
             worldLoads && legs.page == Verdict.LOAD ->
                 "the same insertion loads from the world and the page now (world ${legs.world.name.lowercase()}, ${entryWord(legs.worldEntry)}; page load, ${entryWord(legs.pageEntry)}): the extension's own miss is document_start's moment – an element appended under <html> before <head> exists –, not the world or the loader"
             !worldLoads && legs.page == Verdict.LOAD ->

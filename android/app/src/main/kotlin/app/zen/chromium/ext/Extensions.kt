@@ -393,6 +393,13 @@ class Extensions(private val host: Host) {
     /** While `debug`: the CORS proxy's last outcomes ("<ext> METHOD <status | words> url" – [recordProxy]), for instrumentation. */
     val proxied = ArrayDeque<String>()
     /**
+     * While `debug`: the intercept's last answers on the extensions' origins and the page alias
+     * (ServedRecord's lines – [recorded]), for instrumentation: the sweep reads whether a content
+     * script's insertion of an extension file was served, which the page's Resource Timing cannot
+     * show (compat round 24, AdGuard Extra's row).
+     */
+    val servedRecord = ArrayDeque<String>()
+    /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
      * bridge, so the demo can grade messaging and storage per real extension (`msg` counts as
      * `runtime.sendMessage`, `connect` as `runtime.connect`, `portMsg` as `port.postMessage`).
@@ -1060,6 +1067,29 @@ class Extensions(private val host: Host) {
             proxied.addLast("$extensionId ${request.method} $outcome ${request.url}")
         }
         if (!outcome.first().isDigit()) Log.w(TAG, "cors proxy ${extensionId.take(8)} ${request.method} ${request.url}: $outcome")
+    }
+
+    /**
+     * The intercept's answer on an extension's origin or the page alias, recorded while `debug`
+     * (`servedRecord`, ServedRecord.line: the status, the path as spelled, the frame, the side,
+     * the word of a refusal and the Referer; the sweep reads it through [servedMatching]) and
+     * returned as it is. `foreign` is null where the answer came before the side was told.
+     */
+    private fun recorded(id: String, request: WebResourceRequest, foreign: Boolean?, response: WebResourceResponse, why: String? = null): WebResourceResponse {
+        if (!debug) return response
+        val url = request.url
+        val line = ServedRecord.line(
+            id,
+            response.statusCode,
+            (url.path ?: "/").trimStart('/'),
+            url.query,
+            request.isForMainFrame,
+            when (foreign) { null -> null; true -> "foreign"; false -> "own" },
+            why,
+            request.requestHeaders?.get("Referer")
+        )
+        synchronized(servedRecord) { ServedRecord.add(servedRecord, line) }
+        return response
     }
 
     private fun recordCall(ep: String, message: JSONObject, chars: Int) {
@@ -1912,9 +1942,13 @@ class Extensions(private val host: Host) {
             // A tab's document on an origin the runtime does not serve: held while the core is
             // about to configure the extension, failed as Chrome fails it otherwise; anything
             // else of an unserved extension (a frame, a resource) is simply not there.
-            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else notFound()
+            // (A tab's document on an unserved origin is HeldPages' matter, not the record's: the
+            // hold's release asks the intercept again, and that answer is recorded.)
+            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else recorded(id, request, null, notFound(), ServedRecord.UNSERVED)
             // Chrome does not load a chrome-extension:// URL in incognito for an extension not allowed there.
-            if (tab?.isPrivateTab == true && !ext.allowPrivate) return if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound()
+            if (tab?.isPrivateTab == true && !ext.allowPrivate) {
+                return recorded(id, request, null, if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound(), ServedRecord.PRIVATE)
+            }
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
             val referer = request.requestHeaders?.get("Referer")
@@ -1934,7 +1968,7 @@ class Extensions(private val host: Host) {
             // document resolves here, ExtensionPageNavigation) gets the web-accessible resources
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
-            if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            if (foreign && !ext.webAccessible.any { it.matches(path) }) return recorded(id, request, true, notFound(), ServedRecord.NOT_WEB_ACCESSIBLE)
             // A web-accessible document going into a frame of the tab's page: its own requests follow.
             if (foreign && tab != null && !request.isForMainFrame && document) frames.framed(tab, id)
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
@@ -1942,9 +1976,12 @@ class Extensions(private val host: Host) {
                     workerScriptGate.documentServed(id)
                     // The worker's page is served cross-origin isolated (SharedArrayBuffer, as in
                     // Chrome's extension contexts): the pair on the document alone, compat round 24.
-                    return response(
-                        "text/html", 200, "OK", ext.backgroundHtml.toByteArray(),
-                        ExtensionScripts.backgroundDocumentHeaders(ext.backgroundIsolated, mainFrame = true)
+                    return recorded(
+                        id, request, foreign,
+                        response(
+                            "text/html", 200, "OK", ext.backgroundHtml.toByteArray(),
+                            ExtensionScripts.backgroundDocumentHeaders(ext.backgroundIsolated, mainFrame = true)
+                        )
                     )
                 }
                 // The background document's own path asked for as a sub-resource of itself: the
@@ -1960,9 +1997,9 @@ class Extensions(private val host: Host) {
                         WorkerScriptGate.Verdict.SERVE -> {}
                         WorkerScriptGate.Verdict.REFUSE -> {
                             Log.w(TAG, "refused the ${id.take(8)} background document's own script as a sub-resource: ${url.encodedPath}${url.encodedQuery?.let { "?${it.take(120)}" } ?: ""} (a <script> the worker script appended through the page's document would run the worker again; the element gets its error event)")
-                            return notFound()
+                            return recorded(id, request, foreign, notFound(), ServedRecord.WORKER_SCRIPT)
                         }
-                        WorkerScriptGate.Verdict.REFUSED_AGAIN -> return notFound()
+                        WorkerScriptGate.Verdict.REFUSED_AGAIN -> return recorded(id, request, foreign, notFound(), ServedRecord.WORKER_SCRIPT)
                     }
                 }
             }
@@ -1987,7 +2024,7 @@ class Extensions(private val host: Host) {
                 isolatedWorlds
             )
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
-            return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+            return recorded(id, request, foreign, serve(ext, path, if (moduleGraph) id else null, chunkStubUrl))
         }
         // A module graph a page's policy refused at the extension's origin, asked for again from
         // the page's own origin (`/.zenium-ext/<id>/<path>`, the bootstrap's retry in
@@ -2002,15 +2039,15 @@ class Extensions(private val host: Host) {
             val alias = ExtensionUrls.pageAlias(url.path ?: "")
             if (alias != null) {
                 val (id, path) = alias
-                val ext = served[id] ?: return notFound()
-                if (tab.isPrivateTab && !ext.allowPrivate) return notFound()
-                if (path.isEmpty() || ExtensionScripts.mimeType(path) == "text/html") return notFound()
-                if (!ext.webAccessible.any { it.matches(path) }) return notFound()
+                val ext = served[id] ?: return recorded(id, request, true, notFound(), ServedRecord.UNSERVED)
+                if (tab.isPrivateTab && !ext.allowPrivate) return recorded(id, request, true, notFound(), ServedRecord.PRIVATE)
+                if (path.isEmpty() || ExtensionScripts.mimeType(path) == "text/html") return recorded(id, request, true, notFound(), ServedRecord.ALIAS_DOCUMENT)
+                if (!ext.webAccessible.any { it.matches(path) }) return recorded(id, request, true, notFound(), ServedRecord.NOT_WEB_ACCESSIBLE)
                 // A same-origin module request carries no `Origin`, so the graph is told by the
                 // WebView alone; only a script is bracketed (a stylesheet or an image goes as it is).
                 val moduleGraph = !isolatedWorlds && ExtensionScripts.isScriptPath(path)
                 val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
-                return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+                return recorded(id, request, true, serve(ext, path, if (moduleGraph) id else null, chunkStubUrl))
             }
         }
         // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
@@ -2427,6 +2464,9 @@ class Extensions(private val host: Host) {
 
     /** Whether the CORS proxy's log (`proxied`) has an answer for a URL containing `fragment`, as "METHOD status url" lines. */
     fun proxiedMatching(fragment: String): List<String> = synchronized(proxied) { proxied.filter { it.contains(fragment) } }
+
+    /** The served-resource record's lines (`servedRecord`, ServedRecord.line) containing `fragment` – a file's name, an id's start –, oldest first. */
+    fun servedMatching(fragment: String): List<String> = synchronized(servedRecord) { servedRecord.filter { it.contains(fragment) } }
 
     // ---------------------------------------------------------------------------------------------
     // Background pages and popups

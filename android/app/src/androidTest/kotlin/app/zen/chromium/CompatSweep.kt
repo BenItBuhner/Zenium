@@ -38,6 +38,7 @@ import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepOrderProbe
 import app.zen.chromium.ext.SweepPopupClose
 import app.zen.chromium.ext.SweepScreenGuard
+import app.zen.chromium.ext.SweepServedRecord
 import app.zen.chromium.ext.SweepSwitchGrade
 import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
@@ -2888,11 +2889,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
         if (!found.optBoolean("pass")) {
             extra.put("errors", targetErrors(view))
-            // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading joins the grade's word.
+            // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading
+            // joins the grade's word, and its `pass` is the row's where the probe's read is the
+            // truer one (the served-resource record where the page's timeline is blind).
             onMiss?.let { extra.put("probe", it(view, row, factor)) }
         }
-        val probeWord = extra.optJSONObject("probe")?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
-        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
+        val probe = extra.optJSONObject("probe")
+        val probeWord = probe?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
+        val pass = found.optBoolean("pass") || probe?.optBoolean("pass") == true
+        Grade(if (pass) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
     }
 
     /**
@@ -2916,10 +2921,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * load there –, the world's `getURL` spelling, the world, the loader). On a WebView without isolated worlds the page's
      * insert stands for both realms. The file runs in the page once per insert that loads – its
      * effects are for its listed hosts alone, none on the fixture.
+     *
+     * Compat round 24: the runtime's served-resource record (`Extensions.servedMatching`,
+     * ServedRecord) is read FIRST, before the probe's own inserts add their lines, for the
+     * extension's own insertion of `userscript.js` – the read the timeline cannot give, and
+     * Chrome's cannot either (Blink precludes a resource fetched from an isolated world from the
+     * page's Resource Timing, and a `chrome-extension://` response is not HTTP); a served line is
+     * the row's pass (`pass` on the probe, read by [domMarker]), a refused line is ours, no line an
+     * insertion that never reached the intercept ([SweepServedRecord.reading]).
      */
     private fun adguardExtraProbe(view: WebView, row: Row, factor: Double): JSONObject {
         val probe = JSONObject()
         val origin = "https://${row.id}${Extensions.ORIGIN_SUFFIX}/userscript.js"
+        var record: List<String> = emptyList()
+        instrumentation.runOnMainSync { record = host.extensions.servedMatching("userscript.js") }
+        val ownLines = SweepServedRecord.ownLines(record, row.id, "userscript.js")
+        val served = SweepServedRecord.reading(ownLines, "userscript.js")
+        probe.put("served", JSONArray(ownLines.takeLast(6))).put("recordLines", record.size).put("pass", served.pass)
         var worldRan = false
         if (worlds) {
             val world = worldEval(view, row.id, ADGUARD_EXTRA_WORLD_INSERT.replace("%ORIGIN%", JSONObject.quote(origin)))?.let { json(it) }
@@ -2947,7 +2965,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             pageEntry = entries.optJSONObject("zenpage") != null,
             recoveryLines = recovery.size
         )
-        probe.put("reading", SweepInsertProbe.reading(legs))
+        probe.put("reading", "${served.word}; the inserts: ${SweepInsertProbe.reading(legs)}")
         return probe
     }
 
@@ -15899,6 +15917,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * itself – Chrome serves a web-accessible resource to a page with `Access-Control-Allow-
          * Origin: *` – reading the userscript header (`==UserScript==`) in the body. The
          * userscript's own effects are for its listed hosts alone, none on the fixture.
+         *
+         * The timeline read stands on the one-realm WebView alone, and by a divergence: Chrome's
+         * page timeline never holds this load (Blink precludes a resource fetched from an isolated
+         * world – the world running when the element was inserted – and a `chrome-extension://`
+         * response is not HTTP), and a WebView with isolated worlds is blind to it by the same
+         * code; there the row's read is the runtime's served-resource record, off
+         * [adguardExtraProbe] (compat round 24).
          */
         private const val ADGUARD_EXTRA_SCRIPT =
             "(function(){var rs=performance.getEntriesByType('resource').filter(function(e){return /userscript\\.js/.test(e.name)});if(!window.__agx&&rs.length){window.__agx={pending:true};fetch(rs[0].name).then(function(r){return r.text().then(function(t){window.__agx={ok:r.ok,status:r.status,bytes:t.length,userscript:/==UserScript==/.test(t)}})}).catch(function(e){window.__agx={error:String(e)}})}var a=window.__agx||null;" +
