@@ -285,11 +285,20 @@ describe('the engine on the phone over sync.fetch and secrets.*', () => {
     // reaches nothing the user reads.
     expect(a.toasts).toEqual([])
     expect(JSON.stringify(a.engine.status())).not.toContain(SECRETS_UNAVAILABLE_PREFIX)
-    // The engine probes the server (the directory and its README) before it keeps the password;
-    // past that point nothing of this device is written and no key is kept.
-    expect([...(dav.files(DIR)?.keys() ?? [])].filter(isDeviceFileName)).toEqual([])
+    // The engine's order (`SyncEngine.setup`): the probe – a PROPFIND that makes nothing – then
+    // the password into the store, and only then the folder, the directory and the README. A
+    // store that refuses stops it there: no MKCOL, no folder or README left behind on the
+    // server, no device file, no key kept. The one `secrets.set` came after a `secrets.get` (the
+    // value the store held before, to put back on a later refusal) and no `secrets.delete`
+    // followed, the write having taken nothing.
+    expect(dav.log.map((r) => r.method)).toEqual(['PROPFIND'])
+    expect(dav.collections.has(`${ROOT}/Zenium`)).toBe(false)
+    expect(dav.files(DIR)).toBeNull()
     expect(host.sealed.size).toBe(0)
-    expect(host.calls.filter((c) => c.method === 'secrets.set')).toHaveLength(1)
+    expect(host.calls.filter((c) => c.method !== 'sync.fetch').map((c) => c.method)).toEqual([
+      'secrets.get',
+      'secrets.set'
+    ])
   })
 
   it('a revoked app password is authRefused with the words scrubbed; disconnecting forgets the secret through secrets.delete', async () => {
