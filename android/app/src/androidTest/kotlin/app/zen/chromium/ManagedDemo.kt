@@ -1,15 +1,22 @@
 package app.zen.chromium
 
+import android.app.Activity
 import android.app.admin.DevicePolicyManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.RestrictionsManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Records the app menu's Managed Browser row and the `zen://management` page (TB-13; Chrome for
@@ -21,11 +28,15 @@ import org.junit.runner.RunWith
  *     Managed Browser row and still ends on Change Menu (Chrome shows the row only under a
  *     policy); the core's `managed.status`, read once on that first menu build, is unmanaged.
  *  B. The seam: the shell makes the instrumentation package the device owner (`dpm
- *     set-device-owner`, the test manifest's [ManagedTestAdmin]) and as the owner the driver
+ *     set-device-owner`, the test manifest's [ManagedTestAdmin]) and as the owner the package
  *     hands Zenium an app-restrictions bundle through `DevicePolicyManager.setApplicationRestrictions`
  *     – the path an EMM's device policy controller takes, so the app reads it through
  *     `RestrictionsManager` as it would in the field; nothing in the app is overridden. The
- *     running core still says unmanaged (one read per lifetime), so the app is started again.
+ *     owner's calls have to come from the test package's own uid and the driver runs in Zenium's
+ *     process (run 36461628148: `SecurityException: Admin ... is not owned by uid`), so they are
+ *     made by [ManagedSeedReceiver], a receiver of the test package reached by an ordered
+ *     broadcast, whose result comes back to the driver. The running core still says unmanaged
+ *     (one read per lifetime), so the app is started again.
  *  C. On the fresh boot the app menu's LAST row is Managed Browser, right under Change Menu with
  *     Chrome's `ic_domain` mark (Lucide Building2) at its trail, and `managed.status` names the
  *     organisation the bundle's `EnterpriseCustomLabel` gives and lists the bundle's keys, sorted.
@@ -34,8 +45,9 @@ import org.junit.runner.RunWith
  *     <org>", the notice that says Zenium reads the configuration and does not yet apply it, and
  *     the keys as static rows under "Settings your administrator controls" with their count.
  *  E. The same page and menu on the dark scheme (the design record's pair).
- *  F. The device as it was found: the bundle cleared and the ownership given back, whatever came
- *     before (a `finally`), so the next driver on the boot meets an unmanaged browser.
+ *  F. The device as it was found: the bundle cleared and the ownership given back (the owner's
+ *     own `clearDeviceOwnerApp`, through the same receiver), whatever came before (a `finally`),
+ *     so the next driver on the boot meets an unmanaged browser.
  *
  * Findings in `managed-findings.txt` (one `OK` or `FAIL` per claim; a claim that does not hold
  * fails the run at the end). The seeded profile is the tab-group drivers' (`tab-groups-demo-
@@ -92,6 +104,8 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
         val rows = openMenuRows("A") ?: return
         check("A: the app menu has no $ROW row and still ends on Change Menu", ROW !in rows && rows.lastOrNull() == "Change Menu", "rows $rows")
         check("A: no managed mark anywhere in the sheet", !inDom("$SHEET_ITEM $MARK"), "")
+        finding("  the list's end revealed in the tree at ${reveal("Change Menu")}")
+        SystemClock.sleep(600)
         still("menu-unmanaged-light")
         closeMenu()
         val status = status()
@@ -103,7 +117,7 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
 
     /** The bundle handed to the app the EMM way; true when it is in place and the app started again. */
     private fun seed(): Boolean {
-        section("B. The seam: the test package made device owner through the shell, the bundle set through DevicePolicyManager")
+        section("B. The seam: the test package made device owner through the shell, the bundle set through DevicePolicyManager as the owner")
         if (!dpm.isDeviceOwnerApp(admin.packageName)) {
             val out = shellCommand("dpm set-device-owner ${admin.flattenToString()}").trim()
             finding("  dpm set-device-owner ${admin.flattenToString()}: ${out.ifEmpty { "(no output)" }}")
@@ -118,8 +132,8 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
             putInt("IncognitoModeAvailability", 1)
             putBoolean("BookmarkBarEnabled", false)
         }
-        val set = runCatching { dpm.setApplicationRestrictions(admin, app.packageName, bundle) }
-        finding("  setApplicationRestrictions(${app.packageName}, ${KEYS.size} keys): ${set.exceptionOrNull()?.toString() ?: "ok"}")
+        val set = asOwner(ManagedSeedReceiver.ACTION_SEED, bundle)
+        finding("  setApplicationRestrictions(${app.packageName}, ${KEYS.size} keys) by the owner's process: $set")
         val keys = restrictionKeys()
         finding("  RestrictionsManager.getApplicationRestrictions() in the app's own process now: $keys")
         check("B: the app's restrictions bundle carries the seeded keys", keys == KEYS, "$keys")
@@ -218,22 +232,45 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
 
     // --- F. the device as it was found --------------------------------------------------------------
 
-    @Suppress("DEPRECATION")
     private fun cleanUp() {
         section("F. The device as it was found: the bundle cleared, the ownership given back")
         if (!owner) {
             finding("  nothing to clear: the test package never became the device owner")
             return
         }
-        val cleared = runCatching { dpm.setApplicationRestrictions(admin, app.packageName, Bundle()) }
-        finding("  restrictions cleared: ${cleared.exceptionOrNull()?.toString() ?: "ok"}; the bundle now ${restrictionKeys()}")
-        val released = runCatching { dpm.clearDeviceOwnerApp(admin.packageName) }
-        if (released.isFailure) {
-            finding("  clearDeviceOwnerApp refused (${released.exceptionOrNull()}); the shell's remove-active-admin instead")
-            finding("  dpm remove-active-admin: ${shellCommand("dpm remove-active-admin ${admin.flattenToString()}").trim()}")
+        val released = asOwner(ManagedSeedReceiver.ACTION_RELEASE)
+        finding("  the owner's process cleared the restrictions and the device owner: $released; the bundle now ${restrictionKeys()}")
+        if (dpm.isDeviceOwnerApp(admin.packageName)) {
+            finding("  still the owner; the shell's remove-active-admin instead: ${shellCommand("dpm remove-active-admin ${admin.flattenToString()}").trim().ifEmpty { "(no output)" }}")
         }
         owner = dpm.isDeviceOwnerApp(admin.packageName)
         check("F: the bundle is empty again and the test package is no longer the device owner", restrictionKeys().isEmpty() && !owner, "keys ${restrictionKeys()}, owner $owner")
+    }
+
+    /**
+     * A device-policy call made as the owner: an explicit ordered broadcast to the test package's
+     * [ManagedSeedReceiver] (the system starts that package's own process to deliver it), naming
+     * Zenium as the package and carrying `restrictions` when there are any; the receiver's result
+     * – its note, or the exception's text – as the line for the findings. "no answer" when the
+     * broadcast's result never came within [OWNER_WAIT] ms.
+     */
+    private fun asOwner(action: String, restrictions: Bundle? = null): String {
+        val intent = Intent(action)
+            .setComponent(ComponentName(instrumentation.context.packageName, ManagedSeedReceiver::class.java.name))
+            .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            .putExtra(ManagedSeedReceiver.EXTRA_PACKAGE, app.packageName)
+        if (restrictions != null) intent.putExtra(ManagedSeedReceiver.EXTRA_RESTRICTIONS, restrictions)
+        val done = CountDownLatch(1)
+        var outcome = "no answer within $OWNER_WAIT ms"
+        val result = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                outcome = "${if (resultCode == Activity.RESULT_OK) "ok" else "refused"} (${resultData ?: "no detail"})"
+                done.countDown()
+            }
+        }
+        instrumentation.context.sendOrderedBroadcast(intent, null, result, Handler(Looper.getMainLooper()), Activity.RESULT_CANCELED, null, null)
+        done.await(OWNER_WAIT, TimeUnit.MILLISECONDS)
+        return outcome
     }
 
     // --- the menu -----------------------------------------------------------------------------------
@@ -287,6 +324,9 @@ class ManagedDemo : GroupsDemoBase("managed", "managed-demo") {
 
         /** The seeded bundle's keys as the status lists them: sorted. */
         private val KEYS = listOf("BookmarkBarEnabled", "EnterpriseCustomLabel", "HomepageLocation", "IncognitoModeAvailability", "URLBlocklist")
+
+        /** How long the owner's process gets to answer an ordered broadcast (its cold start included). */
+        private const val OWNER_WAIT = 15_000L
 
         private const val SHEET_ITEM = ".zen-sheet .zen-sheet-item"
         private const val MARK = "[data-mark=\"managed\"]"
