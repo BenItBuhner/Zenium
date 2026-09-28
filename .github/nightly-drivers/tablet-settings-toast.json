@@ -1,0 +1,12 @@
+{
+  "id": "tablet-settings-toast",
+  "class": "TabletSettingsToastDemo",
+  "shard": "tablet",
+  "mirrors": "android-tablet-settings-toast-demo.yml",
+  "dir": "tablet-settings-toast-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 3,
+  "note": "W8-F16's toast lift on the tablet chrome (v2 draft §9.33; the tablet inherits it, §9.36): the Site permissions review as a dialog in the frame dialog host over Settings > Privacy, Allow again's Undo toast rising above the standing dialog in the host's toast seat - the card 8 px inside the content frame's bottom edge and clear of the dialog box, under no inert, one role=status, listed by the accessibility tree while lifted - the Undo reached by Tab as the dialog's last stop (a DeX desk's keyboard through the input dispatcher) and by a finger, the orphan case (the dialog closed by its scrim under the toast: the same card lands on the page frame, its 8 s clock running on) and Got it (which leaves the dialog first on the tablet, #668, its toast landing on the frame). About 70 s of driver time: five Undo clocks and one full 8 s run-out. The nightly runs the light scheme."
+}

@@ -1,0 +1,109 @@
+name: Android tablet settings toast demo
+
+# Records W8-F16's TOAST LIFT on the TABLET chrome (design language v2 draft §9.33 as the lead
+# ruled it; the tablet inherits it, §9.36) on a hardware-accelerated emulator of the pixel_tablet
+# profile, laid out at 1280 x 800 dp at one px per dp (`wm size 1280x800`, `wm density 160`, as
+# the tablet layout demo), and uploads the video, the stills and the driver's findings.
+# TabletSettingsToastDemo opens Settings > Privacy and security's Site permissions review – an
+# item dialog in the frame dialog host, which holds the sidebar, the page and the message frame
+# inert under its scrim – over a seeded profile (one granted site, two sites the unused-sites
+# sweep took permissions from), and reads each claim off the chrome's document and stores, the
+# core's state and the accessibility tree, never off the still alone; the run FAILS when one does
+# not hold: Allow again's "Permissions allowed again" toast rises in the host's toast seat above
+# the standing dialog (`.zen-frame-toast-seat[data-lifted]`), its card 8 px inside the content
+# frame's bottom edge and clear of the dialog box, under no `inert`, one `role="status"`, listed
+# by the accessibility tree while lifted; a keyboard's Tab from the dialog reaches the Undo as
+# the dialog's LAST stop (§9.22), one more Tab re-enters the dialog, Shift+Tab comes back, and
+# Enter undoes – the site back in the block, the core's revoked list holding it; a finger on the
+# lifted Undo does the same; the ORPHAN case – the dialog closed by its scrim under the toast –
+# leaves the SAME card on the page frame, not inert, its 8 s clock running on from the moment it
+# was raised; and Got it, which leaves the dialog first on the tablet (#668's closesSheet gate),
+# lands its own toast on the frame, its Undo restoring the block. Two acts, in parallel, each on
+# its own emulator: the light and the dark colour scheme (the same claims; the stills of both are
+# the design gate's). Dispatch-only, like the other demos: about fifteen minutes an act, and it
+# says nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver, the display and the theme. One more boot
+# per act when the emulator itself went away under the driver, never when the driver failed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-settings-toast-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Tablet settings toast demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the review is a dialog in the frame dialog host only from the tablet layout up.
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletSettingsToastDemo
+        DEMO_DIR=tablet-settings-toast-demo
+        DEMO_OUT=artifacts/android-tablet-settings-toast-demo
+        DEMO_VIDEO=android-tablet-settings-toast-demo-light.mp4
+        DEMO_THEME=light
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-settings-toast-demo-light
+      artifact-path: artifacts/android-tablet-settings-toast-demo/
+
+  light-again:
+    name: Tablet settings toast demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletSettingsToastDemo
+        DEMO_DIR=tablet-settings-toast-demo
+        DEMO_OUT=artifacts/android-tablet-settings-toast-demo
+        DEMO_VIDEO=android-tablet-settings-toast-demo-light.mp4
+        DEMO_THEME=light
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-settings-toast-demo-light-second-boot
+      artifact-path: artifacts/android-tablet-settings-toast-demo/
+
+  dark:
+    name: Tablet settings toast demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletSettingsToastDemo
+        DEMO_DIR=tablet-settings-toast-demo
+        DEMO_OUT=artifacts/android-tablet-settings-toast-demo
+        DEMO_VIDEO=android-tablet-settings-toast-demo-dark.mp4
+        DEMO_THEME=dark
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-settings-toast-demo-dark
+      artifact-path: artifacts/android-tablet-settings-toast-demo/
+
+  dark-again:
+    name: Tablet settings toast demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletSettingsToastDemo
+        DEMO_DIR=tablet-settings-toast-demo
+        DEMO_OUT=artifacts/android-tablet-settings-toast-demo
+        DEMO_VIDEO=android-tablet-settings-toast-demo-dark.mp4
+        DEMO_THEME=dark
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-settings-toast-demo-dark-second-boot
+      artifact-path: artifacts/android-tablet-settings-toast-demo/
