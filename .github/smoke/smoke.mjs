@@ -398,7 +398,7 @@ import {
   withOwedClear
 } from './site-data.mjs'
 import { startVideoFixture } from './video-fixture.mjs'
-import { viewInBox } from './views.mjs'
+import { isPopupSurfaceUrl, isWindowChromeUrl, viewInBox } from './views.mjs'
 import { VISIBILITY_SCENARIO, scenarioVisibility } from './visibility-scenario.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -1414,8 +1414,16 @@ class Session {
     })
   }
 
+  /**
+   * The windows' chrome pages: the renderer's `index.html` loaded as a window's chrome. Not the
+   * popup surface's document (`index.html?surface=popup`, `isPopupSurfaceUrl`): a view inside a
+   * window for the autofill picker and the selection's mini menu, without a chrome root, and
+   * alive for a while after what it showed went – the walkthrough's find bar leaves a selection
+   * behind that puts the mini menu up, and every step that walks the chrome pages for their root
+   * (new-window, private-window) would otherwise wait on a page that never has one.
+   */
   chromePages() {
-    return this.app.windows().filter((p) => /^file:.*index\.html/.test(p.url()))
+    return this.app.windows().filter((p) => isWindowChromeUrl(p.url()))
   }
 
   async waitForChromePage(timeoutMs) {
@@ -1550,9 +1558,12 @@ class Session {
     return this.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
   }
 
-  /** Tab pages: every webContents that is not a window's chrome page and not devtools. */
-  tabs() {
-    return this.app.evaluate(({ webContents, BrowserWindow }) => {
+  /**
+   * Tab pages: every webContents that is not a window's chrome page, not the popup surface's
+   * document (`isPopupSurfaceUrl`; a view of the window's, not a page of it) and not devtools.
+   */
+  async tabs() {
+    const views = await this.app.evaluate(({ webContents, BrowserWindow }) => {
       const chromeIds = new Set(BrowserWindow.getAllWindows().map((w) => w.webContents.id))
       return webContents
         .getAllWebContents()
@@ -1571,6 +1582,7 @@ class Session {
           zoomFactor: wc.getZoomFactor()
         }))
     })
+    return views.filter((view) => !isPopupSurfaceUrl(view.url))
   }
 
   async waitForTab(urlPrefix, timeoutMs = 30000) {

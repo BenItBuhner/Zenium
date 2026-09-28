@@ -34,7 +34,7 @@ interface Asking {
  * active row, Escape closes. A password or a card number behind a passphrase turns the panel
  * into the one-field unlock step and back.
  *
- * The same panel serves the desktop popup surface (`AutofillSurface`, where it is the popover,
+ * The same panel serves the desktop popup surface (`PickerSurface`, where it is the popover,
  * opening on its first row so Enter has a target) and the phone's strip above the keyboard
  * (`PickerStrip`, where it is the strip's content and no row is lit until a key moves the
  * highlight – a lit row under a thumb reads as pressed); the density tokens size its rows for

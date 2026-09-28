@@ -1297,10 +1297,11 @@ export interface WindowHost {
    */
   focusedRect?(): Promise<Rect | null>
   /**
-   * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
-   * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
-   * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
-   * layered view (`HostCapabilities.popupSurface` false) leave this out.
+   * Show the popup surface – a second chrome document (`index.html?surface=popup`: the autofill
+   * picker, the selection's mini menu) floated above the page views – at `bounds` (window CSS
+   * pixels), or take it down with null. It never takes the keyboard when shown; the page the
+   * picker or the menu hangs from keeps it. Hosts without a layered view
+   * (`HostCapabilities.popupSurface` false) leave this out.
    */
   setPopupSurface?(bounds: Rect | null): void
 }
