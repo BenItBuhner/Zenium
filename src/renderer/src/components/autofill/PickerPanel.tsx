@@ -257,7 +257,7 @@ function Row({
       {item.needsPassphrase && (
         <span
           className="zen-v2-af-row-trailing zen-v2-af-row-lock"
-          title="Asks for the vault passphrase"
+          data-tooltip="Asks for the vault passphrase"
         >
           <Lock aria-hidden />
         </span>
