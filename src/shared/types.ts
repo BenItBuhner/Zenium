@@ -5657,10 +5657,13 @@ export interface Commands {
    * typed), or has gone back to it / the bar has closed. The core keeps this per tab in memory –
    * this window's moment, not persisted and not synced (`Browser.barInput`, cleared on the tab's
    * close) – and `freshTabIn` reads it: a tab the user is typing into is not a fresh empty one a
-   * launch URL may take, whatever its history says, as Chrome's omnibox `user_input_in_progress`
-   * keeps its new tab page from being reused (`OmniboxEditModel::user_input_in_progress()`;
-   * `singleton_tabs.cc` `ShowSingletonTabOverwritingNTP`). Fired on the flip, not per keystroke.
-   * Harmless on the phone, whose host has no `freshTabIn` caller (the record is simply unread).
+   * launch URL may take, whatever its history says, as Chrome's omnibox carries its user input
+   * per tab (`OmniboxEditModel::user_input_in_progress()`, kept across a tab switch by
+   * `GetStateForTabSwitch`) and a URL handed to a running Chrome is appended as a new foreground
+   * tab, never written over the active one (`startup_browser_creator_impl.cc`,
+   * `BrowserOpenBehavior::USE_EXISTING` unless `--same-tab`). Fired on the flip, not per
+   * keystroke. The phone's bar sends it too; its host has no `freshTabIn` caller, so the core's
+   * record there is simply unread – harmless.
    */
   'urlbar.input': { args: { tabId: string; active: boolean }; result: void }
   /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */

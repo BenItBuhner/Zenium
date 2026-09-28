@@ -307,8 +307,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // W8-F15 — the per-tab URL-bar-input signal the core's `freshTabIn` reads. The field now holds a
   // draft the user typed, differing from the page's own text (over a fresh new tab page the page's
   // text is empty, so any draft counts; in edit mode the address at rest does not): the tab is not
-  // a fresh empty one a launch URL may take, whatever its history says, as Chrome's omnibox keeps
-  // its new tab page from being reused while `user_input_in_progress()`. This instance is keyed to
+  // a fresh empty one a launch URL may take, whatever its history says, as Chrome's omnibox carries
+  // `user_input_in_progress()` per tab and a typed-into new tab page is never written over by a
+  // launch URL there. This instance is keyed to
   // one `urlbar.tabId` (`ContentArea`/`TabletShell`), so the signal fires on the FLIP of that
   // boolean for the bound tab – not per keystroke – and once more on the bar's close (unmount)
   // when a draft was out. A window-level bar bound to no tab marks nothing; the phone runs the

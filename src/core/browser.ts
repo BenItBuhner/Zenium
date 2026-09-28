@@ -430,7 +430,8 @@ export class Browser {
    * page's own text (a draft the user typed). In memory only: this window's moment, not persisted
    * and not synced, cleared on the tab's close (`forgetBarInput`). {@link freshTabIn} reads it so
    * a tab being typed into is not a fresh empty one a launch URL may take, as Chrome's omnibox
-   * `user_input_in_progress` keeps its new tab page from being reused.
+   * carries its `user_input_in_progress` per tab and a typed-into new tab page is never written
+   * over by a launch URL there.
    */
   private readonly barInput = new Set<string>()
   /** The shortcut table last handed to the host (`syncShortcuts`). */
@@ -2634,8 +2635,11 @@ export class Browser {
     if (tab.canGoBack || tab.canGoForward) return null
     // A tab the user is typing into is not empty, whatever its history says (W8-F15, Chrome's
     // rule): the URL bar holds a draft for it (`urlbar.input`), so a launch URL opens beside it
-    // and the draft is kept, as Chrome does not reuse a new tab page while its omnibox has user
-    // input in progress (`OmniboxEditModel::user_input_in_progress()`).
+    // instead of taking the tab from under the draft. Chrome's omnibox carries its user input
+    // per tab (`OmniboxEditModel::user_input_in_progress()`, kept across a tab switch by
+    // `GetStateForTabSwitch`), and a URL handed to a running Chrome is appended as a new
+    // foreground tab, never written over the active one (`startup_browser_creator_impl.cc`,
+    // `BrowserOpenBehavior::USE_EXISTING` unless `--same-tab`).
     if (this.barInput.has(tab.id)) return null
     const stack = this.state.tabNavigation.get(tab.id)
     if (stack?.entries.some((entry) => !isEmptyTabUrl(entry.url))) return null
