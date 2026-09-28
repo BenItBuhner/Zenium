@@ -36,6 +36,7 @@ import app.zen.chromium.ext.SweepHeapSteps
 import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepOrderProbe
 import app.zen.chromium.ext.SweepScreenGuard
+import app.zen.chromium.ext.SweepSwitchGrade
 import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10412,10 +10413,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * every tab through `scripting.executeScript` on the storage change, Helperbird's first
      * feature switch and its body class): the fixture settles, the popup opens, the control
      * (`switch`, a CSS selector; a popup app mounts it after its script runs, so it is waited
-     * for) is tapped at its centre, and `expr` (a `JSON.stringify` of `{pass, …}`) is polled on
-     * the fixture. A tap the control did not take is followed by a script click on it (recorded
-     * as such) and the effect polled once more; a control never found is `F` with the popup's
-     * text.
+     * for) is tapped at its centre through the popup WebView's own `dispatchTouchEvent`
+     * ([tapSettled]: a UiAutomation finger's down ages in a stalled queue and lands as a
+     * long-press – round 23's BEFORE on WebView 156 had Enable Copy Paste's checkbox untoggled
+     * under a 46-84-frame stall, the popup's `storage.set` missing from the bridge –, and what
+     * a first landing read as a long-press left is cleared and the control tapped again, the
+     * record in the grade's parenthesis), and `expr` (a `JSON.stringify` of `{pass, …}`) is
+     * polled on the fixture. A tap the control did not take is followed by a script click on it
+     * (recorded as such) and the effect polled once more; a control never found is `F` with the
+     * popup's text. The grade's word is [SweepSwitchGrade]'s.
      */
     private fun popupSwitch(label: String, page: String, switch: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -10424,26 +10430,28 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val since = StepEvidence(row)
         val popup = openPopup(row, factor)
         var control = JSONObject()
-        var how = "none"
+        var how = SweepSwitchGrade.How.NONE
+        var tapRecord: String? = null
         if (popup != null) {
             control = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", switch))).takeIf { it.has("x") } } ?: JSONObject()
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
             if (control.has("x")) {
                 val point = screenPoint(popup, control)
                 if (point != null && onScreen("$label: the switch")) {
-                    tap(point.first, point.second)
-                    how = "tap"
+                    tapRecord = tapSettled(popup, control, factor)
+                    tapRecord?.let { extra.put("tap", it) }
+                    how = SweepSwitchGrade.How.TAP
                 }
             }
         }
         extra.put("control", control).put("selector", switch)
-        var found = if (how == "tap") pollExpr(view, expr, scaled(settleMs, factor)) else json(tabEval(view, expr))
+        var found = if (how == SweepSwitchGrade.How.TAP) pollExpr(view, expr, scaled(settleMs, factor)) else json(tabEval(view, expr))
         if (!found.optBoolean("pass") && control.has("x") && popupView()?.takeIf { it.context == "popup" } != null) {
             extra.put("scriptClick", tabEval(popup!!, "(function(){var e=document.querySelector(${JSONObject.quote(switch)});if(!e)return 'gone';e.click();return 'clicked'})()"))
-            how = "script"
+            how = SweepSwitchGrade.How.SCRIPT
             found = pollExpr(view, expr, scaled(12_000, factor))
         }
-        found.put("how", how)
+        found.put("how", how.name.lowercase())
         popupView()?.takeIf { it.context == "popup" }?.let { live ->
             extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200)).put("popupConsole", JSONArray(consoleOf(live).takeLast(8)))
         }
@@ -10453,13 +10461,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-switch-core")
         runCatching { coreCall("extension.closePopup", "null") }
-        val pressed = if (how == "tap") "tapped" else "clicked by script"
-        when {
-            found.optBoolean("pass") -> Grade("P", "$label: the popup's switch ($pressed) restyled the fixture: ${found.toString().take(220)}", extra)
-            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
-            !control.has("x") -> Grade("F", "$label: no `$switch` control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
-            else -> Grade("F", "$label: the switch was $pressed and the fixture shows no effect within ${scaled(settleMs, factor) / 1000} s: ${found.toString().take(200)}", extra)
-        }
+        val word = SweepSwitchGrade.word(
+            label, switch, found.optBoolean("pass"), popup != null, control.has("x"), how, tapRecord,
+            scaled(12_000, factor) / 1000, scaled(settleMs, factor) / 1000, found.toString(), extra.optString("popupText")
+        )
+        Grade(word.verdict, word.note, extra)
     }
 
     /**
