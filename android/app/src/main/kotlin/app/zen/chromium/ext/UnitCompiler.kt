@@ -3,8 +3,14 @@ package app.zen.chromium.ext
 import app.zen.chromium.strOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.io.Writer
 import java.lang.ref.SoftReference
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -47,8 +53,21 @@ import kotlin.concurrent.withLock
  *    script as a transient text whatever its later uses, and a later unit of the plan reads it
  *    from disk again (Monica's 28 million characters of `content.js`: a held copy of it kept the
  *    heap at its limit, and the assembly's third copy of it was the allocation that failed);
+ *  - a unit of [fileUnitChars] characters or more is not held in the heap at all when the
+ *    runtime gives the compiler a [store]: it is written to a file of the compiler's own
+ *    directory AS IT IS ASSEMBLED ([ExtensionScripts.documentStartTo] into a buffered UTF-8
+ *    writer – no builder of it and no string of it, the sources alone at the peak, each let go
+ *    as it is copied through) and read back for each install ([Compiled.text]: the file's bytes
+ *    and the string decoded from them, two allocations for the moment of the install, nothing
+ *    retained). Compat round 24 (R24-1): the 10.6 million character carrier's assembly was the
+ *    peak's step at 42 MB of builder and string, and the string then stood through every row
+ *    after it – Adblock Ad Blocker Pro's 11 units, 37.7 MB retained – where Chrome holds one
+ *    copy of a content script in shared memory outside any heap limit and the WebView takes
+ *    its own native copy per view at the handoff in any case. A unit under the size is held
+ *    as it was: a small unit's string is cheaper than a read per install;
  *  - a unit whose inputs (config, groups, CSS, debug flag) did not change keeps its assembled
- *    script, so a reconfigure that re-sends an unchanged unit costs a hash, not an assembly;
+ *    script (or its file), so a reconfigure that re-sends an unchanged unit costs a hash, not
+ *    an assembly;
  *  - a unit the heap cannot hold as one script is refused before any of it is read
  *    ([budgetChars], [Compiled.refused]): the extension's other units, its pages and its
  *    background go on, the refused unit's content scripts do not run. Total Adblock lists a
@@ -75,6 +94,25 @@ import kotlin.concurrent.withLock
 class UnitCompiler(
     /** The most characters one unit may run to; [unitBudgetChars] of this process's heap unless a test says otherwise. */
     val budgetChars: Int = unitBudgetChars(Runtime.getRuntime().maxMemory()),
+    /**
+     * The unit store's root, or null to hold every unit in memory (the JVM tests' default): a
+     * unit of [fileUnitChars] characters or more is written to a file of this compiler's own
+     * directory under it as it is assembled and read back at each install ([Compiled.text]),
+     * so that no `String` of it stands in the Java heap between installs and no builder of it
+     * at its assembly (compat round 24, R24-1: Adblock Ad Blocker Pro's 10.6 million character
+     * carrier was a 21 MB builder and a 21 MB string at its copy-out, then the string through
+     * every row after – 37.7 MB of units retained on a 192 MB heap, round 23 §4.2).
+     */
+    private val store: File? = null,
+    /**
+     * The process's tag on this compiler's store directory (`<owner>-<n>`): at construction the
+     * directories of OTHER owners – a process that died with its store – are removed, and the
+     * directories of this owner are left (a runtime destroyed a moment ago in the same process,
+     * a browser restarted over the old one, releases its own in [close]).
+     */
+    private val owner: String = "jvm",
+    /** From this many characters a unit goes to the store rather than the heap; [FILE_UNIT_CHARS] unless a test says otherwise. */
+    val fileUnitChars: Int = FILE_UNIT_CHARS,
     private val bootstrap: () -> String
 ) {
     /** One compiled unit: what the WebView gets and what the core is told about it. */
@@ -86,6 +124,7 @@ class UnitCompiler(
         val world: String?,
         /** How much of the bootstrap the script carries ([ExtensionScripts.SHAPE_WHOLE] and the others). */
         val shape: String,
+        /** The script's text when the unit is held in memory; empty for a refused unit and for one in the store ([file]). */
         val script: String,
         val hash: String,
         /** Whether the script came from the cache rather than being assembled now. */
@@ -94,13 +133,39 @@ class UnitCompiler(
         val refused: Refused? = null,
         /**
          * The size the script's builder was made with ([ExtensionScripts.Assembled.presized]);
-         * `script.length` over it means an append grew the builder, which the assembly's count
+         * [chars] over it means an append grew the builder, which the assembly's count
          * is written not to allow. Kept with a cached unit, zero for a refused one.
          */
-        val presized: Int = script.length
+        val presized: Int = script.length,
+        /** The unit's file in the store, when it was written there rather than held ([UnitCompiler.fileUnitChars]); null otherwise. */
+        val file: File? = null,
+        /** The script's characters, whichever its store. */
+        val chars: Int = script.length
     ) {
         /** Whether the assembly's builder grew past its size (never, when the count is right). */
-        val grown: Boolean get() = script.length > presized
+        val grown: Boolean get() = chars > presized
+
+        /**
+         * The script's text: as held, or read from its file – the file's UTF-8 bytes in one
+         * array sized by its length and the string decoded from them, two allocations for the
+         * moment of an install and nothing retained, where a held unit is its string for as
+         * long as it is configured. Not `File.readText()`: that reads through a `StringWriter`
+         * whose buffer doubles as it fills and is copied out at the end – three copies of a
+         * 16-bit text at the peak, more than the builder and string the store is there to
+         * spare. `String(bytes, UTF_8)` is ART's own decoder (native from Android 12, straight
+         * into the string; a char array of the byte count on the way before that). Null for a
+         * refused unit, and for a stored one whose file is gone (the store lives under the
+         * app's files; a runtime that finds a unit's file missing installs the extension's
+         * other units and says so).
+         */
+        fun text(): String? {
+            val stored = file
+            return when {
+                refused != null -> null
+                stored != null -> runCatching { String(stored.readBytes(), Charsets.UTF_8) }.getOrNull()
+                else -> script
+            }
+        }
     }
 
     /** A unit over the budget: what it would have run to (from the files' sizes), over how many groups, against what. */
@@ -151,17 +216,69 @@ class UnitCompiler(
     /** Set by [close], read between units by a compile in flight; a closed compiler compiles nothing and holds nothing. */
     @Volatile private var closed = false
 
+    /**
+     * This compiler's own directory of the unit store (`<store>/<owner>-<n>`, `n` counting the
+     * compilers of the process), made when the first unit goes to it; [close] removes it. Null
+     * without a store.
+     */
+    private val storeDir: File? = store?.let { root -> File(root, "$owner-${STORE_DIRS.incrementAndGet()}") }
+
+    /** Whether the store has been looked over for other owners' leavings ([sweepStore]); once per compiler, at its first compile. */
+    private var swept = false
+
+    /**
+     * The store as this process finds it, at the first compile (the io thread, not the
+     * construction on the main one): a directory of another owner is a process's that died
+     * with its units – a destroyed runtime removes its own – and goes; this owner's other
+     * directories belong to the process's other runtimes, live or releasing, and stay.
+     */
+    private fun sweepStore() {
+        if (swept) return
+        swept = true
+        store?.listFiles()?.forEach { dir ->
+            if (dir.isDirectory && !dir.name.startsWith("$owner-")) dir.deleteRecursively()
+        }
+    }
+
+    /** Where unit `key` of `hash` goes in the store: named by both, so two units of one text keep their own files. */
+    private fun unitFile(key: String, hash: String): File? = storeDir?.let { File(it, "${sha256(key).take(16)}-${hash.take(24)}.js") }
+
+    /**
+     * A [Writer] as the assembly's sink: a `String` segment goes through
+     * `write(String, off, len)` – copied into the writer's buffer a chunk at a time, no
+     * substring of it made on the way – where `Appendable.append(csq, start, end)` would cut one.
+     */
+    private class WriterSink(private val w: Writer) : Appendable {
+        override fun append(csq: CharSequence?): Appendable {
+            val s = csq ?: "null"
+            if (s is String) w.write(s) else w.append(s)
+            return this
+        }
+
+        override fun append(csq: CharSequence?, start: Int, end: Int): Appendable {
+            val s = csq ?: "null"
+            if (s is String) w.write(s, start, end - start) else w.append(s, start, end)
+            return this
+        }
+
+        override fun append(c: Char): Appendable {
+            w.write(c.code)
+            return this
+        }
+    }
+
     /** Whether [close] was called: no unit compiles after it, and nothing is held. */
     val isClosed: Boolean get() = closed
 
     /**
      * What [close] let go of, for the runtime's destroy line: the extensions cached, their
-     * compiled units and those units' characters, the source texts still held (none between
-     * compiles since compat round 22 – a count here is a compile the close cut short).
-     * [deferred] when a compile held the lock: the figures are then zero here, and that compile
-     * releases everything at its next unit boundary.
+     * compiled units and those units' characters (held and stored alike; [storedUnits] of them
+     * were files of the store, removed with the compiler's directory), the source texts still
+     * held (none between compiles since compat round 22 – a count here is a compile the close
+     * cut short). [deferred] when a compile held the lock: the figures are then zero here, and
+     * that compile releases everything at its next unit boundary.
      */
-    class Released(val extensions: Int, val units: Int, val unitChars: Long, val sources: Int, val deferred: Boolean)
+    class Released(val extensions: Int, val units: Int, val unitChars: Long, val sources: Int, val deferred: Boolean, val storedUnits: Int = 0)
 
     /**
      * Compile `units` (`[{ key, origins, world, shape, config, groups: [{ ext, index, js,
@@ -186,8 +303,11 @@ class UnitCompiler(
         size: (String) -> Long?
     ): List<Compiled> = lock.withLock {
         if (closed) return@withLock emptyList()
+        sweepStore()
         var entry = cache[id]
         if (entry == null || entry.version != version) {
+            // A new version starts from nothing: the old version's stored units go with its cache.
+            entry?.units?.values?.forEach { it.file?.delete() }
             entry = ExtensionCache(version)
             cache[id] = entry
         }
@@ -223,12 +343,14 @@ class UnitCompiler(
             val hash = sha256("$config\u0000$groupsJson\u0000$cssJson\u0000$debug\u0000${world ?: ""}\u0000$shape")
             val previous = entry.units[key]
             if (previous != null && previous.hash == hash) {
-                val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused, presized = previous.presized)
+                val kept = Compiled(id, key, origins, world, shape, previous.script, hash, cached = true, refused = previous.refused, presized = previous.presized, file = previous.file, chars = previous.chars)
                 entry.units[key] = kept
                 out.add(kept)
                 entry.releaseUsedThrough(i, lastUse)
                 continue
             }
+            // The unit's inputs changed: what the key held before – a stored file – goes.
+            previous?.file?.delete()
             val estimate = estimateChars(entry, config, groupsJson, cssJson, size, shape)
             if (estimate > budgetChars) {
                 // Refused the way a compiled unit is kept: the same plan sent again answers from
@@ -239,28 +361,53 @@ class UnitCompiler(
                 entry.releaseUsedThrough(i, lastUse)
                 continue
             }
-            val groups = ArrayList<ExtensionScripts.Group>()
-            for (j in 0 until groupsJson.length()) {
-                val g = groupsJson.optJSONObject(j) ?: continue
-                val ext = g.optString("ext", id)
-                val files = g.optJSONArray("js") ?: JSONArray()
-                val sources = List(files.length()) { k ->
-                    val path = files.optString(k, "")
-                    if (path.startsWith(INLINE_CODE)) ExtensionScripts.Source(path.substring(INLINE_CODE.length))
-                    else source(entry, ext, path, read, lastUseHere(path))
-                        ?: ExtensionScripts.Source("console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});")
+            // The unit's groups and CSS over the files as the assembly takes them: read here,
+            // once, for the one assembly – a second call (the store's fallback below) reads them
+            // again from disk.
+            fun inputs(): Pair<List<ExtensionScripts.Group>, Map<String, String>> {
+                val groups = ArrayList<ExtensionScripts.Group>()
+                for (j in 0 until groupsJson.length()) {
+                    val g = groupsJson.optJSONObject(j) ?: continue
+                    val ext = g.optString("ext", id)
+                    val files = g.optJSONArray("js") ?: JSONArray()
+                    val sources = List(files.length()) { k ->
+                        val path = files.optString(k, "")
+                        if (path.startsWith(INLINE_CODE)) ExtensionScripts.Source(path.substring(INLINE_CODE.length))
+                        else source(entry, ext, path, read, lastUseHere(path))
+                            ?: ExtensionScripts.Source("console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});")
+                    }
+                    groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
                 }
-                groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
+                val css = LinkedHashMap<String, String>()
+                for (j in 0 until cssJson.length()) {
+                    val c = cssJson.optJSONObject(j) ?: continue
+                    val path = c.optString("path")
+                    val text = text(entry, path, read, hold = !lastUseHere(path)) ?: continue
+                    css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
+                }
+                return groups to css
             }
-            val css = LinkedHashMap<String, String>()
-            for (j in 0 until cssJson.length()) {
-                val c = cssJson.optJSONObject(j) ?: continue
-                val path = c.optString("path")
-                val text = text(entry, path, read, hold = !lastUseHere(path)) ?: continue
-                css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
+            // A unit of the store's size is written to its file as it is assembled – no builder
+            // of it, no string of it (the sources alone stand at the peak; they go as they are
+            // copied through) – and read back at each install. A file the store cannot take (an
+            // IOException: the disk full) leaves the unit to the heap, as every unit was.
+            val file = if (estimate >= fileUnitChars) unitFile(key, hash) else null
+            val stored = file?.let { f ->
+                runCatching {
+                    f.parentFile?.mkdirs()
+                    val (groups, css) = inputs()
+                    BufferedWriter(OutputStreamWriter(FileOutputStream(f), Charsets.UTF_8), STORE_BUFFER_CHARS).use { w ->
+                        ExtensionScripts.documentStartTo(WriterSink(w), bootstrap(), config, groups, css, debug, shape)
+                    }
+                }.onFailure { f.delete() }.getOrNull()
             }
-            val assembled = ExtensionScripts.documentStartSized(bootstrap(), config, groups, css, debug, shape)
-            val compiled = Compiled(id, key, origins, world, shape, assembled.script, hash, cached = false, presized = assembled.presized)
+            val compiled = if (stored != null) {
+                Compiled(id, key, origins, world, shape, "", hash, cached = false, presized = stored.presized, file = file, chars = stored.chars)
+            } else {
+                val (groups, css) = inputs()
+                val assembled = ExtensionScripts.documentStartSized(bootstrap(), config, groups, css, debug, shape)
+                Compiled(id, key, origins, world, shape, assembled.script, hash, cached = false, presized = assembled.presized)
+            }
             entry.units[key] = compiled
             out.add(compiled)
             entry.releaseUsedThrough(i, lastUse)
@@ -269,8 +416,11 @@ class UnitCompiler(
             releaseLocked()
             return@withLock emptyList()
         }
-        // Units the plan no longer has are not kept around (a registered script that went away).
-        entry.units.keys.retainAll(keysNow)
+        // Units the plan no longer has are not kept around (a registered script that went away),
+        // their stored files with them.
+        entry.units.entries.removeAll { (key, unit) ->
+            (key !in keysNow).also { gone -> if (gone) unit.file?.delete() }
+        }
         // Every unit of the plan is compiled: the texts read for them go, the units keep their own.
         entry.releaseSources()
         out
@@ -279,9 +429,9 @@ class UnitCompiler(
     /** The compiled units of one extension as last configured (empty when not configured). */
     fun unitsOf(id: String): List<Compiled> = lock.withLock { cache[id]?.units?.values?.sortedBy { it.key } ?: emptyList() }
 
-    /** Drop everything remembered for an extension (it was detached). */
+    /** Drop everything remembered for an extension (it was detached), its stored units' files with it. */
     fun forget(id: String) {
-        lock.withLock { cache.remove(id) }
+        lock.withLock { cache.remove(id)?.units?.values?.forEach { it.file?.delete() } }
     }
 
     /**
@@ -301,21 +451,26 @@ class UnitCompiler(
         }
     }
 
-    /** Under [lock]: every entry emptied and dropped, counted. */
+    /** Under [lock]: every entry emptied and dropped, counted; the compiler's store directory removed with its files. */
     private fun releaseLocked(): Released {
         var units = 0
         var unitChars = 0L
         var sources = 0
+        var stored = 0
         for (entry in cache.values) {
             units += entry.units.size
-            for (unit in entry.units.values) unitChars += unit.script.length
+            for (unit in entry.units.values) {
+                unitChars += unit.chars
+                if (unit.file != null) stored++
+            }
             for (held in entry.sources.values) if (held is SoftReference<*> && held.get() != null) sources++
             entry.units.clear()
             entry.sources.clear()
         }
         val extensions = cache.size
         cache.clear()
-        return Released(extensions, units, unitChars, sources, deferred = false)
+        storeDir?.let { runCatching { it.deleteRecursively() } }
+        return Released(extensions, units, unitChars, sources, deferred = false, storedUnits = stored)
     }
 
     /**
@@ -335,7 +490,9 @@ class UnitCompiler(
      * Pro's every unit 16-bit for one U+205D in each uBlock scriptlet's `makeLogPrefix` and the
      * filter lists' CJK, Cyrillic and Arabic text – theirs to carry as they are). The units a
      * plan refused ([Compiled.refused], kept with an empty script) are counted apart, so the
-     * count installed on the tabs has its match here. Does not wait: the lock is a compile's for
+     * count installed on the tabs has its match here. The units in the store ([Compiled.file])
+     * are counted apart too – `storedUnits` and their `storedChars` – and are in no heap
+     * figure: their text is on disk between installs. Does not wait: the lock is a compile's for
      * its whole run (seconds for a plan of Adblock Ad Blocker Pro's size), and what the reading
      * would count under it is the plan being replaced – `compiling: true` and nothing else says
      * so (compat round 22's `[lane]` run read a heap split off such a wait: the instrumentation's
@@ -350,9 +507,16 @@ class UnitCompiler(
             var unitBytes = 0L
             var wideUnits = 0
             var refused = 0
+            var storedUnits = 0
+            var storedChars = 0L
             for (unit in entry.units.values) {
                 if (unit.refused != null) {
                     refused++
+                    continue
+                }
+                if (unit.file != null) {
+                    storedUnits++
+                    storedChars += unit.chars
                     continue
                 }
                 val wide = unit.script.any { it > '\u00FF' }
@@ -372,6 +536,7 @@ class UnitCompiler(
             return JSONObject()
                 .put("compiling", false)
                 .put("units", entry.units.size).put("refused", refused).put("unitChars", unitChars).put("unitBytes", unitBytes).put("wideUnits", wideUnits)
+                .put("storedUnits", storedUnits).put("storedChars", storedChars)
                 .put("sources", sources).put("sourceChars", sourceChars).put("sourceBytes", sourceBytes)
         } finally {
             lock.unlock()
@@ -497,6 +662,23 @@ class UnitCompiler(
          * copies do not fit (Monica's `content.js`, 28 M).
          */
         const val LARGE_SOURCE_CHARS = 1 shl 20
+
+        /**
+         * From this many characters a unit goes to the store when the compiler has one: a
+         * megabyte of 16-bit text is two megabytes of heap held through every row for a unit a
+         * page may never match, and the read per install of a unit this size (its bytes and its
+         * string, a few tens of milliseconds) is the cost of not holding it. Adblock Ad Blocker
+         * Pro's plan has three units over it – the 10.6 million character carrier and two of
+         * 1.9 and 2.0 million, 14.5 million characters and 29 MB of the 39.5 MB its units held
+         * – and eight under (0.4 to 0.7 million each, 5.2 million together), held as before.
+         */
+        const val FILE_UNIT_CHARS = 1 shl 20
+
+        /** The store writer's buffer, in characters: the file is written in chunks of this, never the unit at once. */
+        private const val STORE_BUFFER_CHARS = 1 shl 16
+
+        /** Counts the compilers of the process, for their store directories' names (`<owner>-<n>`). */
+        private val STORE_DIRS = AtomicInteger()
 
         /**
          * A `js` entry that is the script's text rather than a path: `userScripts.register` takes

@@ -26,17 +26,18 @@ object ExtensionScripts {
      * at the copy out only the builder and the script: two copies at the peak, never three. The
      * third copy was the allocation that failed on the 192 MB debug heap.
      */
-    class Source(val length: Int, val names: List<String>, private val write: (StringBuilder) -> Unit) {
+    class Source(val length: Int, val names: List<String>, private val write: (Appendable) -> Unit) {
         constructor(text: String) : this(text.length, TopLevelDeclarations.scanSource(text), { it.append(text) })
 
-        fun appendTo(sb: StringBuilder) = write(sb)
+        /** Write the text into `out` – the unit's builder, or the writer of its file ([documentStartTo]). */
+        fun appendTo(out: Appendable) = write(out)
 
         companion object {
             /** A text appended once and released: after [appendTo] the source no longer holds it. */
             fun transient(text: String): Source {
                 var held: String? = text
-                return Source(text.length, TopLevelDeclarations.scanSource(text)) { sb ->
-                    sb.append(held ?: throw IllegalStateException("a transient source is appended once"))
+                return Source(text.length, TopLevelDeclarations.scanSource(text)) { out ->
+                    out.append(held ?: throw IllegalStateException("a transient source is appended once"))
                     held = null
                 }
             }
@@ -193,46 +194,132 @@ object ExtensionScripts {
         debug: Boolean,
         shape: String = SHAPE_WHOLE
     ): Assembled {
-        val debugText = debug.toString()
-        val keys = Array(groups.size) { JSONObject.quote("${groups[it].extensionId}/${groups[it].index}") }
-        val mirrors = Array(groups.size) { mirrorOf(groups[it]) }
-        var count = BOOT_HEAD.length + configJson.length + BOOT_DEBUG.length + debugText.length + BOOT_CSS.length
-        var first = true
-        for ((key, text) in css) {
-            if (!first) count++
-            first = false
-            count += quotedChars(key) + 1 + quotedChars(text)
+        val layout = Layout(bootstrap, configJson, groups, css, debug, shape)
+        val sb = StringBuilder(layout.count)
+        layout.writeTo(sb)
+        return Assembled(sb.toString(), layout.count)
+    }
+
+    /**
+     * What [documentStartTo] wrote: the count the text was laid out to ([Assembled.presized]'s
+     * figure) and the characters that went into the sink – the same number when the count is
+     * right, which [grown] checks as [Assembled.grown] does.
+     */
+    class Written(val presized: Int, val chars: Int) {
+        val grown: Boolean get() = chars > presized
+    }
+
+    /**
+     * [documentStartSized]'s text written into `out` as it is assembled – the writer of a file
+     * under the runtime's unit store (`UnitCompiler`, compat round 24's R24-1) – so that no
+     * builder and no `String` of the unit stands in the Java heap: a 10.6 million character
+     * carrier (Adblock Ad Blocker Pro's 650 scriptlets) was a 21 MB builder and a 21 MB string
+     * at its copy-out, the 42 MB floor round 23 §4.2 measured, next to the sources being copied
+     * in; written through, the peak is the sources alone. The same text, character for
+     * character, as [documentStartSized] assembles (its tests hold the two to each other);
+     * counted as it goes, so [Written.grown] reads the count against what was written.
+     */
+    fun documentStartTo(
+        out: Appendable,
+        bootstrap: String,
+        configJson: String,
+        groups: List<Group>,
+        css: Map<String, String>,
+        debug: Boolean,
+        shape: String = SHAPE_WHOLE
+    ): Written {
+        val layout = Layout(bootstrap, configJson, groups, css, debug, shape)
+        val counting = Counting(out)
+        layout.writeTo(counting)
+        return Written(layout.count, counting.chars)
+    }
+
+    /** An [Appendable] over another that counts the characters through it. */
+    private class Counting(private val out: Appendable) : Appendable {
+        var chars = 0
+
+        override fun append(csq: CharSequence?): Appendable {
+            val s = csq ?: "null"
+            out.append(s)
+            chars += s.length
+            return this
         }
-        count += BOOT_SOURCES.length
-        for (i in groups.indices) {
-            if (i > 0) count++
-            count += keys[i].length + 1 + groupFunctionChars(groups[i], mirrors[i])
+
+        override fun append(csq: CharSequence?, start: Int, end: Int): Appendable {
+            out.append(csq ?: "null", start, end)
+            chars += end - start
+            return this
         }
-        count += BOOT_END.length + shapeChars(bootstrap.length, shape) + BOOT_CLOSE.length + SOURCE_URL_TAIL.length
-        val sb = StringBuilder(count)
-        sb.append(BOOT_HEAD).append(configJson).append(BOOT_DEBUG).append(debugText)
-        sb.append(BOOT_CSS)
-        first = true
-        for ((key, text) in css) {
-            if (!first) sb.append(',')
-            first = false
-            sb.append(JSONObject.quote(key)).append(':').append(JSONObject.quote(text))
+
+        override fun append(c: Char): Appendable {
+            out.append(c)
+            chars++
+            return this
         }
-        sb.append(BOOT_SOURCES)
-        for (i in groups.indices) {
-            if (i > 0) sb.append(',')
-            sb.append(keys[i]).append(':')
-            appendGroupFunction(sb, groups[i], mirrors[i])
+    }
+
+    /**
+     * The document-start script's text laid out before it is written: the groups' quoted keys
+     * and mirrors (computed once here and handed to the append), and the EXACT count of the
+     * whole – every literal, `debug`'s spelling, the quoted CSS keys and texts (bounded from
+     * above, [quotedChars]), each group's function, the shape's bootstrap part, the close and the
+     * name – so that a builder sized by it never grows ([documentStartSized]) and a file written
+     * by it is checked against it ([documentStartTo]).
+     */
+    private class Layout(
+        private val bootstrap: String,
+        private val configJson: String,
+        private val groups: List<Group>,
+        private val css: Map<String, String>,
+        debug: Boolean,
+        private val shape: String
+    ) {
+        private val debugText = debug.toString()
+        private val keys = Array(groups.size) { JSONObject.quote("${groups[it].extensionId}/${groups[it].index}") }
+        private val mirrors = Array(groups.size) { mirrorOf(groups[it]) }
+        val count: Int
+
+        init {
+            var count = BOOT_HEAD.length + configJson.length + BOOT_DEBUG.length + debugText.length + BOOT_CSS.length
+            var first = true
+            for ((key, text) in css) {
+                if (!first) count++
+                first = false
+                count += quotedChars(key) + 1 + quotedChars(text)
+            }
+            count += BOOT_SOURCES.length
+            for (i in groups.indices) {
+                if (i > 0) count++
+                count += keys[i].length + 1 + groupFunctionChars(groups[i], mirrors[i])
+            }
+            count += BOOT_END.length + shapeChars(bootstrap.length, shape) + BOOT_CLOSE.length + SOURCE_URL_TAIL.length
+            this.count = count
         }
-        sb.append(BOOT_END)
-        when (shape) {
-            SHAPE_CARRIER -> sb.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL).append(CARRIER_RUN)
-            SHAPE_HOLDER -> sb.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL)
-            SHAPE_THIN -> sb.append(THIN_RUN)
-            else -> sb.append(bootstrap)
+
+        fun writeTo(out: Appendable) {
+            out.append(BOOT_HEAD).append(configJson).append(BOOT_DEBUG).append(debugText)
+            out.append(BOOT_CSS)
+            var first = true
+            for ((key, text) in css) {
+                if (!first) out.append(',')
+                first = false
+                out.append(JSONObject.quote(key)).append(':').append(JSONObject.quote(text))
+            }
+            out.append(BOOT_SOURCES)
+            for (i in groups.indices) {
+                if (i > 0) out.append(',')
+                out.append(keys[i]).append(':')
+                appendGroupFunction(out, groups[i], mirrors[i])
+            }
+            out.append(BOOT_END)
+            when (shape) {
+                SHAPE_CARRIER -> out.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL).append(CARRIER_RUN)
+                SHAPE_HOLDER -> out.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL)
+                SHAPE_THIN -> out.append(THIN_RUN)
+                else -> out.append(bootstrap)
+            }
+            out.append(BOOT_CLOSE).append(SOURCE_URL_TAIL)
         }
-        sb.append(BOOT_CLOSE).append(SOURCE_URL_TAIL)
-        return Assembled(sb.toString(), count)
     }
 
     /** Exactly what the shape's bootstrap part of [documentStartSized] writes, in characters. */
@@ -287,20 +374,20 @@ object ExtensionScripts {
      * parenthesis). The mirror ([TopLevelDeclarations.mirror]) hands the files' top-level
      * declarations to the extension's scope, where Chrome's world would have had them as globals.
      */
-    fun appendGroupFunction(sb: StringBuilder, group: Group) = appendGroupFunction(sb, group, mirrorOf(group))
+    fun appendGroupFunction(out: Appendable, group: Group) = appendGroupFunction(out, group, mirrorOf(group))
 
-    /** [appendGroupFunction] with the group's mirror ([mirrorOf]) computed by the caller – [documentStartSized] counts it first. */
-    fun appendGroupFunction(sb: StringBuilder, group: Group, mirror: String) {
-        sb.append(FUNCTION_HEAD)
-        if (group.isolation == "with") sb.append(WITH_HEAD)
+    /** [appendGroupFunction] with the group's mirror ([mirrorOf]) computed by the caller – the layout counts it first. */
+    fun appendGroupFunction(out: Appendable, group: Group, mirror: String) {
+        out.append(FUNCTION_HEAD)
+        if (group.isolation == "with") out.append(WITH_HEAD)
         for (source in group.sources) {
-            sb.append(SOURCE_JOIN_HEAD)
-            source.appendTo(sb)
-            sb.append(SOURCE_JOIN_TAIL)
+            out.append(SOURCE_JOIN_HEAD)
+            source.appendTo(out)
+            out.append(SOURCE_JOIN_TAIL)
         }
-        sb.append(mirror)
-        if (group.isolation == "with") sb.append('}')
-        sb.append(FUNCTION_TAIL)
+        out.append(mirror)
+        if (group.isolation == "with") out.append('}')
+        out.append(FUNCTION_TAIL)
     }
 
     /** The mirror tail of a group: its files' top-level names, each once, in order. */
