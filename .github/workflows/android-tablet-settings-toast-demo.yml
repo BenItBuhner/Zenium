@@ -28,11 +28,6 @@ name: Android tablet settings toast demo
 # per act when the emulator itself went away under the driver, never when the driver failed.
 on:
   workflow_dispatch:
-  # Temporary, this branch only (the Android coordinator's tablet check): a new workflow cannot
-  # be dispatched until it is on main and no token here dispatches, so the branch fires it on
-  # push for the one run of both lanes. Removed again once the run is read.
-  push:
-    branches: [cursor/desktop-w8-f16-dialog-toast-lift-5397]
 
 permissions:
   contents: read
