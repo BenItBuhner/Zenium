@@ -104,7 +104,7 @@ describe('contentSettingsFor', () => {
       choices: ['ask', 'deny'],
       promptLabel: 'control and reprogram your MIDI devices',
       allowOnce: false,
-      support: { desktop: 'enforced', android: 'n-a' }
+      support: { desktop: 'enforced', android: 'enforced' }
     })
     // Electron's `midiSysex` and the WebView's `RESOURCE_MIDI_SYSEX` (the request any Web MIDI
     // call makes) are that row: the same answer, the same words, no row of their own.
@@ -115,10 +115,10 @@ describe('contentSettingsFor', () => {
     expect(builtInDefault('midiSysex')).toBe('ask')
     expect(tracksLastVisit('midiSysex')).toBe(true)
     expect(CONTENT_SETTINGS.map((s) => s.id)).not.toContain('midiSysex')
-    // Listed on the desktop; hidden on the phone while `Permissions.kt` refuses
-    // `RESOURCE_MIDI_SYSEX` before the core hears it: a row is a promise (#506).
+    // Listed on both hosts: Electron hands the core `midiSysex`, and `Permissions.kt` relays
+    // `RESOURCE_MIDI_SYSEX` as the same request – a path acts on the row on each (#506).
     expect(ids('desktop')).toContain('midi')
-    expect(ids('android')).not.toContain('midi')
+    expect(ids('android')).toContain('midi')
     // The retired words are gone: the second row's label and refusal, the first row's old lines.
     for (const setting of CONTENT_SETTINGS) {
       const words = [

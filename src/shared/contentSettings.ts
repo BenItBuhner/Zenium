@@ -178,11 +178,11 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     // Desktop: Electron's request handler is the core's prompt, and the engine grants the
     // process the SysEx right on an Allow of its own accord (`electron_permission_manager.cc:
     // 72-80`). Android: the WebView asks `onPermissionRequest` with `RESOURCE_MIDI_SYSEX`
-    // (`aw_permission_manager.cc:373-378`), which `Permissions.kt` refuses before the core hears
-    // it, so no path acts on the row there yet and it is not offered (a row is a promise, the
-    // root's #506 ruling); `enforced` the day the host routes the resource through its
-    // `ask("midiSysex", …)` as it routes the camera's – the core answers that request already.
-    support: { desktop: 'enforced', android: 'n-a' }
+    // (`aw_permission_manager.cc:373-378`), which `Permissions.kt` relays as a
+    // `permission.request` of `midiSysex` the way it relays the camera's; the core answers from
+    // this row and the host grants the resource, whereupon the WebView hands the page the SysEx
+    // right itself (`aw_permission_manager.cc:242-246`).
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   // The device rows: a chooser is the prompt (`promptLabel` stays null – the site is never asked
   // with a bubble), `block` refuses the site without one, and what a pick grants is one DEVICE
