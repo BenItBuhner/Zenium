@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MenuDescriptor, Rect } from '@shared/types'
 import { closeAllPopovers, openPopover } from '../popoverStore'
-import { holdChromeInert, POPOVER_MARGIN } from '../portals'
+import { holdChromeInert, POPOVER_MARGIN, type Size } from '../portals'
 import {
+  awaitTooltipRoom,
   measureTooltipSize,
   placeTooltip,
   TOOLTIP_ATTR,
@@ -12,10 +13,12 @@ import {
   TOOLTIP_GAP,
   TOOLTIP_HIDDEN,
   TOOLTIP_NO_COVER_ATTR,
+  TOOLTIP_ROOM_CEILING_MS,
   tooltipBlocked,
   TooltipController,
   tooltipMayCover,
   tooltipPaneOf,
+  tooltipRoomStore,
   tooltipSize,
   tooltipTargetOf,
   type TooltipState
@@ -608,5 +611,168 @@ describe('tooltipBlocked', () => {
     const menu: MenuDescriptor = { id: 'm', items: [], source: 'page', x: 0, y: 0 }
     uiStore.set({ menu })
     expect(tooltipBlocked(bubbleButton)).toBe(true)
+  })
+})
+
+describe('awaitTooltipRoom', () => {
+  /*
+   * §11's paint handshake for the popup surface's tooltip room, the reader cover's shape
+   * (#587): the hold (`tooltipRoomStore.awaited`) stands from the ask until the room has
+   * landed – the core's word back (`selectionMenu.surfaceSize`'s answer, the surface's size as
+   * set) AND this document's frame at that size, in either order – or the ceiling
+   * (`TOOLTIP_ROOM_CEILING_MS`, the cover report's 500) for a landing that never comes; a word
+   * that fails, the release (the moment ending) and a newer ask end it too, once only.
+   */
+  const REST: Size = { width: 202, height: 62 }
+  const GROWN: Size = { width: 202, height: 91 }
+  let writes: boolean[]
+  let unsubscribe: () => void
+
+  /** The document's frame arriving at a size: the window's inner size, and its `resize`. */
+  const frameAt = (size: Size): void => {
+    Object.assign(window, { innerWidth: size.width, innerHeight: size.height })
+    window.dispatchEvent(new Event('resize'))
+  }
+  /** The core's word, spoken when the test says. */
+  const word = (): {
+    answer: Promise<Size | null>
+    say: (size: Size | null) => Promise<void>
+    fail: () => Promise<void>
+  } => {
+    let resolve!: (size: Size | null) => void
+    let reject!: (reason: Error) => void
+    const answer = new Promise<Size | null>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    const settle = async (): Promise<void> => {
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+    return {
+      answer,
+      say: async (size) => {
+        resolve(size)
+        await settle()
+      },
+      fail: async () => {
+        reject(new Error('the port went'))
+        await settle()
+      }
+    }
+  }
+  const awaited = (): boolean => tooltipRoomStore.get().awaited
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    Object.assign(window, { innerWidth: REST.width, innerHeight: REST.height })
+    writes = []
+    unsubscribe = tooltipRoomStore.subscribe(() => writes.push(awaited()))
+  })
+  afterEach(() => {
+    unsubscribe()
+    vi.runAllTimers()
+    tooltipRoomStore.set({ awaited: false })
+    vi.useRealTimers()
+  })
+
+  it('the ceiling is the cover report’s: 500 ms', () => {
+    expect(TOOLTIP_ROOM_CEILING_MS).toBe(500)
+  })
+
+  it('holds from the ask; the word alone is not the landing – the frame at the size is', async () => {
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    expect(awaited()).toBe(true)
+    await w.say(GROWN)
+    // The core has set the bounds; this document has not yet been given its new size.
+    expect(awaited()).toBe(true)
+    frameAt(GROWN)
+    expect(awaited()).toBe(false)
+    expect(writes).toEqual([true, false])
+  })
+
+  it('the frame may come before the word: the resize alone holds until the word', async () => {
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    frameAt(GROWN)
+    expect(awaited()).toBe(true)
+    await w.say(GROWN)
+    expect(awaited()).toBe(false)
+  })
+
+  it('a frame at or past the size lands it; one short of it does not', async () => {
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    await w.say(GROWN)
+    frameAt({ width: 202, height: 90 })
+    expect(awaited()).toBe(true)
+    frameAt({ width: 240, height: 100 })
+    expect(awaited()).toBe(false)
+  })
+
+  it('a document already at the size lands on the word alone: the same report asked again', async () => {
+    Object.assign(window, { innerWidth: GROWN.width, innerHeight: GROWN.height })
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    expect(awaited()).toBe(true)
+    await w.say(GROWN)
+    expect(awaited()).toBe(false)
+  })
+
+  it('a null word – the core placed no surface – is nothing to wait for', async () => {
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    await w.say(null)
+    expect(awaited()).toBe(false)
+  })
+
+  it('the ceiling lets go regardless, for a word that never comes', () => {
+    awaitTooltipRoom(word().answer)
+    vi.advanceTimersByTime(TOOLTIP_ROOM_CEILING_MS - 1)
+    expect(awaited()).toBe(true)
+    vi.advanceTimersByTime(1)
+    expect(awaited()).toBe(false)
+  })
+
+  it('the ceiling lets go for a word that came without the frame, too', async () => {
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    await w.say(GROWN)
+    vi.advanceTimersByTime(TOOLTIP_ROOM_CEILING_MS)
+    expect(awaited()).toBe(false)
+  })
+
+  it('a word that fails ends the wait as the ceiling would', async () => {
+    const w = word()
+    awaitTooltipRoom(w.answer)
+    await w.fail()
+    expect(awaited()).toBe(false)
+  })
+
+  it('the release ends the wait at once, and a late word, frame or ceiling says nothing after', async () => {
+    const w = word()
+    const release = awaitTooltipRoom(w.answer)
+    release()
+    expect(awaited()).toBe(false)
+    release()
+    await w.say(GROWN)
+    frameAt(GROWN)
+    vi.advanceTimersByTime(TOOLTIP_ROOM_CEILING_MS)
+    expect(writes).toEqual([true, false])
+  })
+
+  it('a newer ask supersedes an older: the older’s landing ends nothing', async () => {
+    const first = word()
+    awaitTooltipRoom(first.answer)
+    const second = word()
+    awaitTooltipRoom(second.answer)
+    // The first's word, at a size the document already has, would have landed it.
+    await first.say(REST)
+    expect(awaited()).toBe(true)
+    await second.say(GROWN)
+    frameAt(GROWN)
+    expect(awaited()).toBe(false)
+    expect(writes).toEqual([true, false, true, false])
   })
 })

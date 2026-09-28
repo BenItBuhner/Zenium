@@ -444,6 +444,86 @@ function intersects(box: TooltipBox, size: Size, page: Rect): boolean {
 /** The app's tooltip: which control it is up for. Its own store – the frame has no stake in it. */
 export const tooltipStore = createStore<TooltipState>(TOOLTIP_HIDDEN, 'tooltip')
 
+/**
+ * The room a tooltip's own document is having made for it (the popup surface's: the core
+ * grows the surface for the folded pill's tooltips, `MiniMenuRoom`), while it is on its way.
+ * The host keeps a tooltip hidden while `awaited` (`components/Tooltip.tsx`), as it keeps one
+ * hidden until the page is under its cover: the room asked as a tooltip arms lands a round
+ * trip later, and a tooltip painted before it lands is cut by the surface's old bounds – §11's
+ * defect (the stand-in rule: no frame of the wrong picture between two right ones). Never set
+ * in the window's shells: their document is the window, and nothing grows for a tooltip there.
+ */
+export interface TooltipRoomState {
+  /** Whether a room is asked and not yet landed – the tooltip waits, hidden. */
+  awaited: boolean
+}
+
+export const tooltipRoomStore = createStore<TooltipRoomState>({ awaited: false }, 'tooltip-room')
+
+/**
+ * The most a tooltip waits for its room to land before it shows regardless: the failure
+ * ceiling of §11's paint handshake as the reader's cover has it (`COVER_REPORT_CEILING_MS`,
+ * core/tabs.ts – 500 ms: well past the paint it stands for, Chromium's own figure for holding
+ * a paint), the same judgement here – the room is one command's round trip and the frame after
+ * it, tens of milliseconds; a word that never comes (a surface torn down under the ask, a call
+ * lost with its port) must not keep the tooltip from a control the pointer rests on. Short of
+ * the cover's decode wait (`COVER_WAIT_MS` 2500, lib/cover.ts), which stands for a picture that
+ * may take that long to have; a resize never does.
+ */
+export const TOOLTIP_ROOM_CEILING_MS = 500
+
+/** The wait standing right now, so a newer ask supersedes an older one whose word is still on its way. */
+let roomWait: { end: () => void } | null = null
+
+/**
+ * §11's paint handshake for the tooltip's room (the reader cover's `afterFrame`, brought to
+ * the document that asked): hold the tooltip's show – `tooltipRoomStore.awaited` – until the
+ * room asked of the core has landed, or the ceiling (`TOOLTIP_ROOM_CEILING_MS`) for a landing
+ * that never comes, whichever first and once only. Landed is two things, as the cover's paint
+ * is the word and the frame: the core's word that the surface is set (`answer`: the surface's
+ * size, `selectionMenu.surfaceSize`'s result; null when it placed no surface, which is nothing
+ * to wait for), and this document's own frame at that size – `innerWidth`/`innerHeight` at or
+ * past it, read as the word comes and at each `resize` after the ask: the word and the frame
+ * travel different channels, and either may come first. A word that fails (the call rejected)
+ * ends the wait as the ceiling would. Returns the release for the moment ending before the
+ * landing (the room given back): the hold goes at once, a tooltip being nothing to wait for.
+ * A newer ask supersedes an older: the older's landing then says nothing.
+ */
+export function awaitTooltipRoom(answer: Promise<Size | null>): () => void {
+  roomWait?.end()
+  let asked: Size | null | undefined
+  let ceiling: ReturnType<typeof setTimeout> | null = null
+  let onResize = (): void => undefined
+  const landed = (): boolean =>
+    asked !== undefined &&
+    (asked === null || (window.innerWidth >= asked.width && window.innerHeight >= asked.height))
+  const wait = {
+    // Once only, and for the wait that stands: a superseded wait was ended by its successor.
+    end: (): void => {
+      if (roomWait !== wait) return
+      roomWait = null
+      if (ceiling !== null) clearTimeout(ceiling)
+      window.removeEventListener('resize', onResize)
+      tooltipRoomStore.set({ awaited: false })
+    }
+  }
+  onResize = (): void => {
+    if (landed()) wait.end()
+  }
+  roomWait = wait
+  tooltipRoomStore.set({ awaited: true })
+  ceiling = setTimeout(wait.end, TOOLTIP_ROOM_CEILING_MS)
+  window.addEventListener('resize', onResize)
+  answer.then(
+    (size) => {
+      asked = size
+      if (landed()) wait.end()
+    },
+    () => wait.end()
+  )
+  return wait.end
+}
+
 /** How many of `floatingChrome`'s holds are the tooltip host's own (0 or 1). */
 let ownHolds = 0
 
