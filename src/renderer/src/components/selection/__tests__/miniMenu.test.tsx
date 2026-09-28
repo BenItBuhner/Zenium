@@ -16,8 +16,10 @@ import { browserStore } from '@renderer/lib/ui'
  * the `Tooltip` host mounted in this document; no toolkit `title`), in the same 46 box (the
  * fold changes the width alone) – tells the core the box it measured with its pose (again for
  * a new list of chips or the other pose) and, folded, the room its tooltips need under the
- * pill, runs a chip's action through the core and dismisses on Escape, the tooltip going first
- * in the one press.
+ * pill for the tooltip's moment alone (asked as a tooltip arms – the mouse pointer on a glyph,
+ * or keyboard focus – and given back as the pointer leaves the pill, on a press, on blur, on
+ * Escape; none at rest), runs a chip's action through the core and dismisses on Escape, the
+ * tooltip going first in the one press.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -106,6 +108,21 @@ const pill = (): HTMLElement | null => container.querySelector<HTMLElement>('[da
 const chips = (): HTMLButtonElement[] => [
   ...container.querySelectorAll<HTMLButtonElement>('[data-mini-menu-chip]')
 ]
+/** What the pill told the core of its size, report by report (`selectionMenu.surfaceSize`'s args). */
+const told = (): unknown[] =>
+  run.mock.calls.filter(([name]) => name === 'selectionMenu.surfaceSize').map(([, a]) => a)
+const pointer = (
+  type: 'pointerover' | 'pointerout' | 'pointerdown',
+  target: Element,
+  relatedTarget: Element | null = null,
+  pointerType = 'mouse'
+): void => {
+  act(() => {
+    target.dispatchEvent(
+      new PointerEvent(type, { bubbles: true, composed: true, pointerType, relatedTarget })
+    )
+  })
+}
 
 beforeEach(() => {
   run.mockReset()
@@ -295,12 +312,13 @@ describe('the mini menu', () => {
     const sizes = (): unknown[] =>
       run.mock.calls.filter(([name]) => name === 'selectionMenu.surfaceSize').map(([, a]) => a)
     expect(sizes()).toEqual([{ tabId: 't1', width: 300, height: 46, folded: false }])
-    // The folded row as the stylesheet draws it: narrower, the same 46 box.
+    // The folded row as the stylesheet draws it: narrower, the same 46 box – and, at rest, no
+    // room for its tooltips (its report says so; the tooltip's moment asks it).
     box = { width: 186, height: 46 }
     render(<MiniMenu menu={{ ...MENU, folded: true }} />)
     expect(sizes()).toEqual([
       { tabId: 't1', width: 300, height: 46, folded: false },
-      { tabId: 't1', width: 186, height: 46, folded: true }
+      { tabId: 't1', width: 186, height: 46, folded: true, room: null }
     ])
     // The same pose again tells nothing new; the other pose tells its own box again.
     render(<MiniMenu menu={{ ...MENU, folded: true, text: 'foam' }} />)
@@ -311,7 +329,7 @@ describe('the mini menu', () => {
     expect(sizes()[2]).toEqual({ tabId: 't1', width: 300, height: 46, folded: false })
   })
 
-  it('folded, asks the core with its box for the room its tooltips need under the pill, measured off the tooltip’s own class; the full row asks none', () => {
+  it('folded, asks the core with its box for the room its tooltips need under the pill the instant a tooltip arms – the mouse pointer’s arrival on a glyph – measured off the tooltip’s own class, and none at rest; the full row asks none', () => {
     // The pill stands at the surface's 8 padding (`MINI_MENU_SURFACE_PAD`, its offset in the
     // document), its 28 glyph buttons centred in the 46 box: a button's bottom is 8 + (46 +
     // 28) / 2 = 45. The host places a tooltip `TOOLTIP_GAP` 8 under its button and keeps it
@@ -322,28 +340,87 @@ describe('the mini menu', () => {
     box = { width: 186, height: 46 }
     fold = { pad: 8, chip: 28, tip: { width: 96, height: 30 } }
     render(<MiniMenu menu={{ ...MENU, folded: true }} />)
-    const sizes = (): unknown[] =>
-      run.mock.calls.filter(([name]) => name === 'selectionMenu.surfaceSize').map(([, a]) => a)
-    expect(sizes()).toEqual([
-      { tabId: 't1', width: 186, height: 46, folded: true, room: { below: 29, width: 112 } }
-    ])
+    // At rest – no pointer, no tooltip – the folded row asks no room: its report says so.
+    expect(told()).toEqual([{ tabId: 't1', width: 186, height: 46, folded: true, room: null }])
+    // The pointer arrives on a glyph: the tooltip arms (the host's dwell starts from this
+    // event), and the room is asked with the same box, at once – before any dwell.
+    const [copy, search] = chips()
+    pointer('pointerover', search.querySelector('svg')!, pill())
+    expect(told()).toHaveLength(2)
+    expect(told()[1]).toEqual({
+      tabId: 't1',
+      width: 186,
+      height: 46,
+      folded: true,
+      room: { below: 29, width: 112 }
+    })
     // The probe is gone once measured: nothing in the tooltip's class stands in the document
     // before a tooltip shows.
     expect(document.querySelector('.zen-tooltip')).toBeNull()
+    // Browsing the pill – the next glyph, the pill's own padding between – keeps the one room.
+    pointer('pointerout', search, copy)
+    pointer('pointerover', copy, search)
+    pointer('pointerout', copy, pill())
+    pointer('pointerover', pill()!, copy)
+    expect(told()).toHaveLength(2)
+    // The pointer leaves the pill: the room goes with it, the same box told again without.
+    pointer('pointerout', pill()!, document.body)
+    expect(told()).toHaveLength(3)
+    expect(told()[2]).toEqual({ tabId: 't1', width: 186, height: 46, folded: true, room: null })
     // A wider tooltip – a longer engine name – asks a wider surface; the fraction is taken up.
     fold = { ...fold, tip: { width: 130.4, height: 30 } }
     render(<MiniMenu menu={{ ...MENU, folded: true, actions: MENU.actions.slice(0, 2) }} />)
-    expect(sizes()[1]).toEqual({
+    expect(told()[3]).toEqual({ tabId: 't1', width: 186, height: 46, folded: true, room: null })
+    pointer('pointerover', chips()[1], pill())
+    expect(told()[4]).toEqual({
       tabId: 't1',
       width: 186,
       height: 46,
       folded: true,
       room: { below: 29, width: 147 }
     })
-    // The full row's tooltips are its labels: no room asked.
+    // The full row's tooltips are its labels: no room asked, nor said.
     box = { width: 300, height: 46 }
     render(<MiniMenu menu={MENU} />)
-    expect(sizes()[2]).toEqual({ tabId: 't1', width: 300, height: 46, folded: false })
+    expect(told()[5]).toEqual({ tabId: 't1', width: 300, height: 46, folded: false })
+    pointer('pointerover', chips()[1], pill())
+    expect(told()).toHaveLength(6)
+  })
+
+  it('folded, gives the room back on a press, and asks none for a touch or pen pointer (no tooltip arms for them)', () => {
+    box = { width: 186, height: 46 }
+    fold = { pad: 8, chip: 28, tip: { width: 96, height: 30 } }
+    render(<MiniMenu menu={{ ...MENU, folded: true }} />)
+    const [copy] = chips()
+    pointer('pointerover', copy, pill(), 'touch')
+    pointer('pointerover', copy, pill(), 'pen')
+    expect(told()).toHaveLength(1)
+    pointer('pointerover', copy, pill())
+    expect(told()).toHaveLength(2)
+    expect(told()[1]).toMatchObject({ room: { below: 29, width: 112 } })
+    // A press takes the tooltip down (the chassis's rule; the action follows): the room goes
+    // with it, before the action's own report.
+    pointer('pointerdown', copy)
+    expect(told()).toHaveLength(3)
+    expect(told()[2]).toMatchObject({ room: null })
+    click(copy)
+    expect(run).toHaveBeenCalledWith('selectionMenu.run', { tabId: 't1', id: 'copy' })
+  })
+
+  it('folded, starts over for a pill moved to a new box: the room goes, and comes again with the pointer on a glyph', () => {
+    box = { width: 186, height: 46 }
+    fold = { pad: 8, chip: 28, tip: { width: 96, height: 30 } }
+    render(<MiniMenu menu={{ ...MENU, folded: true }} />)
+    pointer('pointerover', chips()[0], pill())
+    expect(told()).toHaveLength(2)
+    // The selection's box moved (the same words, the same chips): the pointer may be off the
+    // pill now, with no `pointerout` to say so – the room is given back, the box not told anew.
+    render(<MiniMenu menu={{ ...MENU, folded: true, rect: { ...MENU.rect!, y: 400 } }} />)
+    expect(told()).toHaveLength(3)
+    expect(told()[2]).toEqual({ tabId: 't1', width: 186, height: 46, folded: true, room: null })
+    pointer('pointerover', chips()[0], pill())
+    expect(told()).toHaveLength(4)
+    expect(told()[3]).toMatchObject({ room: { below: 29, width: 112 } })
   })
 
   it('runs a chip’s action through the core for the selection’s tab', () => {
@@ -395,31 +472,18 @@ describe('the mini menu', () => {
 
 describe('the folded pill’s tooltips in the popup surface’s document', () => {
   const shown = (): HTMLElement | null => document.getElementById(TOOLTIP_ID)
-  const pointer = (
-    type: 'pointerover' | 'pointerout',
-    target: Element,
-    relatedTarget: Element | null = null
-  ): void => {
-    act(() => {
-      target.dispatchEvent(
-        new PointerEvent(type, {
-          bubbles: true,
-          composed: true,
-          pointerType: 'mouse',
-          relatedTarget
-        })
-      )
-    })
-  }
   const tick = (ms: number): void => {
     act(() => {
       vi.advanceTimersByTime(ms)
     })
   }
+  const REST = { tabId: 't1', width: 186, height: 46, folded: true, room: null }
+  const ROOM = { ...REST, room: { below: 29, width: 112 } }
 
   beforeEach(() => {
     vi.useFakeTimers()
     box = { width: 186, height: 46 }
+    fold = { pad: 8, chip: 28, tip: { width: 96, height: 30 } }
     browserStore.set({ state: state({ selectionMenu: { ...MENU, folded: true } }) })
     render(<PopupSurface />)
   })
@@ -428,9 +492,13 @@ describe('the folded pill’s tooltips in the popup surface’s document', () =>
     vi.useRealTimers()
   })
 
-  it('shows the action’s title as the chrome’s one role=tooltip after the pointer’s dwell, describing the button by it, and takes it down as the pointer leaves', () => {
+  it('shows the action’s title as the chrome’s one role=tooltip after the pointer’s dwell, describing the button by it, and takes it down as the pointer leaves – the room asked as the dwell starts and given back as the pointer leaves the pill', () => {
     const [copy, search] = chips()
+    expect(told()).toEqual([REST])
     pointer('pointerover', search.querySelector('svg')!, pill())
+    // The room is asked the instant the tooltip arms, with the whole dwell for the surface to
+    // grow in: by the time the tooltip paints, the document has the room under the pill.
+    expect(told()).toEqual([REST, ROOM])
     tick(TOOLTIP_DELAY - 1)
     expect(shown()).toBeNull()
     tick(1)
@@ -442,32 +510,70 @@ describe('the folded pill’s tooltips in the popup surface’s document', () =>
     expect(tip.getAttribute('data-surface')).toBe('page')
     expect(search.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
     expect(document.querySelectorAll('[role="tooltip"]')).toHaveLength(1)
-    // The next button along takes it at once, in the chassis's browse.
+    // The next button along takes it at once, in the chassis's browse; the room stands.
     pointer('pointerout', search, copy)
     pointer('pointerover', copy, search)
     expect(shown()!.textContent).toBe('Copy')
     expect(search.hasAttribute('aria-describedby')).toBe(false)
     expect(copy.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
+    expect(told()).toEqual([REST, ROOM])
+    // Onto the pill's own padding: the tooltip goes (the chassis's browse window opens), the
+    // room stays for the next glyph's tooltip, which would show at once into it.
     pointer('pointerout', copy, pill())
+    expect(shown()).toBeNull()
+    expect(told()).toEqual([REST, ROOM])
+    // Off the pill: the room goes with the pointer, the surface back to the pill's box.
+    pointer('pointerout', pill()!, document.body)
+    expect(told()).toEqual([REST, ROOM, REST])
     tick(TOOLTIP_DELAY)
     expect(shown()).toBeNull()
     expect(copy.hasAttribute('aria-describedby')).toBe(false)
   })
 
-  it('shows at once on keyboard focus, as the chassis does', () => {
+  it('leaving the pill straight off a glyph with its tooltip up gives the room back as the tooltip goes', () => {
+    const [copy] = chips()
+    pointer('pointerover', copy, pill())
+    tick(TOOLTIP_DELAY)
+    expect(shown()).not.toBeNull()
+    pointer('pointerout', copy, document.body)
+    expect(shown()).toBeNull()
+    expect(told()).toEqual([REST, ROOM, REST])
+  })
+
+  it('keeps its dwell through the resize the room brings: the surface growing under the still pointer is no reason to take the tooltip down', () => {
+    // The core grows the surface for the room (`ElectronWindow.setPopupSurface`), which is a
+    // resize of this window: the host in the shells hides for one, this document's host places
+    // through it (`PopupSurface` mounts it with `resize="place"`).
+    const [, search] = chips()
+    pointer('pointerover', search, pill())
+    tick(TOOLTIP_DELAY / 2)
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    tick(TOOLTIP_DELAY / 2)
+    expect(shown()!.textContent).toBe('Search DuckDuckGo')
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(shown()!.textContent).toBe('Search DuckDuckGo')
+  })
+
+  it('shows at once on keyboard focus, as the chassis does – the room asked with it and given back on blur', () => {
     const define = chips()[2]
     act(() => define.focus())
     expect(shown()!.textContent).toBe('Define')
     expect(shown()!.getAttribute('data-by')).toBe('focus')
     expect(define.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
+    expect(told()).toEqual([REST, ROOM])
     act(() => define.blur())
     expect(shown()).toBeNull()
+    expect(told()).toEqual([REST, ROOM, REST])
   })
 
-  it('Escape takes the tooltip down first and dismisses the pill in the one press', () => {
+  it('Escape takes the tooltip down first – the room going with it – and dismisses the pill in the one press', () => {
     // The pill's Escape (`useEscape`) stops the key at the window before the host's document
     // listener hears it, so the pill takes the tooltip down itself before it asks the core to
-    // dismiss: the core hears the key with no tooltip up.
+    // dismiss: the core hears the key with no tooltip up, and the surface at the pill's box.
     const define = chips()[2]
     act(() => define.focus())
     expect(shown()).not.toBeNull()
@@ -481,17 +587,19 @@ describe('the folded pill’s tooltips in the popup surface’s document', () =>
     expect(run).toHaveBeenCalledWith('selectionMenu.dismiss', { tabId: 't1' })
     expect(upAtDismiss).toEqual([null])
     expect(shown()).toBeNull()
+    const order = run.mock.calls.map(([name]) => name).slice(-2)
+    expect(order).toEqual(['selectionMenu.surfaceSize', 'selectionMenu.dismiss'])
+    expect(told().at(-1)).toEqual(REST)
   })
 
-  it('a press on a button takes the tooltip down as the action runs, as on any control', () => {
+  it('a press on a button takes the tooltip down as the action runs, as on any control – and the room with it', () => {
     const [copy] = chips()
     pointer('pointerover', copy, pill())
     tick(TOOLTIP_DELAY)
     expect(shown()).not.toBeNull()
-    act(() => {
-      copy.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
-    })
+    pointer('pointerdown', copy)
     expect(shown()).toBeNull()
+    expect(told()).toEqual([REST, ROOM, REST])
     click(copy)
     expect(run).toHaveBeenCalledWith('selectionMenu.run', { tabId: 't1', id: 'copy' })
   })

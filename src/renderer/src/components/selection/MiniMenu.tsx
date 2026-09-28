@@ -4,7 +4,13 @@ import { AudioLines, BookA, Copy, Languages, Search, type LucideIcon } from 'luc
 import type { MiniMenuRoom, SelectionMenuActionId, SelectionMenuState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { POPOVER_MARGIN } from '@renderer/lib/portals'
-import { measureTooltipSize, tooltip, TOOLTIP_GAP } from '@renderer/lib/tooltip'
+import {
+  measureTooltipSize,
+  tooltip,
+  TOOLTIP_GAP,
+  tooltipStore,
+  tooltipTargetOf
+} from '@renderer/lib/tooltip'
 import { useEscape } from '../autofill/controls'
 
 /** Each chip's glyph, by the action the core names (`SelectionMenuActionId`). */
@@ -38,6 +44,20 @@ const GLYPHS: Record<SelectionMenuActionId, LucideIcon> = {
  * least width for the widest title – and the core gives the surface the room around the pill
  * without moving it; the surface's document centres the pill in a widened surface.
  *
+ * The room is asked for the tooltip's moment alone (the lead's line: a transparent band under
+ * the pill at rest is a dead zone for the page's pointer): it is asked the instant a tooltip
+ * arms – the mouse pointer's arrival on a glyph button, the `pointerover` the host starts its
+ * `TOOLTIP_DELAY` dwell from, so the surface has grown, transparent, under the still pointer by
+ * the time the tooltip paints – or a tooltip's coming up on a glyph any other way (the store:
+ * keyboard focus shows at once), and given back (`room: null`) the instant the moment is over:
+ * the pointer leaving the pill, a press (the chassis takes the tooltip down on it), the
+ * tooltip going with no pointer on the pill (focus leaving; Escape, which takes it down first),
+ * the pill moving to a new box or going down. The pointer browsing the pill's own gaps keeps
+ * the room: the chassis shows the next glyph's tooltip at once within its browse window, and
+ * a surface shrinking and growing again per gap would flicker under it. The core returns the
+ * surface to the pill's padded box on the null; a resize of this document is the room's coming
+ * and going, which the host places through rather than hiding for (`PopupSurface`).
+ *
  * The pill sizes itself to its chips and tells the core what it measured, with the pose
  * (`selectionMenu.surfaceSize`); the core places the surface over the selection from it. A chip
  * runs its action through the core (`selectionMenu.run`), which gives the page the keyboard back
@@ -51,34 +71,48 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
   const reported = useRef<{ width: number; height: number; room: MiniMenuRoom | null } | null>(null)
   const chipKey = menu.actions.map((action) => `${action.id}:${action.title}`).join('\n')
   const folded = menu.folded
+  const rect = menu.rect
+  const rectKey = rect ? `${rect.x},${rect.y},${rect.width},${rect.height}` : ''
   // The chips as last rendered, for the measuring effect and its observer: the list is keyed
   // by `chipKey`, so the effect need not run for every mirror of the window's state.
   const actions = useRef(menu.actions)
   useEffect(() => {
     actions.current = menu.actions
   })
+  // Whether the mouse pointer is on the pill, come by a glyph button: a tooltip armed or
+  // browsing. Set by the folded row's listeners, read by the report.
+  const hovering = useRef(false)
+  // Tells the core the box last measured again, with the room as it is now (or nothing while
+  // the same report stands); the measuring effect's, for the room's listeners.
+  const tell = useRef<() => void>(() => undefined)
 
   // Measured as it comes and again whenever the chips or the pose change: the core keeps one
   // measurement per pose and forgets both with the chips, so the same size is told again for a
   // new list. The layout box is what is told (`offsetWidth`, the observer's border box), never
   // `getBoundingClientRect`'s: the pop animation scales the pill down for its first frames, and
-  // a scaled box would leave the surface short of the pill's last chip. The folded row tells
-  // the room its tooltips need with its box, so the surface grows once.
+  // a scaled box would leave the surface short of the pill's last chip. The folded row's report
+  // carries the room its tooltips need while one is armed or up, and null at rest.
   useEffect(() => {
     const el = pillRef.current
     if (!el) return
     reported.current = null
-    const report = (size: { width: number; height: number }): void => {
-      const width = Math.ceil(size.width)
-      const height = Math.ceil(size.height)
+    const wanted = (): boolean => {
+      if (!folded) return false
+      if (hovering.current) return true
+      const up = tooltipStore.get().target
+      return up !== null && el.contains(up)
+    }
+    const report = (size: { width: number; height: number } | null): void => {
+      const last = reported.current
+      const width = size ? Math.ceil(size.width) : (last?.width ?? 0)
+      const height = size ? Math.ceil(size.height) : (last?.height ?? 0)
       if (width <= 0 || height <= 0) return
-      const room = folded
+      const room = wanted()
         ? tooltipRoom(
             el,
             actions.current.map((action) => action.title)
           )
         : null
-      const last = reported.current
       if (last && last.width === width && last.height === height && sameRoom(last.room, room))
         return
       reported.current = { width, height, room }
@@ -87,22 +121,68 @@ export function MiniMenu({ menu }: { menu: SelectionMenuState }): JSX.Element {
         width,
         height,
         folded,
-        ...(room ? { room } : {})
+        ...(folded ? { room } : {})
       })
     }
+    tell.current = () => report(null)
     report({ width: el.offsetWidth, height: el.offsetHeight })
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver((entries) => {
-      const border = entries[0]?.borderBoxSize?.[0]
-      report(
-        border
-          ? { width: border.inlineSize, height: border.blockSize }
-          : { width: el.offsetWidth, height: el.offsetHeight }
-      )
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver((entries) => {
+            const border = entries[0]?.borderBoxSize?.[0]
+            report(
+              border
+                ? { width: border.inlineSize, height: border.blockSize }
+                : { width: el.offsetWidth, height: el.offsetHeight }
+            )
+          })
+    observer?.observe(el)
+    return () => {
+      observer?.disconnect()
+      tell.current = () => undefined
+    }
   }, [menu.tabId, chipKey, folded])
+
+  // The tooltip's moment, for the folded row: the room is told as it comes and goes (see the
+  // component's note). The pill's own listeners, not the host's: the host knows nothing of the
+  // surface. Only a mouse pointer arms a tooltip (§9.31; the host's test). A pill moved to a
+  // new box (`rectKey`) starts over – the pointer it stood under may be elsewhere now, and no
+  // `pointerout` says so; one still on it comes by a glyph again.
+  useEffect(() => {
+    const el = pillRef.current
+    if (!el || !folded) return
+    const mouse = (e: PointerEvent): boolean => e.pointerType === 'mouse' || e.pointerType === ''
+    const onOver = (e: PointerEvent): void => {
+      if (hovering.current || !mouse(e) || !tooltipTargetOf(e.target)) return
+      hovering.current = true
+      tell.current()
+    }
+    const onOut = (e: PointerEvent): void => {
+      if (!hovering.current || !mouse(e)) return
+      if (e.relatedTarget instanceof Node && el.contains(e.relatedTarget)) return
+      hovering.current = false
+      tell.current()
+    }
+    const onDown = (): void => {
+      if (!hovering.current) return
+      hovering.current = false
+      tell.current()
+    }
+    el.addEventListener('pointerover', onOver)
+    el.addEventListener('pointerout', onOut)
+    el.addEventListener('pointerdown', onDown)
+    const unsubscribe = tooltipStore.subscribe(() => tell.current())
+    return () => {
+      el.removeEventListener('pointerover', onOver)
+      el.removeEventListener('pointerout', onOut)
+      el.removeEventListener('pointerdown', onDown)
+      unsubscribe()
+      if (!hovering.current) return
+      hovering.current = false
+      tell.current()
+    }
+  }, [menu.tabId, chipKey, folded, rectKey])
 
   useEscape(() => {
     tooltip.dismiss()
