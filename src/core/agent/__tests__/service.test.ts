@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { DEFAULT_AGENT_SETTINGS } from '../../../shared/defaults'
 import type { AgentSettings, AgentSkillStatus } from '../../../shared/types'
 import { Bridge, type NativeBridge, type NativeCall } from '../../../android/bridge'
@@ -6,7 +6,7 @@ import { AndroidStoreIO } from '../../../android/storeIo'
 import type { Browser } from '../../browser'
 import { emptyModel } from '../../model'
 import type { AgentSkillsHost, AgentTransport, StoreIO } from '../../platform'
-import { AgentService } from '../service'
+import { AgentService, type EndpointError } from '../service'
 
 const AGENT_FILE = 'agent.json'
 const PORT = 41739
@@ -16,6 +16,7 @@ interface Stored {
   running: boolean
   port?: number
   url?: string | null
+  error?: EndpointError
 }
 
 /**
@@ -111,15 +112,18 @@ function androidHost(initial: Record<string, string> = {}): Host {
   }
 }
 
+/** A transport that binds whatever it is asked (the fixture's default). */
+const bindingTransport: AgentTransport = {
+  start: async (options) => ({ port: options.port, lanAddresses: [] }),
+  stop: async () => undefined
+}
+
 function fakeBrowser(
   io: StoreIO,
   settings: Partial<AgentSettings> = {},
-  agentSkills?: AgentSkillsHost
+  agentSkills?: AgentSkillsHost,
+  transport: AgentTransport = bindingTransport
 ): Browser {
-  const transport: AgentTransport = {
-    start: async (options) => ({ port: options.port, lanAddresses: [] }),
-    stop: async () => undefined
-  }
   const browser = {
     platform: {
       io,
@@ -148,9 +152,10 @@ const running: Array<{ service: AgentService; host: Host }> = []
 function create(
   host: Host,
   settings: Partial<AgentSettings> = {},
-  agentSkills?: AgentSkillsHost
+  agentSkills?: AgentSkillsHost,
+  transport?: AgentTransport
 ): AgentService {
-  const service = new AgentService(fakeBrowser(host.io, settings, agentSkills))
+  const service = new AgentService(fakeBrowser(host.io, settings, agentSkills, transport))
   running.push({ service, host })
   return service
 }
@@ -252,6 +257,172 @@ describe.each(hosts)('agent.json on %s', (_name, makeHost) => {
     await host.settle()
     expect(service.serverStatus().running).toBe(false)
     expect(parse(host.disk())).toEqual({ token: service.serverStatus().token, running: false })
+  })
+})
+
+/*
+ * A bind that fails – the port taken, no permission – used to leave `agent.json` at
+ * `{ token, running: false, url: null }` and say nothing anywhere else: the Settings row alone
+ * knew (`status.error`), and a harness that waited for `running: true` timed out with nothing to
+ * read (main's boot smoke at e64f09dcc). Now the same write carries the reason under `error`
+ * and one `console.error` line names it; the bound document is byte for byte what it was.
+ */
+const IN_USE = `Port ${PORT} is already in use – pick another port in Settings → AI Agents`
+const URL_OF = (port: number): string => `http://127.0.0.1:${port}/mcp`
+/** The desktop transport's rejection: the Settings message, the code and the address tried on it. */
+const taken = (): Error =>
+  Object.assign(new Error(IN_USE), { code: 'EADDRINUSE', address: '127.0.0.1', port: PORT })
+
+/** A transport that refuses every start with `error`, counting the attempts. */
+function refusing(error: unknown): AgentTransport & { starts: number } {
+  const t = {
+    starts: 0,
+    start: async (): Promise<{ port: number; lanAddresses: string[] }> => {
+      t.starts++
+      throw error
+    },
+    stop: async (): Promise<void> => undefined
+  }
+  return t
+}
+
+describe.each(hosts)('a bind failure on %s', (_name, makeHost) => {
+  let errors: MockInstance
+  beforeEach(() => {
+    errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    errors.mockRestore()
+  })
+
+  it('writes why beside running: false and says it once on stderr, without a retry', async () => {
+    const host = makeHost()
+    const transport = refusing(taken())
+    const service = create(host, {}, undefined, transport)
+    const token = service.serverStatus().token
+    service.start()
+    await host.settle()
+    expect(transport.starts).toBe(1)
+    expect(service.serverStatus()).toEqual({
+      running: false,
+      url: null,
+      lanUrls: [],
+      token,
+      error: IN_USE
+    })
+    const error: EndpointError = {
+      code: 'EADDRINUSE',
+      message: IN_USE,
+      address: '127.0.0.1',
+      port: PORT
+    }
+    // The mint's write, then the one that used to say `running: false` and no more.
+    expect(host.issued.map(parse)).toEqual([
+      { token, running: false },
+      { token, running: false, url: null, error }
+    ])
+    expect(host.landed).toEqual(host.issued)
+    expect(host.disk()).toBe(JSON.stringify({ token, running: false, url: null, error }, null, 2))
+    expect(errors).toHaveBeenCalledTimes(1)
+    expect(errors).toHaveBeenCalledWith(
+      `[zen mcp] the server could not bind 127.0.0.1:${PORT} (EADDRINUSE): ${IN_USE}`
+    )
+  })
+
+  it('carries a message-only rejection with what the service asked for (the phone names no code)', async () => {
+    const host = makeHost()
+    const message = 'bind failed: EADDRINUSE (Address already in use)'
+    const service = create(host, { lan: true, port: 0 }, undefined, refusing(new Error(message)))
+    const token = service.serverStatus().token
+    service.start()
+    await host.settle()
+    expect(service.serverStatus().error).toBe(message)
+    expect(parse(host.disk())).toEqual({
+      token,
+      running: false,
+      url: null,
+      error: { code: null, message, address: '0.0.0.0', port: 0 }
+    })
+    expect(errors).toHaveBeenCalledWith(`[zen mcp] the server could not bind 0.0.0.0:0: ${message}`)
+  })
+
+  it('falls back to the fixed sentence when the rejection has no message, in both places', async () => {
+    const host = makeHost()
+    const service = create(host, {}, undefined, refusing('boom'))
+    const token = service.serverStatus().token
+    service.start()
+    await host.settle()
+    const message = 'Could not start the MCP server'
+    expect(service.serverStatus().error).toBe(message)
+    expect(parse(host.disk())).toEqual({
+      token,
+      running: false,
+      url: null,
+      error: { code: null, message, address: '127.0.0.1', port: PORT }
+    })
+    expect(errors).toHaveBeenCalledWith(
+      `[zen mcp] the server could not bind 127.0.0.1:${PORT}: ${message}`
+    )
+  })
+
+  it('keeps the reason through a token regeneration while down', async () => {
+    const host = makeHost()
+    const service = create(host, {}, undefined, refusing(taken()))
+    service.start()
+    await host.settle()
+    const fresh = service.regenerateToken()
+    await host.settle()
+    expect(parse(host.disk())).toEqual({
+      token: fresh,
+      running: false,
+      url: null,
+      error: { code: 'EADDRINUSE', message: IN_USE, address: '127.0.0.1', port: PORT }
+    })
+  })
+
+  it('drops the field the moment a start succeeds: the bound document is byte-identical to before', async () => {
+    const host = makeHost()
+    let refuse = true
+    const transport: AgentTransport = {
+      start: async (options) => {
+        if (refuse) throw taken()
+        return { port: options.port, lanAddresses: [] }
+      },
+      stop: async () => undefined
+    }
+    const service = create(host, {}, undefined, transport)
+    const token = service.serverStatus().token
+    service.start()
+    await host.settle()
+    expect(parse(host.disk()).error).toBeDefined()
+
+    refuse = false
+    service.onSettingsChanged()
+    await host.settle()
+    expect(service.serverStatus()).toMatchObject({ running: true, url: URL_OF(PORT), error: null })
+    expect(host.disk()).toBe(
+      JSON.stringify({ token, running: true, port: PORT, url: URL_OF(PORT) }, null, 2)
+    )
+
+    // And the stop after it says no more than it did: `running: false`, no reason.
+    const stopping = service.stop()
+    await host.settle()
+    await stopping
+    expect(host.disk()).toBe(JSON.stringify({ token, running: false, url: null }, null, 2))
+    expect(errors).toHaveBeenCalledTimes(1)
+  })
+
+  it('pins the documents of a run without a failure to the byte', async () => {
+    const host = makeHost()
+    const service = create(host)
+    const token = service.serverStatus().token
+    service.start()
+    await host.settle()
+    expect(host.issued).toEqual([
+      JSON.stringify({ token, running: false }),
+      JSON.stringify({ token, running: true, port: PORT, url: URL_OF(PORT) }, null, 2)
+    ])
+    expect(errors).not.toHaveBeenCalled()
   })
 })
 

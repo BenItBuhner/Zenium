@@ -175,6 +175,23 @@ interface StoredEndpoint {
   port?: number
   url?: string | null
   running?: boolean
+  /** Why the last start failed; only beside `running: false`, gone once a start succeeds. */
+  error?: EndpointError
+}
+
+/**
+ * The bind failure as `agent.json` carries it (`error`, beside `running: false`), so a reader
+ * that came for the port – the `zen --mcp` shim, a harness waiting for `server-up` – finds the
+ * reason where it looked. `code` is the host's (`EADDRINUSE`, `EACCES`; null where the host
+ * names none: the phone's bind exception carries a message only); `address` and `port` are what
+ * the bind was asked for – the transport's word when its error carries one, else the service's
+ * request (loopback, or every interface with LAN on; the settings' port, 0 for an ephemeral one).
+ */
+export interface EndpointError {
+  code: string | null
+  message: string
+  address: string
+  port: number
 }
 
 /** What a session last saw of its own tabs and groups: the baseline notices are computed from. */
@@ -247,6 +264,8 @@ export class AgentService implements SessionStore, McpHandlers {
   /** Spaces agents made for themselves (`zen_groups create {space: "own"}`, `zen_spaces create`). */
   private readonly agentSpaceIds = new Set<string>()
   private status: AgentServerStatus = emptyAgentServerStatus()
+  /** Why the last start failed, for `agent.json` (`storeEndpoint`); null while nothing failed. */
+  private failure: EndpointError | null = null
   private token = ''
   private applying: Promise<void> = Promise.resolve()
   /**
@@ -317,7 +336,13 @@ export class AgentService implements SessionStore, McpHandlers {
   /** Bring the server in line with Settings → AI Agents (start / stop / rebind). */
   onSettingsChanged(): void {
     if (!this.started) return
-    this.applying = this.applying.then(() => this.apply()).catch(() => undefined)
+    // `apply` reports a bind failure itself (`startServer`); anything else it throws would
+    // otherwise vanish into the chain with the server left as it was and nothing said.
+    this.applying = this.applying
+      .then(() => this.apply())
+      .catch((error: unknown) => {
+        console.error('[zen mcp] the server settings could not be applied:', error)
+      })
   }
 
   async stop(): Promise<void> {
@@ -343,6 +368,14 @@ export class AgentService implements SessionStore, McpHandlers {
     if (want && !this.status.running) await this.startServer()
   }
 
+  /**
+   * Bind through the host's transport. A failure – the port taken, no permission, whatever the
+   * host's `listen` refused – ends here and nowhere else: the Settings row gets the message
+   * (`status.error`), and, so that a failure nobody was watching still explains itself, one
+   * `console.error` line names it and `agent.json` carries it (`EndpointError`) in the same
+   * write that used to say `running: false` and no more. Reporting only: no retry, and the
+   * server stays down until the settings change.
+   */
   private async startServer(): Promise<void> {
     if (!this.transport) return
     const s = this.settings
@@ -359,13 +392,15 @@ export class AgentService implements SessionStore, McpHandlers {
         token: this.token,
         error: null
       }
+      this.failure = null
       this.storeEndpoint(bound.port)
     } catch (error) {
-      this.status = {
-        ...emptyAgentServerStatus(),
-        token: this.token,
-        error: (error as Error).message || 'Could not start the MCP server'
-      }
+      const failure = endpointError(error, s)
+      console.error(
+        `[zen mcp] the server could not bind ${hostPort(failure.address, failure.port)}${failure.code ? ` (${failure.code})` : ''}: ${failure.message}`
+      )
+      this.status = { ...emptyAgentServerStatus(), token: this.token, error: failure.message }
+      this.failure = failure
       this.storeEndpoint(null)
     }
     this.browser.state.commitVolatile()
@@ -405,6 +440,11 @@ export class AgentService implements SessionStore, McpHandlers {
     return token
   }
 
+  /**
+   * The document the shim and the harnesses read. Bound: `{ token, running: true, port, url }`,
+   * byte for byte as before. Down: `{ token, running: false, url: null }` – plus `error` when
+   * the last start failed (`failure`), so the file that says "not running" says why.
+   */
   private storeEndpoint(port: number | null): void {
     const data: StoredEndpoint = {
       token: this.token,
@@ -412,6 +452,7 @@ export class AgentService implements SessionStore, McpHandlers {
       port: port ?? undefined,
       url: port ? endpointUrl('127.0.0.1', port) : null
     }
+    if (port === null && this.failure) data.error = this.failure
     this.writeEndpointFile(JSON.stringify(data, null, 2))
   }
 
@@ -2134,8 +2175,40 @@ function firstText(result: ToolResult): string {
 }
 
 function endpointUrl(host: string, port: number): string {
+  return `http://${hostPort(host, port)}/mcp`
+}
+
+/** `host:port`, the host bracketed when it is an IPv6 address. */
+function hostPort(host: string, port: number): string {
   const h = host.includes(':') ? `[${host}]` : host
-  return `http://${h}:${port}/mcp`
+  return `${h}:${port}`
+}
+
+/**
+ * What a rejected `AgentTransport.start` said, as `agent.json` and the log carry it: the
+ * host's error code and message, and the address and port it was asked to bind – off the error
+ * where the host put them there (Node's `listen` errors carry `code`, `address` and `port`;
+ * the desktop transport forwards them), else what the service asked for.
+ */
+function endpointError(error: unknown, settings: { port: number; lan: boolean }): EndpointError {
+  const e = (typeof error === 'object' && error !== null ? error : {}) as {
+    code?: unknown
+    message?: unknown
+    address?: unknown
+    port?: unknown
+  }
+  return {
+    code: typeof e.code === 'string' && e.code ? e.code : null,
+    message:
+      typeof e.message === 'string' && e.message ? e.message : 'Could not start the MCP server',
+    address:
+      typeof e.address === 'string' && e.address
+        ? e.address
+        : settings.lan
+          ? '0.0.0.0'
+          : '127.0.0.1',
+    port: typeof e.port === 'number' && Number.isInteger(e.port) ? e.port : settings.port
+  }
 }
 
 function portOf(url: string | null): number | null {

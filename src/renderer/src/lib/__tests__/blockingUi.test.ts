@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Tab } from '@shared/types'
+import type { BlockedSite, Tab } from '@shared/types'
 import {
   DEFAULT_BLOCKING_SETTINGS,
   emptyBlockingStatus,
@@ -8,13 +8,20 @@ import {
 } from '@shared/blocking'
 import {
   blockedChipLabel,
+  blockedSiteCategoryLabel,
   chipCount,
   exceptionHost,
   listDetail,
   listOverrides,
   requests,
   siteBlockingState,
-  statusCardText
+  statusCardText,
+  TRACKER_REPORT_EMPTY,
+  TRACKER_REPORT_SETTINGS,
+  TRACKER_REPORT_TITLE,
+  trackerReportChipLabel,
+  trackerReportOrder,
+  trackerReportRows
 } from '../blockingUi'
 
 function tab(url: string, blockedCount = 0): Tab {
@@ -94,6 +101,66 @@ describe('the chip', () => {
     expect(requests(1)).toBe('1 request')
     expect(requests(0)).toBe('0 requests')
     expect(requests(2500)).toBe('2,500 requests')
+  })
+})
+
+describe('the tracker report', () => {
+  const site = (
+    domain: string,
+    count: number,
+    category: BlockedSite['category'] = 'tracker'
+  ): BlockedSite => ({
+    domain,
+    category,
+    count
+  })
+
+  it('carries the lead words as they were passed', () => {
+    expect(TRACKER_REPORT_TITLE).toBe('Trackers blocked')
+    expect(TRACKER_REPORT_EMPTY).toBe('No trackers blocked on this page')
+    expect(TRACKER_REPORT_SETTINGS).toBe('Tracking prevention settings…')
+  })
+
+  it('names the count pill after the count and the list it opens', () => {
+    expect(trackerReportChipLabel(1)).toBe('1 request blocked on this page · Trackers blocked')
+    expect(trackerReportChipLabel(1234)).toBe(
+      '1,234 requests blocked on this page · Trackers blocked'
+    )
+  })
+
+  it('names the kind of rule that blocked a site on the 13 line, except the default: a list match carries no line', () => {
+    expect(blockedSiteCategoryLabel('tracker')).toBeUndefined()
+    expect(blockedSiteCategoryLabel('user')).toBe('Your filter')
+    expect(blockedSiteCategoryLabel('extension')).toBe('Extension')
+    expect(blockedSiteCategoryLabel('unsafe')).toBe('Unsafe site')
+  })
+
+  it('sorts by count when the list opens, ties in first-seen order', () => {
+    const sites = [site('a.example', 1), site('b.example', 3), site('c.example', 3)]
+    expect(trackerReportOrder([], sites)).toEqual(['b.example', 'c.example', 'a.example'])
+  })
+
+  it('never re-sorts an open list and appends what the engine meets later', () => {
+    const order = trackerReportOrder([], [site('a.example', 1), site('b.example', 3)])
+    const grown = [site('a.example', 9), site('b.example', 3), site('c.example', 5)]
+    expect(trackerReportOrder(order, grown)).toEqual(['b.example', 'a.example', 'c.example'])
+    // Nothing new: the very same array comes back, so nothing re-renders for it.
+    expect(trackerReportOrder(order, [site('a.example', 2), site('b.example', 3)])).toBe(order)
+  })
+
+  it('starts over when the report empties under it', () => {
+    const order = ['b.example', 'a.example']
+    expect(trackerReportOrder(order, undefined)).toEqual([])
+    expect(trackerReportOrder(order, [])).toEqual([])
+    const empty: readonly string[] = []
+    expect(trackerReportOrder(empty, undefined)).toBe(empty)
+  })
+
+  it('reads the rows in the held order with their live counts', () => {
+    const order = ['b.example', 'a.example', 'gone.example']
+    const rows = trackerReportRows(order, [site('a.example', 4, 'user'), site('b.example', 3)])
+    expect(rows).toEqual([site('b.example', 3), site('a.example', 4, 'user')])
+    expect(trackerReportRows(order, undefined)).toEqual([])
   })
 })
 
