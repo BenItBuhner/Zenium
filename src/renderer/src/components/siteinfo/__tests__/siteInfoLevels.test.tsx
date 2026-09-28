@@ -321,13 +321,15 @@ afterEach(() => {
 describe('the level slide (seed 51, §11)', () => {
   it('renders every pane but the level shown hidden, so the chassis measures the sheet on that level before its first frame', async () => {
     await open()
-    // Six panes stand in the track – the root, three detail levels, two confirmations – and one
-    // is in flow; the sheet was measured on that one alone, at the mount and at the reading.
+    // Seven panes stand in the track – the root, four detail levels (the tracker report of PS-33
+    // among them), two confirmations – and one is in flow; the sheet was measured on that one
+    // alone, at the mount and at the reading.
     expect(panes().map((p) => p.dataset.level)).toEqual([
       'main',
       'connection',
       'cookies',
       'permissions',
+      'trackers',
       'clear-cookies',
       'clear-data'
     ])
@@ -365,7 +367,7 @@ describe('the level slide (seed 51, §11)', () => {
       panes()
         .filter((p) => p.hidden)
         .map((p) => p.dataset.level)
-    ).toEqual(['cookies', 'permissions', 'clear-cookies', 'clear-data'])
+    ).toEqual(['cookies', 'permissions', 'trackers', 'clear-cookies', 'clear-data'])
     // Through the slide the arriving pane never fades and never hides; the leaving one, under,
     // shifts a little and dims, never to nothing.
     const seen = new Set<string>()

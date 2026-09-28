@@ -274,6 +274,7 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteControls/primitives.tsx',
   'components/siteControls/pane.tsx',
   'components/siteControls/SiteInfoPopover.tsx',
+  'components/siteControls/TrackersPopover.tsx',
   'components/siteControls/ClearBrowsingDataDialog.tsx',
   'components/siteControls/settingsRows.tsx',
   // The print preview (#225's UI): the option column's headings and validation lines in the
@@ -1058,12 +1059,15 @@ describe('the v2 primitives (§9.34)', () => {
 
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
     // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
-    // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of
+    // exactly four places, each in a chassis row's own rule set – the phone sheet row's press
+    // gate (`.zen-sheet-item`, the sheet chassis's row: its static form, `SheetRow` without a
+    // press, takes no fill), and in the shared row's set the static rule and the `:not()` of
     // the press gate and of the hover gate, the latter gated on the root's live `data-hover`
     // as every hover rule is (OS-12; `:where()` adds no specificity) – so no surface has to
     // fight the fill with a rule of its own, and nothing elsewhere gates on it.
-    // (The test above already holds each of them unlayered and free of literal colour.)
+    // (The test above already holds each of the row's unlayered and free of literal colour.)
     expect([...bare.matchAll(/[^\n]*\[data-static\][^{]*\{/g)].map((m) => m[0].trim())).toEqual([
+      '.zen-sheet-item:active:not(:disabled, [data-static]) {',
       '.zen-v2-row[data-static] {',
       ".zen-v2-row:active:not([aria-disabled='true'], [data-static]) {",
       ":where(:root[data-hover='hover']) .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {"
@@ -2049,14 +2053,16 @@ describe('live counts (§4)', () => {
     // "1,284 requests", "116,161 filters", "Updated 2 h ago": a count that changes under the
     // user must not reflow its row. On a phone the counts sit in the Settings tab's value slot
     // and group description; on desktop in the pane's card title, detail line and row
-    // descriptions; in the URL bar the chip's badge inherits it from the chip.
+    // descriptions; in the URL bar the chip's badge inherits it from the chip – the phone's one
+    // shield chip and the desktop's count pill (PS-33) alike.
     for (const selector of [
       '.zen-settings-description',
       '.zen-settings-group-description',
       '.zen-privacy-card-title',
       '.zen-privacy-muted',
       '.zen-privacy-row-desc',
-      '.zen-v2-blocked-chip'
+      '.zen-v2-blocked-chip',
+      '.zen-v2-blocked-count'
     ])
       expect(block(selector), selector).toMatch(/^ {2}font-variant-numeric: tabular-nums;$/m)
   })

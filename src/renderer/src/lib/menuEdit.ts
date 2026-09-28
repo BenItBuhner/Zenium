@@ -1,4 +1,10 @@
-import { MENU_KEY_CHANGE_MENU, MENU_KEY_UPDATE, menuOrderOf, moveMenuItem } from '@shared/menuOrder'
+import {
+  MENU_KEY_CHANGE_MENU,
+  MENU_KEY_MANAGED,
+  MENU_KEY_UPDATE,
+  menuOrderOf,
+  moveMenuItem
+} from '@shared/menuOrder'
 import type { MenuItemDescriptor } from '@shared/types'
 import { isIconRow } from './menuIconRow'
 
@@ -7,11 +13,13 @@ import { isIconRow } from './menuIconRow'
  * The core composes the root as the icon row, a hairline, the Update Zenium row with a hairline
  * under it while an update waits (TB-12), the list – rows and the hairlines between their
  * groups, every one of them keyed (`shared/menuOrder.ts`) – then a hairline and the Change Menu
- * row. The two keyed runs are the sections the edit mode moves items within, each on its own:
- * the row keeps its membership and its place at the head (§9.13), the list reorders as one
- * list, its hairlines slots like its rows, so a row dragged past a hairline joins the next
- * group. The unkeyed hairlines, the update row and the Change Menu row are the structure around
- * them: drawn in the normal pose, kept out of the edit pose and out of the saved order.
+ * row, and last, while the browser is managed, a hairline and the Managed Browser row (TB-13).
+ * The two keyed runs are the sections the edit mode moves items within, each on its own: the
+ * row keeps its membership and its place at the head (§9.13), the list reorders as one list,
+ * its hairlines slots like its rows, so a row dragged past a hairline joins the next group.
+ * The unkeyed hairlines, the update row, the Change Menu row and the Managed Browser row are
+ * the structure around them: drawn in the normal pose, kept out of the edit pose and out of
+ * the saved order.
  */
 export interface MenuSections {
   row: MenuItemDescriptor[]
@@ -22,6 +30,8 @@ export interface MenuSections {
   list: MenuItemDescriptor[]
   /** The Change Menu row, with the hairline before it; empty for a menu without one. */
   change: MenuItemDescriptor[]
+  /** The Managed Browser row, with the hairline before it; empty for an unmanaged browser. */
+  managed: MenuItemDescriptor[]
 }
 
 export type MenuSection = 'row' | 'list'
@@ -34,6 +44,26 @@ export function isChangeMenuItem(item: MenuItemDescriptor): boolean {
 /** Whether `item` is the Update Zenium row (TB-12): structure, like the Change Menu row. */
 export function isUpdateMenuItem(item: MenuItemDescriptor): boolean {
   return item.key === MENU_KEY_UPDATE
+}
+
+/** Whether `item` is the Managed Browser row (TB-13): structure, like the Change Menu row. */
+export function isManagedMenuItem(item: MenuItemDescriptor): boolean {
+  return item.key === MENU_KEY_MANAGED
+}
+
+/**
+ * `items` less the row `is` names at its tail and the unkeyed hairline before it, the two as a
+ * tail section; `items` whole, and an empty section, when the tail is another row's.
+ */
+function splitTailRow(
+  items: readonly MenuItemDescriptor[],
+  is: (item: MenuItemDescriptor) => boolean
+): { body: MenuItemDescriptor[]; tail: MenuItemDescriptor[] } {
+  const last = items[items.length - 1]
+  if (!last || !is(last)) return { body: [...items], tail: [] }
+  const before = items[items.length - 2]
+  const cut = before && before.type === 'separator' && before.key === undefined ? 2 : 1
+  return { body: items.slice(0, items.length - cut), tail: items.slice(items.length - cut) }
 }
 
 /**
@@ -57,29 +87,22 @@ export function editableMenu(items: readonly MenuItemDescriptor[]): boolean {
 
 /** The root's items cut into the sections above (`joinMenuSections` puts them back). */
 export function splitMenuSections(items: readonly MenuItemDescriptor[]): MenuSections {
-  let end = items.length
-  const change: MenuItemDescriptor[] = []
-  const last = items[end - 1]
-  if (last && isChangeMenuItem(last)) {
-    change.unshift(last)
-    end -= 1
-    const before = items[end - 1]
-    if (before && before.type === 'separator' && before.key === undefined) {
-      change.unshift(before)
-      end -= 1
-    }
-  }
-  const body = items.slice(0, end)
+  // The tail is cut from the end inwards: the Managed Browser row stands last of all, the
+  // Change Menu row before it.
+  const managedCut = splitTailRow(items, isManagedMenuItem)
+  const changeCut = splitTailRow(managedCut.body, isChangeMenuItem)
+  const tails = { change: changeCut.tail, managed: managedCut.tail }
+  const body = changeCut.body
   let firstSep = body.findIndex((item) => item.type === 'separator')
   if (firstSep < 0) firstSep = body.length
   const head = body.slice(0, firstSep)
-  if (!isIconRow(head)) return { row: [], rowEnd: null, ...splitUpdateRow(body), change }
+  if (!isIconRow(head)) return { row: [], rowEnd: null, ...splitUpdateRow(body), ...tails }
   const rowEnd = body[firstSep]
   return {
     row: head,
     rowEnd: rowEnd && rowEnd.key === undefined ? rowEnd : null,
     ...splitUpdateRow(body.slice(rowEnd && rowEnd.key === undefined ? firstSep + 1 : firstSep)),
-    change
+    ...tails
   }
 }
 
@@ -90,7 +113,8 @@ export function joinMenuSections(sections: MenuSections): MenuItemDescriptor[] {
     ...(sections.rowEnd ? [sections.rowEnd] : []),
     ...sections.update,
     ...sections.list,
-    ...sections.change
+    ...sections.change,
+    ...sections.managed
   ]
 }
 

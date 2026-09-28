@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { ManagedStatus } from './managed'
 import type { UpdateDotRecord } from '../core/updateDot'
 import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { ToolbarPins } from './toolbarPins'
@@ -678,6 +679,22 @@ export interface SpaceTheme {
 // Tabs, spaces, split views, folders
 // ---------------------------------------------------------------------------
 
+/**
+ * Where the rule that blocked a request came from: a filter list (`tracker` – the lists match as
+ * one set, so no finer word is known), the user's own filters, an extension's rules, or Safe
+ * Browsing refusing an unsafe frame.
+ */
+export type BlockedSiteCategory = 'tracker' | 'user' | 'extension' | 'unsafe'
+
+/** One site the blocking engine stopped requests from on a tab's current document. */
+export interface BlockedSite {
+  /** Registrable domain of the blocked requests (`doubleclick.net`). */
+  domain: string
+  category: BlockedSiteCategory
+  /** Requests blocked from `domain` on the document so far. */
+  count: number
+}
+
 export interface Tab {
   id: string
   /** Space the tab belongs to. Essentials are global (per container) and have `spaceId: null`. */
@@ -838,6 +855,12 @@ export interface Tab {
   readerable: boolean
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
+  /**
+   * The sites those requests went to, in the order the engine first saw them, at most
+   * `BLOCKED_SITES_CAP` of them (the tracker report behind the count). Absent until the first
+   * block of the document; resets with `blockedCount`. A session's own: not persisted.
+   */
+  blockedSites?: BlockedSite[]
   /**
    * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
    * page such as Settings was opened from). Mobile system back at the tab's first page closes it
@@ -5159,6 +5182,14 @@ export interface MenuItemDescriptor {
    * takes the page under its picture before the core's toggle runs (`lib/readerTransition.ts`).
    */
   action?: ShortcutAction
+  /**
+   * A mark the row carries after its label, in the trailing slot – the sheet's state seat, the
+   * one its secondary ink and the popover's hint take: `managed` is Chrome's `ic_domain` on the
+   * "Managed Browser" row (TB-13; `shared/managed.ts`), the building glyph the row keeps on the
+   * phone's sheet and the tablet's popover alike. A native menu host has no glyph in its ink and
+   * draws the text.
+   */
+  mark?: 'managed'
 }
 
 /**
@@ -6924,6 +6955,13 @@ export interface Commands {
   'updates.cancel': { args: void; result: void }
   /** Open the release notes on GitHub in a tab. */
   'updates.openRelease': { args: void; result: void }
+
+  /**
+   * Who manages the browser (TB-13; `shared/managed.ts`): the host's app-restrictions bundle,
+   * read once on the first ask – the app menu's first build or the Management page's mount,
+   * never at start – or the unmanaged status on a host without a bundle to read.
+   */
+  'managed.status': { args: void; result: ManagedStatus }
 
   /**
    * Open (or first create) the vault. `passphrase` answers a `passphrase` outcome, and creates

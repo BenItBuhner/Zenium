@@ -474,6 +474,122 @@ describe('the app menu', () => {
     })
   })
 
+  describe("Chrome's Managed browser row (TB-13)", () => {
+    const managedRow = {
+      label: 'Managed Browser',
+      key: 'menu.managed',
+      mark: 'managed',
+      click: expect.any(Function)
+    }
+
+    it('shows nothing on a host with no app-restrictions bundle to read, and never asks: the phone menu ends on the Change Menu row as before', () => {
+      const h = harness(ANDROID, 'phone')
+      // No host, no read to wait for: the first open is as synchronous as every later one.
+      expect(h.browser.managed.known()).toBe(true)
+      expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+      expect(h.shown().at(-1)).toMatchObject({ label: 'Change Menu', key: 'menu.change' })
+      expect(h.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+      expect(h.browser.managed.status()).toEqual({ by: null, keys: [] })
+    })
+
+    it('shows nothing while the bundle is empty (Chrome’s `isBrowserManaged`: a policy of any kind, or nothing), the read made once on the menu’s first build', async () => {
+      const h = harness(ANDROID, { formFactor: 'phone', managed: { by: null, keys: [] } })
+      const read = vi.spyOn(h.browser.platform.managed!, 'read')
+      // Nothing has asked yet: the status is unread and nothing at start read it.
+      expect(h.browser.managed.status()).toBeNull()
+      expect(read).not.toHaveBeenCalled()
+      await h.browser.handleCommand(h.win, 'app.menu', {})
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(h.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+      expect(h.shown().at(-1)).toMatchObject({ label: 'Change Menu', key: 'menu.change' })
+      // The second open neither waits nor asks again.
+      expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+      expect(read).toHaveBeenCalledTimes(1)
+    })
+
+    it('ends the phone menu on the row over a hairline of its own while the bundle is non-empty – after the Change Menu row, outside the order and the edit mode – and its pick opens zen://management beside the current tab', async () => {
+      const h = pageHarness(ANDROID, {
+        formFactor: 'phone',
+        managed: { by: 'Example Corp', keys: ['HomepageLocation', 'EnterpriseCustomLabel'] }
+      })
+      const read = vi.spyOn(h.browser.platform.managed!, 'read')
+      const plain = appMenu(pageHarness(ANDROID, { formFactor: 'phone' }))
+      // The first build waits for the one read; the rows are the plain menu's plus the two.
+      const first = h.browser.handleCommand(h.win, 'app.menu', {})
+      expect(first).toBeInstanceOf(Promise)
+      await first
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(h.shown().slice(-4)).toStrictEqual([
+        { type: 'separator' },
+        { label: 'Change Menu', key: 'menu.change' },
+        { type: 'separator' },
+        managedRow
+      ])
+      expect(h.shown().filter((i) => i.key === 'menu.managed')).toHaveLength(1)
+      expect(labels(h.shown()).slice(0, -2)).toEqual(plain)
+      // Structure: not in the default order the sheet's Reset restores, and a saved order that
+      // names it first does not move it – the row stays last whatever the order says.
+      const defaults = h.where()?.defaultOrder ?? []
+      expect(defaults).not.toContain('menu.managed')
+      h.browser.state.settings.menuOrder = ['menu.managed', ...defaults]
+      expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(h.shown().at(-1)).toMatchObject(managedRow)
+      expect(h.shown().filter((i) => i.key === 'menu.managed')).toHaveLength(1)
+      // The pick: Chrome's `openChromeManagementPage`, a new tab with the current one as its
+      // parent; the page's singleton rule makes a second pick a return to the open tab.
+      const open = vi.spyOn(h.browser.pages, 'open')
+      item(h.shown(), 'Managed Browser').click?.()
+      expect(open).toHaveBeenCalledWith('management', undefined, h.win, h.tabId)
+      // The status the page reads is the read's, normalised: the keys sorted, the name kept.
+      expect(h.browser.managed.status()).toEqual({
+        by: 'Example Corp',
+        keys: ['EnterpriseCustomLabel', 'HomepageLocation']
+      })
+    })
+
+    it("keeps the label Chrome's `IDS_MANAGED_BROWSER` whether or not the bundle names the organisation: the name is the page's to show", async () => {
+      const h = harness(ANDROID, {
+        formFactor: 'phone',
+        managed: { by: null, keys: ['URLBlocklist'] }
+      })
+      await h.browser.handleCommand(h.win, 'app.menu', {})
+      expect(h.shown().at(-1)).toStrictEqual(managedRow)
+    })
+
+    it("seats the tablet's row last of all, after Help over a hairline (Chrome's `managed_by_divider_line_id`); the desktop's platform reads no bundle and shows none", async () => {
+      const tablet = harness(ANDROID, {
+        formFactor: 'tablet',
+        managed: { by: null, keys: ['URLBlocklist'] }
+      })
+      await tablet.browser.handleCommand(tablet.win, 'app.menu', {})
+      const shown = tablet.shown()
+      expect(shown.at(-1)).toStrictEqual(managedRow)
+      expect(shown.at(-2)).toEqual({ type: 'separator' })
+      expect(shown.at(-3)?.label).toBe('Help')
+      expect(shown.filter((i) => i.key === 'menu.managed')).toHaveLength(1)
+      const desktop = harness(DESKTOP, 'desktop')
+      expect(desktop.browser.handleCommand(desktop.win, 'app.menu', {})).toBeUndefined()
+      expect(desktop.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+      expect(desktop.shown().at(-1)?.label).toBe('Quit')
+    })
+
+    it('counts a read that fails as unmanaged and keeps it: no row, and no second read on the next opening', async () => {
+      const h = harness(ANDROID, {
+        formFactor: 'phone',
+        managed: { by: null, keys: ['URLBlocklist'] }
+      })
+      const read = vi
+        .spyOn(h.browser.platform.managed!, 'read')
+        .mockRejectedValueOnce(new Error('no restrictions service'))
+      await h.browser.handleCommand(h.win, 'app.menu', {})
+      expect(h.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+      expect(h.browser.managed.status()).toEqual({ by: null, keys: [] })
+      expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+      expect(read).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe("Chrome's Tab groups submenu (shortcuts-menus-111)", () => {
     /** A folder of the window's space, its tabs closed and `pages` kept: a SAVED group. */
     const savedGroup = (
@@ -1098,13 +1214,13 @@ describe('the app menu', () => {
     // alone (`internalPages.ts`). Chrome's Passwords and Autofill ▸ and Find and Edit ▸ are the
     // desktop's folds (W8-1): the tablet keeps the flat Passwords and Find in Page… rows in the
     // same seats – its menu folds nothing the desktop's does not have to, and its editing is the
-    // touch selection's own.
+    // touch selection's own. Show Bookmarks Bar ▸ stays: the tablet's bar is the desktop's under
+    // its toolbar (NTP-34), on the same three settings.
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
         label !== 'More Tools > Task Manager' &&
-        label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
         label !== 'Save and Share > Screenshot…' &&
         !label.startsWith('Passwords and Autofill >') &&

@@ -4,6 +4,7 @@ import {
   countedItems,
   editableMenu,
   isChangeMenuItem,
+  isManagedMenuItem,
   isUpdateMenuItem,
   joinMenuSections,
   menuSectionOf,
@@ -170,6 +171,41 @@ describe('the sections', () => {
     expect(u.update).toEqual([])
     expect(u.list).toEqual(unkeyed)
     expect(joinMenuSections(u)).toEqual(unkeyed)
+  })
+
+  it('the Managed Browser row last of all (TB-13) is structure with its hairline: out of both sections and the saved order, after the Change Menu group on the join; the tablet’s root, with no Change Menu row, cuts the same', () => {
+    const items = root()
+    const managed = [sep(), item('Managed Browser', { key: 'menu.managed', mark: 'managed' })]
+    const withManaged = [...items, ...managed]
+    const s = splitMenuSections(withManaged)
+    expect(keys(s.row)).toEqual(['icon.forward', 'icon.bookmark', 'icon.reload'])
+    expect(keys(s.list)).toEqual(keys(splitMenuSections(items).list))
+    expect(keys(s.change)).toEqual(['(separator)', 'menu.change'])
+    expect(keys(s.managed)).toEqual(['(separator)', 'menu.managed'])
+    expect(joinMenuSections(s)).toEqual(withManaged)
+    expect(menuSectionOf(s, 'menu.managed')).toBeNull()
+    expect(menuSectionsOrder(s)).toEqual(menuSectionsOrder(splitMenuSections(items)))
+    expect(nudgeMenuItem(s, 'menu.managed', -1)).toBe(s)
+    expect(isManagedMenuItem(managed[1]!)).toBe(true)
+    expect(isManagedMenuItem(items[0]!)).toBe(false)
+    expect(editableMenu(withManaged)).toBe(true)
+    // Unmanaged: the section is empty and the split is as before.
+    expect(splitMenuSections(items).managed).toEqual([])
+    // The tablet's popover root on a coarse pointer: no icon row, no Change Menu row, the
+    // managed row and its hairline at the tail, the rest the list.
+    const tablet = [item('New Tab'), sep(), item('Help'), ...managed]
+    const t = splitMenuSections(tablet)
+    expect(t.row).toEqual([])
+    expect(t.change).toEqual([])
+    expect(t.list).toEqual(tablet.slice(0, 3))
+    expect(keys(t.managed)).toEqual(['(separator)', 'menu.managed'])
+    expect(joinMenuSections(t)).toEqual(tablet)
+    // The row's hairline is only ever the unkeyed one before it: a keyed hairline is the list's.
+    const keyedBefore = [...tablet.slice(0, 3), sep('sep.9'), managed[1]!]
+    const k = splitMenuSections(keyedBefore)
+    expect(keys(k.managed)).toEqual(['menu.managed'])
+    expect(keys(k.list).at(-1)).toBe('sep.9')
+    expect(joinMenuSections(k)).toEqual(keyedBefore)
   })
 
   it('knows which section a key is in; the structure’s items are in neither', () => {
