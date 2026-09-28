@@ -137,10 +137,15 @@ function sync(enabled: boolean, openTabs = true): UIState['sync'] {
     } as UIState['sync']['scope'],
     lastSyncAt: enabled ? NOW - 5 * 60_000 : null,
     lastError: null,
+    lastErrorKind: null,
     syncing: false,
     devices: [],
     pendingMerge: false,
-    remoteTabsVersion: version
+    remoteTabsVersion: version,
+    transport: 'folder',
+    webdav: null,
+    webdavAvailable: false,
+    authRefused: false
   } as UIState['sync']
 }
 

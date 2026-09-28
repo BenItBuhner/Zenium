@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:ns0="DAV:">
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:">
+<D:href>/Zenium/zenium-sync/</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype><D:collection/></lp1:resourcetype>
+<lp1:getetag>W/"1000-65c73660a846f"</lp1:getetag>
+<lp1:getlastmodified>Sun, 27 Sep 2026 09:16:03 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:getcontentlength/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/">
+<D:href>/Zenium/zenium-sync/odd%20name%20%c3%a9.zenpage</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:getetag>W/"4-65c73660a846f"</lp1:getetag>
+<lp1:getlastmodified>Sun, 27 Sep 2026 09:16:03 GMT</lp1:getlastmodified>
+<lp1:getcontentlength>4</lp1:getcontentlength>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/">
+<D:href>/Zenium/zenium-sync/README.txt</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:getetag>W/"6-65c73660a364f"</lp1:getetag>
+<lp1:getlastmodified>Sun, 27 Sep 2026 09:16:03 GMT</lp1:getlastmodified>
+<lp1:getcontentlength>6</lp1:getcontentlength>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/">
+<D:href>/Zenium/zenium-sync/a1b2c3.zensync</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:getetag>W/"17-65c73660a076e"</lp1:getetag>
+<lp1:getlastmodified>Sun, 27 Sep 2026 09:16:03 GMT</lp1:getlastmodified>
+<lp1:getcontentlength>23</lp1:getcontentlength>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/" xmlns:g0="DAV:">
+<D:href>/Zenium/zenium-sync/nested/</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype><D:collection/></lp1:resourcetype>
+<lp1:getetag>W/"1000-65c736609b94e"</lp1:getetag>
+<lp1:getlastmodified>Sun, 27 Sep 2026 09:16:03 GMT</lp1:getlastmodified>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+<D:propstat>
+<D:prop>
+<g0:getcontentlength/>
+</D:prop>
+<D:status>HTTP/1.1 404 Not Found</D:status>
+</D:propstat>
+</D:response>
+</D:multistatus>

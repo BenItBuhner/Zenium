@@ -20,3 +20,8 @@ declare module '*.css?raw' {
   const css: string
   export default css
 }
+/** Vite's `?raw` import of an XML document as text: the sync tests' captured WebDAV fixtures. */
+declare module '*.xml?raw' {
+  const xml: string
+  export default xml
+}
