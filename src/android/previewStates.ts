@@ -2041,6 +2041,7 @@ export function blockingFixture(
     // The report's rows come with the count (a device's engine sends both on one beat); the
     // level is the §9.17 empty line when nothing was blocked.
     const { blockedSites: _dropped, ...rest } = tab
+    void _dropped
     tabs[tab.id] =
       count > 0
         ? { ...rest, blockedCount: count, blockedSites: blockedSitesFixture(count) }

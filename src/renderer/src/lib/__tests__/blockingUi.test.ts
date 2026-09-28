@@ -105,7 +105,11 @@ describe('the chip', () => {
 })
 
 describe('the tracker report', () => {
-  const site = (domain: string, count: number, category: BlockedSite['category'] = 'tracker') => ({
+  const site = (
+    domain: string,
+    count: number,
+    category: BlockedSite['category'] = 'tracker'
+  ): BlockedSite => ({
     domain,
     category,
     count
