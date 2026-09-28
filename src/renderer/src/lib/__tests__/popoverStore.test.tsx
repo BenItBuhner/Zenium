@@ -740,7 +740,10 @@ describe('a tap’s late click (W8-F20, §9.20): the consumed press’s remainde
   type Pointer = 'mouse' | 'touch' | 'pen' | ''
 
   /** A pointer's press: down and up, as Chromium delivers them, in one task. */
-  function pointerPress(target: Element, pointerType: Pointer): { down: PointerEvent; up: PointerEvent } {
+  function pointerPress(
+    target: Element,
+    pointerType: Pointer
+  ): { down: PointerEvent; up: PointerEvent } {
     const init = { pointerType, pointerId: pointerType === 'mouse' ? 1 : 7, isPrimary: true }
     const down = pointer('pointerdown', target, init)
     const up = pointer('pointerup', target, init)
