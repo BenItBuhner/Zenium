@@ -116,11 +116,15 @@ jobs:
         # the window back to the user space. os-settings (W8-F5 / F6; #572, #594): Linux reads
         # no accent – Settings › Look and Feel shows no "Use system accent colour" row and the
         # core holds systemAccent null – and Settings › System's proxy door answers
-        # `unsupported` with no shell call, the runner's shell naming no desktop.
+        # `unsupported` with no shell call, the runner's shell naming no desktop. launch-url
+        # (W8-F14): a fresh profile past onboarding launched with the fixture's page on the
+        # command line comes up with that one tab, one sidebar row and no URL bar over the page,
+        # as Chrome launched with a URL does (W5-F2's fresh tab used to stand beside it with the
+        # bar armed for the window open over the page).
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar,agent-space-restore,os-settings
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar,agent-space-restore,os-settings,launch-url
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches

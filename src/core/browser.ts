@@ -414,8 +414,16 @@ export class Browser {
   private quitCheck: Promise<boolean> | null = null
   /** Images shared into the browser, shown by `zen://image?id=…` while the app runs. */
   private readonly sharedImages = new Map<string, string>()
-  /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
-  private readonly urlbarOnReady = new Set<string>()
+  /**
+   * The fresh tab a window is to announce once its chrome is up (`revealFreshTab`: the new tab
+   * page's own announcement, or the URL bar in new-tab mode), by window id – the tab the blank /
+   * private start or `openFreshTab` made before the chrome could hear of it. Armed on the TAB,
+   * not the window: a launch that carries a URL takes that tab (`openLaunchUrls`) or puts a
+   * page beside it before the chrome is ready, and the bar then stays closed over the page
+   * (`onChromeReady`), as Chrome launched with a URL shows the page and no omnibox dropdown.
+   * `url` is the page the tab was made on, for the "still fresh" reading there.
+   */
+  private readonly urlbarOnReady = new Map<string, { tabId: string; url: string }>()
   /** The shortcut table last handed to the host (`syncShortcuts`). */
   private syncedShortcuts: Shortcut[] | null = null
   /**
@@ -1047,7 +1055,7 @@ export class Browser {
       const url = this.newTab.homeUrl() ?? BLANK_URL
       const tab = this.tabs.createTab({ url, active: true, load: false }, win)
       win.select(localSpace, tab.id)
-      this.urlbarOnReady.add(win.id)
+      this.urlbarOnReady.set(win.id, { tabId: tab.id, url })
     } else if (!localSpace && !opts.empty) {
       // A synced window into a space with nothing in it (New Window, the first browser window
       // of a run that began on an app window) comes up with a tab all the same, as Chrome's do.
@@ -1077,13 +1085,20 @@ export class Browser {
   onChromeReady(win: ZenWindow): void {
     if (this.state.settings.onboardingDone && !this.session.holdsPages())
       this.tabs.claimVisible(win)
-    if (this.urlbarOnReady.delete(win.id)) {
-      const active = this.tabs.activeTabFor(win)
+    const armed = this.urlbarOnReady.get(win.id)
+    if (armed !== undefined) {
+      this.urlbarOnReady.delete(win.id)
       setTimeout(() => {
         if (!win.alive) return
-        if (active && isEmptyTabUrl(active.url) && this.newTab.enabled)
-          this.emit('newtab.opened', { tabId: active.id }, win)
-        else this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+        // The fresh tab's announcement is the fresh tab's alone: only while it is still the tab
+        // in front and still on the page it was made on. A URL the launch carried into it
+        // (`openLaunchUrls`), or a page opened beside it before the chrome was ready, is the
+        // content, and nothing opens over it (W8-F14 – the bar used to open over the launched
+        // page, bound to no tab).
+        const tab = this.tabs.activeTabFor(win)
+        if (!tab || tab.id !== armed.tabId) return
+        const fresh = isEmptyTabUrl(armed.url) ? isEmptyTabUrl(tab.url) : tab.url === armed.url
+        if (fresh) this.revealFreshTab(tab, win)
       }, 150)
     }
     this.newTab.onChromeReady(win)
@@ -1109,7 +1124,7 @@ export class Browser {
     const url = override ?? this.newTab.homeUrl() ?? BLANK_URL
     const tab = this.tabs.createTab({ url, active: true, load: false }, win)
     if (!win.chromeReady) {
-      this.urlbarOnReady.add(win.id)
+      this.urlbarOnReady.set(win.id, { tabId: tab.id, url })
       return
     }
     setTimeout(() => {
@@ -2576,6 +2591,41 @@ export class Browser {
     this.tabs.activateTab(tabId, win)
     win.host.show()
     win.host.focus()
+  }
+
+  /**
+   * The URLs a launch carries into `win` – `zenium <url…>`, another app's link with Zenium as
+   * the default browser, a dropped file (`src/main/index.ts` `openLaunch`). The first takes the
+   * window's fresh empty tab when one stands in front ({@link freshTabIn}: the tab a blank or
+   * private window starts with, the one `ensureFirstTab` gave a synced window into an empty
+   * space, a new tab page the user has not left), whatever the window's kind – a launch with a
+   * URL shows that page in the one tab and no new tab page beside it, as Chrome's does; the
+   * rest open beside it (`openExternalUrl`). W8-F14: since W5-F2 the synced startup window got
+   * its fresh tab from `ensureFirstTab` and the URL as a second tab, the bar armed for the
+   * window then opening over the page. The visit is recorded as a link's, as `openExternalUrl`
+   * records it, not as typed.
+   */
+  openLaunchUrls(urls: readonly string[], win: ZenWindow): void {
+    const starter = this.freshTabIn(win)
+    urls.forEach((url, index) => {
+      if (index === 0 && starter) this.tabs.navigate(starter.id, url, { transition: 'link' })
+      else this.openExternalUrl(url, win)
+    })
+  }
+
+  /**
+   * The window's active tab when it is a fresh empty one a launch URL may take: on the blank
+   * page or the new tab page, never navigated (no back / forward entry, none kept for it in the
+   * profile from the last session), and neither pinned nor an Essential – those are the user's
+   * to keep, and a URL opens beside them.
+   */
+  freshTabIn(win: ZenWindow): Tab | null {
+    const tab = this.tabs.activeTabFor(win)
+    if (!tab || !isEmptyTabUrl(tab.url) || tab.pinned || tab.essential) return null
+    if (tab.canGoBack || tab.canGoForward) return null
+    const stack = this.state.tabNavigation.get(tab.id)
+    if (stack?.entries.some((entry) => !isEmptyTabUrl(entry.url))) return null
+    return tab
   }
 
   /**

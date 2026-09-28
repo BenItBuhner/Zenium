@@ -435,6 +435,20 @@ The session's end goes over the local MCP server – the soak's `HttpClient` fro
 `scripts/mcp-soak.mjs`, the same HTTP path a real agent takes – not a test-only command. The
 pure parts (the seeded document, the verdicts) are `agent-space-scenario.test.mjs`'s.
 
+## A launch with a URL (`launch-url`)
+
+`zenium <url>` on a fresh profile past onboarding (W8-F14) – the default-browser path with
+Zenium closed, a dropped file – comes up as Chrome does: the one tab on the page, one sidebar
+row, and no URL bar over it. The main process starts the window with its fresh tab
+(`ensureFirstTab`, W5-F2 / #490), then `openLaunch` carries the URL into that tab
+(`Browser.openLaunchUrls`); the fresh tab's announcement, armed for the tab, finds a page in its
+place at chrome-ready and stays silent. Until this slice the URL opened as a second tab beside the
+fresh `zen://newtab` one and the bar armed for the window opened over the page, bound to no tab.
+The step reads the state once the page has loaded and a quiet second has passed (the bar due at
+chrome-ready has had its moment): the tabs through `app.getState` (one, the launched page,
+active), the sidebar rows (one) and the URL bar's field (none); then the window and a graceful
+quit that keeps the page. The Linux job's boot set runs it.
+
 ## The new tab's caret (`boot` / `new-tab-fixture`)
 
 The onboarding's end leaves a new tab with its URL bar up in new-tab mode, and `boot`'s
