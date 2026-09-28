@@ -1,4 +1,10 @@
 import { BookmarkTree, recentBookmarks } from '@shared/bookmarks'
+import {
+  EDUCATIONAL_TIP_MODULE_NAME,
+  educationalTipCardHolds,
+  type EducationalTipCardId,
+  type EducationalTipInputs
+} from '@shared/educationalTips'
 import { MAGIC_STACK_MODULE_IDS } from '@shared/newTab'
 import {
   SAFETY_HUB_CARD_NAME,
@@ -9,7 +15,6 @@ import {
 import type {
   BookmarkNode,
   ClosedEntrySummary,
-  DefaultBrowserStatus,
   DownloadItem,
   MagicStackModuleId
 } from '@shared/types'
@@ -17,9 +22,9 @@ import type {
 /**
  * The Magic Stack's module plan (NTP-16, design language v2 §9.29): which cards the stack under
  * the new tab page's tiles draws, from what the UI state already publishes, in the stack's
- * order – the user's own content first, the Safety check card, the promo last – less the modules
- * hidden on this device and the ones with nothing to show. Pure: the component renders what
- * `planMagicStack` returns, the Customise sheet lists `availableModules`, and the tests read
+ * order – the user's own content first, the Safety check card, the tip card last – less the
+ * modules hidden on this device and the ones with nothing to show. Pure: the component renders
+ * what `planMagicStack` returns, the Customise sheet lists `availableModules`, and the tests read
  * both directly.
  *
  * Chrome 152's stack has more modules than Zenium has sources for. Tab resumption from other
@@ -29,7 +34,9 @@ import type {
  * types at a time, picked once per impression by `shared/safetyHubCard.ts`'s machine – the
  * component runs the pick and hands the plan the type with the live inputs, so the card holds
  * through the impression and leaves when its trigger clears (Chrome's observers,
- * `SafetyHubMagicStackMediator.java:136-151`).
+ * `SafetyHubMagicStackMediator.java:136-151`). The tip card (NTP-20) is Chrome's educational
+ * tip module the same way: one of its cards at a time, picked once per impression by
+ * `shared/educationalTips.ts`'s machine, held while its live signals hold.
  */
 
 /** What the plan reads: the slices of `UIState` the modules are built from. */
@@ -40,12 +47,10 @@ export interface MagicStackSources {
   downloads: DownloadItem[]
   /** `UIState.bookmarks`, every node. */
   bookmarks: BookmarkNode[]
-  /** `UIState.defaultBrowser`. */
-  defaultBrowser: DefaultBrowserStatus
-  /** `UIState.capabilities.defaultBrowser`: the host can tell and can ask. */
-  canRequestDefault: boolean
   /** The Safety check type this impression shows (the machine's pick; null for none) and the live inputs. */
   safetyHub: { type: SafetyHubCardType | null; inputs: SafetyHubInputs }
+  /** The tip card this impression shows (the machine's pick; null for none) and the live inputs. */
+  tips: { card: EducationalTipCardId | null; inputs: EducationalTipInputs }
 }
 
 /** One card of the stack, with the content its module found. */
@@ -54,7 +59,7 @@ export type MagicStackCard =
   | { id: 'downloads'; item: DownloadItem }
   | { id: 'bookmarks'; items: BookmarkNode[] }
   | { id: 'safety-hub'; type: SafetyHubCardType; inputs: SafetyHubInputs }
-  | { id: 'default-browser' }
+  | { id: 'tips'; card: EducationalTipCardId }
 
 /** How a module names itself: on its card's title row and on its row of the Customise sheet. */
 export interface MagicStackModule {
@@ -82,9 +87,10 @@ export const MAGIC_STACK_MODULES: readonly MagicStackModule[] = [
     description: 'Permissions removed from unused sites, Safe Browsing off, compromised passwords'
   },
   {
-    id: 'default-browser',
-    title: 'Default browser',
-    description: 'A reminder to make Zenium your default browser'
+    id: 'tips',
+    title: EDUCATIONAL_TIP_MODULE_NAME,
+    description:
+      'One tip at a time: customising the page, the default browser, tab groups, deleting browsing data'
   }
 ]
 
@@ -95,22 +101,22 @@ export function magicStackModule(id: MagicStackModuleId): MagicStackModule {
 }
 
 /**
- * The modules this host has at all, in stack order: the Customise sheet's rows. A host that
- * cannot ask to be the default browser (a desktop, a phone whose host never answered) has no
- * such module to switch on or off.
+ * The modules this host has at all, in stack order: the Customise sheet's rows. Every module is
+ * every phone's: the tip card has cards that need no capability of the host (the theme, tab
+ * groups, Quick Delete), so it is listed whether or not the host can ask for the browser role –
+ * one switch for every tip, as Chrome's one "Chrome tips" setting (`HomeModulesUtils.java:315-322`).
  */
-export function availableModules(
-  sources: Pick<MagicStackSources, 'canRequestDefault'>
-): MagicStackModule[] {
-  return MAGIC_STACK_MODULES.filter((m) => m.id !== 'default-browser' || sources.canRequestDefault)
+export function availableModules(): MagicStackModule[] {
+  return [...MAGIC_STACK_MODULES]
 }
 
 /**
  * A module's card from the sources, or null when it has nothing to show. Each module is one
  * rule: the newest closed entry; the newest completed download still on disk and not held in
  * quarantine; the newest bookmarks; the Safety check type the machine picked, for as long as
- * its trigger holds; the default-browser reminder while Zenium is known not to be the default
- * and no dedicated prompt (the first-run sheet, the banner) is asking already.
+ * its trigger holds; the tip card the machine picked, for as long as its live signals hold
+ * (`educationalTipCardHolds`: the default browser's while Zenium is known not to be the default
+ * and no dedicated prompt – the first-run sheet, the banner – is asking already).
  */
 export function buildCard(
   id: MagicStackModuleId,
@@ -140,10 +146,9 @@ export function buildCard(
       const { type, inputs } = sources.safetyHub
       return type && safetyHubTriggers(type, inputs) ? { id, type, inputs } : null
     }
-    case 'default-browser': {
-      if (!sources.canRequestDefault) return null
-      const { isDefault, prompt } = sources.defaultBrowser
-      return isDefault === false && prompt === null ? { id } : null
+    case 'tips': {
+      const { card, inputs } = sources.tips
+      return card && educationalTipCardHolds(card, inputs) ? { id, card } : null
     }
   }
 }

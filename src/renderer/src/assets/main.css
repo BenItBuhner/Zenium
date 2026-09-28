@@ -8755,13 +8755,6 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
-  /* A card with a sentence for content (the default-browser reminder): 15/400 in the page ink. */
-  :root[data-form-factor='phone'] .zen-mstack-text {
-    margin: 0;
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    color: var(--v2-text-deemphasized);
-  }
   /*
    * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml`): the
    * type's glyph in the page's own tile – 56 at radius 8 with the space's corner shape on the
@@ -8826,6 +8819,19 @@
     color: var(--v2-text-deemphasized);
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  /*
+   * The tip card's description (NTP-20; Chrome's `educational_tip_module_layout.xml:88-95`): a
+   * sentence, not a one-line summary – wrapped and clamped at three lines where Chrome clamps at
+   * two, against a text column Chrome's 72 dp illustration (`dimens.xml:12-14`) leaves wider than
+   * the 56 tile does at the card's width.
+   */
+  :root[data-form-factor='phone'] .zen-mstack-tip-summary {
+    display: -webkit-box;
+    white-space: normal;
+    text-overflow: clip;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
   /* The action row at the card's foot: one hugging button, leading (§9.11's in-row form); a card whose rows are its whole act has none. */
   :root[data-form-factor='phone'] .zen-mstack-actions {

@@ -8,12 +8,20 @@ import type {
   BookmarkNode,
   ClosedEntrySummary,
   DownloadItem,
+  Folder,
   MagicStackModuleId,
   RevokedSitePermissions,
   Tab,
   UIState
 } from '@shared/types'
 import { emptyPasswordsStatus } from '@shared/defaults'
+import {
+  EDUCATIONAL_TIP_ANY_INTERVAL_MS,
+  EDUCATIONAL_TIP_CARD_INTERVAL_MS,
+  emptyEducationalTipMemory,
+  type EducationalTipCardId,
+  type EducationalTipMemory
+} from '@shared/educationalTips'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
 import { DEFAULT_PRIVACY_SETTINGS } from '@shared/privacy'
 import {
@@ -24,7 +32,8 @@ import {
 } from '@shared/safetyHubCard'
 import { BLANK_URL } from '@shared/url'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
+import { dismissOverview, stageStore } from '@renderer/lib/gestures/stage'
+import { closeCustomize, customizeStore, openCustomize } from '@renderer/lib/newtab'
 import { pageViewStore } from '@renderer/lib/pageView'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
@@ -42,6 +51,8 @@ import { browserStore, uiStore } from '@renderer/lib/ui'
  * over – and a card a switch turns off leaves as Hide This's does, the strip closing the gap and
  * the dots following, nothing paging (§9.29, §11.4). The page's gear sheet seats its Cards row
  * first, above Layout, a hairline after it (§9.13). The dots' one dimmed number is .4 (§9.30).
+ * The fixture's phone has a tip to show (the default page: the theme card), so the tip card is
+ * the stack's fourth; the tip card's own tests are NTP-20's block below.
  */
 
 const run = vi.fn()
@@ -202,18 +213,32 @@ function state(over: Partial<UIState> = {}): UIState {
     activeSpaceId: 'space',
     folders: {},
     essentialTabIds: [],
-    settings: { privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS) },
+    settings: {
+      privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+      newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS)
+    },
     recentlyClosed: [CLOSED],
     downloads: [DOWNLOAD],
     bookmarks: BOOKMARKS,
     defaultBrowser: { isDefault: false, prompt: null },
     newTabHiddenModules: [],
     newTabSafetyHubCard: {},
+    newTabEducationalTips: emptyEducationalTipMemory(),
     revokedUnusedPermissions: [],
     passwords: emptyPasswordsStatus(),
     ...over
   } as unknown as UIState
 }
+
+/** A tip shown this instant: the module rests three days, so no tip card is drawn. */
+const TIPS_RESTING = (): EducationalTipMemory => ({
+  ...emptyEducationalTipMemory(),
+  shownAt: Date.now()
+})
+
+/** The tip card's face, in Chrome's words for the theme card the fixture's phone gets first. */
+const THEME_TIP_LABEL =
+  'Zenium tips: Customise your homepage. Make Zenium your own with custom colours and images for your homepage'
 
 function render(el: ReactElement): void {
   if (!root) {
@@ -385,9 +410,10 @@ afterEach(() => {
   root = null
   mount?.remove()
   mount = null
-  uiStore.set({ menu: null })
+  uiStore.set({ menu: null, clearBrowsingDataOpen: false })
   closeMagicStackCustomize()
   closeCustomize()
+  dismissOverview()
   browserStore.set({ state: null })
   pageViewStore.set({ phases: new Map(), lastApplied: null })
   act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false }))
@@ -402,7 +428,7 @@ afterEach(() => {
 describe('the Magic Stack on the page (NTP-16)', () => {
   it('draws one card per module with content, in the stack’s order, each a page surface named for TalkBack, the strip a carousel with a dot per page', () => {
     render(stack(state()))
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
     const strip = q('.zen-mstack-strip')!
     expect(strip.getAttribute('role')).toBe('list')
     expect(strip.getAttribute('aria-roledescription')).toBe('carousel')
@@ -414,14 +440,14 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       'Continue where you left off: Espresso - Wikipedia',
       'Downloads: design-language.pdf',
       'Bookmarks: Damping - Wikipedia, RFC 2324: HTCPCP/1.0',
-      'Default browser: set Zenium as your default browser'
+      THEME_TIP_LABEL
     ])
     // Every ⋮ names its module; the shared 44 icon button.
     expect(qa('.zen-mstack-more').map((b) => b.getAttribute('aria-label'))).toEqual([
       'More options for Continue where you left off',
       'More options for Downloads',
       'More options for Bookmarks',
-      'More options for Default browser'
+      'More options for Zenium tips'
     ])
     for (const more of qa('.zen-mstack-more'))
       expect(more.classList.contains('zen-v2-icon-button')).toBe(true)
@@ -470,36 +496,32 @@ describe('the Magic Stack on the page (NTP-16)', () => {
           recentlyClosed: [],
           downloads: [],
           bookmarks: [],
-          defaultBrowser: { isDefault: true, prompt: null }
+          newTabEducationalTips: TIPS_RESTING()
         })
       )
     )
     expect(q('.zen-mstack')).toBeNull()
-    render(
-      stack(
-        state({ newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'default-browser'] })
-      )
-    )
+    render(stack(state({ newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'tips'] })))
     expect(q('.zen-mstack')).toBeNull()
     // One card alone: no dots.
-    render(stack(state({ newTabHiddenModules: ['continue', 'bookmarks', 'default-browser'] })))
+    render(stack(state({ newTabHiddenModules: ['continue', 'bookmarks', 'tips'] })))
     expect(cardIds()).toEqual(['downloads'])
     expect(q('.zen-mstack-dots')).toBeNull()
   })
 
-  it('one action a card, and only one its rows do not already do: See all on Downloads and Bookmarks, Set as default on the reminder, none on Continue; the rows reopen, open and open', () => {
+  it('one action a card, and only one its rows do not already do: See all on Downloads and Bookmarks, the tip’s button, none on Continue; the rows reopen, open and open', () => {
     render(stack(state()))
     const buttons = qa<HTMLButtonElement>('.zen-mstack-action')
-    expect(buttons.map((b) => b.textContent)).toEqual(['See all', 'See all', 'Set as default'])
+    expect(buttons.map((b) => b.textContent)).toEqual(['See all', 'See all', 'Try it now'])
     expect(qa('.zen-mstack-actions').map((a) => a.closest('li')?.dataset.cell)).toEqual([
       'downloads',
       'bookmarks',
-      'default-browser'
+      'tips'
     ])
     expect(q('.zen-mstack-card[data-cell="continue"] .zen-mstack-actions')).toBeNull()
-    // The reminder's primary asks the host under the card's own source.
+    // The tip's primary opens what the tip is about: the theme card, the page's Customise sheet.
     click(buttons[2]!)
-    expect(commands('defaultBrowser.request')).toEqual([{ source: 'newtab' }])
+    expect(customizeStore.get().open).toBe(true)
     expect(buttons[2]!.dataset.primary).toBe('true')
     // The rows are the cards' acts, named for what they do.
     const row = (id: MagicStackModuleId): HTMLElement | null =>
@@ -562,21 +584,21 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     // The card is still drawn, leaving on its fade, out of the way of the finger.
     const leaving = q('.zen-mstack-card[data-cell="continue"]')!
     expect(leaving.dataset.leaving).toBe('true')
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
     // The fade's end takes it out, the state not yet back.
     act(() => {
       leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
     })
-    expect(cardIds()).toEqual(['downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['downloads', 'bookmarks', 'tips'])
     // A state publish without the id yet (another field moved) does not bring the card back.
     render(stack(state({ newTabHiddenModules: [] })))
-    expect(cardIds()).toEqual(['downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['downloads', 'bookmarks', 'tips'])
     // The core's list arrives with the id: the same three.
     render(stack(state({ newTabHiddenModules: ['continue'] })))
-    expect(cardIds()).toEqual(['downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['downloads', 'bookmarks', 'tips'])
     // Re-enabled (the Customise sheet's switch): the card is back in its seat.
     render(stack(state({ newTabHiddenModules: [] })))
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
   })
 
   it('under reduced motion Hide This cuts the card at once', async () => {
@@ -585,18 +607,18 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     await openMenu('bookmarks')
     pick('Hide This')
     expect(commands('newtab.setModuleHidden')).toEqual([{ id: 'bookmarks', hidden: true }])
-    expect(cardIds()).toEqual(['continue', 'downloads', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'tips'])
     expect(q('[data-leaving]')).toBeNull()
   })
 
   it('a card a switch turns on arrives in view: the strip pages to it on the spring, its snapping off for the motion and on again a frame after the rest; the card comes in on the fade’s mirror and the dots follow', () => {
     render(stack(state({ newTabHiddenModules: ['bookmarks'] })))
-    expect(cardIds()).toEqual(['continue', 'downloads', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'tips'])
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!
     const scroll = scroller(strip)
     // The switch: the core's list drops the id.
     render(stack(state({ newTabHiddenModules: [] })))
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
     const card = q('.zen-mstack-card[data-cell="bookmarks"]')!
     expect(card.dataset.arriving).toBe('true')
     expect(q('[data-leaving]')).toBeNull()
@@ -644,11 +666,11 @@ describe('the Magic Stack on the page (NTP-16)', () => {
   })
 
   it('a finger on the strip takes the paging over: the spring stops where it is and the snap returns at once', () => {
-    render(stack(state({ newTabHiddenModules: ['default-browser'] })))
+    render(stack(state({ newTabHiddenModules: ['tips'] })))
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!
     const scroll = scroller(strip)
     render(stack(state({ newTabHiddenModules: [] })))
-    expect(q('.zen-mstack-card[data-cell="default-browser"]')!.dataset.arriving).toBe('true')
+    expect(q('.zen-mstack-card[data-cell="tips"]')!.dataset.arriving).toBe('true')
     // Two frames on the way to the fourth card (24)…
     act(() => frames.run(2))
     const caught = scroll.offset
@@ -673,7 +695,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!
     const scroll = scroller(strip)
     render(stack(state({ newTabHiddenModules: [] })))
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
     expect(scroll.offset).toBe(16)
     expect(scroll.writes.every((w) => w === 16)).toBe(true)
     expect(snapOf(strip)).toBe('none')
@@ -714,15 +736,15 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => 400 })
       // Downloads comes back second: one pitch of the layout width, 108 – not 104 off the rect.
       render(stack(state({ newTabHiddenModules: [] })))
-      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
       expect(scroll.offset).toBe(108)
       act(() => frames.run(1))
       expect(snapOf(strip)).toBe('')
       // The fourth card, gone and back: three pitches would be 324, but the strip stops at 300.
-      render(stack(state({ newTabHiddenModules: ['default-browser'] })))
+      render(stack(state({ newTabHiddenModules: ['tips'] })))
       expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks'])
       render(stack(state({ newTabHiddenModules: [] })))
-      expect(q('.zen-mstack-card[data-cell="default-browser"]')!.dataset.arriving).toBe('true')
+      expect(q('.zen-mstack-card[data-cell="tips"]')!.dataset.arriving).toBe('true')
       expect(scroll.offset).toBe(300)
       expect(scroll.writes.every((w) => w === 108 || w === 300)).toBe(true)
       act(() => frames.run(1))
@@ -743,7 +765,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(commands('newtab.setModuleHidden')).toEqual([])
     const leaving = q('.zen-mstack-card[data-cell="downloads"]')!
     expect(leaving.dataset.leaving).toBe('true')
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
     expect(q('[data-arriving]')).toBeNull()
     expect(scroll.writes).toEqual([])
     expect(snapOf(strip)).toBe('')
@@ -752,7 +774,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     act(() => {
       leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
     })
-    expect(cardIds()).toEqual(['continue', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'bookmarks', 'tips'])
     expect(qa('.zen-mstack-dot')).toHaveLength(3)
     expect(q('.zen-mstack-dots')!.textContent).toBe('Page 1 of 3')
     expect(scroll.writes).toEqual([])
@@ -769,7 +791,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     })
     // The state carries both ids now: the same two cards, no second departure, nothing paged.
     render(stack(state({ newTabHiddenModules: ['downloads', 'bookmarks'] })))
-    expect(cardIds()).toEqual(['continue', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'tips'])
     expect(q('[data-leaving]')).toBeNull()
     expect(q('[data-arriving]')).toBeNull()
     expect(scroll.writes).toEqual([])
@@ -814,11 +836,9 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       act(() => {
         leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
       })
-      expect(cardIds()).toEqual(['continue', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['continue', 'bookmarks', 'tips'])
       const glided = (): string[] =>
-        ['bookmarks', 'default-browser'].map(
-          (id) => q(`.zen-mstack-card[data-cell="${id}"]`)!.style.transform
-        )
+        ['bookmarks', 'tips'].map((id) => q(`.zen-mstack-card[data-cell="${id}"]`)!.style.transform)
       expect(glided()).toEqual(['translate(100px, 0px)', 'translate(100px, 0px)'])
       expect(q('.zen-mstack-card[data-cell="continue"]')!.style.transform).toBe('')
       expect(snapOf(strip)).toBe('none')
@@ -863,7 +883,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     try {
       const page = (s: UIState): ReactElement => <div className="zen-content-frame">{stack(s)}</div>
       render(page(state()))
-      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
       const frame = q('.zen-content-frame')!
       frame.style.transform = 'matrix(0.97, 0, 0, 0.97, 0, 0)'
       frame.style.transformOrigin = '200px 400px'
@@ -879,7 +899,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       act(() => {
         leaving.dispatchEvent(new AnimationEvent('animationend', { bubbles: true }))
       })
-      expect(cardIds()).toEqual(['continue', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['continue', 'bookmarks', 'tips'])
       expect(transforms()).toEqual(['', 'translate(100px, 0px)', 'translate(100px, 0px)'])
       rest()
       expect(transforms()).toEqual(['', '', ''])
@@ -893,7 +913,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     const restore = layOut(() => scroll?.offset ?? 0)
     try {
       render(stack(state({ newTabHiddenModules: ['continue'] })))
-      expect(cardIds()).toEqual(['downloads', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['downloads', 'bookmarks', 'tips'])
       const strip = q<HTMLUListElement>('.zen-mstack-strip')!
       scroll = scroller(strip)
       Object.defineProperty(strip, 'scrollWidth', {
@@ -906,7 +926,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       // no write of the pager's (WebView in run 3 – the card kept, the offset 328).
       scroll.move(100)
       render(stack(state({ newTabHiddenModules: [] })))
-      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
       expect(q('.zen-mstack-card[data-cell="continue"]')!.dataset.arriving).toBe('true')
       const inView = q('.zen-mstack-card[data-cell="downloads"]')!
       // Nothing glides: the baseline followed the offset, and the card in view is where it was.
@@ -960,7 +980,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       })
       Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => 100 })
       render(stack(state({ newTabHiddenModules: [] })))
-      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
       const inView = q('.zen-mstack-card[data-cell="downloads"]')!
       // Drawn where they were, a pitch to the left of their new slots; the arrival at the head.
       expect(transforms()).toEqual([
@@ -1000,7 +1020,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     render(stack(state({ newTabHiddenModules: ['continue', 'downloads'] })))
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!
     const scroll = scroller(strip)
-    render(stack(state({ newTabHiddenModules: ['bookmarks', 'default-browser'] })))
+    render(stack(state({ newTabHiddenModules: ['bookmarks', 'tips'] })))
     expect(cardIds()).toEqual(['continue', 'downloads'])
     expect(q('[data-leaving]')).toBeNull()
     expect(q('[data-arriving]')).toBeNull()
@@ -1059,7 +1079,7 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       'DownloadsThe file you downloaded last',
       'BookmarksThe bookmarks you added most recently',
       'Safety checkPermissions removed from unused sites, Safe Browsing off, compromised passwords',
-      'Default browserA reminder to make Zenium your default browser'
+      'Zenium tipsOne tip at a time: customising the page, the default browser, tab groups, deleting browsing data'
     ])
     expect(switches.map((s) => s.getAttribute('aria-checked'))).toEqual([
       'true',
@@ -1073,11 +1093,11 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     click(switches[4]!)
     expect(commands('newtab.setModuleHidden')).toEqual([
       { id: 'downloads', hidden: false },
-      { id: 'default-browser', hidden: true }
+      { id: 'tips', hidden: true }
     ])
   })
 
-  it('the Customise sheet lists no default-browser row on a host that cannot ask', async () => {
+  it('the Customise sheet lists the tips row on a host that cannot ask for the browser role too: the other tips need nothing of the host (Chrome’s one switch for every tip)', async () => {
     browserStore.set({
       state: state({
         capabilities: { privateTabs: true, defaultBrowser: false }
@@ -1093,14 +1113,20 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     rest()
     expect(
       qa('[role="switch"]').map((s) => s.querySelector('.zen-settings-label')?.textContent)
-    ).toEqual(['Continue where you left off', 'Downloads', 'Bookmarks', 'Safety check'])
+    ).toEqual([
+      'Continue where you left off',
+      'Downloads',
+      'Bookmarks',
+      'Safety check',
+      'Zenium tips'
+    ])
   })
 
   it('the page’s gear sheet seats its Cards row first, above Layout with a hairline after it – the way to the switches once every card is hidden; it leaves first and the stack’s sheet comes up as it has gone', async () => {
     browserStore.set({
       state: state({
         settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS) },
-        newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'safety-hub', 'default-browser']
+        newTabHiddenModules: ['continue', 'downloads', 'bookmarks', 'safety-hub', 'tips']
       } as Partial<UIState>)
     })
     // The page is under its cover already: the gear sheet presents (and so leaves on a spring).
@@ -1191,7 +1217,8 @@ describe('the Safety check card (NTP-19)', () => {
         privacy: {
           ...structuredClone(DEFAULT_PRIVACY_SETTINGS),
           safeBrowsingEnabled: over.safeBrowsing ?? true
-        }
+        },
+        newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS)
       },
       revokedUnusedPermissions: over.revoked ?? [],
       passwords: {
@@ -1225,13 +1252,7 @@ describe('the Safety check card (NTP-19)', () => {
 
   it('draws the revoked-permissions card after the content modules, in Chrome’s words, with the impression written once', () => {
     render(stack(safety({ revoked: REVOKED })))
-    expect(cardIds()).toEqual([
-      'continue',
-      'downloads',
-      'bookmarks',
-      'safety-hub',
-      'default-browser'
-    ])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'safety-hub', 'tips'])
     const c = card()!
     expect(c.getAttribute('aria-label')).toBe('Safety check: Removed permissions for 1 site')
     expect(c.querySelector('.zen-mstack-title')?.textContent).toBe('Safety check')
@@ -1301,7 +1322,7 @@ describe('the Safety check card (NTP-19)', () => {
     const writes = memoryWrites()
     expect(writes).toHaveLength(2)
     expect(writes[1]!.passwords).toMatchObject({ activeSince: null, impressions: 0, runs: 1 })
-    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
   })
 
   it('the Safe Browsing card waits its day, then Go to settings opens the Safe Browsing group and ends the run', () => {
@@ -1439,5 +1460,310 @@ describe('the Safety check card (NTP-19)', () => {
     expect(row.getAttribute('aria-checked')).toBe('true')
     click(row)
     expect(commands('newtab.setModuleHidden')).toEqual([{ id: 'safety-hub', hidden: true }])
+  })
+})
+
+/*
+ * The tip card (NTP-20; Chrome's educational tip module): one of Chrome's four cards at a time,
+ * picked by the shared machine at the stack's mount in Chrome's priority – the theme, the
+ * default browser, tab groups, Quick Delete – from the signals the state already publishes and
+ * the memory the device holds; the impression written back once; the card's face in Chrome's
+ * words, spelt as this surface spells; the button opening what the tip is about and retiring
+ * the card for good; a signal cleared under the card taking it down; the cadence (a tip once in
+ * three days, a card once in seven, the caps, a tap) keeping the module quiet; a hidden module
+ * making no impression and the switch bringing it back making one.
+ */
+describe('the tip card (NTP-20)', () => {
+  const DAY = 24 * 3_600_000
+  const NOW = Date.UTC(2026, 8, 27, 12)
+  let clock: ReturnType<typeof vi.spyOn> | null = null
+
+  /** The state with the tip signals given; everything else as the fixture has it. */
+  function tips(over: {
+    customized?: boolean
+    canAsk?: boolean
+    isDefault?: boolean | null
+    prompt?: 'sheet' | 'banner' | null
+    groups?: number
+    tabs?: number
+    memory?: EducationalTipMemory
+    hidden?: MagicStackModuleId[]
+  }): UIState {
+    const count = over.tabs ?? 1
+    const tabs: Record<string, Tab> = {}
+    for (let i = 0; i < count; i++)
+      tabs[i === 0 ? 'r' : `t${i}`] = { ...TAB, id: i === 0 ? 'r' : `t${i}` }
+    const folders: Record<string, Folder> = {}
+    for (let i = 0; i < (over.groups ?? 0); i++)
+      folders[`g${i}`] = {
+        id: `g${i}`,
+        spaceId: 'space',
+        name: `Group ${i}`,
+        icon: '',
+        collapsed: false
+      }
+    return state({
+      capabilities: { privateTabs: true, defaultBrowser: over.canAsk ?? true },
+      settings: {
+        privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+        newTab: {
+          ...structuredClone(DEFAULT_NEW_TAB_SETTINGS),
+          background: over.customized ? 'solid' : 'space'
+        }
+      },
+      tabs,
+      spaces: [{ id: 'space', activeTabId: 'r', tabIds: Object.keys(tabs) }],
+      folders,
+      defaultBrowser: {
+        isDefault: over.isDefault === undefined ? false : over.isDefault,
+        prompt: over.prompt ?? null
+      },
+      newTabEducationalTips: over.memory ?? emptyEducationalTipMemory(),
+      newTabHiddenModules: over.hidden ?? []
+    } as Partial<UIState>)
+  }
+
+  const memoryWrites = (): EducationalTipMemory[] =>
+    (commands('newtab.setEducationalTipMemory') as Array<{ memory: EducationalTipMemory }>).map(
+      (c) => c.memory
+    )
+  const card = (): HTMLElement | null => q('.zen-mstack-card[data-cell="tips"]')
+  const face = (): HTMLElement | null => q('.zen-mstack-card[data-cell="tips"] .zen-mstack-tip')
+  const shown = (): EducationalTipCardId | null =>
+    (face()?.dataset.card as EducationalTipCardId | undefined) ?? null
+  const button = (): HTMLElement | null =>
+    q('.zen-mstack-card[data-cell="tips"] .zen-mstack-action')
+
+  /** A memory in which `id` was shown once, `ago` ms before now. */
+  const seen = (
+    id: EducationalTipCardId,
+    ago: number,
+    over: Partial<EducationalTipMemory['cards'][EducationalTipCardId]> = {}
+  ): EducationalTipMemory => ({
+    cards: { [id]: { impressions: 1, shownAt: NOW - ago, interacted: false, ...over } },
+    shownAt: NOW - ago,
+    browsingDataClearedAt: null
+  })
+
+  beforeEach(() => {
+    clock = vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  })
+
+  afterEach(() => {
+    clock?.mockRestore()
+    clock = null
+  })
+
+  it('draws the theme card first, after the content modules, in Chrome’s words spelt as this surface spells, with the impression written once', () => {
+    render(stack(tips({})))
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'tips'])
+    const c = card()!
+    expect(c.getAttribute('aria-label')).toBe(THEME_TIP_LABEL)
+    expect(c.querySelector('.zen-mstack-title')?.textContent).toBe('Zenium tips')
+    expect(shown()).toBe('ntp-theme')
+    // The face: the tile with its glyph, the title, the description – the Safety check card's form.
+    const f = face()!
+    expect(f.classList.contains('zen-mstack-safety')).toBe(true)
+    expect(f.querySelector('.zen-mstack-safety-tile svg')).not.toBeNull()
+    expect(f.querySelector('.zen-mstack-safety-tile')?.getAttribute('aria-hidden')).toBe('true')
+    expect(f.querySelector('.zen-mstack-safety-title')?.textContent).toBe('Customise your homepage')
+    expect(f.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
+      'Make Zenium your own with custom colours and images for your homepage'
+    )
+    const b = button()!
+    expect(b.textContent).toBe('Try it now')
+    expect(b.getAttribute('aria-label')).toBe('Try it now: Customise your homepage')
+    expect(b.dataset.primary).toBe('true')
+    expect(c.querySelector('.zen-mstack-more')?.getAttribute('aria-label')).toBe(
+      'More options for Zenium tips'
+    )
+    // Chrome's name and Chrome's spelling are nowhere on the card.
+    expect(c.textContent).not.toContain('Chrome')
+    expect(c.textContent).not.toContain('Customize')
+    // The impression: the card counted and stamped, the module's rest begun, written once.
+    expect(memoryWrites()).toEqual([
+      {
+        cards: { 'ntp-theme': { impressions: 1, shownAt: NOW, interacted: false } },
+        shownAt: NOW,
+        browsingDataClearedAt: null
+      }
+    ])
+  })
+
+  it('falls through the priority as the signals say: the default browser, then tab groups, then Quick Delete', () => {
+    // The page customised: the default-browser card, with Chrome's "Set default".
+    render(stack(tips({ customized: true, tabs: 12 })))
+    expect(shown()).toBe('default-browser')
+    expect(face()!.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
+      'Use Zenium by default'
+    )
+    expect(face()!.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
+      'You can use Zenium any time you tap links in messages, documents and other apps'
+    )
+    expect(button()!.textContent).toBe('Set default')
+    // Zenium the default already, twelve tabs and no group: the tab-groups card.
+    act(() => root!.unmount())
+    root = null
+    render(stack(tips({ customized: true, isDefault: true, tabs: 12 })))
+    expect(shown()).toBe('tab-groups')
+    expect(face()!.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
+      'Tidy up with tab groups'
+    )
+    expect(face()!.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
+      'Create tab groups that automatically save and update across all your devices'
+    )
+    expect(button()!.textContent).toBe('Show me how')
+    // A group made: Quick Delete.
+    act(() => root!.unmount())
+    root = null
+    render(stack(tips({ customized: true, isDefault: true, tabs: 12, groups: 1 })))
+    expect(shown()).toBe('quick-delete')
+    expect(face()!.querySelector('.zen-mstack-safety-title')?.textContent).toBe(
+      'Manage your browsing data'
+    )
+    expect(face()!.querySelector('.zen-mstack-tip-summary')?.textContent).toBe(
+      'You can delete some or all of your history, cookies, site data and more'
+    )
+    expect(button()!.textContent).toBe('Show me how')
+    // A host that cannot ask for the role, ten tabs exactly: past the default-browser and the
+    // tab-groups cards to Quick Delete.
+    act(() => root!.unmount())
+    root = null
+    render(stack(tips({ customized: true, canAsk: false, tabs: 10 })))
+    expect(shown()).toBe('quick-delete')
+  })
+
+  it('the default-browser card yields to the first-run banner or sheet; the role answered while the card is up takes the card down', () => {
+    render(stack(tips({ customized: true, prompt: 'banner', tabs: 12 })))
+    expect(shown()).toBe('tab-groups')
+    act(() => root!.unmount())
+    root = null
+    run.mockClear()
+    render(stack(tips({ customized: true, tabs: 5 })))
+    expect(shown()).toBe('default-browser')
+    // The host's answer arrives: Zenium is the default – the card leaves, the stack shorter.
+    render(stack(tips({ customized: true, tabs: 5, isDefault: true, memory: memoryWrites()[0]! })))
+    expect(card()).toBeNull()
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks'])
+    expect(memoryWrites()).toHaveLength(1)
+  })
+
+  it('Try it now opens the page’s Customise sheet and retires the card: interacted for good, the card kept for the mount, the next mount picking the next card', () => {
+    render(stack(tips({})))
+    click(button())
+    expect(customizeStore.get().open).toBe(true)
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(2)
+    expect(writes[1]!.cards['ntp-theme']).toEqual({
+      impressions: 1,
+      shownAt: NOW,
+      interacted: true
+    })
+    expect(card()).not.toBeNull()
+    // The record back from the core: the card stays for the mount, nothing written again.
+    render(stack(tips({ memory: writes[1]! })))
+    expect(shown()).toBe('ntp-theme')
+    expect(memoryWrites()).toHaveLength(2)
+    // The next page, three days on: the retired card is passed over.
+    act(() => root!.unmount())
+    root = null
+    run.mockClear()
+    clock!.mockReturnValue(NOW + 3 * DAY)
+    render(stack(tips({ memory: writes[1]! })))
+    expect(shown()).toBe('default-browser')
+  })
+
+  it('Set default asks the host for the browser role under the page’s own source', () => {
+    render(stack(tips({ customized: true })))
+    expect(shown()).toBe('default-browser')
+    click(button())
+    expect(commands('defaultBrowser.request')).toEqual([{ source: 'newtab' }])
+    expect(memoryWrites()[1]!.cards['default-browser']?.interacted).toBe(true)
+  })
+
+  it('Show me how on the tab-groups card opens the overview, where a tab dropped on another makes a group', () => {
+    render(stack(tips({ customized: true, isDefault: true, tabs: 12 })))
+    expect(shown()).toBe('tab-groups')
+    expect(stageStore.get().overview.phase).toBe('closed')
+    click(button())
+    expect(stageStore.get().overview.phase).not.toBe('closed')
+    expect(stageStore.get().overview.target).toBe(1)
+    expect(memoryWrites()[1]!.cards['tab-groups']?.interacted).toBe(true)
+  })
+
+  it('Show me how on the Quick Delete card opens the Delete browsing data sheet', async () => {
+    render(stack(tips({ customized: true, isDefault: true, groups: 1 })))
+    expect(shown()).toBe('quick-delete')
+    expect(uiStore.get().clearBrowsingDataOpen).toBe(false)
+    click(button())
+    await flush()
+    expect(uiStore.get().clearBrowsingDataOpen).toBe(true)
+    expect(memoryWrites()[1]!.cards['quick-delete']?.interacted).toBe(true)
+  })
+
+  it('keeps Chrome’s cadence: a tip shown within three days rests the module; a card shown within seven days yields to the next', () => {
+    // The theme card shown yesterday: no tip at all, and nothing written.
+    render(stack(tips({ memory: seen('ntp-theme', DAY) })))
+    expect(card()).toBeNull()
+    expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks'])
+    expect(memoryWrites()).toEqual([])
+    // Shown four days ago: the module is rested, the theme card is not – the default-browser card.
+    act(() => root!.unmount())
+    root = null
+    render(stack(tips({ memory: seen('ntp-theme', 4 * DAY) })))
+    expect(shown()).toBe('default-browser')
+    expect(memoryWrites()[0]!.cards['ntp-theme']).toEqual({
+      impressions: 1,
+      shownAt: NOW - 4 * DAY,
+      interacted: false
+    })
+    expect(memoryWrites()[0]!.cards['default-browser']).toEqual({
+      impressions: 1,
+      shownAt: NOW,
+      interacted: false
+    })
+    expect(EDUCATIONAL_TIP_ANY_INTERVAL_MS).toBe(3 * DAY)
+    expect(EDUCATIONAL_TIP_CARD_INTERVAL_MS).toBe(7 * DAY)
+  })
+
+  it('keeps Chrome’s caps: ten impressions retire a card, three the default-browser card, a tap any; browsing data deleted this month rests the Quick Delete card', () => {
+    const capped: EducationalTipMemory = {
+      cards: {
+        'ntp-theme': { impressions: 10, shownAt: NOW - 30 * DAY, interacted: false },
+        'default-browser': { impressions: 3, shownAt: NOW - 30 * DAY, interacted: false },
+        'tab-groups': { impressions: 1, shownAt: NOW - 30 * DAY, interacted: true }
+      },
+      shownAt: NOW - 30 * DAY,
+      browsingDataClearedAt: null
+    }
+    render(stack(tips({ tabs: 12, memory: capped })))
+    expect(shown()).toBe('quick-delete')
+    // The browsing data deleted yesterday: nothing left to say, and nothing written.
+    act(() => root!.unmount())
+    root = null
+    run.mockClear()
+    render(stack(tips({ tabs: 12, memory: { ...capped, browsingDataClearedAt: NOW - DAY } })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toEqual([])
+  })
+
+  it('a hidden module makes no impression; the Cards sheet’s switch bringing it back makes one', () => {
+    render(stack(tips({ hidden: ['tips'] })))
+    expect(card()).toBeNull()
+    expect(memoryWrites()).toEqual([])
+    // The switch: the module back, picked and written in its own impression.
+    render(stack(tips({})))
+    expect(shown()).toBe('ntp-theme')
+    const writes = memoryWrites()
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.cards['ntp-theme']).toEqual({
+      impressions: 1,
+      shownAt: NOW,
+      interacted: false
+    })
+    // The record back from the core: the same card, nothing written again.
+    render(stack(tips({ memory: writes[0]! })))
+    expect(shown()).toBe('ntp-theme')
+    expect(memoryWrites()).toHaveLength(1)
   })
 })

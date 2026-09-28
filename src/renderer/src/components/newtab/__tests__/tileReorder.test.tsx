@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { NewTabShortcut, Tab, UIState } from '@shared/types'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { emptyEducationalTipMemory } from '@shared/educationalTips'
 import { emptyPasswordsStatus } from '@shared/defaults'
 import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
@@ -76,8 +77,12 @@ function stateWith(pins: readonly NewTabShortcut[]): UIState {
     searchEngines: DEFAULT_SEARCH_ENGINES,
     newTabShortcuts: pins,
     newTabHiddenHosts: [],
-    newTabHiddenModules: [],
+    // The tip module hidden: these are the tiles' tests, and the theme tip would otherwise be due
+    // on every mount (NTP-20).
+    newTabHiddenModules: ['tips'],
     newTabSafetyHubCard: {},
+    newTabEducationalTips: emptyEducationalTipMemory(),
+    defaultBrowser: { isDefault: null, prompt: null },
     revokedUnusedPermissions: [],
     passwords: emptyPasswordsStatus(),
     recentlyClosed: [],
