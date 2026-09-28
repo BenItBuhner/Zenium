@@ -3,6 +3,8 @@ import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared
 import {
   DEFAULT_READER_PREFERENCES,
   READER_IMAGES_ATTRIBUTE,
+  READER_LETTER_SPACING_ATTRIBUTE,
+  READER_LINE_SPACING_ATTRIBUTE,
   READER_LINKS_ATTRIBUTE,
   type ReaderPreferences
 } from '../../shared/reader'
@@ -182,6 +184,52 @@ describe('reader text preferences in the browser', () => {
   })
 })
 
+describe('Line spacing and Letter spacing (CT-35)', () => {
+  it('render as two root attributes of the reader document, each with its own rules, and reach an open reader as a patch; the old one-step patch reads forward', () => {
+    const { browser, platform, win } = start()
+    const tab = readerTab(browser, win, true)
+    const id = readerArticleId(tab.url)!
+    const html = (): string => browser.reader.pageHtml(id) ?? ''
+    expect(browser.reader.preferences()).toMatchObject({
+      lineSpacing: 'standard',
+      letterSpacing: 'standard'
+    })
+    expect(html()).toContain(`${READER_LINE_SPACING_ATTRIBUTE}="standard"`)
+    expect(html()).toContain(`${READER_LETTER_SPACING_ATTRIBUTE}="standard"`)
+    expect(html()).not.toContain('data-spacing=')
+    // The document's rules: the line height on the one attribute, the letter and word gaps on
+    // the other – today's numbers, so a record read forward renders as it did.
+    expect(html()).toContain(`:root[${READER_LINE_SPACING_ATTRIBUTE}='loose']`)
+    expect(html()).toContain(`:root[${READER_LINE_SPACING_ATTRIBUTE}='very-loose']`)
+    expect(html()).toContain(`:root[${READER_LETTER_SPACING_ATTRIBUTE}='wide']`)
+    expect(html()).toContain(`:root[${READER_LETTER_SPACING_ATTRIBUTE}='very-wide']`)
+    expect(html()).toMatch(/--zen-reader-line-height: 1\.65;/)
+    expect(html()).toMatch(/very-loose'\] \{ --zen-reader-line-height: 2\.15; \}/)
+    expect(html()).toMatch(
+      /very-wide'\] \{ --zen-reader-letter-spacing: 0\.12em; --zen-reader-word-spacing: 0\.32em; \}/
+    )
+
+    browser.handleCommand(win, 'reader.setPreferences', { lineSpacing: 'loose' })
+    expect(html()).toContain(`${READER_LINE_SPACING_ATTRIBUTE}="loose"`)
+    expect(html()).toContain(`${READER_LETTER_SPACING_ATTRIBUTE}="standard"`)
+    browser.handleCommand(win, 'reader.setPreferences', { letterSpacing: 'very-wide' })
+    expect(html()).toContain(`${READER_LETTER_SPACING_ATTRIBUTE}="very-wide"`)
+    // A patch in the old shape (a page script or a caller from before the split) sets the pair.
+    browser.handleCommand(win, 'reader.setPreferences', { spacing: 'wider' })
+    expect(browser.reader.preferences()).toMatchObject({
+      lineSpacing: 'very-loose',
+      letterSpacing: 'very-wide'
+    })
+    expect('spacing' in browser.reader.preferences()).toBe(false)
+    const pushes = platform.scripts.get(tab.id)!.map(applied).filter(Boolean)
+    expect(pushes).toEqual([
+      { ...DEFAULT_READER_PREFERENCES, lineSpacing: 'loose' },
+      { ...DEFAULT_READER_PREFERENCES, lineSpacing: 'loose', letterSpacing: 'very-wide' },
+      { ...DEFAULT_READER_PREFERENCES, lineSpacing: 'very-loose', letterSpacing: 'very-wide' }
+    ])
+  })
+})
+
 describe('the Links and Images toggles (reader-12)', () => {
   it('render as root attributes of the reader document only while off, and reach an open reader as a patch', () => {
     const { browser, platform, win } = start()
@@ -242,7 +290,8 @@ describe('the Links and Images toggles (reader-12)', () => {
     const tab = readerTab(browser, win, true)
     const id = readerArticleId(tab.url)!
     // A settings merge lands the whole `reader` object of an older device as it came
-    // (`sync/apply.ts`), seven fields and no `links` / `images` – not through `settings.update`.
+    // (`sync/apply.ts`), seven fields – Edge's one `spacing` before CT-35 split it – and no
+    // `links` / `images` – not through `settings.update`.
     const sevenField = {
       fontSize: 20,
       font: 'sans',

@@ -727,6 +727,75 @@ describe('below the two-pane width', () => {
   })
 })
 
+/*
+ * Settings › Mods on the phone (seed #31, the lead's ruling): `ModStyles` mounts in the desktop
+ * and tablet shells and never in the phone's, so the phone draws no Mods page – a page whose
+ * switches applied nothing would only describe its own absence (#628's transport row, #632's
+ * Print row). The category leaves the phone landing, and `zen://settings/mods` opens the landing
+ * there as `zen://settings/performance` does; the two-pane layouts keep the page and its rows.
+ * The Mods themselves stay in the state (they keep syncing and style the other devices).
+ */
+describe('Settings › Mods on the phone (seed #31: the category hidden, the records untouched)', () => {
+  const MOD = {
+    id: 'm1',
+    name: 'Round tabs',
+    source: null,
+    css: '.zen-tab { border-radius: 12px }',
+    enabled: true,
+    updatedAt: 1
+  }
+  const withMod = (caps: HostCapabilities, platform: UIState['platform'], url: string): UIState => {
+    const s = state(caps, platform, {}, url)
+    s.mods = [MOD]
+    return s
+  }
+  const TITLE = '<h2 id="zen-settings-section-title" class="zen-settings-section-title">Mods</h2>'
+
+  it('lists no Mods category on the phone landing, whatever Mods the state holds', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const markup = render(withMod(ANDROID, 'android', 'zen://settings'))
+    expect(markup).toContain('zen-settings-landing')
+    expect(markup).toContain('data-section="boosts"')
+    expect(markup).not.toContain('data-section="mods"')
+    expect(markup).not.toContain('<span class="zen-settings-category-label">Mods</span>')
+    expect(markup).not.toContain('Round tabs')
+  })
+
+  it('opens the landing for zen://settings/mods on the phone – the section is none of the layout’s, as zen://settings/performance is not – with no drill-in and none of the Mod’s rows', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    for (const url of ['zen://settings/mods', 'zen://settings/performance']) {
+      const markup = render(withMod(ANDROID, 'android', url))
+      expect(markup, url).toContain('data-layout="phone"')
+      expect(markup, url).toContain('class="zen-settings-phone" data-section="landing"')
+      expect(markup, url).not.toContain('zen-settings-drill-in')
+      expect(markup, url).not.toContain('data-row="mod:m1"')
+      expect(markup, url).not.toContain('Round tabs')
+      // The landing is live under nothing: no pane over it.
+      expect(markup, url).not.toMatch(/class="zen-settings-landing"[^>]*\binert\b/)
+    }
+  })
+
+  it('keeps the category, its title and the Mod’s row on the two-pane layouts – the desktop and the tablet, whose shells mount ModStyles', () => {
+    viewport(TWO_PANE_MIN_WIDTH)
+    const desktop = render(withMod(DESKTOP, 'linux', 'zen://settings/mods'))
+    expect(desktop).toContain('data-layout="two-pane"')
+    expect(desktop).toContain('data-testid="settings-page" data-section="mods"')
+    expect(desktop).toContain(TITLE)
+    expect(desktop).toContain('data-row="mod:m1"')
+    expect(desktop).toContain('Round tabs')
+    expect(navItems(desktop)).toContain('Mods')
+
+    viewport(TWO_PANE_MIN_WIDTH, false)
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet' })
+    const tablet = render(withMod(ANDROID, 'android', 'zen://settings/mods'))
+    expect(tablet).toContain('data-layout="two-pane"')
+    expect(tablet).toContain('data-testid="settings-page" data-section="mods"')
+    expect(tablet).toContain(TITLE)
+    expect(tablet).toContain('data-row="mod:m1"')
+    expect(navItems(tablet)).toContain('Mods')
+  })
+})
+
 describe('a section’s drill-in page (zen://settings/<section>/<page>, §10.2)', () => {
   const panes = (el: ParentNode): HTMLElement[] =>
     Array.from(el.querySelectorAll<HTMLElement>('.zen-settings-drill-in'))

@@ -17,6 +17,12 @@
  * top edge of its footer band for a sheet with actions under its body – the band's height over
  * the chassis's padding, published to the recede registry by the sheet (`RecedeHandle.footer`,
  * `recedeFooter`), so the toast covers content but never a footer's buttons.
+ *
+ * The same rule seats the desktop's and the tablet's toast while a frame dialog stands (W8-F16,
+ * lib/portals.tsx `useToastSeat`): the frame dialog host's seat is the frame, the host's
+ * registry – a dialog standing, or a panel on its way out – is the sheet, and the footer is
+ * the top dialog's only where it is a hosted sheet with a band (`ownScrim`). One mechanism,
+ * two seats; the phone's is `PhoneMessages`'.
  */
 export interface ToastSeat {
   /**

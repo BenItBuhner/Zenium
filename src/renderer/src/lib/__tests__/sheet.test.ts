@@ -537,6 +537,51 @@ describe('computeDetents above the bottom inset', () => {
   })
 })
 
+/**
+ * A control panel names where its peek must end (§9.13, the reader's text preferences with
+ * CT-35's sixth type row: the peek shows every live row whole): `foot` is the last live row's
+ * bottom edge and `end` the top of the first row after the hairline, from the sheet's top.
+ */
+describe('computeDetents with a peek end (§9.13)', () => {
+  const peek = Math.round(layer * SHEET_PEEK_FRACTION)
+
+  it('keeps the fraction while the last live row fits within it', () => {
+    expect(
+      computeDetents(1000, layer, insetTop, 0, 'content', { foot: peek, end: peek + 17 })
+    ).toEqual(two)
+    expect(computeDetents(1000, layer, insetTop, 0, 'content', { foot: 300, end: 317 })).toEqual(
+      two
+    )
+  })
+
+  it('ends at the named end where the fraction would cut the last live row', () => {
+    // The 412 × 915 phone with both head rows: the sixth row's foot at 481 over a 476 peek.
+    const d = computeDetents(1000, 915, 0, 0, 'content', { foot: 481, end: 498 })
+    expect(Math.round(915 * SHEET_PEEK_FRACTION)).toBe(476)
+    expect(d.collapsed).toBe(498)
+    expect(d.expanded).toBe(sheetMaxHeight(915, 0))
+  })
+
+  it('the named end rides on the bottom inset, as the fraction does', () => {
+    const d = computeDetents(1000, layer, insetTop, bar, 'content', { foot: 481, end: 498 })
+    const fraction = bar + Math.round((layer - bar) * SHEET_PEEK_FRACTION)
+    expect(481 + bar).toBeGreaterThan(fraction)
+    expect(d.collapsed).toBe(498 + bar)
+  })
+
+  it('never peeks past the expanded detent, and folds into one detent within the minimum gap', () => {
+    const cap = sheetMaxHeight(layer, insetTop)
+    expect(
+      computeDetents(5000, layer, insetTop, 0, 'content', { foot: cap, end: cap + 17 })
+    ).toEqual({
+      collapsed: cap,
+      expanded: cap
+    })
+    const one = computeDetents(600, layer, insetTop, 0, 'content', { foot: 520, end: 537 })
+    expect(one).toEqual({ collapsed: 600, expanded: 600 })
+  })
+})
+
 describe('a focused field above the keyboard', () => {
   const detents = computeDetents(1000, layer, insetTop, keyboard)
   const room = (detent: number): number => detent - keyboard - SHEET_FIELD_MARGIN

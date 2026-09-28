@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   LINE_FOCUS_MASK_CLASS,
   READER_LINE_FOCUS_ATTRIBUTE,
-  READER_SPACING_ATTRIBUTE,
+  READER_LINE_SPACING_ATTRIBUTE,
   READER_SYLLABLES_ATTRIBUTE,
   SYLLABLE_MARK_CLASS
 } from '../reader'
@@ -376,7 +376,7 @@ describe('installReaderExtras', () => {
     expect(extras.lineFocus.active).toBe(false)
   })
 
-  it('a typography change on the root (text spacing) places the band again at the new line height', async () => {
+  it('a typography change on the root (line spacing) places the band again at the new line height', async () => {
     const root = document.documentElement
     root.setAttribute(READER_LINE_FOCUS_ATTRIBUTE, '5')
     const extras = installReaderExtras(document)
@@ -384,13 +384,13 @@ describe('installReaderExtras', () => {
     const rest = Math.round(800 * LINE_FOCUS_REST)
     expect(extras.lineFocus.band()).toEqual({ top: rest - 60, bottom: rest + 90 })
 
-    // Wider spacing: the article's line height goes from 30 to 40 (the reader stylesheet's
-    // line-height 2.15), and nothing scrolled. The five lines are five of the new ones.
+    // Very loose line spacing (CT-35): the article's line height goes from 30 to 40 (the reader
+    // stylesheet's line-height 2.15), and nothing scrolled. The five lines are five of the new ones.
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({
       lineHeight: '40px',
       fontSize: '18px'
     } as unknown as CSSStyleDeclaration)
-    root.setAttribute(READER_SPACING_ATTRIBUTE, 'wider')
+    root.setAttribute(READER_LINE_SPACING_ATTRIBUTE, 'very-loose')
     await tick()
     expect(extras.lineFocus.band()).toEqual({ top: rest - 80, bottom: rest + 120 })
 
@@ -406,10 +406,10 @@ describe('installReaderExtras', () => {
       lineHeight: '30px',
       fontSize: '18px'
     } as unknown as CSSStyleDeclaration)
-    root.setAttribute(READER_SPACING_ATTRIBUTE, 'normal')
+    root.setAttribute(READER_LINE_SPACING_ATTRIBUTE, 'standard')
     await tick()
     expect(extras.lineFocus.band()).toEqual({ top: 300 - 60, bottom: 300 + 90 })
-    root.removeAttribute(READER_SPACING_ATTRIBUTE)
+    root.removeAttribute(READER_LINE_SPACING_ATTRIBUTE)
   })
 
   it('the band follows the read-aloud sentence as it is painted', async () => {

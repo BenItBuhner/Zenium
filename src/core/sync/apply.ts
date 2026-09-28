@@ -29,6 +29,7 @@ import {
   readBookmarkData,
   readCredentialData,
   readFolderAgentMark,
+  readModData,
   readReadingListData,
   readSpaceAgentMark,
   wireFavicon,
@@ -53,6 +54,7 @@ const ORDER: Record<SyncRecord['type'], number> = {
   'site-data': 6,
   shortcuts: 7,
   boost: 8,
+  mod: 8,
   credential: 9,
   order: 10
 }
@@ -360,6 +362,18 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         const domain = r.id.replace(/^boost:/, '')
         if (r.deleted) browser.boosts.remove(domain)
         else browser.boosts.put({ ...(r.data as Boost), domain })
+        break
+      }
+      case 'mod': {
+        // One Mod under its own id (services pass 15, ID-43): a tombstone removes it, a live
+        // record lands it whole through `readModData` (the CSS cut at `MAX_MOD_CSS`, the name
+        // falling back to `UNTITLED_MOD`), so what landed re-collects to the received hash and
+        // a peer's oversized Mod is republished cut at its own time rather than bounced.
+        if (r.deleted) browser.mods.remove(r.id)
+        else {
+          const mod = readModData(r.id, r.data)
+          if (mod) browser.mods.put(mod)
+        }
         break
       }
       case 'credential': {

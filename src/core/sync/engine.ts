@@ -898,7 +898,8 @@ export class SyncEngine implements SyncHost {
       boosts: this.browser.boosts.all(),
       credentials: this.browser.passwords.syncSources(),
       siteData: this.browser.siteData.policy(),
-      readingList: state.readingList
+      readingList: state.readingList,
+      mods: this.browser.mods.all()
     }
   }
 

@@ -9,6 +9,7 @@ import type {
   GlanceState,
   HapticKind,
   LayoutReport,
+  PopupSurfaceRoom,
   QuitHoldState,
   Rect,
   Space,
@@ -40,6 +41,29 @@ export type PopupSurfaceOwner = 'autofill' | 'selectionMenu'
 
 /** The owners front to back: the surface stands where the first one with a place asks. */
 export const POPUP_SURFACE_OWNERS: readonly PopupSurfaceOwner[] = ['autofill', 'selectionMenu']
+
+/**
+ * The room an owner's document asks for a tooltip's moment (`PopupSurfaceRoom`), out of its
+ * size report: two finite, non-negative numbers, or none (null, left out, or nonsense).
+ */
+export function parsePopupSurfaceRoom(raw: unknown): PopupSurfaceRoom | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { below, width } = raw as Record<string, unknown>
+  if (!finiteNumber(below) || below < 0 || !finiteNumber(width) || width < 0) return null
+  return { below, width }
+}
+
+export function samePopupSurfaceRoom(
+  a: PopupSurfaceRoom | null,
+  b: PopupSurfaceRoom | null
+): boolean {
+  if (!a || !b) return a === b
+  return a.below === b.below && a.width === b.width
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
 
 /**
  * Whether `win`'s chrome has `surface` up to answer a page's request (`ZenWindow.surfaces`); a

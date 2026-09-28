@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FormsCommand, FormsEvent } from '../../shared/forms'
-import type { ExtensionControl, Rect, Tab } from '../../shared/types'
+import type { ExtensionControl, PopupSurfaceRoom, Rect, Tab } from '../../shared/types'
 import { emptyPasswordsDevice } from '../../shared/types'
 import { sanitizeAutofillSettings, sanitizePasswordSettings } from '../../shared/defaults'
 import {
@@ -1347,6 +1347,65 @@ describe('AutofillService: the popup surface (desktop)', () => {
     expect(w.win.focusContent).toHaveBeenCalledTimes(1)
   })
 
+  // §9.31, W8-F18: the picker's document asks the room a tooltip needs beyond the panel's box
+  // with its height report, for the tooltip's moment alone (the pill's handshake, #672); the
+  // core grows the surface under the panel without moving it and answers with the size set,
+  // which the document's tooltip waits for before it paints.
+  it('grows the surface for a tooltip’s room asked with the height, answers with the size set, and returns to the box on the null', async () => {
+    const w = setup({ popupSurface: true })
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'pw-a' })
+    w.addTab('t1', 'https://example.com/login')
+    w.event('t1', focusLogin())
+    const picker = w.autofill.uiState().picker!
+    const box = { x: 100 - 8, y: 284 + 32 - 8, width: 320 + 16, height: 140 + 16 }
+
+    // A report at rest: the panel's padded box, answered with its size.
+    expect(w.autofill.surfaceSize(picker.id, 140)).toEqual({ width: 336, height: 156 })
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(box)
+    // The room: the surface reaches under the box, the panel unmoved; the word back is the size set.
+    expect(w.autofill.surfaceSize(picker.id, 140, { below: 30, width: 200 })).toEqual({
+      width: 336,
+      height: 186
+    })
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith({ ...box, height: 186 })
+    // The same report again places nothing anew and is answered the same.
+    const calls = w.win.setPopupSurface.mock.calls.length
+    expect(w.autofill.surfaceSize(picker.id, 140, { below: 30, width: 200 })).toEqual({
+      width: 336,
+      height: 186
+    })
+    expect(w.win.setPopupSurface.mock.calls.length).toBe(calls)
+    // A room capped by the window: the size set, not the size asked, is the word.
+    expect(w.autofill.surfaceSize(picker.id, 140, { below: 5000, width: 200 })).toEqual({
+      width: 336,
+      height: 800 - box.y
+    })
+    // Nonsense for a room is no room.
+    expect(
+      w.autofill.surfaceSize(picker.id, 140, {
+        below: -1,
+        width: 'x'
+      } as unknown as PopupSurfaceRoom)
+    ).toEqual({ width: 336, height: 156 })
+    // The null gives the room back: the box again.
+    w.autofill.surfaceSize(picker.id, 140, { below: 30, width: 200 })
+    expect(w.autofill.surfaceSize(picker.id, 140, null)).toEqual({ width: 336, height: 156 })
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(box)
+    // Another picker's report places nothing and gets no word.
+    expect(w.autofill.surfaceSize('other', 140, { below: 30, width: 200 })).toBeNull()
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(box)
+
+    // A room standing when the picker closes goes with it; the next picker opens at its estimate.
+    w.autofill.surfaceSize(picker.id, 140, { below: 30, width: 200 })
+    w.event('t1', { type: 'blur' })
+    await w.autofill.pick(picker.id, null)
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(null)
+    expect(w.autofill.surfaceSize(picker.id, 140)).toBeNull()
+    w.event('t1', focusLogin())
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith({ ...box, height: 105 + 16 })
+  })
+
   it('draws no surface on a host without one and drops a stale save prompt when the tab leaves the site', async () => {
     const w = setup()
     await w.passwords.unlock()
@@ -1355,6 +1414,10 @@ describe('AutofillService: the popup surface (desktop)', () => {
     w.event('t1', focusLogin())
     expect(w.autofill.uiState().picker).not.toBeNull()
     expect(w.win.setPopupSurface).not.toHaveBeenCalled()
+    // A report from the picker's document is answered with no surface: nothing to wait for.
+    expect(
+      w.autofill.surfaceSize(w.autofill.uiState().picker!.id, 140, { below: 30, width: 200 })
+    ).toBeNull()
 
     // A save prompt left unanswered goes once the tab is on another site.
     w.event('t1', loginSubmit({ username: 'grace', password: 'pw-g' }))

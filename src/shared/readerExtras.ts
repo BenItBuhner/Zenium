@@ -20,9 +20,10 @@ import { baseLanguage } from './readAloud'
  * preferences" and "Grammar tools"), the DOM half: line focus – a dimmed mask over everything but
  * a band of one, three or five lines, following the read-aloud sentence while it plays and the
  * click or the arrow keys otherwise – and syllables, hyphenation points marked inside words by an
- * English heuristic (`syllableBoundaries`). Text spacing is the reader stylesheet's alone
- * (`data-spacing` on the root). The reader page's own script renders the saved settings as
- * `data-line-focus` / `data-syllables` / `data-spacing` on its root (`core/readerPage.ts`); this
+ * English heuristic (`syllableBoundaries`). Line spacing and letter spacing are the reader
+ * stylesheet's alone (`data-line-spacing` / `data-letter-spacing` on the root). The reader
+ * page's own script renders the saved settings as `data-line-focus` / `data-syllables` and the
+ * two spacing attributes on its root (`core/readerPage.ts`); this
  * module, installed by the page script in `zen://reader` documents on both platforms, watches
  * those attributes and does the DOM work. Nothing here runs in a web page.
  *
@@ -369,11 +370,11 @@ export class LineFocus {
   }
 
   /**
-   * The document's typography changed under the band (text spacing, size, font or column
-   * width from the preferences): the line height it was measured with is stale, so a band
-   * anchored by a click takes the article's line height again and every band is placed again.
-   * Without it a five-line band set at normal spacing stayed four lines tall at wider spacing
-   * until the next scroll (the Android record).
+   * The document's typography changed under the band (line or letter spacing, size, font or
+   * column width from the preferences): the line height it was measured with is stale, so a
+   * band anchored by a click takes the article's line height again and every band is placed
+   * again. Without it a five-line band set at standard line spacing stayed four lines tall at
+   * very loose until the next scroll (the Android record).
    */
   relayout(): void {
     if (!this.active) return

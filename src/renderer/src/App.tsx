@@ -35,6 +35,7 @@ import { ContentArea } from './components/content/ContentArea'
 import { FindBar } from './components/content/FindBar'
 import { ChromeDropLayer, DragLayer } from './components/DragLayer'
 import { PopupFrame } from './components/extensions/PopupFrame'
+import { FrameSeatToasts } from './components/messages/FrameSeatToasts'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { SearchChoiceScreen } from './components/overlays/SearchChoice'
@@ -122,6 +123,7 @@ function PageWindowShell({ state, theme }: { state: UIState; theme: ResolvedThem
       <main className="relative min-h-0 flex-1">
         {tab && <InternalPageHost state={state} tab={tab} />}
         <TabDialogs state={state} />
+        <FrameSeatToasts />
       </main>
       <Tooltip />
     </div>
@@ -304,9 +306,11 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           {/*
            * Modal dialogs render in the content frame through FrameDialogHost (its scrim dims
            * this box only); popovers such as the star bubble render through ChromePortal, over
-           * the window (lib/portals.tsx).
+           * the window (lib/portals.tsx). A toast a dialog's act raises is drawn in the host's
+           * own toast seat, above the dialog (§9.33, `FrameSeatToasts`).
            */}
           <TabDialogs state={state} />
+          <FrameSeatToasts />
         </main>
       </div>
     </>

@@ -9,7 +9,7 @@ import type {
 import type { Browser } from './browser'
 import { anchorInChrome } from './credentials/fill'
 import type { PageMessage } from './platform'
-import type { ZenWindow } from './window'
+import { parsePopupSurfaceRoom, samePopupSurfaceRoom, type ZenWindow } from './window'
 
 /**
  * The mini menu over a text selection (CT-39; Edge's mini menu, Chrome for Android's selection
@@ -381,10 +381,10 @@ export class SelectionMenuService {
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0)
       return null
     const pose = folded ? 'folded' : 'full'
-    const asked = folded ? parseMiniMenuRoom(room) : null
+    const asked = folded ? parsePopupSurfaceRoom(room) : null
     const last = this.measured[pose]
     const sameSize = last !== null && last.width === width && last.height === height
-    if (sameSize && sameRoom(this.room, asked)) return this.surfaceSizeSet()
+    if (sameSize && samePopupSurfaceRoom(this.room, asked)) return this.surfaceSizeSet()
     if (!sameSize) this.measured = { ...this.measured, [pose]: { width, height } }
     this.room = asked
     this.place()
@@ -527,17 +527,4 @@ function sameChips(a: readonly SelectionMenuAction[], b: readonly SelectionMenuA
   return (
     a.length === b.length && a.every((chip, i) => chip.id === b[i].id && chip.title === b[i].title)
   )
-}
-
-/** The room out of a report: two finite, non-negative numbers, or none (null, left out, or nonsense). */
-function parseMiniMenuRoom(raw: unknown): MiniMenuRoom | null {
-  if (!raw || typeof raw !== 'object') return null
-  const { below, width } = raw as Record<string, unknown>
-  if (!finite(below) || below < 0 || !finite(width) || width < 0) return null
-  return { below, width }
-}
-
-function sameRoom(a: MiniMenuRoom | null, b: MiniMenuRoom | null): boolean {
-  if (!a || !b) return a === b
-  return a.below === b.below && a.width === b.width
 }

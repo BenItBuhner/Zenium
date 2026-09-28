@@ -354,21 +354,29 @@ export function CodeBlock({ label, value }: { label: string; value: string }): J
 /** A mod's CSS, edited in place; saved when the field loses focus. */
 export function CssEditor({
   value,
-  onCommit
+  onCommit,
+  hint
 }: {
   value: string
   onCommit: (css: string) => void
+  /** A §9.12 hint line under the field – a fact about what the sheet can carry. */
+  hint?: string
 }): JSX.Element {
   const [css, setCss] = useState(value)
   return (
-    <textarea
-      value={css}
-      spellCheck={false}
-      aria-label="CSS"
-      className="zen-settings-textarea zen-v2-field"
-      onChange={(e) => setCss(e.target.value)}
-      onBlur={() => css !== value && onCommit(css)}
-    />
+    <>
+      <textarea
+        value={css}
+        spellCheck={false}
+        aria-label="CSS"
+        className="zen-settings-textarea zen-v2-field"
+        onChange={(e) => setCss(e.target.value)}
+        onBlur={() => css !== value && onCommit(css)}
+      />
+      {hint && (
+        <span className="zen-settings-description zen-settings-description-full">{hint}</span>
+      )}
+    </>
   )
 }
 
