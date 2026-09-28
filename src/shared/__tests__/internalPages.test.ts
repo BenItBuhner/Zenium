@@ -37,6 +37,7 @@ describe('the page registry', () => {
       'whats-new',
       'privacy-notice',
       'terms',
+      'management',
       'print',
       'pdf',
       'tasks',

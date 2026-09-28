@@ -74,10 +74,12 @@ import {
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import {
   MENU_KEY_CHANGE_MENU,
+  MENU_KEY_MANAGED,
   MENU_KEY_UPDATE,
   applyMenuOrder,
   menuOrderOf
 } from '../shared/menuOrder'
+import { MANAGED_MENU_LABEL } from '../shared/managed'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
@@ -4620,7 +4622,12 @@ export class Menus {
           // order: the sheet opens its edit mode in place (`MenuSheet.tsx`); no pick reaches
           // the core.
           separator,
-          { label: 'Change Menu', key: MENU_KEY_CHANGE_MENU }
+          { label: 'Change Menu', key: MENU_KEY_CHANGE_MENU },
+          // Chrome's "Managed browser" as the menu's very last row, over a hairline of its own
+          // (TB-13; `TabbedAppMenuPropertiesDelegate` seats it after Help & feedback behind
+          // `managed_by_divider_line_id`), while the host's app-restrictions bundle is
+          // non-empty; structure like the two rows above, outside the order and the edit mode.
+          ...this.managedRow(win, active)
         ],
         win,
         'app',
@@ -4774,12 +4781,42 @@ export class Menus {
             reportUnsafeSite
           ]
         },
-        ...quit
+        ...quit,
+        // Chrome's "Managed browser" row last of all (TB-13): after Help, which is the tablet's
+        // last row – an Android app has no Quit – where Chrome's Android menu seats it; the
+        // desktop's platform reads no bundle and never shows it.
+        ...this.managedRow(win, active)
       ],
       win,
       'app',
       { ...anchor, keyboard: options.keyboard }
     )
+  }
+
+  /**
+   * Chrome for Android's "Managed browser" row (TB-13; `IDS_MANAGED_BROWSER`, the `ic_domain`
+   * glyph, `TabbedAppMenuPropertiesDelegate.buildManagedByItem`): the app menu's last row, over
+   * a hairline of its own, while the host's app-restrictions bundle is non-empty
+   * (`ManagedService`, read once on the menu's first build) – Chrome's `isBrowserManaged`, which
+   * any policy at all satisfies. Its pick opens `zen://management` as Chrome's
+   * `openChromeManagementPage` opens chrome://management: a new tab beside the current one,
+   * which the page's singleton rule turns into a return to the tab already open. Named
+   * `menu.managed` on every layout (`shared/menuOrder.ts`): structure for the sheet's split
+   * (`lib/menuEdit.ts` – the `managed` section, kept out of the edit pose and of the saved
+   * order like the Change Menu row); its hairline unkeyed, so the split takes the two. Nothing
+   * on a host without a bundle to read, and nothing while the bundle is empty.
+   */
+  private managedRow(win: ZenWindow, active: Tab | undefined): Template {
+    if (!this.browser.managed.managed()) return []
+    return [
+      { type: 'separator' },
+      {
+        label: MANAGED_MENU_LABEL,
+        key: MENU_KEY_MANAGED,
+        mark: 'managed',
+        click: () => void this.browser.pages.open('management', undefined, win, active?.id ?? null)
+      }
+    ]
   }
 
   /**
