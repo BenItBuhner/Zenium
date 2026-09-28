@@ -137,8 +137,8 @@ export interface InternalPageSubpage {
 export function sectionAvailable(section: InternalPageSection, caps: HostCapabilities): boolean {
   const { requires } = section
   if (requires === undefined) return true
-  if (typeof requires === 'string') return caps[requires]
-  return requires.some((cap) => caps[cap])
+  if (typeof requires === 'string') return caps[requires] === true
+  return requires.some((cap) => caps[cap] === true)
 }
 
 export interface InternalPageDefinition {

@@ -811,6 +811,7 @@ export class TabManager {
     if (this.releaseHidden(win)) moved = true
     this.browser.governor.wakeVisible(win)
     this.browser.mediaSession.onVisibleTabsChanged(win)
+    this.browser.selectionMenu.onVisibleTabsChanged()
     if (moved) this.browser.state.commitVolatile()
   }
 
@@ -2246,6 +2247,7 @@ export class TabManager {
     this.browser.textFragments.cancelForTab(tabId)
     this.browser.geolocation.onTabGone(tabId)
     this.browser.readAloud.onTabGone(tabId)
+    this.browser.selectionMenu.onTabGone(tabId)
     this.browser.webNotifications.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
@@ -2536,6 +2538,7 @@ export class TabManager {
     this.browser.security.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
+    this.browser.selectionMenu.onTabGone(tabId)
     this.browser.webNotifications.onTabGone(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
@@ -2785,6 +2788,7 @@ export class TabManager {
     this.browser.governor.wakeVisible(win)
     // A playing video left behind goes into its small window; one in front again comes back (MW-28).
     this.browser.mediaSession.onVisibleTabsChanged(win)
+    this.browser.selectionMenu.onVisibleTabsChanged()
     // An offline error page that came back online while hidden reloads on its turn on screen.
     this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
@@ -2831,6 +2835,7 @@ export class TabManager {
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
     this.browser.mediaSession.onVisibleTabsChanged(win)
+    this.browser.selectionMenu.onVisibleTabsChanged()
     win.findResult = null
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
@@ -4141,6 +4146,7 @@ export class TabManager {
     else {
       this.releaseHidden(source)
       this.browser.mediaSession.onVisibleTabsChanged(source)
+      this.browser.selectionMenu.onVisibleTabsChanged()
       source.relayout()
     }
   }

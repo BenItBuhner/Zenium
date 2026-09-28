@@ -871,12 +871,29 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  /** A message from the page script (routed here by the platform's IPC handler). */
-  dispatchPageMessage(message: PageMessage): void {
+  /**
+   * A message from the page script (routed here by the platform's IPC handler). `sender` is
+   * the frame that posted it; a selection report is stamped with that frame's id
+   * (`extensionApi/frames`: 0 for the top frame) so the core can keep the top document's alone –
+   * the report's own words are not trusted for it.
+   */
+  dispatchPageMessage(message: PageMessage, sender?: WebFrameMain): void {
     if (message.type === 'navigate-intent') {
       // The page is about to navigate itself; kept for the "Leave site?" flow, not the core's.
       if (message.intent) this.pageIntent = { at: Date.now(), intent: message.intent }
       return
+    }
+    if (message.type === 'selection') {
+      // Without a sender frame the report cannot be placed; the menu's model needs the top frame's.
+      if (!sender) return
+      let frameId: number
+      try {
+        frameId = frameIdOf(sender)
+      } catch {
+        // The frame went away between the post and the read (a disposed `WebFrameMain` throws).
+        return
+      }
+      message = { ...message, frameId }
     }
     this.events.onPageMessage(message)
   }

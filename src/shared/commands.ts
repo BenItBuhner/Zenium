@@ -408,7 +408,7 @@ export interface CommandContext {
 /** Whether the command would do anything on this host, in this layout. */
 export function commandAvailable(cmd: CommandDescriptor, ctx: CommandContext): boolean {
   if (cmd.layouts && !cmd.layouts.includes(ctx.formFactor)) return false
-  return cmd.requires === undefined || ctx.capabilities[cmd.requires]
+  return cmd.requires === undefined || ctx.capabilities[cmd.requires] === true
 }
 
 /**
