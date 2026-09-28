@@ -266,13 +266,33 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/scripts/desktop-signin-smoke.mjs dist/linux-unpacked/zenium
           --out "$SMOKE_OUT/signin"
-      - uses: actions/upload-artifact@v7
+      - name: Upload the smoke output (the verdict above is the leg's result; a failed upload is not)
+        id: upload
         if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-smoke-linux-x64
           path: smoke-out
           if-no-files-found: warn
           retention-days: 7
+      - name: Upload the smoke output again (the first upload failed on the runner's network, not the walk)
+        id: upload_retry
+        if: always() && steps.upload.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-smoke-linux-x64
+          path: smoke-out
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true
+      - name: The smoke output could not be uploaded (two tries) – the verdict above stands
+        if: always() && steps.upload.outcome == 'failure' && steps.upload_retry.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=smoke artifact missing::the smoke output 'desktop-smoke-linux-x64' could not be uploaded after two tries (a runner network failure); the leg's verdict above is its result"
+          printf '\n> **Artifact missing:** `desktop-smoke-linux-x64` could not be uploaded after two tries (a runner network failure). The verdict above is the result of the leg.\n' >> "$GITHUB_STEP_SUMMARY"
 
   android:
     name: Android debug APK
