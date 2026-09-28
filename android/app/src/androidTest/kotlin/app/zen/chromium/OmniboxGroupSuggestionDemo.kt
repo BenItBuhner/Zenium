@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
@@ -169,8 +170,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 15_000
             )
             keyboardAway("the still")
-            awaitPainted()
-            shot("01-group-row-typed")
+            steadyShot("01-group-row-typed")
             val card = readCard()
             val row = card.groupRow()
             finding("  typed '$QUERY'; rows from the field outward: ${card.rows.joinToString(" | ") { "${it.kind} '${it.title}'" + (if (it.section.isNotEmpty()) " [${it.section}]" else "") }}")
@@ -227,8 +227,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
             val closed = awaitChrome("!document.querySelector('$FIELD')", 8_000)
             val landed = awaitPageUrl(PAPERS_URL, 10_000)
             SystemClock.sleep(1_500)
-            awaitPainted()
-            shot("02-group-opened")
+            steadyShot("02-group-opened")
             val after = coreState()
             val active = activeCoreTab(after)
             finding("  the touch ${if (took) "took" else "did NOT take"}; field closed $closed; active tab '${active?.optString("id")}' at '${active?.optString("url")}' (loaded $landed); the group collapsed ${folder(after)?.optBoolean("collapsed")}, lastUsedAt set ${folder(after)?.has("lastUsedAt")} ${verdict(took && closed && landed)}")
@@ -256,8 +255,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 15_000
             )
             keyboardAway("the still and the touch")
-            awaitPainted()
-            shot("03-saved-group-row")
+            steadyShot("03-saved-group-row")
             val card = readCard()
             val row = card.groupRow()
             finding("  typed '$SAVED_QUERY'; rows: ${card.rows.joinToString(" | ") { "${it.kind} '${it.title}'" }}")
@@ -274,8 +272,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
             val closed = awaitChrome("!document.querySelector('$FIELD')", 8_000)
             val landed = awaitPageUrl(PAPERS_URL, 12_000)
             SystemClock.sleep(1_500)
-            awaitPainted()
-            shot("04-saved-group-opened")
+            steadyShot("04-saved-group-opened")
             val after = coreState()
             finding("  the touch ${if (took) "took" else "did NOT take"}; field closed $closed; members back ${memberTabs(after)}; active '${activeCoreTab(after)?.optString("url")}' (loaded $landed); kept pages now ${folder(after)?.optJSONArray("savedTabs")?.length() ?: 0} ${verdict(took && closed && landed)}")
             if (!took || !closed || !landed) failures += "the touch on the saved group's row did not bring its pages back (took $took, field closed $closed, first page up $landed)"
@@ -403,8 +400,29 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         if (!stayed) failures += "the back that put the tablet's keyboard away before $what took the field or the row with it"
     }
 
-    /** Where the group row is on screen: the document's rect scaled into the chrome view's place, as the harness reads a Settings row. */
+    /**
+     * Where the group row is on screen once the list stands still: the document's rect, scaled
+     * into the chrome view's place as the harness reads a Settings row, read until two reads
+     * 300 ms apart agree with no row on its way out between them (the third run measured a list
+     * in flux – rows of the keystroke before still leaving above the row, the engine's and the
+     * history's rows still arriving – and called a second row "under the keyboard"); the last
+     * read when they never agree within 3 s, null when the row is not in the document.
+     */
     private fun groupRowOnScreen(): Rect? {
+        var last: Rect? = null
+        val deadline = SystemClock.uptimeMillis() + 3_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = groupRowRect() ?: return null
+            val leaving = chromeValue("String(!!document.querySelector('$ROWS_LEAVING'))") == "true"
+            if (now == last && !leaving) return now
+            last = now
+            SystemClock.sleep(300)
+        }
+        Log.w(tag, "the group row still moving after 3 s: $last")
+        return last
+    }
+
+    private fun groupRowRect(): Rect? {
         val edges = chromeValue("(function(){var r=document.querySelector('$GROUP_ROW');if(!r)return '';var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom].join(',')})()")
             .split(',').mapNotNull { it.toDoubleOrNull() }
         if (edges.size != 4) return null
@@ -417,15 +435,60 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
     }
 
     /**
-     * Two frames of the document once its DOM says the scene stands, then a moment for the
-     * emulator's compositor: the still after the pixels have caught up with the DOM. The second
-     * run's tablet still trailed the field by two keystrokes behind 1.7 s frames – its list the
-     * one for "r" under a field reading "res" – and a fixed wait is no measure of that.
+     * The still once the pixels have caught up with the DOM: two frames of the document first
+     * (`requestAnimationFrame` twice – Blink has painted the scene the DOM read), then the screen
+     * read until two reads [STILL_STEP_MS] apart agree to within the caret's blink (fewer than
+     * 0.2 % of the pixels differ), the agreeing read the still. The emulator's software GPU
+     * trails the DOM by seconds under the sheet's row animations: the second run's tablet still
+     * showed the "r" list under a field reading "res" 2.5 s after the DOM had it, the third
+     * run's light still the "re" list 1.2 s after the second frame – a fixed wait measures
+     * nothing. The last read when the screen never steadies within [STILL_STEADY_MS] (logged).
      */
-    private fun awaitPainted() {
+    private fun steadyShot(name: String) {
         chromeJs("(function(){window.__zenPainted=false;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__zenPainted=true})});return 1})()")
         awaitChrome("window.__zenPainted===true", 8_000)
-        SystemClock.sleep(if (formFactor == "tablet") 2_000 else 1_200)
+        var last: Bitmap? = null
+        var reads = 0
+        val deadline = SystemClock.uptimeMillis() + STILL_STEADY_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(STILL_STEP_MS)
+            val now = softBitmap(ui.takeScreenshot() ?: continue)
+            reads++
+            val before = last
+            if (before != null && nearlySame(before, now)) {
+                before.recycle()
+                Log.i(tag, "still $name: the screen steady at read $reads")
+                shot(name, now)
+                return
+            }
+            before?.recycle()
+            last = now
+        }
+        Log.w(tag, "still $name: the screen never steadied in $STILL_STEADY_MS ms ($reads reads); the last read")
+        shot(name, last ?: softBitmap(ui.takeScreenshot() ?: return))
+    }
+
+    /** A bitmap whose pixels can be read: the screenshot service hands out hardware bitmaps on some builds. */
+    private fun softBitmap(shot: Bitmap): Bitmap =
+        if (shot.config == Bitmap.Config.HARDWARE) shot.copy(Bitmap.Config.ARGB_8888, false).also { shot.recycle() } else shot
+
+    /** Whether two reads of the screen agree to within the caret's blink: fewer than 0.2 % of the pixels differ (every other row read). */
+    private fun nearlySame(a: Bitmap, b: Bitmap): Boolean {
+        if (a.width != b.width || a.height != b.height) return false
+        val w = a.width
+        val rowA = IntArray(w)
+        val rowB = IntArray(w)
+        val allowed = (w.toLong() * ((a.height + 1) / 2) / 500).toInt()
+        var differ = 0
+        var y = 0
+        while (y < a.height) {
+            a.getPixels(rowA, 0, w, 0, y, w, 1)
+            b.getPixels(rowB, 0, w, 0, y, w, 1)
+            for (x in 0 until w) if (rowA[x] != rowB[x]) differ++
+            if (differ > allowed) return false
+            y += 2
+        }
+        return true
     }
 
     private fun fieldUp(): Boolean = chromeValue("String(!!document.querySelector('$FIELD'))") == "true"
@@ -593,6 +656,9 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         private const val SAVED_QUERY = "cit"
         /** Chrome's heading for the section the open tabs and the tab groups share (`IDS_OMNIBOX_HUB_TYPED_MATCH_HEADER`; `TABS_AND_GROUPS_GROUP` in core/suggestions.ts). */
         private const val TABS_AND_GROUPS = "Tabs and tab groups"
+        /** The screen read every [STILL_STEP_MS] until two reads agree, up to [STILL_STEADY_MS], before a still ([steadyShot]). */
+        private const val STILL_STEP_MS = 600L
+        private const val STILL_STEADY_MS = 12_000L
         /** The field's clear button, there once something is typed. */
         private const val CLEAR_LABEL = "Clear"
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
@@ -607,10 +673,10 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
          * row" – the first run's two false failures, the card itself composed as designed).
          */
         private const val FIELD = "[data-testid=\"urlbar-input\"]"
-        private const val GROUP_ROW = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"folder\"]"
+        private const val GROUP_ROW = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"folder\"]:not([data-leaving])"
         private const val ROWS_LEAVING = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-leaving], #zen-omnibox-results > li[data-leaving]"
         private const val SAVED_GLYPH = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]) [data-testid=\"group-row-glyph\"][data-saved], " +
-            "#zen-omnibox-results > li[data-kind=\"folder\"] [data-testid=\"group-row-glyph\"][data-saved]"
+            "#zen-omnibox-results > li[data-kind=\"folder\"]:not([data-leaving]) [data-testid=\"group-row-glyph\"][data-saved]"
 
         /**
          * The card as it stands, from the field outward on either chassis: the headings (the
