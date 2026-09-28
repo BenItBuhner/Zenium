@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.graphics.PointF
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -114,7 +115,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
             SystemClock.sleep(600)
             instrumentation.sendStringSync(QUERY)
             val offered = awaitChrome(
-                "document.querySelector('$GROUP_ROW')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(QUERY)}&&!document.querySelector('$ROWS[data-leaving]')",
+                "document.querySelector('$GROUP_ROW')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(QUERY)}&&!document.querySelector('$ROWS_LEAVING')",
                 15_000
             )
             // The emulator's software GPU trails the DOM by a second or two: the still after it has caught up.
@@ -165,7 +166,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 }
                 SystemClock.sleep(600)
                 instrumentation.sendStringSync(QUERY)
-                awaitChrome("document.querySelector('$GROUP_ROW')&&!document.querySelector('$ROWS[data-leaving]')", 12_000)
+                awaitChrome("document.querySelector('$GROUP_ROW')&&!document.querySelector('$ROWS_LEAVING')", 12_000)
                 SystemClock.sleep(1_000)
             }
             val before = coreState()
@@ -199,7 +200,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
             SystemClock.sleep(600)
             instrumentation.sendStringSync(SAVED_QUERY)
             val offered = awaitChrome(
-                "document.querySelector('$GROUP_ROW [data-testid=\"group-row-glyph\"][data-saved]')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(SAVED_QUERY)}&&!document.querySelector('$ROWS[data-leaving]')",
+                "document.querySelector('$SAVED_GLYPH')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(SAVED_QUERY)}&&!document.querySelector('$ROWS_LEAVING')",
                 15_000
             )
             SystemClock.sleep(2_500)
@@ -284,10 +285,26 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
 
     // --- the pill, the field, the page --------------------------------------------------------------
 
-    /** A finger on the address pill: where the tree says it is (the harness's [pillPoint], on either chassis). */
+    /**
+     * A finger on the address pill: on the phone where the harness's [pillPoint] says (the tree's
+     * `Address, <site>` button, the measured pill when the tree is stale); on the tablet the
+     * toolbar's pill by its own name – a group labelled `Address` alone (SidebarTop), at the top
+     * of the window, which [pillPoint] does not know: it looks for the phone's comma-suffixed
+     * button and falls back to the phone's measured bottom pill, and the first tablet run's every
+     * tap landed on the page under it. The LayoutDemo's `findByLabelPrefix(PILL_LABEL)`, guarded
+     * by the touchable band as [pillPoint] is.
+     */
     private fun tapPill() {
-        val p = pillPoint()
+        val p = if (formFactor == "tablet") tabletPillPoint() else pillPoint()
         Finger().tap(p.x, p.y)
+    }
+
+    private fun tabletPillPoint(): PointF {
+        ensureForeground()
+        val found = findByLabelPrefix(PILL_LABEL)
+        if (found != null && touchable.contains(found.centerX(), found.centerY())) return PointF(found.exactCenterX(), found.exactCenterY())
+        Log.w(tag, "the tablet toolbar's pill is not in the tree where a finger can reach it ($found, touchable $touchable); the harness's pill point")
+        return pillPoint()
     }
 
     private fun openField(): Boolean {
@@ -470,10 +487,18 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }
-        /** The chrome's DOM: the field; the rows of the phone's sheet or the tablet's list; the group row. */
+        /**
+         * The chrome's DOM: the field; the group row; a row on its way out; the saved group's ring
+         * in the group row – each on the phone's sheet or the tablet's list. Each is a selector
+         * LIST with the condition spelled on every alternative: appended once to a list it binds to
+         * the last alternative only (`ROWS[data-leaving]` read as "any sheet row, or a leaving list
+         * row" – the first run's two false failures, the card itself composed as designed).
+         */
         private const val FIELD = "[data-testid=\"urlbar-input\"]"
-        private const val ROWS = ".zen-omnibox-sheet [role=\"listbox\"] > li, #zen-omnibox-results > li"
         private const val GROUP_ROW = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"folder\"]"
+        private const val ROWS_LEAVING = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-leaving], #zen-omnibox-results > li[data-leaving]"
+        private const val SAVED_GLYPH = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]) [data-testid=\"group-row-glyph\"][data-saved], " +
+            "#zen-omnibox-results > li[data-kind=\"folder\"] [data-testid=\"group-row-glyph\"][data-saved]"
 
         /**
          * The card as it stands, from the field outward on either chassis: the headings (the
