@@ -1,0 +1,72 @@
+name: Android tablet bookmarks bar demo
+
+# Records the TABLET'S BOOKMARKS BAR (NTP-34, W6-E16: the desktop shell's bar mounted under the
+# tablet toolbar beside the sidebar, on the shared Show bookmarks bar setting) on a
+# hardware-accelerated emulator of the pixel_tablet profile laid out at 1280 x 800 dp at one px
+# per dp (`wm size 1280x800`, `wm density 160`, as the tablet layout demo), and uploads the
+# video, the stills and the driver's findings. The scenes, once in each colour scheme, every
+# touch a finger's: no bar over a site under the default (Only on new tab page); Settings › Look
+# and Feel from the app menu; the row's menulist opening its sheet of three radio rows and
+# Always closing it – the bar at the head of the content column under the toolbar row, 44 tall
+# with 40 chips and the » as the 40 toolbar button, no chip draggable; the bar over a page; a
+# folder chip's panel and the »'s overflow panel as the tablet's popovers (not sheets), each
+# closed by its own button again; Never; and under the default again the new tab page alone
+# showing the bar. The driver judges every step from the chrome's and the core's own state and
+# fails the run when a claim does not hold; see TabletBookmarksBarDemo.kt. Dispatch-only, like
+# the tablet layout demo (#273's recipe: a push of this file on its branch registers the workflow
+# and is the run while the PR is open; the branch-scoped push trigger goes from the final head).
+# The build, the emulator and its caches live in android-emulator-demo.yml; this file picks the
+# driver, the profile and the display. The nightly sweep runs the driver on its tablet shard
+# (.github/nightly-drivers/tablet-bookmarks-bar.json).
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-E16, PR #687): the branch's own push registers the workflow and is its run; no
+  # token of the builder's can dispatch. Removed in the branch's last commit.
+  push:
+    branches:
+      - cursor/android-tablet-bookmarks-bar-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-bookmarks-bar-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Tablet bookmarks bar demo (light, then dark)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the bar is the tablet layout's (a 600 dp+ short side).
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletBookmarksBarDemo
+        DEMO_DIR=tablet-bookmarks-bar-demo
+        DEMO_OUT=artifacts/android-tablet-bookmarks-bar-demo
+        DEMO_VIDEO=tablet-bookmarks-bar-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-bookmarks-bar-demo
+      artifact-path: artifacts/android-tablet-bookmarks-bar-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Tablet bookmarks bar demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletBookmarksBarDemo
+        DEMO_DIR=tablet-bookmarks-bar-demo
+        DEMO_OUT=artifacts/android-tablet-bookmarks-bar-demo
+        DEMO_VIDEO=tablet-bookmarks-bar-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-bookmarks-bar-demo-second-boot
+      artifact-path: artifacts/android-tablet-bookmarks-bar-demo/

@@ -77,27 +77,35 @@ describe('helperShortcuts (TABLET-20)', () => {
   })
 
   it("carries a desktop-only row's layouts on the wire, so the helper keeps it out of the tablet's and the phone's listing", () => {
-    // `layouts: ['desktop']` rows (Name Window…, Screenshot…, Task Manager, Show / Hide Bookmarks
-    // Bar and the two Compact Mode rows – §9.36's chrome; #588's Report an issue… once it lands):
-    // the row travels, the layouts with it, and `ShortcutHelper.groups` lists it on no layout but
-    // the desktop's – the JUnit pin `aDesktopOnlyRowIsListedOnNoTouchLayout`.
+    // `layouts: ['desktop']` rows (Name Window…, Screenshot…, Task Manager and the two Compact
+    // Mode rows – §9.36's chrome; #588's Report an issue… once it lands): the row travels, the
+    // layouts with it, and `ShortcutHelper.groups` lists it on no layout but the desktop's – the
+    // JUnit pin `aDesktopOnlyRowIsListedOnNoTouchLayout`. Show / Hide Bookmarks Bar is the
+    // sidebar layouts' since the tablet's bar (NTP-34): `['desktop', 'tablet']`, the phone out.
     const desktopOnly = TABLE.filter((s) => s.layouts && !s.layouts.includes('tablet'))
     expect(desktopOnly.map((s) => s.action).sort()).toEqual(
       [
         'window.name',
         'capture.start',
         'tasks.open',
-        'bookmark.toggleBar',
         'compact.toggle',
         'compact.toggleSidebar',
         // #588's Report an Issue… (W8-4): the desktop app menu's row, `layouts: ['desktop']`.
         'help.reportIssue'
       ].sort()
     )
-    for (const action of ['bookmark.toggleBar', 'compact.toggle', 'compact.toggleSidebar']) {
+    for (const action of ['compact.toggle', 'compact.toggleSidebar']) {
       expect(TABLE.find((s) => s.action === action)?.layouts, action).toEqual(['desktop'])
     }
+    expect(TABLE.find((s) => s.action === 'bookmark.toggleBar')?.layouts).toEqual([
+      'desktop',
+      'tablet'
+    ])
     const rows = helperShortcuts(TABLE)
+    expect(rows.find((r) => r.action === 'bookmark.toggleBar')?.layouts).toEqual([
+      'desktop',
+      'tablet'
+    ])
     for (const shortcut of desktopOnly) {
       const row = rows.find((r) => r.action === shortcut.action)
       expect(row?.layouts).toEqual(shortcut.layouts)
