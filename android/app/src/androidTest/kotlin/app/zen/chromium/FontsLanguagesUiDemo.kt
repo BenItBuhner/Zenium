@@ -50,8 +50,10 @@ import java.io.File
  *     narrows the list to Basque, a finger on Basque adds it and the page leaves; the phone
  *     copy says pages receive the system's languages.
  *  5. CT-36 Reader View's Text preferences: Translate is the head's one action row after Listen
- *     (both with their glyph, the setting rows with none: rulings 4 and 5), Text spacing whole
- *     above the peek's fold; Translate under a finger opens the target picker sheet – expanded,
+ *     (both with their glyph, the setting rows with none: rulings 4 and 5), Letter spacing – the
+ *     last live type row (CT-35) – whole above the peek's fold, the peek ending at the type rows'
+ *     foot plus the hairline where the 52 % would cut it; Translate under a finger opens the
+ *     target picker sheet – expanded,
  *     scrolled to the checked German (the first preferred language after the move), every
  *     language named in itself under the English from the shipped table (ruling 7) – and
  *     German under a finger translates on the pick: the row turns busy with the progress as its
@@ -1038,7 +1040,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             head.optJSONObject("listen")?.optString("glyph") == "lucide-audio-lines" && head.optJSONObject("translate")?.optString("glyph") == "lucide-languages" && head.optJSONObject("translate")?.optString("haspopup") == "dialog" && head.optInt("settingGlyphs", -1) == 0
         )
         check(
-            "Text spacing stands whole above the peek's fold with the one head row (#265's measure kept, the lead's re-measure ~877 of the 915 peek)",
+            "Letter spacing, the last live type row, stands whole above the peek's fold with both head rows (CT-35: the peek ends at the type rows' foot plus the hairline where the 52 % detent would cut it; #265's measure kept)",
             head.optInt("spacingBottom", -1) > 0 && head.optInt("spacingBottom") <= head.optInt("scrollerBottom", -1)
         )
         SystemClock.sleep(600)
@@ -1322,8 +1324,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     /**
      * The Text preferences sheet's head as the chrome draws it: the Listen and Translate rows
      * (top, height, the leading glyph's lucide class, `aria-haspopup`, busy), how many setting
-     * rows carry a leading glyph, and where Text spacing's bottom edge stands against the
-     * sheet's scroller at the peek.
+     * rows carry a leading glyph, and where Letter spacing's bottom edge – the last live type
+     * row's (CT-35) – stands against the sheet's scroller at the peek.
      */
     private fun readerHead(): JSONObject = chromeJson(
         "(function(){var root=document.querySelector('[data-reader-prefs-rows]');if(!root)return '{}';" +
@@ -1333,7 +1335,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             "function row(sel){var r=root.querySelector(sel);if(!r)return null;var b=r.getBoundingClientRect();" +
             "return {y:Math.round(b.top),h:Math.round(b.height),glyph:glyph(r),haspopup:r.getAttribute('aria-haspopup')||'',busy:r.getAttribute('aria-busy')==='true'}}" +
             "var rows=Array.from(root.querySelectorAll('.zen-v2-row'));function label(e){var l=e.querySelector('.truncate');return l?(l.textContent||'').trim():''}" +
-            "var spacing=rows.find(function(e){return label(e)==='Text spacing'});var spr=spacing&&spacing.getBoundingClientRect();" +
+            "var spacing=rows.find(function(e){return label(e)==='Letter spacing'});var spr=spacing&&spacing.getBoundingClientRect();" +
             "var settings=rows.filter(function(e){var t=label(e);return t&&t!=='Listen to this article'&&t!=='Translate'&&t!=='Show original'});" +
             "return JSON.stringify({listen:row('[data-reader-pref=\"listen\"]'),translate:row('[data-reader-pref=\"translate\"]'),viewport:window.innerHeight," +
             "sheetTop:sheet?Math.round(sheet.getBoundingClientRect().top):-1,scrollerTop:sr?Math.round(sr.top):-1,scrollerBottom:sr?Math.round(sr.bottom):-1," +
