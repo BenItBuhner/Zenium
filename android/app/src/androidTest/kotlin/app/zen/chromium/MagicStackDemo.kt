@@ -60,8 +60,11 @@ import kotlin.math.abs
  *     not the default (the emulator's answer; the driver reads it and predicts what it implies),
  *     tab groups over the seed's twelve tabs and no group, Delete browsing data with nothing
  *     deleted here in 30 days – each shot on the light scheme and the dark; the default browser
- *     tip retired at its cap of three impressions, the others as tapped. A page within three
- *     days of a tip shows none: the page the steps after continue on.
+ *     tip retired at its cap of three impressions, the others as tapped. The pages after the
+ *     first stand on the last card already: the chrome mounts one stack for whichever blank tab
+ *     is active, so the strip keeps its offset from one page to the next (and the module counts
+ *     the new tab's page as an impression of its own). A page within three days of a tip shows
+ *     none: the page the steps after continue on, the strip swiped home for them.
  *  5. A card's ⋮ opens the shared local menu titled by the module, Hide This and Customise its
  *     rows; Hide This (a measured scene, `magic-stack-hide`) writes the device's hidden set,
  *     fades the card out over 120 ms and glides the cards after it into the gap on the FLIP
@@ -430,18 +433,29 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
 
     /**
      * The strip swiped forward a card at a time from where it stands to the card `id` of
-     * `expected` (the strip's `scroll-snap-stop: always` holds a fling to the next card); a swipe
-     * that stops short is a finding, and the strip scrolled to the card by the DOM is the
-     * recovery, on record. The strip's geometry where it stood.
+     * `expected` (the strip's `scroll-snap-stop: always` holds a fling to the next card), each
+     * swipe begun once the strip is at rest from the last; a swipe that does not take (the snap
+     * flake `planSwipe`'s KDoc records: the strip follows the finger, then snaps back) is a
+     * finding and is swiped again once, and the strip scrolled to the card by the DOM is the
+     * last recovery, on record. The strip's geometry where it stood.
      */
     private fun swipeToCard(id: String, expected: List<String>): JSONObject {
         val index = expected.indexOf(id)
         if (index < 0) error("the stack's expected order has no $id card")
-        val from = geometry().optInt("selected").coerceAtLeast(0)
-        for (page in from + 1..index) {
-            swipeStrip(forward = true)
-            SystemClock.sleep(900)
-            if (!awaitChrome(dotCurrentJs(page), 4_000)) finding("  the swipe to page ${page + 1} did not take: ${geometry()}")
+        var at = geometry().optInt("selected").coerceAtLeast(0)
+        while (at < index) {
+            var took = false
+            for (attempt in 1..2) {
+                awaitStripAtRest()
+                swipeStrip(forward = true)
+                SystemClock.sleep(900)
+                took = awaitChrome(dotCurrentJs(at + 1), 4_000)
+                if (took) break
+                finding("  the swipe to page ${at + 2} did not take${if (attempt == 1) " – swiped again" else " twice"}: ${geometry()}")
+            }
+            val now = geometry().optInt("selected")
+            if (now <= at) break
+            at = now
         }
         SystemClock.sleep(400)
         var stood = geometry()
@@ -452,6 +466,18 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             finding("  the swipes stopped short of the $id card: the strip scrolled to it by the DOM, now $stood")
         }
         return stood
+    }
+
+    /** The strip's offset read until two reads 150 ms apart agree (a snap in flight let finish), two seconds at most. */
+    private fun awaitStripAtRest() {
+        var last = geometry().optInt("scrollLeft")
+        val deadline = SystemClock.uptimeMillis() + 2_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(150)
+            val now = geometry().optInt("scrollLeft")
+            if (now == last) return
+            last = now
+        }
     }
 
     // --- 3. the Safety check card ---------------------------------------------------------------
@@ -530,26 +556,37 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             val ids = cardIds()
             finding("  the tip memory at the re-mount: $memory; the tip predicted: ${tipUp ?: "none"}")
             expect("the new tab page is active again in front of the Settings tab with its ${expectedBack.size} cards, the Safety check card still among them and the tip card gone – the module rests three days after an impression ($ids; ${describeActive()})", back && activeUrl() == BLANK_URL && ids == expectedBack && tipUp == null && tabCount() == tabsBefore + 1, "safety-back")
-            var home = geometry()
-            var swipes = 0
-            while (home.optInt("selected") > 0 && swipes < expectedBack.size) {
-                val target = home.optInt("selected") - 1
-                swipeStrip(forward = false)
-                swipes++
-                SystemClock.sleep(900)
-                awaitChrome(dotCurrentJs(target), 4_000)
-                home = geometry()
-            }
-            if (home.optInt("selected") != 0 || home.optInt("scrollLeft") > 4) {
-                chromeValue(SCROLL_HOME_JS)
-                SystemClock.sleep(1_000)
-                home = geometry()
-                finding("  the swipes back stopped short of the first card: the strip scrolled home by the DOM, now $home")
-            }
-            finding("  home after $swipes swipe(s) back: $home")
+            val home = swipeHome(expectedBack.size)
             expect("the strip stands on the first card again for the steps after (selected ${home.optInt("selected")}, scrollLeft ${home.optInt("scrollLeft")})", home.optInt("selected") == 0 && home.optInt("scrollLeft") <= 4, "safety-home")
             SystemClock.sleep(400)
         }
+    }
+
+    /**
+     * The strip swiped back a card at a time to the first card, at most `cards` swipes, each begun
+     * once the strip is at rest; the strip scrolled home by the DOM is the recovery, on record.
+     * The strip's geometry where it stood.
+     */
+    private fun swipeHome(cards: Int): JSONObject {
+        var home = geometry()
+        var swipes = 0
+        while (home.optInt("selected") > 0 && swipes < cards) {
+            val target = home.optInt("selected") - 1
+            awaitStripAtRest()
+            swipeStrip(forward = false)
+            swipes++
+            SystemClock.sleep(900)
+            awaitChrome(dotCurrentJs(target), 4_000)
+            home = geometry()
+        }
+        if (home.optInt("selected") != 0 || home.optInt("scrollLeft") > 4) {
+            chromeValue(SCROLL_HOME_JS)
+            SystemClock.sleep(1_000)
+            home = geometry()
+            finding("  the swipes back stopped short of the first card: the strip scrolled home by the DOM, now $home")
+        }
+        finding("  home after $swipes swipe(s) back: $home")
+        return home
     }
 
     // --- 4. the tip card ------------------------------------------------------------------------
@@ -564,7 +601,11 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
      * device's (`NewTabDeviceState.educationalTips`, read through `UIState.newTabEducationalTips`
      * and written through `newtab.setEducationalTipMemory` – the command the page writes with,
      * and the one the driver seeds through). Every page here is opened by a finger on the bar's
-     * New tab and swiped to its last card; the days between Chrome's tips are the driver's:
+     * New tab and swiped to its last card from where the strip stands – the chrome mounts one
+     * stack for whichever blank tab is active, so the strip keeps its offset from one page to the
+     * next: the first page takes the swipes, the pages after stand on the last card already, and
+     * the module counts the new tab's page as an impression of its own (Chrome builds a stack a
+     * page); the days between Chrome's tips are the driver's:
      * between pages it moves the memory's stamps eight days back and retires the tip shown –
      * the theme by its own tap here, the default browser at its cap of three impressions, the
      * others as tapped – so the next page shows the next tip in Chrome's order. The one button's
@@ -601,6 +642,10 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
             // The memory as the last page left it – a tip shown minutes ago: the next page shows none.
             val none = openTipPage(null, "a page within three days of a tip")
             expect("a page within three days of a tip draws no tip card (predicted ${none ?: "none"}; cards ${cardIds()})", none == null && !cardIds().contains("tips"), "tip-rests")
+            // The strip keeps its offset from one blank tab's page to the next (the one mounted
+            // stack): swiped home, so the Hide This step finds the Continue card in view.
+            val home = swipeHome(expectedCards().size)
+            expect("the strip stands on the first card again for the steps after (selected ${home.optInt("selected")}, scrollLeft ${home.optInt("scrollLeft")})", home.optInt("selected") == 0 && home.optInt("scrollLeft") <= 4, "tip-home")
             SystemClock.sleep(400)
         }
     }
