@@ -3,7 +3,7 @@ import type { Folder, Rect, Tab } from '@shared/types'
 import { clearDepartures, departStore, type Departure } from '../departureStore'
 import { exitProgressAt } from '../exitSpring'
 import {
-  QUICK_DELETE_SWEEP_MS,
+  QUICK_DELETE_GRID_CROSSING_MS,
   closesTabs,
   holdQuickDeleteWipe,
   setQuickDeleteWipe,
@@ -21,10 +21,10 @@ afterEach(() => {
 
 /*
  * Quick Delete's wipe schedule (matrix MOT-24; Chrome 152's `QuickDeleteAnimationGradientDrawable`
- * sweeping the switcher bottom-up): the one constant `QUICK_DELETE_SWEEP_MS` spreads the held
- * exits' starts over the visible grid's height by card BOTTOM – the card at the grid's bottom
- * edge first, the one at its top last, a row together – and the motion runs only for a clear
- * whose `types` carry `'tabs'`.
+ * sweeping the switcher bottom-up): the one constant `QUICK_DELETE_GRID_CROSSING_MS` – how long
+ * the wipe takes to cross the visible grid – spreads the held exits' starts over the visible
+ * grid's height by card BOTTOM – the card at the grid's bottom edge first, the one at its top
+ * last, a row together – and the motion runs only for a clear whose `types` carry `'tabs'`.
  */
 
 const tab = (id: string): Tab => ({ id, title: id, url: `https://${id}.example/` }) as Tab
@@ -91,10 +91,11 @@ describe('wipeSchedule', () => {
     expect(wipeSchedule(exits, GRID, 250).map((s) => s.key)).toEqual(['a', 'group:g'])
   })
 
-  it('the sweep is one constant, near Chrome’s crossing of the visible grid', () => {
-    // Chrome's gradient crosses the visible grid in about 380 ms of its 1200 ms curve; the house
-    // sweep stands in for it as one number (gate question (a) folds it to 0 or another in one line).
-    expect(QUICK_DELETE_SWEEP_MS).toBe(250)
+  it('the crossing is one constant at Chrome’s cadence: the wipe crosses the visible grid in 380 ms', () => {
+    // The lead's ruling on gate (a): Chrome's gradient crosses the visible grid in about 380 ms of
+    // its 1200 ms curve, and the house sweep takes that cadence as one number – a schedule, not a
+    // motion's length (each exit's own spring stays under §11's 300 ms cap).
+    expect(QUICK_DELETE_GRID_CROSSING_MS).toBe(380)
   })
 })
 
@@ -135,8 +136,8 @@ describe('holdQuickDeleteWipe (the preview host’s still)', () => {
     const frozen = new Map(
       s.items.map((i) => [i.key, i.kind === 'new-tab' ? undefined : i.frozen] as const)
     )
-    // The bottom card is 120 ms into its run; the top one sets off 450 × 250 / 600 ≈ 188 ms later
-    // (the sweep's share of its distance from the grid's bottom), so it stands whole.
+    // The bottom card is 120 ms into its run; the top one sets off 450 × 380 / 600 = 285 ms later
+    // (the crossing's share of its distance from the grid's bottom), so it stands whole.
     expect(frozen.get('bottom')).toBeCloseTo(exitProgressAt(120), 10)
     expect(frozen.get('top')).toBe(0)
     expect(s.released.size).toBe(0)

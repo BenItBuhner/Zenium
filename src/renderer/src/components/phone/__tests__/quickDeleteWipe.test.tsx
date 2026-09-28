@@ -13,8 +13,9 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
  * tabs are read, their cards depart in place bottom-up by card bottom (a group's as one only
  * when whole), the core is asked to close the tabs only once every exit has rested, the commit
  * that shows the closes takes the exits with the slots, a tab the core kept gets its card back,
- * and the haptic comes last. Without `'tabs'` among the types the submit is the plain clear;
- * under reduced motion the close is a cut.
+ * and the haptic comes last. A tabs clear that fails on the wire strands no exit: every card is
+ * sent back and the grid is live again. Without `'tabs'` among the types the submit is the
+ * plain clear; under reduced motion the period's cards fade together in place (§11.3), no sweep.
  */
 
 const SPACE = 'space'
@@ -25,6 +26,8 @@ let inRange: string[] = []
 /** What the core was asked, in order, with the departures' state at the moment of each clear. */
 let events: string[] = []
 let settledAtTabsClear: string[] | null = null
+/** Set, the tabs' clear fails on the wire (the IPC rejects) instead of answering. */
+let tabsClearFailure: Error | null = null
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name, args) => {
   if (name === 'privacy.tabsInRange') {
     events.push('tabsInRange')
@@ -34,6 +37,7 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
     const { types } = args as { types: string[] }
     events.push(`clear:${types.join('+')}`)
     if (types.includes('tabs')) settledAtTabsClear = [...departStore.get().settled].sort()
+    if (types.includes('tabs') && tabsClearFailure) throw tabsClearFailure
     return { status: 'ok', value: { cleared: types } }
   }
   if (name === 'haptic') events.push(`haptic:${(args as { kind: string }).kind}`)
@@ -44,10 +48,10 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { TabOverview } = await import('../TabOverview')
 const { clearDepartures, departStore, isHeld } = await import('../departureStore')
-const { CLOSE_SHOWN_WAIT_MS, QUICK_DELETE_SWEEP_MS, quickDeleteClear } =
+const { CLOSE_SHOWN_WAIT_MS, QUICK_DELETE_GRID_CROSSING_MS, quickDeleteClear } =
   await import('../quickDelete')
 const { cancelLift } = await import('../useCardLift')
-const { layoutAnimations } = await import('@renderer/lib/motion/flip')
+const { layoutAnimations, REDUCED_FADE_MS } = await import('@renderer/lib/motion/flip')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
@@ -247,6 +251,7 @@ beforeEach(() => {
   inRange = []
   events = []
   settledAtTabsClear = null
+  tabsClearFailure = null
   invoke.mockClear()
   viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
   rectDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect')
@@ -351,18 +356,19 @@ describe('quickDeleteClear', () => {
     expect(departStore.get().items.every(isHeld)).toBe(true)
     expect(grid()?.hasAttribute('inert')).toBe(true)
     expect(released()).toEqual([])
-    // 3. Bottom-up by card bottom over the one sweep: the group's card, its bottom at the grid's
-    //    bottom edge, at once; c (bottom 450 of 100…700) at 104 ms; a and b's row (bottom 250)
-    //    at 188 ms – the same moment for both, had a been in the period.
+    // 3. Bottom-up by card bottom over the one crossing (380 ms for the grid's height): the
+    //    group's card, its bottom at the grid's bottom edge, at once; c (bottom 450 of 100…700) at
+    //    158 ms; a and b's row (bottom 250) at 285 ms – the same moment for both, had a been in
+    //    the period.
     await tick(0)
     expect(released()).toEqual([`group:${GROUP}`])
-    await tick(Math.round((250 / 600) * QUICK_DELETE_SWEEP_MS) - 1)
+    await tick(Math.round((250 / 600) * QUICK_DELETE_GRID_CROSSING_MS) - 1)
     expect(released()).toEqual([`group:${GROUP}`])
     await tick(1)
     expect(released()).toEqual(['c', `group:${GROUP}`])
     await tick(
-      Math.round((450 / 600) * QUICK_DELETE_SWEEP_MS) -
-        Math.round((250 / 600) * QUICK_DELETE_SWEEP_MS)
+      Math.round((450 / 600) * QUICK_DELETE_GRID_CROSSING_MS) -
+        Math.round((250 / 600) * QUICK_DELETE_GRID_CROSSING_MS)
     )
     expect(released()).toEqual(['b', 'c', `group:${GROUP}`])
     // 4. The core is not asked to close while an exit still runs (`closeTabsAndShowPostDeleteFeedback`
@@ -400,7 +406,7 @@ describe('quickDeleteClear', () => {
     // `types: ['tabs']` alone: no data clear, the period read straight after the landing.
     expect(events).toEqual(['tabsInRange'])
     expect(keys()).toEqual(['m1'])
-    await tick(QUICK_DELETE_SWEEP_MS)
+    await tick(QUICK_DELETE_GRID_CROSSING_MS)
     await land()
     show(without(['m1']))
     await settle()
@@ -416,7 +422,7 @@ describe('quickDeleteClear', () => {
     await land()
     await settle()
     expect(keys()).toEqual(['b', 'c'])
-    await tick(QUICK_DELETE_SWEEP_MS)
+    await tick(QUICK_DELETE_GRID_CROSSING_MS)
     await land()
     expect(events.at(-1)).toBe('clear:tabs')
     // The core closed b but kept c (it left the period between the read and the close).
@@ -436,7 +442,47 @@ describe('quickDeleteClear', () => {
     expect(events.at(-1)).toBe('haptic:dock')
   })
 
-  it('under reduced motion the close is a cut: no card departs, the tabs are closed at once', async () => {
+  it('a tabs clear that fails on the wire strands nothing: every exit is sent back, the cards shown again, the grid live, the failure the caller’s', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    show(full())
+    inRange = ['b', 'c']
+    tabsClearFailure = new Error('ipc: channel closed')
+    // The rejection is caught the moment it comes, so nothing goes unhandled while the motion
+    // still runs; what the runner settled on is read at the end.
+    const done = quickDeleteClear({ range: '15min', types: ['tabs'] }, () => undefined).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    )
+    await settle()
+    await land()
+    await settle()
+    expect(keys()).toEqual(['b', 'c'])
+    await tick(QUICK_DELETE_GRID_CROSSING_MS)
+    await land()
+    expect(events).toEqual(['tabsInRange', 'clear:tabs'])
+    expect(settledAtTabsClear).toEqual(['b', 'c'])
+    // The core closed nothing, so the wait for the closes runs out and BOTH exits are sent back
+    // – the same path a kept tab takes – instead of standing settled over cards still open with
+    // the grid inert under them.
+    expect(keys()).toEqual(['b', 'c'])
+    expect(grid()?.hasAttribute('inert')).toBe(true)
+    expect([...departStore.get().restoring]).toEqual([])
+    await tick(CLOSE_SHOWN_WAIT_MS)
+    expect([...departStore.get().restoring].sort()).toEqual(['b', 'c'])
+    await land()
+    expect(keys()).toEqual([])
+    expect(grid()?.hasAttribute('inert')).toBe(false)
+    for (const id of ['b', 'c']) {
+      const card = grid()?.querySelector<HTMLElement>(`[data-cell="${id}"] .zen-overview-card`)
+      expect(card).not.toBeNull()
+      expect(card?.style.opacity).not.toBe('0')
+    }
+    // No haptic – nothing was deleted – and the failure is the form's to show.
+    await expect(done).resolves.toEqual({ error: tabsClearFailure })
+    expect(events).toEqual(['tabsInRange', 'clear:tabs'])
+  })
+
+  it('under reduced motion the period’s cards fade together in place over §11.3’s 120 ms – no sweep, no spring – and the close takes them on its commit', async () => {
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
       value: () => ({
@@ -445,21 +491,79 @@ describe('quickDeleteClear', () => {
         removeEventListener: () => undefined
       })
     })
-    show(full())
-    inRange = ['b', 'c']
-    const drawn: string[][] = []
-    const off = departStore.subscribe(() => {
-      if (departStore.get().items.length > 0) drawn.push(keys())
-    })
-    const done = quickDeleteClear({ range: '15min', types: ['history', 'tabs'] }, () => undefined)
-    await settle()
-    await land()
-    await settle()
-    await tick(0)
-    await settle()
-    off()
-    expect(drawn).toEqual([])
-    expect(events).toEqual(['clear:history', 'tabsInRange', 'clear:tabs', 'haptic:dock'])
-    await expect(done).resolves.toEqual({ status: 'ok', value: { cleared: ['history', 'tabs'] } })
+    // happy-dom's Web Animations run on their own clock: a stand-in records each `animate()`
+    // and lets the test finish it.
+    const proto = HTMLElement.prototype as { animate?: unknown }
+    const hadAnimate = proto.animate
+    const fades: Array<{ el: HTMLElement; frames: unknown; options: KeyframeAnimationOptions }> = []
+    const finish: Array<() => void> = []
+    proto.animate = function (
+      this: HTMLElement,
+      frames: unknown,
+      options: KeyframeAnimationOptions
+    ): { onfinish: (() => void) | null; cancel: () => void } {
+      fades.push({ el: this, frames, options })
+      const fade = { onfinish: null as (() => void) | null, cancel: () => undefined }
+      finish.push(() => fade.onfinish?.())
+      return fade
+    }
+    try {
+      show(full())
+      inRange = ['b', 'c', 'm1', 'm2']
+      const done = quickDeleteClear({ range: '15min', types: ['history', 'tabs'] }, () => undefined)
+      await settle()
+      await land()
+      await settle()
+      expect(events).toEqual(['clear:history', 'tabsInRange'])
+      // The same exits as with motion, held – the group as one, whole – …
+      expect(keys()).toEqual(['b', 'c', `group:${GROUP}`])
+      expect(released()).toEqual([])
+      expect(fades).toEqual([])
+      // … and NO sweep: the group's card at the grid's bottom edge and b's row at its top set off
+      // together on the first tick, where the sweep would have held b back 285 ms.
+      await tick(0)
+      expect(released()).toEqual(['b', 'c', `group:${GROUP}`])
+      // Each fades in place over §11.3's 120 ms on `--zen-ease`, held at 0 – `Departures`'
+      // reduced-motion run, no exit spring: b's and c's cards and the group's card, nothing else.
+      const exits = fades.filter((f) => f.el.classList.contains('pointer-events-none'))
+      expect(exits).toHaveLength(3)
+      expect(
+        exits.map((f) => (f.el.classList.contains('zen-group') ? 'group' : 'card')).sort()
+      ).toEqual(['card', 'card', 'group'])
+      for (const fade of exits) {
+        expect(fade.frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
+        expect(fade.options).toEqual({
+          duration: REDUCED_FADE_MS,
+          easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+          fill: 'forwards'
+        })
+      }
+      expect(REDUCED_FADE_MS).toBe(120)
+      // The close still waits on the motion: with the fades running (the frame loop cranked all
+      // it likes – no spring is on it) the core is not asked to close.
+      await land()
+      expect(events.filter((e) => e.startsWith('clear:tabs'))).toEqual([])
+      // The fades finish: every exit rests in place, and the core is asked to close on that –
+      // the same commit-gated close as with motion, every exit settled at the ask.
+      await act(async () => {
+        for (const end of finish) end()
+      })
+      await settle()
+      expect(events.at(-1)).toBe('clear:tabs')
+      expect(settledAtTabsClear).toEqual(['b', 'c', `group:${GROUP}`])
+      expect(keys()).toEqual(['b', 'c', `group:${GROUP}`])
+      // The commit that shows the closes takes the faded exits with the slots.
+      show(without(['b', 'c', 'm1', 'm2']))
+      await settle()
+      expect(keys()).toEqual([])
+      expect(grid()?.hasAttribute('inert')).toBe(false)
+      await expect(done).resolves.toEqual({
+        status: 'ok',
+        value: { cleared: ['history', 'tabs'] }
+      })
+      expect(events).toEqual(['clear:history', 'tabsInRange', 'clear:tabs', 'haptic:dock'])
+    } finally {
+      proto.animate = hadAnimate
+    }
   })
 })

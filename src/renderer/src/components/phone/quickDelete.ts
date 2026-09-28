@@ -48,20 +48,23 @@ import type { ClearArgs, ClearOutcome } from '../siteControls/useClearForm'
  *     the same words the form's plain clear gets; never "Deleted browsing data".
  *
  * Without `'tabs'` in `types` the submit is the plain clear: no switcher, no motion. Under
- * reduced motion the range's cards are not departed at all – the close is a cut, the cards gone
- * at once on the commit (the brief's ruling; §11.3's 120 ms fade is a one-line fold here). The
- * tablet's form has no Tabs row (#624), so this never runs there; the seam is layout-agnostic.
+ * reduced motion the period's cards fade together in place over §11.3's 120 ms – no sweep, no
+ * spring (`Departures` fades a released exit) – and the close takes them on its commit (the
+ * lead's ruling on gate (a)'s companion). The tablet's form has no Tabs row (#624), so this
+ * never runs there; the seam is layout-agnostic.
  */
 
 /**
- * How long the wipe takes from the grid's bottom edge to its top: the one constant of the
- * stagger (gate question (a); 0 = every card at once). Chrome's gradient crosses the visible
- * grid in about 380 ms of its 1200 ms curve (`QuickDeleteAnimationGradientDrawable.java:52–72`:
- * the sweep runs 1.35 × the grid's height on (0.25, 0, 0.15, 1), the trigger line 0.175 × the
- * height ahead of the gradient's top); the house form takes it as a straight sweep, a card's
- * exit spring standing for Chrome's 230 ms linear fade (`TabGridView.java:159–193`).
+ * How long the wipe takes to CROSS THE VISIBLE GRID, its bottom edge to its top – the one
+ * constant of the stagger, in ms (0 = every card at once). Chrome's cadence, the lead's ruling
+ * on gate (a): the gradient crosses the visible grid in about 380 ms of its 1200 ms curve
+ * (`QuickDeleteAnimationGradientDrawable.java:52–72`: the sweep runs 1.35 × the grid's height on
+ * (0.25, 0, 0.15, 1), the trigger line 0.175 × the height ahead of the gradient's top); the house
+ * form takes it as a straight sweep. This is a SCHEDULE, not a motion's length: each card's own
+ * exit (the §11.4 spring, ~250 ms to rest, standing for Chrome's 230 ms linear fade,
+ * `TabGridView.java:159–193`) stays under §11's 300 ms cap on its own.
  */
-export const QUICK_DELETE_SWEEP_MS = 250
+export const QUICK_DELETE_GRID_CROSSING_MS = 380
 
 /**
  * How long the chrome waits for the browser to show the closes (the core's state broadcast is
@@ -93,18 +96,19 @@ export function setQuickDeleteWipe(builder: WipeBuilder | null): void {
  * When each held exit sets off, in ms from the wipe's start: bottom-up by card bottom, a card at
  * the grid's bottom edge first and one at its top edge last, in proportion to the distance
  * between (a row's cards set off together; a card below the visible grid at once, one above it
- * at the sweep's end). Without a grid to measure, or with the sweep at 0, everything at once.
+ * at the crossing's end). `crossingMs` is how long the wipe takes to cross the visible grid;
+ * without a grid to measure, or with the crossing at 0, everything at once.
  */
 export function wipeSchedule(
   exits: readonly Departure[],
   grid: Rect | null,
-  sweepMs: number
+  crossingMs: number
 ): Array<{ key: string; delay: number }> {
   return exits.filter(isHeld).map((exit) => {
-    if (!grid || grid.height <= 0 || sweepMs <= 0) return { key: exit.key, delay: 0 }
+    if (!grid || grid.height <= 0 || crossingMs <= 0) return { key: exit.key, delay: 0 }
     const bottom = exit.rect.y + exit.rect.height
     const share = Math.min(1, Math.max(0, (grid.y + grid.height - bottom) / grid.height))
-    return { key: exit.key, delay: Math.round(share * sweepMs) }
+    return { key: exit.key, delay: Math.round(share * crossingMs) }
   })
 }
 
@@ -129,7 +133,10 @@ export async function holdQuickDeleteWipe(
   const built = wipeBuilder?.(Array.isArray(inRange) ? inRange : []) ?? null
   if (!built || built.exits.length === 0) return false
   const delays = new Map(
-    wipeSchedule(built.exits, built.grid, QUICK_DELETE_SWEEP_MS).map((s) => [s.key, s.delay])
+    wipeSchedule(built.exits, built.grid, QUICK_DELETE_GRID_CROSSING_MS).map((s) => [
+      s.key,
+      s.delay
+    ])
   )
   depart(
     built.exits.map((exit) =>
@@ -164,10 +171,17 @@ export async function quickDeleteClear(
   const inRange = await cmd('privacy.tabsInRange', { range: args.range })
   const ids = Array.isArray(inRange) ? inRange : []
   const held = await wipe(ids)
-  const tabs = await cmd('privacy.clearBrowsingData', { range: args.range, types: ['tabs'] })
-  if (held.length > 0) {
-    await closesShown(ids)
-    restoreDepartures(kept(held))
+  let tabs: ClearOutcome
+  try {
+    tabs = await cmd('privacy.clearBrowsingData', { range: args.range, types: ['tabs'] })
+  } finally {
+    // Whatever the command's fate – a rejection too (`cmd` rethrows an IPC failure; the form
+    // shows it) – the held exits never stand over cards still open: the wait for the closes
+    // runs, and a card the browser still shows gets its exit sent back, the grid live again.
+    if (held.length > 0) {
+      await closesShown(ids)
+      restoreDepartures(kept(held))
+    }
   }
   if (tabs.status !== 'ok') return tabs
   run('haptic', { kind: 'dock' })
@@ -204,15 +218,17 @@ async function showOverview(): Promise<void> {
 
 /**
  * The range's cards depart, held, on the sweep's schedule; resolves with the held exits' keys
- * once every one has rested. Nothing departs under reduced motion (the close is a cut), with no
- * overview mounted, or for a range with no card on the grid.
+ * once every one has rested. Under reduced motion there is no sweep: every exit is released
+ * together and fades in place over §11.3's 120 ms (`Departures`' reduced-motion run). Nothing
+ * departs with no overview mounted, or for a range with no card on the grid.
  */
 async function wipe(ids: readonly string[]): Promise<string[]> {
-  if (ids.length === 0 || reducedMotion() || !wipeBuilder) return []
+  if (ids.length === 0 || !wipeBuilder) return []
   const built = wipeBuilder(ids)
   if (!built || built.exits.length === 0) return []
   depart(built.exits)
-  const schedule = wipeSchedule(built.exits, built.grid, QUICK_DELETE_SWEEP_MS)
+  const crossing = reducedMotion() ? 0 : QUICK_DELETE_GRID_CROSSING_MS
+  const schedule = wipeSchedule(built.exits, built.grid, crossing)
   const byDelay = new Map<number, string[]>()
   for (const { key, delay } of schedule) byDelay.set(delay, [...(byDelay.get(delay) ?? []), key])
   for (const [delay, keys] of byDelay) setTimeout(() => releaseDepartures(keys), delay)
