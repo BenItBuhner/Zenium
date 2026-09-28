@@ -114,8 +114,11 @@ textarea.zen-v2-field {
 /*
  * The picker in the popup surface's document (`?surface=popup`, `PickerSurface`): a transparent
  * page whose one panel sits inside the 8 px margin the surface leaves for its shadow
- * (`PICKER_SURFACE_PAD`). The panel takes the document's height less that margin, so a long list
- * scrolls inside it.
+ * (`PICKER_SURFACE_PAD`). The panel takes the document's width and at most its height less
+ * that margin, so a long list scrolls inside it – until the core's first word on the surface's
+ * size at rest, which the script pins the panel to (`PickerSurface`), the same box: the room
+ * the surface grows by for a tooltip's moment (§9.31, `PopupSurfaceRoom`) is under and beside
+ * the panel, which keeps its box and stands centred in a widened surface.
  */
 .zen-v2-af-surface {
   position: fixed;
@@ -125,7 +128,9 @@ textarea.zen-v2-field {
   overflow: hidden;
 }
 .zen-v2-af-surface > .zen-v2-af-popover {
+  width: 100%;
   max-height: 100%;
+  margin-inline: auto;
 }
 /*
  * The popup surface's document (the picker's and the mini menu's, `PopupSurface`) draws no page
