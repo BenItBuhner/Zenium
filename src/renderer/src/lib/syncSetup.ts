@@ -7,7 +7,7 @@ import type {
   WebDavProbe,
   WebDavSyncCredentials
 } from '@shared/types'
-import { DEFAULT_WEBDAV_FOLDER } from '@core/sync/webdav'
+import { DEFAULT_WEBDAV_FOLDER, webDavFolderSegments } from '@core/sync/webdav'
 import { cmd } from './api'
 import { createStore } from './store'
 import { browserStore, forgetToast, uiStore } from './ui'
@@ -235,8 +235,14 @@ export interface SyncSetupDraft {
   probe: SyncProbeState
 }
 
-/** The folder the server form starts with (the engine's default, written as a folder). */
-export const WEBDAV_FOLDER_DEFAULT = `${DEFAULT_WEBDAV_FOLDER}/`
+/**
+ * The folder the server form starts with: the engine's default by its name – `Zenium`, the
+ * folder under the account's files that holds the `zenium-sync` directory, with no trailing
+ * slash. The one value the connected page's Folder row reads back (`webDavFolderLine`), so
+ * the two surfaces say the same thing; the engine reads `Zenium` and `Zenium/` alike
+ * (`webDavFolderSegments`).
+ */
+export const WEBDAV_FOLDER_DEFAULT = DEFAULT_WEBDAV_FOLDER
 
 export function emptySyncSetup(): SyncSetupDraft {
   return {
@@ -391,15 +397,15 @@ export function probeLine(state: SyncProbeState): string {
 }
 
 /**
- * The server folder as the connected page names it: the folder as the engine reads it (empty,
- * dot and parent segments dropped, one trailing slash), or the account's top level for none.
+ * The server folder as the connected page names it: the folder by its name, as the engine reads
+ * what was typed (`webDavFolderSegments`: empty, dot and parent segments dropped, the segments
+ * joined with `/`, no trailing slash – `Zenium`, `Backups/Zenium`), or the account's top level
+ * for none. The same string the form's Folder field holds for the same folder, so the setup
+ * and the connected page never disagree on it.
  */
 export function webDavFolderLine(folder: string): string {
-  const segments = folder
-    .split(/[\\/]+/)
-    .map((s) => s.trim())
-    .filter((s) => s !== '' && s !== '.' && s !== '..')
-  return segments.length === 0 ? SYNC_COPY.serverRootFolder : `${segments.join('/')}/`
+  const segments = webDavFolderSegments(folder)
+  return segments.length === 0 ? SYNC_COPY.serverRootFolder : segments.join('/')
 }
 
 /** The server as the connected page names it: the account on the host ("alice on cloud.example.com"). */
