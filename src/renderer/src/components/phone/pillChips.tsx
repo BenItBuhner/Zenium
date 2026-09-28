@@ -22,7 +22,7 @@ import {
   type PillFold
 } from '@renderer/lib/pillChips'
 import { readerArticleTab } from '@renderer/lib/readerEntry'
-import { crossReaderView } from '@renderer/lib/readerTransition'
+import { crossReaderView, isReaderUrl } from '@renderer/lib/readerTransition'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
@@ -50,7 +50,8 @@ import { PillChip } from '../urlbar/PillChip'
  * verdict cross-fades the slot (§11.4) as the lock and the media chip do. `save-prompt` is
  * §9.29's other state chip – a save-password or save-address key – for when the phone grows one
  * (the desktop has `AutofillChip`); the slot rule already holds for it. `reader` is §9.29's
- * reader chip: the sheet's Reader View row on an article page (PUI-14), never drawn in the pill.
+ * reader chip: the sheet's Reader View row on an article page (PUI-14) and the slot's one offer
+ * there (CT-37), and on `zen://reader` the lit exit in the same slot.
  */
 export type PillChipId =
   | 'lock'
@@ -76,6 +77,12 @@ export const READER_ROW_LABEL = 'Reader View'
 export const READER_ROW_SPOKEN = 'Reader View available'
 /** The reader chip's description (its tooltip on a mouse or keyboard, §9.31): the desktop chip's words (`SidebarTop`). */
 export const READER_CHIP_HINT = 'Enter Reader View'
+/** The lit exit's words on `zen://reader` (§9.29's checked exit; the desktop chip's other title). */
+export const READER_EXIT_HINT = 'Exit Reader View'
+/** What the address speaks of the lit exit while a live state holds its slot: the page's state, not an offer. */
+export const READER_ON_SPOKEN = 'Reader View on'
+/** The sheet row's value on `zen://reader`: the state the exit row reports, as the translate row reports its languages. */
+export const READER_ON_VALUE = 'On'
 
 /** The glyph slot's chip id for a connection state that has a verdict to draw. */
 const VERDICT_CHIP_IDS = {
@@ -171,13 +178,24 @@ function translateValue(translation: TranslateTabState): string | undefined {
  * where it runs (`crossReaderView`, MOT-36), begun on the picture the sheet holds of the page
  * when the sheet is up – so the page is never let back between the sheet's going and the
  * surface's coming (the menu row's way, `lib/ui.ts` `pickMenuItem`) – and on the crossing's own
- * picture from the pill, where no sheet stands; the sheet, if up, leaves with its spring.
+ * picture from the pill, where no sheet stands; the sheet, if up, leaves with its spring. On
+ * `zen://reader` the same crossing is the exit: the core's toggle uncovers the page (the lit
+ * chip's tap, the sheet's row, the app menu's row and Back are that one door).
  */
 export function enterReaderView(tabId: string): void {
   const ui = uiStore.get()
   const picture = ui.snapshotTabId === tabId ? ui.snapshot : null
   closeSiteInfo()
   void crossReaderView(tabId, { picture })
+}
+
+/**
+ * Whether the reader chip stands on `tab`: an article page – the probe's word, `readerArticleTab`
+ * – where it is the offer, or Reader View itself, where it is the lit exit (§9.29). The pill's
+ * tap route (`PhoneShell`) and the chip's builder ask the one question.
+ */
+export function readerChipTab(tab: Pick<Tab, 'url' | 'readerable' | 'discarded'> | null): boolean {
+  return tab !== null && (isReaderUrl(tab.url) || readerArticleTab(tab))
 }
 
 /**
@@ -369,8 +387,8 @@ export function phonePillChips(
   // through the crossing where it runs (`crossReaderView`, MOT-36), begun on the picture the
   // sheet already holds of the page so the page is never let back between the sheet's going and
   // the surface's coming (the menu row's way, `lib/ui.ts` `pickMenuItem`); the sheet leaves with
-  // its spring. Not on a page the probe did not read as an article, nor in Reader View itself,
-  // whose exit is the menu's row.
+  // its spring. Not on a page the probe did not read as an article; in Reader View itself the
+  // same chip is the exit (below).
   //
   // The pill's readerable indicator (CT-37; Chrome Android's adaptive-toolbar Reader mode button
   // – `AdaptiveToolbarButtonVariant.READER_MODE`, `ReaderModeToolbarButtonController` – which
@@ -388,25 +406,42 @@ export function phonePillChips(
   // vocabulary ("Enter Reader View") without the desktop's chord – the phone's chips carry none,
   // and §9.31's tooltip is a mouse's or a keyboard's, so here the words are TalkBack's alone.
   // The tap is routed by `PhoneShell`'s pill (`data-reader-chip`) to the same crossing.
-  if (identity && !page && !extension && readerArticleTab(tab)) {
+  //
+  // The lit exit (§9.29 as amended; the design lead's one fold on CT-37's gate): on `zen://reader`
+  // the same chip stays in the slot, lit in the accent with `aria-pressed` – the phone's twin of
+  // the desktop's lit Reader View exit (`SidebarTop`) and of Chrome's checked "Hide Reading mode"
+  // – and its tap runs the same crossing, which the core's toggle takes back to the page
+  // (`reader.toggle` uncovers a reader URL, `src/core/reader.ts`). The reader URL alone decides
+  // (`isReaderUrl`: the probe's flag is the article's and may be stale); the fold is the article
+  // page's – the offer's kind, the identity's warn or danger glyph keeping the slot, a live state
+  // folding it to the sheet, where its row is listed under every state as on the article page,
+  // its value the state it reports ("On") and its tap the same exit; the app menu's row and Back
+  // are the core's other doors. The §9.33 strip never stands on the reader page, so
+  // `readerOfferUp` is the article's alone. The lit ink is the window family's accent, the Now
+  // playing chip's while it plays; the desktop chip's title is the exit's description.
+  const inReader = isReaderUrl(tab.url)
+  if (identity && !page && !extension && readerChipTab(tab)) {
     const quietSlot = verdict === null || verdict.tone === 'neutral'
     chips.push({
       id: 'reader',
-      fold: quietSlot && ctx.readerOfferUp !== true ? pillChipFold('reader') : 'sheet',
-      spoken: READER_ROW_SPOKEN,
+      fold:
+        quietSlot && (inReader || ctx.readerOfferUp !== true) ? pillChipFold('reader') : 'sheet',
+      spoken: inReader ? READER_ON_SPOKEN : READER_ROW_SPOKEN,
       row: {
-        glyph: <BookOpenText />,
+        glyph: <BookOpenText className={inReader ? 'text-[var(--zen-accent)]' : undefined} />,
         label: READER_ROW_LABEL,
+        value: inReader ? READER_ON_VALUE : undefined,
         activate: () => enterReaderView(tab.id)
       },
       render: (interactive) => (
         <PillChip
           inert={!interactive}
           label={READER_ROW_LABEL}
-          title={READER_CHIP_HINT}
+          title={inReader ? READER_EXIT_HINT : READER_CHIP_HINT}
+          pressed={inReader || undefined}
           data-reader-chip
           data-testid="reader-chip"
-          className={cn(CHIP_CLASS, 'zen-pill-quiet')}
+          className={cn(CHIP_CLASS, inReader ? 'text-[var(--zen-accent)]' : 'zen-pill-quiet')}
         >
           <BookOpenText className="h-3.5 w-3.5" />
         </PillChip>

@@ -12,7 +12,6 @@ import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
-import { readerArticleTab } from '@renderer/lib/readerEntry'
 import { READER_BANNER_KEY, useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { bringChromeBack, settleChromeAway, slideChromeAway } from '@renderer/lib/fullscreenMotion'
@@ -84,7 +83,8 @@ import {
   enterReaderView,
   phonePillChips,
   pillChipsDrawn,
-  pillChipsSpoken
+  pillChipsSpoken,
+  readerChipTab
 } from './pillChips'
 import { PhoneMessages } from './PhoneMessages'
 import { PhoneStage } from './PhoneStage'
@@ -233,9 +233,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       } else if (quiet) {
         // The bell-off glyph of a quiet notification ask (NOT-03) opens its sheet.
         openQuietPrompt(quiet.id)
-      } else if (tab && reader && readerArticleTab(tab)) {
+      } else if (tab && reader && readerChipTab(tab)) {
         // The readerable indicator (CT-37) opens Reader View for the article through the same
-        // crossing as the sheet's row and the app menu's; the predicate is checked again here,
+        // crossing as the sheet's row and the app menu's, and on `zen://reader` the lit exit
+        // takes the same crossing back to the page (§9.29); the predicate is checked again here,
         // since the chip may be fading out of a page that just stopped being one (§11.4).
         enterReaderView(tab.id)
       } else if (tab && icon) {
