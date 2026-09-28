@@ -59,7 +59,13 @@ export function FolderField({
   const listOpen = anchor !== null
   const current = tree.get(value)
   const options = useMemo(() => {
-    const recent = recentFolders(tree, 5).filter((f) => !disabled?.has(f.id))
+    // Five recents. A folder that cannot be chosen drops out of the list and the next recent
+    // folder takes its slot – the list is not shortened by the folder's own subtree, which is
+    // filed into last as often as not (a folder is edited where it was just worked in).
+    const excluded = disabled?.size ?? 0
+    const recent = recentFolders(tree, 5 + excluded)
+      .filter((f) => !disabled?.has(f.id))
+      .slice(0, 5)
     return current && !recent.some((f) => f.id === current.id) ? [current, ...recent] : recent
   }, [current, disabled, tree])
 

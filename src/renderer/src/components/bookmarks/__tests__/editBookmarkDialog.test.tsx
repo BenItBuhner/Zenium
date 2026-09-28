@@ -269,6 +269,20 @@ describe('where a folder cannot go (the core’s move rule as the field’s disa
     expect(offered.at(-1)).toBe('Choose another folder…')
   })
 
+  it('the slots the excluded folders leave are taken by the next recent folders – the list still offers five', () => {
+    show({ id: 'specs', parentId: 'work', type: 'folder' })
+    click(trigger())
+    // Specs and Archive would head the five recents; without them the roots fill the list.
+    expect(options()).toEqual([
+      'Work',
+      'Home',
+      'Bookmarks bar',
+      'Other bookmarks',
+      'Mobile bookmarks',
+      'Choose another folder…'
+    ])
+  })
+
   it('the tree marks exactly the folder and its descendants disabled (§9.30) – never a sibling, an ancestor or a root', () => {
     show({ id: 'specs', parentId: 'work', type: 'folder' })
     openTree()
