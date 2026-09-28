@@ -96,9 +96,15 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
             fades()
             lift()
             reducedMotion()
+            // A named row for the dark shrink's still (the light scenes closed Gamma and Delta):
+            // opened off camera, inactive, before the dark grow's row so that one stands below it.
+            coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/gamma.html")},\"active\":false,\"id\":${JSONObject.quote(GAMMA_DARK)}}")
+            awaitDom(row(GAMMA_DARK), 3_000)
             dark()
             grow("dark", held = true)
-            shrink("dark", opened.firstOrNull { tabExists(it) } ?: ALPHA, held = true)
+            val ids = rowIds()
+            val named = ids.indexOf(GAMMA_DARK).let { it >= 0 && it < ids.size - 1 }
+            shrink("dark", if (named) GAMMA_DARK else opened.firstOrNull { tabExists(it) } ?: ALPHA, held = true)
         } finally {
             releaseFrames()
             shellCommand("settings put global animator_duration_scale 1")
@@ -425,10 +431,15 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
     private fun rowStyle(selector: String, prop: String): String =
         jsText("(function(){var e=document.querySelector(${JSONObject.quote(selector)});return e?e.style[${JSONObject.quote(prop)}]:''})()")
 
-    /** The px clipped off the element's end edge by its inline `clip-path: inset(0 0 <px> 0)`; 0 when none. */
+    /**
+     * The px clipped off the element's end edge by its inline `clip-path: inset(0 0 <px> 0)`; 0
+     * when none. Blink serialises the four-value inset it was given as the three-value
+     * `inset(0px 0px <px>px)` (the left edge the same as the right, so the fourth value is
+     * dropped), so both forms are read.
+     */
     private fun hiddenOf(selector: String): Double {
         val clip = rowStyle(selector, "clipPath")
-        val m = Regex("""inset\(0(?:px)? 0(?:px)? ([0-9.]+)px 0(?:px)?\)""").find(clip) ?: return 0.0
+        val m = Regex("""inset\(0(?:px)? 0(?:px)? ([0-9.]+)px(?: 0(?:px)?)?\)""").find(clip) ?: return 0.0
         return m.groupValues[1].toDoubleOrNull() ?: 0.0
     }
 
@@ -463,6 +474,8 @@ class TabletTabListMotionDemo : GroupsDemoBase("tablet-list-motion", "tablet-lis
         /** How long the snappy spring is given inside a traced block (it lands well within). */
         private const val SPRING_MS = 900L
         private const val MAX_EXTRA = 18
+        /** The named row the dark shrink closes, opened off camera after the light scenes. */
+        private const val GAMMA_DARK = "tab_gamma_dark"
         private const val CHROME_ROOT = "[data-testid=\"chrome-root\"]"
         private const val SIDEBAR = ".zen-tablet-sidebar"
         private const val ADDRESS_PILL = ".zen-tablet-toolbar [data-address-pill]"
