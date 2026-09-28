@@ -93,14 +93,16 @@ export function trackerReportChipLabel(blocked: number): string {
 }
 
 /**
- * A row's 13/69% line: the kind of rule that blocked the site. The filter lists match as one set,
- * so a list's block reads as a tracker; the user's own filters, an extension's rules and Safe
- * Browsing (an unsafe frame refused, Android) name themselves.
+ * A row's 13/69% line: the kind of rule that blocked the site, when the kind says something. The
+ * filter lists match as one set and are the default kind – a line naming it would say the same
+ * word on every row, so it says nothing (§9.29): a list-match row carries no line and stands one
+ * line tall (§10.1). The user's own filters, an extension's rules and Safe Browsing (an unsafe
+ * frame refused, Android) name themselves.
  */
-export function blockedSiteCategoryLabel(category: BlockedSiteCategory): string {
+export function blockedSiteCategoryLabel(category: BlockedSiteCategory): string | undefined {
   switch (category) {
     case 'tracker':
-      return 'Tracker'
+      return undefined
     case 'user':
       return 'Your filter'
     case 'extension':

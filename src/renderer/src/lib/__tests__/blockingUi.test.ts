@@ -128,8 +128,8 @@ describe('the tracker report', () => {
     )
   })
 
-  it('names the kind of rule that blocked a site on the 13 line', () => {
-    expect(blockedSiteCategoryLabel('tracker')).toBe('Tracker')
+  it('names the kind of rule that blocked a site on the 13 line, except the default: a list match carries no line', () => {
+    expect(blockedSiteCategoryLabel('tracker')).toBeUndefined()
     expect(blockedSiteCategoryLabel('user')).toBe('Your filter')
     expect(blockedSiteCategoryLabel('extension')).toBe('Extension')
     expect(blockedSiteCategoryLabel('unsafe')).toBe('Unsafe site')

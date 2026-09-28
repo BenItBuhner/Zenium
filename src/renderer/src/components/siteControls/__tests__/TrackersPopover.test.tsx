@@ -17,8 +17,10 @@ import { TrackersPopover } from '../TrackersPopover'
 
 /*
  * The tracker report (PS-33): the §9.20 list popover behind the desktop shield's count pill.
- * Rows are §10.1's – the domain as the label, the kind of rule on the 13/69% line, the count as
- * a tabular-nums aside – sorted by count as the list opens and never re-sorted while it is up
+ * Rows are §10.1's – the domain as the label, the count as a tabular-nums aside, and the kind of
+ * rule on the 13/69% line only for the user's filter, an extension or Safe Browsing (a list match,
+ * the default kind, carries no line and is one line tall) – sorted by count as the list opens and
+ * never re-sorted while it is up
  * (§9.29); a site the engine meets later joins at the foot. Empty, §9.17's one sentence without
  * a full stop. No controls but the one footer row of §9.20's third form, 32 tall, which leaves
  * for Settings › Privacy and security at the site.
@@ -105,7 +107,7 @@ afterEach(async () => {
 })
 
 describe('the tracker report popover (PS-33)', () => {
-  it('is a 320 dialog titled Trackers blocked, its rows by count with the rule kind and a tabular count, no controls', () => {
+  it('is a 320 dialog titled Trackers blocked, its rows by count with a tabular count – one line for a list match, the rule kind under the others – no controls', () => {
     render(<Report tab={page([site('cdn.example', 1, 'user'), site('ads.example', 4)])} />)
     const el = dialog()
     expect(el.getAttribute('role')).toBe('dialog')
@@ -113,9 +115,15 @@ describe('the tracker report popover (PS-33)', () => {
     const title = document.getElementById(el.getAttribute('aria-labelledby')!)
     expect(title?.textContent).toBe('Trackers blocked')
     expect(rows()).toEqual([
-      { domain: 'ads.example', text: 'ads.exampleTracker4', count: '4' },
+      { domain: 'ads.example', text: 'ads.example4', count: '4' },
       { domain: 'cdn.example', text: 'cdn.exampleYour filter1', count: '1' }
     ])
+    // The list match is the default kind and carries no 13 line (the row is §10.1's one line);
+    // the user's own filter names itself under the domain.
+    const line = (domain: string): Element | null =>
+      el.querySelector(`[data-tracker-row="${domain}"] .line-clamp-2`)
+    expect(line('ads.example')).toBeNull()
+    expect(line('cdn.example')?.textContent).toBe('Your filter')
     for (const aside of el.querySelectorAll<HTMLElement>('[data-count]'))
       expect(aside.classList.contains('tabular-nums')).toBe(true)
     // Rows are facts: no button among them, no per-site allow. The footer row is the one control.
@@ -133,9 +141,9 @@ describe('the tracker report popover (PS-33)', () => {
     const grown = page([site('a.example', 9), site('b.example', 3), site('c.example', 5)])
     act(() => root!.render(<Report tab={grown} />))
     expect(rows()).toEqual([
-      { domain: 'b.example', text: 'b.exampleTracker3', count: '3' },
-      { domain: 'a.example', text: 'a.exampleTracker9', count: '9' },
-      { domain: 'c.example', text: 'c.exampleTracker5', count: '5' }
+      { domain: 'b.example', text: 'b.example3', count: '3' },
+      { domain: 'a.example', text: 'a.example9', count: '9' },
+      { domain: 'c.example', text: 'c.example5', count: '5' }
     ])
   })
 

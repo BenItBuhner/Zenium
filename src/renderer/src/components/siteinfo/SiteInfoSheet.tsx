@@ -1024,8 +1024,11 @@ function PillChipRows({
 /**
  * The tracker report (PS-33), one level under the shield's row: the sites the engine blocked
  * requests to on the page, one §10.1 chassis row each – the registrable domain as the label,
- * the kind of rule that blocked it as the 13/69% line, the request count as the tabular-nums
- * value – sorted by count as the level opens and never re-sorted while it is up; a site blocked
+ * the request count as the tabular-nums value, and the kind of rule that blocked it as the
+ * 13/69% line only when the kind says something: the user's own filter, an extension, Safe
+ * Browsing; a list match, the default kind, carries no line and is a one-line 44 row (§9.29:
+ * the same word on every row says nothing; §9.2 lets the heights mix) – sorted by count as the
+ * level opens and never re-sorted while it is up; a site blocked
  * later joins at the foot (§9.29), the counts move live. Empty, §9.17's one sentence. No
  * controls, no per-site allow; the one footer is a hairline and a 44 navigation row to
  * Settings › Privacy and security at the site. The level has no control of its own to land the

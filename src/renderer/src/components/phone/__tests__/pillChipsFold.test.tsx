@@ -1432,14 +1432,21 @@ describe('the site-information sheet lists the chips as rows', () => {
     act(() => row('Trackers blocked')!.click())
     await vi.waitFor(() => expect(pane.hidden).toBe(false))
     expect(document.querySelector('.zen-sheet-title')?.textContent).toBe('Trackers blocked')
-    // The rows are the record's sites, most blocked first, each named for TalkBack by domain,
-    // count and kind; the counts are the chassis's tabular values.
+    // The rows are the record's sites, most blocked first: the domain, the count as the chassis's
+    // tabular value, and the kind of rule under the domain only when it says something – the
+    // list match is the default kind and its row is the one-line 44 (§10.1), the user's own
+    // filter names itself on a two-line row (§9.2 lets the heights mix).
     const report = pane.querySelector<HTMLElement>('[data-testid="tracker-report"]')!
     const items = Array.from(report.querySelectorAll<HTMLElement>('.zen-sheet-item'))
     expect(items.map((el) => el.textContent)).toEqual([
-      'doubleclick.netTracker3',
+      'doubleclick.net3',
       'example-cdn.comYour filter2',
       'Tracking prevention settings…'
+    ])
+    expect(items.map((el) => el.classList.contains('zen-sheet-item-two-line'))).toEqual([
+      false,
+      true,
+      false
     ])
     expect(report.querySelector('.zen-sheet-empty')).toBeNull()
     expect(report.querySelector('.zen-sheet-sep')).not.toBeNull()

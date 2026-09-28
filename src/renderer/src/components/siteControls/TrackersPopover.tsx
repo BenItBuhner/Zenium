@@ -18,10 +18,13 @@ import { DesktopPopover, EmptyLine, Level, ListRow, RowValue, TitleBlock } from 
 /**
  * The tracker report (PS-33): the §9.20 list popover the shield's count pill opens on the
  * desktop, 320 wide, with the sites the engine blocked requests to on the page and no controls.
- * Each §10.1 row is the registrable domain as its label, the kind of rule that blocked it as the
- * 13/69% line and the request count as a tabular-nums aside. The rows sort by count as the list
- * opens and never re-sort while it is up; a site blocked later joins at the foot (§9.29: no
- * jitter); the counts themselves move live. Empty, it says so in §9.17's one sentence. It is
+ * Each §10.1 row is the registrable domain as its label and the request count as a tabular-nums
+ * aside; a site the user's own filter, an extension or Safe Browsing blocked names that kind on
+ * the 13/69% line, while a list match – the default kind – carries no line and is one line tall
+ * (§9.29: the same word on every row says nothing; §9.2 lets the heights mix). The rows sort by
+ * count as the list opens and never re-sort while it is up; a site blocked later joins at the
+ * foot (§9.29: no jitter); the counts themselves move live. Empty, it says so in §9.17's one
+ * sentence. It is
  * informational only – no per-site allow – and its one footer is §9.20's third form: a hairline
  * and a 32 navigation row to Settings › Privacy and security, at the site. Private tabs get the
  * same list; nothing about it persists (the record is the tab's, gone with its document).
