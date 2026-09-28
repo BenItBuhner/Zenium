@@ -42,6 +42,8 @@ describe('closedTabEntry', () => {
     tab.splitGroupId = 'split_1'
     tab.loading = true
     tab.audible = true
+    tab.blockedCount = 3
+    tab.blockedSites = [{ domain: 'ads.example', category: 'tracker', count: 3 }]
     const entry = closedTabEntry(
       tab,
       { spaceId: 'space_1', folderId: 'folder_1', index: 4, windowId: 'window_1' },
@@ -62,6 +64,10 @@ describe('closedTabEntry', () => {
       loading: false,
       audible: false
     })
+    // The tracker report (PS-33) is the document's own: the entry carries no key for it, and so
+    // writes none to disk.
+    expect(entry.tab.blockedSites).toBeUndefined()
+    expect(JSON.parse(JSON.stringify(entry.tab))).not.toHaveProperty('blockedSites')
     expect(entry.navigation?.entries).toHaveLength(1)
     expect(entry.id).toMatch(/^closed_/)
   })
