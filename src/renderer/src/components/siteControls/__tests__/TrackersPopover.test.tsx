@@ -126,12 +126,38 @@ describe('the tracker report popover (PS-33)', () => {
     expect(line('cdn.example')?.textContent).toBe('Your filter')
     for (const aside of el.querySelectorAll<HTMLElement>('[data-count]'))
       expect(aside.classList.contains('tabular-nums')).toBe(true)
-    // Rows are facts: no button among them, no per-site allow. The footer row is the one control.
+    // Rows are facts: no button among them, no per-site allow. The footer row is the one control
+    // – the row primitive itself (§9.34: never a utility copy), one line without a control, so
+    // the 32 `.zen-v2-row` with its own hover, press and ring – under the hairline, and the
+    // focus lands on it as the popover opens (`focus="first"`, the rows being facts).
     expect(el.querySelector('[data-tracker-rows] button')).toBeNull()
     const buttons = Array.from(el.querySelectorAll<HTMLElement>('button'))
     expect(buttons.map((b) => b.textContent)).toEqual(['Tracking prevention settings…'])
-    expect(buttons[0].classList.contains('h-8')).toBe(true)
+    const footer = buttons[0]!
+    expect(footer.classList.contains('zen-v2-row')).toBe(true)
+    expect(footer.hasAttribute('data-control')).toBe(false)
+    expect(footer.hasAttribute('data-static')).toBe(false)
+    expect(footer.querySelector('.line-clamp-2')).toBeNull()
+    expect(footer.className).not.toMatch(/\bh-8\b|hover:bg-\[var\(--v2-fill-hover\)\]/)
+    expect(footer.closest('[data-footer="navigation"]')).not.toBeNull()
     expect(el.querySelector('[data-footer="navigation"] .h-px')).not.toBeNull()
+    expect(document.activeElement).toBe(footer)
+  })
+
+  it('draws §9.7’s hairline under the sticky title once the rows have scrolled under it, and drops it at the top again', () => {
+    render(<Report tab={page([site('a.example', 1), site('b.example', 3)])} />)
+    const el = dialog()
+    const title = document.getElementById(el.getAttribute('aria-labelledby')!)!
+    const block = title.closest('.p-4')!
+    const scroller = el.querySelector<HTMLElement>('[data-tracker-rows]')!
+    const hairline = 'shadow-[0_1px_0_0_var(--v2-border)]'
+    expect(block.classList.contains(hairline)).toBe(false)
+    Object.defineProperty(scroller, 'scrollTop', { value: 12, configurable: true, writable: true })
+    act(() => scroller.dispatchEvent(new Event('scroll')))
+    expect(block.classList.contains(hairline)).toBe(true)
+    scroller.scrollTop = 0
+    act(() => scroller.dispatchEvent(new Event('scroll')))
+    expect(block.classList.contains(hairline)).toBe(false)
   })
 
   it('holds its order while open: counts move live and a site blocked later joins at the foot', () => {
