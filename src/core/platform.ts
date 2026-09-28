@@ -187,6 +187,14 @@ export interface PageFlags {
    * navigating here. False for every other page.
    */
   linksToSplitPane: boolean
+  /**
+   * The browser shows the mini menu over a text selection (CT-39): the host has it
+   * (`capabilities.selectionMenu`) and `Settings.showSelectionMenu` is on. The page runs its
+   * selection reporter (`shared/selectionScript`) while this is on and takes its listeners down
+   * when it turns off – a profile with the menu off pays for none of them. False on every host
+   * without the menu (the phone).
+   */
+  selectionMenu: boolean
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Rect, SelectionMenuState } from '../../shared/types'
 import { anchorInChrome } from '../credentials/fill'
 import { SELECTION_MINI_MENU_ORDER } from '../menus'
+import type { PageFlags } from '../platform'
 import {
   estimateMiniMenuSize,
   MINI_MENU_FOLD_SLACK,
@@ -346,6 +347,57 @@ describe('the pill on the popup surface', () => {
     expect(h.browser.selectionMenu.available).toBe(true)
     report(h, 'quantum foam')
     expect(model(h)?.text).toBe('quantum foam')
+  })
+
+  describe('the page flag (`PageFlags.selectionMenu`: the page runs its reporter while it is on)', () => {
+    /** What every `sendPageFlags` the tab's view received said about the menu, in order. */
+    const flagged = (h: PageHarness): boolean[] =>
+      h.viewCalls
+        .filter((call) => call.startsWith('sendPageFlags('))
+        .map(
+          (call) => (JSON.parse(call.slice('sendPageFlags('.length, -1)) as PageFlags).selectionMenu
+        )
+
+    it('is on for a desktop host with the setting on, and follows the setting to every live page', () => {
+      const h = pageHarness()
+      layout(h)
+      h.browser.tabs.sendPageFlags(h.tabId)
+      expect(flagged(h)).toEqual([true])
+      report(h, 'quantum foam')
+      expect(model(h)).not.toBeNull()
+      // The setting turned off: the flag goes to the page with the toggle itself, the standing
+      // model goes as before, and a report that still arrives is dropped.
+      h.viewCalls.length = 0
+      h.browser.handleCommand(h.win, 'settings.update', { showSelectionMenu: false })
+      expect(flagged(h)).toEqual([false])
+      expect(model(h)).toBeNull()
+      report(h, 'quantum foam')
+      expect(model(h)).toBeNull()
+      // Another setting changing re-sends nothing for this one.
+      h.viewCalls.length = 0
+      h.browser.handleCommand(h.win, 'settings.update', { glanceEnabled: false })
+      expect(flagged(h)).toEqual([false])
+      h.viewCalls.length = 0
+      h.browser.handleCommand(h.win, 'settings.update', { caretBrowsing: true })
+      expect(flagged(h)).toEqual([])
+      // Turned on again: the page hears it at once and its next report becomes the model.
+      h.browser.handleCommand(h.win, 'settings.update', { showSelectionMenu: true })
+      expect(flagged(h)).toEqual([true])
+      report(h, 'quantum foam')
+      expect(model(h)?.text).toBe('quantum foam')
+    })
+
+    it('is off on a host without the menu whatever the setting says – the phone installs nothing', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone' })
+      expect(h.browser.state.settings.showSelectionMenu).not.toBe(false)
+      h.browser.tabs.sendPageFlags(h.tabId)
+      expect(flagged(h)).toEqual([false])
+      h.viewCalls.length = 0
+      h.browser.handleCommand(h.win, 'settings.update', { showSelectionMenu: false })
+      expect(flagged(h)).toEqual([false])
+      h.browser.handleCommand(h.win, 'settings.update', { showSelectionMenu: true })
+      expect(flagged(h)).toEqual([false, false])
+    })
   })
 
   it('folds the whole row to glyph buttons where the view is narrower than the pill and its margins, and unfolds as the view widens', () => {
