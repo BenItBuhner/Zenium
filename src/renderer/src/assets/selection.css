@@ -22,11 +22,17 @@
  * The pill's document: transparent, the pill inside the 8 px margin the core leaves around it
  * for its shadow (`MINI_MENU_SURFACE_PAD`). The surface is the core's estimate of the pill's size
  * until the pill has told it what it measured (`selectionMenu.surfaceSize`), so the margin clips
- * for the frame a wider pill takes to be measured, and nothing here scrolls.
+ * for the frame a wider pill takes to be measured, and nothing here scrolls. The pill stands
+ * at the top of the box, centred across it: the core widens the surface past the pill only by
+ * the room a folded pill asks for its tooltips (`MiniMenuRoom`, split evenly around the pill)
+ * and lengthens it under the pill for the same, and neither moves the pill.
  */
 .zen-mini-menu-surface {
   position: fixed;
   inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   padding: 8px;
   background: transparent;
   overflow: hidden;
@@ -66,8 +72,9 @@
 /*
  * Folded (`[data-folded]`: the page view is narrower than the pill and its margins, the core's
  * `miniMenuFolds`), every chip is the shared `.zen-v2-icon-button` as it is – the 28 glyph
- * button with its title as the tooltip, the whole row at once, centred in the row's 32 band by
- * the pill's `align-items` above. Nothing to add here.
+ * button with its title as the chrome's tooltip (`.zen-tooltip`, main.css: the host mounted in
+ * this document draws it under the button), the whole row at once, centred in the row's 32 band
+ * by the pill's `align-items` above. Nothing to add here.
  */
 
 /* --- The Define surface (a §9.20 popover, a §9.13 sheet) ------------------------------------ */
