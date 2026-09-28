@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
@@ -48,8 +49,10 @@ import kotlin.math.roundToInt
  * does not hold, and a touch that does not take is a fault ([DemoHarness.touchTapLabelExpecting]).
  * The group row's place against the keyboard is measured on both chassis, and on the tablet the
  * keyboard is put away before the still and the touch, since that chassis's list runs under it
- * ([keyboardAway]). See [DemoHarness] for the plumbing and its rule on real touches versus
- * accessibility clicks.
+ * ([keyboardAway]). Each still is taken behind a frame fence ([steadyShot]): the emulator's
+ * frames trail the DOM by seconds, so a marker the document draws is awaited on the screen and
+ * its removal awaited too before the frame is kept. See [DemoHarness] for the plumbing and its
+ * rule on real touches versus accessibility clicks.
  */
 @RunWith(AndroidJUnit4::class)
 class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-state.json", "android-omnibox-group-suggestion", "omnibox-group-suggestion-demo") {
@@ -169,6 +172,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 "document.querySelector('$GROUP_ROW')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(QUERY)}&&!document.querySelector('$ROWS_LEAVING')",
                 15_000
             )
+            awaitEngineRows()
             keyboardAway("the still")
             steadyShot("01-group-row-typed")
             val card = readCard()
@@ -254,6 +258,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 "document.querySelector('$SAVED_GLYPH')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(SAVED_QUERY)}&&!document.querySelector('$ROWS_LEAVING')",
                 15_000
             )
+            awaitEngineRows()
             keyboardAway("the still and the touch")
             steadyShot("03-saved-group-row")
             val card = readCard()
@@ -422,8 +427,14 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         return last
     }
 
-    private fun groupRowRect(): Rect? {
-        val edges = chromeValue("(function(){var r=document.querySelector('$GROUP_ROW');if(!r)return '';var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom].join(',')})()")
+    private fun groupRowRect(): Rect? = rectOnScreen("document.querySelector('$GROUP_ROW')")
+
+    /**
+     * An element's place on screen: the document's rect scaled into the chrome view's place (as
+     * the harness reads a Settings row); null when `elementJs` finds nothing.
+     */
+    private fun rectOnScreen(elementJs: String): Rect? {
+        val edges = chromeValue("(function(){var r=$elementJs;if(!r)return '';var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom].join(',')})()")
             .split(',').mapNotNull { it.toDoubleOrNull() }
         if (edges.size != 4) return null
         var origin = IntArray(2)
@@ -434,62 +445,79 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         )
     }
 
+    /** The engine's rows – asynchronous, from the suggest endpoint – in the card before a still and a read: the typed row alone is one search row. */
+    private fun awaitEngineRows(): Boolean = awaitChrome("document.querySelectorAll('$SEARCH_ROWS').length>=2", 6_000)
+
     /**
-     * The still once the pixels have caught up with the DOM: two frames of the document first
-     * (`requestAnimationFrame` twice – Blink has painted the scene the DOM read), then the screen
-     * read until two reads [STILL_STEP_MS] apart agree to within the caret's blink (fewer than
-     * 0.2 % of the pixels differ), the agreeing read the still. The emulator's software GPU
-     * trails the DOM by seconds under the sheet's row animations: the second run's tablet still
-     * showed the "r" list under a field reading "res" 2.5 s after the DOM had it, the third
-     * run's light still the "re" list 1.2 s after the second frame – a fixed wait measures
-     * nothing. The last read when the screen never steadies within [STILL_STEADY_MS] (logged).
+     * The still once the pixels have caught up with the DOM, by a FRAME FENCE. The emulator's
+     * software GPU trails the DOM by seconds and puts its frames out in fits: the second run's
+     * tablet still showed the "r" list under a field reading "res" 2.5 s after the DOM had it,
+     * the third run's light still the "re" list 1.2 s after the document's second frame, and the
+     * fourth run's dark still a section heading at the first frame of its 120 ms fade, two reads
+     * of the screen 600 ms apart agreeing on that stale frame – neither a fixed wait nor a steady
+     * screen measures the lag. So: two frames of the document first (`requestAnimationFrame`
+     * twice – Blink has painted the scene the DOM read); then the document draws a magenta
+     * marker ([FENCE_ID], 10 CSS px, over the leading edge of the field or the pill – the
+     * chrome's own ground on either chassis, in either state; the page views stand OVER the
+     * chrome, so a marker in the content area would be under the page once the field has
+     * closed); the screen is read every [FENCE_STEP_MS] until the marker shows, the marker is
+     * removed, and the screen read until it is gone: the first frame without it was composed
+     * after the removal, so all else in it is at least as current as the document at the fence.
+     * Each wait bounded by [FENCE_MS] and logged when it runs out (the next read is then the
+     * still). The marker shows in the video for the moment between its two reads.
      */
     private fun steadyShot(name: String) {
         chromeJs("(function(){window.__zenPainted=false;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__zenPainted=true})});return 1})()")
         awaitChrome("window.__zenPainted===true", 8_000)
-        var last: Bitmap? = null
-        var reads = 0
-        val deadline = SystemClock.uptimeMillis() + STILL_STEADY_MS
-        while (SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(STILL_STEP_MS)
-            val now = softBitmap(ui.takeScreenshot() ?: continue)
-            reads++
-            val before = last
-            if (before != null && nearlySame(before, now)) {
-                before.recycle()
-                Log.i(tag, "still $name: the screen steady at read $reads")
-                shot(name, now)
-                return
-            }
-            before?.recycle()
-            last = now
+        val started = SystemClock.uptimeMillis()
+        chromeJs(
+            "(function(){var m=document.getElementById('$FENCE_ID');if(!m){m=document.createElement('div');m.id='$FENCE_ID';document.body.appendChild(m)}" +
+                "var a=$FENCE_ANCHOR_JS;var b=a?a.getBoundingClientRect():{left:0,top:0,height:20};" +
+                "m.style.cssText='position:fixed;left:'+(b.left+2)+'px;top:'+(b.top+(b.height-10)/2)+'px;width:10px;height:10px;background:#ff00ff;z-index:2147483647;pointer-events:none';return 1})()"
+        )
+        val at = rectOnScreen("document.getElementById('$FENCE_ID')")
+        val seen = at?.let { awaitFence(it, present = true) }
+        seen?.recycle()
+        if (seen == null) Log.w(tag, "still $name: the fence's marker never showed on the screen in $FENCE_MS ms (at $at)")
+        chromeJs("(function(){var m=document.getElementById('$FENCE_ID');if(m)m.parentNode.removeChild(m);return 1})()")
+        val still = at?.let { awaitFence(it, present = false) }
+        if (still == null) {
+            Log.w(tag, "still $name: the fence's marker never left the screen in $FENCE_MS ms (at $at); the next read")
+            shot(name, softBitmap(ui.takeScreenshot() ?: return))
+            return
         }
-        Log.w(tag, "still $name: the screen never steadied in $STILL_STEADY_MS ms ($reads reads); the last read")
-        shot(name, last ?: softBitmap(ui.takeScreenshot() ?: return))
+        Log.i(tag, "still $name: the fence passed in ${SystemClock.uptimeMillis() - started} ms (the marker ${if (seen != null) "seen" else "NOT seen"} at $at)")
+        shot(name, still)
+    }
+
+    /**
+     * The screen read every [FENCE_STEP_MS] until the fence's marker is there (`present`) or gone,
+     * that read returned (the caller's to recycle or keep); null when [FENCE_MS] runs out.
+     */
+    private fun awaitFence(at: Rect, present: Boolean): Bitmap? {
+        val deadline = SystemClock.uptimeMillis() + FENCE_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(FENCE_STEP_MS)
+            val read = softBitmap(ui.takeScreenshot() ?: continue)
+            if (markerAt(read, at) == present) return read
+            read.recycle()
+        }
+        return null
+    }
+
+    /** Whether the fence's magenta stands at the marker's centre in a read of the screen (the read scaled to the display when its size differs). */
+    private fun markerAt(read: Bitmap, at: Rect): Boolean {
+        val sx = if (width > 0) read.width.toDouble() / width else 1.0
+        val sy = if (height > 0) read.height.toDouble() / height else 1.0
+        val x = (at.centerX() * sx).roundToInt().coerceIn(0, read.width - 1)
+        val y = (at.centerY() * sy).roundToInt().coerceIn(0, read.height - 1)
+        val p = read.getPixel(x, y)
+        return Color.red(p) > 180 && Color.green(p) < 90 && Color.blue(p) > 180
     }
 
     /** A bitmap whose pixels can be read: the screenshot service hands out hardware bitmaps on some builds. */
     private fun softBitmap(shot: Bitmap): Bitmap =
         if (shot.config == Bitmap.Config.HARDWARE) shot.copy(Bitmap.Config.ARGB_8888, false).also { shot.recycle() } else shot
-
-    /** Whether two reads of the screen agree to within the caret's blink: fewer than 0.2 % of the pixels differ (every other row read). */
-    private fun nearlySame(a: Bitmap, b: Bitmap): Boolean {
-        if (a.width != b.width || a.height != b.height) return false
-        val w = a.width
-        val rowA = IntArray(w)
-        val rowB = IntArray(w)
-        val allowed = (w.toLong() * ((a.height + 1) / 2) / 500).toInt()
-        var differ = 0
-        var y = 0
-        while (y < a.height) {
-            a.getPixels(rowA, 0, w, 0, y, w, 1)
-            b.getPixels(rowB, 0, w, 0, y, w, 1)
-            for (x in 0 until w) if (rowA[x] != rowB[x]) differ++
-            if (differ > allowed) return false
-            y += 2
-        }
-        return true
-    }
 
     private fun fieldUp(): Boolean = chromeValue("String(!!document.querySelector('$FIELD'))") == "true"
 
@@ -656,9 +684,16 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         private const val SAVED_QUERY = "cit"
         /** Chrome's heading for the section the open tabs and the tab groups share (`IDS_OMNIBOX_HUB_TYPED_MATCH_HEADER`; `TABS_AND_GROUPS_GROUP` in core/suggestions.ts). */
         private const val TABS_AND_GROUPS = "Tabs and tab groups"
-        /** The screen read every [STILL_STEP_MS] until two reads agree, up to [STILL_STEADY_MS], before a still ([steadyShot]). */
-        private const val STILL_STEP_MS = 600L
-        private const val STILL_STEADY_MS = 12_000L
+        /**
+         * The frame fence before a still ([steadyShot]): the marker's id, where it is drawn (the
+         * field when open, else the tablet's pill group or the phone's pill button – the chrome's
+         * own ground on either chassis), the screen read every [FENCE_STEP_MS] for it, each wait
+         * bounded by [FENCE_MS].
+         */
+        private const val FENCE_ID = "__zenFence"
+        private const val FENCE_ANCHOR_JS = "(document.querySelector('[data-testid=\"urlbar-input\"]')||document.querySelector('[role=\"group\"][aria-label=\"Address\"]')||document.querySelector('button[aria-label^=\"Address\"]'))"
+        private const val FENCE_STEP_MS = 200L
+        private const val FENCE_MS = 15_000L
         /** The field's clear button, there once something is typed. */
         private const val CLEAR_LABEL = "Clear"
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
@@ -666,8 +701,9 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
             if (it == "dark") "dark" else "light"
         }
         /**
-         * The chrome's DOM: the field; the group row; a row on its way out; the saved group's ring
-         * in the group row – each on the phone's sheet or the tablet's list. Each is a selector
+         * The chrome's DOM: the field; the group row; a row on its way out; the engine's search
+         * rows; the saved group's ring in the group row – each on the phone's sheet or the
+         * tablet's list. Each is a selector
          * LIST with the condition spelled on every alternative: appended once to a list it binds to
          * the last alternative only (`ROWS[data-leaving]` read as "any sheet row, or a leaving list
          * row" – the first run's two false failures, the card itself composed as designed).
@@ -675,6 +711,7 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         private const val FIELD = "[data-testid=\"urlbar-input\"]"
         private const val GROUP_ROW = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"folder\"]:not([data-leaving])"
         private const val ROWS_LEAVING = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-leaving], #zen-omnibox-results > li[data-leaving]"
+        private const val SEARCH_ROWS = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"search\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"search\"]:not([data-leaving])"
         private const val SAVED_GLYPH = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"folder\"]:not([data-leaving]) [data-testid=\"group-row-glyph\"][data-saved], " +
             "#zen-omnibox-results > li[data-kind=\"folder\"]:not([data-leaving]) [data-testid=\"group-row-glyph\"][data-saved]"
 
