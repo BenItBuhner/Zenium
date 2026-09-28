@@ -239,7 +239,7 @@ describe('the app menu', () => {
     // With the media hub folded the Media Controls… row and its separator lead: twenty-one rows
     // and four separators (701 px), which still stand on an 800 px window under the bar's 74.
     full.browser.state.media = [
-      { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+      { tabId: full.tabId, playing: true, muted: false, title: 'Nocturne', session: true }
     ]
     appMenuFolded(full)
     expect(rows(full)).toHaveLength(21)
@@ -459,7 +459,7 @@ describe('the app menu', () => {
       expect(rows(full)[0]).toBe('Update Zenium')
       // Chrome's order at the head: the update, then the folded hub's row, then the tabs.
       full.browser.state.media = [
-        { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+        { tabId: full.tabId, playing: true, muted: false, title: 'Nocturne', session: true }
       ]
       appMenuFolded(full)
       expect(rows(full)).toHaveLength(22)
@@ -1460,6 +1460,7 @@ describe('the app menu', () => {
     const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
       tabId,
       playing: true,
+      muted: false,
       title: 'Nocturne',
       artist: 'The Band',
       artwork: 'https://example.com/art.png',
@@ -1626,6 +1627,7 @@ describe('the app menu', () => {
         {
           tabId: h.tabId,
           playing: true,
+          muted: false,
           title: 'Nocturne',
           artist: 'The Band',
           artwork: null,
@@ -2139,7 +2141,7 @@ describe('the app menu', () => {
       const priv = h.browser.openWindow('private', h.win)!
       const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
       h.browser.state.media = [
-        { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
+        { tabId: theirs.id, playing: true, muted: false, title: 'Nocturne', session: true }
       ]
       expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Media Controls…', '-', 'New Tab'])
       expect(separators(h.shown())).toBe(4)
@@ -3821,6 +3823,7 @@ describe('the page context menu', () => {
     expect(menu).toEqual([
       'Copy',
       'Search Google for “quantum foam”',
+      'Define',
       'Copy Link to Highlight',
       'Open Selection in Reader View',
       '-',
@@ -3862,9 +3865,10 @@ describe('the page context menu', () => {
 
     it('seats the row after Copy Link to Highlight and before Translate Selection on the desktop alone', () => {
       const h = pageHarness(DESKTOP, { translate: true })
-      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
+      expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 6)).toEqual([
         'Copy',
         'Search Google for “quantum foam”',
+        'Define',
         'Copy Link to Highlight',
         'Open Selection in Reader View',
         'Translate Selection'
@@ -4218,10 +4222,91 @@ describe('the selection toolbar', () => {
     ])
   })
 
-  it('on the phone lists Search <engine> then Share for text, and nothing for blank text or a gone tab', () => {
+  it('carries Define on the phone\u2019s bar after Search, in the mini menu and in the desktop\u2019s page menu after Search; the phone\u2019s page menu unchanged (CT-39)', () => {
+    // `SELECTION_TOOLBAR_ORDER`: search · define · glance · share · translate · readAloud. The
+    // bar's touch anchors nothing, so the phone's Define shows its sheet (`define.show` with no
+    // box). The lead's ruling: the desktop's right-click menu carries Define after the search
+    // (the one list – Copy · Search · Define · …), its popover hanging from the click (`at`, as
+    // the translate popover does); the phone's page menu stays as it was, its toolbar being the
+    // phone's surface for Define.
+    const phone = pageHarness(ANDROID, PHONE)
+    expect(phone.browser.menus.selectionToolbar(phone.tabId, 'foam').map((i) => i.id)).toEqual([
+      'search',
+      'define',
+      'share'
+    ])
+    const send = vi.spyOn(phone.win, 'send')
+    expect(phone.browser.menus.runSelectionAction(phone.tabId, 'define', ' Quantum  foam ')).toBe(
+      true
+    )
+    expect(send).toHaveBeenCalledWith('define.show', {
+      tabId: phone.tabId,
+      term: 'Quantum foam',
+      rect: null
+    })
+    // Four words are no term: the bar has no Define for them, and the id runs nothing.
+    expect(
+      phone.browser.menus.selectionToolbar(phone.tabId, 'the quantum foam theory').map((i) => i.id)
+    ).toEqual(['search', 'share'])
+    expect(
+      phone.browser.menus.runSelectionAction(phone.tabId, 'define', 'the quantum foam theory')
+    ).toBe(false)
+    expect(phone.menu(pageParams({ selectionText: 'foam' }))).not.toContain('Define')
+    const desktop = pageHarness()
+    // The desktop's page menu: Copy · Search · Define · … for a word; no Define for four words
+    // or an address (the address is offered as a link, Go to); the click's point rides the
+    // request so the popover hangs where the user asked, with no box to hang from.
+    expect(desktop.menu(pageParams({ selectionText: 'foam', x: 300, y: 180 })).slice(0, 3)).toEqual(
+      ['Copy', 'Search Google for “foam”', 'Define']
+    )
+    const desktopSend = vi.spyOn(desktop.win, 'send')
+    desktop.click('Define')
+    expect(desktopSend).toHaveBeenCalledWith('define.show', {
+      tabId: desktop.tabId,
+      term: 'foam',
+      rect: null,
+      at: { x: 300, y: 180 }
+    })
+    expect(desktop.menu(pageParams({ selectionText: 'the quantum foam theory' }))).not.toContain(
+      'Define'
+    )
+    expect(desktop.menu(pageParams({ selectionText: 'example.com' }))).not.toContain('Define')
+    // A text field's selection: the editing group's tail carries the search but – as with
+    // Translate, the popover hangs from a click the tail does not have, and the mini menu is
+    // not shown over a text field's selection – no Define. The field's menu stands as it was.
+    const field = desktop.menu(
+      pageParams({ selectionText: 'foam', isEditable: true, editFlags: ALL_EDITS })
+    )
+    expect(field).toContain('Search Google for “foam”')
+    expect(field).not.toContain('Define')
+    expect(desktop.browser.menus.selectionMenuActions(desktop.tabId, 'foam', null)).toEqual([
+      { id: 'copy', title: 'Copy' },
+      { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' }
+    ])
+    // The phone has no mini menu: its chips are empty, and a chip pressed there runs nothing.
+    expect(phone.browser.menus.selectionMenuActions(phone.tabId, 'foam', null)).toEqual([])
+    expect(phone.browser.menus.runSelectionMenuAction(phone.tabId, 'copy', 'foam', null)).toBe(
+      false
+    )
+    // An address is a link, not a word (`example.com` is one word with letters): no Define where
+    // the selection is offered as a link. The stop a drag took along with the word is no bar:
+    // the chip stands for the bare word.
+    expect(
+      desktop.browser.menus
+        .selectionMenuActions(desktop.tabId, 'example.com', null)
+        .map((a) => a.id)
+    ).toEqual(['copy'])
+    expect(desktop.browser.menus.selectionMenuActions(desktop.tabId, 'foam.', null)).toContainEqual(
+      { id: 'define', title: 'Define' }
+    )
+  })
+
+  it('on the phone lists Search <engine>, Define, then Share for text, and nothing for blank text or a gone tab', () => {
     const h = pageHarness(ANDROID, PHONE)
     expect(h.browser.menus.selectionToolbar(h.tabId, '  quantum foam ')).toEqual([
       { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' },
       { id: 'share', title: 'Share' }
     ])
     // The title names the engine the search goes through, the menu's own (never the browser).
@@ -4244,6 +4329,7 @@ describe('the selection toolbar', () => {
     const h = pageHarness({ ...ANDROID, readAloud: true }, { ...PHONE, speech: true })
     expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
       { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' },
       { id: 'share', title: 'Share' },
       { id: 'readAloud', title: 'Listen' }
     ])
@@ -4405,7 +4491,9 @@ describe('the selection toolbar', () => {
     // A menu-only action, a toolbar action the text no longer warrants, an unknown id.
     expect(h.browser.menus.runSelectionAction(h.tabId, 'go', 'example.org/docs')).toBe(false)
     expect(h.browser.menus.runSelectionAction(h.tabId, 'glance', 'quantum foam')).toBe(false)
-    expect(h.browser.menus.runSelectionAction(h.tabId, 'define', 'quantum foam')).toBe(false)
+    expect(
+      h.browser.menus.runSelectionAction(h.tabId, 'define', 'the quantum foam theory of all')
+    ).toBe(false)
     expect(h.browser.menus.runSelectionAction(h.tabId, 'share', '   ')).toBe(false)
     expect(shared.length).toBe(1)
     expect(h.win.glance).toBeNull()
@@ -4471,6 +4559,7 @@ describe('the selection toolbar', () => {
     const h = pageHarness(ANDROID, { ...PHONE, translate: true })
     expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
       { id: 'search', title: 'Search Google' },
+      { id: 'define', title: 'Define' },
       { id: 'share', title: 'Share' },
       { id: 'translate', title: 'Translate' }
     ])
@@ -4507,7 +4596,7 @@ describe('the selection toolbar', () => {
     const h = pageHarness(ANDROID, PHONE)
     expect(
       h.browser.menus.selectionToolbar(h.tabId, 'quantum foam').map((item) => item.id)
-    ).toEqual(['search', 'share'])
+    ).toEqual(['search', 'define', 'share'])
     expect(h.browser.menus.runSelectionAction(h.tabId, 'translate', 'quantum foam')).toBe(false)
     expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
       'Translate Selection'

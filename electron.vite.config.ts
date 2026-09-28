@@ -50,8 +50,11 @@ export default defineConfig({
       }
     },
     // The open-source licences list (`virtual:zenium-licences`, Settings › About), collected
-    // from the installed tree at build time; the desktop's carries Electron itself.
-    plugins: [react(), tailwindcss(), licencesPlugin({ electron: true })],
+    // from the installed tree at build time; the desktop's carries Electron itself. The inlined
+    // scripts resolve here too: the chrome imports `shared/zenPages.ts` for its constants, and
+    // that module carries Roll's runtime (`virtual:zenium-game-runtime`) for the documents it
+    // builds – unused by the chrome, so Rollup drops the string from its bundle.
+    plugins: [react(), tailwindcss(), licencesPlugin({ electron: true }), inlineScriptPlugin()],
     server: {
       port: 41733,
       strictPort: true

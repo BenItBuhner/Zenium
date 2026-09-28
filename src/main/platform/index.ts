@@ -161,6 +161,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   savePageFormats: true,
   // Chromium's PDF viewer draws PDFs in the page itself.
   pdfViewer: false,
+  // Chromium's viewer prints its own document; no PDF hand-off to a system print flow.
+  pdfPrint: false,
   agents: true,
   // Claude Code, Cursor and Codex run beside the browser: the skill installs into their folders.
   agentSkills: true,
@@ -198,6 +200,10 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   shareSheet: true,
   // Selected text gets the page context menu on the desktop; the floating toolbar is Android's.
   selectionToolbar: false,
+  // The mini menu over a settled selection (CT-39): the page preload reports the selection
+  // (`shared/selectionScript`) and the chrome draws the pill; the phone's floating toolbar is
+  // its selection menu, so the phone leaves this unset.
+  selectionMenu: true,
   // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
   popupSurface: true,
   // No camera to scan with on the desktop hosts; the camera buttons stay away.
@@ -976,7 +982,9 @@ export class ElectronPlatform implements Platform {
       primeChromeForRelease(event.sender, browser.quitHold, browser.state.shortcuts)
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
-      this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
+      this.views
+        .viewForWebContents(event.sender)
+        ?.dispatchPageMessage(message, event.senderFrame ?? undefined)
     })
     // A page frame's answer to a script the host ran in the browser's private world of that
     // frame (`shared/privateWorld.ts`: the image-search thumbnail in a sub-frame). Only a tab

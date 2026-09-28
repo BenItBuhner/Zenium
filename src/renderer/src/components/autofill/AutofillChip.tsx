@@ -50,6 +50,8 @@ export function AutofillChip({ state, tab }: { state: UIState; tab: Tab }): JSX.
       title={open ? `${label} (hide the prompt)` : `${label}…`}
       popup="dialog"
       expanded={open}
+      // The prompt hangs from the chip: the pill's hover-only run stays drawn under it (L7).
+      anchored
       data-af-chip=""
       data-open={open ? 'true' : 'false'}
       className="zen-v2-af-chip flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"

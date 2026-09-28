@@ -13,6 +13,7 @@ import type { ReadAloudHostMessage } from '@shared/readAloud'
 import { installNotificationPolyfill } from '@shared/notificationScript'
 import { installCaptureReporter, installCaptureShim } from '@shared/captureState'
 import { installShareBridge, installShareShim, type ShareOutcome } from '@shared/share'
+import { installClipboardReadShim, type ClipboardReadResult } from '@shared/clipboardRead'
 import { installTextFragmentScript, type TextFragmentHostMessage } from '@shared/textFragmentScript'
 import { focusEdge } from '@shared/focusEdge'
 import { installContentGuards } from '@shared/contentGuards'
@@ -177,6 +178,7 @@ function installGuards(
   let onReadAloud: ((message: ReadAloudHostMessage) => void) | null = null
   let onHint: ((hint: PageHint | null) => void) | null = null
   let onShareResult: ((id: string, result: ShareOutcome) => void) | null = null
+  let onClipboardRead: ((result: ClipboardReadResult) => void) | null = null
   let onTextFragment: ((message: TextFragmentHostMessage) => void) | null = null
   let onNewTabState: ((state: NewTabPageState) => void) | null = null
   let onNewTabCommand: ((command: NewTabPageCommand) => void) | null = null
@@ -204,6 +206,8 @@ function installGuards(
         id?: string
         hint?: PageHint | null
         result?: string
+        text?: string
+        error?: string
         edge?: string
         state?: NewTabPageState
       }
@@ -261,6 +265,14 @@ function installGuards(
       } else if (data.type === 'share' && typeof data.id === 'string') {
         // A `navigator.share` call's outcome from the system sheet (SH-14): the promise settles.
         onShareResult?.(data.id, data.result === 'shared' ? 'shared' : 'aborted')
+      } else if (data.type === 'clipboardRead' && typeof data.id === 'string') {
+        // One clipboard read's answer (MW-38): the text when the site's `clipboard-read`
+        // permission allowed it, else the denial the shim turns into Chrome's rejection.
+        onClipboardRead?.(
+          typeof data.text === 'string'
+            ? { id: data.id, text: data.text }
+            : { id: data.id, error: 'denied' }
+        )
       } else if (
         data.type === 'textFragment' &&
         data.action === 'generate' &&
@@ -455,6 +467,24 @@ function installGuards(
       })
     } catch {
       /* a page that sealed `navigator` keeps the engine's absence of the API */
+    }
+    // `navigator.clipboard.read()` / `readText()` (MW-38): the WebView's permission manager
+    // refuses every clipboard read, so the engine's own methods reject on every page. The shim
+    // lays the two methods over `Clipboard.prototype` and no more at load: a call goes up as
+    // `{ type: 'clipboardRead', clipboardRead: call }` (Kotlin's router forwards the type to
+    // the core unchanged, from the main frame alone), the core runs the site's `clipboard-read`
+    // permission – the prompt, the remembered decision – and answers through `onmessage` above
+    // with the host clipboard's text, or the denial the shim turns into Chrome's
+    // `NotAllowedError`. Top frame only: the host's replies reach the main document alone.
+    try {
+      installClipboardReadShim({
+        send: (call) => up({ type: 'clipboardRead', clipboardRead: call }),
+        onResult: (listener) => {
+          onClipboardRead = listener
+        }
+      })
+    } catch {
+      /* a page that sealed `Clipboard.prototype` keeps the engine's own refusal */
     }
     // Links to a highlight (SH-11): the core's request for the selection's `text=` directive,
     // answered from the selection – or the one the action mode just cleared – and, on this

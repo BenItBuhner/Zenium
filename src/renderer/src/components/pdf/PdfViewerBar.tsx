@@ -8,7 +8,11 @@ import {
   formatPdfZoom,
   PDF_FIT_LABELS,
   pdfCommand,
-  pdfViewerStore
+  pdfPrintRow,
+  pdfSaveRow,
+  pdfViewerStore,
+  printPdf,
+  savePdfCopy
 } from '@renderer/lib/pdfViewer'
 import { openFindBar } from '@renderer/lib/ui'
 import {
@@ -29,12 +33,18 @@ type Sheet = 'zoom' | 'outline' | 'more' | 'goto' | 'password' | null
  * Chrome Android's viewer in the phone chrome's language: the page indicator, the zoom as a
  * menulist that opens the zoom sheet (the two fits and Chrome's presets), then Find, Contents
  * (the document's outline) and Share as icon buttons, and the overflow with Open with – Chrome's
- * way out of the viewer – and Rotate. Every sheet is a `PhoneSheet` on the hosted chassis.
+ * way out of the viewer – Save a copy and Print (CT-44: a filled form's copy, the system print
+ * flow) and Rotate. Every sheet is a `PhoneSheet` on the hosted chassis.
  *
  * The bar draws what the viewer document last reported (`lib/pdfViewer.ts`): the document
  * loading, waiting for a password, open, or failed – each a state of this one bar, with the
  * controls that mean nothing in it disabled at .4 (§9.30). A page surface (§9.29): the root
  * carries `data-surface="page"`. No tooltips: the controls are named for the reader (§9.31).
+ *
+ * Save a copy and Print answer on the toast card (§9.33; `savePdfCopy`, `printPdf`): a copy
+ * written names its destination as the capture card's Save does ("Saved to Downloads"); a
+ * refusal – the host cannot write or print, or the copy failed – is stated of the document in
+ * the error kind.
  */
 export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
   const report = pdfViewerStore.use((s) => s.reports[tabId] ?? null)
@@ -218,8 +228,12 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
         <PdfMoreSheet
           title={title}
           ready={ready}
+          save={pdfSaveRow(report)}
+          print={pdfPrintRow(report, state.capabilities.pdfPrint)}
           onShare={() => void cmd('pdf.share', { tabId })}
           onOpenWith={openWith}
+          onSave={() => void savePdfCopy(tabId)}
+          onPrint={() => void printPdf(tabId)}
           onRotate={() => pdfCommand(tabId, { kind: 'rotate' })}
           onClose={() => setSheet(null)}
         />

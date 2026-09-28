@@ -26,6 +26,7 @@ import {
   pillText,
   presentedUrl,
   readerSourceUrl,
+  revealProbeText,
   titleForUrl
 } from '../url'
 
@@ -178,6 +179,24 @@ describe('fullUrl / addressParts', () => {
     expect(fullUrl('zen://image?src=x')).toBe('zen://image?src=x')
   })
 
+  it('names the least the hover reveal must fit to keep the host: the trimmed run, the host’s first character, the ellipsis (W8-F7 L3)', () => {
+    // What `displayUrl` takes off, put back before the host's first character.
+    expect(revealProbeText('https://www.example.com/a?b#c')).toBe('https://www.e…')
+    expect(revealProbeText('http://127.0.0.1:18560/some/path')).toBe('http://1…')
+    expect(revealProbeText('https://example.com')).toBe('https://e…')
+    // Nothing before the host to put back: an internal page's alias, a `file:` address, an
+    // extension page – the reveal reads as the rest address does, and nothing is measured.
+    expect(revealProbeText(fullUrl('zen://settings'))).toBe('')
+    expect(revealProbeText('file:///tmp/a')).toBe('')
+    expect(revealProbeText('chrome-extension://abc/page.html')).toBe('')
+    expect(revealProbeText('')).toBe('')
+    // Nothing after the trimmed run: nothing to keep in view.
+    expect(revealProbeText('https://')).toBe('')
+    expect(revealProbeText('https://www.')).toBe('')
+    // The first character whole, whatever its plane.
+    expect(revealProbeText('https://😀.example/')).toBe('https://😀…')
+  })
+
   it('splits the site from the dimmed path, query and fragment', () => {
     expect(addressParts('example.com/some/path')).toEqual({
       site: 'example.com',
@@ -300,6 +319,14 @@ describe('internal pages', () => {
     expect(inputToUrl('zenium://version')).toBe('zen://version')
     expect(displayUrl('zen://version')).toBe('zenium://version')
     expect(titleForUrl('zen://version')).toBe('About Version')
+    // Chrome's runner's own page (chrome://dino) is Roll's, zen://game (ERR-03, R2).
+    expect(inputToUrl('chrome://dino')).toBe('zen://game')
+    expect(inputToUrl('chrome://dino/')).toBe('zen://game')
+    expect(inputToUrl('about:dino')).toBe('zen://game')
+    expect(inputToUrl('zenium://dino')).toBe('zen://game')
+    expect(inputToUrl('zenium://game')).toBe('zen://game')
+    expect(displayUrl('zen://game')).toBe('zenium://game')
+    expect(titleForUrl('zen://game')).toBe('Roll')
     // Chrome Android's native pages in the tab: the new tab, History, Downloads, Bookmarks.
     expect(inputToUrl('chrome://newtab')).toBe('zen://newtab')
     expect(inputToUrl('chrome://history')).toBe('zen://history')

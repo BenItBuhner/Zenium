@@ -58,6 +58,7 @@ const ELECTRON: HostCapabilities = {
   printPreview: true,
   savePageFormats: true,
   pdfViewer: false,
+  pdfPrint: false,
   agents: true,
   agentSkills: true,
   updates: true,
@@ -578,8 +579,8 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Edit your filters',
     'news.example',
     'Add a site',
-    // Clear Browsing Data (#135)
-    'Clear browsing data',
+    // Delete browsing data (#135; Chrome's words since M124, W8-7)
+    'Delete browsing data',
     // Cookies, HTTPS-only, secure DNS, signals (#156). The Third-party cookies row folded into
     // Cookies and site data's default radio on #322 (the lead's ruling on Q3): the mode is the
     // "Default behaviour" choice there and the private-only switch under it.
@@ -593,7 +594,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Resolver',
     'Send a Global Privacy Control signal',
     'Send a Do Not Track request',
-    // Site Settings (#135): the 40 content types and the sites with their own settings
+    // Site Settings (#135): the 39 content types and the sites with their own settings
     'Location',
     'Camera',
     'Microphone',
@@ -636,7 +637,6 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Speaker selection',
     'Clipboard writes',
     'Screen sharing',
-    'MIDI system messages',
     'Default behaviour',
     'meet.example',
     'Reset all sites'
@@ -755,7 +755,7 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Your lists',
     'Your filters',
     'Sites without blocking',
-    'Clear browsing data',
+    'Delete browsing data',
     // #156's Third-party cookies heading folded into #310's Cookies and site data (#322, Q3).
     'Cookies and site data',
     'Site settings',

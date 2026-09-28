@@ -63,10 +63,26 @@ export interface TranslateRuleset {
   path?: string
   /** Static rulesets: position in `rule_resources`, for Chrome's tie-break. */
   manifestIndex?: number
-  rules: readonly CompiledRule[]
+  /**
+   * The compiled rules in hand, or a reader for them: the translator calls a reader only for
+   * a set it must emit, so a state that let a static ruleset's rules go (`DnrStateIO.
+   * rereadsStaticRulesets`) is not made to read the file again for a change elsewhere. A
+   * reader wants an `identity` beside it, else the set is re-emitted at every sync.
+   */
+  rules: readonly CompiledRule[] | (() => Promise<readonly CompiledRule[]>)
   /** Static rulesets: rules disabled through `updateStaticRules`. */
   disabledRuleIds?: ReadonlySet<number>
+  /**
+   * Stands for the rules in the translator's unchanged check: two hand-overs with the same
+   * identity carry the same rules whatever brings them (`DnrState` gives its entry for the
+   * static ruleset, one for the state's lifetime). Without it the rule array is the identity,
+   * and the translator keeps the array to compare against.
+   */
+  identity?: object
 }
+
+/** A ruleset with its rules in hand, what the pure translation takes. */
+export type RulesetInHand = TranslateRuleset & { rules: readonly CompiledRule[] }
 
 export interface TranslateExtension {
   extensionId: string
@@ -225,7 +241,7 @@ function setKindOf(ruleset: TranslateRuleset): EngineSetKind {
 /** Build the engine set for one ruleset of an extension. Pure: same input, same output. */
 export function translateRuleset(
   extension: TranslateExtension,
-  ruleset: TranslateRuleset,
+  ruleset: RulesetInHand,
   options: TranslateOptions = {}
 ): RulesetTranslation {
   const transforms: number[] = []
@@ -257,17 +273,29 @@ export function translateRuleset(
   return { set, transforms, headerConditioned }
 }
 
-/** Every set an extension should have in the engine right now (empty rulesets produce none). */
+/**
+ * Every set an extension should have in the engine right now (empty rulesets produce none).
+ * Pure and synchronous: every ruleset comes with its rules in hand (a reader is refused).
+ */
 export function translateExtension(
   extension: TranslateExtension,
   options: TranslateOptions = {}
 ): RulesetTranslation[] {
   const out: RulesetTranslation[] = []
   for (const ruleset of extension.rulesets) {
-    const translation = translateRuleset(extension, ruleset, options)
+    const translation = translateRuleset(extension, inHand(ruleset), options)
     if (translation.set.rules && translation.set.rules.length > 0) out.push(translation)
   }
   return out
+}
+
+function inHand(ruleset: TranslateRuleset): RulesetInHand {
+  if (typeof ruleset.rules === 'function') {
+    throw new Error(
+      `translateExtension takes rules in hand; ${ruleset.source} ruleset ${ruleset.rulesetId ?? ''} came with a reader`
+    )
+  }
+  return ruleset as RulesetInHand
 }
 
 export interface ExtensionTranslationReport {
@@ -282,17 +310,26 @@ export interface ExtensionTranslationReport {
 }
 
 interface EmittedSet {
-  rules: readonly CompiledRule[]
+  /** The rule array the set was translated from, kept only when no `identity` stands for it. */
+  rules: readonly CompiledRule[] | null
+  identity: object | undefined
   disabledRuleIds: ReadonlySet<number> | undefined
   priority: number
   version: string | undefined
   name: string | undefined
+  /** The set's part of the translation report, repeated for a set left as it was sent. */
+  transforms: readonly number[]
+  headerConditioned: readonly number[]
 }
 
 /**
  * Keeps the engine in step with any number of extensions: `sync` emits the sets that changed,
  * removes the ones that disappeared, and re-emits every set of an extension whose install rank
- * moved. Unchanged sets (same rule array, same disabled ids, same priority) are not re-sent.
+ * moved. Unchanged sets (same rules – by `identity` or by the array –, same disabled ids, same
+ * priority) are neither translated again nor re-sent, and a set whose rules come as a reader is
+ * read only when it is emitted; between syncs the translator keeps an extension's input as it
+ * was handed over (readers and identities, the dynamic and session arrays) and no array of a
+ * set with an identity.
  */
 export class DnrTranslator {
   private readonly emitted = new Map<string, Map<string, EmittedSet>>()
@@ -344,7 +381,6 @@ export class DnrTranslator {
   }
 
   private async emit(input: TranslateExtension): Promise<ExtensionTranslationReport> {
-    const translations = translateExtension(input, this.options)
     let emitted = this.emitted.get(input.extensionId)
     if (!emitted) {
       emitted = new Map()
@@ -358,22 +394,36 @@ export class DnrTranslator {
       headerConditioned: []
     }
     const wanted = new Set<string>()
+    const priority = enginePriorityForRank(input.installRank)
     for (const ruleset of input.rulesets) {
       const setId = engineSetId(input.extensionId, setKindOf(ruleset))
-      const translation = translations.find((t) => t.set.id === setId)
-      if (!translation) continue
-      wanted.add(setId)
-      report.transforms.push(...translation.transforms)
-      report.headerConditioned.push(...translation.headerConditioned)
       const before = emitted.get(setId)
       const next: EmittedSet = {
-        rules: ruleset.rules,
+        rules: ruleset.identity || typeof ruleset.rules === 'function' ? null : ruleset.rules,
+        identity: ruleset.identity,
         disabledRuleIds: ruleset.disabledRuleIds,
-        priority: translation.set.priority,
+        priority,
         version: input.version,
-        name: input.name
+        name: input.name,
+        transforms: [],
+        headerConditioned: []
       }
-      if (before && sameEmission(before, next)) continue
+      if (before && sameEmission(before, next)) {
+        // The set stands in the engine as it was sent (it had rules then, or it would not be
+        // here); its report lines repeat, and its rules are neither read nor translated again.
+        wanted.add(setId)
+        report.transforms.push(...before.transforms)
+        report.headerConditioned.push(...before.headerConditioned)
+        continue
+      }
+      const rules = typeof ruleset.rules === 'function' ? await ruleset.rules() : ruleset.rules
+      const translation = translateRuleset(input, { ...ruleset, rules }, this.options)
+      if (!translation.set.rules || translation.set.rules.length === 0) continue
+      wanted.add(setId)
+      next.transforms = translation.transforms
+      next.headerConditioned = translation.headerConditioned
+      report.transforms.push(...translation.transforms)
+      report.headerConditioned.push(...translation.headerConditioned)
       await this.sink.setRuleSet(translation.set)
       emitted.set(setId, next)
       report.updated.push(setId)
@@ -389,7 +439,12 @@ export class DnrTranslator {
 }
 
 function sameEmission(a: EmittedSet, b: EmittedSet): boolean {
-  if (a.rules !== b.rules || a.priority !== b.priority) return false
+  if (a.identity !== undefined || b.identity !== undefined) {
+    if (a.identity !== b.identity) return false
+  } else if (a.rules === null || b.rules === null || a.rules !== b.rules) {
+    return false
+  }
+  if (a.priority !== b.priority) return false
   if (a.version !== b.version || a.name !== b.name) return false
   if (a.disabledRuleIds === b.disabledRuleIds) return true
   if (!a.disabledRuleIds || !b.disabledRuleIds) {

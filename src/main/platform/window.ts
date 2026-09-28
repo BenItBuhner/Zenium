@@ -428,12 +428,16 @@ export class ElectronWindow implements WindowHost {
     // chord is down in draws it in its own document, and the chrome reads no hold meanwhile
     // (`DevtoolsQuitHoldNotice`); it is taken down there with the hold.
     if (name === 'state') payload = this.quitHoldRouted(payload as UIState) as Events[K]
-    // A layout applied with no chrome cover on: a view parked under the cover that this layout
-    // did not show again (its tab switched away from meanwhile) is hidden for good
-    // (`ElectronTabView.setVisible` on why a covered page is parked, not hidden).
+    // A layout applied with the chrome off the content: a view parked under the chrome that this
+    // layout did not show again (its tab switched away from meanwhile; the page beneath the
+    // reader's cover, hidden on the cover's word while the chrome was over the content) is
+    // hidden for good (`ElectronTabView.setVisible` on why a page under the chrome is parked,
+    // not hidden). Every view of the window, the pages beneath the reader's covers included – a
+    // page hidden beneath its cover is in no layout, and would otherwise stay parked until the
+    // reader's exit.
     if (name === 'layout.applied' && !(payload as Events['layout.applied']).contentHidden) {
-      for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
-        if (hasCoverLifted(view)) view.coverLifted()
+      for (const view of this.browser.tabs.allViewsOwnedBy(this.zen)) {
+        if (hasHideParked(view)) view.hideParked()
       }
     }
     this.win.webContents.send('zen:event', name, payload)
@@ -455,11 +459,13 @@ export class ElectronWindow implements WindowHost {
    * minimised or not visible; a window merely blurred while on screen is not. Idempotent – the
    * view ignores a state it already holds, and the core window is told the same state once
    * (`ZenWindow.onWindowVisibleChanged`: what waits for the window's return hears it there).
+   * Every view of the window, the pages beneath the reader's covers included: a page that never
+   * heard the window go would come up in the concealed window at the reader's exit.
    */
   private refreshTabViewConcealment(): void {
     if (!this.alive) return
     const visible = !this.win.isMinimized() && this.win.isVisible()
-    for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+    for (const view of this.browser.tabs.allViewsOwnedBy(this.zen)) {
       if (hasWindowVisibility(view)) view.applyWindowVisible(visible)
     }
     this.zen.onWindowVisibleChanged(visible)
@@ -632,10 +638,11 @@ export class ElectronWindow implements WindowHost {
   // ---------------------------------------------------------------------------
 
   /**
-   * The picker's document in a `WebContentsView` above every page view, at `bounds` (window CSS
+   * The popup surface's document (`index.html?surface=popup`: the autofill picker, the
+   * selection's mini menu) in a `WebContentsView` above every page view, at `bounds` (window CSS
    * pixels); null hides it. Showing never moves the keyboard: the view is added without focus and
    * the page field keeps typing. Hidden, the document stays loaded for `POPUP_SURFACE_IDLE_MS` so
-   * the next picker is instant, then it is closed.
+   * the next picker or menu is instant, then it is closed.
    */
   setPopupSurface(bounds: Rect | null): void {
     if (!this.alive) return
@@ -688,11 +695,11 @@ export class ElectronWindow implements WindowHost {
     })
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       const url = new URL(process.env['ELECTRON_RENDERER_URL'])
-      url.searchParams.set('surface', 'autofill')
+      url.searchParams.set('surface', 'popup')
       void wc.loadURL(url.toString())
     } else {
       void wc.loadFile(join(__dirname, '../renderer/index.html'), {
-        query: { surface: 'autofill' }
+        query: { surface: 'popup' }
       })
     }
     return view
@@ -849,11 +856,11 @@ export class ElectronWindowFactory implements WindowHostFactory {
 }
 
 /**
- * A tab view that parks under a chrome cover (`ElectronTabView.coverLifted`); the core hands
+ * A tab view that parks under the chrome (`ElectronTabView.park`, `hideParked`); the core hands
  * its views out as `TabView`s, and a host of another kind (tests) has no parking to end.
  */
-function hasCoverLifted(view: TabView): view is TabView & { coverLifted(): void } {
-  return typeof (view as { coverLifted?: unknown }).coverLifted === 'function'
+function hasHideParked(view: TabView): view is TabView & { hideParked(): void } {
+  return typeof (view as { hideParked?: unknown }).hideParked === 'function'
 }
 
 /**

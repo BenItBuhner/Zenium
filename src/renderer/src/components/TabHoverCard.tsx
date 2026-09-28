@@ -2,9 +2,11 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { UIState } from '@shared/types'
 import {
+  bindHoverCardDismissals,
   hostHoverCard,
   hoverCard,
   hoverCardHost,
+  hoverCardMemoryLine,
   hoverCardPreviews,
   placeHoverCard
 } from '@renderer/lib/hoverCard'
@@ -24,10 +26,12 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from '@renderer/lib/
  * The tab hover card (design-language-v2-draft §9.20; tabs-04, BUG-004): a 320 popover flush
  * against the sidebar's edge and start-aligned with its row, with the row's full title on two
  * lines at most and the page's host under it, then the state lines the row's tooltip used to
- * carry. Shown by lib/hoverCard.ts after the pointer rests on a row or when keyboard focus
- * lands on one; one at a time; it never takes the pointer. Any press, a drag, a scroll,
- * Escape, the window losing focus, another tab coming to the front, or a popover, menu or
- * dialog opening takes it down.
+ * carry, and last the page's memory – "Memory usage: 123 MB" (settings-29, Chrome's footer row)
+ * while Settings › Performance's Show tab memory usage is on, "High memory usage" past Chrome's
+ * threshold whatever it says. Shown by lib/hoverCard.ts after the pointer rests on a row or
+ * when keyboard focus lands on one; one at a time; it never takes the pointer. Any press, a
+ * drag, a scroll, Escape, the window losing focus, another tab coming to the front, or a
+ * popover, menu or dialog opening takes it down.
  *
  * For a page in the background the card previews it (tabs-19, Chrome's tab hover card
  * preview): the tab's picture above the title, a 16:10 frame at the card's inner width with
@@ -50,7 +54,10 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
 
   const title = tab ? tabTitle(tab) : ''
   const host = tab ? hoverCardHost(tab.url) : ''
-  const lines = tab ? tabStateLines(tab, agent?.name ?? null) : []
+  // The state lines, then the page's memory (settings-29): Chrome's footer order, the memory
+  // row last; a sleeping tab's "Memory saved" stands in for it (`hoverCardMemoryLine`).
+  const memory = tab ? hoverCardMemoryLine(state, tab.id) : null
+  const lines = tab ? [...tabStateLines(tab, agent?.name ?? null), ...(memory ? [memory] : [])] : []
   const stateText = lines.join('\n')
   // The page's picture, read from the covers the chrome holds (no read from a host's disk: the
   // card is up for a moment, and the controller has just captured the page).
@@ -73,8 +80,9 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
   }, [shown, card.anchor, card.sidebar, card.axis, title, host, stateText, preview])
 
   // This is the card's host: the rows raise no card while none is mounted (the tablet chrome
-  // mounts none, and a mouse there would otherwise capture and hide the page for a card that
-  // never shows; lib/hoverCard.ts).
+  // mounts `TabletHoverCardHost` where a native host is registered (Android); the desktop at
+  // `?formFactor=tablet` mounts none, and a mouse there would otherwise capture and hide the
+  // page for a card that never shows; lib/hoverCard.ts).
   useEffect(() => hostHoverCard(), [])
 
   // The page behind the card is a capture of the active tab; another tab coming to the front
@@ -99,32 +107,11 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
     []
   )
 
+  // A press, a wheel, a scroll, a key, the window's blur or resize (`bindHoverCardDismissals`,
+  // shared with the tablet's host).
   useEffect(() => {
     if (!shown) return
-    const hide = (): void => hoverCard.hide()
-    // Escape, and typing: the page under the card had the keyboard until the card hid it (see
-    // lib/hoverCard.ts), so a letter means the user is back at the page. Arrows, Tab and Enter
-    // are the rows' own keys and move or activate instead.
-    const onKey = (e: KeyboardEvent): void => {
-      const typing = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
-      if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'Delete' || typing) hide()
-    }
-    document.addEventListener('pointerdown', hide, true)
-    document.addEventListener('contextmenu', hide, true)
-    document.addEventListener('wheel', hide, { capture: true, passive: true })
-    document.addEventListener('scroll', hide, { capture: true, passive: true })
-    document.addEventListener('keydown', onKey, true)
-    window.addEventListener('blur', hide)
-    window.addEventListener('resize', hide)
-    return () => {
-      document.removeEventListener('pointerdown', hide, true)
-      document.removeEventListener('contextmenu', hide, true)
-      document.removeEventListener('wheel', hide, { capture: true })
-      document.removeEventListener('scroll', hide, { capture: true })
-      document.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('blur', hide)
-      window.removeEventListener('resize', hide)
-    }
+    return bindHoverCardDismissals(() => hoverCard.hide())
   }, [shown])
 
   if (!shown || !tab) return null

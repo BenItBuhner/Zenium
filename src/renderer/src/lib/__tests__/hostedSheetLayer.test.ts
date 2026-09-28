@@ -59,10 +59,12 @@ const OWN_SCRIM_CONSUMERS = [
   // (`security/SecurityPromptDialog.tsx`, one component for the dialog and the sheet), which the
   // literal-`true` match above does not see – it returns the hosted `BottomSheet` to the slot too.
   'components/security/BlockedPopupsPanel.tsx',
+  // The selection surfaces' phone sheet (#106, CT-39): the chassis the selection translation
+  // and the Define sheet share (`SelectionSheet`).
+  'components/selection/SelectionSurface.tsx',
   // The translate surfaces' phone sheets (#106): a language menulist's picker (over the bar or
-  // the selection sheet) and the selection translation sheet.
-  'components/translate/Menulist.tsx',
-  'components/translate/SelectionPopover.tsx'
+  // the selection sheet).
+  'components/translate/Menulist.tsx'
 ]
 
 function sourceFiles(dir: string): string[] {

@@ -57,13 +57,15 @@ declare const __zenExtBoot: { token: string }
   const micro = g.queueMicrotask ?? ((cb: () => void) => void Promise.resolve().then(cb))
   const error = console.error
   const warn = console.warn
+  const now = Date.now
   const primordials: Primordials = {
     stringify: (value) => stringify(value),
     parse: (text) => parse(text),
     setTimeout: (cb, ms) => timeout(cb, ms) as unknown as number,
     queueMicrotask: (cb) => micro(cb),
     error: (...args) => error(...args),
-    warn: (...args) => warn(...args)
+    warn: (...args) => warn(...args),
+    now: () => now()
   }
   let sink: ((event: { data: string }) => void) | null = null
   const onMessage = (event: { data: string }): void => {

@@ -306,9 +306,11 @@ function PhoneSettings({
   const dictionary = useDictionaryWords(
     current?.id === 'languages' && state.spellcheck.available && formFactor !== 'phone'
   )
-  // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
-  // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
-  syncSetupStore.use((s) => s.folder)
+  // Settings › Sync's setup rows keep the draft made before sync is on – the folder chosen, or
+  // the transport and the server's details with the Test connection's answer – outside the
+  // browser state (`syncSetupStore`); the page is rebuilt when any of it changes so the rows
+  // show it.
+  syncSetupStore.use()
   // The folder new downloads go to, while Downloads is the section shown (its Location row).
   const downloadDirectory = useDownloadDirectory(
     current?.id === 'downloads',

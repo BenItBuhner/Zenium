@@ -15,8 +15,10 @@ import {
   type Tab
 } from '../../shared/types'
 import type { SiteInfoSnapshot } from '../../shared/siteInfo'
+import { crashPageUrl, errorPageUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import { REVOKED_PERMISSIONS_KEPT_MS, coarseVisitTime } from '../permissions'
+import { DEVICE_LOCAL_SETTINGS } from '../sync/records'
 import {
   UNUSED_PERMISSIONS_FIRST_SWEEP_DELAY_MS,
   UNUSED_PERMISSIONS_SWEEP_INTERVAL_MS
@@ -432,7 +434,8 @@ describe('clear browsing data', () => {
         range: 'all'
       }
     )
-    expect(counts.map((c) => c.type)).toEqual(BROWSING_DATA_ADVANCED)
+    // The Advanced set's rows, then the phone's `tabs` row (in neither set; HB-07).
+    expect(counts.map((c) => c.type)).toEqual([...BROWSING_DATA_ADVANCED, 'tabs'])
     const by = Object.fromEntries(counts.map((c) => [c.type, c]))
     expect(by.history).toMatchObject({ count: 2, unit: 'visits', rangeApplies: true })
     expect(by.cookies).toMatchObject({ count: 4, unit: 'sites', rangeApplies: false })
@@ -502,11 +505,194 @@ describe('clear browsing data', () => {
 
   it('measures ranges from the given moment, Chrome’s four weeks for a month', () => {
     const now = 10_000_000_000
+    expect(rangeStart('15min', now)).toBe(now - 900_000)
     expect(rangeStart('hour', now)).toBe(now - 3_600_000)
     expect(rangeStart('day', now)).toBe(now - 86_400_000)
     expect(rangeStart('week', now)).toBe(now - 7 * 86_400_000)
     expect(rangeStart('month', now)).toBe(now - 28 * 86_400_000)
     expect(rangeStart('all', now)).toBe(0)
+  })
+
+  it('remembers the range the dialog last deleted with (seed #20): the last hour until a Delete writes another; a range no picker offers reads the last hour; the key is the device’s own', () => {
+    const f = fixture()
+    expect(f.browser.state.settings.clearBrowsingDataRange).toBe('hour')
+    // The dialog's Delete writes the range it went with through the settings path.
+    f.command('settings.update', { clearBrowsingDataRange: 'month' })
+    expect(f.browser.state.settings.clearBrowsingDataRange).toBe('month')
+    f.command('settings.update', { clearBrowsingDataRange: '15min' })
+    expect(f.browser.state.settings.clearBrowsingDataRange).toBe('15min')
+    // A malformed patch reads as Chrome's default, never as a range the pickers lack.
+    for (const bad of ['year', 3, null, { range: 'all' }]) {
+      f.command('settings.update', { clearBrowsingDataRange: bad })
+      expect(f.browser.state.settings.clearBrowsingDataRange, JSON.stringify(bad)).toBe('hour')
+    }
+    // Chrome stopped syncing browser.clear_data.time_period (CL 5398105): device-local here too.
+    expect(DEVICE_LOCAL_SETTINGS).toContain('clearBrowsingDataRange')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// HB-07 / MOT-24: Quick Delete's tab half – `Tab.lastNavigatedAt`, `privacy.tabsInRange`,
+// the `'tabs'` type (Chrome Android's `QuickDeleteTabsFilter`)
+// ---------------------------------------------------------------------------
+
+describe('quick delete: the tabs of a range', () => {
+  const T0 = 1_700_000_000_000
+  const at = (ms: number): void => {
+    vi.setSystemTime(T0 + ms)
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    at(0)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  /** A tab created at `T0 + ms` whose page committed there. */
+  function tabAt(f: Fixture, ms: number, url: string, opts: { pinned?: boolean } = {}): Tab {
+    at(ms)
+    const tab = f.browser.tabs.createTab({ url, active: true, ...opts }, f.win)
+    f.navigate(tab.id, url)
+    return tab
+  }
+
+  it('stamps a tab at every committed main-frame navigation, a same-document one too, and never before', () => {
+    const f = fixture()
+    const tab = f.browser.tabs.createTab({ url: 'https://a.example/', active: true }, f.win)
+    expect(tab.lastNavigatedAt).toBeNull()
+    at(1_000)
+    f.navigate(tab.id, 'https://a.example/')
+    expect(f.browser.tabs.tab(tab.id)?.lastNavigatedAt).toBe(T0 + 1_000)
+    // A pushState within the document: Chrome stamps `lastNavigationCommittedTimestampMillis`
+    // on any committed navigation (`TabImpl.handleDidFinishNavigation`), so the same-document
+    // commit moves the stamp as well.
+    at(2_000)
+    f.viewOf(tab.id).events.onNavigated('https://a.example/#part', true)
+    expect(f.browser.tabs.tab(tab.id)?.lastNavigatedAt).toBe(T0 + 2_000)
+    expect(f.browser.tabs.tab(tab.id)?.url).toBe('https://a.example/#part')
+  })
+
+  it('stamps a committed error page as Chrome does, but not the crash page – Chrome’s sad tab is no navigation', () => {
+    const f = fixture()
+    const tab = f.browser.tabs.createTab({ url: 'https://a.example/', active: true }, f.win)
+    at(1_000)
+    f.navigate(tab.id, 'https://a.example/')
+    // A load that failed commits Chrome's error page through the same `didFinishNavigation`
+    // (`TabWebContentsObserver.java:318–327`, `setIsShowingErrorPage` after the stamp): the
+    // user went there, the stamp moves.
+    at(5_000)
+    f.navigate(tab.id, errorPageUrl(-106, 'ERR_INTERNET_DISCONNECTED', 'https://b.example/'))
+    expect(f.browser.tabs.tab(tab.id)?.lastNavigatedAt).toBe(T0 + 5_000)
+    // The renderer's death shows a sad tab over the page in Chrome (`primaryMainFrameRenderProcessGone`
+    // → `showSadTab`, `:221–222`), no commit, no stamp; Zenium loads its crash page, which
+    // must not read as a visit – or a tab last seen hours ago would go with the last 15 minutes.
+    at(3_600_000)
+    f.navigate(tab.id, crashPageUrl('CRASHED', 'https://b.example/'))
+    expect(f.browser.tabs.tab(tab.id)?.lastNavigatedAt).toBe(T0 + 5_000)
+    expect(f.browser.tabs.tab(tab.id)?.errorCode).toBe(-1)
+    // Quick Delete's list agrees: the crashed tab is in the hour of its last real commit only.
+    expect(f.command<string[]>('privacy.tabsInRange', { range: '15min' })).not.toContain(tab.id)
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'day' })).toContain(tab.id)
+  })
+
+  it('lists the tabs whose last commit is in the range, pinned included, in the strip’s order, before anything closes', () => {
+    const f = fixture()
+    // The window's first tab never committed a document here: in no bounded range.
+    const start = f.command<string[]>('privacy.tabsInRange', { range: 'all' })
+    expect(start).toHaveLength(1)
+    const old = tabAt(f, 0, 'https://old.example/')
+    const pinned = tabAt(f, 10 * 60_000, 'https://pinned.example/', { pinned: true })
+    const recent = tabAt(f, 20 * 60_000, 'https://recent.example/')
+    const fresh = f.browser.tabs.createTab({ url: 'https://never.example/', active: true }, f.win)
+    at(24 * 60_000)
+    // Fifteen minutes back is T0 + 9 min: the pinned tab (10) and the recent one (20) are in.
+    expect(f.command<string[]>('privacy.tabsInRange', { range: '15min' })).toEqual([
+      pinned.id,
+      recent.id
+    ])
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'hour' })).toEqual([
+      pinned.id,
+      old.id,
+      recent.id
+    ])
+    // "All time" is every tab of the regular model, stamped or not – Chrome's ALL_TIME answers
+    // true before it reads a timestamp – while a tab that never committed a document is in no
+    // bounded range at all.
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'all' })).toEqual([
+      pinned.id,
+      ...start,
+      old.id,
+      recent.id,
+      fresh.id
+    ])
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'hour' })).not.toContain(fresh.id)
+    // Nothing closed: this is the read the chrome takes before its motion.
+    expect(f.browser.tabs.tab(old.id)).toBeDefined()
+    expect(f.browser.tabs.tab(recent.id)).toBeDefined()
+  })
+
+  it('leaves private tabs out, as Chrome’s filter runs on the regular model only', () => {
+    const f = fixture()
+    const normal = tabAt(f, 0, 'https://a.example/')
+    at(1_000)
+    const secretId = f.command<string>('tab.newPrivate', { url: 'https://secret.example/' })
+    f.navigate(secretId, 'https://secret.example/')
+    at(2_000)
+    expect(f.command<string[]>('privacy.tabsInRange', { range: '15min' })).toEqual([normal.id])
+    expect(f.command<string[]>('privacy.tabsInRange', { range: 'all' })).not.toContain(secretId)
+  })
+
+  it('counts the range’s tabs as a row of the preview, outside the Basic and Advanced sets', async () => {
+    const f = fixture()
+    tabAt(f, 0, 'https://old.example/')
+    tabAt(f, 20 * 60_000, 'https://recent.example/')
+    at(24 * 60_000)
+    const counts = await f.command<Promise<BrowsingDataCount[]>>(
+      'privacy.clearBrowsingDataCounts',
+      { range: '15min' }
+    )
+    expect(counts.find((c) => c.type === 'tabs')).toEqual({
+      type: 'tabs',
+      count: 1,
+      unit: 'tabs',
+      rangeApplies: true,
+      unavailable: null
+    })
+    expect(BROWSING_DATA_ADVANCED).not.toContain('tabs')
+  })
+
+  it('closes exactly the range’s tabs with no undo and no recently-closed entry, other types untouched', async () => {
+    const f = fixture()
+    const old = tabAt(f, 0, 'https://old.example/')
+    const pinned = tabAt(f, 10 * 60_000, 'https://pinned.example/', { pinned: true })
+    const recent = tabAt(f, 20 * 60_000, 'https://recent.example/')
+    at(24 * 60_000)
+    const sent = vi.spyOn(f.win, 'send')
+    const before = f.browser.state.recentlyClosed.length
+    const result = await f.command<Promise<ClearBrowsingDataResult>>('privacy.clearBrowsingData', {
+      range: '15min',
+      types: ['tabs']
+    })
+    expect(result).toEqual({ status: 'ok', value: { cleared: ['tabs'] } })
+    expect(f.browser.tabs.tab(pinned.id)).toBeUndefined()
+    expect(f.browser.tabs.tab(recent.id)).toBeUndefined()
+    expect(f.browser.tabs.tab(old.id)).toBeDefined()
+    // Chrome's `allowUndo(false).saveToTabRestoreService(false)`: the list stays as it was and
+    // the chrome hears no `session.recentlyClosedChanged` – no toast offers to undo.
+    expect(f.browser.state.recentlyClosed).toHaveLength(before)
+    expect(sent.mock.calls.map(([name]) => name)).not.toContain('session.recentlyClosedChanged')
+    // Only the tabs were asked for: the engine cleared nothing, history stands.
+    expect(f.sessions.cleared).toEqual([])
+    expect(f.browser.history.recent(10).length).toBeGreaterThan(0)
+  })
+
+  it('a tab closed by hand still goes to recently closed – the ordinary path is unchanged', () => {
+    const f = fixture()
+    const tab = tabAt(f, 0, 'https://a.example/')
+    f.browser.tabs.createTab({ url: 'https://b.example/', active: true }, f.win)
+    const before = f.browser.state.recentlyClosed.length
+    f.browser.tabs.closeTab(tab.id, true, f.win)
+    expect(f.browser.state.recentlyClosed.length).toBe(before + 1)
   })
 })
 
@@ -849,9 +1035,55 @@ describe('unused site permissions in the browser (PS-41)', () => {
     expect(check.permissions.review).toEqual([
       { origin: 'https://kept.example', permissions: ['camera'], reason: 'unused' }
     ])
-    // Past 30 days the record is gone at the next check.
+    // The row is Chrome's module sentence in the info state while the list holds anything,
+    // ahead of the flagged grant's sentence.
+    expect(check.permissions.state).toBe('info')
+    expect(check.permissions.summary).toBe('Permissions removed from 1 site')
+    // Past 30 days the record is gone at the next check, and the row says what the grants say.
     vi.setSystemTime(T0 + REVOKED_PERMISSIONS_KEPT_MS)
-    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions.revoked).toEqual([])
+    const later = fx.command<SafetyCheckResult>('privacy.safetyCheck')
+    expect(later.permissions.revoked).toEqual([])
+    expect(later.permissions.summary).toBe(
+      '1 site worth a look: unused permissions or several at once'
+    )
+  })
+
+  it('the row’s sentence counts the revoked sites – "Permissions removed from N sites" – and returns to today’s once they are reviewed', () => {
+    const fx = withStale('https://cam.example')
+    vi.setSystemTime(OLD)
+    fx.browser.permissions.set('geolocation', 'https://cam.example', 'allow')
+    fx.browser.permissions.set('midi', 'https://midi.example', 'allow')
+    vi.setSystemTime(T0)
+    const check = fx.command<SafetyCheckResult>('privacy.safetyCheck')
+    expect(check.permissions.revoked.map((r) => r.origin)).toEqual([
+      'https://cam.example',
+      'https://midi.example'
+    ])
+    expect(check.permissions).toMatchObject({
+      state: 'info',
+      summary: 'Permissions removed from 2 sites',
+      grantedSites: 0
+    })
+    // Got it: the list goes, no site holds a permission any more, the row is safe again.
+    fx.command('permissions.acknowledgeRevoked')
+    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions).toMatchObject({
+      state: 'safe',
+      summary: 'No site holds extra permissions',
+      revoked: []
+    })
+    // Allow again on one site: it holds its permission (kept from the sweep) and the row counts it.
+    fx.command('permissions.restoreRevokedList', {
+      records: check.permissions.revoked.map((r) => ({
+        ...r,
+        expiresAt: r.revokedAt + REVOKED_PERMISSIONS_KEPT_MS
+      }))
+    })
+    fx.command('permissions.regrantRevoked', { origin: 'https://midi.example' })
+    expect(fx.command<SafetyCheckResult>('privacy.safetyCheck').permissions).toMatchObject({
+      state: 'info',
+      summary: 'Permissions removed from 1 site',
+      grantedSites: 1
+    })
   })
 
   it('the review’s commands: Allow again and its undo, Got it and its undo, through the command map', () => {

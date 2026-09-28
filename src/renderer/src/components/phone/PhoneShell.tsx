@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator } from '@shared/siteInfo'
-import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
+import type { PhoneBarItemId, PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { useFullscreenAwayBinding } from '@renderer/hooks/useFullscreenAwayBinding'
@@ -12,7 +12,7 @@ import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
-import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
+import { READER_BANNER_KEY, useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { bringChromeBack, settleChromeAway, slideChromeAway } from '@renderer/lib/fullscreenMotion'
 import {
@@ -31,6 +31,7 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import { HINT_BUBBLE_ID, hintBubbleStore } from '@renderer/lib/iph'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
@@ -66,7 +67,6 @@ import {
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
-import { MessageLayer } from '../messages/MessageLayer'
 import { FakeboxMorphLayer } from '../newtab/FakeboxMorphLayer'
 import { Onboarding } from '../overlays/Onboarding'
 import { PhoneSearchChoiceScreen } from '../overlays/PhoneSearchChoice'
@@ -78,7 +78,15 @@ import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
 import { GroupStrip } from './GroupStrip'
-import { ChipRun, phonePillChips, pillChipsDrawn, pillChipsSpoken } from './pillChips'
+import {
+  ChipRun,
+  enterReaderView,
+  phonePillChips,
+  pillChipsDrawn,
+  pillChipsSpoken,
+  readerChipTab
+} from './pillChips'
+import { PhoneMessages } from './PhoneMessages'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -90,6 +98,7 @@ import { useFullscreenReturn } from './useFullscreenReturn'
 import { useGestureHint } from './useGestureHint'
 import { useGroupStrip, type GroupStripPresence } from './useGroupStrip'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
+import { useTabSwitcherHint } from './useTabSwitcherHint'
 import './phonePanels.css'
 
 interface Props {
@@ -213,6 +222,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       const icon = (e.target as HTMLElement).closest('[data-site-info]')
       const media = (e.target as HTMLElement).closest('[data-media]')
       const bell = (e.target as HTMLElement).closest('[data-quiet-bell]')
+      const reader = (e.target as HTMLElement).closest('[data-reader-chip]')
       const session = media ? mediaSession(state) : null
       const quiet = bell && tab ? quietPermissionPrompt(state, tab.id) : null
       if (overviewIsOpen() || (tab && privateTabLocked(state)) || fakeboxAway()) openAddress()
@@ -223,6 +233,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       } else if (quiet) {
         // The bell-off glyph of a quiet notification ask (NOT-03) opens its sheet.
         openQuietPrompt(quiet.id)
+      } else if (tab && reader && readerChipTab(tab)) {
+        // The readerable indicator (CT-37) opens Reader View for the article through the same
+        // crossing as the sheet's row and the app menu's, and on `zen://reader` the lit exit
+        // takes the same crossing back to the page (§9.29); the predicate is checked again here,
+        // since the chip may be fading out of a page that just stopped being one (§11.4).
+        enterReaderView(tab.id)
       } else if (tab && icon) {
         // The site icon at the start of the pill and the lock after the host open the site
         // information instead – where the translate offer and the blocking shield are (OMN-02).
@@ -279,25 +295,33 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     return holdChromeInert()
   }, [htmlFullscreen])
   useEffect(() => () => settleChromeAway(false), [])
+  // The holds on the chrome that are not a sheet's: this fullscreen hold, and the capture
+  // overlay's own (`CaptureOverlay`, mounted through `TabDialogs` while `ui.capture` stands; on
+  // its own scrim, off the sheet chassis). The toast frame is no shell chrome – a toast above a
+  // sheet must stay in reach (§9.33) – so the shell tells it of these holds itself, and it goes
+  // inert at the normal seat with the rest of the chrome (never while lifted).
+  const chromeHeld = htmlFullscreen || ui.capture !== null
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId, bringChromeBack)
-  // The message layer sits on the frame's edges and recedes with it (main.css reads
-  // `--zen-recede` on it).
-  const messageFrameRef = useRef<HTMLDivElement>(null)
-  useRecedeSurface(messageFrameRef)
-  // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
-  // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
-  useGestureHint(
-    state,
-    edge,
+  // The chrome is calm: a page in view under nothing, the bar and its pill in place, no drag,
+  // overview or prompt. The one-time gesture hint (FRE-07), a toast on the message cards, and
+  // the tab switcher's in-product help bubble (TB-19, `useTabSwitcherHint`) are owed on it.
+  const calm =
     !onboarding &&
-      !htmlFullscreen &&
-      !barHidden &&
-      tab !== null &&
-      !overlayCoversContent(ui) &&
-      !overviewOpen &&
-      dock.phase === 'idle' &&
-      state.defaultBrowser.prompt !== 'sheet'
+    !htmlFullscreen &&
+    !barHidden &&
+    tab !== null &&
+    !overlayCoversContent(ui) &&
+    !overviewOpen &&
+    dock.phase === 'idle' &&
+    state.defaultBrowser.prompt !== 'sheet'
+  useGestureHint(state, edge, calm)
+  useTabSwitcherHint(state, edge, calm)
+  // The bubble's anchor pulses while the bubble is up (Chrome's `HighlightShape.CIRCLE` on the
+  // tab switcher button, `PulseDrawable`; §9.23's halo here): the bar carries the item's id for
+  // the stylesheet, and the item names the bubble as its description while it stands.
+  const iphAnchor = hintBubbleStore.use((s) =>
+    s.bubble && !s.leaving ? s.bubble.anchorItem : null
   )
 
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
@@ -359,20 +383,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           />
         )}
       </main>
-      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets.
-          Its box is the stylesheet's, by the bar's edge (`data-edge`) and the root's
-          `data-bar-away` (lib/barHide.ts): the content column's edge at either rest, the page's
-          tall box for the whole of a hide gesture, with the cards on the bar's edge riding the
-          bar by transform – so a toast showing mid-gesture moves with the bar instead of jumping
-          the band at the rest, and nothing in the frame is laid out per frame (main.css). */}
-      <div
-        ref={messageFrameRef}
-        data-shell-chrome
-        data-edge={edge}
-        className="zen-message-frame pointer-events-none absolute z-[36]"
-      >
-        <MessageLayer />
-      </div>
+      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets –
+          except a toast up while a sheet stands, raised by the sheet's act or up already as it
+          opened, which stands above the sheet (§9.33; the frames and their seats are
+          PhoneMessages'). */}
+      <PhoneMessages edge={edge} inert={chromeHeld} />
       <PhoneStage state={state} />
       {/* The bar's opacity is the chassis rule in main.css: docked at the bottom edge, where a
           sheet arrives, it fades by `1 − recede`, the sheet's progress (v2 draft §11.1); docked
@@ -390,6 +405,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
           pillAway={morph.away}
+          iphAnchor={iphAnchor}
           style={fromHere ? { opacity: barFade(edge, 1 - p) } : undefined}
         />
       )}
@@ -469,6 +485,7 @@ export function PhoneBar({
   overviewOpen,
   pillLook,
   pillAway,
+  iphAnchor,
   inert,
   style
 }: {
@@ -487,6 +504,11 @@ export function PhoneBar({
    * page's scroll carries the field into it. The slot still takes the pill's gestures.
    */
   pillAway?: boolean
+  /**
+   * The control an in-product help bubble is about right now (TB-19): the stylesheet pulses it
+   * and it carries the bubble as its description (`aria-describedby`, the lead's (j) on #641).
+   */
+  iphAnchor?: PhoneBarItemId | null
   /** A preview of the bar at the other edge: drawn, never pressed. */
   inert?: boolean
   style?: CSSProperties
@@ -550,6 +572,7 @@ export function PhoneBar({
         // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
         // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
         data-edge={edge}
+        data-iph-anchor={iphAnchor && !inert ? iphAnchor : undefined}
         aria-hidden={inert || undefined}
         data-shell-chrome
         // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
@@ -569,7 +592,13 @@ export function PhoneBar({
         {edge === 'bottom' && groupStrip}
         <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
           {layout.left.map((id) => (
-            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+            <BarButton
+              key={id}
+              id={id}
+              ctx={ctx}
+              inert={inert}
+              describedBy={!inert && iphAnchor === id ? HINT_BUBBLE_ID : undefined}
+            />
           ))}
           {/*
           The pill is a gesture surface, not a button: its site icon, address and lock are real
@@ -604,7 +633,13 @@ export function PhoneBar({
             )}
           </div>
           {layout.right.map((id) => (
-            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+            <BarButton
+              key={id}
+              id={id}
+              ctx={ctx}
+              inert={inert}
+              describedBy={!inert && iphAnchor === id ? HINT_BUBBLE_ID : undefined}
+            />
           ))}
         </div>
         {edge === 'top' && groupStrip}
@@ -688,19 +723,28 @@ export function PillContent({
   const privateMark = shown ? isPrivateTab(shown) : false
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
   const quietPromptOpen = uiStore.use((s) => s.quietPromptId !== null)
+  // The §9.33 "Show Reader View?" strip stands on the banner stack for the tab in front
+  // (`useReaderEntryMessage`, one banner under its key): the reader chip waits in the sheet
+  // while it asks, and takes the slot as the strip leaves (CT-37's coexistence with PUI-14).
+  const readerOfferUp = uiStore.use((s) =>
+    s.banners.some((b) => b.key === READER_BANNER_KEY && b.leaving !== true)
+  )
   // The chips after the address as data (`phonePillChips`): the lock, the blocking shield with
-  // its count, a translate offer, the Now playing chip (MW-16). At rest the pill draws the
-  // favicon, the host and the lock alone – v2 §9.29 as amended on Bennett's ruling (OMN-02):
-  // the shield and the translate offer are the site-information sheet's rows, always, and a
-  // transient state chip (media) takes the lock's slot while its state is live, the lock
-  // returning when it ends (`lib/pillChips.ts`). The favicon ahead of the host and the lock
-  // both open the sheet the others went into; the favicon alone while a state has the slot.
+  // its count, a translate offer, the Now playing chip (MW-16), the reader chip on an article.
+  // At rest the pill draws the favicon, the host and the lock alone – v2 §9.29 as amended on
+  // Bennett's ruling (OMN-02): the shield and the translate offer are the site-information
+  // sheet's rows, always, and a transient state chip (media) takes the lock's slot while its
+  // state is live, the lock returning when it ends (`lib/pillChips.ts`); the reader chip, the
+  // readerable indicator (CT-37), has the slot on a quiet secure article. The favicon ahead of
+  // the host and the lock both open the sheet the others went into; the favicon alone while a
+  // state or the offer has the slot.
   const chips = phonePillChips(state, shown, {
     siteInfoOpen,
     mediaSheetOpen,
     quietPromptOpen,
     activeTabId: tab?.id ?? null,
-    locked
+    locked,
+    readerOfferUp
   })
   const drawn = pillChipsDrawn(chips)
   // What TalkBack hears at the address, the pill's one stop (`phoneAddressLabel`): the host,

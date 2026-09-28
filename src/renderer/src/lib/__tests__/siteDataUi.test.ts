@@ -121,7 +121,10 @@ describe('the lists', () => {
     // "Sites that can always use cookies" restated the heading (#322 nit 1).
     expect(ui.siteDataPatternDescription('allow', false)).toBeUndefined()
     expect(ui.siteDataPatternDescription('block', true)).toBeUndefined()
-    expect(ui.siteDataListDescription('block', false)).toContain('cleared when it is added')
+    // The never list's line speaks the Delete verb (W8-11): "What a site stored is deleted when it is added".
+    expect(ui.siteDataListDescription('block', false)).toContain(
+      'What a site stored is deleted when it is added'
+    )
   })
 
   it('find the list holding a pattern as typed, in the grammar’s canonical form', () => {
@@ -178,7 +181,7 @@ describe('clear on exit', () => {
   it('describes the group: the choice and the passwords line on both hosts, a pending clear', () => {
     const base = ui.clearOnExitDescription(status())
     expect(base).toBe(ui.SITE_DATA_TEXT.clearOnExit.description)
-    expect(base).toContain('Saved passwords are never cleared this way')
+    expect(base).toContain('Saved passwords are never deleted this way')
     expect(base.split('. ')).toHaveLength(2)
     // The next-start timing is the phone's Clear on exit row's to say, once (#322 Q6 and (d)):
     // the group's paragraph is the same two sentences on the host that clears at its next start,
@@ -319,7 +322,8 @@ describe('the site-information row', () => {
     expect(ui.siteDataChoiceOptions(site(), true)[2]!.description).toBe(
       'Site data from this session is cleared the next time Zenium starts.'
     )
-    expect(options[3]!.description).toContain('cleared now')
+    // The never-allow line speaks the Delete verb (W8-11), as the never list's line does.
+    expect(options[3]!.description).toBe('No cookies; what it stored is deleted now.')
   })
 
   it('applies a choice: the site onto the list picked, the deciding entry off its list for the default', async () => {

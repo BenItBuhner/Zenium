@@ -246,6 +246,20 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('readerEntry=offer&network=offline')).toEqual(offer)
   })
 
+  it('holds Quick Delete’s wipe on the overview this far into its release (MOT-24)', () => {
+    expect(parsePreviewSpec('overview&wipe=120')).toEqual({ kind: 'overview', wipe: 120 })
+    expect(parsePreviewSpec('overview&wipe=0')).toEqual({ kind: 'overview', wipe: 0 })
+    expect(parsePreviewSpec('overview&wipe=120&then=tap:More')).toEqual({
+      kind: 'overview',
+      wipe: 120,
+      then: [{ kind: 'tap', text: 'More' }]
+    })
+    // Not a time: no hold (the overview alone); nothing without the overview.
+    expect(parsePreviewSpec('overview&wipe=abc')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('overview&wipe=-5')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('wipe=120')).toEqual({ kind: 'idle' })
+  })
+
   it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
     expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
     expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({
@@ -368,6 +382,19 @@ describe('parsePreviewSpec', () => {
     })
     expect(parsePreviewSteps('cards:0;cards:1.5;cards:;cards:two;cards:3')).toEqual([
       { kind: 'cards', page: 3 }
+    ])
+  })
+
+  it('raises a toast at a point of the walk (`toast:<text>|<action>`); a blank text is no step, a blank action none', () => {
+    expect(
+      parsePreviewSteps(
+        'tap:Site permissions;toast:Review complete for 2 sites|Undo;toast:Link copied;toast: | Undo;toast:Saved|'
+      )
+    ).toEqual([
+      { kind: 'tap', text: 'Site permissions' },
+      { kind: 'toast', text: 'Review complete for 2 sites', action: 'Undo' },
+      { kind: 'toast', text: 'Link copied', action: null },
+      { kind: 'toast', text: 'Saved', action: null }
     ])
   })
 
@@ -497,6 +524,18 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&toast=y')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('raises an in-product help bubble by name (TB-19), at either edge of the bar', () => {
+    expect(parsePreviewSpec('iph=tab-switcher')).toEqual({ kind: 'iph', bubble: 'tab-switcher' })
+    expect(parsePreviewSpec('iph=tab-switcher&bar=top')).toEqual({
+      kind: 'iph',
+      bubble: 'tab-switcher'
+    })
+    expect(parsePreviewSeed('iph=tab-switcher&bar=top').bar).toBe('top')
+    // A bubble Chrome does not show is no state; the bubble wins over the messages.
+    expect(parsePreviewSpec('iph=back-swipe')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('iph=tab-switcher&toast=y')).toMatchObject({ kind: 'iph' })
+  })
+
   it('raises an "Add to Home screen" surface by name', () => {
     for (const surface of PREVIEW_WEBAPP_SURFACES) {
       expect(parsePreviewSpec(`webapp=${surface}`)).toEqual({ kind: 'webapp', surface })
@@ -586,6 +625,31 @@ describe('parsePreviewSpec', () => {
       kind: 'pull',
       progress: 0.4,
       released: false
+    })
+  })
+
+  it('poses the offline game (ERR-03) on the no-connection page and on zen://game with `game=`; waiting without it, and for a word it does not know', () => {
+    expect(parsePreviewSpec('error=-106&url=https://example.com/&game=over')).toEqual({
+      kind: 'error',
+      code: -106,
+      url: 'https://example.com/',
+      game: 'over'
+    })
+    expect(parsePreviewSpec('page=game&game=night')).toEqual({
+      kind: 'page',
+      page: 'game',
+      game: 'night'
+    })
+    expect(parsePreviewSpec('page=game&game=running')).toEqual({
+      kind: 'page',
+      page: 'game',
+      game: 'running'
+    })
+    expect(parsePreviewSpec('page=game')).toEqual({ kind: 'page', page: 'game' })
+    expect(parsePreviewSpec('error=-106&game=won')).toEqual({
+      kind: 'error',
+      code: -106,
+      url: null
     })
   })
 

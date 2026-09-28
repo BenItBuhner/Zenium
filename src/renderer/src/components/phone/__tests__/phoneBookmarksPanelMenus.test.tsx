@@ -8,8 +8,11 @@ import { createBookmarkRoots, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@s
 
 /*
  * The bookmark row's menu and the selection bar on a phone against Chrome 152 (HB-12, HB-15;
- * `BookmarkManagerMediator.createListMenuForBookmark`, `BookmarkToolbarMediator`): a row's ⋮
- * hangs Select, Edit… (a folder's Rename…), Move to…, the open rows – Open in Private Tab only
+ * `BookmarkManagerMediator.createListMenuModelList` as `createListMenuForBookmark` hangs it,
+ * `BookmarkToolbarMediator`): a row's ⋮ hangs Select, Edit… (a folder's too – the per-door
+ * word, W6-E6b: its sheet is HB-16's "Edit folder", so the item is Chrome's Edit and not the
+ * core's "Rename…", which the desktop keeps for the manager's in-place rename of a folder in
+ * view, a rename alone), Move to…, the open rows – Open in Private Tab only
  * where the host has private tabs – Copy Link, Share… where the host shares, and Delete; Select
  * starts selection mode with that row picked; the selection header's More hangs Edit… for
  * exactly one picked row, Move to… for any, then the open rows, Copy Link(s) and Delete. Move
@@ -33,6 +36,7 @@ Object.assign(window, {
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { PhoneBookmarksPanel } = await import('../PhoneBookmarksPanel')
+const { BookmarkEditSheet } = await import('../BookmarkEditSheet')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, pickMenuItem, uiStore } = await import('@renderer/lib/ui')
@@ -201,6 +205,27 @@ async function push(state: UIState): Promise<void> {
   await settle()
 }
 
+/**
+ * The frame's wiring for the editor a row's Edit… asks for (`TabDialogs.tsx`: `BookmarkEditSheet`
+ * mounts on `uiStore.bookmarkEdit` beside the panel), so a pin can read the sheet that opened.
+ */
+async function mountEditor(state: UIState): Promise<void> {
+  const edit = uiStore.get().bookmarkEdit
+  if (!edit) throw new Error('no editor was asked for')
+  act(() =>
+    root!.render(
+      createElement(
+        FrameDialogHost,
+        null,
+        createElement(PhoneBookmarksPanel, { state }),
+        createElement(BookmarkEditSheet, { state, edit })
+      )
+    )
+  )
+  await settle()
+  await land()
+}
+
 beforeEach(() => {
   vi.useFakeTimers({
     toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date']
@@ -352,7 +377,7 @@ describe("the bookmark row's menu (HB-12)", () => {
     // The roots carry no menu (they neither move nor delete).
     expect(more('Mobile bookmarks')).toBeNull()
     await tap('Mobile bookmarks')
-    expect(titles()).toEqual(['Work', 'Home', 'News', 'Mail'])
+    expect(titles()).toEqual(['News', 'Mail', 'Work', 'Home'])
     await openMenu('News')
     expect(menu()).toEqual({
       title: 'News',
@@ -385,20 +410,25 @@ describe("the bookmark row's menu (HB-12)", () => {
     ])
   })
 
-  it('reads Rename… and Open All (N) for a folder, its private row counting the pages under it', async () => {
+  it('reads Edit… – not the core’s Rename… – and Open All (N) for a folder, its private row counting the pages under it', async () => {
     await show()
     await tap('Mobile bookmarks')
     await openMenu('Work')
     expect(menu()).toEqual({
       title: 'Work',
+      // Chrome 152 adds `bookmark_item_edit` for a folder as for a page (`BookmarkManagerMediator`
+      // `createListMenuModelList` l.1522-1523, handled in `createListMenuForBookmark` l.1609-1613;
+      // `IDS_BOOKMARK_ITEM_EDIT` "Edit"); the desktop's "Rename…" (`src/core/menus.ts`) is the
+      // manager's in-place rename, not this door's word – the per-door split (W6-E6b).
       // One page under it: the private row reads as a page's (#203's `openInPrivateItems`).
-      items: ['Select', 'Rename…', 'Move to…', 'Open All (1)', 'Open in Private Tab', '-', 'Delete']
+      items: ['Select', 'Edit…', 'Move to…', 'Open All (1)', 'Open in Private Tab', '-', 'Delete']
     })
+    expect(menu()!.items).not.toContain('Rename…')
     await openMenu('Home')
     const items = uiStore.get().menu!.items
     expect(items.map((i) => (i.type === 'separator' ? '-' : i.label))).toEqual([
       'Select',
-      'Rename…',
+      'Edit…',
       'Move to…',
       'Open All (0)',
       '-',
@@ -406,6 +436,23 @@ describe("the bookmark row's menu (HB-12)", () => {
     ])
     // An empty folder has nothing to open.
     expect(items.find((i) => i.label === 'Open All (0)')).toMatchObject({ enabled: false })
+  })
+
+  it('a folder’s Edit… opens its editor – HB-16’s "Edit folder", the sheet the word is named for', async () => {
+    const state = stateOf()
+    await show(state)
+    await tap('Mobile bookmarks')
+    await openMenu('Work')
+    await pick('Edit…')
+    expect(uiStore.get().bookmarkEdit).toEqual({
+      id: 'work',
+      parentId: MOBILE_BOOKMARKS_ID,
+      type: 'folder'
+    })
+    // The sheet the frame mounts on that request wears HB-16's title (`BookmarkEditSheet`,
+    // Chrome's `IDS_EDIT_FOLDER`) – the editor, not a rename.
+    await mountEditor(state)
+    expect(sheetTitle()).toBe('Edit folder')
   })
 
   it('Select starts selection mode with that row picked, as a long press does (Chrome’s toggleSelectionForItem)', async () => {
@@ -468,13 +515,14 @@ describe('the selection bar’s More (HB-15)', () => {
     })
   })
 
-  it('reads Rename… for one picked folder and drops the edit row for two or more (Chrome: numSelected == 1)', async () => {
+  it('reads Edit… for one picked folder – the per-door word here too – and drops the edit row for two or more (Chrome: numSelected == 1)', async () => {
     await show()
     await tap('Mobile bookmarks')
     await openMenu('Work')
     await pick('Select')
     await openSelectionMenu()
-    expect(menu()!.items.slice(0, 2)).toEqual(['Rename…', 'Move to…'])
+    expect(menu()!.items.slice(0, 2)).toEqual(['Edit…', 'Move to…'])
+    expect(menu()!.items).not.toContain('Rename…')
     act(() => uiStore.set({ menu: null }))
     await tap('News')
     await openSelectionMenu()
@@ -573,7 +621,7 @@ describe('Move to… and its folder picker', () => {
     await land()
     expect(sheet()).toBeNull()
     expect(of('bookmark.move')).toEqual([])
-    expect(titles()).toEqual(['Work', 'Home', 'News', 'Mail'])
+    expect(titles()).toEqual(['News', 'Mail', 'Work', 'Home'])
   })
 
   it('leaves a moved folder and everything under it out of the list', async () => {
@@ -606,7 +654,7 @@ describe('Move to… and its folder picker', () => {
     act(() => footerButton('Move').click())
     await land()
     expect(of('bookmark.move')).toEqual([
-      { ids: ['work', 'news', 'mail'], parentId: OTHER_BOOKMARKS_ID }
+      { ids: ['news', 'mail', 'work'], parentId: OTHER_BOOKMARKS_ID }
     ])
     expect(selectionHeader()).toBeNull()
   })

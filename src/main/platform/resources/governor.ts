@@ -143,9 +143,15 @@ export class ResourceGovernor implements Governor {
     return views instanceof ElectronTabViewHost ? views : null
   }
 
-  /** The Electron web contents behind a tab's live view. */
+  /**
+   * The Electron web contents behind a tab's page – the page beneath the reader's cover while
+   * one stands (`pageView`, never `view`): the page holds the site's memory, its media and its
+   * frozen state, and is what a sample, a freeze, a purge or a discard of the tab means. The
+   * reader document is a page of the browser's own, attributed to no tab (its renderer counts
+   * with the processes no tab owns, as the chrome's do).
+   */
   private wc(tabId: string): WebContents | undefined {
-    const view = this.browser.tabs.view(tabId)
+    const view = this.browser.tabs.pageView(tabId)
     return view instanceof ElectronTabView && !view.webContents.isDestroyed()
       ? view.webContents
       : undefined
@@ -358,7 +364,7 @@ export class ResourceGovernor implements Governor {
     const s = this.settings
     if (!s.enabled || s.maxLoadedTabs <= 0) return
     if (this.browser.tabs.loadedCount() < s.maxLoadedTabs) return
-    if (this.browser.tabs.view(tabId)) return
+    if (this.browser.tabs.pageView(tabId)) return
     this.evictOne('over the live pages cap')
   }
 

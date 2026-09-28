@@ -35,6 +35,7 @@ import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../
 import { engineFieldFavicon } from '../shared/search'
 import { openHosts } from '../shared/favicons'
 import { newId } from '../shared/ids'
+import { TOAST_UNDO_MS } from '../shared/toastCard'
 import {
   DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
@@ -49,11 +50,13 @@ import {
   sanitizeNewTabSettings,
   setModuleHidden,
   setNewTabSection,
+  setSafetyHubCardMemories,
   siteHost,
   toggleNewTabModule,
   unhideSite,
   unpinShortcut
 } from '../shared/newTab'
+import type { SafetyHubCardMemories } from '../shared/safetyHubCard'
 import { createTabRecord, getSpace } from './model'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -779,6 +782,18 @@ export class NewTabService {
   }
 
   /**
+   * The Safety check card's memory as the renderer's machine left it (NTP-19,
+   * `shared/safetyHubCard.ts`): replaced whole in this device's new-tab sets, never synced
+   * (Chrome's `safety_hub.menu_notifications` pref is per device). Nothing is written when the
+   * record already reads so.
+   */
+  setSafetyHubCardMemories(memories: SafetyHubCardMemories): void {
+    const next = setSafetyHubCardMemories(this.device, memories)
+    if (next === this.device) return
+    this.updateDevice(() => next)
+  }
+
+  /**
    * Whether the grid is anything but a fresh profile's – a pinned shortcut, a removed site or a
    * mode other than the default – so the page menu's "Restore Default Shortcuts" has work to do
    * (the row is greyed otherwise).
@@ -849,13 +864,18 @@ export class NewTabService {
    * this): the layout preset and its sections, the shortcuts mode, the background and the
    * greeting as `DEFAULT_NEW_TAB_SETTINGS` has them, the pinned shortcuts and removed sites
    * cleared, the picked image let go. `enabled` – whether a new tab opens the page at all – is
-   * not the page's content and stays.
+   * not the page's content and stays; nor is the Safety check card's memory, which is Chrome's
+   * Safety Hub record (`safety_hub.menu_notifications`, not a new tab page pref): a card the
+   * user has seen enough of does not come back for a reset of the page.
    */
   async reset(): Promise<void> {
     const host = this.browser.platform.newTabBackground
     if (host?.current()) await host.clear()
     this.restoredFrom = null
-    this.browser.state.newTabDevice = emptyNewTabDevice()
+    this.browser.state.newTabDevice = {
+      ...emptyNewTabDevice(),
+      safetyHubCard: this.browser.state.newTabDevice.safetyHubCard
+    }
     this.setSettings({ ...DEFAULT_NEW_TAB_SETTINGS, enabled: this.settings.enabled })
   }
 
@@ -873,8 +893,51 @@ export class NewTabService {
     this.updateDevice((d) => unpinShortcut(d, url))
   }
 
-  remove(url: string): void {
+  /**
+   * The tile menu's Remove (NTP-07): the tile off the page – its shortcut gone and its host out
+   * of the most visited (`removeSite`) – and the chrome's toast raised with Undo alone on §9.33's
+   * 8 s clock: "Shortcut removed" for a pin, "Site removed" for a most visited site, the served
+   * page's words (Chrome 152's snackbar over the same blocklist write says "This site won't be
+   * shown again", `TileGroupDelegateImpl.removeMostVisitedItem`). What went is kept for
+   * `undoRemove` until Undo runs or a later removal takes the toast; a device write in between
+   * (a pin, a reorder, a card hidden) does not forget it – the toast still offers Undo, so Undo
+   * still has to work (`restoreShortcut` clamps the slot and refuses a duplicate on its own).
+   * Nothing is raised for a tile that was not on the page.
+   */
+  remove(url: string, win?: ZenWindow): void {
+    const before = this.device
+    const index = before.shortcuts.findIndex((s) => s.url === url)
+    const shortcut = index >= 0 ? before.shortcuts[index] : null
+    if (removeSite(before, url) === before) return
     this.updateDevice((d) => removeSite(d, url))
+    this.removed = { url, shortcut, index }
+    this.browser.toast(
+      shortcut ? 'Shortcut removed' : 'Site removed',
+      'info',
+      win,
+      { label: 'Undo', command: 'newtab.undoRemove', args: { url } },
+      TOAST_UNDO_MS
+    )
+  }
+
+  /** The last `remove`, for its toast's Undo. */
+  private removed: { url: string; shortcut: NewTabShortcut | null; index: number } | null = null
+
+  /**
+   * The Undo of `remove`: a pin back at the slot it held (or the end of a grid that has moved
+   * on), its host back among the most visited either way (`removeSite` hid it; `restoreShortcut`
+   * does not unhide, as the served page's `restore-shortcut` never hid). The word is the
+   * restore's for a pin – false when the grid filled up or the url was pinned again by hand in
+   * between, the host unhidden all the same – and the unhide's for a most visited site. False
+   * when `url` is not the last removal's – Undo ran already, or a later removal replaced the toast.
+   */
+  undoRemove(url: string): boolean {
+    const removed = this.removed
+    if (!removed || removed.url !== url) return false
+    this.removed = null
+    const back = removed.shortcut ? this.restoreShortcut(removed.shortcut, removed.index) : null
+    const unhidden = this.unhideSite(url)
+    return back ?? unhidden
   }
 
   // ---------------------------------------------------------------------------
@@ -887,9 +950,11 @@ export class NewTabService {
     this.updateDevice((d) => hideSite(d, url))
   }
 
-  unhideSite(url: string): void {
-    if (!this.device.hiddenHosts.includes(siteHost(url))) return
+  /** True when the host was hidden and is not now; false for a host that was not hidden. */
+  unhideSite(url: string): boolean {
+    if (!this.device.hiddenHosts.includes(siteHost(url))) return false
     this.updateDevice((d) => unhideSite(d, url))
+    return true
   }
 
   // ---------------------------------------------------------------------------

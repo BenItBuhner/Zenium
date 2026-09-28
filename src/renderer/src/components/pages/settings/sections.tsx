@@ -520,7 +520,7 @@ function lookSection({
                 kind: 'action',
                 id: 'theme',
                 label: 'Theme',
-                description: `${themeLabel} · ${spaceLabel(activeSpace)} space`,
+                description: `${themeLabel} · ${spaceLabel(activeSpace)} Space`,
                 keywords: ['theme', 'accent', 'colour', 'color', 'gradient', 'preset', 'reset'],
                 layouts: ['desktop', 'tablet'],
                 button: themed ? 'Reset to default' : 'Change…',
@@ -545,7 +545,7 @@ function lookSection({
                 id: 'use-system-accent',
                 label: 'Use system accent colour',
                 description: themed
-                  ? 'Controls take the colour your system uses while the space has the default look.'
+                  ? 'Controls take the colour your system uses while the Space has the default look.'
                   : 'Controls take the colour your system uses.',
                 keywords: ['accent', 'system colour', 'system color', 'follow device colours'],
                 layouts: ['desktop'],
@@ -751,7 +751,37 @@ function lookSection({
           description: 'Hide the rounded frame around web content.',
           checked: s.borderless,
           onChange: (v) => set({ borderless: v })
-        }
+        },
+        // Edge's "Show mini menu when selecting text" (Settings › Appearance › Context menus;
+        // CT-39, `Settings.showSelectionMenu`, on by default – an absent value reads as on): the
+        // pill of chips – Copy, Search, Define, Translate, Read aloud – over a settled text
+        // selection. Desktop hosts with the popup surface alone (`capabilities.selectionMenu`),
+        // in the desktop and the tablet layouts – a desktop host at a tablet width still runs
+        // the menu; the phone's selection toolbar is the system's.
+        ...(caps.selectionMenu
+          ? [
+              {
+                kind: 'switch',
+                id: 'show-selection-menu',
+                label: 'Show the mini menu when text is selected',
+                keywords: [
+                  'mini menu',
+                  'selection',
+                  'select text',
+                  'selected text',
+                  'copy',
+                  'search',
+                  'define',
+                  'translate',
+                  'read aloud',
+                  'context menu'
+                ],
+                layouts: ['desktop', 'tablet'],
+                checked: s.showSelectionMenu !== false,
+                onChange: (v) => set({ showSelectionMenu: v })
+              } satisfies SettingsRow
+            ]
+          : [])
       ]
     }
   ]
@@ -1610,7 +1640,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
                 id: 'newtab-image-colour',
                 label: "Use the picture's colour",
                 description:
-                  'This space takes the colour your picture is mostly of, and follows a new one.',
+                  'This Space takes the colour your picture is mostly of, and follows a new one.',
                 keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
                 checked: activeSpace?.theme?.fromImage === true,
                 disabled: !image || !accent,
@@ -1642,7 +1672,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'newtab-reset-background',
           label: 'Reset background to default',
-          description: 'The space gradient; an image kept on this device is removed.',
+          description: 'The Space gradient; an image kept on this device is removed.',
           keywords: ['restore', 'theme', 'wallpaper'],
           button: 'Reset',
           disabled: background === DEFAULT_NEW_TAB_SETTINGS.background && !image,
@@ -2482,6 +2512,29 @@ function performanceSection({ state, tab, set }: SectionContext): RowGroup[] {
         }
       ]
     },
+    {
+      // The tab hover card's memory line (settings-29, W8-10; Chrome's "Show tab memory usage",
+      // `browser.hovercard.memory_usage_enabled` – off by default, Chrome 152's effective default
+      // after `MigrateHoverCardMemoryPref`). Chrome seats the switch in
+      // Appearance under "Tab hover preview card" and its Performance page only links there;
+      // the matrix seats the row here, with Chrome's words under Chrome's heading in §9.20's
+      // name for the card. The desktop's alone, as the card is (the tablet chrome mounts none).
+      id: 'hover-card',
+      heading: 'Tab hover card',
+      layouts: ['desktop'],
+      rows: [
+        {
+          kind: 'switch',
+          id: 'hover-card-memory',
+          label: 'Show tab memory usage',
+          description:
+            'The card that appears when you rest the pointer on a tab says how much memory its page is using.',
+          keywords: ['hover card', 'tab hover', 'preview card', 'memory usage', 'memory'],
+          checked: s.hoverCardMemoryUsage,
+          onChange: (v) => set({ hoverCardMemoryUsage: v })
+        }
+      ]
+    },
     ...(noBattery ? [] : [energySaver])
   ]
 }
@@ -3142,11 +3195,11 @@ function resourcesSection({ state, set, navigate }: SectionContext): RowGroup[] 
 
 /**
  * The hub at the top of the section (settings-12; Chrome's card list, `privacyHub.ts`): one
- * §10.4 action row per card in Chrome's order – Clear browsing data…, Third-party cookies,
+ * §10.4 action row per card in Chrome's order – Delete browsing data…, Third-party cookies,
  * Safe Browsing, Site settings, Safety check – the leading glyph, the title, one line under it.
  * A card brings its program's first group on screen (`ctx.reveal`, the section's `?group=`
  * landing) and trails the chevron that says so (Q5 of the #553 lead check: the four landings
- * keep it); Clear browsing data… opens the PS-13 dialog the Clear browsing data row opens, with
+ * keep it); Delete browsing data… opens the PS-13 dialog the Delete browsing data row opens, with
  * §9.1's ellipsis on its name and no chevron (F1). No heading: the cards stand under the
  * section's title as Chrome's do. The desktop and tablet shells' (`layouts`): the phone's
  * Privacy page keeps its plain list.
@@ -3179,8 +3232,10 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
           label: card.label,
           description: lines[card.id],
           leading: <Glyph className="zen-settings-glyph" aria-hidden="true" />,
+          // The dialog's card keeps its pre-M124 name as a search alias (W8-7): a hand that
+          // types "clear browsing data" still finds it.
           ...(group === null
-            ? { form: CLEAR_BROWSING_DATA_FORM }
+            ? { form: CLEAR_BROWSING_DATA_FORM, keywords: ['clear'] }
             : { leaves: 'chevron', onPress: () => reveal?.(group) })
         }
       })
@@ -3189,32 +3244,36 @@ function privacyHubGroups(ctx: SectionContext): RowGroup[] {
 }
 
 /**
- * Groups in Chrome's Privacy and security order – the hub's cards (`privacyHubGroups`), then
- * Safety check, Safe Browsing, Tracking
- * prevention, Clear browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
- * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
- * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
- * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
- * site-data program's (`siteDataRows.tsx`, which carries the third-party cookie setting and its
- * related sites from `protectionRows.tsx`) at the cookies position, the protection program's
- * at the preload-pages (PS-43), safe-browsing, https-only, secure-dns and privacy-signals
- * positions; the remembered
- * per-site answers are Security's (`securitySection`).
+ * Groups in the hub cards' order (the #553 lead check's Q6 ruling, built in W8-8: the pane's
+ * groups take the cards' order, so the page and its hub read alike) – the cards
+ * (`privacyHubGroups`), then Delete browsing data, Cookies and site data, Safe Browsing, Site
+ * settings, Safety check – each program's groups self-contained: the site-controls program's
+ * (`siteControls/settingsRows`) at the delete-browsing-data, site-settings and safety-check
+ * positions, the site-data program's (`siteDataRows.tsx`, which carries the third-party cookie
+ * setting and its related sites from `protectionRows.tsx`) at the cookies position, the
+ * protection program's at the safe-browsing position. A group no card names follows the card
+ * it is kin to, as Chrome's page holds them (the #650 lead check): the request engine's
+ * Tracking prevention (`tracking.tsx`) and Privacy signals after Cookies – Chrome's
+ * cookies-and-ad-privacy stretch – and HTTPS-only with Secure DNS after Safe Browsing – both
+ * rows of Chrome's Security page. Preload pages (PS-43) is Chrome's Performance › Speed row and
+ * its seat is another slice's question, so it stays after Safety check for now; the private-tab
+ * lock (INC-05) is last, Chrome's seat for it. The phone's plain list – no cards – reads in the
+ * same order. The remembered per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
   return [
     ...privacyHubGroups(ctx),
-    ...safetyCheckGroups(ctx),
-    ...safeBrowsingGroups(state, set),
-    ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
     ...siteDataGroups(ctx),
-    ...siteSettingsGroups(ctx),
-    ...preloadGroups(state, set),
+    ...trackingGroups(ctx),
+    ...signalsGroups(state, set),
+    ...safeBrowsingGroups(state, set),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),
-    ...signalsGroups(state, set),
+    ...siteSettingsGroups(ctx),
+    ...safetyCheckGroups(ctx),
+    ...preloadGroups(state, set),
     ...privateLockGroups(ctx)
   ]
 }
@@ -4450,13 +4509,15 @@ function containersSection({ state }: SectionContext): RowGroup[] {
                 kind: 'action',
                 id: `container:${c.id}:delete`,
                 label: 'Delete container',
-                description: 'Its cookies and site data are cleared.',
+                // A container's removal deletes site data: the Delete family's verb (W8-11, the
+                // design lead's ruling).
+                description: 'Its cookies and site data are deleted.',
                 button: 'Delete…',
                 destructive: true,
                 confirm: {
                   title: `Delete ${c.name}?`,
                   description:
-                    'Tabs in this container lose their sign-ins; its site data is cleared.',
+                    'Tabs in this container lose their sign-ins; its site data is deleted.',
                   action: 'Delete'
                 },
                 onPress: () => run('container.delete', { id: c.id })

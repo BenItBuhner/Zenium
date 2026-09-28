@@ -34,8 +34,9 @@
  * since #572, the Energy Saver leaf since #584) folds where the pill it would leave the row
  * drops under `PILL_TOOLS_TIER` – `lib/toolbarPins.ts`'s `foldingButtonFits`, the one helper for
  * every such button (the hub's `mediaHubButtonFits` and the leaf's `energySaverLeafFits` are
- * its names), which reads its floor from here (`PILL_PADDING + PILL_TOOLS_TIER`). Buttons fold
- * by that rule outside the pill; chips fold by this one inside it, and the two meet at the
+ * its names), which reads its floor from here (`PILL_PADDING + PILL_TOOLS_TIER`, less the
+ * `PILL_BLEED` the pill takes of the row beside its flex share). Buttons fold by that rule
+ * outside the pill; chips fold by this one inside it, and the two meet at the
  * tools tier: a row that keeps a button keeps the pill at least 110 wide inside, where this
  * rule still holds the site icon and the address's floor beside whatever chips fit.
  *
@@ -70,7 +71,7 @@ const NEVER_HIDDEN: ReadonlySet<ChipTier> = new Set<ChipTier>(['site', 'state'])
 /**
  * What the address keeps before a chip is let in: a host's first letters and the ellipsis.
  * With the site icon and the star alone this puts the star's return at a 110 px content box –
- * §9.29's "130 px pill", the 270 px sidebar's (126 wide at `PILL_PADDING` 16).
+ * §9.29's "130 px pill", the 266 px sidebar's (126 wide at `PILL_PADDING` 16, `PILL_BLEED` in).
  */
 export const MIN_ADDRESS_WIDTH = 56
 
@@ -79,14 +80,32 @@ export const CHIP_GAP = 6
 
 /**
  * The pill's horizontal padding, both sides together (`px-2`). With the row's buttons 4 apart
- * (§5, `TOOLBAR_GAP`) the 240 sidebar's pill is 96 wide and its content box 80 – the box the
- * tier and the stylesheet's container queries read, unchanged from the 100 px pill of §9.29's
- * arithmetic – and the 270 sidebar's is 126 / 110, where the star returns.
+ * (§5, `TOOLBAR_GAP`) and the pill filling its slot (`PILL_BLEED`), the 240 sidebar's pill is
+ * 100 wide and its content box 84 – the box the tier and the stylesheet's container queries
+ * read; §9.29's "100 at 240" – and the 266 sidebar's is 126 / 110, where the star returns.
  */
 export const PILL_PADDING = 16
 
 /**
- * The content box at which the star and the tools return (§9.29's "130 px pill", the 270
+ * What the pill takes of the row beyond its flex share, both sides together: the 2 px outer
+ * padding of the button either side of it. §5's 32 pitch is the 28 box in a [2 | 28 | 2] slot,
+ * and the row's `gap-1` is two of those paddings meeting; the pill fills its own slot to the
+ * neighbours' boxes, as Firefox's URL bar does between its buttons (`-mx-0.5` on the pill). At
+ * the default 240 sidebar the row is 224 (8 px insets), the four always-there buttons take
+ * 4 × 32 = 128 as slots, and the pill's slot is the 96 the flex share left plus this 4 – §9.29's
+ * 100 at 240 – with no button moved: Back 8–36, Forward 40–68, Reload 72–100, the pill 102–202,
+ * ⋯ 204–232. So a sidebar S with N buttons in the row draws a pill S − 16 − 32 N + 4 wide, its
+ * content box (`PILL_PADDING` off) S − 28 − 32 N: 84 at 240 with the four, where the address
+ * beside the site icon is 58, over its 56 floor (the FIRST LINE's L11 on #572 and #589; the
+ * lead's arithmetic, 54 → 58). The tiers below read the content box and keep their numbers;
+ * each lands 4 px of sidebar earlier than it did – the star's 110 at 266, the utilities' 170 at
+ * 326, the labels' 220 at 376 – and a folding button's return row counts this in
+ * (`lib/toolbarPins.ts`: 282, the 298 sidebar, with the four always-there buttons).
+ */
+export const PILL_BLEED = 4
+
+/**
+ * The content box at which the star and the tools return (§9.29's "130 px pill", the 266
  * sidebar's 126 / 110): the stylesheet's `@container (width < 110px)` on `.zen-pill` drops every
  * `zen-pill-chip` under it. The hub's toolbar button folds by the same tier (`lib/mediaHub.ts`):
  * it returns where the pill, with the button's own slot back in the row, still holds this box.

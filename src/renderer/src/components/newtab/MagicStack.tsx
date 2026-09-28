@@ -2,6 +2,7 @@ import type { JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bookmark,
+  CircleCheck,
   Download,
   EllipsisVertical,
   File,
@@ -13,9 +14,26 @@ import {
   Globe,
   History,
   Image,
+  KeyRound,
+  ListChecks,
   Package,
+  ShieldHalf,
   type LucideIcon
 } from 'lucide-react'
+import {
+  activeSafetyHubType,
+  dismissSafetyHubCard,
+  pickSafetyHubCard,
+  safetyHubCardButton,
+  safetyHubCardButtonLabel,
+  safetyHubCardSummary,
+  safetyHubCardTitle,
+  sameSafetyHubCardMemories,
+  type SafetyHubCardMemories,
+  type SafetyHubCardType,
+  type SafetyHubInputs,
+  type SafetyHubPick
+} from '@shared/safetyHubCard'
 import type {
   BookmarkNode,
   ClosedEntrySummary,
@@ -32,8 +50,8 @@ import { useFaviconSrc } from '@renderer/lib/favicons'
 import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
-import { openPage } from '@renderer/lib/pages'
-import { browserStore, showLocalMenu } from '@renderer/lib/ui'
+import { openPage, openSettings } from '@renderer/lib/pages'
+import { browserStore, openOverlay, showLocalMenu } from '@renderer/lib/ui'
 import { cn, formatBytes, relativeTime } from '@renderer/lib/utils'
 import { RowView, type RowContext } from '../pages/settings/rows'
 import { PhoneSheet } from '../phone/PhoneSheet'
@@ -56,13 +74,15 @@ import {
  * The new tab page's cards (NTP-16; Chrome's Magic Stack, `HomeModulesCoordinator` – the name
  * stays Chrome's, the surface is called Cards to the user): a horizontally paged strip of module
  * cards under the shortcut tiles – the newest recently closed tab, the last download, the newest
- * bookmarks, the default-browser reminder – each on one card chassis with a title row (the
- * module's glyph, its name, the ⋮) and its content. The content rows act (the file opens, the
- * bookmark opens, the closed tab reopens), so a card carries at most one action its rows cannot
- * do: See all on Downloads and Bookmarks, Set as default on Default browser, none on Continue
- * where you left off (§9.29). The ⋮ offers Hide This and Customise; the Customise sheet lists
- * the modules with switches. Hidden modules are this device's (`UIState.newTabHiddenModules`,
- * never synced); a stack with no card to show is not drawn at all, as Chrome draws none.
+ * bookmarks, the Safety check card, the default-browser reminder – each on one card chassis with
+ * a title row (the module's glyph, its name, the ⋮) and its content. The content rows act (the
+ * file opens, the bookmark opens, the closed tab reopens), so a card carries at most one action
+ * its rows cannot do: See all on Downloads and Bookmarks, Set as default on Default browser, the
+ * Safety check card's one button (Review, Go to settings, Change passwords – NTP-19), none on
+ * Continue where you left off (§9.29). The ⋮ offers Hide This and Customise; the Customise
+ * sheet lists the modules with switches. Hidden modules are this device's
+ * (`UIState.newTabHiddenModules`, never synced); a stack with no card to show is not drawn at
+ * all, as Chrome draws none.
  *
  * Design language v2: the page is a window surface, and each card is a page surface on it
  * (§9.29: the field and the sheets are page surfaces; the cards join them) – `--v2-card` under a
@@ -90,8 +110,9 @@ export function MagicStack({
   tab: Tab
   dock: PhoneBarPosition
 }): JSX.Element | null {
-  const sources = useSources(state)
   const hidden = state.newTabHiddenModules
+  const safetyHub = useSafetyHub(state, hidden.includes('safety-hub'))
+  const sources = useSources(state, safetyHub.source)
   // A module hidden from a card's menu is kept as hidden here until the core's list has it, so
   // the card cannot come back between the command and the state; once the list has an id, the
   // id is dropped in the render that sees it (the previous-render pattern, no effect needed).
@@ -205,7 +226,12 @@ export function MagicStack({
               if (arriving === card.id) setArriving(null)
             }}
           >
-            <CardBody card={card} tabId={tab.id} onMenu={() => openMenu(card.id)} />
+            <CardBody
+              card={card}
+              tabId={tab.id}
+              onMenu={() => openMenu(card.id)}
+              onSafetyHubAct={safetyHub.act}
+            />
           </li>
         ))}
       </ul>
@@ -269,7 +295,21 @@ const MODULE_GLYPHS: Record<MagicStackModuleId, LucideIcon> = {
   continue: History,
   downloads: Download,
   bookmarks: Bookmark,
+  // Lucide's `list-checks`, the Privacy and security hub's Safety check card (`privacyHub.ts`).
+  'safety-hub': ListChecks,
   'default-browser': Globe
+}
+
+/**
+ * The Safety check card's icon tile per type (`SafetyHubMagicStackMediator.java:158-283`):
+ * `ic_check_circle_filled_green_24dp` for the permissions already removed (a done thing, in the
+ * success ink), `secured_by_brand_shield_24` for Safe Browsing and `ic_password_manager_key` for
+ * the passwords, both at the accent.
+ */
+const SAFETY_HUB_GLYPHS: Record<SafetyHubCardType, LucideIcon> = {
+  'revoked-permissions': CircleCheck,
+  'safe-browsing': ShieldHalf,
+  passwords: KeyRound
 }
 
 /** The desktop row's file-type glyphs (`fileGlyphFor`), as the Downloads sheet draws them. */
@@ -284,13 +324,131 @@ const FILE_GLYPHS: Record<FileGlyph, LucideIcon> = {
   file: File
 }
 
-function useSources(state: UIState): MagicStackSources {
+function useSources(state: UIState, safetyHub: MagicStackSources['safetyHub']): MagicStackSources {
   const { recentlyClosed, downloads, bookmarks, defaultBrowser } = state
   const canRequestDefault = state.capabilities.defaultBrowser
   return useMemo(
-    () => ({ recentlyClosed, downloads, bookmarks, defaultBrowser, canRequestDefault }),
-    [recentlyClosed, downloads, bookmarks, defaultBrowser, canRequestDefault]
+    () => ({ recentlyClosed, downloads, bookmarks, defaultBrowser, canRequestDefault, safetyHub }),
+    [recentlyClosed, downloads, bookmarks, defaultBrowser, canRequestDefault, safetyHub]
   )
+}
+
+/**
+ * The Safety check card's impression (NTP-19; Chrome's `showModule()`,
+ * `SafetyHubMagicStackMediator.java:65-108`): once per mount of the stack, the machine
+ * (`shared/safetyHubCard.ts`) picks the type from the memory as published and the inputs as they
+ * stand – on the first render, so the first paint has the card – and the memory it leaves is
+ * written back once. The pick names the type for the mount; the persisted record names it too
+ * (the winner is the one running type), which is what a stack whose module was hidden at its
+ * mount reads after the Cards sheet's switch brings the module back: that switch is an
+ * impression of its own, picked and written in an effect. The type ends – the card leaves and its
+ * run is dismissed – on the card's own button for Safe Browsing and the passwords, and when Safe
+ * Browsing comes back on or the compromised count reaches zero while the card is up (`:136-151`,
+ * `dismissSafetyHubModule` / `dismissCompromisedPasswordsModule`); nothing re-picks in the mount
+ * after that (`mHasBeenDismissed`). A module hidden on this device is not built at all: no pick,
+ * no impression, no write (Chrome never constructs a hidden module).
+ */
+function useSafetyHub(
+  state: UIState,
+  hidden: boolean
+): {
+  source: MagicStackSources['safetyHub']
+  act: (type: SafetyHubCardType, tabId: string) => void
+} {
+  const revoked = state.revokedUnusedPermissions
+  const safeBrowsingEnabled = state.settings.privacy.safeBrowsingEnabled
+  const compromised = state.passwords.checkupSummary.compromised
+  const inputs = useMemo<SafetyHubInputs>(
+    () => ({
+      revokedOrigins: revoked.map((r) => r.origin),
+      safeBrowsingEnabled,
+      compromisedPasswords: compromised
+    }),
+    [revoked, safeBrowsingEnabled, compromised]
+  )
+  const memories = state.newTabSafetyHubCard
+  // The mount's impression, made on the first render (a hidden module makes none).
+  const [first] = useState<SafetyHubPick | null>(() =>
+    hidden ? null : pickSafetyHubCard(inputs, memories, Date.now())
+  )
+  const [ended, setEnded] = useState(false)
+  // The switch that brought the module back into the stack (the previous-render pattern): a new
+  // impression, and a run the button ended is open to the machine again.
+  const [seenHidden, setSeenHidden] = useState(hidden)
+  const [reshown, setReshown] = useState(0)
+  if (seenHidden !== hidden) {
+    setSeenHidden(hidden)
+    if (!hidden) {
+      setReshown((n) => n + 1)
+      setEnded(false)
+    }
+  }
+  const written = useRef({ first: false, reshown: 0 })
+  useEffect(() => {
+    if (written.current.first) return
+    written.current.first = true
+    if (first && !sameSafetyHubCardMemories(first.memories, memories))
+      run('newtab.setSafetyHubCardMemory', { memories: first.memories })
+  }, [first, memories])
+  useEffect(() => {
+    if (reshown === 0 || written.current.reshown === reshown) return
+    written.current.reshown = reshown
+    const pick = pickSafetyHubCard(inputs, memories, Date.now())
+    if (!sameSafetyHubCardMemories(pick.memories, memories))
+      run('newtab.setSafetyHubCardMemory', { memories: pick.memories })
+  }, [reshown, inputs, memories])
+
+  // The mount's pick names the type; a module shown again reads the record its impression wrote.
+  const live = first && reshown === 0 ? first.type : activeSafetyHubType(memories)
+  // The run's memory to dismiss from: the record as written back, else the pick's own.
+  const dismissFrom = useCallback(
+    (t: SafetyHubCardType): SafetyHubCardMemories =>
+      memories[t]?.activeSince != null ? memories : (first?.memories ?? memories),
+    [memories, first]
+  )
+  // Safe Browsing back on, the compromised count gone: the run ends where Chrome's observers end
+  // it – the card leaves for the rest of the mount (`ended` latches; the render that saw the
+  // clearing is replaced by the one with the latch, so the dismissal reads `cleared` from the
+  // live type, not from the card's) and the run is dismissed once.
+  const cleared =
+    live !== null &&
+    ((live === 'safe-browsing' && inputs.safeBrowsingEnabled) ||
+      (live === 'passwords' && inputs.compromisedPasswords === 0))
+  if (cleared && !ended) setEnded(true)
+  const type = ended ? null : live
+  const dismissed = useRef<SafetyHubCardType | null>(null)
+  useEffect(() => {
+    if (!cleared || live === null || dismissed.current === live) return
+    dismissed.current = live
+    run('newtab.setSafetyHubCardMemory', {
+      memories: dismissSafetyHubCard(dismissFrom(live), live)
+    })
+  })
+
+  const act = useCallback(
+    (t: SafetyHubCardType, tabId: string): void => {
+      switch (t) {
+        case 'revoked-permissions':
+          // Chrome's Review opens the Safety Hub page and leaves the run to its own course.
+          openSettings('privacy', { group: 'safety-check' })
+          return
+        case 'safe-browsing':
+          openSettings('privacy', { group: 'safe-browsing' })
+          break
+        case 'passwords':
+          // The manager's checkup view, the Safety check's own Review (`settingsRows.tsx`).
+          void openOverlay('passwords', tabId, null, null, 'checkup')
+          break
+      }
+      setEnded(true)
+      dismissed.current = t
+      run('newtab.setSafetyHubCardMemory', { memories: dismissSafetyHubCard(dismissFrom(t), t) })
+    },
+    [dismissFrom]
+  )
+
+  const source = useMemo(() => ({ type, inputs }), [type, inputs])
+  return { source, act }
 }
 
 /** The same ids in the same order. */
@@ -499,6 +657,11 @@ function cardLabel(card: MagicStackCard): string {
       return `${title}: ${card.item.finalName || card.item.filename}`
     case 'bookmarks':
       return `${title}: ${card.items.map((b) => b.title || getHost(b.url ?? '')).join(', ')}`
+    case 'safety-hub': {
+      const summary = safetyHubCardSummary(card.type, card.inputs)
+      const text = safetyHubCardTitle(card.type, card.inputs)
+      return `${title}: ${summary ? `${text}. ${summary}` : text}`
+    }
     case 'default-browser':
       return `${title}: set Zenium as your default browser`
   }
@@ -512,11 +675,13 @@ function closedTitle(entry: ClosedEntrySummary): string {
 function CardBody({
   card,
   tabId,
-  onMenu
+  onMenu,
+  onSafetyHubAct
 }: {
   card: MagicStackCard
   tabId: string
   onMenu: () => void
+  onSafetyHubAct: (type: SafetyHubCardType, tabId: string) => void
 }): JSX.Element {
   const module = magicStackModule(card.id)
   const Glyph = MODULE_GLYPHS[card.id]
@@ -537,6 +702,7 @@ function CardBody({
       {card.id === 'continue' && <ContinueContent entry={card.entry} />}
       {card.id === 'downloads' && <DownloadContent item={card.item} />}
       {card.id === 'bookmarks' && <BookmarksContent items={card.items} tabId={tabId} />}
+      {card.id === 'safety-hub' && <SafetyHubContent type={card.type} inputs={card.inputs} />}
       {card.id === 'default-browser' && <DefaultBrowserContent />}
       {/*
         One action a card, and only one its rows do not already do (§9.29): the rows open the
@@ -554,6 +720,18 @@ function CardBody({
           <Action onClick={() => openPage('bookmarks')}>See all</Action>
         </div>
       )}
+      {card.id === 'safety-hub' && (
+        <div className="zen-mstack-actions">
+          {/* Chrome's one `FilledButton` (`safety_hub_magic_stack_view.xml:77-82`): the primary. */}
+          <Action
+            primary
+            label={safetyHubCardButtonLabel(card.type)}
+            onClick={() => onSafetyHubAct(card.type, tabId)}
+          >
+            {safetyHubCardButton(card.type)}
+          </Action>
+        </div>
+      )}
       {card.id === 'default-browser' && (
         <div className="zen-mstack-actions">
           <Action primary onClick={() => run('defaultBrowser.request', { source: 'newtab' })}>
@@ -568,10 +746,13 @@ function CardBody({
 function Action({
   children,
   primary,
+  label,
   onClick
 }: {
   children: ReactNode
   primary?: boolean
+  /** The accessible name where it says more than the button (Chrome's content description). */
+  label?: string
   onClick: () => void
 }): JSX.Element {
   return (
@@ -579,6 +760,7 @@ function Action({
       type="button"
       className="zen-v2-button zen-mstack-action"
       data-primary={primary || undefined}
+      aria-label={label}
       onClick={onClick}
     >
       {children}
@@ -712,6 +894,36 @@ function DefaultBrowserContent(): JSX.Element {
     <p className="zen-mstack-text">
       Open links from other apps in Zenium, with your bookmarks, passwords and tabs along.
     </p>
+  )
+}
+
+/**
+ * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml:28-70`): the
+ * type's glyph in a rounded tile, the title beside it – two lines at most – and the one-line
+ * summary under the title where the type has one (Chrome's revoked-permissions card has none,
+ * `SafetyHubMagicStackMediator.java:158-183`). The words are Chrome's
+ * (`shared/safetyHubCard.ts`); the tile takes the type's ink: the success ink for what is already
+ * done (the permissions removed), the accent for what is asked of the user.
+ */
+function SafetyHubContent({
+  type,
+  inputs
+}: {
+  type: SafetyHubCardType
+  inputs: SafetyHubInputs
+}): JSX.Element {
+  const Glyph = SAFETY_HUB_GLYPHS[type]
+  const summary = safetyHubCardSummary(type, inputs)
+  return (
+    <div className="zen-mstack-safety" data-type={type}>
+      <span className="zen-mstack-safety-tile" aria-hidden>
+        <Glyph />
+      </span>
+      <span className="zen-mstack-safety-text">
+        <span className="zen-mstack-safety-title">{safetyHubCardTitle(type, inputs)}</span>
+        {summary && <span className="zen-mstack-safety-summary">{summary}</span>}
+      </span>
+    </div>
   )
 }
 

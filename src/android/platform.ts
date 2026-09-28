@@ -59,6 +59,7 @@ import type {
   NetHost,
   PageFontsHost,
   PasswordsHost,
+  PdfPrintJob,
   PickedTextFile,
   PerformanceHost,
   Platform,
@@ -231,6 +232,8 @@ export function androidCapabilities({
     qrScan: false,
     // Until boot says the device has a text-to-speech engine (`ReadAloud.kt`; `Platform.speech`).
     readAloud: false,
+    // Until boot says the host answers `view.printPdf` (`Platform.printPdf`; the viewer's Print row).
+    pdfPrint: false,
     // WebView sends the system's languages and cannot be told the list (CT-41's recorded limit).
     pageLanguages: false,
     // Blink's Android font selection ignores the generic-family settings: the standard family
@@ -376,6 +379,8 @@ export interface BootInfo {
   qrScan?: boolean
   /** The device has a text-to-speech engine (`ReadAloud.kt`: an installed TTS service); `Platform.speech` speaks through it. */
   readAloud?: boolean
+  /** The host answers `view.printPdf` (the system print flow for the viewer's PDF); `Platform.printPdf` prints through it. */
+  pdfPrint?: boolean
   /** `Build.MODEL`: what sync calls this device until the user renames it (absent in old hosts). */
   deviceModel?: string
   /**
@@ -1361,6 +1366,13 @@ export class AndroidPlatform implements Platform {
    * `readAloud.available` is false and the entry points stay hidden (interface 3.2).
    */
   readonly speech?: SpeechHost
+  /**
+   * The system print flow for the PDF viewer's document (`view.printPdf`: a `PrintManager` job
+   * whose adapter writes the PDF's bytes), on a host that declared it at boot (`pdfPrint`);
+   * without the verb the host is left out, `capabilities.pdfPrint` is false and the viewer's
+   * Print row stays hidden.
+   */
+  readonly printPdf?: (job: PdfPrintJob) => Promise<boolean>
   private speechListeners: Array<(utteranceId: string, event: SpeechHostEvent) => void> = []
   private voicesListeners: Array<() => void> = []
   /**
@@ -1460,7 +1472,8 @@ export class AndroidPlatform implements Platform {
       pinShortcuts: boot.pinShortcuts === true,
       voiceSearch: boot.voiceSearch === true,
       qrScan: boot.qrScan === true,
-      readAloud: boot.readAloud === true
+      readAloud: boot.readAloud === true,
+      pdfPrint: boot.pdfPrint === true
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
@@ -1751,6 +1764,10 @@ export class AndroidPlatform implements Platform {
           this.speechListeners.push(listener)
         }
       }
+    }
+    if (this.capabilities.pdfPrint) {
+      this.printPdf = async (job) =>
+        (await bridge.call<boolean | null>('view.printPdf', job)) === true
     }
     this.thumbnails = {
       configure: (width) => bridge.send('thumbnail.configure', { width }),

@@ -155,7 +155,21 @@ export class BlockingService {
     return this.browser.permissions.defaultFor(BLOCKING_PERMISSION) !== 'allow'
   }
 
-  /** Load the persisted rule sets, apply the settings and seed the bundled snapshot. */
+  /**
+   * The host's requests are decided by this engine (`BlockingHost.requestEngine: 'core'`, the
+   * desktop); a host that says nothing decides with an engine of its own (Android's Kotlin
+   * engine) and never has a table built here.
+   */
+  private get coreDecides(): boolean {
+    return this.browser.platform.blocking?.requestEngine === 'core'
+  }
+
+  /**
+   * Load the persisted rule sets, apply the settings and seed the bundled snapshot. On a host
+   * whose requests this engine decides, the tables are built here too – `browser.start()` is
+   * one synchronous tick that also opens the startup windows, so they are ready before any
+   * request hook can run and session restore's first request pays no build.
+   */
   start(): void {
     const loaded = this.store.load()
     this.store.attach(this.engine)
@@ -166,6 +180,7 @@ export class BlockingService {
         hasFilterText: l.hasFilterText
       })
     this.syncSets()
+    if (this.coreDecides) this.engine.warm()
     this.unsubscribePermissions = this.browser.permissions.subscribe((change) => {
       if (change.permission !== BLOCKING_PERMISSION) return
       this.syncSets()

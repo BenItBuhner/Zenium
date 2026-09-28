@@ -48,6 +48,56 @@ xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
 The fixture extension lives under `fixtures/mv3-worker` (its worker logs the `chrome` surface it
 starts with; the hook in `smoke.mjs` reads the line off the session's ServiceWorkers console).
 
+## Launch render budget (`--render-budget-ms`, `--first-launch-render-budget-ms`)
+
+Every scenario's `launch` step bounds how long the chrome takes to be on screen: the run's first
+launch of a build is the cold one (`--first-launch-render-budget-ms`, 20 s; nothing has mapped the
+build's pages yet), every launch after it the warm one (`--render-budget-ms`, 10 s). The budget
+guards the chrome's **first paint** and a regression in what the chrome does before it, so it is
+judged on the renderer's own paint timeline: `Session.readChromePaint` reads `performance.timeOrigin`
+plus the latest `paint` entry off the chrome page and reports `firstPaintMs`, the offset from the
+launch's start. That reading is the renderer thread's, not the main process's. The root attaches
+before the frame that shows it is presented (run 36366601282: the entry landed 39–47 ms before the
+read on several windows-x64 launches, after it on `restore`'s), so a document without the entry yet
+is watched for it – what is left of the budget, between 0.5 s and 5 s (`PAINT_READ_GRACE_MS`,
+`PAINT_READ_MAX_MS`); `paintReadMs` says how long that took.
+
+It has to be, because the harness reaches the render through a handshake. `electron.launch()`
+spawns the app (through `cmd.exe` on Windows), waits for its two debugger lines, opens both sockets,
+attaches over CDP, then sends its first two commands **to the main process** (`Runtime.enable`, the
+`__playwright_run` probe – a packaged app has no Playwright loader, so it boots on its own and is
+not held at `ready`); the harness then runs two more main-process evaluates – `hookMain` and the pid
+read – and only then finds the chrome window and awaits its `chrome-root`. `chromeRenderedMs` spans
+all of that: it is the handshake's clock, and every one of those steps can hold it.
+
+W8-H2's two reds were the handshake, not the paint. Run 36356941806 (`agent-space-restore`, the
+unpacked leg's 4th launch) read 10154 ms and run 36362439181 (`dark`, its 7th) 10139 ms; every other
+launch of both legs read 0.7–2.5 s, the ones just before and after included, and the installed leg
+never came near. In both the whole excess sat in `launchMs` (`electron.launch()` plus `hookMain`):
+10052 and 10091 ms against 536–1851 ms otherwise, with the render steps after it at 102 and 48 ms –
+shorter than on any normal launch, over a chrome the failure screenshots show fully painted. A hold
+on the whole process (an antivirus pre-execution check, say) is ruled out by the arithmetic: a boot
+after a 10 s hold still needs the ≥ 536 ms every other launch needed, and 52–91 ms remained. So the
+app booted and painted while the handshake waited, and the wait was in the handshake – which step,
+the logs could not say, and no 10 s code deadline exists on the path (Playwright 1.63's launch runs
+under the harness's 90 s progress deadline; the app's boot before its window has none; `hookMain`
+is synchronous).
+
+Judging on `firstPaintMs` keeps a genuine paint regression failing on every launch, while a handshake
+that waited on something other than the paint no longer does. That handshake is not dropped: when it
+runs over the budget behind a paint within it, the launch step logs `launch handshake N ms over the
+render budget … while the chrome painted at M ms` with every timed phase, and each scenario's
+`result.json` and the summary carry `chromeRenderedMs` beside `firstPaintMs`. The phases split the
+handshake so the next occurrence names its own: on the harness's side `launchResolveMs`
+(`electron.launch()`), `hookMs`, `pidMs`, `chromePageMs`, `rootAttachMs`, `paintReadMs`; on the
+app's, against the same launch clock, `processStartMs` (the OS's creation time of the browser
+process – a wait before the app existed), `nodeStartMs` (Node up in the main process),
+`chromeNavStartMs` (the chrome document loading – the window was up) and `firstPaintMs`. The
+composite is still the verdict when the renderer reported no paint entry in the wait. The leg's
+normal shape, run 36366601282 windows-x64 unpacked: process at 14–27 ms, Node at 44–59 ms, chrome
+document at 407–480 ms, paint at 0.99–1.33 s, `electron.launch()` back at 0.68–1.33 s, `hookMain`
+8–17 ms (the cold first launch: 82 / 124 / 556 ms, paint 3.86 s, `electron.launch()` 3.90 s).
+
 ## reCAPTCHA v2 (`recaptcha`, allow-network)
 
 The one scenario that leaves the loopback fixture: it opens Google's own reCAPTCHA v2 demo
@@ -128,15 +178,41 @@ clean quit takes the entry back. No runner restarts: the scenario emits the even
 app from the main process and reads what Windows would run off the registry (`win-restart.ps1`);
 the toggle is set on for the run and put back as it was, the entry deleted at the end.
 
-| step                     | reads                                                                                                                                                                                                                                              | confirmed by                         |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `toggle-on`              | `RestartApps` before the run (restored at the end), then set to 1; a leftover entry of an earlier run removed                                                                                                                                      | the OS's registry                    |
-| `session-end-registers`  | `session-end` `{reasons:['shutdown']}` on the main window: this profile's RunOnce value holds `<exe> "--user-data-dir=<profile>" --restore-last-session` (the running executable, the profile the app resolved); the `[zen] restart:` line says so | the app's handler, the OS's registry |
-| `clean-quit-unregisters` | `will-quit` on the app: the value gone (the app stays up – the emit is the quit's event alone)                                                                                                                                                     | the app's handler, the OS's registry |
-| `toggle-off-skips`       | `RestartApps` = 0, `session-end` again: no value; the line says the toggle is off                                                                                                                                                                  | the app's handler, the OS's registry |
-| `close-app-skips`        | `RestartApps` = 1, `session-end` `{reasons:['close-app']}` (the Restart Manager closing the app for an installer, which restarts it itself): no value; the line says no sign-in follows                                                            | the app's handler, the OS's registry |
-| `registration-survives`  | `session-end` `{reasons:['logoff']}` registers again; the process is ended the way Windows ends it after `WM_ENDSESSION` (`taskkill /F`): the value stands – what the next sign-in would run                                                       | the OS's registry                    |
-| `cleanup`                | the value deleted; the toggle put back                                                                                                                                                                                                             | the OS's registry                    |
+| step                     | reads                                                                                                                                                                                                                                                                                                                 | confirmed by                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `toggle-on`              | `RestartApps` before the run (restored at the end), then set to 1; a leftover entry of an earlier run removed                                                                                                                                                                                                         | the OS's registry                    |
+| `session-end-registers`  | `session-end` `{reasons:['shutdown']}` on the main window: this profile's RunOnce value holds `<exe> "--user-data-dir=<profile>" --restore-last-session` (the running executable, the profile the app resolved); the `[zen] restart:` line says so – the key read to the budget, stamped from the app's write (below) | the app's handler, the OS's registry |
+| `clean-quit-unregisters` | `will-quit` on the app: the value gone (the app stays up – the emit is the quit's event alone); read to the budget as well                                                                                                                                                                                            | the app's handler, the OS's registry |
+| `toggle-off-skips`       | `RestartApps` = 0, `session-end` again: no value; the line says the toggle is off                                                                                                                                                                                                                                     | the app's handler, the OS's registry |
+| `close-app-skips`        | `RestartApps` = 1, `session-end` `{reasons:['close-app']}` (the Restart Manager closing the app for an installer, which restarts it itself): no value; the line says no sign-in follows                                                                                                                               | the app's handler, the OS's registry |
+| `registration-survives`  | `session-end` `{reasons:['logoff']}` registers again; the process is ended the way Windows ends it after `WM_ENDSESSION` (`taskkill /F`): the value stands – what the next sign-in would run – read to the budget after the process's end, stamped from the app's write                                               | the OS's registry                    |
+| `cleanup`                | the value deleted; the toggle put back                                                                                                                                                                                                                                                                                | the OS's registry                    |
+
+Every read of the key is timed to a budget (W8-F10; `restart-scenario.mjs` `pollRunOnce`). The
+app's handler runs inside the emit – the write is a synchronous `reg.exe add` – so the
+main-process emit (`emitSessionEnd`, `emitWillQuit`) returns the app's clock either side of it,
+and the key is then read (`win-restart.ps1`, a PowerShell spawn: 300–1000 ms on the arm64 leg)
+every 500 ms until it agrees with the step, to 20 s from the poll's start, each read stamped from
+the handler's return; `registration-survives` polls the same way after `taskkill`, where one read
+500 ms after the kill used to be the whole reading. On the windows-arm64 legs (the slow
+Intel-emulated runner, 2026-09-27) the value the app said it had written read back missing –
+`session-end-registers` for the whole of its 10 s with the `[zen] restart:` line saying registered
+(run 36319202354), `registration-survives` 500 ms after the process's end having read present
+before it (run 36329961432). A key that never agrees fails after the budget with the readers'
+wording first, then the app's word, the reads (those that agree collapsed into spans) and two
+`reg.exe query` cross-reads – the harness's and, while the app is up, the app's own from inside its
+process (`appRegQuery`) – so a write that raced the reads tells from one the PowerShell reader
+never sees:
+
+    HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce\Zenium.afce3647 is missing;
+    the app's session-end (shutdown) handler returned at 12:39:13.951Z after 51 ms;
+    reads +0.4s…+19.8s ×22 missing; reg query: harness missing, app present
+
+The step's detail carries `emitted` (the clock), `reads` and `cross` with the values; the green
+path's log line says how long after the app's write the entry was read. No step's criteria
+changed – the value must hold the exact command, the log its wording – and the pure parts
+(`runOnceVerdict`, `formatRunOnceReads`, `describeEmit`, `regQueryState`, `runOnceMissMessage`)
+are `restart-scenario.test.mjs`'s.
 
 What no runner confirms: the sign-in itself (RunOnce processed by the shell at the user's next
 sign-in, the app up with `--restore-last-session`), and that Windows delivers `WM_ENDSESSION`
@@ -335,17 +411,19 @@ as `<scenario>-quit-hold.png`, the exit at the hold's end). The chord's keys go 
 `webContents.sendInputEvent` on the chrome, the path a physical press takes into
 `before-input-event`, where the key table runs synchronously.
 
-Two things the harness learnt on macos-x64 (`macos-15-intel`, W8-F9; five `hold-release` reds
+Three things the harness learnt on macos-x64 (`macos-15-intel`, W8-F9; five `hold-release` reds
 in 37 h with the arm64 twin green each time, and one `dark/quit` red nothing could explain
-afterwards): the hold's release is timed by the app's own clock, and a quit that does not come
-is read while it is not coming.
+afterwards; then W8-H1, run 36359347441: the app's own 500 ms key-up timer fired at 1507 ms on a
+starved runner, the arming proven, the other four legs green): the hold's release is timed by
+the app's own clock, a quit that does not come is read while it is not coming, and a release
+the runner's timer slack alone pushed past the hold is driven again rather than failed.
 
-| step           | reads                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | confirmed by                     |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- |
-| `menu-item`    | a page in a new tab in front; the application menu's `Warn Before Quitting (⌘Q)` row a checkbox, checked; `settings.warnBeforeQuitting === true` on the fresh profile; the `Quit Zenium` row kept                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | the main process, `app.getState` |
-| `hold-release` | one evaluate in the main process (`Session.holdKeysFor`) sends the chord's key down, schedules its key up on a timer there 500 ms later and returns `{ downAt, upAt }` off the app's `Date.now()` – the hold's length (`heldForMs = upAt − downAt` ≈ 500, `lateByMs` the timer's slack) contains no round trip; meanwhile `window.quitHold` is polled through the chrome and each poll is judged by its timestamps (`quit.mjs` `judgeHoldRelease`): a poll that saw the hold proves the arming (its chord `⌘Q`, its 1500 ms), a null read whose whole round trip lay inside the hold fails the step (the chord armed nothing), a poll that answered after the release proves nothing and fails nothing (`arming: 'unproven'` with a note – the other scenarios' full holds prove the arming with a still each run); then the state reads no hold, no exit comes by `downAt + 2000`, the main process answers. Fails on: a release at or past 1500 ms, a key up the app could not send, a not-armed read, a hold naming another chord or duration | the app's clock, `app.getState`  |
-| `toggle-off`   | the row picked through its own `click` in the main process: `settings.warnBeforeQuitting` false, the menu rebuilt with the row unchecked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | the main process, `app.getState` |
-| `quit-at-once` | `quitGracefully` reads the setting off and presses instead of holding: the app quits at the press with no hold (`hold` null), exit code 0; `state.json` keeps `warnBeforeQuitting: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | the process, the profile         |
+| step           | reads                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | confirmed by                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `menu-item`    | a page in a new tab in front; the application menu's `Warn Before Quitting (⌘Q)` row a checkbox, checked; `settings.warnBeforeQuitting === true` on the fresh profile; the `Quit Zenium` row kept                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | the main process, `app.getState` |
+| `hold-release` | one evaluate in the main process (`Session.holdKeysFor`) sends the chord's key down, schedules its key up on a timer there 500 ms later and returns `{ downAt, upAt }` off the app's `Date.now()` – the hold's length (`heldForMs = upAt − downAt` ≈ 500, `lateByMs` the timer's slack) contains no round trip; meanwhile `window.quitHold` is polled through the chrome and each poll is judged by its timestamps (`quit.mjs` `judgeHoldRelease`): a poll that saw the hold proves the arming (its chord `⌘Q`, its 1500 ms), a null read whose whole round trip lay inside the hold fails the step (the chord armed nothing), a poll that answered after the release proves nothing and fails nothing (`arming: 'unproven'` with a note – the other scenarios' full holds prove the arming with a still each run); then the state reads no hold, no exit comes by `downAt + 2000`, the main process answers. A release at or past 1500 ms with nothing else wrong is the runner's key-up timer firing late, not the app (W8-H1; `quit.mjs` `holdReleaseRedrives`): the chord is driven again, up to three attempts (`HOLD_RELEASE_ATTEMPTS`), each only once the state reads no hold and no exit came (`holdClearedForRedrive`); every attempt is logged (`hold-release attempt n/3: the keys were down … ms by the app's clock (release at 500 ms, … ms of timer slack)`), a pass after a re-drive names the overshoots before it, and the detail carries every attempt's verdict (`attempts`). Fails on: a release at or past 1500 ms on the last attempt, a key up the app could not send, a not-armed read, a hold naming another chord or duration (any of these at once, on any attempt), the app gone or the hold not cleared between two attempts | the app's clock, `app.getState`  |
+| `toggle-off`   | the row picked through its own `click` in the main process: `settings.warnBeforeQuitting` false, the menu rebuilt with the row unchecked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | the main process, `app.getState` |
+| `quit-at-once` | `quitGracefully` reads the setting off and presses instead of holding: the app quits at the press with no hold (`hold` null), exit code 0; `state.json` keeps `warnBeforeQuitting: false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | the process, the profile         |
 
 The trace of a quit that does not come (every `quitGracefully`, on every leg): a quit not exited
 by the hold's 1500 ms and a 1000 ms margin is read BEFORE the keys come up (`holdQuitChord`) and
@@ -406,6 +484,48 @@ through its DOM, the profile's through `state.json` – never a log line.
 The session's end goes over the local MCP server – the soak's `HttpClient` from
 `scripts/mcp-soak.mjs`, the same HTTP path a real agent takes – not a test-only command. The
 pure parts (the seeded document, the verdicts) are `agent-space-scenario.test.mjs`'s.
+
+## A launch with a URL (`launch-url`)
+
+`zenium <url>` on a fresh profile past onboarding (W8-F14) – the default-browser path with
+Zenium closed, a dropped file – comes up as Chrome does: the one tab on the page, one sidebar
+row, and no URL bar over it. The main process starts the window with its fresh tab
+(`ensureFirstTab`, W5-F2 / #490), then `openLaunch` carries the URL into that tab
+(`Browser.openLaunchUrls`); the fresh tab's announcement, armed for the tab, finds a page in its
+place at chrome-ready and stays silent. Until this slice the URL opened as a second tab beside the
+fresh `zen://newtab` one and the bar armed for the window opened over the page, bound to no tab.
+The step reads the state once the page has loaded and a quiet second has passed (the bar due at
+chrome-ready has had its moment): the tabs through `app.getState` (one, the launched page,
+active), the sidebar rows (one) and the URL bar's field (none); then the window and a graceful
+quit that keeps the page. The Linux job's boot set runs it.
+
+## The new tab's caret (`boot` / `new-tab-fixture`)
+
+The onboarding's end leaves a new tab with its URL bar up in new-tab mode, and `boot`'s
+`new-tab-fixture` step requires that bar's field to hold the keyboard as the harness finds it
+before it types the fixture's address (the caret the user would see; a regression of the chrome
+letting the field go for the new tab's view – 2026-09-22, three times – is this one step). The
+field is read through the app, not the screen: `Session.keyboardOwner` asks the main process
+which `webContents` has the keyboard (`webContents.isFocused()`) and the chrome page for its
+`document.activeElement`, and the field owns the keyboard when the answer is `chrome:urlbar-input`
+(`URLBAR_FIELD_OWNER`). The bar taking the keyboard back from the new tab's view is an IPC round
+trip away (`lib/panes.ts` `pageTookKeyboard` → `focus.chrome`), and on the windows-arm64 legs
+(the slow Intel-emulated runner) it took longer than the fixed 3 s the harness used to allow –
+"the URL bar found up had no caret: the keyboard was none for the 3097 ms before the harness
+focused the field" on 2026-09-27 (runs 36328985977, 36311508944). The read is now
+a poll (`Session.urlbarCaret`, W8-F10): the owner every 250 ms to a 10 s budget
+(`CARET_BUDGET_MS`, `CARET_POLL_EVERY_MS`), each poll stamped, done at the first read that says
+the field. A caret that does not come still fails after the budget, with the same wording, the
+polls (`navigation.mjs` `formatCaretTrace`, readings that agree collapsed into spans) and the
+case for the verdict in the step's detail – the main process's view of the keyboard with the
+field's own focus and selection, the hook's keyboard moves and the chrome's focus trace – and
+the step's own screenshot as the still:
+
+    the URL bar found up had no caret: the keyboard was tab:2 for the 10012 ms before the
+    harness focused the field; polls +0.0s none; +0.3s…+10.0s ×40 tab:2
+
+The green path's detail carries `caret.ms` (when the field had the keyboard) and the trace;
+`caretVerdict` and the trace's line are `navigation.test.mjs`'s.
 
 ## Teardown
 

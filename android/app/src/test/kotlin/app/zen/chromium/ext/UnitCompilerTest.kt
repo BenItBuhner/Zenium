@@ -71,18 +71,19 @@ class UnitCompilerTest {
     }
 
     @Test
-    fun `a re-plan reuses the sources already read and compiles only what changed`() {
+    fun `a re-plan compiles only what changed and reads only the files its new unit names`() {
         val compiler = UnitCompiler { "/*boot*/" }
         compiler.compile(id, "1.0.0", units("isolated:https://example.com" to listOf("cs.js")), true, read, size)
         val readsAfterFirst = reads
-        // registerContentScripts added a second unit: the first is cached, the second reads extra.js only.
+        // registerContentScripts added a second unit: the first is cached and reads nothing, the
+        // second reads extra.js and the CSS (the first compile's texts went with it).
         val compiled = compiler.compile(
             id, "1.0.0",
             units("isolated:https://example.com" to listOf("cs.js"), "isolated:https://other.example" to listOf("extra.js")),
             true, read, size
         )
         assertEquals(listOf(true, false), compiled.map { it.cached })
-        assertEquals(readsAfterFirst + 1, reads)
+        assertEquals(readsAfterFirst + 2, reads)
         assertEquals(2, compiler.unitsOf(id).size)
         // The plan shrinks again: the dropped unit is forgotten.
         compiler.compile(id, "1.0.0", units("isolated:https://example.com" to listOf("cs.js")), true, read, size)
@@ -114,23 +115,111 @@ class UnitCompilerTest {
     }
 
     @Test
-    fun `sources the GC took back are read again and only they - a cached unit needs none of them`() {
+    fun `the texts read for a plan are shared by its units and let go once every unit is compiled - memoryOf reads none after`() {
+        // Compat round 22 (R22-1): Adblock Ad Blocker Pro's 651 sources – 15.8 million characters,
+        // 24.7 MB – stood soft-held on the 192 MB heap through every row after its configure, and
+        // ART clears a soft referent only in the collection after an allocation has failed.
+        val compiler = UnitCompiler { "/*boot*/" }
+        // Two units of one plan list cs.js: read once, and the CSS once, for the both of them.
+        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js", "cs.js")), true, read, size)
+        assertEquals(3, reads) // cs.js, style.css, extra.js
+        assertTrue(compiled[1].script.contains("console.log('extra')") && compiled[1].script.contains("console.log('cs')"))
+        // Nothing held once the plan is compiled: the units carry every text themselves.
+        assertEquals(0, compiler.cachedSources(id))
+        val memory = compiler.memoryOf(id)
+        assertEquals(2, memory.getInt("units"))
+        assertEquals(compiled.sumOf { it.script.length.toLong() }, memory.getLong("unitChars"))
+        assertEquals(0, memory.getInt("sources"))
+        assertEquals(0L, memory.getLong("sourceChars"))
+        assertEquals(0L, memory.getLong("sourceBytes"))
+        // The units themselves are cached: the same plan needs no source.
+        val same = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js", "cs.js")), true, read, size)
+        assertEquals(listOf(true, true), same.map { it.cached })
+        assertEquals(3, reads)
+        // A re-plan that adds a unit reads the files it names again, and holds nothing after either.
+        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js", "cs.js"), "k3" to listOf("cs.js")), true, read, size)
+        assertEquals(listOf(true, true, false), more.map { it.cached })
+        assertEquals(5, reads) // cs.js and style.css for k3
+        assertEquals(0, compiler.cachedSources(id))
+        assertEquals(0, compiler.memoryOf(id).getInt("sources"))
+    }
+
+    @Test
+    fun `a unit is 16-bit for its sources alone - the config and the glue are Latin-1 - and memoryOf counts it`() {
+        // Compat round 22 (R22-2): the width the lanes read on every unit of Adblock Ad Blocker Pro
+        // was the extension's own text – a U+205D in each uBlock scriptlet's `makeLogPrefix`, the
+        // filter lists' CJK and Cyrillic – not the bootstrap's, the boot config's or the assembly's.
+        files["wide.js"] = "console.log('\u205D')"
+        val compiler = UnitCompiler { "/*boot*/" }
+        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("wide.js")), true, read, size)
+        assertFalse(compiled[0].script.any { it > '\u00FF' })
+        assertTrue(compiled[1].script.any { it > '\u00FF' })
+        val memory = compiler.memoryOf(id)
+        assertEquals(2, memory.getInt("units"))
+        assertEquals(1, memory.getInt("wideUnits"))
+        assertEquals(compiled[0].script.length.toLong() + 2L * compiled[1].script.length, memory.getLong("unitBytes"))
+        assertFalse(memory.getBoolean("compiling"))
+        assertEquals(0, memory.getInt("refused"))
+    }
+
+    @Test
+    fun `memoryOf does not wait on a compile in flight - it says compiling and counts nothing - and counts the settled plan after`() {
+        // Compat round 22's `[lane]` run: the heap split's reading on the main thread stood on the
+        // compiler's lock for the compile's last 1.5 s (Choreographer's 92 skipped frames) and got
+        // the plan being compiled counted against the one still installed.
         val compiler = UnitCompiler { "/*boot*/" }
         compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read, size)
-        assertEquals(2, compiler.cachedSources(id))
-        compiler.clearSourcesForTest(id)
-        assertEquals(0, compiler.cachedSources(id))
-        val readsAfterClear = reads
-        // The unit itself is still cached: no source is needed for it.
-        val same = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read, size)
-        assertTrue(same[0].cached)
-        assertEquals(readsAfterClear, reads)
-        // A re-plan that adds a unit reads its files again (cs.js and style.css went; extra.js never was).
-        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js", "cs.js")), true, read, size)
-        assertEquals(listOf(true, false), more.map { it.cached })
-        assertTrue(more[1].script.contains("console.log('extra')") && more[1].script.contains("console.log('cs')"))
-        assertEquals(readsAfterClear + 3, reads)
-        assertEquals(3, compiler.cachedSources(id))
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val blockingRead: (String) -> String? = { path ->
+            if (path == "extra.js") {
+                entered.countDown()
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            files[path]
+        }
+        val worker = Thread {
+            compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js")), true, blockingRead, size)
+        }
+        worker.start()
+        assertTrue(entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        val t0 = System.nanoTime()
+        val during = compiler.memoryOf(id)
+        assertTrue("memoryOf waited ${(System.nanoTime() - t0) / 1_000_000} ms", System.nanoTime() - t0 < 2_000_000_000L)
+        assertTrue(during.getBoolean("compiling"))
+        assertFalse(during.has("units"))
+        release.countDown()
+        worker.join(10_000)
+        assertFalse(worker.isAlive)
+        val after = compiler.memoryOf(id)
+        assertFalse(after.getBoolean("compiling"))
+        assertEquals(2, after.getInt("units"))
+        assertEquals(0, after.getInt("sources"))
+    }
+
+    @Test
+    fun `memoryOf counts a refused unit apart from the compiled ones - its empty script in no total`() {
+        val vendor = "/* vendor */ " + "v".repeat(2_000)
+        files["vendor.js"] = vendor
+        val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
+        val groups = JSONArray()
+        for (g in 0 until 8) {
+            groups.put(org.json.JSONObject().put("ext", id).put("index", g).put("js", JSONArray(listOf("vendor.js", "cs.js"))).put("isolation", "with"))
+        }
+        val plan = units("small:https://example.com" to listOf("cs.js"))
+        plan.put(
+            org.json.JSONObject().put("key", "big:*").put("origins", JSONArray(listOf("*"))).put("world", org.json.JSONObject.NULL)
+                .put("config", "{}").put("groups", groups).put("css", JSONArray())
+        )
+        val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+        val memory = compiler.memoryOf(id)
+        // Two entries in the cache, one of them the refusal: the runtime installs one unit, and the count here matches it.
+        assertEquals(2, memory.getInt("units"))
+        assertEquals(1, memory.getInt("refused"))
+        assertEquals(compiled[0].script.length.toLong(), memory.getLong("unitChars"))
+        assertEquals(compiled[0].script.length.toLong(), memory.getLong("unitBytes"))
+        assertEquals(0, memory.getInt("wideUnits"))
+        assertEquals(1, memory.getInt("units") - memory.getInt("refused"))
     }
 
     @Test
@@ -139,8 +228,10 @@ class UnitCompilerTest {
         val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("gone.js")), true, read, size)
         assertTrue(compiled[0].script.contains("missing content script gone.js"))
         val readsAfterFirst = reads
+        // The mark outlives the compile where the texts do not: a re-plan reads the CSS again and does not try gone.js twice.
         compiler.compile(id, "1.0.0", units("k2" to listOf("gone.js")), true, read, size)
-        assertEquals(readsAfterFirst, reads)
+        assertEquals(readsAfterFirst + 1, reads)
+        assertEquals(1, compiler.cachedSources(id))
     }
 
     @Test
@@ -160,26 +251,27 @@ class UnitCompilerTest {
     }
 
     @Test
-    fun `a large file goes into the script once, is not held for a re-plan, and is read again by one`() {
-        // Monica's content.js: 28 million characters; the soft copy and the assembly's third copy did not fit the heap.
+    fun `a large file goes into the script once and is not held even for the plan's next unit, which reads it again`() {
+        // Monica's content.js: 28 million characters; the held copy and the assembly's third copy did not fit the heap.
         val large = "/* big */ " + "x".repeat(UnitCompiler.LARGE_SOURCE_CHARS)
         files["big.js"] = large
         val compiler = UnitCompiler { "/*boot*/" }
-        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "big.js", "extra.js")), true, read, size)
+        // Two units of one plan name it: cs.js, extra.js and the CSS are read once for the both, big.js once per unit.
+        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "big.js", "extra.js"), "k2" to listOf("big.js", "cs.js")), true, read, size)
         val script = compiled[0].script
         assertEquals(1, Regex("/\\* big \\*/").findAll(script).count())
         val cs = script.indexOf("console.log('cs')")
         val big = script.indexOf("/* big */")
         val extra = script.indexOf("console.log('extra')")
         assertTrue(cs in 0 until big && big < extra)
-        assertEquals(4, reads) // cs.js, big.js, extra.js and the CSS
-        // cs.js, extra.js and the CSS are held; big.js is not.
-        assertEquals(3, compiler.cachedSources(id))
-        // A re-plan that needs it reads big.js again and nothing else.
-        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "big.js", "extra.js"), "k2" to listOf("big.js")), true, read, size)
-        assertEquals(listOf(true, false), more.map { it.cached })
-        assertEquals(5, reads)
-        assertTrue(more[1].script.contains("/* big */"))
+        assertTrue(compiled[1].script.contains("/* big */"))
+        assertEquals(5, reads) // cs.js, big.js, extra.js and the CSS for k; big.js again for k2
+        assertEquals(0, compiler.cachedSources(id))
+        // A re-plan that adds a unit over it reads big.js and the CSS again.
+        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "big.js", "extra.js"), "k2" to listOf("big.js", "cs.js"), "k3" to listOf("big.js")), true, read, size)
+        assertEquals(listOf(true, true, false), more.map { it.cached })
+        assertEquals(7, reads)
+        assertTrue(more[2].script.contains("/* big */"))
     }
 
     @Test
@@ -197,9 +289,9 @@ class UnitCompilerTest {
         // The CSS travels JSON-quoted; its `import(` and `url(` are as written, nothing of it rewritten.
         assertTrue(script.contains("not-a-script.js") && script.contains("./x.css") && script.contains("./b.png"))
         assertFalse(script.contains("ext.zenium.invalid/not-a-script.js") || script.contains("ext.zenium.invalid/x.css"))
-        // The cached text is the file as read, so a re-plan rewrites it the same way and reads nothing new.
+        // The text is rewritten as it goes into a unit, never in the cache: a re-plan reads the file again and rewrites it the same way.
         val again = compiler.compile(id, "1.0.0", units("k2" to listOf("src/pages/contentInject/index.js")), true, read, size)
-        assertEquals(4, reads)
+        assertEquals(6, reads) // index.js and the CSS again
         assertTrue(again[0].script.contains("""import("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js")"""))
     }
 
@@ -257,15 +349,16 @@ class UnitCompilerTest {
     }
 
     @Test
-    fun `a destroyed runtime's close releases every extension's units and held sources, reports them, and the compiler compiles nothing after`() {
+    fun `a destroyed runtime's close releases every extension's units, reports them, and the compiler compiles nothing after`() {
         val compiler = UnitCompiler { "/*boot*/" }
         compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js")), true, read, size)
         val other = "bcdefghijklmnopqbcdefghijklmnopq"
         compiler.compile(other, "2.0.0", units("k" to listOf("cs.js")), true, read, size)
         val chars = (compiler.unitsOf(id) + compiler.unitsOf(other)).sumOf { it.script.length.toLong() }
         assertTrue(chars > 0)
-        assertEquals(3, compiler.cachedSources(id)) // cs.js, extra.js, style.css
-        assertEquals(2, compiler.cachedSources(other))
+        // No source is held between compiles; the units are what the close has to let go of.
+        assertEquals(0, compiler.cachedSources(id))
+        assertEquals(0, compiler.cachedSources(other))
         assertFalse(compiler.isClosed)
         val released = compiler.close()
         assertTrue(compiler.isClosed)
@@ -273,7 +366,7 @@ class UnitCompilerTest {
         assertEquals(2, released.extensions)
         assertEquals(3, released.units)
         assertEquals(chars, released.unitChars)
-        assertEquals(5, released.sources)
+        assertEquals(0, released.sources)
         for (ext in listOf(id, other)) {
             assertEquals(0, compiler.unitsOf(ext).size)
             assertEquals(0, compiler.cachedSources(ext))
@@ -363,17 +456,20 @@ class UnitCompilerTest {
     }
 
     @Test
-    fun `a unit under the budget compiles as before, its measure taken from the sizes and the held texts`() {
+    fun `a unit under the budget compiles as before, its measure taken from the sizes and, within a plan, from the texts in hand`() {
         val compiler = UnitCompiler(budgetChars = 10_000) { "/*boot*/" }
-        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "extra.js")), true, read, size)
+        // The plan's second unit is over files its first unit read: measured by their texts, not the disk.
+        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "extra.js"), "k2" to listOf("cs.js")), true, read, size)
         assertNull(compiled[0].refused)
+        assertNull(compiled[1].refused)
         assertTrue(compiled[0].script.contains("console.log('cs')") && compiled[0].script.contains("console.log('extra')"))
         assertEquals(3, reads) // cs.js, extra.js, style.css
-        // A re-plan adding a unit over the same held files measures them by their texts, not the disk.
+        assertEquals(3, sizes) // the first unit's three files; the second's two were in hand
+        // A re-plan adding a unit measures its files by the disk again (the texts went with the first compile).
         sizes = 0
-        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "extra.js"), "k2" to listOf("cs.js")), true, read, size)
-        assertNull(more[1].refused)
-        assertEquals(0, sizes)
+        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "extra.js"), "k2" to listOf("cs.js"), "k3" to listOf("cs.js")), true, read, size)
+        assertNull(more[2].refused)
+        assertEquals(2, sizes) // cs.js and style.css
     }
 
     @Test

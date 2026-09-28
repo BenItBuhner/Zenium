@@ -5,10 +5,11 @@ import type {
   MouseEvent as ReactMouseEvent,
   ReactNode
 } from 'react'
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { focusableIn } from '@renderer/lib/popover'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import type { InternalPageQuery } from '@shared/internalPages'
@@ -20,12 +21,15 @@ import { Slider } from '../../ui/slider'
 import {
   controlledRuns,
   currentOptionLabel,
+  fieldInputType,
   groupShows,
   itemMenuItems,
   type ActionRow,
   type CustomRow,
   type FieldRow,
   type InfoRow,
+  type InlineAction,
+  type ItemRow,
   type RowControl,
   type RowCopy,
   type RowGroup,
@@ -367,11 +371,14 @@ function PlainRowView({
       )
     }
     case 'field':
+      // The row stands in for the field on the phone: its warning (`FieldRow.warning`) is the
+      // line under the value it shows, where the desktop's stands under the field.
       return (
         <PressableRow
           row={row}
           caption={caption}
           description={row.display ?? row.value}
+          warning={row.warning}
           haspopup="dialog"
           onPress={() => ctx.open({ kind: 'field', rowId: row.id })}
         />
@@ -573,6 +580,91 @@ function PopoverActionButton({
 }
 
 /**
+ * An item row's one action as its trailing 32 button (`ItemRow.action`, §10.5), named for the
+ * row it acts on – the label then the row's label, or the action's own reader name where those
+ * two make no sentence. The act commonly removes the row (Reset, Remove, Allow again), and a
+ * button that unmounts with its row leaves the keyboard nowhere: the focus falls to `body`,
+ * where the frame is held inert under a dialog and the next Tab re-enters at the first
+ * control. So a button holding the focus as its row goes hands it on first – the layout
+ * cleanup runs while the row still stands in the document – to the next row's control, else
+ * the group's heading, the next group's first control, the row before, or the dialog:
+ * whichever still stands once the commit is through (`handOffFocus`).
+ */
+function InlineActionButton({ row, action }: { row: ItemRow; action: InlineAction }): JSX.Element {
+  const ref = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    const button = ref.current
+    return () => {
+      if (button && document.activeElement === button) handOffFocus(button)
+    }
+  }, [])
+  return (
+    <V2Button
+      ref={ref}
+      variant={action.destructive ? 'danger' : 'secondary'}
+      busy={action.busy}
+      disabled={row.disabled}
+      aria-label={action.ariaLabel ?? `${action.label} ${row.label}`}
+      onClick={action.onPress}
+    >
+      {action.label}
+    </V2Button>
+  )
+}
+
+/** What the browser focuses without being told to: the controls, and anything given a tabindex. */
+const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]'
+
+/** The row's own control: the row where it is one (`PressableRow`), else its first control. */
+function controlOf(row: HTMLElement): HTMLElement | undefined {
+  return row.matches(FOCUSABLE) ? row : focusableIn(row)[0]
+}
+
+/** The nearest row (`data-row`) on one side of `row`, over the hairlines and indicators between. */
+function siblingRow(
+  row: HTMLElement,
+  side: 'nextElementSibling' | 'previousElementSibling'
+): HTMLElement | null {
+  for (let el = row[side]; el; el = el[side]) {
+    if (el instanceof HTMLElement && el.hasAttribute('data-row')) return el
+  }
+  return null
+}
+
+/**
+ * Move the focus from a control whose row is leaving the document to what stands after it, once
+ * the commit that removes the row is through (a microtask: the candidates are read now, while
+ * the row is still in place, and the first still connected then takes the focus). A heading
+ * takes `tabindex="-1"` to hold it. Nothing moves when something else has the focus by then –
+ * the dialog returning it to its opener as it leaves with the row, a user's click.
+ */
+function handOffFocus(control: HTMLElement): void {
+  const row = control.closest<HTMLElement>('[data-row]')
+  if (!row) return
+  const group = row.closest<HTMLElement>('.zen-settings-group')
+  const candidates: (HTMLElement | undefined | null)[] = []
+  const next = siblingRow(row, 'nextElementSibling')
+  if (next) candidates.push(controlOf(next))
+  candidates.push(group?.querySelector<HTMLElement>('.zen-settings-heading'))
+  const after = group?.nextElementSibling
+  if (after instanceof HTMLElement && after.classList.contains('zen-settings-group'))
+    candidates.push(focusableIn(after)[0])
+  const previous = siblingRow(row, 'previousElementSibling')
+  if (previous) candidates.push(controlOf(previous))
+  candidates.push(row.closest<HTMLElement>('[role="dialog"]'))
+  queueMicrotask(() => {
+    const now = document.activeElement
+    if (now && now !== document.body && now.isConnected) return
+    for (const target of candidates) {
+      if (!target?.isConnected) continue
+      if (!target.matches(FOCUSABLE)) target.tabIndex = -1
+      target.focus()
+      if (document.activeElement === target) return
+    }
+  })
+}
+
+/**
  * A model row in the desktop vocabulary. Info and custom rows are the phone's, and so is an item
  * row unless it carries its one `action`, which then trails it as a button in place of a dialog,
  * or its `menu`, the 28 ⋯ over its sheet's actions; a value row trails a menulist, a switch row
@@ -640,18 +732,9 @@ function DesktopRowView({
       // mouse and opens no dialog (§10.5); the button is named for the row it acts on, as the
       // viewer's Clear is, since a list of them reads "Remove" many times over.
       if (row.action) {
-        const action = row.action
         return (
           <ControlRow row={row} caption={caption} description={row.description}>
-            <V2Button
-              variant={action.destructive ? 'danger' : 'secondary'}
-              busy={action.busy}
-              disabled={row.disabled}
-              aria-label={`${action.label} ${row.label}`}
-              onClick={action.onPress}
-            >
-              {action.label}
-            </V2Button>
+            <InlineActionButton row={row} action={row.action} />
           </ControlRow>
         )
       }
@@ -729,6 +812,7 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
         options={row.options}
         onChange={row.onChange}
         disabled={row.disabled}
+        readOnly={row.readOnly}
         className="zen-settings-menulist"
       />
     </ControlRow>
@@ -749,11 +833,15 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
  * move the choice to the next or previous option, wrapping, and the focus with it. The row is a
  * column as the stacked field row is (`.zen-settings-stacked-row`), `data-static` since the
  * options are the targets, and disabled as a dependent row at .4 with its options taking no
- * press (§10.4).
+ * press (§10.4). With nothing of its own in sight – no description, no caption – the row is
+ * `data-bare`: its options and nothing else, so the row pad a text row keeps above and below
+ * goes (pr-584's NEW 1, W8-10) and the options stand off the row before as they stand off one
+ * another (§10.3, rows 0 apart) instead of the legend's pad further.
  */
 function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
   const group = useRef<HTMLDivElement>(null)
   const description = row.sheetDescription ?? row.description
+  const text = Boolean(caption || description)
   const checkedAt = Math.max(
     0,
     row.options.findIndex((option) => option.value === row.value)
@@ -778,6 +866,7 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
     <div
       data-row={row.id}
       data-static=""
+      data-bare={text ? undefined : ''}
       data-tone={row.tone}
       className={cn(
         'zen-settings-row zen-settings-stacked-row zen-settings-radios-row zen-v2-row',
@@ -785,7 +874,7 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
       )}
     >
       <div className="zen-settings-field-block">
-        {(caption || description) && (
+        {text && (
           <span className="zen-settings-row-text">
             {caption && <span className="zen-settings-caption">{caption}</span>}
             {description && <span className="zen-settings-description">{description}</span>}
@@ -1203,7 +1292,10 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
  * (`StackedFieldRow`) the column spans the row's content width and the field and its message
  * with it. In either form the row's visible label is the field's `<label for>` (§9.12's
  * association; #453 for the stacked row, the sweep for the inline one): the input carries
- * `fieldId`, the id the label names, and no `aria-label` to override the name it gives.
+ * `fieldId`, the id the label names, and no `aria-label` to override the name it gives. A
+ * row's `warning` is the same line in the warn ink under the field, named by the field the
+ * same way, while the field holds the row's committed value – never while typing, and never
+ * beside a refusal.
  */
 function InlineField({
   row,
@@ -1216,6 +1308,7 @@ function InlineField({
   fieldId: string
 }): JSX.Element {
   const errorId = `${useId()}-error`
+  const warningId = `${useId()}-warning`
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -1227,6 +1320,10 @@ function InlineField({
     setSeen(row.value)
     if (!editing) setValue(row.value)
   }
+  // The row's warning (`FieldRow.warning`) stands under the field while the field holds the
+  // value the row kept – the field left with it, or not yet touched – and goes while the text
+  // differs (typing) or a refusal has the line.
+  const warning = row.warning && !error && !busy && value === row.value ? row.warning : null
   // Escape leaves the field through `blur()`, whose commit would otherwise run over the value
   // this render's closure still holds – the text the key just put away – and, for a refused
   // one, raise the error the key just cleared (the W8-3 drive's Address field: the row's value
@@ -1258,13 +1355,13 @@ function InlineField({
           row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
           row.secret && 'zen-settings-field-secret'
         )}
-        type={row.input === 'number' ? 'number' : 'text'}
+        type={fieldInputType(row)}
         inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
         min={row.min}
         max={row.max}
         placeholder={row.placeholder}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={error ? errorId : warning ? warningId : undefined}
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
@@ -1301,6 +1398,14 @@ function InlineField({
       {error && (
         <ValidationMessage id={errorId} message={error} className="zen-settings-inline-error" />
       )}
+      {warning && (
+        <ValidationMessage
+          id={warningId}
+          message={warning}
+          tone="warn"
+          className="zen-settings-inline-error"
+        />
+      )}
     </span>
   )
 }
@@ -1335,6 +1440,7 @@ function PressableRow({
   row,
   caption,
   description,
+  warning,
   name,
   leading,
   trailing,
@@ -1349,6 +1455,8 @@ function PressableRow({
   row: SettingsRow
   caption?: string
   description?: string
+  /** A field row's warning line under the description (`FieldRow.warning`). */
+  warning?: string
   name?: string
   leading?: ReactNode
   trailing?: ReactNode
@@ -1389,7 +1497,7 @@ function PressableRow({
           {leading}
         </span>
       )}
-      <RowText label={row.label} description={description} caption={caption} />
+      <RowText label={row.label} description={description} warning={warning} caption={caption} />
       {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
@@ -1402,19 +1510,23 @@ function PressableRow({
  * `<label for>` of the control with that id (a field row's, §9.12), the same class and so the
  * same line; every style hangs on the class, so the element makes no difference. With `labelId`
  * the label carries that id, for a button-like control's `aria-labelledby` (a menulist, a
- * slider's thumb) to name itself by the visible label.
+ * slider's thumb) to name itself by the visible label. A `warning` is §9.12's line in the warn
+ * ink under the description (the phone field row's, `FieldRow.warning`): a third line of the
+ * block, not a third line of the description.
  */
 export function RowText({
   label,
   labelFor,
   labelId,
   description,
+  warning,
   caption
 }: {
   label: string
   labelFor?: string
   labelId?: string
   description?: string
+  warning?: string
   caption?: string
 }): JSX.Element {
   return (
@@ -1430,6 +1542,7 @@ export function RowText({
         </span>
       )}
       {description && <span className="zen-settings-description">{description}</span>}
+      {warning && <ValidationMessage message={warning} tone="warn" />}
     </span>
   )
 }

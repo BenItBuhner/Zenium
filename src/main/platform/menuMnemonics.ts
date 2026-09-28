@@ -176,6 +176,14 @@ export const ZENIUM_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Bookmark All Tabs…', 'B'],
   ['Bookmark Manager', 'M'],
   ['New Tab Below', 'N'],
+  // The horizontal layout's words for the same three rows (#588, W8-10): Chrome's grd carries no
+  // `&` for IDS_TAB_CXMENU_NEWTABTORIGHT / CLOSETABSTOLEFT / CLOSETABSTORIGHT, and only the
+  // sidebar words were keyed, so the rule left them Ri&ght, &Close, &Tabs. The same letters as
+  // their vertical twins' – the row's N whatever the strip's direction, and the distinguishing
+  // word's initial for the two closes, as Above's A and Below's B (and Move &Left / &Right).
+  ['New Tab to the Right', 'N'],
+  ['Close Tabs to the Left', 'L'],
+  ['Close Tabs to the Right', 'R'],
   ['Reload Tab', 'R'],
   ['Mute Tab', 'M'],
   ['Mute Site', 'S'],
@@ -193,7 +201,6 @@ export const ZENIUM_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Close Other Tabs', 'O'],
   ['Move Left', 'L'],
   ['Move Right', 'R'],
-  ['Rename…', 'n'],
   ['Paste as Plain Text', 'l'],
   ['Quit', 'Q'],
   ['Exit Full Screen', 'x'],

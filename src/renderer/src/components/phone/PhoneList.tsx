@@ -272,6 +272,13 @@ export interface PhoneListRowProps {
    * announced a kind gives no row a box, `anyDeviceKind`).
    */
   icon?: ReactNode
+  /**
+   * A tile before the text in place of the leading box – the Visual bookmark row's page picture,
+   * or its favicon on a card (HB-13; `.zen-list-picture`): the text centres on it. While rows
+   * are being picked the checkbox leads and the tile stays; the box is never drawn over a
+   * picture (9.6). Takes the place of `icon` when both are given.
+   */
+  picture?: ReactNode
   title: string
   subtitle?: ReactNode
   /** A 44 control, or a 13 deemphasised value; hidden while selecting. */
@@ -312,6 +319,7 @@ export interface PhoneListRowProps {
  */
 export function PhoneListRow({
   icon,
+  picture,
   title,
   subtitle,
   trailing,
@@ -340,6 +348,7 @@ export function PhoneListRow({
     <div
       data-selected={selected}
       data-two-line={Boolean(subtitle)}
+      data-picture={picture != null || undefined}
       data-danger={danger || undefined}
       data-disabled={disabled || undefined}
       className="zen-v2-row zen-phone-row select-none"
@@ -358,11 +367,17 @@ export function PhoneListRow({
         {selecting ? (
           <span className="zen-v2-checkbox" aria-hidden />
         ) : (
+          picture == null &&
           icon != null && (
             <span className="zen-list-lead" aria-hidden>
               {icon}
             </span>
           )
+        )}
+        {picture != null && (
+          <span className="zen-list-picture" aria-hidden>
+            {picture}
+          </span>
         )}
         <span className="zen-list-text">
           <span className="zen-list-title truncate">{title}</span>

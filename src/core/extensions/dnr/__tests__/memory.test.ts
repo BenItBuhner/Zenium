@@ -3,8 +3,13 @@ import v8 from 'node:v8'
 // eslint-disable-next-line no-restricted-imports
 import vm from 'node:vm'
 import { describe, expect, test } from 'vitest'
+import { RuleEngine } from '../../../blocking/engine'
+import { createDnrSink } from '../engineSink'
 import { parseRuleset, type Rule } from '../rules'
-import { EXTENSION_BASE_URL } from './fixtures'
+import { engineSetId, type RuleSink } from '../sink'
+import { DnrState, type DnrStateIO } from '../state'
+import { DnrTranslator } from '../translate'
+import { EXTENSION_BASE_URL, EXTENSION_ID } from './fixtures'
 
 /**
  * What the core retains for one static ruleset of the round-21 extension's shape (`Adblock Ad
@@ -318,4 +323,135 @@ describe("the core's copy of a static ruleset", () => {
     ]
     console.info(lines.join('\n'))
   })
+})
+
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What the phone's DNR layer holds of the same set once it is in the blocking engine, before
+ * and after compat round 22's R22-3: without `DnrStateIO.rereadsStaticRulesets` the state keeps
+ * `StaticRuleset.parsed` and the translator its references to the same `CompiledRule[]` (the
+ * desktop's shape, whose matcher wants them); with it the state keeps a `ParsedSummary` and the
+ * translator an identity, the rules read again from the file only for `testMatchOutcome` /
+ * `getMatchedRules` or a set the translator must emit again. Measured through the real
+ * `DnrState` + `DnrTranslator` twice over: into a sink that drops every set (the DNR layer's own
+ * share) and into the real `RuleEngine` through `createDnrSink` (the phone's wiring – the engine
+ * keeps the translated `EngineRule[]` and its own compiled form of every set, on the phone too,
+ * although Kotlin decides there; `src/core/blocking/`, the platform's, measured here and not
+ * changed). Numbers printed for the record; the assertions pin the reads and the residents, and
+ * that the after is a fraction of the before at the census size.
+ */
+
+interface Passed {
+  heapBytes: number
+  reads: number
+  rereads: number
+  resident: string[]
+  enabledRules: number
+  engineRules: number | undefined
+}
+
+/** One pass in its own frame: the state, the translator and the engine die with the return. */
+async function through(
+  text: string,
+  rereads: boolean,
+  wired: boolean,
+  settled: () => number
+): Promise<Passed> {
+  // Each pass against its own settled base: the previous pass's garbage is collected here.
+  const base = settled()
+  const engine = wired ? new RuleEngine() : null
+  const sink: RuleSink = engine
+    ? createDnrSink(engine)
+    : { setRuleSet: () => {}, removeRuleSet: () => {} }
+  let reads = 0
+  const io: DnrStateIO = {
+    readFile: async () => {
+      reads++
+      return text
+    },
+    loadState: async () => undefined,
+    saveState: async () => {}
+  }
+  if (rereads) io.rereadsStaticRulesets = true
+  const state = new DnrState(
+    { id: EXTENSION_ID, ruleResources: [{ id: 'census', enabled: true, path: 'census.json' }] },
+    io
+  )
+  await state.load()
+  const translator = new DnrTranslator(sink)
+  const report = await translator.sync(state.translateInput(0))
+  expect(report.updated).toEqual([
+    engineSetId(EXTENSION_ID, { kind: 'static', rulesetId: 'census' })
+  ])
+  // The state and the translator alive here, as they are on the phone after the first sync.
+  const heapBytes = settled() - base
+  const out: Passed = {
+    heapBytes,
+    reads,
+    rereads: state.rereads(),
+    resident: state.residentStaticRules(),
+    enabledRules: state.enabledStaticRuleCount(),
+    engineRules: engine?.summary(engineSetId(EXTENSION_ID, { kind: 'static', rulesetId: 'census' }))
+      ?.ruleCount
+  }
+  if (rereads) {
+    // The matcher's rare call: the file read again and let go again.
+    const rulesets = await state.matcherRulesets()
+    expect(rulesets[0]!.rules.length).toBe(out.enabledRules)
+    expect(state.rereads()).toBe(1)
+    expect(state.residentStaticRules()).toEqual([])
+    // A second sync of the unchanged input reads nothing and sends nothing.
+    const again = await translator.sync(state.translateInput(0))
+    expect(again.updated).toEqual([])
+    expect(reads).toBe(2)
+  }
+  state.dispose()
+  return out
+}
+
+describe("the core's copy let go on the phone (compat round 22, R22-3): before and after", () => {
+  test('the census set through DnrState and DnrTranslator, into a dropping sink and into the blocking engine', async () => {
+    const count = Number(process.env['ZEN_DNR_RULES']) || CENSUS_RULES
+    const gc = collector()
+    const settled = (): number => {
+      if (gc) for (let i = 0; i < 3; i++) gc()
+      return process.memoryUsage().heapUsed
+    }
+    // The rules file's text lives for the whole test, as the package file lives on disk: it is
+    // in every pass's base and in no pass.
+    const text = JSON.stringify(generate(count).rules)
+
+    const before = await through(text, false, false, settled)
+    const after = await through(text, true, false, settled)
+    const beforeWired = await through(text, false, true, settled)
+    const afterWired = await through(text, true, true, settled)
+
+    for (const pass of [before, after, beforeWired, afterWired]) {
+      expect(pass.reads).toBe(1)
+      expect(pass.enabledRules).toBeGreaterThan((count * 9) / 10)
+      expect(pass.enabledRules).toBe(before.enabledRules)
+    }
+    expect(before.resident).toEqual(['census'])
+    expect(before.rereads).toBe(0)
+    expect(after.resident).toEqual([])
+    expect(after.rereads).toBe(0)
+    expect(beforeWired.engineRules).toBe(before.enabledRules)
+    expect(afterWired.engineRules).toBe(before.enabledRules)
+    if (count >= 10_000) {
+      // The summaries and an identity against the parsed tree and its compiled rules.
+      expect(after.heapBytes).toBeLessThan(before.heapBytes / 4)
+      expect(afterWired.heapBytes).toBeLessThan(beforeWired.heapBytes)
+    }
+
+    const engineShare = afterWired.heapBytes - after.heapBytes
+    const lines = [
+      `=== the core's copy on the phone, ${count} rules of the census set through DnrState + DnrTranslator (compat round 22, R22-3; node ${process.version}${gc ? '' : ', no collector exposed: the numbers include garbage'}) ===`,
+      `BEFORE (the rules resident in the state and referenced by the translator, the desktop's shape): the DNR layer ${mb(before.heapBytes)} = ${perRule(before.heapBytes, before.enabledRules)}; wired into the blocking engine ${mb(beforeWired.heapBytes)} = ${perRule(beforeWired.heapBytes, before.enabledRules)}`,
+      `AFTER (rereadsStaticRulesets: a ParsedSummary and an identity; the file read again on a matcher call – ${after.rereads + 1} re-read in the pass, resident ${JSON.stringify(after.resident)}): the DNR layer ${mb(after.heapBytes)} = ${perRule(after.heapBytes, after.enabledRules)}; wired into the blocking engine ${mb(afterWired.heapBytes)} = ${perRule(afterWired.heapBytes, after.enabledRules)}`,
+      `the blocking engine's own copy of the set (its StoredSet: the translated EngineRule[] and its compiled form, src/core/blocking/engine.ts – kept on the phone too, where Kotlin decides): about ${mb(engineShare)} = ${perRule(engineShare, after.enabledRules)}`,
+      `reads of the rules file per pass: 1 at load (the counts and the hand-over from one read); the enabled rules ${before.enabledRules} in every pass; the engine's set ${beforeWired.engineRules} rules`
+    ]
+    console.info(lines.join('\n'))
+  }, 180_000)
 })

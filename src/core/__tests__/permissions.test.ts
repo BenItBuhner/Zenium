@@ -75,7 +75,8 @@ describe('PermissionService: what is asked', () => {
     expect(await p.decide('usb', PAGE)).toBe(false)
     // Screen sharing has no prompt of its own: the picker (MW-19) is where the user decides.
     expect(await p.decide('display-capture', PAGE)).toBe(true)
-    expect(await p.decide('midiSysex', PAGE)).toBe(false)
+    expect(await p.decide('xr', PAGE)).toBe(false)
+    expect(await p.decide('local-fonts', PAGE)).toBe(false)
     expect(d.asked).toEqual([])
   })
 
@@ -144,6 +145,131 @@ describe('PermissionService: what is asked', () => {
     p.chooseDefault('fullscreen', 'deny')
     expect(await p.decide('fullscreen', 'zen://settings')).toBe(false)
     expect(d.asked).toEqual([])
+  })
+})
+
+/*
+ * Web MIDI (MW-36 / PS-54). Chrome keeps one MIDI setting, `midi-sysex`, ask by default
+ * (`content_settings_registry.cc:209-217`), and since `kBlockMidiByDefault` (on by default,
+ * `blink/common/features.cc:108-109`) every `requestMIDIAccess()` asks for it, `sysex` or not
+ * (`midi_access_initializer.cc:48-52`): the request reaches the desktop as Electron's `midiSysex`
+ * (`content_converter.cc:162-163`) and the phone as the WebView's `RESOURCE_MIDI_SYSEX`
+ * (`aw_permission_manager.cc:373-378`), which `Permissions.kt` relays as `permission.request`
+ * with the permission name, the URL and the tab. Both shapes meet the same prompt here.
+ */
+describe('PermissionService: Web MIDI including SysEx (MW-36 / PS-54)', () => {
+  const SITE = 'https://synth.example'
+  /** Electron's request, as `permissionRequestDetails` shapes it for a main-frame page. */
+  const DESKTOP: PermissionRequestDetails = { tabId: 'tab_d' }
+  /** The phone's `permission.request` for a WebView resource: no media types, no embedder. */
+  const PHONE: PermissionRequestDetails = { tabId: 'tab_a', mediaTypes: undefined }
+
+  it('asks in Chrome’s words, offers no "Allow once", and grants system-exclusive access on Allow', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    expect(p.check('midiSysex', SITE)).toBe(false)
+    expect(await p.decide('midiSysex', `${SITE}/play`, DESKTOP)).toBe(true)
+    expect(d.asked).toHaveLength(1)
+    // Chrome's `IDS_MIDI_SYSEX_PERMISSION_FRAGMENT` ("Control and reprogram your MIDI devices",
+    // `permissions_strings.grdp:148-150`) after the prompt's "Allow <site> to …"; no one-time
+    // grant, as Chrome's chip carries none (`permission_request.cc:319-320`). The engine's
+    // `midiSysex` is the one MIDI row (`ALIASES`), so the prompt and the store name `midi`.
+    expect(d.asked[0]).toMatchObject({
+      tabId: 'tab_d',
+      origin: SITE,
+      permission: 'midi',
+      message: 'Allow synth.example to control and reprogram your MIDI devices?',
+      detail: 'Your choice is remembered for this site.',
+      allowLabel: 'Allow',
+      blockLabel: 'Block',
+      allowOnce: false
+    })
+    // Remembered: the engine's status check says yes and the next request asks nothing.
+    expect(p.check('midiSysex', SITE)).toBe(true)
+    expect(await p.decide('midiSysex', `${SITE}/other`, DESKTOP)).toBe(true)
+    expect(d.asked).toHaveLength(1)
+    expect(p.get('midi', SITE)).toBe('allow')
+    expect(p.listForOrigin(SITE)).toEqual([{ permission: 'midi', decision: 'allow' }])
+    expect(p.rules()).toMatchObject([{ origin: SITE, permission: 'midi', decision: 'allow' }])
+  })
+
+  it('remembers a Block for the site, and the site is refused without a second question', async () => {
+    const d = prompts(false)
+    const p = new PermissionService(fakeIo(), d)
+    expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(false)
+    expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(false)
+    expect(d.asked).toHaveLength(1)
+    expect(p.get('midi', SITE)).toBe('deny')
+    // The site-information sheet's reset: asked again.
+    p.resetOrigin(SITE)
+    expect(p.resolve('midiSysex', SITE)).toBe('ask')
+  })
+
+  it('meets the phone’s request shape with the same prompt, and keeps a private tab’s answer out of the store', async () => {
+    const io = fakeIo()
+    const d = prompts(true)
+    const p = new PermissionService(io, d)
+    expect(await p.decide('midiSysex', SITE, PHONE)).toBe(true)
+    expect(d.asked[0]).toMatchObject({
+      tabId: 'tab_a',
+      permission: 'midi',
+      message: 'Allow synth.example to control and reprogram your MIDI devices?'
+    })
+    p.flushSync()
+    expect(io.writes).toHaveLength(1)
+    expect(JSON.parse(io.writes[0]).decisions).toEqual({ [`${SITE}|midi`]: 'allow' })
+    // A private tab's Allow lasts its session and is never written (Chrome's Incognito rule).
+    const other = 'https://sequencer.example'
+    expect(
+      await p.decide('midiSysex', other, { tabId: 'tab_p', privateContainerId: 'private' })
+    ).toBe(true)
+    expect(d.asked).toHaveLength(2)
+    expect(p.get('midi', other)).toBeUndefined()
+    expect(p.resolve('midiSysex', other, { privateContainerId: 'private' })).toBe('allow')
+    p.forgetContainer('private')
+    expect(p.resolve('midiSysex', other, { privateContainerId: 'private' })).toBe('ask')
+    p.flushSync()
+    expect(io.writes).toHaveLength(1)
+  })
+
+  it('a default of Block in Settings refuses every site without a prompt; Ask brings the question back', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    // Settings speaks of the row; the engine's name reads the row's default through the alias.
+    p.chooseDefault('midi', 'deny')
+    expect(p.effectiveDefault('midiSysex')).toBe('deny')
+    expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(false)
+    expect(await p.decide('midiSysex', SITE, PHONE)).toBe(false)
+    expect(d.asked).toEqual([])
+    expect(p.rules()).toEqual([])
+    p.chooseDefault('midiSysex', 'ask')
+    expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(true)
+    expect(d.asked).toHaveLength(1)
+  })
+
+  it('is one row with the plain `midi` request: one answer, one set of words, one line in the site’s list', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    // The row's answer (the site card's toggle, Settings › Sites) covers the engine's request …
+    p.set('midi', SITE, 'allow')
+    expect(p.check('midiSysex', SITE)).toBe(true)
+    expect(await p.decide('midiSysex', SITE, DESKTOP)).toBe(true)
+    expect(d.asked).toEqual([])
+    expect(p.listForOrigin(SITE)).toEqual([{ permission: 'midi', decision: 'allow' }])
+    // … and Electron's plain `midi` (sent only with `kBlockMidiByDefault` off) reads the same
+    // answer and asks with the same words.
+    expect(p.check('midi', SITE)).toBe(true)
+    expect(permissionPromptCopy('midi', SITE).message).toBe(
+      'Allow synth.example to control and reprogram your MIDI devices?'
+    )
+    expect(permissionPromptCopy('midiSysex', SITE)).toEqual(permissionPromptCopy('midi', SITE))
+    // A Block of the row refuses both names; forgetting the row forgets both.
+    p.set('midi', SITE, 'deny')
+    expect(p.resolve('midiSysex', SITE)).toBe('deny')
+    expect(p.resolve('midi', SITE)).toBe('deny')
+    p.forget('midiSysex', SITE)
+    expect(p.resolve('midi', SITE)).toBe('ask')
+    expect(p.listForOrigin(SITE)).toEqual([])
   })
 })
 

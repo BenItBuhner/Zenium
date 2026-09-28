@@ -20,8 +20,9 @@
  * Chrome's toolbar ahead of the media button and shows only while the mode is on) is the one
  * control whose fold has no menu row: Chrome's button has none, and the mode runs on whether
  * the leaf is drawn or not – unpinned, it is simply not drawn, and Settings › Performance, which
- * holds the switch, says when the mode is on. Chrome's button cannot be unpinned; the lead is
- * asked whether Zenium's should be (W8-2's LEAD CHECK), and until then it is a pin like the rest.
+ * holds the switch, says when the mode is on. Chrome's button cannot be unpinned; Zenium's can
+ * (the lead's W8-2 ruling): the leaf is a pin like the rest, pinned by default, so a user who
+ * would rather not see the mode's badge folds it away in Customise toolbar and the mode runs on.
  *
  * Read by the desktop chrome's toolbar row alone (`components/sidebar/SidebarTop.tsx`'s
  * `NavRow`, on the desktop form factor; `core/menus.ts` for the folded Forward row): the phone

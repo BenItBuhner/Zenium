@@ -149,12 +149,12 @@ function main(): void {
           : launch.window === 'new'
             ? b.createWindow({ kind: 'synced' })
             : b.ensureBrowserWindow()
-    // Blank and private windows start with one empty tab: the first URL goes there.
-    const starter = win.localSpace ? win.selectedTabIn(win.localSpace) : null
-    launch.urls.forEach((url, index) => {
-      if (index === 0 && starter) b.tabs.navigate(starter, url)
-      else b.openExternalUrl(url, win)
-    })
+    // The first URL takes the window's fresh empty tab – the one a blank or private window
+    // starts with, the one a synced window into an empty space gets (`ensureFirstTab`: the
+    // startup window of a fresh profile, the default-browser path with Zenium closed), a new
+    // tab page the user has not left – and the rest open beside it. One tab on the page, no
+    // new tab page beside it and no URL bar over it, as Chrome launched with a URL (W8-F14).
+    b.openLaunchUrls(launch.urls, win)
     win.host.show()
     win.host.focus()
   }

@@ -253,6 +253,14 @@ describe('Delete browsing data', () => {
     const row = defaultShortcuts('linux').find((s) => s.id === 'key_clearBrowsingData')
     expect(row).toMatchObject({ group: 'historyAndBookmarks', label: 'Delete Browsing Data…' })
     expect(row?.hidden).toBeUndefined()
+    // Chrome's reference row carries Chrome's M124+ words too (W8-7): the collision table
+    // names the same thing the same way on both sides.
+    for (const platform of PLATFORMS) {
+      const reference = chromeReference(platform).filter((r) =>
+        r.actions.includes('privacy.clearBrowsingData')
+      )
+      expect(reference.map((r) => r.label)).toEqual(['Delete browsing data'])
+    }
     for (const platform of PLATFORMS) {
       for (const preset of ['zen', 'chrome'] as const) {
         const found = collisions(defaultShortcuts(platform, preset), chromeReference(platform))

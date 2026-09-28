@@ -27,6 +27,17 @@
  * time: the danger glyph, a live state, a stored site-level block, a quiet request, the
  * connection's own glyph.
  *
+ * An offer is the slot's last tenant before the connection's own glyph (CT-37's phone half: the
+ * reader indicator, the root's row of 2026-09-27; the design gate rules on its seat): an
+ * informational chip the pill ALSO draws while the slot is otherwise quiet – Chrome's reader
+ * entry is a toolbar button that appears on a distillable page, Zenium's phone bar has no
+ * toolbar slot, so the pill's glyph slot is the seat with the least deviation and the host keeps
+ * its 150 px floor. It is the sheet's row ALWAYS (#491's row stays whether or not the pill draws
+ * it), takes the slot only when no live or quiet state has it, and never displaces a status
+ * glyph: the caller gives it the sheet's fold under a warning or a danger glyph, as it does the
+ * quiet bell under danger. The slot's precedence, one glyph at a time: the danger glyph, a live
+ * state, a stored site-level block, a quiet request, an offer, the connection's own glyph.
+ *
  * So the fold is a rule per chip, not a width computation: this module is that rule, pure and
  * deterministic; `components/phone/pillChips.tsx` builds the chips, remembers the states' order
  * of arrival and draws what stays.
@@ -35,13 +46,16 @@
 /**
  * How a chip of the phone pill relates to the pill at rest.
  * - `glyph`: the site-information glyph – the pill's anatomy; never a sheet row, gives way to a
- *   live state chip or a quiet one and returns when it ends.
+ *   live state chip, a quiet one or an offer and returns when it ends.
  * - `sheet`: an informational chip – always in the site-information sheet, never in the pill.
  * - `live`: a transient state chip – in the pill while its state is live, in the glyph's slot.
  * - `quiet`: a quiet state – a question the page waits on (the quiet notification ask); in the
  *   glyph's slot at rest, under a live state (the sheet's row while one is up), above the glyph.
+ * - `offer`: an offer – an entry the page makes possible (Reader View on an article); the
+ *   sheet's row always, AND in the glyph's slot while no live or quiet state has it, above the
+ *   connection's quiet glyph (the caller folds it to `sheet` under a status glyph).
  */
-export type PillChipFold = 'glyph' | 'sheet' | 'live' | 'quiet'
+export type PillChipFold = 'glyph' | 'sheet' | 'live' | 'quiet' | 'offer'
 
 export interface PillChipFoldSpec {
   /** A stable id (`lock` and the glyph's other states, `blocked`, `translate`, `reader`, `media`, `save-prompt`). */
@@ -50,9 +64,9 @@ export interface PillChipFoldSpec {
 }
 
 export interface PillFold<T extends PillChipFoldSpec> {
-  /** The chips the pill draws after the host, in the order they were given: the glyph, or the one live state chip, or the quiet state in its place. */
+  /** The chips the pill draws after the host, in the order they were given: the glyph, or the one live state chip, or the quiet state in its place, or the offer in its place. */
   shown: T[]
-  /** The chips the site-information sheet lists, in the order they were given: the informational chips, a live state waiting behind a newer one, a quiet state under a live one. */
+  /** The chips the site-information sheet lists, in the order they were given: the informational chips, a live state waiting behind a newer one, a quiet state under a live one, every offer (the drawn one too – its row is the sheet's always). */
   folded: T[]
   /** The glyph while a live or a quiet state has its slot: neither drawn nor listed (the sheet's title carries the connection, the favicon still opens the sheet). */
   yielded: T[]
@@ -71,10 +85,12 @@ export const PILL_CHIP_FOLDS: Readonly<Record<string, PillChipFold>> = {
   dangerous: 'glyph',
   blocked: 'sheet',
   translate: 'sheet',
-  // Reader View on an article page (PUI-14): §9.29's "reader chip", informational – information
-  // the user did not ask for, as the translate offer is – so the sheet's row always, never the
-  // pill's (the fixed phone pill draws no reader glyph; the design gate for #491 held to it).
-  reader: 'sheet',
+  // Reader View on an article page: §9.29's "reader chip". PUI-14 (#491) made it the sheet's row
+  // alone – informational, as the translate offer is – and its design gate held to the fixed
+  // pill; CT-37's phone half (the root's row of 2026-09-27) asks the pill for a readerable
+  // indicator, so it is the one offer: the sheet's row still, and the glyph slot's while the
+  // slot is quiet. The design gate for that PR rules on the seat.
+  reader: 'offer',
   'save-prompt': 'live',
   media: 'live',
   // The quiet notification ask (NOT-03): a quiet state, not a live one (the design gate's
@@ -124,8 +140,10 @@ function newestLive<T extends PillChipFoldSpec>(live: readonly T[], arrival: rea
  * glyph gives way, and any older live state waits in the sheet as a row. A quiet state has the
  * slot when no live state does – the glyph gives way to it as to a live state – and is the
  * sheet's row while a live state is up; it takes no part in the record, so it never outranks a
- * live state, however it arrived. Nothing about the pill's width comes into it – the same set
- * folds the same way at every width and font scale.
+ * live state, however it arrived. An offer has the slot when neither a live nor a quiet state
+ * does – the glyph gives way to it as to those – and is a row of the sheet whatever has the
+ * slot, the pill's included. Nothing about the pill's width comes into it – the same set folds
+ * the same way at every width and font scale.
  */
 export function foldPillChips<T extends PillChipFoldSpec>(
   chips: readonly T[],
@@ -133,19 +151,30 @@ export function foldPillChips<T extends PillChipFoldSpec>(
 ): PillFold<T> {
   const live = chips.filter((c) => c.fold === 'live')
   const quiet = chips.filter((c) => c.fold === 'quiet')
+  // Every offer is the sheet's row, drawn or not: a listing is what the informational fold is.
+  const listed = (c: T): boolean => c.fold === 'sheet' || c.fold === 'offer'
   if (live.length === 0) {
     if (quiet.length === 0) {
+      const [offer] = chips.filter((c) => c.fold === 'offer')
+      if (offer === undefined) {
+        return {
+          shown: chips.filter((c) => c.fold === 'glyph'),
+          folded: chips.filter(listed),
+          yielded: []
+        }
+      }
+      // The first offer in the pill's order has the slot; another is a row alone.
       return {
-        shown: chips.filter((c) => c.fold === 'glyph'),
-        folded: chips.filter((c) => c.fold === 'sheet'),
-        yielded: []
+        shown: [offer],
+        folded: chips.filter(listed),
+        yielded: chips.filter((c) => c.fold === 'glyph')
       }
     }
     // The first quiet state in the pill's order has the slot; another waits as a row.
     const [first] = quiet
     return {
       shown: [first!],
-      folded: chips.filter((c) => c.fold === 'sheet' || (c.fold === 'quiet' && c !== first)),
+      folded: chips.filter((c) => listed(c) || (c.fold === 'quiet' && c !== first)),
       yielded: chips.filter((c) => c.fold === 'glyph')
     }
   }
@@ -153,7 +182,7 @@ export function foldPillChips<T extends PillChipFoldSpec>(
   return {
     shown: [newest],
     folded: chips.filter(
-      (c) => c.fold === 'sheet' || c.fold === 'quiet' || (c.fold === 'live' && c !== newest)
+      (c) => listed(c) || c.fold === 'quiet' || (c.fold === 'live' && c !== newest)
     ),
     yielded: chips.filter((c) => c.fold === 'glyph')
   }

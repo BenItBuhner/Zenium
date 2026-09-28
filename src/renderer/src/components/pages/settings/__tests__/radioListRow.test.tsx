@@ -90,6 +90,10 @@ describe('the two-pane radio form (§9.14, §10.5; pr-584 N2)', () => {
     expect(row.textContent).not.toContain('Memory Saver options')
     // The list is the field block's one child: nothing stands between the row's edge and it.
     expect([...block.children]).toEqual([group])
+    // …and the row says so (`data-bare`): the row pad a text row keeps above and below goes with
+    // the legend (pr-584's NEW 1, W8-10), the options standing off the switch row as they stand
+    // off one another – §10.3's rows 0 apart – not the legend's 6 further.
+    expect(row.hasAttribute('data-bare')).toBe(true)
     // The options, on the page's row chassis, checked and labelled as the model says.
     const options = radios(el)
     expect(options.map((o) => o.textContent)).toEqual([
@@ -127,6 +131,15 @@ describe('the two-pane radio form (§9.14, §10.5; pr-584 N2)', () => {
     expect(row.querySelector('[role="radiogroup"]')!.getAttribute('aria-label')).toBe(
       'Memory Saver options'
     )
+    // With text of its own in sight the row keeps its pad: it is the text's.
+    expect(row.hasAttribute('data-bare')).toBe(false)
+    act(() => root?.unmount())
+    const captionOnly = render(
+      <RowView row={tierRow()} ctx={ctx} caption="Tabs › Memory Saver" variant="desktop" />
+    )
+    expect(
+      captionOnly.querySelector('[data-row="memory-saver-tier"]')!.hasAttribute('data-bare')
+    ).toBe(false)
   })
 
   it('is one tab stop on the checked option; the arrows move the choice and the focus together, wrapping; a press on an option picks it once', () => {

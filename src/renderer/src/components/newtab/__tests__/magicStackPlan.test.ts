@@ -5,6 +5,7 @@ import type {
   DefaultBrowserStatus,
   DownloadItem
 } from '@shared/types'
+import type { SafetyHubInputs } from '@shared/safetyHubCard'
 import {
   BOOKMARKS_CARD_LIMIT,
   MAGIC_STACK_MODULES,
@@ -83,6 +84,13 @@ const ROOTS: BookmarkNode[] = [
 
 const NOT_DEFAULT: DefaultBrowserStatus = { isDefault: false, prompt: null }
 
+/** A profile with nothing for the Safety check to say. */
+const SAFE: SafetyHubInputs = {
+  revokedOrigins: [],
+  safeBrowsingEnabled: true,
+  compromisedPasswords: 0
+}
+
 function sources(over: Partial<MagicStackSources> = {}): MagicStackSources {
   return {
     recentlyClosed: [],
@@ -90,6 +98,7 @@ function sources(over: Partial<MagicStackSources> = {}): MagicStackSources {
     bookmarks: [],
     defaultBrowser: { isDefault: true, prompt: null },
     canRequestDefault: true,
+    safetyHub: { type: null, inputs: SAFE },
     ...over
   }
 }
@@ -99,13 +108,14 @@ describe('planMagicStack', () => {
     expect(planMagicStack(sources(), [])).toEqual([])
   })
 
-  it('keeps the stack order: continue, downloads, bookmarks, then the promo', () => {
+  it('keeps the stack order: continue, downloads, bookmarks, the Safety check, then the promo', () => {
     const cards = planMagicStack(
       sources({
         recentlyClosed: [closed()],
         downloads: [download()],
         bookmarks: [...ROOTS, bookmark('a', 5)],
-        defaultBrowser: NOT_DEFAULT
+        defaultBrowser: NOT_DEFAULT,
+        safetyHub: { type: 'safe-browsing', inputs: { ...SAFE, safeBrowsingEnabled: false } }
       }),
       []
     )
@@ -113,6 +123,7 @@ describe('planMagicStack', () => {
       'continue',
       'downloads',
       'bookmarks',
+      'safety-hub',
       'default-browser'
     ])
   })
@@ -226,6 +237,46 @@ describe('buildCard', () => {
       )
     ).toBeNull()
   })
+
+  it('the Safety check card shows the type the machine picked for as long as its trigger holds', () => {
+    const revoked = { ...SAFE, revokedOrigins: ['https://a.example', 'https://b.example'] }
+    expect(
+      buildCard(
+        'safety-hub',
+        sources({ safetyHub: { type: 'revoked-permissions', inputs: revoked } })
+      )
+    ).toEqual({ id: 'safety-hub', type: 'revoked-permissions', inputs: revoked })
+    const off = { ...SAFE, safeBrowsingEnabled: false }
+    expect(
+      buildCard('safety-hub', sources({ safetyHub: { type: 'safe-browsing', inputs: off } }))
+    ).toEqual({
+      id: 'safety-hub',
+      type: 'safe-browsing',
+      inputs: off
+    })
+    const leaked = { ...SAFE, compromisedPasswords: 2 }
+    expect(
+      buildCard('safety-hub', sources({ safetyHub: { type: 'passwords', inputs: leaked } }))
+    ).toEqual({
+      id: 'safety-hub',
+      type: 'passwords',
+      inputs: leaked
+    })
+    // No pick: nothing, whatever the inputs say (the machine decides when the card is due).
+    expect(
+      buildCard('safety-hub', sources({ safetyHub: { type: null, inputs: leaked } }))
+    ).toBeNull()
+    // The trigger cleared under the picked type: the card leaves (Chrome's observers).
+    expect(
+      buildCard('safety-hub', sources({ safetyHub: { type: 'safe-browsing', inputs: SAFE } }))
+    ).toBeNull()
+    expect(
+      buildCard('safety-hub', sources({ safetyHub: { type: 'passwords', inputs: SAFE } }))
+    ).toBeNull()
+    expect(
+      buildCard('safety-hub', sources({ safetyHub: { type: 'revoked-permissions', inputs: SAFE } }))
+    ).toBeNull()
+  })
 })
 
 describe('the modules', () => {
@@ -234,6 +285,7 @@ describe('the modules', () => {
       'continue',
       'downloads',
       'bookmarks',
+      'safety-hub',
       'default-browser'
     ])
     for (const m of MAGIC_STACK_MODULES) {
@@ -248,12 +300,14 @@ describe('the modules', () => {
       'continue',
       'downloads',
       'bookmarks',
+      'safety-hub',
       'default-browser'
     ])
     expect(availableModules({ canRequestDefault: false }).map((m) => m.id)).toEqual([
       'continue',
       'downloads',
-      'bookmarks'
+      'bookmarks',
+      'safety-hub'
     ])
   })
 })

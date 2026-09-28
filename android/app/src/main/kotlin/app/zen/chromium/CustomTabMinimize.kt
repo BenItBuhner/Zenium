@@ -16,6 +16,21 @@ object CustomTabMinimize {
     /** The card's two lines: the page's title (its host when it has none) over its host. */
     data class Card(val title: String, val host: String)
 
+    /** The toolbar view's state, `View.VISIBLE` / `View.INVISIBLE` / `View.GONE`. */
+    enum class Visibility { VISIBLE, INVISIBLE, GONE }
+
+    /**
+     * The toolbar as the card comes and goes: hidden behind the card while minimized and back
+     * when the card lifts – unless the tab is a Trusted Web Activity in app mode, whose toolbar
+     * is GONE and stays so whatever the card does (the page is laid out without it; a page that
+     * commits into the verified scope while minimized must not come back under a toolbar).
+     */
+    fun toolbarVisibility(minimized: Boolean, appMode: Boolean): Visibility = when {
+        appMode -> Visibility.GONE
+        minimized -> Visibility.INVISIBLE
+        else -> Visibility.VISIBLE
+    }
+
     fun card(title: String?, url: String): Card {
         val host = host(url)
         val trimmed = title?.trim().orEmpty()

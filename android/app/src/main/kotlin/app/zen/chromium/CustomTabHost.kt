@@ -101,6 +101,11 @@ class CustomTabHost(
         listener.onPageEvent(name, payload as? JSONObject)
     }
 
+    /** The document's HTTP error status, as an event of its own (`httpError`: `url`, `status`) for the TWA's quality log. */
+    override fun documentHttpError(tab: TabWebView, url: String, status: Int) {
+        listener.onPageEvent("httpError", json("url" to url, "status" to status))
+    }
+
     override fun hostEvent(name: String, payload: Any?) {
         val args = payload as? JSONObject ?: JSONObject()
         when (name) {

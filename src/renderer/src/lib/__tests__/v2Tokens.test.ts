@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
 import { QUIT_HOLD_FONT, QUIT_HOLD_PANEL } from '@shared/quitHoldPanel'
 import { REDUCED_FADE_MS, TOAST_CARD, TOAST_SHOW_MS } from '@shared/toastCard'
-import { MESSAGE_INSET } from '../../components/messages/stack'
+import {
+  HINT_BUBBLE_PADDING,
+  HINT_BUBBLE_WIDTH,
+  MESSAGE_INSET
+} from '../../components/messages/stack'
 import { FULLSCREEN_RETURN_MS } from '../../components/phone/useFullscreenReturn'
 import { TOOLBAR_STROKE } from '../../components/v2/controls'
 import { TOAST_DURATION } from '../ui'
@@ -222,6 +226,9 @@ const V2_FILES: ReadonlyArray<string> = [
   // the translation bar, the selection popover and sheet, the language menulist's list and
   // picker sheet, the desktop Languages pane.
   'assets/translate.css',
+  // The selection surfaces' stylesheet, imported by main.css (components/selection/*, CT-39):
+  // the mini menu's pill over a text selection and the Define popover's and sheet's body.
+  'assets/selection.css',
   // The autofill surfaces' own stylesheet, imported by components/autofill/controls.tsx (#145):
   // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
   // Settings > Autofill with its managers.
@@ -1592,7 +1599,12 @@ describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 sl
     // One token, `--zen-corner: squircle`, declared once in the theme block; a chassis class of
     // radius 8 and up carries it as `corner-shape: var(--zen-corner)` beside its radius token –
     // the popover and toolbar chassis (`.zen-v2-panel`, extensions.css) the pattern followed.
-    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(1)
+    // The served documents' root (`.zen-error-document`, the slice zenPages.ts cuts for the
+    // error pages and `zen://game`, which the theme block never reaches) restates it as it
+    // restates `--zen-ease`, so Roll's game-over card at radius 8 draws the squircle there too
+    // (ERR-03, §9.17 (c)); that is the token's one other declaration.
+    expect(css.match(/^ {2}--zen-corner: squircle;$/gm)).toHaveLength(2)
+    expect(block('.zen-error-document')).toMatch(/^ {2}--zen-corner: squircle;$/m)
     expect(declarations(extensions, '.zen-v2-panel')).toEqual(
       expect.arrayContaining([
         'border-radius: var(--v2-radius-card);',
@@ -1832,6 +1844,24 @@ describe('the Settings page’s radio rows (§9.14, §10.4; pr-584 R2)', () => {
     expect(rows).toMatch(/className="zen-settings-radio-list zen-settings-radios"/)
   })
 
+  it('drop the row pad when the legend is aria-only and no text of the row’s own shows (pr-584’s NEW 1, W8-10): the options stand off the switch as they stand off one another, §10.3’s 0 apart', () => {
+    // The row's `--v2-row-pad` (6 / 12) above and below a list of rows that carry their own
+    // would put the first option's label 18 off the switch's where options stand 12 apart; the
+    // rule outranks `.zen-v2-row`'s padding shorthand by the attribute (0,2,0 over 0,1,0).
+    const bare = block('.zen-settings-radios-row[data-bare]')
+    expect(bare).toMatch(/^\s*padding-top: 0;\s*$/m)
+    expect(bare).toMatch(/^\s*padding-bottom: 0;\s*$/m)
+    expect(bare).not.toMatch(/padding-left|padding-right|padding:/)
+    expect(block('.zen-v2-row')).toMatch(/^\s*padding: var\(--v2-row-pad\) 16px;\s*$/m)
+    // The row carries the attribute only while no caption or description renders (rows.tsx).
+    const rows = readFileSync(
+      fileURLToPath(new URL('../../components/pages/settings/rows.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(rows).toMatch(/const text = Boolean\(caption \|\| description\)/)
+    expect(rows).toMatch(/data-bare=\{text \? undefined : ''\}/)
+  })
+
   it('draw no `--v2-selected` band on the checked option (pr-584 L1 / Q6): the accent ring and dot tell the choice; the pointer’s fill is the page row’s', () => {
     // The band is the picker sheet's (§9.6); on the page the checked row is flat at rest and
     // under a touch's sticky `:hover`, and takes `--v2-fill` under a hovering pointer or a press
@@ -1999,6 +2029,18 @@ describe('the chrome tooltip (§9.31, a11y-26)', () => {
     expect(tip).toMatch(/^ {4}background: var\(--v2-panel\);$/m)
     expect(tip).toMatch(/^ {4}border: 1px solid var\(--v2-border\);$/m)
     expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-control: 4px;$/m)
+  })
+})
+
+describe('the in-product help bubble (TB-19, §9.20’s anchored pose)', () => {
+  it("is §9.20's notice width by value: the stylesheet's 320 and its 16 of padding are the chrome's constants, not copies (#641's first line, N1)", () => {
+    // The rule sits inside `@layer components`: its own close is the indented one.
+    const whole = block('.zen-hint-bubble')
+    const card = whole.slice(0, whole.indexOf('\n  }'))
+    expect(card).toMatch(new RegExp(`^ {4}width: ${HINT_BUBBLE_WIDTH}px;$`, 'm'))
+    expect(card).toMatch(new RegExp(`^ {4}padding: ${HINT_BUBBLE_PADDING}px;$`, 'm'))
+    // The sentence's measure inside the padding: 288, two lines (the lead's (c)).
+    expect(HINT_BUBBLE_WIDTH - 2 * HINT_BUBBLE_PADDING).toBe(288)
   })
 })
 

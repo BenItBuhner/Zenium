@@ -21,7 +21,8 @@ import type {
   SyncStatus,
   Tab,
   ToolbarLayout,
-  UIState
+  UIState,
+  WebDavProbe
 } from '@shared/types'
 import type { InstalledWebApp } from '@shared/webApp'
 import { defaultScope } from '@core/sync/records'
@@ -61,6 +62,7 @@ import { THEME_PRESETS, makeTheme } from '@shared/theme'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -99,7 +101,8 @@ const { familyOptions, fontSizeOptions, previewFamilies } = await import('../fon
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
-const { SYNC_SCOPES, syncSetupStore } = await import('@renderer/lib/syncSetup')
+const { SYNC_SCOPES, clearSyncSetup, emptySyncSetup, syncSetupStore } =
+  await import('@renderer/lib/syncSetup')
 const remoteTabs = await import('@renderer/lib/remoteTabs')
 
 type Model = ReturnType<typeof buildSection>
@@ -125,6 +128,7 @@ const ANDROID: HostCapabilities = {
   printPreview: false,
   savePageFormats: false,
   pdfViewer: true,
+  pdfPrint: false,
   agents: true,
   agentSkills: false,
   updates: true,
@@ -654,8 +658,9 @@ describe('the section model', () => {
 
   it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
     const privacy = section('privacy', blockingState())
-    // The engine's groups sit between #135's Safety check and Clear browsing data groups; their
-    // own order and content are asserted here (the whole category's order is #135's test).
+    // The engine's groups sit after the Cookies and site data groups, before the signals (the
+    // #650 lead check: Chrome's cookies-and-ad-privacy stretch); their own order and content are
+    // asserted here (the whole category's order is #135's test).
     const tracking = privacy.groups.filter((g) => g.id.startsWith('tracking-'))
     expect(tracking.map((g) => g.id)).toEqual([
       'tracking-prevention',
@@ -723,14 +728,12 @@ describe('the section model', () => {
     )
     expect(without.groups.filter((g) => g.id.startsWith('tracking-'))).toEqual([])
     // W7-6's hub cards lead (a group the desktop and tablet shells draw; the fixture has no
-    // layout, so it stays here too).
+    // layout, so it stays here too); the programs follow in the cards' order (W8-8, Q6), a
+    // group no card names after the card it is kin to (the #650 lead check) – the signals
+    // after Cookies where Tracking prevention would stand, HTTPS-only and Secure DNS after
+    // Safe Browsing.
     expect(without.groups.map((g) => g.id)).toEqual([
       'privacy-hub',
-      'safety-check',
-      'safety-check-results',
-      'safety-check-actions',
-      'safe-browsing',
-      'safe-browsing-feeds',
       'clear-data',
       'site-data',
       'cookies-related-sites',
@@ -743,15 +746,21 @@ describe('the section model', () => {
       'site-data-block-add',
       'site-data-exit',
       'site-data-viewer',
+      'signals',
+      'safe-browsing',
+      'safe-browsing-feeds',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
       'sites-permissions',
       'sites-content',
       'sites-additional',
       'sites-own',
+      'sites-unused',
+      'safety-check',
+      'safety-check-results',
+      'safety-check-actions',
       'preload',
-      'https-only',
-      'https-only-sites',
-      'secure-dns',
-      'signals',
       'private-lock'
     ])
   })
@@ -2039,27 +2048,23 @@ describe('the section model', () => {
     }
   })
 
-  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Clear browsing data, Site settings', () => {
+  it('carries #135’s site-controls rows in the hub cards’ order (the #553 lead check’s Q6), each un-carded group after its kin as Chrome’s page holds them (the #650 lead check): Delete browsing data, Cookies and site data with #115’s Tracking prevention and the signals, Safe Browsing with HTTPS-only and Secure DNS, Site settings, Safety check, Preload pages, the lock', () => {
     const c = context()
     const privacy = buildSection(
       PAGE.sections.find((x) => x.id === 'privacy')!,
       c.ctx
     )
-    // The whole category in Chrome's order – #135's, #156's and #115's groups (each program's
+    // The whole category in the cards' order – #135's, #156's and #115's groups (each program's
     // own order and content is its own test); the remembered per-site answers are Security's
-    // since #62 (no `permissions` group here). W7-6's hub cards lead the category (settings-12).
+    // since #62 (no `permissions` group here). W7-6's hub cards lead the category (settings-12);
+    // the five carded programs follow in the cards' order (W8-8), and a group no card names
+    // follows the card it is kin to (the #650 lead check): Tracking prevention and Privacy
+    // signals after Cookies (Chrome's cookies-and-ad-privacy stretch), HTTPS-only and Secure
+    // DNS after Safe Browsing (Chrome's Security page carries both); Preload pages – Chrome's
+    // Performance › Speed row, its seat another slice's – stays after Safety check for now, and
+    // the private-tab lock is last.
     expect(privacy.groups.map((g) => g.id)).toEqual([
       'privacy-hub',
-      'safety-check',
-      'safety-check-results',
-      'safety-check-actions',
-      'safe-browsing',
-      'safe-browsing-feeds',
-      'tracking-prevention',
-      'tracking-lists',
-      'tracking-custom-lists',
-      'tracking-filters',
-      'tracking-exceptions',
       'clear-data',
       'site-data',
       'cookies-related-sites',
@@ -2072,15 +2077,26 @@ describe('the section model', () => {
       'site-data-block-add',
       'site-data-exit',
       'site-data-viewer',
+      'tracking-prevention',
+      'tracking-lists',
+      'tracking-custom-lists',
+      'tracking-filters',
+      'tracking-exceptions',
+      'signals',
+      'safe-browsing',
+      'safe-browsing-feeds',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
       'sites-permissions',
       'sites-content',
       'sites-additional',
       'sites-own',
+      'sites-unused',
+      'safety-check',
+      'safety-check-results',
+      'safety-check-actions',
       'preload',
-      'https-only',
-      'https-only-sites',
-      'secure-dns',
-      'signals',
       'private-lock'
     ])
     expect(privacy.groups.every(groupShows)).toBe(true)
@@ -2100,12 +2116,33 @@ describe('the section model', () => {
     now.onPress?.()
     expect(invoke).toHaveBeenCalledWith('privacy.safetyCheck', undefined)
 
-    // Clear browsing data is one action row whose sheet is the form.
+    // Delete browsing data is one action row whose sheet is the form – Chrome's words since
+    // M124 (W8-7: `IDS_SETTINGS_CLEAR_BROWSING_DATA` "Delete browsing data", the row's button
+    // Chrome's `IDS_SETTINGS_CLEAR` "Delete" with the opener's ellipsis).
     const clear = row(privacy, 'clear-data-open')
     if (clear.kind !== 'action') throw new Error('not an action')
-    expect(clear.label).toBe('Clear browsing data')
-    expect(clear.form?.title).toBe('Clear browsing data')
+    expect(clear.label).toBe('Delete browsing data')
+    expect(clear.button).toBe('Delete…')
+    expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.form?.description).toContain('time range')
+    expect(clear.form?.description).toContain('what to delete')
+    // On the phone layout the sheet is Quick Delete's (HB-07, MOT-24 UI): the same title, its
+    // description saying what the Tabs row does since nothing else on the sheet does before the
+    // switch is on (the reviewer's N5); the wide layouts' sheet says nothing of tabs.
+    expect(clear.form?.description).not.toContain('Tabs')
+    const phonePrivacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      {
+        ...c.ctx,
+        formFactor: 'phone'
+      }
+    )
+    const phoneClear = row(phonePrivacy, 'clear-data-open')
+    if (phoneClear.kind !== 'action') throw new Error('not an action')
+    expect(phoneClear.form?.title).toBe('Delete browsing data')
+    expect(phoneClear.form?.description).toBe(
+      `${clear.form?.description} Turn on Tabs to close the tabs you used in that time as well.`
+    )
 
     // Site settings: the catalogue this host honours, each an item whose sheet holds the default
     // as a value row; a type with one possible default is a fact. Notifications are in it since
@@ -2443,6 +2480,300 @@ describe('the section model', () => {
       kind: 'info',
       description: 'Safe Browsing is on'
     })
+  })
+
+  it('reviews the permissions the sweep removed first (PS-41): Chrome’s module as the sheet’s first group – Allow again and Got it with their toasts and undos – then the granted sites; the row keeps its review with no granted site', async () => {
+    const revoked = [
+      {
+        origin: 'https://meet.example',
+        permissions: ['camera', 'microphone'],
+        revokedAt: Date.now() - 2 * 86_400_000
+      },
+      { origin: 'https://maps.example', permissions: ['geolocation'], revokedAt: Date.now() }
+    ]
+    const result: SafetyCheckResult = {
+      checkedAt: Date.now() - 60_000,
+      updates: {
+        state: 'safe',
+        summary: 'Up to date',
+        currentVersion: '0.3.0',
+        latestVersion: null
+      },
+      safeBrowsing: {
+        state: 'safe',
+        summary: 'Safe Browsing is on',
+        configured: true,
+        enabled: true
+      },
+      passwords: {
+        state: 'safe',
+        summary: 'No passwords saved',
+        compromised: 0,
+        weak: 0,
+        reused: 0,
+        known: false,
+        checkedAt: null
+      },
+      permissions: {
+        state: 'info',
+        summary: 'Permissions removed from 2 sites',
+        grantedSites: 1,
+        review: [],
+        revoked
+      },
+      notifications: { state: 'safe', summary: 'No site may send notifications', sites: [] },
+      extensions: { state: 'unavailable', summary: 'This host runs no extensions', flagged: [] }
+    }
+    const rules = [
+      { origin: 'https://docs.example', permission: 'geolocation', decision: 'allow' as const }
+    ]
+    const privacy = section(
+      'privacy',
+      state({ lastSafetyCheck: result, permissionRules: rules } as Partial<UIState>)
+    )
+    // The card reads the row's info state; the row is the review, its sentence the engine's.
+    expect(row(privacy, 'safety-check-standing')).toMatchObject({
+      label: 'A few things to look at'
+    })
+    const permissions = row(privacy, 'safety-check:permissions')
+    if (permissions.kind !== 'item') throw new Error('not an item')
+    expect(permissions.description).toBe('Permissions removed from 2 sites')
+    expect(permissions.sheet.title).toBe('Site permissions')
+    // The sheet's description covers both lists (the lead's #637 ruling on nit 6).
+    expect(permissions.sheet.description).toBe(
+      'Sites allowed to use something, and permissions taken back from unused sites. Resetting a site makes it ask again.'
+    )
+    expect(permissions.sheet.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['safety-check:permissions:revoked', 'Permissions removed from 2 sites'],
+      ['safety-check:permissions:sites', 'Sites with permissions you granted']
+    ])
+    const block = permissions.sheet.groups[0]
+    // The block's description says once why the permissions went; each row is the permissions
+    // alone (ruling 1); Got it says what it does in the house's words (ruling 2).
+    expect(block.description).toBe(
+      "To protect your data, permissions were removed from sites you haven't visited recently."
+    )
+    expect(block.rows.map((r) => [r.kind, r.label, r.description])).toEqual([
+      ['item', 'meet.example', 'Camera, Microphone'],
+      ['item', 'maps.example', 'Location'],
+      ['action', 'Got it', 'Clears this list. Sites ask again when they need a permission.']
+    ])
+    expect(permissions.sheet.groups[1].rows.map((r) => r.label)).toEqual(['docs.example'])
+
+    // Allow again: the site's permissions come back at once (no confirmation), the check runs
+    // again, and Chrome's toast offers Undo – on §9.33's Undo clock – which reverses it and
+    // reads the check once more. The desktop button's reader name is Chrome's own sentence.
+    uiStore.set({ toasts: [] })
+    const meet = row(privacy, 'safety-check:permissions:revoked:https://meet.example')
+    if (meet.kind !== 'item') throw new Error('not an item')
+    expect(meet.action).toMatchObject({
+      label: 'Allow again',
+      ariaLabel: 'Allow permissions again for meet.example'
+    })
+    expect(meet.action?.destructive).toBeUndefined()
+    expect(meet.sheet.title).toBe('meet.example')
+    expect(meet.sheet.description).toBe('Camera, Microphone')
+    const regrant = row(
+      privacy,
+      'safety-check:permissions:revoked:https://meet.example:allow-again'
+    )
+    expect(regrant).toMatchObject({ kind: 'action', label: 'Allow again', button: 'Allow again' })
+    if (regrant.kind !== 'action') throw new Error('not an action')
+    expect(regrant.confirm).toBeUndefined()
+    // Allow again keeps the sheet open for the sites left (ruling 8 iii).
+    expect(regrant.closesSheet).toBeUndefined()
+    invoke.mockClear()
+    meet.action?.onPress()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.regrantRevoked', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    let toasts = uiStore.get().toasts
+    expect(toasts.map((t) => [t.message, t.kind, t.action?.label, t.duration])).toEqual([
+      ['Permissions allowed again for meet.example', 'info', 'Undo', TOAST_UNDO_MS]
+    ])
+    // A second press inside the round-trip – the row stands until the check's result lands –
+    // is the engine's no-op and would only double the toast: it does nothing, from the button
+    // or from the phone sheet's row alike.
+    meet.action?.onPress()
+    regrant.onPress?.()
+    expect(invoke.mock.calls).toHaveLength(2)
+    expect(uiStore.get().toasts).toHaveLength(1)
+    invoke.mockClear()
+    toasts[0].action?.onPick()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.undoRegrantRevoked', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    uiStore.set({ toasts: [] })
+    // The check back (its promise settled), the guard lifts and a press acts again.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    invoke.mockClear()
+    regrant.onPress?.()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.regrantRevoked', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    expect(uiStore.get().toasts).toHaveLength(1)
+    uiStore.set({ toasts: [] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The check's result back without the site: its rows are gone from the rebuilt sheet, so
+    // the phone's item sheet opened for it resolves to no row and leaves with its act (the
+    // stack's orphan rule, `sheets.tsx`), while the review sheet stays for the sites left.
+    const afterMeet = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          permissions: {
+            ...result.permissions,
+            summary: 'Permissions removed from 1 site',
+            revoked: [revoked[1]]
+          }
+        },
+        permissionRules: rules
+      } as Partial<UIState>)
+    )
+    expect(
+      findRow(afterMeet.groups, 'safety-check:permissions:revoked:https://meet.example')
+    ).toBeNull()
+    expect(
+      findRow(afterMeet.groups, 'safety-check:permissions:revoked:https://meet.example:allow-again')
+    ).toBeNull()
+    expect(row(afterMeet, 'safety-check:permissions:revoked:https://maps.example').kind).toBe(
+      'item'
+    )
+    expect(row(afterMeet, 'safety-check:permissions').kind).toBe('item')
+
+    // Got it: the list is acknowledged through the engine, which hands back the records; the
+    // bulk toast counts them – on the Undo clock – and its Undo puts them back as they were.
+    // The press leaves the review sheet first (`closesSheet`): its act ends the list the sheet
+    // was opened for, and the toast then stands over the page on the phone.
+    const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
+    invoke.mockImplementation(async (name) =>
+      name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
+    )
+    invoke.mockClear()
+    const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
+    if (gotIt.kind !== 'action') throw new Error('not an action')
+    expect(gotIt).toMatchObject({ button: 'Got it', closesSheet: true })
+    expect(gotIt.confirm).toBeUndefined()
+    expect(gotIt.destructive).toBeUndefined()
+    gotIt.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().toasts).toHaveLength(1))
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.acknowledgeRevoked', undefined],
+      ['privacy.safetyCheck', undefined]
+    ])
+    toasts = uiStore.get().toasts
+    expect(toasts.map((t) => [t.message, t.kind, t.action?.label, t.duration])).toEqual([
+      ['Review complete for 2 sites', 'info', 'Undo', TOAST_UNDO_MS]
+    ])
+    invoke.mockClear()
+    toasts[0].action?.onPick()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.restoreRevokedList', { records }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    uiStore.set({ toasts: [] })
+    invoke.mockImplementation(async () => null)
+
+    // One site: the singular forms.
+    const one = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          permissions: {
+            ...result.permissions,
+            summary: 'Permissions removed from 1 site',
+            grantedSites: 0,
+            revoked: [revoked[1]]
+          }
+        },
+        permissionRules: []
+      } as Partial<UIState>)
+    )
+    // With no granted site the row is still the review: the removed permissions are what it opens.
+    const single = row(one, 'safety-check:permissions')
+    if (single.kind !== 'item') throw new Error('not an item')
+    expect(single.sheet.groups[0].description).toBe(
+      "To protect your data, permissions were removed from a site you haven't visited recently."
+    )
+    expect(single.sheet.groups[1]).toMatchObject({
+      heading: 'Sites with permissions you granted',
+      rows: [],
+      empty: 'No site holds a permission'
+    })
+
+    // With nothing removed the sheet is as it was: one headingless list of the granted sites.
+    const none = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          permissions: {
+            ...result.permissions,
+            state: 'safe',
+            summary: '1 site with permissions you granted',
+            revoked: []
+          }
+        },
+        permissionRules: rules
+      } as Partial<UIState>)
+    )
+    const plain = row(none, 'safety-check:permissions')
+    if (plain.kind !== 'item') throw new Error('not an item')
+    expect(plain.sheet.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['safety-check:permissions:sites', null]
+    ])
+  })
+
+  it('keeps the sweep’s switch last among the Site settings under its own heading, bound to the setting, in each host’s own words (PS-41)', () => {
+    const phone = section('privacy')
+    const ids = phone.groups.map((g) => g.id)
+    expect(ids[ids.indexOf('sites-own') + 1]).toBe('sites-unused')
+    expect(ids.indexOf('sites-own')).toBeGreaterThan(ids.indexOf('sites-permissions'))
+    // A heading of its own after the danger-ink Reset all sites (the lead's #637 ruling 6).
+    expect(phone.groups.find((g) => g.id === 'sites-unused')?.heading).toBe('Unused sites')
+    const sw = row(phone, 'sites-auto-revoke')
+    // The phone's one sentence keeps "recently" (ruling 5); Chrome's contraction stays with
+    // Chrome's verbatim words (ruling 7).
+    expect(sw).toMatchObject({
+      kind: 'switch',
+      label: 'Automatically remove permissions',
+      description: "Let Zenium remove permissions from sites that you haven't visited recently.",
+      checked: true
+    })
+    if (sw.kind !== 'switch') throw new Error('not a switch')
+    invoke.mockClear()
+    sw.onChange(false)
+    expect(invoke.mock.calls).toEqual([['settings.update', { autoRevokeUnusedPermissions: false }]])
+    expect(
+      row(
+        section('privacy', state({}, { autoRevokeUnusedPermissions: false })),
+        'sites-auto-revoke'
+      )
+    ).toMatchObject({ checked: false })
+
+    const desktop = section(
+      'privacy',
+      state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })
+    )
+    expect(desktop.groups.find((g) => g.id === 'sites-unused')?.heading).toBe('Unused sites')
+    expect(row(desktop, 'sites-auto-revoke')).toMatchObject({
+      kind: 'switch',
+      label: 'Automatically remove permissions from unused sites',
+      description:
+        "To protect your data, let Zenium remove permissions from sites you haven't visited recently. Notifications are not removed.",
+      checked: true
+    })
+    // The search reaches it under its heading.
+    const hits = searchRows(phoneSections(), 'unused sites')
+    expect(hits.find((h) => h.row.id === 'sites-auto-revoke')?.caption).toBe(
+      'Privacy and Security › Unused sites'
+    )
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
@@ -5629,7 +5960,7 @@ describe('searching the rows', () => {
     expect(rowText(max)).toContain(max.kind === 'field' ? (max.display ?? max.value) : '')
   })
 
-  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Clear browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
+  it('carries #156’s protection groups at the hub cards’ positions: cookies after Delete browsing data with the signals closing Chrome’s cookies stretch, Safe Browsing after them with HTTPS-only and secure DNS – Chrome’s Security page – before Site settings', () => {
     const privacy = section('privacy', state({ privacy: PRIVACY_STATUS }))
     const ids = privacy.groups.map((g) => g.id)
     // The protection groups' own order and content are asserted here; the whole category's
@@ -5639,35 +5970,51 @@ describe('searching the rows', () => {
       families.find((f) => id === f || id.startsWith(`${f}-`))
     const protection = privacy.groups.filter((g) => familyOf(g.id) !== undefined)
     // The third-party cookie mode itself is Cookies and site data's default row since #322's
-    // ruling on Q3 folded the Third-party cookies group into it; the related sites follow it.
+    // ruling on Q3 folded the Third-party cookies group into it; the related sites follow it –
+    // and, the Third-party cookies card standing before Safe Browsing's, they come first. The
+    // signals are the cookies stretch's tail (Chrome's cookies-and-ad-privacy run, the #650
+    // lead check), HTTPS-only and Secure DNS are Safe Browsing's kin (Chrome's Security page).
     expect(protection.map((g) => g.id)).toEqual([
-      'safe-browsing',
-      'safe-browsing-feeds',
       'cookies-related-sites',
       'cookies-add-site',
+      'signals',
+      'safe-browsing',
+      'safe-browsing-feeds',
       'https-only',
       'https-only-sites',
-      'secure-dns',
-      'signals'
+      'secure-dns'
     ])
-    // Each family sits at its Chrome position among the neighbours' groups.
+    // Each family sits at its card's position among the neighbours' groups (the #553 lead
+    // check's Q6: the groups take the cards' order – Delete browsing data, Third-party cookies,
+    // Safe Browsing, Site settings, Safety check). Delete browsing data is the first group
+    // under the cards.
     const at = (id: string): number => ids.indexOf(id)
-    expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
-    expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
-    // #310's Cookies and site data groups (site-data-*) stand between Clear browsing data and
-    // Site settings, where Chrome's cookies page sits, the related sites right under the default
-    // they qualify; siteData.test.ts asserts their content.
+    expect(at('clear-data')).toBe(at('privacy-hub') + 1)
+    // #310's Cookies and site data groups (site-data-*) stand between Delete browsing data and
+    // Safe Browsing, where the Third-party cookies card sits, the related sites right under the
+    // default they qualify; siteData.test.ts asserts their content.
     expect(at('site-data')).toBe(at('clear-data') + 1)
     expect(at('cookies-related-sites')).toBe(at('site-data') + 1)
     expect(at('site-data-allow')).toBe(at('cookies-add-site') + 1)
-    expect(at('site-data-viewer')).toBe(at('sites-permissions') - 1)
-    // Preload pages (PS-43) stands between Site settings and HTTPS-only mode, as on Chrome's
-    // Android page (Chrome desktop moved it to Performance; the shared builder keeps one place).
-    expect(at('preload')).toBe(at('sites-own') + 1)
-    expect(at('https-only')).toBe(at('preload') + 1)
-    // The signals close the protection groups; after them only the private-tab lock (INC-05,
+    // The un-carded kin follow their card (the #650 lead check): Tracking prevention and the
+    // signals close the cookies stretch, then Safe Browsing, then HTTPS-only and Secure DNS –
+    // both rows of Chrome's Security page.
+    expect(at('tracking-prevention')).toBe(at('site-data-viewer') + 1)
+    expect(at('signals')).toBe(at('tracking-exceptions') + 1)
+    expect(at('safe-browsing')).toBe(at('signals') + 1)
+    expect(at('https-only')).toBe(at('safe-browsing-feeds') + 1)
+    expect(at('secure-dns')).toBe(at('https-only-sites') + 1)
+    // Site settings follows the Security stretch, Safety check follows Site settings, as the
+    // cards do; the sweep's switch closes Site settings (PS-41: the last thing on both Chromes'
+    // Site settings pages), so Safety check follows it.
+    expect(at('sites-permissions')).toBe(at('secure-dns') + 1)
+    expect(at('sites-unused')).toBe(at('sites-own') + 1)
+    expect(at('safety-check')).toBe(at('sites-unused') + 1)
+    // After the carded five: Preload pages (PS-43) stays where it stood – Chrome's Performance ›
+    // Speed row, its seat another slice's question – and the private-tab lock is last (INC-05,
     // Chrome's Incognito lock after Do Not Track).
-    expect(at('signals')).toBe(ids.length - 2)
+    expect(at('preload')).toBe(at('safety-check-actions') + 1)
+    expect(at('preload')).toBe(ids.length - 2)
     expect(at('private-lock')).toBe(ids.length - 1)
     // The remembered per-site answers are the Security section's (#62), not a privacy group.
     expect(ids).not.toContain('permissions')
@@ -6366,12 +6713,13 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     return { ...c, model }
   }
 
-  it('draws Chrome’s three groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), Energy Saver', () => {
+  it('draws Chrome’s groups in Chrome’s order on the desktop: Memory Saver, Always keep these sites active (with its Add group), the tab hover card’s row (W8-10), Energy Saver', () => {
     const { model } = perf(DESKTOP_STATE({ unloadExcludedDomains: ['mail.example.com'] }))
     expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
       ['memory-saver', 'Memory Saver'],
       ['keep-active', 'Always keep these sites active'],
       ['keep-active-add', null],
+      ['hover-card', 'Tab hover card'],
       ['energy-saver', 'Energy Saver']
     ])
     expect(allRows(model.groups).map((r) => [r.kind, r.id])).toEqual([
@@ -6381,6 +6729,7 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       ['action', 'keep-active:mail.example.com:remove'],
       ['action', 'keep-active-add'],
       ['action', 'keep-active-current'],
+      ['switch', 'hover-card-memory'],
       ['switch', 'energy-saver'],
       ['value', 'energy-saver-mode'],
       ['value', 'energy-saver-factor']
@@ -6420,6 +6769,48 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
       expect(allRows(model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
       expect(patches).toEqual([])
     }
+  })
+
+  it('seats the tab hover card’s memory switch on the desktop (settings-29, W8-10): Chrome’s "Show tab memory usage" under its "Tab hover card" heading, off by default, bound to hoverCardMemoryUsage; the tablet has none', () => {
+    const { model, patches } = perf(DESKTOP_STATE())
+    const group = model.groups.find((g) => g.id === 'hover-card')!
+    expect(group.heading).toBe('Tab hover card')
+    expect(group.layouts).toEqual(['desktop'])
+    expect(group.rows.map((r) => r.id)).toEqual(['hover-card-memory'])
+    const memory = row(model, 'hover-card-memory')
+    if (memory.kind !== 'switch') throw new Error('not a switch')
+    expect(memory.label).toBe('Show tab memory usage')
+    expect(memory.description).toBe(
+      'The card that appears when you rest the pointer on a tab says how much memory its page is using.'
+    )
+    // Chrome 152's effective default: browser.hovercard.memory_usage_enabled registers true in
+    // local state (RegisterBrowserPrefs) and MigrateHoverCardMemoryPref flips it to false once,
+    // under Tab Declutter, on every desktop platform – so the switch rests off.
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(false)
+    expect(memory.checked).toBe(false)
+    expect(memory.disabled).toBeFalsy()
+    memory.onChange(true)
+    expect(patches).toEqual([{ hoverCardMemoryUsage: true }])
+    const on = row(perf(DESKTOP_STATE({ hoverCardMemoryUsage: true })).model, 'hover-card-memory')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.checked).toBe(true)
+    // Independent of Memory Saver: the switch stands whatever the mode.
+    const saverOff = row(
+      perf(DESKTOP_STATE({ unloadEnabled: false, hoverCardMemoryUsage: true })).model,
+      'hover-card-memory'
+    )
+    if (saverOff.kind !== 'switch') throw new Error('not a switch')
+    expect(saverOff.checked).toBe(true)
+    expect(saverOff.disabled).toBeFalsy()
+    // Found from Chrome's words and the card's.
+    for (const query of ['hover card', 'memory usage', 'preview card']) {
+      expect(
+        searchRows([model], query).map((r) => r.row.id),
+        query
+      ).toContain('hover-card-memory')
+    }
+    // The tablet chrome mounts no hover card: no row there.
+    expect(findRow(perf(DESKTOP_STATE(), 'tablet').model.groups, 'hover-card-memory')).toBeNull()
   })
 
   it('binds Memory Saver’s switch to unloadEnabled with Chrome’s three facts in two sentences that hold the row’s two lines (N1), Zenium named', () => {
@@ -6652,7 +7043,8 @@ describe('W8-2: Performance on the desktop and tablet shells – Chrome’s Memo
     expect(none.model.groups.map((g) => g.id)).toEqual([
       'memory-saver',
       'keep-active',
-      'keep-active-add'
+      'keep-active-add',
+      'hover-card'
     ])
     expect(allRows(none.model.groups).some((r) => r.id.startsWith('energy-saver'))).toBe(false)
     // The mode itself is left as it was: nothing is written for a group not drawn.
@@ -6914,8 +7306,8 @@ describe('ID-08’s Sync category on a phone', () => {
     return state({ capabilities: { ...ANDROID, sync: true }, sync } as Partial<UIState>)
   }
 
-  beforeEach(() => syncSetupStore.set({ folder: null }))
-  afterEach(() => syncSetupStore.set({ folder: null }))
+  beforeEach(() => clearSyncSetup())
+  afterEach(() => clearSyncSetup())
 
   it('is listed behind the `sync` capability only, and builds in both states with unique ids', () => {
     expect(phoneSections().map((m) => m.section.id)).not.toContain('sync')
@@ -7447,6 +7839,594 @@ describe('ID-08’s Sync category on a phone', () => {
       expect(labels.filter((l) => l.startsWith('Turn off'))).toEqual(['Turn off sync'])
     }
   })
+
+  // ID-32: a WebDAV server as the transport (services pass 12). The host says whether it can
+  // reach one (`webdavAvailable`: a fetch and a secret store – the desktop's); the phone's
+  // status reads false until its host lands both, and then these rows are its rows too.
+  const DAV_ROOT = 'https://cloud.example.com/remote.php/dav/files/alice/'
+  const SERVER = { url: DAV_ROOT, username: 'alice', folder: 'Zenium' }
+  const SERVER_INTRO =
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync – or a WebDAV server such as Nextcloud – and a passphrase: everything is encrypted on this device before it is written, so what is stored there is only ever ciphertext.'
+  const TEST_HINT = 'Reaches the server with these details; nothing is written yet.'
+  const APP_PASSWORD_HINT =
+    'Create one under Security in the server’s personal settings – never the account’s own password.'
+
+  /** Connected through the server, as the engine reports it (the folder is the server folder's URL). */
+  function onServer(patch: Partial<SyncStatus> = {}): SyncStatus {
+    return connected({
+      transport: 'webdav',
+      webdav: SERVER,
+      webdavAvailable: true,
+      folder: `${DAV_ROOT}Zenium/`,
+      folderName: 'Zenium',
+      ...patch
+    })
+  }
+
+  const withServer = (): UIState => syncState(syncStatus({ webdavAvailable: true }))
+
+  function actionRow(model: Model, id: string): Extract<Row, { kind: 'action' }> {
+    const r = row(model, id)
+    if (r.kind !== 'action') throw new Error(`${id} is not an action`)
+    return r
+  }
+
+  function fieldRow(model: Model, id: string): Extract<Row, { kind: 'field' }> {
+    const r = row(model, id)
+    if (r.kind !== 'field') throw new Error(`${id} is not a field`)
+    return r
+  }
+
+  /** The desktop's buttons on the section's action rows, in row order (§10.5). */
+  function desktopButtons(s: UIState): Array<[string, string | undefined]> {
+    const def = PAGE.sections.find((x) => x.id === 'sync')!
+    const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
+    return allRows(model.groups).flatMap((r) => (r.kind === 'action' ? [[r.id, r.button]] : []))
+  }
+
+  it('ID-32: a host that reaches a WebDAV server opens the setup with Sync through – a value row of two radios, the folder picked – and names the server in the paragraph; without the host’s half there is no such row, whatever the draft says', () => {
+    const model = section('sync', withServer())
+    expect(model.groups[0]?.heading).toBe('Set up sync')
+    expect(model.groups[0]?.description).toBe(SERVER_INTRO)
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-folder',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const transport = row(model, 'sync-transport')
+    if (transport.kind !== 'value') throw new Error('not a value row')
+    expect(transport).toMatchObject({ label: 'Sync through', value: 'folder', radios: true })
+    expect(transport.description).toBeUndefined()
+    expect(transport.options).toEqual([
+      {
+        value: 'folder',
+        label: 'A folder on this device',
+        description: 'Shared through your own cloud drive'
+      },
+      { value: 'webdav', label: 'A WebDAV server', description: 'Nextcloud and others' }
+    ])
+    expect(currentOptionLabel(transport)).toBe('A folder on this device')
+    // The folder's rows under it are the ones pinned above, unchanged.
+    expect(row(model, 'sync-folder')).toMatchObject({
+      kind: 'action',
+      label: 'Sync folder',
+      description: 'Choose a folder that your cloud drive keeps in sync.'
+    })
+    expect(actionRow(model, 'sync-turn-on').description).toBe('Choose a sync folder first.')
+
+    // A host without the fetch or the secret store (the phone today): the folder's paragraph
+    // and rows alone, and a draft that says `webdav` is read as the folder.
+    syncSetupStore.set({ transport: 'webdav' })
+    const folderOnly = section('sync', syncState(syncStatus()))
+    expect(folderOnly.groups[0]?.description).toBe(
+      'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync and a passphrase: everything is encrypted on this device before it is written, so the folder only ever holds ciphertext.'
+    )
+    expect(folderOnly.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-folder',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(findRow(folderOnly.groups, 'sync-transport')).toBeNull()
+    expect(desktopButtons(syncState(syncStatus()))).toEqual([
+      ['sync-folder', 'Choose…'],
+      ['sync-turn-on', 'Turn on…']
+    ])
+  })
+
+  it('ID-32: picking the server swaps the folder row for the server form – Server address, Username, App password (masked), Folder – and Test connection; Turn on sync and Test connection wait at 40 % on the three details a connection needs; an http:// address is taken with its one risk under the field in the warn ink, never a refusal', () => {
+    const build = (): Model => section('sync', withServer())
+    const transport = row(build(), 'sync-transport')
+    if (transport.kind !== 'value') throw new Error('not a value row')
+    transport.onChange('webdav')
+    expect(syncSetupStore.get()).toMatchObject({ transport: 'webdav', probe: { state: 'idle' } })
+
+    const model = build()
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-webdav-url',
+      'sync-webdav-username',
+      'sync-webdav-password',
+      'sync-webdav-folder',
+      'sync-webdav-test',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(findRow(model.groups, 'sync-folder')).toBeNull()
+    const picked = row(model, 'sync-transport')
+    if (picked.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(picked)).toBe('A WebDAV server')
+
+    // The address: a URL field, stacked under its text on the desktop (a DAV root is longer
+    // than the inline 160), Nextcloud's own shape as its hint and the row's line before anything
+    // is typed; refused under the field when it is not an http(s) address – and a refused
+    // value is not kept – accepted otherwise; cleared is not refused, only not filled in.
+    const url = fieldRow(model, 'sync-webdav-url')
+    expect(url).toMatchObject({
+      label: 'Server address',
+      description: 'For Nextcloud: https://cloud.example.com/remote.php/dav/files/USERNAME/',
+      display: 'For Nextcloud: https://cloud.example.com/remote.php/dav/files/USERNAME/',
+      value: '',
+      input: 'url',
+      form: 'stacked',
+      placeholder: 'https://'
+    })
+    expect(url.warning).toBeUndefined()
+    const invalid = 'Enter an address that starts with https:// or http://'
+    expect(url.onCommit('cloud.example.com')).toBe(invalid)
+    expect(url.onCommit('ftp://cloud.example.com/')).toBe(invalid)
+    expect(url.onCommit('https://')).toBe(invalid)
+    expect(syncSetupStore.get().webdav.url).toBe('')
+    expect(url.onCommit(DAV_ROOT)).toBeUndefined()
+    expect(syncSetupStore.get().webdav.url).toBe(DAV_ROOT)
+    expect(fieldRow(build(), 'sync-webdav-url')).toMatchObject({
+      value: DAV_ROOT,
+      display: DAV_ROOT
+    })
+    expect(fieldRow(build(), 'sync-webdav-url').warning).toBeUndefined()
+    expect(url.onCommit('')).toBeUndefined()
+    expect(syncSetupStore.get().webdav.url).toBe('')
+    // An http:// address is taken (a home server on the LAN) – not a refusal, the row is not
+    // in a status ink – and the field left holding it carries the one risk in the warn ink
+    // under it: the app password, the one thing sent unprotected (the records are ciphertext
+    // either way). The line goes with the address.
+    expect(url.onCommit(`http://192.168.1.10:8080/dav/`)).toBeUndefined()
+    const plain = fieldRow(build(), 'sync-webdav-url')
+    expect(plain.warning).toBe('Over http:// the app password is sent unprotected.')
+    expect(plain.tone).toBeUndefined()
+    expect(plain.display).toBe('http://192.168.1.10:8080/dav/')
+    expect(url.onCommit(DAV_ROOT)).toBeUndefined()
+    expect(fieldRow(build(), 'sync-webdav-url').warning).toBeUndefined()
+
+    const username = fieldRow(model, 'sync-webdav-username')
+    expect(username).toMatchObject({
+      label: 'Username',
+      description: 'Your account on the server.',
+      display: 'Your account on the server.',
+      value: '',
+      input: 'text'
+    })
+    expect(username.onCommit('alice')).toBeUndefined()
+    expect(fieldRow(build(), 'sync-webdav-username').display).toBe('alice')
+
+    // The app password: a masked field whose row shows the hint before and dots after, never
+    // the value – and the landing's search never reads the value either.
+    const password = fieldRow(model, 'sync-webdav-password')
+    expect(password).toMatchObject({
+      label: 'App password',
+      description: APP_PASSWORD_HINT,
+      display: APP_PASSWORD_HINT,
+      value: '',
+      input: 'password',
+      secret: true
+    })
+    expect(password.onCommit('app-pass')).toBeUndefined()
+    const set = fieldRow(build(), 'sync-webdav-password')
+    expect(set.value).toBe('app-pass')
+    expect(set.display).toBe('••••••••')
+    expect(rowText(set)).not.toContain('app-pass')
+    expect(rowText(set)).toContain('App password')
+
+    const folder = fieldRow(model, 'sync-webdav-folder')
+    expect(folder).toMatchObject({
+      label: 'Folder',
+      description: 'Where the zenium-sync folder is kept on the server.',
+      value: 'Zenium/',
+      input: 'text'
+    })
+    expect(folder.onCommit('Backups/Zenium')).toBeUndefined()
+    expect(syncSetupStore.get().webdav.folder).toBe('Backups/Zenium')
+
+    // Test connection and Turn on sync, as the first build had them: laid out at 40 % (§10.4)
+    // until the address, the username and the app password are in, whichever order they come;
+    // the folder may stay as it is.
+    const testBefore = actionRow(model, 'sync-webdav-test')
+    expect(testBefore).toMatchObject({
+      label: 'Test connection',
+      description: TEST_HINT,
+      button: 'Test',
+      busy: false,
+      disabled: true
+    })
+    expect(testBefore.tone).toBeUndefined()
+    expect(testBefore.form).toBeUndefined()
+    const turnOnBefore = actionRow(model, 'sync-turn-on')
+    expect(turnOnBefore.disabled).toBe(true)
+    expect(turnOnBefore.description).toBe(
+      'Fill in the server address, username and app password first.'
+    )
+    expect(turnOnBefore.form?.title).toBe('Create a passphrase')
+    expect(turnOnBefore.form?.render(() => undefined)).toBeNull()
+
+    // All three in: both rows are pressable, and Turn on sync's form is the passphrase form
+    // over the server's details rather than a folder.
+    const ready = build()
+    expect(actionRow(ready, 'sync-webdav-test').disabled).toBe(false)
+    const turnOn = actionRow(ready, 'sync-turn-on')
+    expect(turnOn.disabled).toBe(false)
+    expect(turnOn.description).toBe('Create the passphrase every device will share.')
+    const form = turnOn.form?.render(() => undefined)
+    if (!isValidElement<{ folder: string; webdav?: unknown }>(form)) throw new Error('no form')
+    expect(form.props.folder).toBe('')
+    expect(form.props.webdav).toEqual({
+      url: DAV_ROOT,
+      username: 'alice',
+      password: 'app-pass',
+      folder: 'Backups/Zenium'
+    })
+
+    // One detail out again and both wait again.
+    password.onCommit('')
+    const short = build()
+    expect(actionRow(short, 'sync-webdav-test').disabled).toBe(true)
+    expect(actionRow(short, 'sync-turn-on').disabled).toBe(true)
+    expect(actionRow(short, 'sync-turn-on').form?.render(() => undefined)).toBeNull()
+
+    // Back to the folder: its rows return, and the server's details stay in the draft for a
+    // change of mind.
+    const back = row(short, 'sync-transport')
+    if (back.kind !== 'value') throw new Error('not a value row')
+    back.onChange('folder')
+    expect(build().groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-folder',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(syncSetupStore.get().webdav.username).toBe('alice')
+    expect(actionRow(build(), 'sync-turn-on').description).toBe('Choose a sync folder first.')
+  })
+
+  it('ID-32: Test connection is a §9.30 busy row while the engine reaches the server (`sync.testWebDav` with the details, trimmed) and reports the answer in its description alone (§9.33): Connected., the sign-in refused, the server not reached, or an address that did not answer as WebDAV; a press while busy does nothing, an edit drops the answer', async () => {
+    const build = (): Model => section('sync', withServer())
+    const test = (): Extract<Row, { kind: 'action' }> => actionRow(build(), 'sync-webdav-test')
+    const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+    syncSetupStore.set({
+      transport: 'webdav',
+      webdav: {
+        url: ` ${DAV_ROOT} `,
+        username: ' alice ',
+        password: 'app-pass',
+        folder: ' Zenium/ '
+      }
+    })
+    let finish: (value: never) => void = () => undefined
+    invoke.mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          finish = resolve as (value: never) => void
+        })
+    )
+    test().onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.testWebDav', {
+      url: DAV_ROOT,
+      username: 'alice',
+      password: 'app-pass',
+      folder: 'Zenium/'
+    })
+    const busy = test()
+    expect(busy).toMatchObject({ busy: true, disabled: false, description: 'Connecting…' })
+    expect(busy.tone).toBeUndefined()
+    busy.onPress?.()
+    expect(invoke).toHaveBeenCalledTimes(1)
+    finish({ ok: true } as never)
+    await settle()
+    const done = test()
+    expect(done).toMatchObject({ busy: false, disabled: false, description: 'Connected.' })
+    expect(done.tone).toBeUndefined()
+    // The answer stays with the details it answered: another build reads the same line.
+    expect(test().description).toBe('Connected.')
+
+    // The refusals, each the description in the danger ink and nothing else – an action row
+    // reporting its result carries no glyph (§9.33) – and each the page's sentence for the
+    // answer's class (`webDavOutcomeLine`, the one mapping the Turn on refusal and the line
+    // under Sync now read too): no method name, no status code in any of them.
+    const answers: Array<[WebDavProbe, string]> = [
+      [{ ok: false, kind: 'auth', status: 401 }, 'The server refused the sign-in.'],
+      [
+        { ok: false, kind: 'forbidden', status: 403 },
+        'The server did not allow writing to the folder.'
+      ],
+      [
+        { ok: false, kind: 'conflict', status: 423 },
+        'The server did not allow writing to the folder.'
+      ],
+      [{ ok: false, kind: 'unavailable', status: 0 }, 'The server could not be reached.'],
+      [{ ok: false, kind: 'unavailable', status: 503 }, 'The server could not be reached.'],
+      [{ ok: false, kind: 'redirect', status: 301 }, 'The address redirected elsewhere.'],
+      [
+        { ok: false, kind: 'refused', status: 200 },
+        'The address did not answer as a WebDAV server.'
+      ],
+      [
+        { ok: false, kind: 'refused', status: 405 },
+        'The address did not answer as a WebDAV server.'
+      ],
+      [
+        { ok: false, kind: 'missing', status: 404 },
+        'The address did not answer as a WebDAV server.'
+      ]
+    ]
+    for (const [answer, line] of answers) {
+      syncSetupStore.set({ probe: { state: 'idle' } })
+      invoke.mockResolvedValueOnce(answer as never)
+      test().onPress?.()
+      await settle()
+      const answered = test()
+      expect(answered, line).toMatchObject({ description: line, tone: 'danger', busy: false })
+      expect(answered.description, line).not.toMatch(/PROPFIND|\b[1-5]\d\d\b/)
+      expect(answered.leading, line).toBeUndefined()
+      expect(answered.leaves, line).toBeUndefined()
+    }
+    // The host's channel failing is the server not reached.
+    syncSetupStore.set({ probe: { state: 'idle' } })
+    invoke.mockRejectedValueOnce(new Error('channel closed'))
+    test().onPress?.()
+    await settle()
+    expect(test()).toMatchObject({
+      description: 'The server could not be reached.',
+      tone: 'danger'
+    })
+
+    // An edit puts the row back to its hint – the answer was to the old details – and an answer
+    // that lands after an edit is dropped for the same reason.
+    const username = fieldRow(build(), 'sync-webdav-username')
+    username.onCommit('bob')
+    expect(test()).toMatchObject({ description: TEST_HINT, busy: false })
+    expect(test().tone).toBeUndefined()
+    invoke.mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          finish = resolve as (value: never) => void
+        })
+    )
+    test().onPress?.()
+    expect(test().busy).toBe(true)
+    fieldRow(build(), 'sync-webdav-username').onCommit('carol')
+    expect(test().busy).toBe(false)
+    finish({ ok: true } as never)
+    await settle()
+    expect(test()).toMatchObject({ busy: false, description: TEST_HINT })
+    expect(syncSetupStore.get().probe).toEqual({ state: 'idle' })
+    // Nothing to test without the details: the press is refused before anything is sent.
+    invoke.mockClear()
+    fieldRow(build(), 'sync-webdav-password').onCommit('')
+    test().onPress?.()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(test().busy).toBe(false)
+  })
+
+  it('ID-32: connected through a server, the second group is Server and device – the account on the host and the folder under its files as facts, nothing to press and no folder row – on every shell; the top level is named when the folder is none', () => {
+    const model = section('sync', syncState(onServer()))
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'sync-status',
+      'sync-where',
+      'sync-devices',
+      'sync-scope',
+      'sync-off'
+    ])
+    const where = model.groups.find((g) => g.id === 'sync-where')
+    expect(where?.heading).toBe('Server and device')
+    expect(where?.rows.map((r) => r.id)).toEqual([
+      'sync-server',
+      'sync-server-folder',
+      'sync-device-name'
+    ])
+    expect(findRow(model.groups, 'sync-folder')).toBeNull()
+    const server = row(model, 'sync-server')
+    if (server.kind !== 'info') throw new Error('not an info row')
+    expect(server).toMatchObject({
+      label: 'WebDAV server',
+      description: 'alice on cloud.example.com'
+    })
+    expect(server.keywords).toContain(DAV_ROOT)
+    expect(server.leading).toBeUndefined()
+    expect(server.trailing).toBeUndefined()
+    const folder = row(model, 'sync-server-folder')
+    if (folder.kind !== 'info') throw new Error('not an info row')
+    expect(folder).toMatchObject({ label: 'Folder', description: 'Zenium/' })
+    expect(folder.trailing).toBeUndefined()
+    // The folder as the engine reads it: empty and dot segments dropped, one trailing slash;
+    // the account's top level named for none.
+    const nested = section(
+      'sync',
+      syncState(onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } }))
+    )
+    expect(row(nested, 'sync-server-folder').description).toBe('Backups/Zenium/')
+    const root = section(
+      'sync',
+      syncState(
+        onServer({
+          webdav: { ...SERVER, folder: '' },
+          folder: DAV_ROOT,
+          folderName: 'cloud.example.com'
+        })
+      )
+    )
+    expect(row(root, 'sync-server-folder').description).toBe('The top level of your files')
+    // A folder transport keeps its heading and its row.
+    const viaFolder = section('sync', syncState(connected()))
+    expect(viaFolder.groups.find((g) => g.id === 'sync-where')?.heading).toBe('Folder and device')
+    expect(row(viaFolder, 'sync-folder').kind).toBe('action')
+    // Sync now reads the status as with a folder; a round that fails for a reason that is not
+    // the sign-in puts the page's sentence for the server's answer under it in the danger ink
+    // (`lastErrorKind` through the one mapping), never the engine's method and status; an
+    // error with no class – a record that would not decrypt – is the engine's own line, as
+    // the folder transport's are.
+    expect(actionRow(model, 'sync-now')).toMatchObject({
+      description: 'Last synced 5 min ago',
+      disabled: false
+    })
+    const failed: Array<[SyncStatus['lastErrorKind'], string, string]> = [
+      ['conflict', 'WebDAV PUT answered 423', 'The server did not allow writing to the folder.'],
+      ['forbidden', 'WebDAV MKCOL answered 403', 'The server did not allow writing to the folder.'],
+      ['unavailable', 'WebDAV PROPFIND answered 503', 'The server could not be reached.'],
+      ['redirect', 'WebDAV PROPFIND: the address redirected', 'The address redirected elsewhere.'],
+      ['missing', 'WebDAV GET answered 404', 'The address did not answer as a WebDAV server.'],
+      [null, 'Sync failed', 'Sync failed']
+    ]
+    for (const [lastErrorKind, lastError, line] of failed) {
+      expect(
+        actionRow(section('sync', syncState(onServer({ lastError, lastErrorKind }))), 'sync-now'),
+        line
+      ).toMatchObject({ description: line, tone: 'danger', disabled: false })
+    }
+    // The desktop's buttons: Sync now and Turn off…; the server's rows carry none.
+    expect(desktopButtons(syncState(onServer()))).toEqual([
+      ['sync-now', 'Sync now'],
+      ['sync-disconnect', 'Turn off…']
+    ])
+    // The device name and the way off stand as they do with a folder.
+    expect(row(model, 'sync-device-name')).toMatchObject({ kind: 'field', label: 'This device' })
+    expect(row(model, 'sync-disconnect')).toMatchObject({ kind: 'action', label: 'Turn off sync' })
+  })
+
+  it('ID-32: a sign-in the server has stopped taking is the lone status row over the App password row – the info row in the danger ink with the key glyph trailing, nothing to press; Sync now waits with its status line, not the engine’s sentence – and the masked field’s commit hands the engine the new password as a §9.30 busy commit, an empty one nothing; a secret store that cannot keep it is the field’s refusal in the page’s words', async () => {
+    const model = section(
+      'sync',
+      syncState(
+        onServer({
+          authRefused: true,
+          lastError: 'WebDAV PROPFIND answered 401',
+          lastErrorKind: 'auth'
+        })
+      )
+    )
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual(['sync-auth-refused', 'sync-now'])
+    const notice = row(model, 'sync-auth-refused')
+    if (notice.kind !== 'info') throw new Error('not an info row')
+    expect(notice).toMatchObject({
+      label: 'The server refused the sign-in',
+      description: 'Enter a new app password to keep syncing.',
+      tone: 'danger'
+    })
+    expect(notice.leading).toBeUndefined()
+    if (!isValidElement<{ className?: string }>(notice.trailing)) throw new Error('no glyph')
+    expect(notice.trailing.props.className).toBe('zen-settings-trailing-glyph')
+    const now = actionRow(model, 'sync-now')
+    expect(now.disabled).toBe(true)
+    expect(now.description).toBe('Last synced 5 min ago')
+    expect(now.tone).toBeUndefined()
+
+    // The way out is the next group's first row (§9.17): the App password field, masked and
+    // empty – the old one is never read back – with what it does as its line.
+    const where = model.groups.find((g) => g.id === 'sync-where')
+    expect(where?.heading).toBe('Server and device')
+    expect(where?.rows.map((r) => r.id)).toEqual([
+      'sync-webdav-password',
+      'sync-server',
+      'sync-server-folder',
+      'sync-device-name'
+    ])
+    const password = fieldRow(model, 'sync-webdav-password')
+    expect(password).toMatchObject({
+      label: 'App password',
+      description: 'The one the server takes now; the old one is forgotten.',
+      display: 'The one the server takes now; the old one is forgotten.',
+      value: '',
+      input: 'password',
+      secret: true
+    })
+    expect(password.form).toBeUndefined()
+    invoke.mockClear()
+    expect(password.onCommit('')).toBeUndefined()
+    expect(invoke).not.toHaveBeenCalled()
+    // The commit settles with the engine (§9.30's busy form while it keeps the password and
+    // runs a round): accepted when the engine answers nothing; a server that refuses the new
+    // password in its turn leaves the status row to say so, not the field.
+    const accepted = password.onCommit('new-app-pass')
+    expect(accepted).toBeInstanceOf(Promise)
+    expect(invoke).toHaveBeenCalledWith('sync.setWebDavPassword', { password: 'new-app-pass' })
+    await expect(accepted).resolves.toBeUndefined()
+    expect(rowText(password)).not.toContain('new-app-pass')
+    // The secret store could not keep it: the field's refusal, in the page's words.
+    invoke.mockResolvedValueOnce({ reason: 'secrets' } as never)
+    await expect(password.onCommit('new-app-pass')).resolves.toBe(
+      'The app password could not be kept on this device.'
+    )
+    // The host's channel failing is the same sentence: the password did not get kept.
+    invoke.mockRejectedValueOnce(new Error('channel closed'))
+    await expect(password.onCommit('new-app-pass')).resolves.toBe(
+      'The app password could not be kept on this device.'
+    )
+
+    // Not refused: no password row – it appears with its state (§10.4) – and no status row.
+    const fine = section('sync', syncState(onServer()))
+    expect(findRow(fine.groups, 'sync-webdav-password')).toBeNull()
+    expect(findRow(fine.groups, 'sync-auth-refused')).toBeNull()
+    // The same rows on the desktop: a message row with no button, the field under it.
+    expect(desktopButtons(syncState(onServer({ authRefused: true })))).toEqual([
+      ['sync-now', 'Sync now'],
+      ['sync-disconnect', 'Turn off…']
+    ])
+    // A folder transport's page never shows the row, whatever an older status carries.
+    expect(
+      findRow(
+        section('sync', syncState(connected({ authRefused: true }))).groups,
+        'sync-webdav-password'
+      )
+    ).toBeNull()
+  })
+
+  it('ID-32: the landing’s search reaches the server rows – "nextcloud" lands on Sync through and the address, "app password" on the masked field, the server’s host on the connected page’s row – and never reads the password itself; the desktop’s server form trails Test and Turn on…', () => {
+    syncSetupStore.set({
+      transport: 'webdav',
+      webdav: { url: DAV_ROOT, username: 'alice', password: 'app-pass', folder: 'Zenium/' }
+    })
+    const models = phoneSections(withServer())
+    const hits = (query: string): string[] => searchRows(models, query).map((h) => h.row.id)
+    expect(hits('nextcloud')).toEqual(expect.arrayContaining(['sync-transport', 'sync-webdav-url']))
+    expect(hits('webdav')).toContain('sync-transport')
+    expect(hits('username')).toContain('sync-webdav-username')
+    expect(hits('app password')).toContain('sync-webdav-password')
+    expect(hits('test connection')).toContain('sync-webdav-test')
+    expect(hits('app-pass')).toEqual([])
+    expect(searchRows(models, 'server address')[0]?.caption).toBe('Sync › Set up sync')
+    expect(desktopButtons(withServer())).toEqual([
+      ['sync-webdav-test', 'Test'],
+      ['sync-turn-on', 'Turn on…']
+    ])
+    const on = phoneSections(syncState(onServer()))
+    expect(searchRows(on, 'cloud.example.com').map((h) => h.row.id)).toContain('sync-server')
+    expect(searchRows(on, 'webdav server').map((h) => h.row.id)).toContain('sync-server')
+  })
+
+  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder written as Zenium/, no test asked – and is cleared whole, the typed app password with it', () => {
+    expect(emptySyncSetup()).toEqual({
+      folder: null,
+      transport: 'folder',
+      webdav: { url: '', username: '', password: '', folder: 'Zenium/' },
+      probe: { state: 'idle' }
+    })
+    syncSetupStore.set({
+      folder: TREE,
+      transport: 'webdav',
+      webdav: { url: DAV_ROOT, username: 'alice', password: 'app-pass', folder: 'Zenium/' },
+      probe: { state: 'done', probe: { ok: true } }
+    })
+    clearSyncSetup()
+    expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+  })
 })
 
 describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
@@ -7678,7 +8658,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       settings
     )
 
-  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
+  it('the theme row stands after Colour scheme on the desktop and the tablet, never on the phone, naming the active space’s theme and the space – "Default · Personal Space" at rest (the picker’s own description, #572’s N5) – with the picker as its door (Chrome’s row opens Customize Chrome; no store is named), hung from the Change… button that opened it (§9.20, #572’s L8)', async () => {
     const { model } = look()
     const ids = appearanceIds(model)
     expect(ids.slice(0, 2)).toEqual(['color-scheme', 'theme'])
@@ -7686,7 +8666,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     expect(theme).toMatchObject({
       kind: 'action',
       label: 'Theme',
-      description: 'Default · Personal space',
+      description: 'Default · Personal Space',
       layouts: ['desktop', 'tablet'],
       button: 'Change…',
       // The button hangs the `theme` overlay from itself (round C): the row's view draws it as
@@ -7724,7 +8704,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     const { model } = look(themed())
     const theme = row(model, 'theme')
     expect(theme).toMatchObject({
-      description: 'Custom · Personal space',
+      description: 'Custom · Personal Space',
       button: 'Reset to default'
     })
     if (theme.kind !== 'action') throw new Error('not an action row')
@@ -7754,7 +8734,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
       ] as unknown as UIState['spaces']
     })
     expect(row(look(preset).model, 'theme').description).toBe(
-      `${THEME_PRESETS[1].name} · Work space`
+      `${THEME_PRESETS[1].name} · Work Space`
     )
   })
 
@@ -7895,7 +8875,7 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
     // A themed space keeps its own accent: the row says when the OS's shows.
     expect(
       row(look(themed({ systemAccent: '#0078d4' })).model, 'use-system-accent').description
-    ).toBe('Controls take the colour your system uses while the space has the default look.')
+    ).toBe('Controls take the colour your system uses while the Space has the default look.')
     for (const formFactor of ['phone', 'tablet'] as const)
       expect(
         findRow(
@@ -7904,6 +8884,32 @@ describe('W8-3: Settings › Appearance on the desktop – the theme row (settin
         ),
         formFactor
       ).toBeNull()
+  })
+
+  it('"Show the mini menu when text is selected" (CT-39; Edge’s Appearance › Context menus row) closes the Appearance group on desktop hosts with the popup surface, in the desktop and tablet layouts, on by default with an absent value reading as on, and is absent without the capability and off the phone', () => {
+    // The fixture's host has no popup surface: no row, and the search has none either.
+    expect(appearanceIds(look().model)).not.toContain('show-selection-menu')
+    const host = (settings: Partial<Settings> = {}): UIState =>
+      state({ capabilities: { ...ANDROID, selectionMenu: true } }, settings)
+    const on = look(host())
+    expect(appearanceIds(on.model).at(-1)).toBe('show-selection-menu')
+    const menu = row(on.model, 'show-selection-menu')
+    expect(menu).toMatchObject({
+      kind: 'switch',
+      label: 'Show the mini menu when text is selected',
+      checked: true,
+      layouts: ['desktop', 'tablet']
+    })
+    expect(menu.description).toBeUndefined()
+    if (menu.kind !== 'switch') throw new Error('not a switch')
+    menu.onChange(false)
+    expect(on.patches).toEqual([{ showSelectionMenu: false }])
+    expect(
+      row(look(host({ showSelectionMenu: false })).model, 'show-selection-menu')
+    ).toMatchObject({ checked: false })
+    // A desktop host laid out at a tablet width (a coarse pointer) still runs the menu: its row stays.
+    expect(findRow(look(host(), 'tablet').model.groups, 'show-selection-menu')).not.toBeNull()
+    expect(findRow(look(host(), 'phone').model.groups, 'show-selection-menu')).toBeNull()
   })
 })
 
@@ -7930,10 +8936,11 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
       layouts: ['desktop', 'tablet']
     })
     // The first card follows the dialog it opens by name (the #553 lead check's F1: one name
-    // for one thing today; the family's rename to "Delete browsing data" is its own slice), the
-    // third names its landing, Safe Browsing, since the nav has a Security category (F3 / Q4).
+    // for one thing) – Chrome's "Delete browsing data" since M124, the family renamed together
+    // in W8-7; the third names its landing, Safe Browsing, since the nav has a Security
+    // category (F3 / Q4).
     expect(cards.rows.map((r) => [r.id, r.label])).toEqual([
-      ['hub-clear-data', 'Clear browsing data…'],
+      ['hub-clear-data', 'Delete browsing data…'],
       ['hub-cookies', 'Third-party cookies'],
       ['hub-security', 'Safe Browsing'],
       ['hub-site-settings', 'Site settings'],
@@ -7959,7 +8966,7 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     ])
   })
 
-  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Clear browsing data…', () => {
+  it('lands each card on its program’s first group – present under the cards – and opens the PS-13 dialog from Delete browsing data…', () => {
     const { privacy, revealed } = hub()
     const groupIds = privacy.groups.map((g) => g.id)
     const targets = ['site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
@@ -7980,8 +8987,8 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
 
     const clear = cards[0]
     if (clear.kind !== 'action') throw new Error('not an action row')
-    // The same sheet as the Clear browsing data row's (`clear-data-open`), no landing.
-    expect(clear.form?.title).toBe('Clear browsing data')
+    // The same sheet as the Delete browsing data row's (`clear-data-open`), no landing.
+    expect(clear.form?.title).toBe('Delete browsing data')
     expect(clear.onPress).toBeUndefined()
     const existing = row(privacy, 'clear-data-open')
     if (existing.kind !== 'action') throw new Error('not an action row')
@@ -7995,10 +9002,17 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     expect(groupIds.slice(1)).toContain('clear-data')
   })
 
-  it('keeps the cards to the desktop and tablet shells: the phone’s Privacy page is as it was', () => {
+  it('keeps the cards to the desktop and tablet shells: the phone’s Privacy page is the plain list, in the cards’ order (W8-8)', () => {
     const { privacy } = hub()
-    expect(onLayout(privacy.groups, 'phone').map((g) => g.id)).not.toContain('privacy-hub')
-    expect(onLayout(privacy.groups, 'phone')[0].id).toBe('safety-check')
+    const phone = onLayout(privacy.groups, 'phone').map((g) => g.id)
+    expect(phone).not.toContain('privacy-hub')
+    // The phone's list moves with the desktop's groups (the #553 lead check's Q6): Delete
+    // browsing data leads it, the carded programs follow in the cards' order, Safety check the
+    // last of them; the same groups, the cards alone taken away.
+    expect(phone[0]).toBe('clear-data')
+    expect(phone).toEqual(privacy.groups.map((g) => g.id).slice(1))
+    const heads = ['clear-data', 'site-data', 'safe-browsing', 'sites-permissions', 'safety-check']
+    expect(phone.filter((id) => heads.includes(id))).toEqual(heads)
     expect(onLayout(privacy.groups, 'desktop')[0].id).toBe('privacy-hub')
     expect(onLayout(privacy.groups, 'tablet')[0].id).toBe('privacy-hub')
     // A phone in landscape draws the two panes (`formFactor: 'phone'` still): no cards there either.
@@ -8030,9 +9044,15 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
     )
     expect(ids('site settings')).toContain('hub-site-settings')
     expect(ids('third-party cookies')).toContain('hub-cookies')
-    // The dialog card is found by its own name and by Chrome's (its line's "Delete"), and a
-    // card's hit reads the category alone as its caption: the cards' group has no heading.
-    expect(ids('clear browsing data')).toContain('hub-clear-data')
+    // The dialog card is found by Chrome's M124+ name (its own since W8-7) and still by the
+    // pre-M124 one it kept as a search alias; the row under it the same. A card's hit reads
+    // the category alone as its caption: the cards' group has no heading.
+    expect(ids('clear browsing data')).toEqual(
+      expect.arrayContaining(['hub-clear-data', 'clear-data-open'])
+    )
+    expect(ids('delete browsing data')).toEqual(
+      expect.arrayContaining(['hub-clear-data', 'clear-data-open'])
+    )
     const hit = searchRows([privacy], 'delete browsing data').find(
       (h) => h.row.id === 'hub-clear-data'
     )

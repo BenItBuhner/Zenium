@@ -87,6 +87,11 @@ export const WARNING_ENABLED_RULE_COUNT_EXCEEDED =
   'The number of enabled rules exceeds the API limits. Some rulesets will be ignored.'
 export const WARNING_ENABLED_REGEX_RULE_COUNT_EXCEEDED =
   'The number of enabled regular expression rules exceeds the API limits. Some rulesets will be ignored.'
+/**
+ * Zenium's own, not Chrome's: a static ruleset read once already could not be read again when
+ * its rules were wanted after the host let them go (`DnrStateIO.rereadsStaticRulesets`).
+ */
+export const ERROR_RULESET_READ_AGAIN_FAILED = 'Ruleset with id * could not be read again.'
 
 /** `ErrorUtils::FormatErrorMessage`: each `*` takes the next argument. */
 export function formatMessage(template: string, ...args: (string | number)[]): string {
@@ -184,6 +189,17 @@ export interface DnrStateIO {
   onActionCount?: (tabId: number, count: number) => void
   /** Install-style warnings Chrome would surface on chrome://extensions. */
   warn?: (message: string) => void
+  /**
+   * The host would rather read a static ruleset's file again than keep its parsed rules: the
+   * state keeps the counts of a ruleset it read (`ParsedSummary`), hands the compiled rules to
+   * the translator through a reader (`translateInput`) or the matcher (`matcherRulesets`) and
+   * lets them go at the hand-over, reading the file once more when they are wanted again – a
+   * set that must be re-emitted after a change, `testMatchOutcome`. The phone says so: its
+   * request engine (Kotlin's) holds every set in its own heap, so the JS copy is dead weight in
+   * the chrome WebView's heap once the set document is written (Adblock Ad Blocker Pro's 61,714
+   * rules held 97 MB there, compat round 21). Left out, the parsed rules stay resident.
+   */
+  rereadsStaticRulesets?: boolean
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -291,8 +307,31 @@ export interface RuleCounts {
 interface StaticRuleset {
   resource: ManifestRuleResource
   manifestIndex: number
-  /** Parsed lazily; undefined until read, null when the file could not be read or parsed. */
+  /**
+   * Parsed lazily; undefined until read, null when the file could not be read or parsed. Under
+   * `DnrStateIO.rereadsStaticRulesets` it is let go again once the rules are handed over, and
+   * `summary` stands for the read until the file is wanted once more.
+   */
   parsed?: ParseRulesetResult | null
+  /** The counts of the ruleset as read: undefined until the first read, null when it failed. */
+  summary?: ParsedSummary | null
+}
+
+/** What the counts need of a static ruleset, without its rules. */
+interface ParsedSummary {
+  /** `compiled.length`: the rules Chrome indexes. */
+  ruleCount: number
+  regexRuleCount: number
+  /** The ruleset's share of `ruleCounts()`. */
+  counts: RuleCounts
+}
+
+function summarize(parsed: ParseRulesetResult): ParsedSummary {
+  return {
+    ruleCount: parsed.compiled.length,
+    regexRuleCount: parsed.regexRuleCount,
+    counts: compiledCounts(parsed.compiled)
+  }
 }
 
 interface RuleList {
@@ -373,6 +412,7 @@ export class DnrState {
   private readonly debugListeners = new Set<(info: MatchedRuleInfoDebug) => void>()
   private readonly pool: GlobalStaticRulePool
   private loaded: Promise<void> | undefined
+  private readsAgain = 0
   /** Warnings from the last load, in Chrome's wording. */
   readonly warnings: string[] = []
 
@@ -452,9 +492,16 @@ export class DnrState {
     }
   }
 
+  /**
+   * The ruleset's parsed rules: read and parsed on the first call, resident from then on – or,
+   * when the host re-reads, read again once they were let go (`handOver`). A file that fails on
+   * its first read is remembered as failed, as Chrome remembers a ruleset that would not index;
+   * one that fails on a read-again keeps its summary and answers null for this call alone.
+   */
   private async readStatic(id: string): Promise<ParseRulesetResult | null> {
     const ruleset = this.statics.get(id)!
     if (ruleset.parsed !== undefined) return ruleset.parsed
+    const again = ruleset.summary !== undefined
     let parsed: ParseRulesetResult | null
     try {
       const json = await this.io.readFile(ruleset.resource.path)
@@ -463,8 +510,61 @@ export class DnrState {
     } catch {
       parsed = null
     }
+    if (again) {
+      this.readsAgain++
+      if (!parsed) return null
+    }
     ruleset.parsed = parsed
+    ruleset.summary = parsed ? summarize(parsed) : null
     return parsed
+  }
+
+  /** The counts of a static ruleset, read from the file once and kept. */
+  private async summaryOf(id: string): Promise<ParsedSummary | null> {
+    const ruleset = this.statics.get(id)!
+    if (ruleset.summary === undefined) await this.readStatic(id)
+    return ruleset.summary ?? null
+  }
+
+  /**
+   * The compiled rules of a loaded static ruleset for a hand-over to the translator or the
+   * matcher; under `rereadsStaticRulesets` the state lets its own copy go as it hands them
+   * over, so the array lives as long as its taker holds it.
+   */
+  private async handOver(id: string): Promise<readonly CompiledRule[]> {
+    const parsed = await this.readStatic(id)
+    if (!parsed) throw new Error(formatMessage(ERROR_RULESET_READ_AGAIN_FAILED, id))
+    if (this.io.rereadsStaticRulesets) this.statics.get(id)!.parsed = undefined
+    return parsed.compiled
+  }
+
+  /**
+   * Under `rereadsStaticRulesets`: let go of the parsed rules of every static ruleset that is
+   * not among `kept` – read for its counts and then left out of the enabled set, it would never
+   * be handed over.
+   */
+  private releaseUnloaded(kept: readonly string[]): void {
+    if (!this.io.rereadsStaticRulesets) return
+    for (const [id, ruleset] of this.statics) {
+      if (ruleset.parsed && !kept.includes(id)) ruleset.parsed = undefined
+    }
+  }
+
+  /**
+   * How many times a static ruleset's file was read again after its rules were let go
+   * (`rereadsStaticRulesets`): the phone's evidence line and the tests read it.
+   */
+  rereads(): number {
+    return this.readsAgain
+  }
+
+  /**
+   * The static rulesets whose parsed rules the state holds right now, in manifest order: under
+   * `rereadsStaticRulesets` the ones read for their counts and not yet handed over; without it
+   * every ruleset read so far. Diagnostic, for the tests and the phone's evidence line.
+   */
+  residentStaticRules(): string[] {
+    return this.manifestOrder.filter((id) => Boolean(this.statics.get(id)!.parsed))
   }
 
   /**
@@ -482,21 +582,21 @@ export class DnrState {
     let overRegex = false
     for (const id of this.manifestOrder) {
       if (!this.enabledIntent.has(id)) continue
-      const parsed = await this.readStatic(id)
-      if (!parsed) {
+      const summary = await this.summaryOf(id)
+      if (!summary) {
         failed = true
         continue
       }
-      if (ruleCount + parsed.compiled.length > budget) {
+      if (ruleCount + summary.ruleCount > budget) {
         overBudget = true
         continue
       }
-      if (regexCount + parsed.regexRuleCount > MAX_NUMBER_OF_REGEX_RULES) {
+      if (regexCount + summary.regexRuleCount > MAX_NUMBER_OF_REGEX_RULES) {
         overRegex = true
         continue
       }
-      ruleCount += parsed.compiled.length
-      regexCount += parsed.regexRuleCount
+      ruleCount += summary.ruleCount
+      regexCount += summary.regexRuleCount
       loaded.push(id)
     }
     if (failed) this.warn(WARNING_RULESET_FAILED_TO_LOAD)
@@ -504,6 +604,7 @@ export class DnrState {
     if (overRegex) this.warn(WARNING_ENABLED_REGEX_RULE_COUNT_EXCEEDED)
     this.pool.update(this.extensionId, ruleCount)
     this.loadedStatics = loaded
+    this.releaseUnloaded(loaded)
     this.notify('static')
   }
 
@@ -548,31 +649,40 @@ export class DnrState {
 
   // ---- views for the translator and the matcher --------------------------------------------
 
+  /** The loaded static rulesets with their summaries (every loaded ruleset was read). */
   private enabledStaticRulesets(): {
     id: string
     ruleset: StaticRuleset
-    parsed: ParseRulesetResult
+    summary: ParsedSummary
   }[] {
-    const out: { id: string; ruleset: StaticRuleset; parsed: ParseRulesetResult }[] = []
+    const out: { id: string; ruleset: StaticRuleset; summary: ParsedSummary }[] = []
     for (const id of this.loadedStatics) {
       const ruleset = this.statics.get(id)!
-      if (ruleset.parsed) out.push({ id, ruleset, parsed: ruleset.parsed })
+      if (ruleset.summary) out.push({ id, ruleset, summary: ruleset.summary })
     }
     return out
   }
 
-  /** Everything the translator needs for this extension. */
+  /**
+   * Everything the translator needs for this extension. A static ruleset comes with its
+   * `identity` (the state's entry for it, one for the state's lifetime – the file behind it
+   * does not change under an installed version), so the translator's unchanged check stands
+   * without the rule array; under `rereadsStaticRulesets` the rules come as a reader the
+   * translator calls only for a set it must emit (`handOver`), else as the resident array.
+   */
   translateInput(installRank?: number): TranslateExtension {
-    const rulesets: TranslateRuleset[] = this.enabledStaticRulesets().map(
-      ({ id, ruleset, parsed }) => ({
-        source: 'static',
-        rulesetId: id,
-        path: ruleset.resource.path,
-        manifestIndex: ruleset.manifestIndex,
-        rules: parsed.compiled,
-        disabledRuleIds: this.disabledRuleIds.get(id)
-      })
-    )
+    const rulesets: TranslateRuleset[] = this.enabledStaticRulesets().map(({ id, ruleset }) => ({
+      source: 'static',
+      rulesetId: id,
+      path: ruleset.resource.path,
+      manifestIndex: ruleset.manifestIndex,
+      rules:
+        !this.io.rereadsStaticRulesets && ruleset.parsed
+          ? ruleset.parsed.compiled
+          : () => this.handOver(id),
+      disabledRuleIds: this.disabledRuleIds.get(id),
+      identity: ruleset
+    }))
     if (this.dynamic.compiled.length > 0) {
       rulesets.push({ source: 'dynamic', rules: this.dynamic.compiled })
     }
@@ -586,15 +696,21 @@ export class DnrState {
     return input
   }
 
-  /** The rulesets as the reference matcher evaluates them (`testMatchOutcome`). */
-  matcherRulesets(): MatcherRuleset[] {
-    const out: MatcherRuleset[] = this.enabledStaticRulesets().map(({ id, ruleset, parsed }) => ({
-      id,
-      source: 'static',
-      manifestIndex: ruleset.manifestIndex,
-      rules: parsed.compiled,
-      disabledRuleIds: this.disabledRuleIds.get(id)
-    }))
+  /**
+   * The rulesets as the reference matcher evaluates them (`testMatchOutcome`); a static
+   * ruleset whose rules were let go is read again for the call.
+   */
+  async matcherRulesets(): Promise<MatcherRuleset[]> {
+    const out: MatcherRuleset[] = []
+    for (const { id, ruleset } of this.enabledStaticRulesets()) {
+      out.push({
+        id,
+        source: 'static',
+        manifestIndex: ruleset.manifestIndex,
+        rules: await this.handOver(id),
+        disabledRuleIds: this.disabledRuleIds.get(id)
+      })
+    }
     out.push({ id: DYNAMIC_RULESET_ID, source: 'dynamic', rules: this.dynamic.compiled })
     out.push({ id: SESSION_RULESET_ID, source: 'session', rules: this.session.compiled })
     return out
@@ -627,20 +743,26 @@ export class DnrState {
     )
     let ruleCount = 0
     let regexCount = 0
-    for (const id of next) {
-      const parsed = await this.readStatic(id)
-      if (!parsed) throw new Error(ERROR_INTERNAL_UPDATING_ENABLED_RULESETS)
-      ruleCount += parsed.compiled.length
-      regexCount += parsed.regexRuleCount
-    }
-    if (next.length > MAX_NUMBER_OF_ENABLED_STATIC_RULESETS) {
-      throw new Error(ERROR_ENABLED_RULESET_COUNT_EXCEEDED)
-    }
-    if (regexCount > MAX_NUMBER_OF_REGEX_RULES) {
-      throw new Error(ERROR_ENABLED_RULESETS_REGEX_RULE_COUNT_EXCEEDED)
-    }
-    if (!this.pool.update(this.extensionId, ruleCount)) {
-      throw new Error(ERROR_ENABLED_RULESETS_RULE_COUNT_EXCEEDED)
+    try {
+      for (const id of next) {
+        const summary = await this.summaryOf(id)
+        if (!summary) throw new Error(ERROR_INTERNAL_UPDATING_ENABLED_RULESETS)
+        ruleCount += summary.ruleCount
+        regexCount += summary.regexRuleCount
+      }
+      if (next.length > MAX_NUMBER_OF_ENABLED_STATIC_RULESETS) {
+        throw new Error(ERROR_ENABLED_RULESET_COUNT_EXCEEDED)
+      }
+      if (regexCount > MAX_NUMBER_OF_REGEX_RULES) {
+        throw new Error(ERROR_ENABLED_RULESETS_REGEX_RULE_COUNT_EXCEEDED)
+      }
+      if (!this.pool.update(this.extensionId, ruleCount)) {
+        throw new Error(ERROR_ENABLED_RULESETS_RULE_COUNT_EXCEEDED)
+      }
+    } catch (error) {
+      // A ruleset read for its counts and refused stays out: nothing hands its rules over.
+      this.releaseUnloaded(this.loadedStatics)
+      throw error
     }
     this.loadedStatics = next
     this.enabledIntent = new Set(next)
@@ -656,7 +778,7 @@ export class DnrState {
   /** Enabled static rules across the loaded rulesets. */
   enabledStaticRuleCount(): number {
     let count = 0
-    for (const { parsed } of this.enabledStaticRulesets()) count += parsed.compiled.length
+    for (const { summary } of this.enabledStaticRulesets()) count += summary.ruleCount
     return count
   }
 
@@ -804,9 +926,14 @@ export class DnrState {
   }
 
   ruleCounts(): { static: RuleCounts; dynamic: RuleCounts; session: RuleCounts } {
-    const staticRules = this.enabledStaticRulesets().flatMap(({ parsed }) => parsed.compiled)
+    const staticCounts: RuleCounts = { rules: 0, unsafeRules: 0, regexRules: 0 }
+    for (const { summary } of this.enabledStaticRulesets()) {
+      staticCounts.rules += summary.counts.rules
+      staticCounts.unsafeRules += summary.counts.unsafeRules
+      staticCounts.regexRules += summary.counts.regexRules
+    }
     return {
-      static: compiledCounts(staticRules),
+      static: staticCounts,
       dynamic: compiledCounts(this.dynamic.compiled),
       session: compiledCounts(this.session.compiled)
     }

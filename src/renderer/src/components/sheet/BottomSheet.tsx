@@ -498,14 +498,15 @@ export function BottomSheet({
     // In the same layout, what the body's box at a detent is made of: the grip and the footer
     // (`shrink-0`) and the bottom padding stand at every height of the sheet; the body takes the
     // rest of the detent, at the width it has.
+    const footerHeight = footerRef.current?.offsetHeight ?? 0
     restParts.current = {
       width: scrollRef.current?.clientWidth ?? 0,
       chrome:
-        (gripRef.current?.offsetHeight ?? 0) +
-        (footerRef.current?.offsetHeight ?? 0) +
-        SHEET_EDGE_PAD +
-        insetBottom.current
+        (gripRef.current?.offsetHeight ?? 0) + footerHeight + SHEET_EDGE_PAD + insetBottom.current
     }
+    // The footer band's top edge over the sheet's bottom edge, the inset left out: the band's
+    // height on the chassis's 8 (§9.25) – where a message seated over the sheet stands (§9.33).
+    recede.current?.footer(footerRef.current ? footerHeight + SHEET_EDGE_PAD : 0)
     sheet.style.height = height
     detents.current = computeDetents(
       intrinsic,

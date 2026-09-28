@@ -643,6 +643,23 @@ function publishHidden(hidden: boolean): void {
   else delete el.dataset.barHidden
 }
 
+/**
+ * Chrome listeners for a finger landing on the active page – the host's `'start'` report, the
+ * one word the chrome hears of a touch on the page's view (the in-product help bubble goes at
+ * it, `components/phone/useTabSwitcherHint.ts`, as Chrome's dismisses on any touch). Heard
+ * whatever the hide-on-scroll gate: the host reports a finger's down whether or not the bar may
+ * hide (`BarHideGesture.reports`) – the down alone; the rest of the stream comes only with the
+ * gate open, and the machine ignores a `'start'` while its gate is closed.
+ */
+const scrollStartListeners = new Set<() => void>()
+
+export function onBarScrollStart(listener: () => void): () => void {
+  scrollStartListeners.add(listener)
+  return () => {
+    scrollStartListeners.delete(listener)
+  }
+}
+
 /** Host → chrome: one report of the active page's scroll. */
 export function dispatchBarScroll(
   tabId: string,
@@ -652,6 +669,7 @@ export function dispatchBarScroll(
   const state = browserStore.get().state
   // Only the page on screen moves the bar.
   if (state && activeTab(state)?.id !== tabId) return
+  if (phase === 'start') for (const listener of scrollStartListeners) listener()
   if (phase === 'show') note('show: the host (a fling reached the top)')
   machine.dispatch(phase, payload)
 }
@@ -695,6 +713,11 @@ export function setBarHideTouchExploration(enabled: boolean): void {
   if (touchExploration === enabled) return
   touchExploration = enabled
   evaluateGate()
+}
+
+/** Whether an accessibility service explores by touch, as the host last said. */
+export function touchExplorationOn(): boolean {
+  return touchExploration
 }
 
 /** The gate as the stores stand. */

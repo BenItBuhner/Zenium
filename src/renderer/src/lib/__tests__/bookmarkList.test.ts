@@ -97,11 +97,11 @@ describe('initialFolderStack', () => {
 })
 
 describe('folderRows', () => {
-  it('lists folders before pages, each in manual order', () => {
+  it('lists folders and pages as stored – the manual order, nothing grouped', () => {
     expect(folderRows(sampleTree(), MOBILE_BOOKMARKS_ID, 'android').map((n) => n.id)).toEqual([
-      'work',
       'news',
-      'mail'
+      'mail',
+      'work'
     ])
   })
 

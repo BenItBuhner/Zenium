@@ -55,6 +55,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
@@ -102,7 +103,15 @@ import kotlin.math.roundToInt
  *    and without a hairline, as Chrome's quick action widget is; the floor scene at the
  *    provider's minimum width, where the scan button drops on xsmall and small as Chrome's Lens
  *    does; a finger on each part of the small form (voice search, the omnibox, a private tab or
- *    the toast, the QR scanner). A still of each form (`widget-<theme>-quick-actions-<form>.png`).
+ *    the toast, the QR scanner). A still of each form (`widget-<theme>-quick-actions-<form>.png`);
+ *  - the game widget (WID-04 / ERR-03, gate #607 (f)), Roll's one-cell face: its info read (one
+ *    cell, fixed, the gate's words), an id bound on the same host and the face laid at a
+ *    launcher's cell with the host's padding kept, the card read against the quick actions
+ *    widget's surface role (opaque, no hairline on Android 12+) and the glyph's indigo and ink
+ *    found on it, a still (`widget-<theme>-game.png`); a finger on the face (a new tab on
+ *    `zen://game` sent by another app, the stage up – its label in the tree, or the document's
+ *    own word of the mounted region where the WebView exposes no node for it), and the COLD landing with
+ *    the same frame read as the others.
  *
  * Every check is a finding line (`widget-findings.txt`); one that fails fails the run at the end,
  * after the stills are down. Handshake and screenshots (`widget-<theme>-*.png`) as in the other
@@ -230,6 +239,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
 
         shortcuts()
         quickActions()
+        gameWidget()
         finding("\nend: ${describeActive()}; ${failures.size} failed check(s)")
     }
 
@@ -532,17 +542,94 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         }
     }
 
+    /** The overlay off the screen (GONE): from here the scene's touches reach the chrome. Only [tapThenHide] calls it after a tap. */
     private fun hideOverlay() = onMain { overlay?.visibility = View.GONE }
-    private fun showOverlay() = onMain { overlay?.visibility = View.VISIBLE }
+
+    /**
+     * The overlay back over the previous tab, drawn again ([tapThenHide] left it at alpha 0). Safe
+     * with the capture: the previous tab is being SHOWN under it, and a show takes no picture; the
+     * next landing that hides it goes through [tapThenHide], which clears the pixels first.
+     */
+    private fun showOverlay() = onMain {
+        overlay?.apply {
+            alpha = 1f
+            visibility = View.VISIBLE
+        }
+    }
 
     // --- 2–4. a finger on the face, Zenium in front ----------------------------------------------
 
-    /** A real finger on the middle of a face part: the RemoteViews' click sends the part's PendingIntent. */
-    private fun touchPart(id: Int): Boolean {
+    /**
+     * A real finger on the middle of a face part – the RemoteViews' click sends the part's
+     * PendingIntent – with the overlay's pixels out of the window BEFORE it lands and the overlay
+     * GONE once the landing has arrived. The one way a face is tapped here; whether the finger
+     * found the part.
+     *
+     * Why this order, and not a tap followed by a hide. A launcher's face lives in the launcher's
+     * window; Zenium's never holds it. This driver's backdrop stands in for the launcher INSIDE
+     * Zenium's own window ([showOnTheBackdrop] adds it to `android.R.id.content`, over the page).
+     * The part's PendingIntent lands in `onNewIntent`, and the landing (`landing.ts`) creates its tab
+     * `active: true`: the core hides the previous tab, and the host takes the previous tab's card
+     * picture on its way off the screen ([Host.setTabVisible] → [TabWebView.captureThumbnail] →
+     * `captureBitmap`: `PixelCopy.request(host.activity.window, rect, …)`, a copy of the WINDOW
+     * over the page's rect). With the backdrop still drawn at that moment the previous tab's card
+     * picture is the wallpaper and the face – a picture no user can see, and the one #607's
+     * overview stills showed; `touchPart; sleep(150); hideOverlay()` lost that race every time,
+     * the copy landing inside the 150 ms, and a hide right after the tap would still race the
+     * landing's copy against the frame that draws the hide. So the backdrop turns transparent
+     * FIRST – alpha 0: still laid out and still the touch target (alpha plays no part in hit
+     * testing), drawn no more (HWUI skips a node at alpha 0) – and one frame of the window is
+     * waited for ([overlayOffTheWindowsPixels]), so the RenderThread holds the frame without the
+     * backdrop before any copy the landing asks for is queued behind it; only then the finger
+     * lands, and the landing's copy finds the page. The overlay goes GONE once the landing's intent
+     * has arrived (`activity.intent` is another object after `onNewIntent`; 3 s at most), never
+     * before the tap has been taken: from then the scene's touches (the stage, the Tabs button,
+     * the field) must reach the chrome under it.
+     */
+    private fun tapThenHide(id: Int): Boolean {
         val bounds = viewBounds(id)
         if (bounds.isEmpty) return false
+        val intentBefore = onMain { activity.intent }
+        expect("the overlay is out of the window's pixels before the finger lands (a frame drawn with it at alpha 0)", overlayOffTheWindowsPixels())
         Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        awaitTrue(3_000) { onMain { activity.intent } !== intentBefore }
+        hideOverlay()
         return true
+    }
+
+    /**
+     * The overlay out of the window's pixels while it keeps its place and its touches: alpha 0 on
+     * the backdrop, then one traversal's draw of the window waited for. An `OnDrawListener` on the
+     * decor fires inside the traversal, before the frame is handed to the RenderThread; a post
+     * from it runs once the traversal has returned, the frame handed over – so a `PixelCopy` of
+     * the window asked for after this returns is queued on the RenderThread behind the frame
+     * without the backdrop and copies that frame. True when the frame came within [timeoutMs];
+     * false when it did not (the backdrop is transparent all the same). True at once with no
+     * overlay up: the window's pixels are the page already.
+     */
+    private fun overlayOffTheWindowsPixels(timeoutMs: Long = 3_000): Boolean {
+        val drawn = CountDownLatch(1)
+        val decor = activity.window.decorView
+        onMain {
+            val overlay = overlay
+            if (overlay == null) {
+                drawn.countDown()
+                return@onMain
+            }
+            val listener = object : ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    // Not inside onDraw: the observer refuses a removal there, and the frame is
+                    // handed to the RenderThread only when the traversal returns.
+                    decor.post {
+                        decor.viewTreeObserver.removeOnDrawListener(this)
+                        drawn.countDown()
+                    }
+                }
+            }
+            decor.viewTreeObserver.addOnDrawListener(listener)
+            overlay.alpha = 0f
+        }
+        return drawn.await(timeoutMs, TimeUnit.MILLISECONDS)
     }
 
     /** The [part] (its view [id] on the face) under a finger: voice search; [still] the shot's name. */
@@ -550,9 +637,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val before = activeCoreTab()?.optString("id").orEmpty()
         val intentBefore = onMain { activity.intent }
         val starts = recognizer.starts
-        expect("a finger reaches $part on the face", touchPart(id))
-        SystemClock.sleep(150)
-        hideOverlay()
+        expect("a finger reaches $part on the face", tapThenHide(id))
         val up = awaitVoicePhase(setOf("starting", "listening"), 10_000)
         expect("$part lands in voice search: the sheet is up (phase ${voicePhase()})", up)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
@@ -581,9 +666,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         var reading: OmniboxOpen? = null
         var keyboard = false
         val traced = traceFrames(scene, JankBudget.Kind.OPEN) {
-            expect("a finger reaches $part on the face", touchPart(id))
-            SystemClock.sleep(150)
-            hideOverlay()
+            expect("a finger reaches $part on the face", tapThenHide(id))
             reading = awaitOmniboxOpen(10_000)
             keyboard = awaitIme(true, 8_000)
         }
@@ -607,9 +690,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     private fun touchTheMask(id: Int = R.id.widget_search_private, still: String = "04-mask-private", part: String = "the mask") {
         val before = activeCoreTab()?.optString("id").orEmpty()
         watchToasts()
-        expect("a finger reaches $part on the face", touchPart(id))
-        SystemClock.sleep(150)
-        hideOverlay()
+        // The private landing hides the previous tab on a WebView with profiles (a private tab,
+        // active) and on one without leaves it shown (the toast, no tab): the helper's clearing
+        // costs the toast leg one frame and spares the profiles leg the same picture as the others.
+        expect("a finger reaches $part on the face", tapThenHide(id))
         val landed = privateLanded(12_000)
         expect("$part lands in a new private tab, or in the toast where this WebView has no profiles ($landed)", landed != null)
         val tab = activeCoreTab()
@@ -628,6 +712,12 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         showOverlay()
     }
 
+    /**
+     * The overlay and the host gone before the cold landings. Safe with the capture without
+     * [tapThenHide]'s clearing: no tap lands here and no tab changes – the removal itself takes no
+     * picture, and the previous tab is painted again ([preparePrevious]) with nothing over it
+     * before the task is removed and the landing's new window draws.
+     */
     private fun takeDownTheHost() {
         onMain {
             overlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
@@ -757,7 +847,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
                 ", ${"%.0f".format(rate)} grabs/s" +
                 (if (result == PRIVATE_TOAST) " (the WebView-113 fallback: the restored tab in front, the toast said within the wait)" else "")
         )
-        shot("0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing")
+        shot(if (landing in COLD_ORDER) "0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing" else "21-cold-$landing")
         leaveLanding(result)
         backToThePrevious(tab?.optString("id"))
     }
@@ -1297,9 +1387,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val before = activeCoreTab()?.optString("id").orEmpty()
         val intentBefore = onMain { activity.intent }
         val starts = camera.starts
-        expect("a finger reaches the scan button on the face", touchPart(id))
-        SystemClock.sleep(150)
-        hideOverlay()
+        expect("a finger reaches the scan button on the face", tapThenHide(id))
         val landed = scanLanded(12_000)
         expect("the scan button lands in the QR scanner ($landed)", landed != null)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
@@ -1369,6 +1457,282 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     }
 
     private fun dpOf(px: Int): Int = (px / density).roundToInt()
+
+    // --- 10. the game widget (WID-04) ------------------------------------------------------------
+
+    /**
+     * Roll's one-cell face (ERR-03 / WID-04, gate #607 (f)): its provider as the picker lists it –
+     * one cell by one, fixed, the platform's one-cell minimum, the Home screen alone, the gate's
+     * words – then an id bound on the driver's host and the face laid at a launcher's cell with the
+     * host's default padding kept, so the PROVIDER is handed the cell a launcher hands it; the face's
+     * name in the tree, the card read against the quick actions widget's surface role and its top
+     * edge for the absent hairline (Android 12+), the glyph's indigo found on the card (the mark's
+     * brand colour, lifted for the dark theme); a still (`widget-<theme>-game.png`); then a finger
+     * on the face with Zenium in front – a new tab on `zen://game` sent by another app, Roll's
+     * document up (the stage's label in the tree, or the document's word of the mounted region) –
+     * and the COLD landing (the WID-07 rule), the
+     * browser's task removed and the widget's own `PendingIntent` sent: every frame read for the
+     * previous tab's page, which must never paint.
+     */
+    private fun gameWidget() {
+        ensureForeground()
+        val manager = AppWidgetManager.getInstance(app)
+        val provider = ComponentName(app, GameWidgetProvider::class.java)
+        val info = manager.getInstalledProvidersForPackage(app.packageName, null).firstOrNull { it.provider == provider }
+        expect("the game widget's provider is installed for ${app.packageName}", info != null)
+        info ?: return
+        finding("\ngame widget provider: ${describe(info)}")
+        expect("the widget asks for one cell (minWidth and minHeight the platform's 40 dp one-cell minimum)", info.minWidth == dp(GAME_MIN_DP) && info.minHeight == dp(GAME_MIN_DP))
+        expect("the widget does not resize: one cell, fixed", info.resizeMode == AppWidgetProviderInfo.RESIZE_NONE)
+        expect("the widget is for the home screen alone – a one-cell face is no search box", info.widgetCategory == AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN)
+        expect("the widget names itself for the picker as the gate ruled", info.loadLabel(app.packageManager) == GAME_LABEL)
+        expect("the widget asks for no periodic update", info.updatePeriodMillis == 0)
+        expect("a preview image for pickers without a preview layout", info.previewImage == R.drawable.widget_game_preview)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect(
+                "the picker's target is 1×1, its description the gate's, its preview the layout",
+                info.targetCellWidth == 1 && info.targetCellHeight == 1 && info.loadDescription(app) == GAME_DESCRIPTION && info.previewLayout == R.layout.widget_game_preview
+            )
+        }
+
+        val grant = shellCommand("appwidget grantbind --package ${app.packageName} --user 0").trim()
+        val widgetHost = AppWidgetHost(app, HOST_ID).also { widgetHost = it }
+        onMain { widgetHost.startListening() }
+        val id = widgetHost.allocateAppWidgetId().also { widgetId = it }
+        val bound = onMain { manager.bindAppWidgetIdIfAllowed(id, provider) }
+        finding("bind: grantbind '${grant.ifEmpty { "(no output)" }}', id $id bound $bound")
+        expect("the id binds to the game provider on the driver's host", bound)
+        if (!bound) {
+            takeDownTheHost()
+            return
+        }
+        val launcherContext = launcherContext()
+        val hostView = onMain { widgetHost.createView(launcherContext, id, info) }
+        val delivered = awaitTrue(8_000) { onMain { hostView.findViewById<View>(R.id.widget_game_face)?.hasOnClickListeners() == true } }
+        expect("the provider's RemoteViews reach the host after the bind (the face has its click)", delivered)
+        if (!delivered) onMain { hostView.updateAppWidget(GameWidgetProvider.views(launcherContext)) }
+        widgetView = hostView
+        showOnTheBackdrop(hostView, hostView, fourCells = false)
+        layTheFace(hostView, GAME_CELL_DP, GAME_CELL_DP)
+        SystemClock.sleep(1_500)
+
+        expect("the face reads its name in the tree – what a tap does", awaitTrue(8_000) { labelsInFrame(GAME_FACE_LABEL) })
+        val card = viewBounds(android.R.id.background)
+        val face = viewBounds(R.id.widget_game_face)
+        finding("face bounds on screen: frame ${frameBounds()}, card $card (${dpOf(card.width())} × ${dpOf(card.height())} dp for the $GAME_CELL_DP dp cell), face $face")
+        expect("the card fills the cell the launcher gives and the face is the whole card", card.width() == dp(GAME_CELL_DP) && card.height() == dp(GAME_CELL_DP) && face == card)
+        saveFace("widget-$THEME-game")
+        shot("19-game-face-on-a-launcher-backdrop")
+        theGameFacesColours(launcherContext)
+
+        touchTheGame()
+        takeDownTheHost()
+
+        coldLanding(GameWidgetProvider.FACE, "game") { gameLanded(30_000) }
+    }
+
+    /**
+     * The face's colours (gate #607 (f) on WID-02's roles): the card the quick actions widget's
+     * surface – read at its side padding, clear of the glyph – opaque, and on Android 12+ without a
+     * hairline (its top edge is the card's own colour, not the v2 border's); the glyph's ring in the
+     * mark's indigo, found among the drawn pixels of the glyph's box, and the ground in the ink.
+     */
+    private fun theGameFacesColours(launcherContext: Context) {
+        val res = launcherContext.resources
+        val theme = launcherContext.theme
+        val surface = res.getColor(R.color.widget_quick_actions_surface, theme)
+        val hairline = res.getColor(R.color.widget_quick_actions_hairline, theme)
+        val mark = res.getColor(R.color.widget_search_mark, theme)
+        val ink = res.getColor(R.color.widget_search_ink, theme)
+        finding("  game face colours in the launcher's configuration ($THEME): card ${hex(surface)} mark ${hex(mark)} ink ${hex(ink)}; the v2 border would be ${hex(hairline)}")
+        expect("the card and the mark are opaque", Color.alpha(surface) == 0xFF && Color.alpha(mark) == 0xFF)
+        expect("the mark keeps the brand indigo (${if (THEME == "dark") "#8284F0 lifted for the dark theme" else "#6264DC"})", rgb(mark) == (if (THEME == "dark") 0x8284F0 else 0x6264DC))
+        val (bitmap, band) = drawFace() ?: return
+        val card = viewBounds(android.R.id.background)
+        val cardX = card.left + dp(3) - band.left
+        val cardY = card.centerY() - band.top
+        val edgeX = card.centerX() - band.left
+        val edgeY = card.top + 1 - band.top
+        val cardPixel = pixelAt(bitmap, cardX, cardY)
+        val edge = pixelAt(bitmap, edgeX, edgeY)
+        // The glyph's 32 dp box at the card's centre: every pixel of it read for the ring's indigo and the ground's ink.
+        val glyph = dp(GAME_GLYPH_DP)
+        val left = card.centerX() - glyph / 2 - band.left
+        val top = card.centerY() - glyph / 2 - band.top
+        var indigo = 0
+        var inked = 0
+        for (y in top until top + glyph) for (x in left until left + glyph) {
+            val pixel = pixelAt(bitmap, x, y)
+            if (near(pixel, mark)) indigo++
+            if (near(pixel, ink)) inked++
+        }
+        bitmap.recycle()
+        finding("  the drawn face: card ${hex(cardPixel)} (+3 dp, mid-height), top edge ${hex(edge)}; in the glyph's box $indigo px of the mark's indigo, $inked px of the ink")
+        expect("the drawn card is the quick actions surface, nothing composited", near(cardPixel, surface))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            expect("no hairline on the dynamic face: the top edge is the card's colour", near(edge, surface) && !near(edge, hairline))
+        } else {
+            expect("below Android 12 the card wears the v2 border as its hairline", near(edge, hairline))
+        }
+        expect("the ring is drawn in the mark's indigo", indigo > 0)
+        expect("the ground line is drawn in the ink", inked > 0)
+    }
+
+    /** The face under a finger with Zenium in front: a new tab on `zen://game`, Roll's document up. */
+    private fun touchTheGame() {
+        val before = activeCoreTab()?.optString("id").orEmpty()
+        val intentBefore = onMain { activity.intent }
+        // The overview still after this ([theGlyphInTheOverview]) shows the previous tab's card:
+        // its picture is the page only because the overlay's pixels left the window before the tap.
+        expect("a finger reaches the face", tapThenHide(R.id.widget_game_face))
+        val landed = gameLanded(12_000)
+        expect("the face lands in a new tab on $GAME_URL with Roll's stage up ($landed)", landed in GAME_STAGED_WORDS)
+        expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
+        val tab = activeCoreTab()
+        expect("the game's tab is a new tab another app sent (fromIntent)", tab?.optString("id") != before && tab?.optBoolean("fromIntent") == true)
+        SystemClock.sleep(800)
+        shot("20-game-tab")
+        finding("after the face: ${describeActive()}, landing $landed")
+        val glyphs = chromeJs(ROLL_GLYPHS_JS).toIntOrNull() ?: -1
+        expect("the game tab's favicon slot wears Roll's picture (§9.17): a `lucide-roll` glyph in the chrome, drawn from `shared/game/mark.ts` ($glyphs)", glyphs > 0)
+        rollToTheNight()
+        theGlyphInTheOverview()
+        backToThePrevious(tab?.optString("id"))
+        showOverlay()
+    }
+
+    /**
+     * Roll's night on the device, for the still the lead asked for ((g-look) on #607): a REAL tap
+     * on the stage starts the game (the hint by device reads "Tap to start" here), then an
+     * auto-player is put into the document ([GAME_BOT_JS]) – it takes over `requestAnimationFrame`,
+     * hands the runtime's loop one 60 Hz frame per turn, reads the canvas for what stands in the
+     * runner's lane and presses Space on the document eight frames ahead of it – until the 700-point
+     * night has painted eight frames, where it holds the next frame so the still is the runtime's
+     * own paint of the night, the auto-player's word (frames, jumps, starts, the theme, the sky's
+     * corner) beside it. A crashed run is started again by the same key; the game's device stays
+     * the touch the mount read.
+     */
+    private fun rollToTheNight() {
+        val stage = gameStageBounds()
+        expect("the stage's box is read (the tree's region, else the document's canvas)", stage != null && !stage.isEmpty)
+        stage ?: return
+        Finger().tap(stage.exactCenterX(), stage.exactCenterY())
+        SystemClock.sleep(400)
+        val running = awaitTrue(4_000) { gameTabJs(GAME_RUNNING_JS) == "true" }
+        expect("a finger on the stage starts the game (the hint gone, the region live)", running)
+        gameTabJs(GAME_BOT_JS)
+        var word = JSONObject()
+        val reached = awaitTrue(150_000) {
+            // The object itself: `evaluateJavascript` hands an object back as its JSON literal, a
+            // string back JSON-quoted (`"{\"a\":1}"`), which is not an object for [JSONObject] –
+            // the first run's stringified word fell to `{}` every poll and `done` was never read.
+            word = runCatching { JSONObject(gameTabJs("window.__zenBot||{}") ?: "{}") }.getOrDefault(JSONObject())
+            word.optBoolean("done")
+        }
+        finding("Roll's auto-player: $word")
+        expect("the auto-player reaches the 700-point night and holds its frame (frames ${word.optInt("frames")}, jumps ${word.optInt("jumps")}, starts again ${word.optInt("starts")})", reached && word.optBoolean("night"))
+        expect("the night's sky is the runtime's rounded box: the canvas's corner clear, the sky inside it opaque", word.optInt("corner", -1) == 0 && word.optInt("sky", -1) == 255)
+        expect("the night is the stage's alone: the region wears the other theme while the page keeps its own", word.optString("theme").isNotEmpty() && word.optString("theme") != word.optString("page"))
+        SystemClock.sleep(600)
+        shot("21-game-night")
+    }
+
+    /**
+     * The overview's grid with Roll's tab in it: its card's favicon slot wears the picture. The grid
+     * is waited for ON SCREEN the way the overview drivers wait ([FirstTapDemo], [ThumbsDemo]: the
+     * header's Spaces button in the tree, then the emulator's seconds for its software GPU to paint
+     * and settle the grid) – the first run shot 1.5 s after the tap, when the store already said
+     * open and the chrome already held the card's glyph, and the still showed the page.
+     */
+    private fun theGlyphInTheOverview() {
+        val tabs = tabsButton(6_000)
+        val point = tabs?.let { touchPoint(it) }
+        expect("the bar's Tabs button is under a finger", point != null)
+        point ?: return
+        Finger().tap(point.x, point.y)
+        val open = awaitTrue(8_000) { overviewOpen() }
+        expect("the Tabs button opens the overview (the stage store's phase leaves `closed`)", open)
+        val onScreen = waitFor("Spaces", 8_000) != null
+        expect("the overview's grid is on screen (the header's Spaces button in the tree)", onScreen)
+        SystemClock.sleep(3_500)
+        val glyphs = chromeJs(ROLL_GLYPHS_JS).toIntOrNull() ?: -1
+        expect("the overview draws Roll's picture in the game tab's card ($glyphs `lucide-roll` glyphs in the chrome)", glyphs > 0)
+        shot("22-game-glyph-overview")
+        finding("the overview with Roll's tab: $glyphs roll glyph(s), ${chromeJs(GLOBE_GLYPHS_JS)} globe(s) in the chrome")
+        back()
+        awaitTrue(6_000) { !overviewOpen() }
+        SystemClock.sleep(600)
+    }
+
+    /** The stage store's overview phase is not `closed`; false with no store to ask, never a hollow yes. */
+    private fun overviewOpen(): Boolean =
+        chromeJs("(function(){var s=(window.__zenStores||{}).stage;if(!s||!s.get)return false;var o=(s.get()||{}).overview;return !!o&&o.phase!=='closed'})()") == "true"
+
+    /** Roll's region on screen: the tree's node by its label, else the document's canvas box under the shown tab's view. */
+    private fun gameStageBounds(): Rect? {
+        waitFor({ it.startsWith(GAME_STAGE_LABEL) }, 3_000)?.takeIf { !it.isEmpty }?.let { return it }
+        val raw = gameTabJs(GAME_STAGE_BOX_JS)?.trim('"') ?: return null
+        val css = raw.split(',').map { it.toFloatOrNull() ?: return null }
+        if (css.size != 4) return null
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            origin = IntArray(2).also { view?.getLocationOnScreen(it) }
+        }
+        return Rect(
+            origin[0] + (css[0] * density).toInt(),
+            origin[1] + (css[1] * density).toInt(),
+            origin[0] + (css[2] * density).toInt(),
+            origin[1] + (css[3] * density).toInt()
+        )
+    }
+
+    /** `code` evaluated in the shown tab's document (Roll's), its JSON answer; null with no view or in 5 s. */
+    private fun gameTabJs(code: String): String? {
+        val done = ArrayBlockingQueue<String>(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            if (view == null) done.offer("") else view.evaluateJavascript(code) { value -> done.offer(value ?: "null") }
+        }
+        return done.poll(5, TimeUnit.SECONDS)?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * A tab on `zen://game` active and sent by another app, Roll's stage up: the game landing's
+     * word. The stage is read two ways, the tree first – the region's label (`role="application"`,
+     * `page.ts`'s `GAME_ARIA_LABEL`), what TalkBack would say – and then the document's own word
+     * ([gameStageMounted]: the runtime's mounted mark on the region, the canvas inside it). The
+     * profiles leg's Chromium snapshot WebView (156 on the AOSP image) drew the stage in the first
+     * run and exposed no node for it within 8 s while the API 34 image's WebView did; a stage the
+     * document says is mounted and drawn is up whichever way the tree reads, and the word says which.
+     */
+    private fun gameLanded(timeoutMs: Long): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        if (!awaitChromeUp(timeoutMs)) return null
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = activeCoreTab()
+            if (tab?.optString("url") == GAME_URL && tab.optBoolean("fromIntent")) {
+                if (waitFor({ it.startsWith(GAME_STAGE_LABEL) }, 8_000) != null) return GAME_STAGED
+                return if (awaitTrue(4_000) { gameStageMounted() }) GAME_STAGED_BY_DOCUMENT else "Roll's tab on $GAME_URL, the stage not read in the tree nor mounted by the document's word"
+            }
+            SystemClock.sleep(100)
+        }
+        return null
+    }
+
+    /** The shown tab's document says Roll's region is mounted (the runtime's mark) and its canvas is in it. */
+    private fun gameStageMounted(): Boolean {
+        val done = ArrayBlockingQueue<String>(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.all().firstOrNull { it.isShown }
+            if (view == null) {
+                done.offer("")
+            } else {
+                view.evaluateJavascript(GAME_STAGE_MOUNTED_JS) { value -> done.offer(value ?: "") }
+            }
+        }
+        return done.poll(5, TimeUnit.SECONDS) == "true"
+    }
 
     // --- what an intent started ------------------------------------------------------------------
 
@@ -1937,6 +2301,123 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         /** The Quick Actions widget's words (`strings.xml`): the picker's label and the scan button's name. */
         private const val QUICK_ACTIONS_LABEL = "Zenium quick actions"
         private const val SCAN_LABEL = "Scan a QR code"
+        /** The game widget's words (`strings.xml`, gate #607 (f)): the picker's label and description, the face's name. */
+        private const val GAME_LABEL = "Zenium Roll"
+        private const val GAME_DESCRIPTION = "Play Roll, Zenium's offline game"
+        private const val GAME_FACE_LABEL = "Play Roll"
+        /** Roll's page and its stage's label as `shared/game/page.ts` writes them (the region's aria-label, read from its start). */
+        private const val GAME_URL = "zen://game"
+        private const val GAME_STAGE_LABEL = "Roll, an offline game"
+        private const val GAME_STAGED = "Roll's tab on zen://game, the stage up (read in the tree)"
+        private const val GAME_STAGED_BY_DOCUMENT = "Roll's tab on zen://game, the stage up (the document's word; not read in the tree)"
+        private val GAME_STAGED_WORDS = setOf(GAME_STAGED, GAME_STAGED_BY_DOCUMENT)
+        /** The document's word: the region carries the runtime's mounted mark (`page.ts`) and its canvas is inside. */
+        private const val GAME_STAGE_MOUNTED_JS =
+            "(function(){var g=document.querySelector('.zen-game[data-zen-game-mounted]');return !!(g&&g.querySelector('canvas'))})()"
+        /** The region's phase, as the runtime marks it (`data-phase`): the game is running. */
+        private const val GAME_RUNNING_JS =
+            "(function(){var g=document.querySelector('.zen-game[data-zen-game-mounted]');return !!g&&g.dataset.phase==='running'})()"
+        /** The canvas's box in the document's CSS px: left,top,right,bottom. */
+        private const val GAME_STAGE_BOX_JS =
+            "(function(){var c=document.querySelector('.zen-game[data-zen-game-mounted] canvas');if(!c)return '';var r=c.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom].join(',')})()"
+        /** How many of Roll's glyphs (`PAGE_GLYPHS.roll`, the class Lucide gives it) the chrome draws; and how many globes. */
+        private const val ROLL_GLYPHS_JS = "document.querySelectorAll('svg.lucide-roll').length"
+        private const val GLOBE_GLYPHS_JS = "document.querySelectorAll('svg.lucide-globe').length"
+        /**
+         * Roll's auto-player, for the night still alone. The runtime asks the window for every frame
+         * (`requestFrame` → `requestAnimationFrame`, `runtime.ts`); this takes the window's over and
+         * answers each ask on the next turn of the event loop with a clock 1000/60 ahead – one game
+         * frame a turn, the physics untouched, real time not waited for. After each frame it reads the
+         * canvas: the lane the runner's body crosses (stage y 90–135 – the tall card's top at 90 to the
+         * ground's hairline at 138; the parallax rings stay above 72 and a high note above 88) from the
+         * runner's right edge (x 54) on, a column with four device px unlike the sky (the pixel at 2,100,
+         * clear by day and the painted box at night) is the next obstacle's left edge; the speed is that
+         * edge's shift a frame. Eight frames before it reaches the runner it presses Space on the
+         * document (`onKeyDown`, as a keyboard would) and lifts it twenty frames on, past the jump's
+         * peak so `endJump` cuts nothing. A frame in which the region carries `data-theme` is the
+         * night; after eight of them it holds the next ask, so the still is the frame the runtime
+         * painted, and reads the canvas's corner (0,0; clear outside the rounded box) and the sky
+         * (2,75; opaque inside it). A run that crashed – or a game still waiting – asks for no frame:
+         * every 1.5 s of no frames the same key starts it (again). Its word is `window.__zenBot`.
+         */
+        private val GAME_BOT_JS = """
+            (function () {
+              var root = document.querySelector('.zen-game[data-zen-game-mounted]');
+              var canvas = root && root.querySelector('canvas');
+              var ctx = canvas && canvas.getContext('2d');
+              var status = (window.__zenBot = { error: null, frames: 0, jumps: 0, starts: 0, night: false, done: false, theme: '', page: document.documentElement.dataset.theme || 'light', corner: -1, sky: -1 });
+              if (!ctx) { status.error = 'no stage'; return; }
+              var FRAME = 1000 / 60, LOOKAHEAD = 8, AIR = 34, LIFT_AT = 20;
+              var clock = performance.now(), airborne = 0, lastEdge = null, speed = 8, nightFrames = 0, held = null;
+              function key(type, code) { document.dispatchEvent(new KeyboardEvent(type, { code: code, key: code === 'Space' ? ' ' : code, bubbles: true, cancelable: true })); }
+              function ratio() { return canvas.width / (parseFloat(canvas.style.width) || canvas.clientWidth || 600); }
+              function edge() {
+                var k = ratio();
+                var ref = ctx.getImageData(Math.round(2 * k), Math.round(100 * k), 1, 1).data;
+                var x0 = 56, w = 150, y0 = 90, h = 45;
+                var img = ctx.getImageData(Math.round(x0 * k), Math.round(y0 * k), Math.round(w * k), Math.round(h * k));
+                var W = img.width, H = img.height, d = img.data, need = Math.max(3, Math.round(4 * k));
+                for (var px = 0; px < W; px++) {
+                  var run = 0;
+                  for (var py = 0; py < H; py++) {
+                    var i = (py * W + px) * 4;
+                    var diff = Math.abs(d[i] - ref[0]) + Math.abs(d[i + 1] - ref[1]) + Math.abs(d[i + 2] - ref[2]) + Math.abs(d[i + 3] - ref[3]);
+                    if (diff > 24) { if (++run >= need) return x0 + px / k; } else run = 0;
+                  }
+                }
+                return null;
+              }
+              function decide() {
+                var e = edge();
+                if (e !== null && lastEdge !== null && lastEdge > e && lastEdge - e < 20) speed = lastEdge - e;
+                lastEdge = e;
+                if (airborne > 0) {
+                  airborne++;
+                  if (airborne === LIFT_AT) key('keyup', 'Space');
+                  if (airborne > AIR) airborne = 0;
+                  return;
+                }
+                if (e !== null && e - 54 <= LOOKAHEAD * speed) { key('keydown', 'Space'); airborne = 1; status.jumps++; }
+              }
+              window.requestAnimationFrame = function (cb) {
+                if (status.done) { held = cb; return 1; }
+                setTimeout(function () {
+                  if (status.done) { held = cb; return; }
+                  clock += FRAME;
+                  cb(clock);
+                  status.frames++;
+                  var theme = root.getAttribute('data-theme');
+                  if (theme !== null) {
+                    status.night = true;
+                    status.theme = theme;
+                    if (++nightFrames >= 8) {
+                      status.done = true;
+                      var k = ratio();
+                      status.corner = ctx.getImageData(0, 0, 1, 1).data[3];
+                      status.sky = ctx.getImageData(Math.round(2 * k), Math.round(75 * k), 1, 1).data[3];
+                      return;
+                    }
+                  }
+                  decide();
+                }, 0);
+                return 1;
+              };
+              var seen = 0;
+              var kick = setInterval(function () {
+                if (status.done) { clearInterval(kick); return; }
+                if (status.frames === seen) { key('keydown', 'Space'); key('keyup', 'Space'); status.starts++; airborne = 0; lastEdge = null; }
+                seen = status.frames;
+              }, 1500);
+            })();
+        """.trimIndent()
+        /**
+         * The game widget's measures (`values/dimens.xml`): the platform's one-cell minimum the info
+         * declares, the glyph's box; and the cell handed to the provider – a launcher's 1×1 on a 412 dp
+         * phone (five columns, ~82 dp) less the host's 8 dp padding a side, near enough 72 dp square.
+         */
+        private const val GAME_MIN_DP = 40
+        private const val GAME_GLYPH_DP = 32
+        private const val GAME_CELL_DP = 72
         private const val LISTENING_TITLE = "Listening"
         private const val PRIVATE_TITLE = "You're browsing privately"
         private const val PRIVATE_UNAVAILABLE_TOAST = "Private tabs need a newer Android System WebView"

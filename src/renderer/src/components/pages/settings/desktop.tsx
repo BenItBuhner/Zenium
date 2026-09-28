@@ -110,9 +110,11 @@ export function DesktopSettings({
   // The computer's font families while Look and Feel is the open category, on a host whose
   // engine takes the family rows (Customise fonts' menulists; a phone host lists the generic names).
   const localFonts = useLocalFonts(sectionId === 'look' && state.capabilities.genericFontFamilies)
-  // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
-  // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
-  syncSetupStore.use((s) => s.folder)
+  // Settings › Sync's setup rows keep the draft made before sync is on – the folder chosen, or
+  // the transport and the server's details with the Test connection's answer – outside the
+  // browser state (`syncSetupStore`); the page is rebuilt when any of it changes so the rows
+  // show it.
+  syncSetupStore.use()
   // Likewise the other devices' open tabs, asked of the core once per `remoteTabsVersion`.
   useRemoteTabs(state.sync)
   // Whether the device has a screen lock, for Privacy and Security's private-tab lock switch: a

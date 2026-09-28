@@ -64,7 +64,7 @@ describe('AndroidExtensionRuntime: chrome.privacy', () => {
     await call(h, ep, 'privacy', 'set', ['websites', 'referrersEnabled', { value: false }])
     expect(h.controls[h.controls.length - 1]).toEqual({
       'passwords.offerToSave': { extensionId: ID, name: 'iCloud Passwords', value: false },
-      'privacy.dnt': { extensionId: ID, name: 'iCloud Passwords', value: true }
+      'privacy.doNotTrack': { extensionId: ID, name: 'iCloud Passwords', value: true }
     })
     // The engine: a document in a regular partition gets DNT: 1 and loses its Referer; a
     // subresource and a private tab's document are untouched (no extension allowed there).
@@ -124,7 +124,7 @@ describe('AndroidExtensionRuntime: chrome.privacy', () => {
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['privacy', 'storage'] })))
     expect(h.controls[h.controls.length - 1]).toMatchObject({
       'passwords.offerToSave': { extensionId: ID, value: false },
-      'privacy.dnt': { extensionId: ID, value: true }
+      'privacy.doNotTrack': { extensionId: ID, value: true }
     })
     expect(h.engine.has(PRIVACY_RULE_SET_ID)).toBe(true)
     expect(h.kt.privacyLayer).toMatchObject({ doNotTrack: true })
@@ -160,7 +160,7 @@ describe('AndroidExtensionRuntime: chrome.privacy', () => {
     expect(h.controls).toEqual([
       {
         'passwords.offerToSave': { extensionId: ID, name: 'iCloud Passwords', value: false },
-        'privacy.dnt': { extensionId: ID, name: 'iCloud Passwords', value: true }
+        'privacy.doNotTrack': { extensionId: ID, name: 'iCloud Passwords', value: true }
       }
     ])
     // The engine was up by the time `prime` resolved in the harness, so the set is there already;
@@ -197,7 +197,7 @@ describe('AndroidExtensionRuntime: chrome.privacy', () => {
     }
     h.runtime.prime()
     expect(h.controls).toEqual([
-      { 'privacy.dnt': { extensionId: ID, name: 'iCloud Passwords', value: true } }
+      { 'privacy.doNotTrack': { extensionId: ID, name: 'iCloud Passwords', value: true } }
     ])
     await withPrivacy(h, ['storage'])
     expect(h.controls[h.controls.length - 1]).toEqual({})

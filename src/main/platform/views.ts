@@ -401,6 +401,11 @@ function pageWebPreferences(session?: Session): WebPreferences {
  * owns the tab's live page (Zen's window sync moves it between windows). Built by
  * `ElectronTabViewHost`, which wires the core's events once the tab exists – a page Chromium
  * created for `window.open` is adopted after the fact.
+ *
+ * Two of the tree's four "covers" meet in this class (the glossary: `TabManager`, "The reader's
+ * cover"): the READER'S COVER, a view of this class standing over a tab's page (`cover`,
+ * `createCover`), and the CHROME OVER THE CONTENT, under which a shown view is PARKED rather
+ * than hidden (`park`, `parkable`, `hideParked`; never "covered" here).
  */
 export class ElectronTabView implements TabView {
   /** Captured up front: on Electron 44 `view.webContents` is already undefined when `destroyed` fires. */
@@ -510,19 +515,20 @@ export class ElectronTabView implements TabView {
   /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
   private bounds: Rect | null = null
   /**
-   * The window corner the engine's view stands parked in under a chrome cover rather than hidden
-   * (`park`): shown, at its size, with one pixel still inside the window; null when not parked.
-   * Never set while `visible` is.
+   * The window corner the engine's view stands parked in under the chrome rather than hidden
+   * (`park`: the chrome is over the content, `contentHidden`): shown, at its size, with one
+   * pixel still inside the window; null when not parked. Never set while `visible` is.
    */
   private parked: number | null = null
   /**
    * The view's window is minimised or hidden (W6-F6): the engine's view is hidden to Chromium
    * whatever the core's layout says, so the page reads `document.visibilityState` `hidden` as a
-   * Chrome tab does. A view PARKED under a chrome cover (W6-F5) is hidden for real too – parking
-   * keeps a page visible under Zenium's OWN cover, not under a minimised or hidden window. The
+   * Chrome tab does. A view PARKED under the chrome (W6-F5) is hidden for real too – parking
+   * keeps a page visible under Zenium's OWN chrome, not under a minimised or hidden window. The
    * core's flag (`visible`, `isVisible`, the `hid`/`shown` accounting) is untouched throughout;
    * `applyWindowVisible(true)` puts the engine's view back where the core's layout left it when
-   * the window returns (shown, re-parked under a cover still up, or hidden as the flag says).
+   * the window returns (shown, re-parked under the chrome still over the content, or hidden as
+   * the flag says).
    */
   private windowConcealed = false
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
@@ -865,12 +871,29 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  /** A message from the page script (routed here by the platform's IPC handler). */
-  dispatchPageMessage(message: PageMessage): void {
+  /**
+   * A message from the page script (routed here by the platform's IPC handler). `sender` is
+   * the frame that posted it; a selection report is stamped with that frame's id
+   * (`extensionApi/frames`: 0 for the top frame) so the core can keep the top document's alone –
+   * the report's own words are not trusted for it.
+   */
+  dispatchPageMessage(message: PageMessage, sender?: WebFrameMain): void {
     if (message.type === 'navigate-intent') {
       // The page is about to navigate itself; kept for the "Leave site?" flow, not the core's.
       if (message.intent) this.pageIntent = { at: Date.now(), intent: message.intent }
       return
+    }
+    if (message.type === 'selection') {
+      // Without a sender frame the report cannot be placed; the menu's model needs the top frame's.
+      if (!sender) return
+      let frameId: number
+      try {
+        frameId = frameIdOf(sender)
+      } catch {
+        // The frame went away between the post and the read (a disposed `WebFrameMain` throws).
+        return
+      }
+      message = { ...message, frameId }
     }
     this.events.onPageMessage(message)
   }
@@ -1514,9 +1537,9 @@ export class ElectronTabView implements TabView {
   }
 
   detach(): void {
-    // A view parked under this window's cover leaves it hidden: the engine's view must not be
+    // A view parked under this window's chrome leaves it hidden: the engine's view must not be
     // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
-    this.coverLifted()
+    this.hideParked()
     this.leaveStage()
     const win = this.win
     if (win && this.inWindow) {
@@ -1559,9 +1582,9 @@ export class ElectronTabView implements TabView {
   /**
    * Onto the owner's stage, shown at the box the layout would give the page in front (its own
    * last one, else the box a page of the same window stands in, else the window's content): a
-   * hidden view an agent drives, in a live window, not parked under a cover – parking keeps it
-   * painting already, and `coverLifted` brings it here when the cover goes. Out of the user's
-   * window first: a view is one `contentView`'s at a time.
+   * hidden view an agent drives, in a live window, not parked under the chrome – parking keeps
+   * it painting already, and `hideParked` brings it here when the chrome leaves the content.
+   * Out of the user's window first: a view is one `contentView`'s at a time.
    */
   private enterStage(): void {
     if (!this.agentDriven || this.staged || this.visible || this.parked !== null) return
@@ -1648,30 +1671,30 @@ export class ElectronTabView implements TabView {
    * re-asserted this way after a thaw); the owner hears of a flip, so the resource governor can
    * put its CPU clamp on a page that went behind and take it off one that came in front.
    *
-   * A page taken down because chrome UI covers it – the window's `contentHidden` at the time of
-   * the call: the omnibox dropdown, a menu, a sheet or dialog, the first-run tour, a drag – is
-   * parked rather than hidden (`park`). The views composite above the chrome, so the chrome
-   * cannot draw over a page and asks for it to go away instead; but a `WebContentsView` hidden,
-   * detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its aura
-   * occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while the
-   * page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch the
-   * page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that queue
-   * when the page is shown again: it starts only once the page next changes its candidates, which
-   * for most pages is never. Chrome keeps the page visible under its own popups, and a
+   * A page taken down because the chrome is over the content – the window's `contentHidden` at
+   * the time of the call: the omnibox dropdown, a menu, a sheet or dialog, the first-run tour, a
+   * drag – is parked rather than hidden (`park`). The views composite above the chrome, so the
+   * chrome cannot draw over a page and asks for it to go away instead; but a `WebContentsView`
+   * hidden, detached, sized to nothing or moved wholly off the window is HIDDEN to Chromium (its
+   * aura occlusion tracker), and Chromium starts a page's speculation-rules prefetches only while
+   * the page's `WebContents` is VISIBLE (`PrefetchDocumentManager::CanPrefetchNow`) – a prefetch
+   * the page asked for meanwhile waits in `PrefetchScheduler`'s queue, and nothing re-runs that
+   * queue when the page is shown again: it starts only once the page next changes its candidates,
+   * which for most pages is never. Chrome keeps the page visible under its own popups, and a
    * speculation rule in a page loaded under Zenium's omnibox dropdown (the address on the command
    * line, a fresh profile) never prefetched at all. A parked view keeps its size and stays shown
    * with one corner pixel in a corner of the window (`PARK_CORNERS`: the one pixel of it on
    * screen), which Chromium counts as VISIBLE: the page keeps painting,
    * `document.visibilityState` stays `visible`, its prefetches run, and the view comes back with
    * `setVisible(true)` untouched, as Chrome's pages do from under a popup. The window's host ends
-   * the parking of a view the next uncovered layout leaves out (`coverLifted`: a tab switched
-   * under the cover). The page hidden by a tab switch, a chrome page tab or a move between
-   * windows (no cover on) is hidden as before.
+   * the parking of a view the next layout with the chrome off the content leaves out
+   * (`hideParked`: a tab switched under the chrome). The page hidden by a tab switch, a chrome
+   * page tab or a move between windows (the chrome off the content) is hidden as before.
    *
    * A page whose background throttling is off – an agent session's, the user looking at the
    * tab as the session prepared it (`setBackgroundThrottling(false)`) – is hidden with the
-   * throttling on for the hide and off again after it (`hide`; the hide a lifted cover leaves
-   * behind, `coverLifted`, is the same hide and takes the same way). Electron's
+   * throttling on for the hide and off again after it (`hide`; the hide the chrome leaving the
+   * content leaves behind, `hideParked`, is the same hide and takes the same way). Electron's
    * `allow_disabling_blink_scheduler_throttling_per_renderview` patch takes every
    * page-visibility update as `visible` while throttling is off, so a plain hide would leave
    * the page reading `visible` to its scripts (`document.visibilityState`, `visibilitychange`)
@@ -1701,7 +1724,7 @@ export class ElectronTabView implements TabView {
         this.view.setVisible(true)
         if (parked) this.pointerBack()
       }
-    } else if (this.coverable(wasShown)) {
+    } else if (this.parkable(wasShown)) {
       this.park()
     } else {
       if (this.parked !== null) this.unpark()
@@ -1715,8 +1738,8 @@ export class ElectronTabView implements TabView {
 
   /**
    * The engine's view down, then onto the stage if an agent drives the page (`enterStage`): the
-   * hide of a tab switch, a chrome page tab or a move between windows (`setVisible`), and of a
-   * cover lifting off a page switched away from under it (`coverLifted`). A page whose
+   * hide of a tab switch, a chrome page tab or a move between windows (`setVisible`), and of the
+   * chrome leaving the content over a page switched away from under it (`hideParked`). A page whose
    * throttling is off is hidden with the throttling on and given it back off after, whatever
    * the hide did (a `finally`; the page gone meanwhile is left alone) – see `setVisible` for why.
    */
@@ -1735,18 +1758,18 @@ export class ElectronTabView implements TabView {
   /**
    * The view's window was minimised or hidden (`false`) or restored / shown (`true`), told by
    * the window host on the frame's own events (W6-F6). A concealed window's pages read `hidden`
-   * as a Chrome tab's do: the engine's view goes down for real, a view parked under a chrome
-   * cover (W6-F5) included – parking keeps a page visible under Zenium's own popup, not under a
+   * as a Chrome tab's do: the engine's view goes down for real, a view parked under the chrome
+   * (W6-F5) included – parking keeps a page visible under Zenium's own popup, not under a
    * minimised or hidden window. One page does not: a page whose throttling is off (a session's,
    * the user looking at it as the window went away) reads `visible` in the concealed window
    * until its next navigation – Electron's patch rewrites this hide as it does a tab switch's
    * (`setVisible`), with no regard for what hid the widget; this hide is left plain for now, and
    * the wrap `hide` puts round a tab switch's would close it. The window back, the engine's view
-   * returns to where the core's layout left it: parked at its corner under a cover still up,
-   * shown, or hidden as the core's flag says. The core's flag (`visible`, `isVisible`, the
-   * `hid`/`shown` accounting the governor and snapshot logic read) is not touched, and no
-   * visibility flip is announced – the core's view of which page is in front does not change
-   * when its window is put away and brought back.
+   * returns to where the core's layout left it: parked at its corner under the chrome still over
+   * the content, shown, or hidden as the core's flag says. The core's flag (`visible`,
+   * `isVisible`, the `hid`/`shown` accounting the governor and snapshot logic read) is not
+   * touched, and no visibility flip is announced – the core's view of which page is in front
+   * does not change when its window is put away and brought back.
    *
    * Occlusion by another application's window is Chromium's own to track (Windows and macOS
    * natively; none on X11, where Chrome itself does not); nothing is synthesised here for it, and
@@ -1765,8 +1788,8 @@ export class ElectronTabView implements TabView {
       if (this.parked !== null && this.bounds) this.view.setBounds(this.bounds)
       this.view.setVisible(false)
     } else if (this.parked !== null && this.bounds) {
-      // The window is back with a chrome cover still up: the view is parked again, a pixel in
-      // its corner, so Chromium keeps it visible and its prefetches run (W6-F5).
+      // The window is back with the chrome still over the content: the view is parked again, a
+      // pixel in its corner, so Chromium keeps it visible and its prefetches run (W6-F5).
       this.view.setBounds(this.parkedBox(this.bounds, this.parked))
       this.view.setVisible(true)
     } else {
@@ -1776,14 +1799,15 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * Whether a hide asked for now is a chrome cover's: the window's chrome covers the content and
-   * the engine's view is on screen in it (a page never shown, or shown in no window, has nothing
-   * to keep visible). In a window minimised or hidden the engine's view is down whatever the
-   * layout says (W6-F6), so "on screen" is what the core's flag held before this call (`wasShown`)
-   * or the parking already on: a layout re-applied under the cover while the window is away keeps
-   * the parking for the window's return rather than dropping it for a plain hide.
+   * Whether a hide asked for now is one to park for: the window's chrome is over the content
+   * (`contentHidden`) and the engine's view is on screen in it (a page never shown, or shown in
+   * no window, has nothing to keep visible). In a window minimised or hidden the engine's view
+   * is down whatever the layout says (W6-F6), so "on screen" is what the core's flag held before
+   * this call (`wasShown`) or the parking already on: a layout re-applied under the chrome while
+   * the window is away keeps the parking for the window's return rather than dropping it for a
+   * plain hide.
    */
-  private coverable(wasShown: boolean): boolean {
+  private parkable(wasShown: boolean): boolean {
     const host = this.host
     const onScreen = this.windowConcealed
       ? wasShown || this.parked !== null
@@ -1828,8 +1852,9 @@ export class ElectronTabView implements TabView {
    * chrome hears a move at the pointer's place as the view goes (`park`), and when the view
    * comes back under the pointer the chrome hears the pointer leave and the page hears where it
    * stands (`pointerBack`), as aura's exit and move would say. Nothing while a chrome mouse
-   * button is down (a tab row's drag is a cover): aura's synthesized moves wait for the release
-   * too, and the chrome holds the pointer's capture through the drag anyway.
+   * button is down (a tab row's drag puts the chrome over the content): aura's synthesized
+   * moves wait for the release too, and the chrome holds the pointer's capture through the drag
+   * anyway.
    */
   private park(): void {
     const rect = this.bounds
@@ -1879,7 +1904,7 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  /** Whether the engine's view stands parked under a chrome cover, and in which corner. */
+  /** Whether the engine's view stands parked under the chrome, and in which corner. */
   parkedCorner(): number | null {
     return this.parked
   }
@@ -1890,12 +1915,14 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * The chrome's cover lifted (a layout applied with `contentHidden` off) without the layout
-   * showing this view: it was switched away from under the cover, and is hidden now the way a
+   * The chrome left the content (a layout applied with `contentHidden` off) without the layout
+   * showing this view: it was switched away from under the chrome, and is hidden now the way a
    * tab switch hides a page (`hide`: onto the stage if an agent drives it, with the throttling
-   * on for the hide if a session holds it). Nothing for a view that is not parked.
+   * on for the hide if a session holds it). Nothing for a view that is not parked. The window's
+   * host walks every view of the window with it (`TabManager.allViewsOwnedBy`): the page beneath
+   * the reader's cover too, hidden on the cover's word while the chrome was over the content.
    */
-  coverLifted(): void {
+  hideParked(): void {
     if (this.parked === null) return
     this.unpark()
     this.hide()
@@ -2141,8 +2168,9 @@ export class ElectronTabView implements TabView {
    * 3.5–6.5 ms per input Mpx) costs about what the encode of the source would (5–7 per Mpx), so a
    * frame scaled by it pays more than it saves on the main thread; Hamming-1 (1.9–3.5) halves the
    * resize and is what the target is reached with. The picture is drawn at the page's CSS size
-   * whatever its pixels (`CoverImage`, `object-cover`), so a 1:1 capture at DPR 2 does not
-   * double. The Android host's cover is its own copy and encode (`TabWebView.snapshot`).
+   * whatever its pixels (the page cover, `CoverImage`, `object-cover`), so a 1:1 capture at DPR
+   * 2 does not double. The Android host's picture is its own copy and encode
+   * (`TabWebView.snapshot`).
    *
    * A staged page (an agent's, hidden from the user) is pictured from a frame of its renderer's
    * own, on the page's capture turn, as `capture` pictures it – never `capturePage`'s copy,
@@ -2152,9 +2180,9 @@ export class ElectronTabView implements TabView {
    * bounded as the frame is, not as the copy is: `STAGED_FRAME_FIRST_MS` and then
    * `STAGED_FRAME_RETRY_MS`, 2.8 s at the most, against the copy's `SNAPSHOT_TIMEOUT_MS` of
    * 600 ms. The copy is one paint of a widget already painting, and a late one is worth nothing
-   * to the cover; a staged renderer is first shown as painting, and one that shows nothing for
-   * the first wait – a navigation since – is shown once more, which is what gets a frame of it
-   * at all. The tool's fallback follows a capture that took the same path; the hover card's
+   * to the page cover; a staged renderer is first shown as painting, and one that shows nothing
+   * for the first wait – a navigation since – is shown once more, which is what gets a frame of
+   * it at all. The tool's fallback follows a capture that took the same path; the hover card's
    * preview of the agent's tab comes on the frame's terms, up to that long, for the page's
    * visibility kept.
    */
@@ -2164,16 +2192,16 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * The picture of the developer toolbox docked in this view's box (§9.29), for the cover to lay
-   * under the page's picture: the frontend's own `capturePage`, cut to the toolbox's band – the
-   * part of the box beside the page's hole, the seam at its edge – where the frontend has said
-   * where its hole is (`devtoolsPageBounds`, with the view's box: `devtoolsBandRect`), the whole
-   * box otherwise. The cover anchors the picture to the band's side of the box, so the cut and
-   * the whole lay out the same; the cut keeps the pair of pictures at the box's own pixels
-   * (§9.5's budget: the page's hole is in the page's picture already – at DPR 2 a 1600 × 1000
-   * box is 6 Mpx once, not 9 with the hole pictured twice). Null with no toolbox up, an undocked
-   * one (a window of its own, nothing of it in the frame) or a frontend that is gone; encoded as
-   * the page's picture is (`snapshot`).
+   * The picture of the developer toolbox docked in this view's box (§9.29), for the page cover
+   * (the chrome's picture of the page) to lay under the page's picture: the frontend's own
+   * `capturePage`, cut to the toolbox's band – the part of the box beside the page's hole, the
+   * seam at its edge – where the frontend has said where its hole is (`devtoolsPageBounds`, with
+   * the view's box: `devtoolsBandRect`), the whole box otherwise. The page cover anchors the
+   * picture to the band's side of the box, so the cut and the whole lay out the same; the cut
+   * keeps the pair of pictures at the box's own pixels (§9.5's budget: the page's hole is in the
+   * page's picture already – at DPR 2 a 1600 × 1000 box is 6 Mpx once, not 9 with the hole
+   * pictured twice). Null with no toolbox up, an undocked one (a window of its own, nothing of it
+   * in the frame) or a frontend that is gone; encoded as the page's picture is (`snapshot`).
    */
   snapshotDevtools(): Promise<string | null> {
     const wc = this.wc
@@ -3430,7 +3458,7 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
-  /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
+  /** The window corners the views parked under the chrome hold (`claimParkingCorner`). */
   private readonly parkingCorners = new Map<ElectronTabView, number>()
   /**
    * The stage the hidden pages agents drive stand on (`ElectronTabView.enterStage`): one window
@@ -3795,7 +3823,7 @@ export class ElectronTabViewHost implements TabViewHost {
   }
 
   /**
-   * The window corner for a view parking under a chrome cover (`ElectronTabView.park`): the
+   * The window corner for a view parking under the chrome (`ElectronTabView.park`): the
    * lowest no other view parked in the same window holds, and the last one when all are held. A
    * view already parked keeps its corner.
    */

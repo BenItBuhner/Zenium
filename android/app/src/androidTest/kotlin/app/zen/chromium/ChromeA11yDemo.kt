@@ -1481,7 +1481,7 @@ class ChromeA11yDemo : DemoHarness(
             listOf(
                 Want("Close", "Button"),
                 Want("Search history", "EditText", listOf("editable"), prefix = true),
-                Want("Clear history", "Button"),
+                Want("Delete history", "Button"),
                 Want("Remove from history", "Button")
             )
         )

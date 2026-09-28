@@ -349,7 +349,17 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
       count: 3,
       why: 'dialog lines, not controls: the address and the description on both chassis'
     },
-    'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' }
+    'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' },
+    // The folded mini menu's glyph buttons (CT-39, the lead's fold rule: the titles as tooltips).
+    // The pill is drawn in the popup surface's own document (`index.html?surface=popup`, a
+    // WebContentsView the size of the pill and its 8 shadow band), which mounts no tooltip host
+    // – the picker it shares the document with carries native titles too (`autofill/`, not
+    // walked) – and has no room beside the pill for the chrome's panel without a dead band
+    // over the page; the toolkit's tooltip names the glyph until the surface hosts the chrome's.
+    'selection/MiniMenu.tsx': {
+      count: 1,
+      why: 'the popup surface’s document: no tooltip host, no room beside the pill for the chrome’s panel'
+    }
   }
 
   function sources(dir: string): string[] {

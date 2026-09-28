@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { CONTENT_SETTINGS, contentSetting, contentSettingsFor } from '../contentSettings'
+import {
+  CONTENT_SETTINGS,
+  type ContentDefault,
+  type ContentSetting,
+  allowOnceFor,
+  builtInDefault,
+  contentSetting,
+  contentSettingId,
+  contentSettingsFor,
+  promptLabelFor,
+  tracksLastVisit
+} from '../contentSettings'
 
 const ids = (platform: 'desktop' | 'android'): string[] =>
   contentSettingsFor(platform).map((setting) => setting.id)
@@ -45,7 +56,8 @@ describe('contentSettingsFor: the per-host catalogue (pass 10)', () => {
     for (const platform of ['desktop', 'android'] as const) {
       const listed = contentSettingsFor(platform)
       expect(listed.every((setting) => setting.support[platform] !== 'n-a')).toBe(true)
-      const hidden = CONTENT_SETTINGS.filter((setting) => !listed.includes(setting))
+      const listedIds = new Set(listed.map((setting) => setting.id))
+      const hidden = CONTENT_SETTINGS.filter((setting) => !listedIds.has(setting.id))
       expect(hidden.every((setting) => setting.support[platform] === 'n-a')).toBe(true)
       expect(contentSettingsFor(platform, ['stored'])).toEqual([])
       expect(contentSettingsFor(platform, ['enforced'])).toEqual(listed)
@@ -78,6 +90,109 @@ describe('contentSettingsFor', () => {
       choices: ['allow', 'deny'],
       support: { desktop: 'enforced', android: 'enforced' }
     })
+  })
+
+  it('keeps one MIDI row, as Chrome has since kBlockMidiByDefault, and folds the engines’ SysEx request into it (MW-36 / PS-54)', () => {
+    // Chrome: one setting, `midi-sysex`, ask by default, allow / block / ask
+    // (`content_settings_registry.cc:209-217`); every `requestMIDIAccess()` asks for it since
+    // `kBlockMidiByDefault` (`midi_access_initializer.cc:48-52`); no one-time allow
+    // (`permission_request.cc:319-320`). Its words: `IDS_SETTINGS_SITE_SETTINGS_MIDI_ASK` and
+    // `IDS_MIDI_SYSEX_PERMISSION_FRAGMENT`; the label the lead's ruling on #656 kept.
+    expect(contentSetting('midi')).toMatchObject({
+      label: 'MIDI devices',
+      description: 'Sites can ask to control and reprogram your MIDI devices',
+      descriptions: { deny: 'Sites cannot control or reprogram your MIDI devices' },
+      group: 'permissions',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'control and reprogram your MIDI devices',
+      allowOnce: false,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // Electron's `midiSysex` and the WebView's `RESOURCE_MIDI_SYSEX` (the request any Web MIDI
+    // call makes) are that row: the same answer, the same words, no row of their own.
+    expect(contentSettingId('midiSysex')).toBe('midi')
+    expect(contentSetting('midiSysex')).toBe(contentSetting('midi'))
+    expect(promptLabelFor('midiSysex')).toBe('control and reprogram your MIDI devices')
+    expect(allowOnceFor('midiSysex')).toBe(false)
+    expect(builtInDefault('midiSysex')).toBe('ask')
+    expect(tracksLastVisit('midiSysex')).toBe(true)
+    expect(CONTENT_SETTINGS.map((s) => s.id)).not.toContain('midiSysex')
+    // Listed on both hosts: Electron hands the core `midiSysex`, and `Permissions.kt` relays
+    // `RESOURCE_MIDI_SYSEX` as the same request – a path acts on the row on each (#506).
+    expect(ids('desktop')).toContain('midi')
+    expect(ids('android')).toContain('midi')
+    // The retired words are gone: the second row's label and refusal, the first row's old lines.
+    for (const setting of CONTENT_SETTINGS) {
+      const words = [
+        setting.label,
+        setting.description,
+        setting.promptLabel ?? '',
+        ...Object.values(setting.descriptions ?? {})
+      ].join('\n')
+      expect(words, setting.id).not.toMatch(/MIDI system messages|system-exclusive/)
+      expect(words, setting.id).not.toMatch(/connect to MIDI devices|access MIDI devices/)
+    }
+  })
+
+  it('lists Clipboard on both hosts now that the phone’s page shim asks the row (MW-38)', () => {
+    // Desktop: Electron's request handler; Android: the page script's shim over
+    // `navigator.clipboard.read` / `readText` through the same prompt (`core/clipboardRead.ts`).
+    // The prompt copy is the row's – no new user-read string.
+    expect(contentSettingsFor('desktop').map((s) => s.id)).toContain('clipboard-read')
+    expect(contentSettingsFor('android').map((s) => s.id)).toContain('clipboard-read')
+    expect(contentSetting('clipboard-read')).toMatchObject({
+      label: 'Clipboard',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'read from your clipboard',
+      allowOnce: true,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // An asked row remembered per site: the unused-sites sweep and Safety check review it.
+    expect(tracksLastVisit('clipboard-read')).toBe(true)
+  })
+
+  it('hands the phone the Clipboard row in its own words – text alone until its path reads images (the lead’s copy on #657) – and the desktop the row as written', () => {
+    const row = (platform: 'desktop' | 'android'): ContentSetting => {
+      const found = contentSettingsFor(platform).find((s) => s.id === 'clipboard-read')
+      if (!found) throw new Error(`no Clipboard row on ${platform}`)
+      return found
+    }
+    // The desktop: Electron's read hands text and images; the row is the catalogue's own object.
+    expect(row('desktop')).toBe(contentSetting('clipboard-read'))
+    expect(row('desktop')).toMatchObject({
+      description: 'Sites can ask to see text and images on your clipboard',
+      descriptions: { deny: 'Sites cannot see text or images on your clipboard' }
+    })
+    // The phone: `platform.clipboard.readText()` alone answers the shim, so the row says text.
+    expect(row('android')).toMatchObject({
+      description: 'Sites can ask to see text on your clipboard',
+      descriptions: { deny: 'Sites cannot see text on your clipboard' }
+    })
+    // Two sub-lines change and nothing else: one prompt, one default, one set of choices.
+    expect(row('android')).toMatchObject({
+      label: 'Clipboard',
+      group: 'permissions',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'read from your clipboard',
+      allowOnce: true,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // The shape: the override names the phone's description and, value by value, its lines.
+    expect(
+      Object.fromEntries(CONTENT_SETTINGS.filter((s) => s.android).map((s) => [s.id, s.android]))
+    ).toEqual({
+      'clipboard-read': {
+        description: 'Sites can ask to see text on your clipboard',
+        descriptions: { deny: 'Sites cannot see text on your clipboard' }
+      }
+    })
+    // Every other phone row is the catalogue's own object, as before.
+    for (const setting of contentSettingsFor('android')) {
+      if (setting.id !== 'clipboard-read') expect(setting).toBe(contentSetting(setting.id))
+    }
   })
 
   it('still hides a row a host has no feature for, and lists it when asked for everything', () => {
@@ -118,7 +233,7 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
         allow: 'Sites can download multiple files without asking',
         deny: 'Sites cannot download multiple files automatically'
       },
-      midi: { deny: 'Sites cannot connect to MIDI devices' },
+      midi: { deny: 'Sites cannot control or reprogram your MIDI devices' },
       usb: { deny: 'Sites cannot connect to USB devices' },
       serial: { deny: 'Sites cannot connect to serial ports' },
       hid: { deny: 'Sites cannot connect to HID devices' },
@@ -190,6 +305,35 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
         if (value === 'deny') expect(line, where).toMatch(/\b(cannot|instead of)\b/)
         if (value === 'allow') expect(line, where).toMatch(/\bcan\b/)
         expect(line, where).not.toBe(setting.description)
+      }
+    }
+  })
+
+  it('holds a row’s phone lines (`android`) to the same register, each for a choice the row offers beyond its built-in default', () => {
+    for (const setting of CONTENT_SETTINGS) {
+      if (!setting.android) continue
+      for (const key of Object.keys(setting.android)) {
+        expect(['description', 'descriptions'], setting.id).toContain(key)
+      }
+      const others = setting.choices.filter((value) => value !== setting.builtInDefault)
+      expect(setting.android.description, setting.id).toMatch(/^[A-Z][^.!?]*[^.!?\s]$/)
+      expect(setting.android.description, setting.id).not.toBe(setting.description)
+      for (const [value, line] of Object.entries(setting.android.descriptions ?? {})) {
+        const where = `${setting.id} ${value} (android)`
+        expect(others, where).toContain(value)
+        expect(line, where).toMatch(/^[A-Z][^.!?]*[^.!?\s]$/)
+        if (value === 'deny') expect(line, where).toMatch(/\b(cannot|instead of)\b/)
+        if (value === 'allow') expect(line, where).toMatch(/\bcan\b/)
+        expect(line, where).not.toBe(setting.android.description)
+        expect(line, where).not.toBe(setting.descriptions?.[value as ContentDefault])
+      }
+    }
+    // The phone's rows read those lines through `defaultDescription`'s fields and no other.
+    for (const setting of contentSettingsFor('android')) {
+      if (!setting.android) continue
+      expect(setting.description).toBe(setting.android.description)
+      for (const [value, line] of Object.entries(setting.android.descriptions ?? {})) {
+        expect(setting.descriptions?.[value as ContentDefault], `${setting.id} ${value}`).toBe(line)
       }
     }
   })

@@ -6,7 +6,14 @@
  * backgrounding the app never loses a decision the user already made.
  */
 
-export const UNDO_DELAY_MS = 5000
+import { TOAST_UNDO_MS } from '@shared/toastCard'
+
+/**
+ * The grace period is §9.33's Undo clock (`TOAST_UNDO_MS`, 8 s): the toast that offers Undo and
+ * the commit it can cancel run on the one number, so neither outlives the other. Kept under its
+ * own name for the readers that have it (`phonePanel.ts`'s toast, the tests).
+ */
+export const UNDO_DELAY_MS = TOAST_UNDO_MS
 
 export interface Timers {
   set(fn: () => void, ms: number): unknown

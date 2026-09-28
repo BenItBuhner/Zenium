@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Rect, Tab, UIState } from '@shared/types'
+import { DEFAULT_SETTINGS } from '@shared/defaults'
 import {
   HOVER_CARD_DELAY,
+  HOVER_CARD_HIGH_MEMORY_MB,
   HOVER_CARD_LEAVE_GRACE,
   HoverCardController,
+  formatHoverCardMemory,
   hoverCardHost,
+  hoverCardMemoryLine,
   hoverCardPreviews,
   placeHoverCard,
   type HoverCardState
@@ -432,5 +436,85 @@ describe('hoverCardPreviews (tabs-19)', () => {
     expect(hoverCardPreviews(s, 'b')).toBe(false)
     expect(hoverCardPreviews(s, 'zz')).toBe(false)
     expect(hoverCardPreviews(null, 'b')).toBe(false)
+  })
+})
+
+describe('hoverCardMemoryLine (settings-29, W8-10; Chrome’s FadePerformanceFooterRow)', () => {
+  // The setting's value as the profile holds it: `true` (the switch turned on), `false`, garbage,
+  // or ABSENT (a profile from before the key: no `hoverCardMemoryUsage` in `settings` at all).
+  const ABSENT = Symbol('absent')
+  const state = (
+    tabs: Array<Partial<Tab> & { id: string }>,
+    usage: Array<{ tabId: string; memoryMb: number }>,
+    hoverCardMemoryUsage: unknown
+  ): UIState =>
+    ({
+      tabs: Object.fromEntries(
+        tabs.map((t) => [t.id, { discarded: false, url: `https://${t.id}.example/`, ...t }])
+      ),
+      settings: hoverCardMemoryUsage === ABSENT ? {} : { hoverCardMemoryUsage },
+      resources: { tabs: usage.map((u) => ({ ...u, cpuPercent: 0, processes: 1 })) }
+    }) as unknown as UIState
+
+  it('says the governor’s figure for the tab while the setting is on – "Memory usage: 123 MB" (IDS_HOVERCARD_TAB_MEMORY_USAGE)', () => {
+    const s = state([{ id: 'a' }, { id: 'b' }], [{ tabId: 'a', memoryMb: 123.4 }], true)
+    expect(hoverCardMemoryLine(s, 'a')).toBe('Memory usage: 123 MB')
+    // A tab the governor has not measured (no processes yet, a tab it never sampled): no line.
+    expect(hoverCardMemoryLine(s, 'b')).toBeNull()
+    expect(hoverCardMemoryLine(s, 'zz')).toBeNull()
+    expect(hoverCardMemoryLine(null, 'a')).toBeNull()
+    // Nothing positive to say: Chrome's `memory_usage.is_positive()` gate.
+    expect(
+      hoverCardMemoryLine(state([{ id: 'a' }], [{ tabId: 'a', memoryMb: 0 }], true), 'a')
+    ).toBeNull()
+    expect(
+      hoverCardMemoryLine(state([{ id: 'a' }], [{ tabId: 'a', memoryMb: NaN }], true), 'a')
+    ).toBeNull()
+  })
+
+  it('writes the figure as Chrome’s ui::FormatBytes does: one decimal under 100, whole megabytes to a gigabyte, then gigabytes with one decimal', () => {
+    expect(formatHoverCardMemory(45.26)).toBe('45.3 MB')
+    expect(formatHoverCardMemory(99.96)).toBe('100.0 MB')
+    expect(formatHoverCardMemory(123.4)).toBe('123 MB')
+    expect(formatHoverCardMemory(1023.6)).toBe('1024 MB')
+    expect(formatHoverCardMemory(1024)).toBe('1.0 GB')
+    expect(formatHoverCardMemory(1228.8)).toBe('1.2 GB')
+  })
+
+  it('says nothing by default – Chrome 152’s effective default, off after MigrateHoverCardMemoryPref – or with the setting off, or with anything but true; except past Chrome’s 800 MiB threshold, where "High memory usage" shows whatever the setting (IDS_HOVERCARD_TAB_HIGH_MEMORY_USAGE)', () => {
+    const tabs = [{ id: 'a' }, { id: 'b' }]
+    const usage = [
+      { tabId: 'a', memoryMb: 123 },
+      { tabId: 'b', memoryMb: 1228.8 }
+    ]
+    expect(DEFAULT_SETTINGS.hoverCardMemoryUsage).toBe(false)
+    const values: Array<[string, unknown]> = [
+      ['the default', DEFAULT_SETTINGS.hoverCardMemoryUsage],
+      ['false', false],
+      ['no key', ABSENT],
+      ['"on"', 'on'],
+      ['1', 1],
+      ['null', null]
+    ]
+    for (const [name, value] of values) {
+      const s = state(tabs, usage, value)
+      expect(hoverCardMemoryLine(s, 'a'), name).toBeNull()
+      expect(hoverCardMemoryLine(s, 'b'), name).toBe('High memory usage: 1.2 GB')
+    }
+    const on = state([{ id: 'b' }], [{ tabId: 'b', memoryMb: 1228.8 }], true)
+    expect(hoverCardMemoryLine(on, 'b')).toBe('High memory usage: 1.2 GB')
+    // Chrome's `memory_usage_ > kHighMemoryUsageThreshold`: at the threshold it is the plain line.
+    expect(HOVER_CARD_HIGH_MEMORY_MB).toBe(800)
+    expect(
+      hoverCardMemoryLine(state([{ id: 'a' }], [{ tabId: 'a', memoryMb: 800 }], true), 'a')
+    ).toBe('Memory usage: 800 MB')
+    expect(
+      hoverCardMemoryLine(state([{ id: 'a' }], [{ tabId: 'a', memoryMb: 801 }], false), 'a')
+    ).toBe('High memory usage: 801 MB')
+  })
+
+  it('leaves a sleeping tab to its "Memory saved" line: Chrome’s discard footer stands in for the memory row', () => {
+    const s = state([{ id: 'a', discarded: true }], [{ tabId: 'a', memoryMb: 1228.8 }], true)
+    expect(hoverCardMemoryLine(s, 'a')).toBeNull()
   })
 })

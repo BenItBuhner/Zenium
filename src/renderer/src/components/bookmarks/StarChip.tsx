@@ -59,15 +59,17 @@ export function StarChip({
   if (collapsed && !open) return null
   // One of the pill's chips (`PillChip`, v2 draft §9.22): a real button in the tab order after
   // the address, whose popup is the bubble. A 28px icon button (§9.3) that keeps its pressed
-  // fill and `aria-expanded` while the bubble is open (§9.20). Whether the page is bookmarked is
-  // in its name and `data-filled`, not `aria-pressed`: a chip opens something or toggles, never
-  // both.
+  // fill and `aria-expanded` while the bubble is open (§9.20) – a bubble hung from the chip, so
+  // the desktop pill keeps its hover-only run drawn under it (`anchored`, L7). Whether the page
+  // is bookmarked is in its name and `data-filled`, not `aria-pressed`: a chip opens something
+  // or toggles, never both.
   return (
     <PillChip
       label={filled ? 'Edit bookmark' : 'Bookmark this tab'}
       title={title}
       popup="dialog"
       expanded={open}
+      anchored
       data-bm-star=""
       data-filled={filled}
       data-open={open}

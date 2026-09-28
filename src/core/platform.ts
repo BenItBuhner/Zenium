@@ -239,6 +239,12 @@ export interface PageMessage {
     | 'share'
     /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
     | 'geolocation'
+    /**
+     * The page's `navigator.clipboard.read()` / `readText()` shim asks for the clipboard's
+     * text (`shared/clipboardRead`; hosts whose engine refuses every read, MW-38): the
+     * `clipboard-read` permission decides, the host's clipboard answers.
+     */
+    | 'clipboardRead'
     /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
     | 'readAloud'
     /**
@@ -258,9 +264,26 @@ export interface PageMessage {
      * progress, so memory pressure leaves the tab alone until its next document (OS-37).
      */
     | 'formEdited'
+    /**
+     * Roll (`shared/game/bridge.ts`), from the no-connection page or `zen://game`: the ask for
+     * the profile's best score at mount, or a run's best at a crash (`GameService`).
+     */
+    | 'game'
+    /**
+     * The top document's text selection settled, or collapsed (`shared/selectionScript`; the
+     * Electron preload alone): the selection menu's model (`core/selectionMenu`) reads it.
+     */
+    | 'selection'
   url?: string
   /** `editing`: whether a text field of the reporting frame has the keyboard. */
   editing?: boolean
+  /** `selection`: the report (`SelectionReport`, validated by the core). */
+  selection?: unknown
+  /**
+   * `selection`: the reporting frame's extension-API id (`extensionApi/frames` – 0 for the top
+   * frame), stamped by the host from the sender frame; the core takes the top frame's alone.
+   */
+  frameId?: number
   /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
   id?: string
   directive?: string | null
@@ -309,10 +332,14 @@ export interface PageMessage {
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */
   geolocation?: unknown
+  /** `clipboardRead`: the shim's call (`ClipboardReadCall`, validated by the core). */
+  clipboardRead?: unknown
   /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
   readAloud?: unknown
   /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
   capture?: unknown
+  /** `game`: the ask or the report (`GameWindowMessage`, validated by the core). */
+  game?: unknown
 }
 
 /** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
@@ -337,6 +364,18 @@ export interface GeolocationHostMessage {
   error?: { code: GeolocationErrorCode; message: string }
 }
 
+/**
+ * The answer to one call of the page's clipboard-read shim (`shared/clipboardRead`): the
+ * clipboard's text when the `clipboard-read` permission allowed it, `denied` when it did not
+ * (the shim rejects with Chrome's `NotAllowedError`).
+ */
+export interface ClipboardReadHostMessage {
+  type: 'clipboardRead'
+  id: string
+  text?: string
+  error?: 'denied'
+}
+
 /** The page's `display-mode` changed (`shared/displayMode`): its window went fullscreen, or it moved. */
 export interface DisplayModeHostMessage {
   type: 'display-mode'
@@ -346,10 +385,10 @@ export interface DisplayModeHostMessage {
 /**
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
- * the notification polyfill's answers and events, a share call's outcome, a position, the
- * page's display mode, read aloud's extraction request and highlight, the request for the
- * selection's text directive (a link to the highlight, SH-11), and where a Tab entering the
- * page from the chrome lands (`focus`, A11Y-09).
+ * the notification polyfill's answers and events, a share call's outcome, a position, a
+ * clipboard read's text, the page's display mode, read aloud's extraction request and
+ * highlight, the request for the selection's text directive (a link to the highlight, SH-11),
+ * and where a Tab entering the page from the chrome lands (`focus`, A11Y-09).
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -357,6 +396,7 @@ export type PageHostMessage =
   | NotificationHostMessage
   | ShareHostMessage
   | GeolocationHostMessage
+  | ClipboardReadHostMessage
   | DisplayModeHostMessage
   | ReadAloudHostMessage
   | TextFragmentHostMessage
@@ -939,10 +979,11 @@ export interface TabView {
    */
   frameDrawn?(): Promise<number>
   /**
-   * Chrome messages (toasts, banners) cover these strips of the view's edges. Hosts whose pages
-   * are layered above the chrome clip the page out of the strips – animating the clip so it
-   * moves with the message – and hand touches inside them to the chrome. Optional: on Electron
-   * the chrome draws over the page as it is.
+   * The message strips: chrome messages (toasts, banners) draw over these strips of the view's
+   * edges. Hosts whose pages are layered above the chrome clip the page out of the strips –
+   * animating the clip so it moves with the message – and hand touches inside them to the
+   * chrome. Optional: on Electron the chrome draws over the page as it is. (Not the reader's
+   * cover, `TabViewHost.createCover` – the glossary of the tree's "covers" is at `TabManager`.)
    */
   setCover?(cover: ContentCover): void
 
@@ -1152,10 +1193,11 @@ export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
   /**
-   * Create a second live page for `tab` – the reader's cover (`TabManager.cover`): the
-   * `zen://reader` document drawn over the tab's own page, which stays alive and unmoved
-   * beneath it, so leaving the reader uncovers the page as it was – no load, no history entry
-   * (Chrome's immersive reading mode is an overlay over the tab's contents in the same way).
+   * Create a second live page for `tab` – the reader's cover (`TabManager.cover`; the glossary
+   * of the tree's four "covers" stands there): the `zen://reader` document drawn over the tab's
+   * own page, which stays alive and unmoved beneath it, so leaving the reader uncovers the page
+   * as it was – no load, no history entry (Chrome's immersive reading mode is an overlay over
+   * the tab's contents in the same way).
    * The cover is not the tab's page to the host's own maps (a request's `tabId`, the extension
    * API's view of the tab stay the page's). Hosts that hold one page per tab id (Android's
    * WebViews) leave it out; the reader then loads as a navigation of the tab.
@@ -1280,10 +1322,11 @@ export interface WindowHost {
    */
   focusedRect?(): Promise<Rect | null>
   /**
-   * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
-   * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
-   * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
-   * layered view (`HostCapabilities.popupSurface` false) leave this out.
+   * Show the popup surface – a second chrome document (`index.html?surface=popup`: the autofill
+   * picker, the selection's mini menu) floated above the page views – at `bounds` (window CSS
+   * pixels), or take it down with null. It never takes the keyboard when shown; the page the
+   * picker or the menu hangs from keeps it. Hosts without a layered view
+   * (`HostCapabilities.popupSurface` false) leave this out.
    */
   setPopupSurface?(bounds: Rect | null): void
 }
@@ -2559,10 +2602,21 @@ export interface BundledFilterList {
 /**
  * The host side of ad and tracker blocking. Matching itself is the core's `RuleEngine` plus the
  * platform's text matcher (Ghostery's engine behind Electron's `webRequest`, the Kotlin engine
- * inside `shouldInterceptRequest`); this interface only hands over the bundled snapshot of the
- * default lists so the very first run is protected before any list has been downloaded.
+ * inside `shouldInterceptRequest`); this interface says whose engine decides the host's
+ * requests and hands over the bundled snapshot of the default lists so the very first run is
+ * protected before any list has been downloaded.
  */
 export interface BlockingHost {
+  /**
+   * Whose engine decides the host's requests. `'host'` (the default): the host's own engine
+   * reads the set documents the service writes and decides natively (Android's Kotlin engine
+   * inside `shouldInterceptRequest`); the core's `RuleEngine` counts and persists the sets and
+   * never builds a table of them. `'core'`: the host's request hook asks the core's engine
+   * (`engine.decide` behind Electron's `webRequest`), so the service warms the engine's tables
+   * the moment its sets are loaded – in the same synchronous tick as the startup windows, ahead
+   * of any request hook – and the first request after boot pays no build.
+   */
+  readonly requestEngine?: 'core' | 'host'
   /** The lists this build ships a snapshot of. */
   bundledLists(): Promise<BundledFilterList[]>
   /**
@@ -2743,6 +2797,29 @@ export interface PrintingHost {
     options: { defaultName: string },
     win?: ZenWindow
   ): Promise<string | null>
+}
+
+/**
+ * A PDF the inline viewer shows (`capabilities.pdfViewer`; `core/pdf.ts`), for the system's
+ * print flow (`capabilities.pdfPrint`; Android's `PrintManager` with a document adapter that
+ * writes the PDF's bytes to the job – Chrome Android prints its viewer's PDF the same way). The
+ * document is exactly one of `path` and `data`; a job with both or neither is refused (the host
+ * answers false). The core hands `data` for both of its cases – the file's bytes as downloaded
+ * when the form was not touched, the bytes of a copy with the form's values written in
+ * (pdf.js's incremental save) when it was: the download's file lives in the public collection,
+ * which is no path the host takes.
+ */
+export interface PdfPrintJob {
+  tabId: string
+  /** The job's name in the print queue: the file's (the host drops a `.pdf`). */
+  name: string
+  /**
+   * A file the host holds under its own directories (its files or cache directory – the host
+   * accepts no other file through the bridge, `PdfPrint.kt`); null with `data`.
+   */
+  path: string | null
+  /** The bytes to print, base64; null with `path`. */
+  data: string | null
 }
 
 /**
@@ -3148,6 +3225,12 @@ export interface Platform {
   readonly spellcheck?: SpellcheckHost
   /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
   readonly printing?: PrintingHost
+  /**
+   * The system print flow for a PDF the inline viewer shows (`capabilities.pdfPrint`; Android).
+   * Resolves true once the job is handed to the system's print dialog, false when the host
+   * would not take it; omit where the engine prints its own PDF viewer's document.
+   */
+  readonly printPdf?: (job: PdfPrintJob) => Promise<boolean>
   /** Screens, windows and tabs a page may capture (`capabilities.screenCapture`). */
   readonly screenCapture?: ScreenCaptureHost
   /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */

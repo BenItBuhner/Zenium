@@ -17,7 +17,12 @@ import {
 const tab = (id: string, url: string, title = 'Page'): Tab =>
   ({ id, url, title, containerId: 'default' }) as Tab
 
-const media = (over: Partial<MediaState>): MediaState => ({ tabId: 't1', playing: true, ...over })
+const media = (over: Partial<MediaState>): MediaState => ({
+  tabId: 't1',
+  playing: true,
+  muted: false,
+  ...over
+})
 
 const state = (tabs: Tab[], list: MediaState[]): UIState =>
   ({

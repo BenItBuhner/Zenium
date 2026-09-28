@@ -26,7 +26,7 @@ import java.util.Locale
 /**
  * Records the phone history and bookmarks panels: history grouped by day, a visit swiped away
  * and brought back with Undo, long-press selection with its menu and a delete undone, the
- * Clear history question and the empty state after it, the bookmarks list with a row's menu,
+ * Delete history question and the empty state after it, the bookmarks list with a row's menu,
  * the edit sheet renaming a bookmark, bookmark selection with an undone delete, a folder entered
  * and left with the system back gesture, back closing a row menu and then an editor without
  * taking the panel with them, and the star saving the page with a toast whose Edit opens the
@@ -335,26 +335,27 @@ class HistoryBookmarksDemo :
             )
         }
 
-        // 4. The top row asks before it clears everything (#129's question as a prompt sheet).
-        if (click("Clear history")) {
-            await("Clear all")
+        // 4. The top row asks before it wipes everything (#129's question as a prompt sheet;
+        //    the Delete family's words since W8-11: "Delete history", "Delete all history?", "Delete all").
+        if (click("Delete history")) {
+            await("Delete all")
             SystemClock.sleep(1_500)
             shot("07-history-clear-prompt")
             finding(
-                "\nClear history: prompt 'Clear all history?' ${verdict(present("Clear all history?"))}, " +
-                    "Cancel ${verdict(present("Cancel"))}, Clear all ${verdict(present("Clear all"))}"
+                "\nDelete history: prompt 'Delete all history?' ${verdict(present("Delete all history?"))}, " +
+                    "Cancel ${verdict(present("Cancel"))}, Delete all ${verdict(present("Delete all"))}"
             )
-            // The prompt sheet's injected touch (the rule in DemoHarness): Clear all under a
+            // The prompt sheet's injected touch (the rule in DemoHarness): Delete all under a
             // finger, and the panel must show its empty note on it.
-            touch("Clear all", "the history is empty") { present("Pages you visit will show up here") }
+            touch("Delete all", "the history is empty") { present("Pages you visit will show up here") }
             SystemClock.sleep(2_000)
             shot("08-history-empty")
             finding(
-                "after Clear all: empty note ${verdict(present("Pages you visit will show up here"))}, " +
-                    "Clear history row gone ${verdict(!present("Clear history"))}"
+                "after Delete all: empty note ${verdict(present("Pages you visit will show up here"))}, " +
+                    "Delete history row gone ${verdict(!present("Delete history"))}"
             )
         } else {
-            finding("\nClear history: row not found ${verdict(false)}")
+            finding("\nDelete history: row not found ${verdict(false)}")
         }
         click("Close")
         awaitPanelGone(HISTORY_SEARCH)

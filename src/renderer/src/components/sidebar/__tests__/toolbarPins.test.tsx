@@ -14,6 +14,7 @@ import { defaultShortcuts } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { mediaHubFolded, mediaHubReturnRow } from '@renderer/lib/mediaHub'
+import { PILL_BLEED } from '@renderer/components/urlbar/pillChipTiers'
 import {
   FOLDING_BUTTON_PILL,
   foldingButtonFits,
@@ -54,6 +55,7 @@ function media(over: Partial<MediaState> = {}): MediaState {
   return {
     tabId: 't1',
     playing: true,
+    muted: false,
     title: 'Nocturne',
     artist: 'The Band',
     artwork: null,
@@ -245,7 +247,7 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     expect(toolbarTiering.get().hidden).not.toContain('energy-saver')
   })
 
-  it('tiers the leaf by the row’s width on the hub’s rule (L2): folded at the 240 sidebar and published as hidden, back at the 302; where one of the two fits, the leaf stands and the hub folds', () => {
+  it('tiers the leaf by the row’s width on the hub’s rule (L2): folded at the 240 sidebar and published as hidden, back at the 298; where one of the two fits, the leaf stands and the hub folds', () => {
     const leaf = (): HTMLElement | null => q('[data-zen-energy-saver-button]')
     const hub = (): HTMLElement | null => q('[data-zen-media-hub-button]')
     const widths = { row: 240 - 16 }
@@ -267,28 +269,29 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
       expect(toolbarTiering.get().hidden).toEqual(['energy-saver', 'media'])
       expect(q('[data-zen-app-menu-button]')!.querySelector('.zen-mhub-dot')).not.toBeNull()
       // One px short of the leaf's return: still folded.
-      widths.row = 285
+      widths.row = 281
       render(
-        <NavRow key="285" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+        <NavRow key="281" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
       )
       expect(leaf()).toBeNull()
-      // The 302 sidebar (the 286 row): the leaf returns over a pill at the tier's floor; the
-      // hub, counting the leaf among the buttons it makes room against, needs 318 and folds.
-      widths.row = 286
+      // The 298 sidebar (the 282 row; the pill fills its slot, W8-F7's `PILL_BLEED`): the leaf
+      // returns over a pill at the tier's floor; the hub, counting the leaf among the buttons it
+      // makes room against, needs 314 and folds.
+      widths.row = 282
       render(
-        <NavRow key="286" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
+        <NavRow key="282" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
       )
       expect(leaf()).not.toBeNull()
       expect(hub()).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual(['media'])
       // Without media the same width has nothing else to fold.
       render(
-        <NavRow key="286-quiet" state={state(page, {}, [], SAVING)} tab={page} compact={false} />
+        <NavRow key="282-quiet" state={state(page, {}, [], SAVING)} tab={page} compact={false} />
       )
       expect(leaf()).not.toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
       // 32 more: both stand.
-      widths.row = 318
+      widths.row = 314
       render(
         <NavRow key="318" state={state(page, {}, [media()], SAVING)} tab={page} compact={false} />
       )
@@ -449,15 +452,20 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
     expect(homeButton()!.disabled).toBe(true)
   })
 
-  it('folds by the row’s width under §9.29’s hub-button rule, the one rule the hub folds by: gone below the 302 sidebar, back where the pill with its slot holds 126', () => {
+  it('folds by the row’s width under §9.29’s hub-button rule, the one rule the hub folds by: gone below the 298 sidebar, back where the pill with its slot holds 126', () => {
     // The always-there buttons: back, forward, reload, ⋯ (no extensions, no downloads).
     const always = 4
     expect(FOLDING_BUTTON_PILL).toBe(126)
-    expect(foldingButtonReturnRow(always)).toBe(286)
-    expect(foldingButtonReturnRow(always) + 16).toBe(302)
+    // The row's 282 draws a 126 pill: the flex share 122 and the 4 the pill takes of its
+    // neighbours' slots (`PILL_BLEED`, W8-F7's 100 pill at 240).
+    expect(foldingButtonReturnRow(always)).toBe(282)
+    expect(foldingButtonReturnRow(always) - (always + 1) * 32 + PILL_BLEED).toBe(
+      FOLDING_BUTTON_PILL
+    )
+    expect(foldingButtonReturnRow(always) + 16).toBe(298)
     expect(foldingButtonFits(240 - 16, always)).toBe(false)
-    expect(foldingButtonFits(302 - 16 - 1, always)).toBe(false)
-    expect(foldingButtonFits(302 - 16, always)).toBe(true)
+    expect(foldingButtonFits(298 - 16 - 1, always)).toBe(false)
+    expect(foldingButtonFits(298 - 16, always)).toBe(true)
     // An unmeasured row shows the button, as the pinned actions show before a width.
     expect(foldingButtonFits(0, always)).toBe(true)
     // The hub's rule is this rule by its own name.
@@ -465,7 +473,7 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
     expect(mediaHubReturnRow(always + 1) - mediaHubReturnRow(always)).toBe(32)
   })
 
-  it('shown by its pin at the 240 sidebar it is folded – the pill keeps its 96 and the title reads whole (the FIRST LINE’s F1 on #572) – with "home" published for Customise toolbar’s "Hidden at this width."; at 302 it returns, and the hub returns one slot after it', () => {
+  it('shown by its pin at the 240 sidebar it is folded – the pill keeps its 100 and the title reads whole (the FIRST LINE’s F1 on #572) – with "home" published for Customise toolbar’s "Hidden at this width."; at 298 it returns, and the hub returns one slot after it', () => {
     const widths = { row: 240 - 16 }
     const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: Element
@@ -486,24 +494,24 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
         .filter((c): c is HTMLButtonElement => c.tagName === 'BUTTON')
       expect(before.map((b) => nameOf(b).split(' (')[0])).toEqual(['Back', 'Forward', 'Reload'])
       // One short of the return: still folded.
-      widths.row = 302 - 16 - 1
+      widths.row = 298 - 16 - 1
       render(<NavRow key="short" state={state(page, shown)} tab={page} compact={false} />)
       expect(homeButton()).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual(['home'])
-      // The 302 sidebar: with Home's slot back in the row the pill holds its 126.
-      widths.row = 302 - 16
+      // The 298 sidebar: with Home's slot back in the row the pill holds its 126.
+      widths.row = 298 - 16
       render(<NavRow key="wide" state={state(page, shown)} tab={page} compact={false} />)
       expect(homeButton()).not.toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
-      // Home and the hub both pinned, media playing: at 302 Home is back and the hub – which
+      // Home and the hub both pinned, media playing: at 298 Home is back and the hub – which
       // makes room against Home too – waits; both published at 240, in the bar's order.
       const both = (): UIState => state(page, shown, [media()])
-      render(<NavRow key="both-302" state={both()} tab={page} compact={false} />)
+      render(<NavRow key="both-298" state={both()} tab={page} compact={false} />)
       expect(homeButton()).not.toBeNull()
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual(['media'])
-      widths.row = 302 - 16 + 32
-      render(<NavRow key="both-334" state={both()} tab={page} compact={false} />)
+      widths.row = 298 - 16 + 32
+      render(<NavRow key="both-330" state={both()} tab={page} compact={false} />)
       expect(homeButton()).not.toBeNull()
       expect(q('[data-zen-media-hub-button]')).not.toBeNull()
       expect(toolbarTiering.get().hidden).toEqual([])
@@ -544,24 +552,24 @@ describe('the Home button (settings-32; Chrome’s HomeButton under "Show home b
       expect(leaf()).toBeNull()
       expect(hub()).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual(['home', 'energy-saver', 'media'])
-      // The 302 sidebar (the 286 row) has one slot: Home, the first in the bar, takes it.
-      widths.row = 286
-      render(<NavRow key="286" state={all()} tab={page} compact={false} />)
+      // The 298 sidebar (the 282 row) has one slot: Home, the first in the bar, takes it.
+      widths.row = 282
+      render(<NavRow key="282" state={all()} tab={page} compact={false} />)
       expect(homeButton()).not.toBeNull()
       expect(leaf()).toBeNull()
       expect(hub()).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual(['energy-saver', 'media'])
       // 32 more: the leaf, counting Home among the buttons it makes room against, returns; the
       // hub, counting both, waits.
-      widths.row = 318
-      render(<NavRow key="318" state={all()} tab={page} compact={false} />)
+      widths.row = 314
+      render(<NavRow key="314" state={all()} tab={page} compact={false} />)
       expect(homeButton()).not.toBeNull()
       expect(leaf()).not.toBeNull()
       expect(hub()).toBeNull()
       expect(toolbarTiering.get().hidden).toEqual(['media'])
       // 32 more again: all three stand.
-      widths.row = 350
-      render(<NavRow key="350" state={all()} tab={page} compact={false} />)
+      widths.row = 346
+      render(<NavRow key="346" state={all()} tab={page} compact={false} />)
       expect(homeButton()).not.toBeNull()
       expect(leaf()).not.toBeNull()
       expect(hub()).not.toBeNull()

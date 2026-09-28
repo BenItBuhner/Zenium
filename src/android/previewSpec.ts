@@ -34,7 +34,11 @@ export const PREVIEW_PULL_MAX = 2.5
  * timer opens, not the `contextmenu` a row's hold takes), `type` fills the field with that id
  * the way a keyboard would and leaves it (the field is touched: a form's validation shows),
  * `back` is one system back (the top sheet closes, a section pops), `overview` opens the tab
- * overview over the page, `urlbar` opens the pill for editing.
+ * overview over the page, `urlbar` opens the pill for editing, `toast` raises a toast at that
+ * point of the walk (`toast:<text>` or `toast:<text>|<action label>`, on a still's clock like
+ * `toast=`'s): raised after a sheet's step it stands above that sheet (design language v2
+ * §9.33); raised before one it is up as the sheet opens and lifts above it too, as Chrome
+ * re-parents whatever snackbar is showing into an open bottom sheet.
  */
 export type PreviewStep =
   | { kind: 'tap'; text: string }
@@ -46,6 +50,7 @@ export type PreviewStep =
   | { kind: 'urlbar' }
   /** The new tab page's cards strip (NTP-16) at its nth card, 1-based (`cards:<n>`). */
   | { kind: 'cards'; page: number }
+  | { kind: 'toast'; text: string; action: string | null }
 
 /**
  * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
@@ -75,6 +80,9 @@ const EXTENSION_ID = /^[a-p]{32}$/
  * and the confirmation toast after a pin (`pinned`).
  */
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
+/** The in-product help bubbles a preview state may raise (TB-19): Chrome 152's one, on the Tabs button. */
+export const PREVIEW_IPH_BUBBLES = ['tab-switcher'] as const
+export type PreviewIphBubble = (typeof PREVIEW_IPH_BUBBLES)[number]
 /** The screenshot flow's stills (SH-07, SH-08): the flash, the preview card, the long-screenshot editor. */
 export const PREVIEW_SCREENSHOT_SURFACES = ['flash', 'card', 'editor'] as const
 export type PreviewScreenshotSurface = (typeof PREVIEW_SCREENSHOT_SURFACES)[number]
@@ -186,6 +194,19 @@ export type PreviewNetworkVariant = (typeof PREVIEW_NETWORK_VARIANTS)[number]
  */
 export const PREVIEW_CRASH_VARIANTS = ['crash', 'memory', 'hung', 'repeat'] as const
 export type PreviewCrashVariant = (typeof PREVIEW_CRASH_VARIANTS)[number]
+
+/**
+ * The poses the offline game (ERR-03, `shared/game/`) may be shown in (`&game=<scene>` on
+ * `error=-106` and on `page=game`): `running` (a few seconds in, the runner mid-jump over a
+ * card), `over` (the game-over card up on the first card met) and `night` (the page's theme cut
+ * to the other for the night). Without one the game waits for its first tap, as it does on a
+ * device. The stand-in host's `previewGame.ts` drives the runtime to the pose on a clock of its
+ * own, so the still is one frame of it.
+ */
+export const PREVIEW_GAME_SCENES = ['running', 'over', 'night'] as const
+export type PreviewGameScene = (typeof PREVIEW_GAME_SCENES)[number]
+/** The root's dataset key the states module leaves the asked pose under for `preview.ts` to read. */
+export const PREVIEW_GAME_SCENE_KEY = 'zenGameScene'
 
 /** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
 export const PREVIEW_MENUS = ['app', 'tabs'] as const
@@ -313,6 +334,8 @@ export type PreviewState =
       search?: string
       /** Steps taken after the page is open, searched and scrolled. */
       then?: PreviewStep[]
+      /** For `zen://game`: the pose the offline game is shown in (waiting without one). */
+      game?: PreviewGameScene
     }
   | {
       /**
@@ -514,6 +537,8 @@ export type PreviewState =
       code: number
       /** The URL that failed; null for the active tab's own. */
       url: string | null
+      /** For -106 (offline): the pose the page's game is shown in (waiting without one). */
+      game?: PreviewGameScene
     }
   | {
       /**
@@ -556,6 +581,17 @@ export type PreviewState =
        */
       kind: 'unresponsive'
       url: string | null
+    }
+  | {
+      /**
+       * An in-product help bubble (TB-19) up on the active page: `tab-switcher` is Chrome 152's
+       * one default toolbar bubble, on the bar's Tabs button. The seed makes it due (the record
+       * 15 days old, the first run and the gesture hint behind the user) and the shell's own
+       * trigger raises it, so the still shows the bubble as a phone shows it – at either edge
+       * with `bar=top` / `bar=bottom`.
+       */
+      kind: 'iph'
+      bubble: PreviewIphBubble
     }
   | {
       kind: 'messages'
@@ -650,6 +686,12 @@ export type PreviewState =
        * title>` picks a card while the mode is on, `tap:Group` opens the action row's picker.
        */
       then?: PreviewStep[]
+      /**
+       * Quick Delete's wipe of the last 15 minutes' cards held this many ms into its release
+       * (MOT-24, `wipe=<ms>`): the frame the sweep would be on, the cards at the grid's bottom
+       * furthest gone, held for a still; the tabs stay open.
+       */
+      wipe?: number
     }
   | {
       /** The pill's editor (the phone omnibox) over the active tab, or over a new tab. */
@@ -843,7 +885,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * permission that page asks for (the permission prompt sheet), `private=<surface>|new|<url>`
  * for a private tab, `voice=<script>` for voice search from the active tab, `overview` for the
  * tab overview over the active page (the grid of cards, with whatever pictures the stand-in
- * host has of the tabs), or `urlbar=<text>` for the pill's editor over the active tab with that
+ * host has of the tabs; `&wipe=<ms>` holds Quick Delete's wipe of the last 15 minutes' cards
+ * that far into its release, MOT-24), or `urlbar=<text>` for the pill's editor over the active tab with that
  * text typed (`urlbar=` opens it search-ready, with the page's header row; `newtab` opens it
  * over a new tab page instead; `clip=<text>` puts that on the stand-in clipboard first, so the
  * clipboard row shows; `then=tap:<label>;…` presses the editor's controls once the suggestions
@@ -887,6 +930,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (show) state.show = show
     const then = parsePreviewSteps(params.get('then'))
     if (then.length > 0) state.then = then
+    const game = parseGameScene(params.get('game'))
+    if (game) state.game = game
     return state
   }
   const extensionPage = parseExtensionPage(params.get('extension-page'))
@@ -1065,7 +1110,14 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (params.has('unresponsive')) return { kind: 'unresponsive', url: params.get('url') || null }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
-    return { kind: 'error', code: Number(error), url: params.get('url') || null }
+    const state: Extract<PreviewState, { kind: 'error' }> = {
+      kind: 'error',
+      code: Number(error),
+      url: params.get('url') || null
+    }
+    const game = parseGameScene(params.get('game'))
+    if (game) state.game = game
+    return state
   }
   const screenshot = params.get('screenshot')
   if (
@@ -1083,6 +1135,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
           ? { edge, by: distance }
           : null
     }
+  }
+  const iph = params.get('iph')
+  if (iph !== null && (PREVIEW_IPH_BUBBLES as readonly string[]).includes(iph)) {
+    return { kind: 'iph', bubble: iph as PreviewIphBubble }
   }
   const toast = params.get('toast')
   const banners = params.get('banners')
@@ -1149,6 +1205,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const state: Extract<PreviewState, { kind: 'overview' }> = { kind: 'overview' }
     const then = parsePreviewSteps(params.get('then'))
     if (then.length > 0) state.then = then
+    const wipe = Number(params.get('wipe'))
+    if (params.has('wipe') && Number.isFinite(wipe) && wipe >= 0) state.wipe = wipe
     return state
   }
   const urlbar = params.get('urlbar')
@@ -1192,8 +1250,8 @@ function parsePrivate(value: string, params: URLSearchParams): PreviewState {
 }
 
 /**
- * The `then=` list: `tap:<text>;hold:<text>;press:<text>;type:<id>=<text>;back;overview;urlbar`;
- * blanks and unknown steps are dropped.
+ * The `then=` list: `tap:<text>;hold:<text>;press:<text>;type:<id>=<text>;back;overview;urlbar;
+ * cards:<n>;toast:<text>|<action>`; blanks and unknown steps are dropped.
  */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
@@ -1204,6 +1262,12 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
     if (pressing) {
       const text = step.slice(pressing.length + 1).trim()
       if (text) steps.push({ kind: pressing, text })
+    } else if (step.startsWith('toast:')) {
+      const body = step.slice('toast:'.length)
+      const bar = body.indexOf('|')
+      const text = (bar === -1 ? body : body.slice(0, bar)).trim()
+      const action = bar === -1 ? null : body.slice(bar + 1).trim() || null
+      if (text) steps.push({ kind: 'toast', text, action })
     } else if (step.startsWith('type:')) {
       const at = step.indexOf('=')
       const id = at === -1 ? '' : step.slice('type:'.length, at).trim()
@@ -1231,6 +1295,13 @@ function parseExtensionPage(
   if (!EXTENSION_ID.test(id)) return null
   const path = slash === -1 ? '' : value.slice(slash + 1).replace(/^\/+/, '')
   return { kind: 'extension-page', id, path }
+}
+
+/** The offline game's pose a state asks for (`&game=<scene>`); an unknown word is none. */
+function parseGameScene(value: string | null): PreviewGameScene | null {
+  return value !== null && (PREVIEW_GAME_SCENES as readonly string[]).includes(value)
+    ? (value as PreviewGameScene)
+    : null
 }
 
 function parseDownload(filename: string, params: URLSearchParams): PreviewDownloadSpec {

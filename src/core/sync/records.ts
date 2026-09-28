@@ -367,6 +367,31 @@ export function readReadingListData(id: string, data: unknown): ReadingListEntry
  *   (`settings.a11y.touchpad_overscroll_history_navigation`, `prefs_tab_helper.cc`) Android-only
  *   and without `SYNCABLE_PREF`: the device with the touchpad decides, and a phone's or a
  *   desktop's record has no say. No migration, as above: the key never joins a record.
+ * - `hoverCardMemoryUsage`: whether the tab hover card says the page's memory (settings-29,
+ *   W8-10; off by default, Chrome 152's effective default) – Chrome registers
+ *   `browser.hovercard.memory_usage_enabled` in local state (`RegisterBrowserPrefs` in
+ *   `browser_ui_prefs.cc`), never synced; the card is the desktop's alone, so the phone holds
+ *   the key inert. Same mechanics as the three above: no migration, an older peer's copy
+ *   stripped at apply and never winning.
+ * - `bookmarkRowSortOrder`, `bookmarkRowDisplay` (HB-13): the phone's bookmark rows' order and
+ *   display, Chrome's `BookmarkUiPrefs` – two SharedPreferences keys on the device, never synced.
+ * - `iph`: the phone's in-product help bubbles' records (TB-19, `shared/iph.ts`) – when each
+ *   became available on this device and whether it has been shown. Chrome's feature engagement
+ *   tracker keeps its events in the profile's own LevelDB
+ *   (`components/feature_engagement/internal/persistent_event_store.cc` l.25–26, a
+ *   `leveldb_proto::ProtoDatabase<Event>`; l.43 `WriteEvent`), no sync layer over it: a phone
+ *   that has seen a bubble says nothing about the phone beside it, and a desktop has no such
+ *   bubble to be told about. No migration, as above.
+ * - `clearBrowsingDataRange`: the range the Delete browsing data dialog opens on – the one the
+ *   user last deleted with (services pass 13, seed #20). Chrome registered its twin,
+ *   `browser.clear_data.time_period`, as a syncable pref until CL 5398105 ("[CBD] Make options
+ *   not syncable", 2024-03-27: "not sync across devices and only be local per profile") dropped
+ *   the flag from every Delete browsing data choice; `components/browsing_data/core/
+ *   pref_names.cc:23–25` registers it plain today, and `components/sync_preferences/
+ *   common_syncable_prefs_database.cc:74–75` lists it as "(no longer synced)". Each device's
+ *   own, then: the desktop's dialog remembers what was deleted on that desktop; the phone's
+ *   Quick Delete form opens on its own 15 minutes and never reads the key. No migration, as
+ *   above: the key never joins a record.
  */
 export const DEVICE_LOCAL_SETTINGS = [
   'onboardingDone',
@@ -376,7 +401,12 @@ export const DEVICE_LOCAL_SETTINGS = [
   'energySaver',
   'unloadEnabled',
   'unloadTimeoutMinutes',
-  'touchpadSwipeToNavigate'
+  'touchpadSwipeToNavigate',
+  'hoverCardMemoryUsage',
+  'bookmarkRowSortOrder',
+  'bookmarkRowDisplay',
+  'iph',
+  'clearBrowsingDataRange'
 ] as const
 export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
 const DEVICE_LOCAL = new Set<string>(DEVICE_LOCAL_SETTINGS)

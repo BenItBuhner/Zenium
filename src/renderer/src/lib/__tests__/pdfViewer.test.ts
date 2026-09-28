@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UIState } from '@shared/types'
+import { folderNameOf } from '@shared/paths'
 import type { PdfViewerReport } from '@shared/pdfViewerProtocol'
-import { browserStore } from '../ui'
+import { browserStore, uiStore } from '../ui'
 import {
   canZoomIn,
   canZoomOut,
@@ -12,8 +13,16 @@ import {
   formatPdfZoom,
   isPdfViewerTab,
   parsePageNumber,
+  PDF_PRINT_REFUSED,
+  PDF_SAVE_REFUSED,
+  PDF_SAVE_ROW_LABEL,
+  pdfPrintRow,
+  pdfSavedMessage,
+  pdfSaveRow,
   pdfViewerStore,
   pdfZoomIs,
+  printPdf,
+  savePdfCopy,
   setPdfReport
 } from '../pdfViewer'
 
@@ -26,6 +35,7 @@ const report = (over: Partial<PdfViewerReport> = {}): PdfViewerReport => ({
   title: null,
   find: null,
   outline: [],
+  form: { fields: 0, modified: false },
   ...over
 })
 
@@ -134,5 +144,143 @@ describe('the bar’s arithmetic', () => {
     expect(parsePageNumber('2.5', 3)).toBeNull()
     expect(parsePageNumber('two', 3)).toBeNull()
     expect(parsePageNumber('', 3)).toBeNull()
+  })
+})
+
+describe('the overflow’s Save and Print rows (CT-44)', () => {
+  it('offers Save for a document with a form, enabled once a field changed, and not otherwise', () => {
+    // No form: nothing a copy would hold that the file does not – no row.
+    expect(pdfSaveRow(report())).toBe('absent')
+    expect(pdfSaveRow(null)).toBe('absent')
+    // A form untouched: the row at .4 until a field changes.
+    expect(pdfSaveRow(report({ form: { fields: 12, modified: false } }))).toBe('disabled')
+    expect(pdfSaveRow(report({ form: { fields: 12, modified: true } }))).toBe('enabled')
+    // Only an open document has a form to speak of.
+    for (const state of ['loading', 'password', 'error'] as const)
+      expect(pdfSaveRow(report({ state, form: { fields: 12, modified: true } }))).toBe('absent')
+  })
+
+  it('offers Print where the host prints, and like Share needs only the file', () => {
+    expect(pdfPrintRow(report(), false)).toBe('absent')
+    expect(pdfPrintRow(report({ form: { fields: 3, modified: true } }), false)).toBe('absent')
+    expect(pdfPrintRow(report(), true)).toBe('enabled')
+    // The file is there whatever the viewer made of it (Share's rule).
+    expect(pdfPrintRow(report({ state: 'password' }), true)).toBe('enabled')
+    expect(pdfPrintRow(report({ state: 'error' }), true)).toBe('enabled')
+    // Not before the document began to load, and not before it reported at all.
+    expect(pdfPrintRow(report({ state: 'loading' }), true)).toBe('disabled')
+    expect(pdfPrintRow(null, true)).toBe('disabled')
+  })
+
+  it('names the destination of a written copy as the capture card does, and states a refusal of the document', () => {
+    // Android's public collection – the directory `Download` – is "Downloads" through the shared
+    // `folderNameOf`, the one place that names it (the lead's ruling: across both toasts), so the
+    // message is the capture card's shape, `Saved to ${folderNameOf(path) || 'Downloads'}`.
+    const inDownloads = '/storage/emulated/0/Download/mooring (1).pdf'
+    expect(folderNameOf(inDownloads)).toBe('Downloads')
+    expect(pdfSavedMessage(inDownloads)).toBe('Saved to Downloads')
+    expect(pdfSavedMessage(inDownloads)).toBe(
+      `Saved to ${folderNameOf(inDownloads) || 'Downloads'}`
+    )
+    // Below Android 10 the host writes under its own files: the same folder by name.
+    expect(
+      pdfSavedMessage('/storage/emulated/0/Android/data/app.zen/files/Download/mooring.pdf')
+    ).toBe('Saved to Downloads')
+    // A host that names no path answers the row's address: no folder to name.
+    expect(pdfSavedMessage('content://media/external/downloads/1042')).toBe('Saved to Downloads')
+    expect(pdfSavedMessage('mooring.pdf')).toBe('Saved to Downloads')
+    // Any other folder by its own name – the shared reading (`folderNameOf`).
+    expect(pdfSavedMessage('/storage/emulated/0/Documents/Forms/mooring.pdf')).toBe(
+      'Saved to Forms'
+    )
+    // The row's word is the lead's: a copy, since the file itself is never written.
+    expect(PDF_SAVE_ROW_LABEL).toBe('Save a copy')
+    // One clause each, uncontracted, stated of the thing (the register).
+    expect(PDF_SAVE_REFUSED).toBe('This PDF cannot be saved.')
+    expect(PDF_PRINT_REFUSED).toBe('This PDF cannot be printed.')
+  })
+})
+
+describe('the rows’ presses', () => {
+  const calls: Array<[string, unknown]> = []
+  let answer: (name: string) => Promise<unknown> = async () => null
+
+  beforeEach(() => {
+    calls.length = 0
+    uiStore.set({ toasts: [] })
+    vi.stubGlobal('window', {
+      zen: {
+        invoke: async (name: string, args: unknown) => {
+          calls.push([name, args])
+          return answer(name)
+        },
+        on: () => () => undefined
+      }
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    uiStore.set({ toasts: [] })
+  })
+
+  const toasts = (): Array<[string, string]> => uiStore.get().toasts.map((t) => [t.message, t.kind])
+
+  it('Save a copy asks the core for the copy and says where it went; a refusal or a failure is stated of the document', async () => {
+    answer = async () => '/storage/emulated/0/Download/mooring (1).pdf'
+    expect(await savePdfCopy('t1')).toBe('saved')
+    expect(calls).toEqual([['pdf.save', { tabId: 't1' }]])
+    expect(toasts()).toEqual([['Saved to Downloads', 'info']])
+    // No path: the host writes no files, or the copy failed.
+    answer = async () => null
+    expect(await savePdfCopy('t1')).toBe('refused')
+    expect(toasts().at(-1)).toEqual([PDF_SAVE_REFUSED, 'error'])
+    // The command itself failing is the same refusal, not an unhandled rejection.
+    answer = async () => {
+      throw new Error('bridge down')
+    }
+    expect(await savePdfCopy('t1')).toBe('refused')
+    expect(toasts().at(-1)).toEqual([PDF_SAVE_REFUSED, 'error'])
+    expect(toasts()).toHaveLength(3)
+  })
+
+  it('writes one copy per tab at a time: a press while the host writes is dropped, and another tab’s goes through', async () => {
+    // The host holds every copy until released: the writes are in flight together.
+    const pending: Array<(path: string) => void> = []
+    answer = (name) =>
+      name === 'pdf.save' ? new Promise<string>((r) => pending.push(r)) : Promise.resolve(null)
+    const first = savePdfCopy('t1')
+    expect(await savePdfCopy('t1')).toBe('busy')
+    const other = savePdfCopy('t2')
+    expect(calls.map(([name, args]) => [name, (args as { tabId: string }).tabId])).toEqual([
+      ['pdf.save', 't1'],
+      ['pdf.save', 't2']
+    ])
+    expect(pending).toHaveLength(2)
+    for (const release of pending) release('/storage/emulated/0/Download/mooring (1).pdf')
+    expect(await first).toBe('saved')
+    expect(await other).toBe('saved')
+    // The tab is free again once the host answered.
+    answer = async () => '/storage/emulated/0/Download/mooring (2).pdf'
+    expect(await savePdfCopy('t1')).toBe('saved')
+    expect(toasts().filter(([m]) => m === 'Saved to Downloads')).toHaveLength(3)
+  })
+
+  it('Print hands the document to the system print flow and says nothing when the dialog took it; a refusal is stated of the document', async () => {
+    answer = async () => true
+    expect(await printPdf('t1')).toBe(true)
+    expect(calls).toEqual([['pdf.print', { tabId: 't1' }]])
+    expect(toasts()).toEqual([])
+    answer = async () => false
+    expect(await printPdf('t1')).toBe(false)
+    expect(toasts()).toEqual([[PDF_PRINT_REFUSED, 'error']])
+    answer = async () => {
+      throw new Error('bridge down')
+    }
+    expect(await printPdf('t1')).toBe(false)
+    expect(toasts()).toEqual([
+      [PDF_PRINT_REFUSED, 'error'],
+      [PDF_PRINT_REFUSED, 'error']
+    ])
   })
 })

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Roll's glyph on the game widget's face (GameWidgetProvider; WID-04 / ERR-03), as gate #607 (f)
+     ruled it: the runner – Zenium's mark, the ring with its dot (ic_widget_mark.xml), the dot off
+     its centre as the run turns it (shared/game/runtime.ts drawPlayer) – rolling on the ground
+     line, the ring and the dot in the brand indigo (widget_search_mark, lifted for the dark theme),
+     the ground in the ink of the system's theme (widget_search_ink). The ring's outer edge meets
+     the line's top; a 32 dp box drawn at the card's centre (res/layout/widget_game.xml), and the
+     glyph the quick actions widget's fourth button will wear in Chrome's Dino slot. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="@dimen/widget_game_glyph"
+    android:height="@dimen/widget_game_glyph"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="@color/widget_search_ink"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:pathData="M3,18.5 H21" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="@color/widget_search_mark"
+        android:strokeWidth="2"
+        android:pathData="M12,3.625 a6.5,6.5 0 1,0 0.01,0 Z" />
+    <path
+        android:fillColor="@color/widget_search_mark"
+        android:pathData="M14.49,6.04 a2,2 0 1,0 0.01,0 Z" />
+</vector>

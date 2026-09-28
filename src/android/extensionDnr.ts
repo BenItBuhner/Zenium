@@ -235,6 +235,10 @@ export class AndroidDeclarativeNetRequest {
     }
     const state = new DnrState(info, {
       ...createAndroidDnrIO(this.host, id),
+      // Kotlin's engine holds every set in its own heap once the set document is written: the
+      // core's parsed copy of a static ruleset is let go at the hand-over and the file read
+      // again on the rare call that wants it (compat round 22, R22-3).
+      rereadsStaticRulesets: true,
       now: () => this.host.now(),
       globalStaticRulePool: this.pool,
       isValidTabId: (tabId) => this.host.isValidTabId(tabId),

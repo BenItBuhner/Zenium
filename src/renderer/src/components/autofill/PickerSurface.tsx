@@ -1,9 +1,7 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
-import type { AutofillPicker, UIState } from '@shared/types'
+import type { AutofillPicker } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { browserStore } from '@renderer/lib/ui'
-import { useTheme } from '@renderer/hooks/useTheme'
 import { PickerPanel } from './PickerPanel'
 import { useEscape } from './controls'
 
@@ -11,31 +9,14 @@ import { useEscape } from './controls'
 const PANEL_BORDERS = 2
 
 /**
- * The picker's own document: `index.html?surface=autofill`, loaded by the desktop host into a
- * `WebContentsView` it floats over the page under the focused field (`ElectronWindow.
- * setPopupSurface`). It mirrors the window's state like the chrome does and draws one thing –
- * the popover panel of `UIState.autofill.picker` – on a transparent page, inside the 8 px margin
- * the core leaves for the panel's shadow. It tells the core the height its content wants
+ * The autofill picker as the popup surface draws it (`PopupSurface`: the document the desktop
+ * host floats over the page under the focused field, `ElectronWindow.setPopupSurface`): the
+ * popover panel of `UIState.autofill.picker` on a transparent page, inside the 8 px margin the
+ * core leaves for the panel's shadow. It tells the core the height its content wants
  * (`autofill.surfaceSize`) and when it holds the keyboard (`autofill.surfaceFocus`); the core
  * sizes and places the surface, and keeps the picker open while the surface has the focus.
  */
-export function AutofillSurface(): JSX.Element | null {
-  const state = browserStore.use((s) => s.state)
-  useEffect(() => {
-    document.documentElement.dataset.chromeSurface = 'autofill'
-  }, [])
-  if (!state) return null
-  return <Surface state={state} />
-}
-
-function Surface({ state }: { state: UIState }): JSX.Element | null {
-  useTheme(state)
-  const picker = state.autofill.picker
-  if (!picker) return null
-  return <Popover key={picker.id} picker={picker} />
-}
-
-function Popover({ picker }: { picker: AutofillPicker }): JSX.Element {
+export function PickerSurface({ picker }: { picker: AutofillPicker }): JSX.Element {
   const observer = useRef<ResizeObserver | null>(null)
   const reported = useRef(0)
 

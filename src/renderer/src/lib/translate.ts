@@ -191,7 +191,8 @@ export function modelOptions(
  */
 export function openTranslateSelection(request: TranslateSelectionRequest): void {
   run('focus.chrome', undefined)
-  uiStore.set({ translateSelection: request, drawerOpen: false })
+  // The one selection surface at a time: the newer request takes the Define surface's place.
+  uiStore.set({ translateSelection: request, define: null, drawerOpen: false })
 }
 
 export function closeTranslateSelection(): void {
@@ -202,7 +203,8 @@ export function closeTranslateSelection(): void {
 const flags = globalThis as unknown as { __zenTranslateWired?: boolean }
 if (!flags.__zenTranslateWired) {
   flags.__zenTranslateWired = true
-  // Another chrome surface (URL bar, panel, drawer, menu, another sheet) replaces the popover.
+  // Another chrome surface (URL bar, panel, drawer, menu, another sheet) replaces the popover;
+  // the Define surface replaces it as it opens (`lib/define.ts`, `openDefine`).
   uiStore.subscribe(() => {
     const ui = uiStore.get()
     if (

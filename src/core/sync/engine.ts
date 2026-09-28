@@ -350,9 +350,26 @@ export class SyncEngine implements SyncHost {
    * 'webdav'` the folder is the server's (ID-32): reached with the app password given here,
    * which the host's secret store keeps from then on – the settings without it go to `sync.json`.
    *
-   * A server's refusal, and a secret store that cannot keep the password, come back typed
-   * (`SyncSetupRefusal`) for the chrome to say in its words – no method or status of the
-   * protocol reaches a sentence (§9.33); the folder transport's refusals are toasted as before.
+   * The order for a server, and why: the probe (nothing stored, nothing made) → the password into
+   * the secret store → the folder and the README made, the device files read, the key derived →
+   * `disconnect(false, { keepSecret: true })` → the new data written. The store comes before the
+   * server is written to so that a device whose store refuses (a Keystore that will not take it)
+   * leaves no folder and no README behind on the server; and nothing of the standing
+   * configuration – its connection, its data – is touched before the disconnect, the last step
+   * but one. The store holds ONE password (`WEBDAV_SECRET_KEY`), so the value it held before is
+   * read first, and any refusal after the write – the server's, the passphrase's, a throw – puts
+   * it back (`set(previous)`), or deletes the key when there was none: the delete is scoped to the
+   * password this setup wrote, and a standing server configuration keeps its own. Should that
+   * restore itself fail, its throw is swallowed and the refusal is still what comes back – but
+   * the store may then hold the refused setup's password, or nothing, where the standing
+   * configuration's was: that configuration's next connect (a restart) reads it, is refused or
+   * finds `null`, and asks for the password again – `authRefused`, the chrome's existing ask.
+   * Nothing pretends otherwise.
+   *
+   * A server's refusal, and a secret store that cannot keep the password (or read what it holds),
+   * come back typed (`SyncSetupRefusal`) for the chrome to say in its words – no method or status
+   * of the protocol reaches a sentence (§9.33); the folder transport's refusals are toasted as
+   * before.
    */
   async setup(
     opts: {
@@ -386,6 +403,10 @@ export class SyncEngine implements SyncHost {
     }
     // Deriving the key takes a moment (seconds on a phone): the chrome shows the form busy.
     this.setBusy(true)
+    // Set once the password is in the store: what a refusal after that point must undo.
+    let restoreSecret: (() => Promise<void>) | null = null
+    // Set at the point of no return: from the disconnect on, the new setup is the device's.
+    let kept = false
     try {
       const transport = this.openTransport(target)
       if (target.transport === 'webdav' && transport instanceof WebDavTransport) {
@@ -394,6 +415,30 @@ export class SyncEngine implements SyncHost {
         // directory yet") and fail on the first round instead of at the setup.
         const probe = await transport.probe()
         if (!probe.ok) return { reason: 'server', kind: probe.kind, status: probe.status }
+        // The password into the store before the server is written to (Android's ask): a store
+        // that refuses leaves no folder and no README behind, and a device that restarts before
+        // the store took it would be a WebDAV device without a password, refused every round.
+        // The one key is shared with whatever configuration stands, so its value is read first
+        // and put back on a refusal; a store that cannot even be read is not one to keep a
+        // password in – the same typed refusal, before anything is written anywhere.
+        const secrets = this.browser.platform.secrets!
+        let previous: string | null
+        try {
+          previous = await secrets.get(WEBDAV_SECRET_KEY)
+          await secrets.set(WEBDAV_SECRET_KEY, target.password)
+        } catch {
+          return { reason: 'secrets' }
+        }
+        restoreSecret = async (): Promise<void> => {
+          try {
+            if (previous === null) await secrets.delete(WEBDAV_SECRET_KEY)
+            else await secrets.set(WEBDAV_SECRET_KEY, previous)
+          } catch {
+            // The refusal is still what comes back; the store may now hold the wrong password
+            // or none for the standing configuration, whose next connect asks for it (see the
+            // doc comment).
+          }
+        }
       }
       let existing: DeviceFile[]
       try {
@@ -417,18 +462,9 @@ export class SyncEngine implements SyncHost {
           return null
         }
       }
-      if (target.transport === 'webdav') {
-        // The secret store first, before anything of the device's standing setup is undone: a
-        // store that cannot keep the password leaves the device as it was, and a device that
-        // restarts before the store took it would be a WebDAV device without a password, refused
-        // every round.
-        try {
-          await this.browser.platform.secrets!.set(WEBDAV_SECRET_KEY, target.password)
-        } catch {
-          return { reason: 'secrets' }
-        }
-      }
-      // The password just kept is the new setup's: the disconnect leaves it in the store.
+      // The point of no return: the password in the store is the new setup's, and the disconnect
+      // leaves it there (`keepSecret`); every other disconnect forgets it.
+      kept = true
       this.disconnect(false, { keepSecret: target.transport === 'webdav' })
       this.key = key
       this.data = {
@@ -452,6 +488,9 @@ export class SyncEngine implements SyncHost {
       this.persist()
       this.attach(transport)
     } finally {
+      // Refused after the store took the password – by the server, the passphrase, a throw:
+      // the store back to what it held, so a refused setup leaves nothing behind on either side.
+      if (!kept && restoreSecret) await restoreSecret()
       this.setBusy(false)
     }
     if (!this.data.pendingMerge) await this.syncNow()
@@ -608,7 +647,9 @@ export class SyncEngine implements SyncHost {
   /**
    * Turn sync off; optionally delete this device's file and documents from the folder. A WebDAV
    * device's app password leaves the secret store with it, unless `keepSecret` says the store
-   * already holds the next setup's (`setup`, which stores before it disconnects).
+   * already holds the next setup's: `setup` is the one caller that passes it (it stores before it
+   * disconnects); the user's turn-off (`sync.disconnect`, with or without the wipe) passes nothing
+   * and forgets, as `setFolder` forgets on its own when a server device goes back to a folder.
    */
   disconnect(wipeRemote: boolean, options: { keepSecret?: boolean } = {}): void {
     const transport = this.transport

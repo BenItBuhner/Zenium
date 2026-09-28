@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SyncSetupRefusal, WebDavSyncCredentials } from '../../../shared/types'
-import type { SecretStore } from '../../platform'
+import type { SecretStore, SyncFetch } from '../../platform'
 import { WEBDAV_CONFLICT_RETRIES } from '../engine'
 import { SyncFolderLostError, isDeviceFileName } from '../transport'
 import { WEBDAV_SECRET_KEY, WebDavTransport, webDavFolderUrl } from '../webdav'
@@ -158,6 +158,107 @@ function refusingSecrets(): SecretStore {
   }
 }
 
+/** A memory store that also logs its calls (`get`, `set:<value>`, `delete`): the order the engine keeps. */
+function loggingSecrets(): SecretStore & { values: Map<string, string>; calls: string[] } {
+  const store = memorySecrets()
+  const calls: string[] = []
+  return {
+    values: store.values,
+    calls,
+    get: async (key) => {
+      calls.push('get')
+      return store.get(key)
+    },
+    set: async (key, value) => {
+      calls.push(`set:${value}`)
+      await store.set(key, value)
+    },
+    delete: async (key) => {
+      calls.push('delete')
+      await store.delete(key)
+    }
+  }
+}
+
+/**
+ * A store that, once `arm`ed, takes one more write and fails every write after it until
+ * `disarm` – the restore a refused setup attempts, after the write it made. What the failed
+ * write leaves under the key is the store's: the value it took (`'the new password'`, a keyring
+ * whose second write did not go through) or nothing (`'nothing'`, an entry lost as the write
+ * failed).
+ */
+function restoreFailingSecrets(leaves: 'the new password' | 'nothing'): SecretStore & {
+  values: Map<string, string>
+  calls: string[]
+  arm(): void
+  disarm(): void
+} {
+  const store = loggingSecrets()
+  let armed = false
+  let passed = false
+  const write = (key: string, value: string | null): void => {
+    if (armed && passed) {
+      if (leaves === 'nothing') store.values.delete(key)
+      throw new Error('Error while encrypting the text provided to safeStorage.encryptString.')
+    }
+    passed = true
+    if (value === null) store.values.delete(key)
+    else store.values.set(key, value)
+  }
+  return {
+    values: store.values,
+    calls: store.calls,
+    arm: () => {
+      armed = true
+      passed = false
+    },
+    disarm: () => {
+      armed = false
+    },
+    get: store.get,
+    set: async (key, value) => {
+      store.calls.push(`set:${value}`)
+      write(key, value)
+    },
+    delete: async (key) => {
+      store.calls.push('delete')
+      write(key, null)
+    }
+  }
+}
+
+const OTHER_ROOT = '/remote.php/dav/files/bob'
+const OTHER_CREDENTIALS: WebDavSyncCredentials = {
+  url: `https://other.test${OTHER_ROOT}/`,
+  username: 'bob',
+  password: 'bob-pass',
+  folder: 'Zenium'
+}
+
+/**
+ * Two servers behind one fetch, by host; `refuse` is the second server's front door answering
+ * a status of its own to one method on every path but the DAV root (a share whose permission
+ * layer refuses the folder's listing while the root answers), logged here since it never
+ * reaches the server.
+ */
+function routedFetch(
+  servers: Record<string, FakeWebDavServer>,
+  refuse?: { host: string; method: string; status: number; refused: string[] }
+): SyncFetch {
+  return async (url, init) => {
+    // (`URL` is this file's server address; the parser is the global's.)
+    const { host, pathname } = new globalThis.URL(url)
+    const path = pathname.replace(/\/+$/, '')
+    if (refuse && host === refuse.host && init.method === refuse.method && path !== OTHER_ROOT) {
+      refuse.refused.push(`${init.method} ${path}`)
+      return { status: refuse.status, headers: { get: () => null }, text: async () => '' }
+    }
+    const server = servers[host]
+    if (!server) throw new TypeError(`fetch failed: ${url} refused the connection`)
+    return server.fetch(url, init)
+  }
+}
+
 describe('the engine on a WebDAV server', () => {
   it('two devices converge through the server; the settings are kept, the password only in the secret store', async () => {
     const a = webDavDevice('Desk (Linux)')
@@ -265,11 +366,14 @@ describe('the engine on a WebDAV server', () => {
     dav.setPassword('alice', 'rotated')
     a.browser.bookmarks.create({ title: 'X', url: 'https://x.example/' })
     await a.engine.syncNow()
+    // Which request meets the 401 first is the poll's business – a round already past its
+    // PROPFIND when the password turned is refused on its PUT; the kind and the stop are what
+    // the engine promises, not the method in the log line.
     expect(a.engine.status()).toMatchObject({
       enabled: true,
       transport: 'webdav',
       authRefused: true,
-      lastError: 'WebDAV PROPFIND answered 401',
+      lastError: expect.stringMatching(/^WebDAV (PROPFIND|PUT) answered 401$/),
       lastErrorKind: 'auth'
     })
     expect(a.engine.status().lastError).not.toContain('app-pass')
@@ -356,6 +460,7 @@ describe('the engine on a WebDAV server', () => {
       transport: 'folder',
       folder: '/drive'
     })
+    dav.drain()
     expect(await setupWebDav(b)).toEqual({ reason: 'secrets' })
     expect(b.toasts).toEqual([])
     expect(b.engine.status()).toMatchObject({
@@ -363,6 +468,10 @@ describe('the engine on a WebDAV server', () => {
       transport: 'folder',
       folder: '/drive'
     })
+    // The store is asked before the server is written to: the probe is all that reached it, and
+    // no folder or README was left there for a device that could not keep the password.
+    expect(dav.log.map((r) => r.method)).toEqual(['PROPFIND'])
+    expect(dav.collections.has(`${ROOT}/Zenium`)).toBe(false)
     b.browser.bookmarks.create({ title: 'Still', url: 'https://still.example/' })
     await b.engine.syncNow()
     expect(b.engine.status().lastError).toBeNull()
@@ -504,13 +613,17 @@ describe('the engine on a WebDAV server', () => {
 
   it('a wrong passphrase for a folder already on the server is refused and nothing is kept', async () => {
     const a = webDavDevice('Desk (Linux)')
-    const b = webDavDevice('Pixel 9')
+    const store = loggingSecrets()
+    const b = webDavDevice('Pixel 9', { secrets: store })
     await unlockVault(a)
     await unlockVault(b)
     await setupWebDav(a)
     await setupWebDav(b, CREDENTIALS, 'a different passphrase')
     expect(b.toasts.at(-1)).toContain('does not match')
     expect(b.engine.status()).toMatchObject({ enabled: false, transport: 'folder', webdav: null })
+    // The password went into the store before the folder was read (it had none before), and the
+    // refusal took it out again.
+    expect(store.calls).toEqual(['get', 'set:app-pass', 'delete'])
     expect(b.secrets.values.size).toBe(0)
   }, 30_000)
 
@@ -546,5 +659,212 @@ describe('the engine on a WebDAV server', () => {
     await tick()
     expect(a.secrets.values.has(WEBDAV_SECRET_KEY)).toBe(false)
     expect(devices).toHaveLength(2)
+  }, 30_000)
+
+  it('turning sync off without the wipe forgets the password too; only the setup keeps it', async () => {
+    const store = loggingSecrets()
+    const a = webDavDevice('Desk (Linux)', { secrets: store })
+    await unlockVault(a)
+    await setupWebDav(a)
+    // The happy path: the store read once, written once, nothing deleted – the setup's own
+    // disconnect (`keepSecret`) left the new password in place.
+    expect(store.calls).toEqual(['get', 'set:app-pass'])
+    expect(store.values.get(WEBDAV_SECRET_KEY)).toBe('app-pass')
+
+    // The user's turn-off (`sync.disconnect` without the wipe): a genuine disconnect, the
+    // password gone with it.
+    a.engine.disconnect(false)
+    await tick()
+    expect(a.engine.status()).toMatchObject({ enabled: false, transport: 'folder', webdav: null })
+    expect(store.calls.at(-1)).toBe('delete')
+    expect(store.values.has(WEBDAV_SECRET_KEY)).toBe(false)
+    // The server keeps this device's file (no wipe was asked); nothing else was touched.
+    expect([...dav.files(DIR)!.keys()].filter(isDeviceFileName)).toHaveLength(1)
+  }, 30_000)
+
+  it('the password is stored before the server is written to, and a refusal after that takes it out again', async () => {
+    // A device with no server configuration yet, whose new server's front door refuses the
+    // folder's listing (403) after the root answered the probe.
+    const other = new FakeWebDavServer({ roots: [OTHER_ROOT], users: { bob: 'bob-pass' } })
+    const refused: string[] = []
+    const store = loggingSecrets()
+    const a = device('Desk (Linux)', {
+      secrets: store,
+      fetch: routedFetch(
+        { 'cloud.test': dav, 'other.test': other },
+        { host: 'other.test', method: 'PROPFIND', status: 403, refused }
+      )
+    })
+    await unlockVault(a)
+    expect(await setupWebDav(a, OTHER_CREDENTIALS)).toEqual({
+      reason: 'server',
+      kind: 'forbidden',
+      status: 403
+    })
+    expect(a.toasts).toEqual([])
+    // The order: the store read (nothing there), the new password written, the server refused,
+    // the key deleted again – scoped to the password this setup wrote, there being no other.
+    expect(store.calls).toEqual(['get', 'set:bob-pass', 'delete'])
+    expect(store.values.size).toBe(0)
+    // The probe is all that reached the server; the refused listing never did, and no MKCOL or
+    // PUT followed it: nothing left behind on either side.
+    expect(other.log.map((r) => `${r.method} ${r.status}`)).toEqual(['PROPFIND 207'])
+    expect(refused).toEqual([`PROPFIND ${OTHER_ROOT}/Zenium/zenium-sync`])
+    expect(other.collections.has(`${OTHER_ROOT}/Zenium`)).toBe(false)
+    expect(a.engine.status()).toMatchObject({ enabled: false, transport: 'folder', webdav: null })
+  }, 30_000)
+
+  it('a refused switch to another server leaves the standing configuration its password, connected and syncing', async () => {
+    // Alice's server stands (password P1 in the one key); a setup to Bob's server is refused at
+    // the folder's listing, after the store took P2.
+    const other = new FakeWebDavServer({ roots: [OTHER_ROOT], users: { bob: 'bob-pass' } })
+    const refused: string[] = []
+    const store = loggingSecrets()
+    const a = device('Desk (Linux)', {
+      secrets: store,
+      fetch: routedFetch(
+        { 'cloud.test': dav, 'other.test': other },
+        { host: 'other.test', method: 'PROPFIND', status: 403, refused }
+      )
+    })
+    await unlockVault(a)
+    await setupWebDav(a)
+    const standing = a.engine.status()
+    expect(standing).toMatchObject({ enabled: true, folder: webDavFolderUrl(CREDENTIALS) })
+    store.calls.length = 0
+    dav.drain()
+
+    expect(await setupWebDav(a, OTHER_CREDENTIALS)).toEqual({
+      reason: 'server',
+      kind: 'forbidden',
+      status: 403
+    })
+    expect(a.toasts).toEqual([])
+    // P1 read first, P2 written, P1 put back: the delete would have wiped a password the
+    // standing configuration relies on.
+    expect(store.calls).toEqual(['get', 'set:bob-pass', 'set:app-pass'])
+    expect(store.values.get(WEBDAV_SECRET_KEY)).toBe('app-pass')
+    // Nothing of the standing configuration was touched: still Alice's server, the same device
+    // and key, no disconnect happened.
+    expect(a.engine.status()).toMatchObject({
+      enabled: true,
+      transport: 'webdav',
+      webdav: { url: URL, username: 'alice', folder: 'Zenium' },
+      folder: webDavFolderUrl(CREDENTIALS),
+      deviceId: standing.deviceId,
+      authRefused: false,
+      lastError: null
+    })
+    // Bob's server saw the probe alone; the refused listing never reached it, no MKCOL or PUT did.
+    expect(other.log.map((r) => `${r.method} ${r.status}`)).toEqual(['PROPFIND 207'])
+    expect(refused).toEqual([`PROPFIND ${OTHER_ROOT}/Zenium/zenium-sync`])
+    expect(other.collections.has(`${OTHER_ROOT}/Zenium`)).toBe(false)
+    // And Alice's configuration still syncs, with P1.
+    a.browser.bookmarks.create({ title: 'Still', url: 'https://still.example/' })
+    await a.engine.syncNow()
+    expect(a.engine.status()).toMatchObject({ lastError: null, authRefused: false })
+    expect(dav.log.some((r) => r.method === 'PROPFIND' && r.status === 207)).toBe(true)
+    expect(dav.log.some((r) => r.status === 401)).toBe(false)
+    expect(dav.files(DIR)!.size).toBeGreaterThan(1)
+  }, 30_000)
+
+  it('the happy switch stores the new password once and the old configuration goes without forgetting it', async () => {
+    const other = new FakeWebDavServer({ roots: [OTHER_ROOT], users: { bob: 'bob-pass' } })
+    const store = loggingSecrets()
+    const a = device('Desk (Linux)', {
+      secrets: store,
+      fetch: routedFetch({ 'cloud.test': dav, 'other.test': other })
+    })
+    await unlockVault(a)
+    await setupWebDav(a)
+    store.calls.length = 0
+
+    expect(await setupWebDav(a, OTHER_CREDENTIALS)).toBeNull()
+    expect(a.toasts).toEqual([])
+    // P1 read, P2 written once; the setup's disconnect of Alice's configuration kept the store
+    // as it was (`keepSecret`) – no delete, P2 in place for the configuration that now stands.
+    expect(store.calls).toEqual(['get', 'set:bob-pass'])
+    expect(store.values.get(WEBDAV_SECRET_KEY)).toBe('bob-pass')
+    expect(a.engine.status()).toMatchObject({
+      enabled: true,
+      transport: 'webdav',
+      webdav: { url: OTHER_CREDENTIALS.url, username: 'bob', folder: 'Zenium' },
+      folder: webDavFolderUrl(OTHER_CREDENTIALS),
+      authRefused: false,
+      lastError: null
+    })
+    const names = [...other.files(`${OTHER_ROOT}/Zenium/zenium-sync`)!.keys()]
+    expect(names.filter(isDeviceFileName)).toHaveLength(1)
+    expect(names).toContain('README.txt')
+    // Alice's server keeps what this device wrote there (no wipe was asked) and hears no more.
+    expect([...dav.files(DIR)!.keys()].filter(isDeviceFileName)).toHaveLength(1)
+    dav.drain()
+    a.browser.bookmarks.create({ title: 'Moved', url: 'https://moved.example/' })
+    await a.engine.syncNow()
+    expect(dav.log).toEqual([])
+    expect(a.engine.status().lastError).toBeNull()
+  }, 30_000)
+
+  it('when the restore itself fails the refusal still comes back, and the standing configuration asks for its password at the next connect', async () => {
+    for (const leaves of ['the new password', 'nothing'] as const) {
+      const other = new FakeWebDavServer({ roots: [OTHER_ROOT], users: { bob: 'bob-pass' } })
+      const store = restoreFailingSecrets(leaves)
+      const fetch = routedFetch(
+        { 'cloud.test': dav, 'other.test': other },
+        { host: 'other.test', method: 'PROPFIND', status: 403, refused: [] }
+      )
+      const a = device('Desk (Linux)', { secrets: store, fetch })
+      await unlockVault(a)
+      await setupWebDav(a)
+      expect(store.values.get(WEBDAV_SECRET_KEY)).toBe('app-pass')
+      store.calls.length = 0
+      store.arm()
+
+      // Refused at Bob's listing; the restore of P1 throws. The refusal is what comes back, and
+      // this session's connection to Alice's server, holding P1 in memory, syncs on.
+      expect(await setupWebDav(a, OTHER_CREDENTIALS)).toEqual({
+        reason: 'server',
+        kind: 'forbidden',
+        status: 403
+      })
+      expect(store.calls).toEqual(['get', 'set:bob-pass', 'set:app-pass'])
+      expect(a.toasts).toEqual([])
+      expect(a.engine.status()).toMatchObject({
+        enabled: true,
+        folder: webDavFolderUrl(CREDENTIALS),
+        authRefused: false
+      })
+      await a.engine.syncNow()
+      expect(a.engine.status()).toMatchObject({ lastError: null, authRefused: false })
+      // Honestly: the store now holds P2, or nothing, where P1 was.
+      expect(store.values.get(WEBDAV_SECRET_KEY) ?? null).toBe(
+        leaves === 'the new password' ? 'bob-pass' : null
+      )
+      store.disarm()
+      a.engine.flushSync()
+
+      // The next connect – a restart – reads what the store holds and asks for the password:
+      // refused by the server with P2, or `authRefused` at once with nothing to send.
+      const again = device('Desk (Linux)', { io: a.io, keys: a.keys, secrets: store, fetch })
+      await tick()
+      dav.drain()
+      await again.engine.syncNow()
+      expect(again.engine.status()).toMatchObject({
+        enabled: true,
+        transport: 'webdav',
+        folder: webDavFolderUrl(CREDENTIALS),
+        authRefused: true
+      })
+      expect(dav.log.filter((r) => r.status === 401).length).toBe(
+        leaves === 'the new password' ? 1 : 0
+      )
+      // The existing way out: the password given again.
+      dav.drain()
+      expect(await again.engine.setWebDavPassword('app-pass')).toBeNull()
+      expect(again.engine.status()).toMatchObject({ authRefused: false, lastError: null })
+      expect(dav.log.some((r) => r.method === 'PROPFIND' && r.status === 207)).toBe(true)
+      teardown()
+      dav.reset()
+    }
   }, 30_000)
 })

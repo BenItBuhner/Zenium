@@ -22,6 +22,7 @@ import {
   pdfCommandScript,
   pdfReportOf,
   pdfReportTokenOf,
+  pdfSaveScript,
   steppedZoom
 } from '../pdfViewerProtocol'
 
@@ -187,6 +188,23 @@ describe('the protocol between the viewer and the chrome', () => {
     // loses its value; the chrome would then take every command for one the document refused.
     expect(looksLikeStatements(pdfCommandScript({ kind: 'goTo', page: 2 }))).toBe(false)
     expect(looksLikeStatements(pdfCommandScript({ kind: 'stopFind' }))).toBe(false)
+    expect(looksLikeStatements(pdfSaveScript())).toBe(false)
+  })
+
+  it('asks the document’s global for the saved copy, and is null where there is none to ask', async () => {
+    const script = pdfSaveScript()
+    expect(script).toContain(`window[${JSON.stringify(PDF_VIEWER_GLOBAL)}]`)
+    const run = (window: Record<string, unknown>): unknown =>
+      new Function('window', `return ${script}`)(window)
+    expect(run({})).toBeNull()
+    // An older document with the commands alone: no copy, not an error.
+    expect(run({ [PDF_VIEWER_GLOBAL]: { command: () => undefined } })).toBeNull()
+    // The document's promise rides through: the host's `executeJavaScript` awaits it.
+    const copy = run({
+      [PDF_VIEWER_GLOBAL]: { command: () => undefined, save: async () => 'JVBERi0x' }
+    })
+    expect(copy).toBeInstanceOf(Promise)
+    await expect(copy).resolves.toBe('JVBERi0x')
   })
 
   it('reads a report out of the viewer’s window message and nothing else', () => {
@@ -198,11 +216,17 @@ describe('the protocol between the viewer and the chrome', () => {
       fit: 'width',
       title: null,
       find: null,
-      outline: []
+      outline: [],
+      form: { fields: 0, modified: false }
     }
     expect(pdfReportOf({ [PDF_VIEWER_MESSAGE_KEY]: report })).toEqual(report)
     expect(pdfReportOf({ [PDF_VIEWER_MESSAGE_KEY]: { ...report, state: 'odd' } })).toBeNull()
     expect(pdfReportOf({ [PDF_VIEWER_MESSAGE_KEY]: { ...report, page: '1' } })).toBeNull()
+    // The form's state rides every report: one without it is no report of this viewer's.
+    expect(pdfReportOf({ [PDF_VIEWER_MESSAGE_KEY]: { ...report, form: undefined } })).toBeNull()
+    expect(
+      pdfReportOf({ [PDF_VIEWER_MESSAGE_KEY]: { ...report, form: { fields: 2, modified: 'yes' } } })
+    ).toBeNull()
     expect(pdfReportOf({ other: report })).toBeNull()
     expect(pdfReportOf('zeniumPdf')).toBeNull()
     expect(pdfReportOf(null)).toBeNull()

@@ -344,6 +344,7 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
         data-pane="tabs"
         data-strip-axis="x"
         data-overflow={layout.overflow || undefined}
+        data-private={isPrivate || undefined}
         data-testid="tab-strip"
         onPointerEnter={onBandEnter}
         onPointerLeave={onBandLeave}

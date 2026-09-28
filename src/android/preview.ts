@@ -6,6 +6,8 @@ import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { PDF_VIEWER_ASSETS, pdfViewerAssetUrl, pdfViewerDocumentUrl } from '@shared/pdfPage'
 import { pdfReportOf, pdfReportTokenOf } from '@shared/pdfViewerProtocol'
+import { GAME_RUNTIME_ATTRIBUTE } from '@shared/game/page'
+import { PREVIEW_GAME_SCENE_KEY } from './previewSpec'
 import {
   blocksFromHtml,
   type ReadAloudExtractRequest,
@@ -50,6 +52,13 @@ const PAGE_ROUTE = '/__zen/page/'
 const PDF_ROUTE = '/__zen/pdf/'
 /** The viewer document's script, as the dev server serves it (a module under the Vite root, `src/android`). */
 const PDF_VIEWER_SCRIPT = '/pdfViewer.ts'
+/**
+ * Roll's mount for a document that carries its fragment (`previewGame.ts`, served the same way):
+ * the inline runtime's stand-in, which also drives the game to a pose for a still.
+ */
+const GAME_MOUNT_SCRIPT = '/previewGame.ts'
+/** The inline runtime's tag in a served document, whole (`gameRuntimeScriptHtml`). */
+const GAME_RUNTIME_SCRIPT_RE = new RegExp(`<script ${GAME_RUNTIME_ATTRIBUTE}>[\\s\\S]*?</script>`)
 /**
  * Whether the preview "holds the browser role" (outside the file store: it is not profile data);
  * `sheet=promo` (previewStates.ts) puts the role up for grabs before it raises the campaign.
@@ -382,6 +391,25 @@ export function createPreviewBridge(): NativeBridge {
       .replace('</head>', `${relay}</head>`)
   }
 
+  /**
+   * A document carrying Roll (the no-connection page, `zen://game`) carries its runtime inline
+   * (`shared/game/inlineRuntime.ts`, the tag marked `GAME_RUNTIME_ATTRIBUTE`); here the tag is
+   * swapped for the same runtime as a module the dev server serves (`previewGame.ts`), which
+   * mounts the stage as the inline script would and drives it to the pose a state asked for
+   * (`&game=`, left on the root by the states module and ridden on the tag for the driver to
+   * read). The stand-in host answers the best score itself: this host's frames run no page
+   * script to relay the ask to a core.
+   */
+  const gameDocumentHtml = (html: string): string => {
+    if (!html.includes(GAME_RUNTIME_ATTRIBUTE)) return html
+    const scene = document.documentElement.dataset[PREVIEW_GAME_SCENE_KEY]
+    const pose = scene ? ` data-zen-game-scene="${scene}"` : ''
+    return html.replace(
+      GAME_RUNTIME_SCRIPT_RE,
+      `<script type="module" src="${GAME_MOUNT_SCRIPT}"${pose}></script>`
+    )
+  }
+
   // A viewer document's report, relayed by the script above with the document's token: the tab
   // is the frame it came from.
   window.addEventListener('message', (e: MessageEvent<unknown>) => {
@@ -654,6 +682,9 @@ export function createPreviewBridge(): NativeBridge {
       readAloud: true,
       files,
       downloadsDir: DOWNLOADS_DIR,
+      // The print verb the phone declares once its host has it (`view.printPdf`, CT-44): the
+      // viewer's Print row is up here, and prints to the console below.
+      pdfPrint: true,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
       // A screen lock as the vault has one: `vault=none` is a device without (the lock switch
@@ -869,7 +900,9 @@ export function createPreviewBridge(): NativeBridge {
       // Kotlin to serve); here that picks the sample document the dev server answers with.
       const pdf = document as { path?: unknown } | undefined
       const shown =
-        pdf && typeof pdf.path === 'string' ? pdfDocumentHtml(String(html), pdf.path) : String(html)
+        pdf && typeof pdf.path === 'string'
+          ? pdfDocumentHtml(String(html), pdf.path)
+          : gameDocumentHtml(String(html))
       void showDocument(frame, shown, commitEntry(String(tabId), String(url)))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
@@ -920,6 +953,9 @@ export function createPreviewBridge(): NativeBridge {
     // The history navigation disc the host draws above the pages (Kotlin: `HistoryNavBubbleView`):
     // the preview has no 3-button edge drag to start one, so nothing ever arrives here.
     'chrome.historyNavBubble': () => undefined,
+    // The tab hover card the host draws above the pages (Kotlin: `TabHoverCardView`): the
+    // preview has no native layer to draw it in, so a frame is taken and nothing shows.
+    'chrome.hoverCard': () => undefined,
     // Chrome messages along the frame's edges: the page is clipped out of their strips, eased
     // the way Kotlin springs its clip; a clip-path keeps pointer events out of them too, so the
     // cards underneath can be tapped.
@@ -1044,9 +1080,20 @@ export function createPreviewBridge(): NativeBridge {
     'view.savePage': () => null,
     'view.screenshot': () => null,
     // The preview's frames are the browser's own: no page geometry or capture to read, no
-    // Downloads collection to write (the capture UI's engine says so with null).
+    // Downloads collection to write (the capture UI's engine says so with null). A PDF copy the
+    // viewer's Save writes (CT-44) is the one file kept: in the stand-in downloader's folder, as
+    // the QR code's Download is, so the row's toast and the Downloads list show where it went.
     'view.viewport': () => null,
-    'download.saveFile': () => null,
+    'download.saveFile': ({ name, mimeType }) => {
+      if (mimeType !== 'application/pdf') return null
+      console.info('[zen preview] PDF copy kept in Downloads', name)
+      return `${DOWNLOADS_DIR}/${String(name)}`
+    },
+    // The system print flow with the viewer's PDF (`Platform.printPdf`): the word alone here.
+    'view.printPdf': ({ name }) => {
+      console.info('[zen preview] print', name)
+      return true
+    },
     'view.certificate': () => null,
     // The preview has no cookie jar of its own to look into: without a `sitedata=` state the
     // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands

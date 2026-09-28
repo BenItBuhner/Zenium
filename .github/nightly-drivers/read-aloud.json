@@ -2,8 +2,9 @@
   "id": "read-aloud",
   "order": 34,
   "class": "ReadAloudDemo",
-  "shard": "phone-b",
+  "shard": "phone-g",
   "mirrors": "android-read-aloud-demo.yml",
   "dir": "read-aloud-demo",
-  "estimate": 5
+  "estimate": 5,
+  "note": "Moved from phone-b (68 of its 68 minutes) to phone-g by W6-H's rebalance, with reader-ui: the two largest drivers of phone-b that nothing ties there. The same Google APIs image and its speech engine (com.google.android.tts), no setup step of its own."
 }

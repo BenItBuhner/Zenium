@@ -108,7 +108,7 @@ export function ThemePicker({
   return (
     <OverlayShell
       title="Theme"
-      description={`${spaceLabel(space)} space`}
+      description={`${spaceLabel(space)} Space`}
       variant="dialog"
       className="mb-3 ml-3 mr-auto mt-auto w-[420px]"
       anchor={anchor ? { at: anchor, width: POPOVER } : undefined}

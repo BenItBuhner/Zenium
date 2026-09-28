@@ -161,7 +161,9 @@ function stateWith(
 }
 
 /** The tab's media as the core lists a page with a video (`MediaState.video`). */
-const VIDEO: MediaState[] = [{ tabId: 't1', playing: true, video: true, session: true }]
+const VIDEO: MediaState[] = [
+  { tabId: 't1', playing: true, muted: false, video: true, session: true }
+]
 
 let root: Root | null = null
 let mount: HTMLElement | null = null

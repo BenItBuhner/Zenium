@@ -611,4 +611,128 @@ describe("the core's compiled rule table", () => {
     ]
     console.info(lines.join('\n'))
   }, 900_000)
+
+  test('the warm-up: what it adds to the desktop’s boot, what the first decide pays before and after it, and nothing on the phone path', async () => {
+    const count = Number(process.env['ZEN_RULES']) || CENSUS_RULES
+    const requests = syntheticRequests(64, count)
+    const first = requests[0]!
+    const median = (values: number[]): number => {
+      const sorted = [...values].sort((a, b) => a - b)
+      return sorted[Math.floor(sorted.length / 2)]!
+    }
+    const us = (value: number): string => `${(value * 1000).toFixed(0)} µs`
+    /** Every set built – or none: the warm-up's and the phone path's conditions. */
+    const built = (engine: RuleEngine, expected: boolean): void => {
+      for (const s of engine.listRuleSets()) {
+        expect(engine.tableOf(s.id) !== null, `${s.id} table`).toBe(expected)
+        expect(engine.indexOf(s.id) !== null, `${s.id} index`).toBe(expected)
+      }
+    }
+    const timed = (work: () => void): number => {
+      const start = performance.now()
+      work()
+      return performance.now() - start
+    }
+
+    // The default lists alone – a desktop without an extension – over several rounds (the
+    // first warms the allocation sites): the first decide of a cold engine, which builds every
+    // table inside it; the warm-up's own time – the boot cost – and the first decide after it.
+    const defaults = { coldFirst: [] as number[], warm: [] as number[], warmFirst: [] as number[] }
+    let structured = 0
+    for (let round = 0; round < 9; round++) {
+      const cold = new RuleEngine()
+      structured = serviceDefaults(cold)
+      built(cold, false)
+      defaults.coldFirst.push(timed(() => cold.decide(first)))
+      built(cold, true)
+      const warmed = new RuleEngine()
+      serviceDefaults(warmed)
+      defaults.warm.push(timed(() => warmed.warm()))
+      built(warmed, true)
+      const tables = warmed.listRuleSets().map((s) => warmed.tableOf(s.id))
+      defaults.warmFirst.push(timed(() => warmed.decide(first)))
+      // The first decide built nothing: every table is the one the warm-up built.
+      expect(warmed.listRuleSets().map((s) => warmed.tableOf(s.id))).toEqual(tables)
+      expect(warmed.decide(first)).toEqual(cold.decide(first))
+    }
+
+    // The defaults plus the census set – a desktop with a large declarativeNetRequest extension:
+    // cold, the first decide builds the set's table (its index is queued for the ticks after);
+    // warmed as the service warms – `warm()`: every table now, the large index in slices from
+    // the next tick – the first decide scans the census table and builds nothing; warmed and
+    // drained – `warm()` + `buildIndexes()`, the synchronous alternative – it is indexed too.
+    const census = censusEngineSet(count)
+    const large = {
+      coldFirst: [] as number[],
+      warm: [] as number[],
+      warmFirst: [] as number[],
+      slices: [] as number[],
+      ticks: [] as number[],
+      drained: [] as number[],
+      drainedFirst: [] as number[]
+    }
+    for (let round = 0; round < 3; round++) {
+      const cold = new RuleEngine()
+      serviceDefaults(cold)
+      cold.setRuleSet(census.set)
+      large.coldFirst.push(timed(() => cold.decide(first)))
+      expect(cold.tableOf(census.set.id)).not.toBeNull()
+      cold.buildIndexes()
+
+      const warmed = new RuleEngine()
+      serviceDefaults(warmed)
+      warmed.setRuleSet(census.set)
+      large.warm.push(timed(() => warmed.warm()))
+      const table = warmed.tableOf(census.set.id)
+      expect(table).not.toBeNull()
+      expect(warmed.indexOf(census.set.id)).toBeNull()
+      large.warmFirst.push(timed(() => warmed.decide(first)))
+      expect(warmed.tableOf(census.set.id)).toBe(table)
+      expect(warmed.decide(first)).toEqual(cold.decide(first))
+      const sliced = performance.now()
+      let ticks = 0
+      while (warmed.indexOf(census.set.id) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        ticks++
+      }
+      large.slices.push(performance.now() - sliced)
+      large.ticks.push(ticks)
+      expect(warmed.decide(first)).toEqual(cold.decide(first))
+
+      const drained = new RuleEngine()
+      serviceDefaults(drained)
+      drained.setRuleSet(census.set)
+      large.drained.push(
+        timed(() => {
+          drained.warm()
+          drained.buildIndexes()
+        })
+      )
+      built(drained, true)
+      large.drainedFirst.push(timed(() => drained.decide(first)))
+      expect(drained.decide(first)).toEqual(cold.decide(first))
+    }
+
+    // The phone path, pinned as in #603: a store attached, the set document written, no
+    // `warm()` (the phone's host says nothing) – no table and no index of any set.
+    const io = discardingIo()
+    const store = new RuleSetStore(io)
+    const phone = new RuleEngine()
+    store.attach(phone)
+    serviceDefaults(phone)
+    phone.setRuleSet(census.set)
+    await store.whenSettled()
+    expect(io.written.get(store.documentPathFor(census.set.id))).toBeGreaterThan(0)
+    built(phone, false)
+    store.detach()
+
+    console.info(
+      [
+        `=== the warm-up (seed #17): the service defaults (${BUNDLED.length} bundled text lists, ${structured} builtin rules), then with the ${census.set.rules?.length ?? 0}-rule census set; node ${process.version}; medians of ${defaults.warm.length} / ${large.warm.length} rounds ===`,
+        `DESKTOP, the default lists: first decide of a cold engine (the tables built inside it) ${us(median(defaults.coldFirst))}; warm() – the boot cost, every table + index – ${us(median(defaults.warm))}; first decide after warm() ${us(median(defaults.warmFirst))} (0 ms of build inside it)`,
+        `DESKTOP, defaults + census set: first decide of a cold engine (the census table built inside it, its index queued) ${ms(median(large.coldFirst))}; warm() – every table now, the census index in slices – ${ms(median(large.warm))}, then the first decide (the census table scanned, 0 ms of build) ${ms(median(large.warmFirst))}, the index landed after ${ms(median(large.slices))} in ${median(large.ticks)} ticks; warm() + buildIndexes() (the synchronous alternative) ${ms(median(large.drained))}, then the first decide (indexed) ${us(median(large.drainedFirst))}`,
+        `PHONE PATH: no warm() – no table, no index of any set after the census set's document is written (${io.written.get(store.documentPathFor(census.set.id))} chars), as #603 pinned`
+      ].join('\n')
+    )
+  }, 900_000)
 })

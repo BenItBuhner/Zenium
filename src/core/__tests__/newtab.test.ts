@@ -11,6 +11,7 @@ import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
+import { emptySafetyHubCardMemory } from '../../shared/safetyHubCard'
 import { makeTheme, resolveTheme, unfollowedTheme } from '../../shared/theme'
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
@@ -916,9 +917,153 @@ describe('NewTabService: my shortcuts and most visited', () => {
     // Removing a pinned site drops the tile and blocks the host.
     svc.pin('https://docs.example/', 'Docs')
     svc.remove('https://docs.example/')
-    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'], hiddenModules: [] })
+    expect(device()).toEqual({
+      shortcuts: [],
+      hiddenHosts: ['docs.example'],
+      hiddenModules: [],
+      safetyHubCard: {}
+    })
     svc.pin('javascript:alert(1)', 'nope')
     expect(device().shortcuts).toEqual([])
+  })
+
+  describe("the tile menu's Remove raises the chrome's toast with Undo (NTP-07)", () => {
+    const undo = (url: string): unknown => ({
+      label: 'Undo',
+      command: 'newtab.undoRemove',
+      args: { url }
+    })
+
+    it('a pin removed: "Shortcut removed" with Undo on the 8 s clock; Undo puts the tile back at its slot and its host among the most visited', () => {
+      const f = fixture()
+      const svc = f.browser.newTab
+      const win = f.browser.focusedWindow()
+      svc.pin('https://a.example/', 'A')
+      svc.pin('https://b.example/', 'B')
+      svc.pin('https://c.example/', 'C')
+      const device = (): { shortcuts: { url: string }[]; hiddenHosts: string[] } =>
+        f.browser.state.newTabDevice
+      svc.remove('https://b.example/', win)
+      expect(device().shortcuts.map((s) => s.url)).toEqual([
+        'https://a.example/',
+        'https://c.example/'
+      ])
+      expect(device().hiddenHosts).toEqual(['b.example'])
+      expect(eventsNamed(f, 'toast')).toEqual([
+        {
+          message: 'Shortcut removed',
+          kind: 'info',
+          action: undo('https://b.example/'),
+          duration: 8000
+        }
+      ])
+      expect(f.browser.handleCommand(win, 'newtab.undoRemove', { url: 'https://b.example/' })).toBe(
+        true
+      )
+      expect(device().shortcuts.map((s) => s.url)).toEqual([
+        'https://a.example/',
+        'https://b.example/',
+        'https://c.example/'
+      ])
+      expect(device().hiddenHosts).toEqual([])
+      // Undo is one act: a second pick has nothing left to do.
+      expect(f.browser.handleCommand(win, 'newtab.undoRemove', { url: 'https://b.example/' })).toBe(
+        false
+      )
+    })
+
+    it('a most visited site removed: "Site removed" with Undo; Undo unhides the host, so its tile ranks again', () => {
+      const f = fixture()
+      const svc = f.browser.newTab
+      f.browser.history.visit('https://www.news.example/a', 'News', null)
+      f.browser.history.visit('https://docs.example/', 'Docs', null)
+      const device = (): { shortcuts: { url: string }[]; hiddenHosts: string[] } =>
+        f.browser.state.newTabDevice
+      svc.remove('https://www.news.example/a')
+      expect(device().hiddenHosts).toEqual(['news.example'])
+      expect(eventsNamed(f, 'toast')).toEqual([
+        {
+          message: 'Site removed',
+          kind: 'info',
+          action: undo('https://www.news.example/a'),
+          duration: 8000
+        }
+      ])
+      expect(svc.undoRemove('https://www.news.example/a')).toBe(true)
+      expect(device()).toEqual({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: [],
+        safetyHubCard: {}
+      })
+      expect(f.browser.history.topSites(8, device().hiddenHosts).map((s) => s.url)).toEqual([
+        'https://www.news.example/a',
+        'https://docs.example/'
+      ])
+    })
+
+    it('a later removal takes the toast and the Undo; a pin in between does not', () => {
+      const f = fixture()
+      const svc = f.browser.newTab
+      svc.pin('https://a.example/', 'A')
+      svc.pin('https://b.example/', 'B')
+      const shortcuts = (): string[] => f.browser.state.newTabDevice.shortcuts.map((s) => s.url)
+      svc.remove('https://a.example/')
+      // A pin after the removal is the user's; the toast still offers Undo, so it still works –
+      // the tile back at the slot it held.
+      svc.pin('https://c.example/', 'C')
+      expect(svc.undoRemove('https://a.example/')).toBe(true)
+      expect(shortcuts()).toEqual([
+        'https://a.example/',
+        'https://b.example/',
+        'https://c.example/'
+      ])
+      // Two removals: the second's toast stands, the first's Undo is gone with its toast.
+      svc.remove('https://a.example/')
+      svc.remove('https://b.example/')
+      expect(eventsNamed(f, 'toast')).toHaveLength(3)
+      expect(svc.undoRemove('https://a.example/')).toBe(false)
+      expect(shortcuts()).toEqual(['https://c.example/'])
+      expect(svc.undoRemove('https://b.example/')).toBe(true)
+      expect(shortcuts()).toEqual(['https://b.example/', 'https://c.example/'])
+      expect(f.browser.state.newTabDevice.hiddenHosts).toEqual(['a.example'])
+    })
+
+    it("Undo gives the restore's word: a grid filled in between, or the url pinned again by hand, refuses the pin (the host unhidden all the same); a site's Undo is the unhide's", () => {
+      const f = fixture()
+      const svc = f.browser.newTab
+      const device = (): { shortcuts: { url: string }[]; hiddenHosts: string[] } =>
+        f.browser.state.newTabDevice
+      svc.pin('https://a.example/', 'A')
+      svc.remove('https://a.example/')
+      for (let i = 0; i < 8; i++) svc.pin(`https://s${i}.example/`, `S${i}`)
+      expect(device().shortcuts).toHaveLength(8)
+      expect(svc.undoRemove('https://a.example/')).toBe(false)
+      expect(device().shortcuts.map((s) => s.url)).not.toContain('https://a.example/')
+      expect(device().hiddenHosts).toEqual([])
+      // Pinned again by hand between the removal and the Undo: nothing left to put back.
+      svc.remove('https://s0.example/')
+      svc.pin('https://s0.example/', 'S0 again')
+      expect(svc.undoRemove('https://s0.example/')).toBe(false)
+      expect(device().shortcuts.filter((s) => s.url === 'https://s0.example/')).toHaveLength(1)
+      // A most visited site unhidden another way first: Undo has nothing to do.
+      f.browser.history.visit('https://www.news.example/a', 'News', null)
+      svc.remove('https://www.news.example/a')
+      svc.unhideSite('https://www.news.example/a')
+      expect(svc.undoRemove('https://www.news.example/a')).toBe(false)
+      expect(device().hiddenHosts).toEqual([])
+    })
+
+    it('a removal that changes nothing – the host hidden already, no address – raises nothing', () => {
+      const f = fixture()
+      const svc = f.browser.newTab
+      svc.remove('https://gone.example/')
+      svc.remove('https://gone.example/')
+      svc.remove('javascript:alert(1)')
+      expect(f.browser.state.newTabDevice.hiddenHosts).toEqual(['gone.example'])
+      expect(eventsNamed(f, 'toast')).toHaveLength(1)
+      expect(svc.undoRemove('javascript:alert(1)')).toBe(false)
+    })
   })
 
   it('actions from the page drive the same operations', async () => {
@@ -1205,7 +1350,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
       expect(f.browser.state.newTabDevice).toEqual({
         shortcuts: [],
         hiddenHosts: [],
-        hiddenModules: []
+        hiddenModules: [],
+        safetyHubCard: {}
       })
       expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
       expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
@@ -1262,6 +1408,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
           modules: { ...f.browser.state.settings.newTab.modules, greeting: true }
         }
       })
+      // A Safety check card seen on this device: Chrome's Safety Hub record, not the page's.
+      const seen = { ...emptySafetyHubCardMemory(), lastShownAt: 5, runs: 1, result: 'off' }
+      f.browser.handleCommand(win, 'newtab.setSafetyHubCardMemory', {
+        memories: { 'safe-browsing': seen }
+      })
       await f.browser.handleCommand(win, 'newtab.reset', undefined)
       expect(f.browser.state.settings.newTab).toEqual({
         ...DEFAULT_NEW_TAB_SETTINGS,
@@ -1270,7 +1421,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
       expect(f.browser.state.newTabDevice).toEqual({
         shortcuts: [],
         hiddenHosts: [],
-        hiddenModules: []
+        hiddenModules: [],
+        safetyHubCard: { 'safe-browsing': seen }
       })
       expect(f.background.current).toBeNull()
       // No restore snapshot survives a reset.
