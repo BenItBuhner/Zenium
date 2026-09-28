@@ -1860,6 +1860,19 @@
     opacity: 0;
     transition: none;
   }
+  /*
+   * A closed row's picture (MOT-33; v2 §11.4's departure, `SlideMotion.leave`): the row's
+   * element, React's no longer, placed in the list's column in the box it stood in and clipped
+   * shut from its foot on the spring as the rows below glide up into the gap – the row's entry
+   * run backwards. A picture: nothing reaches it, its own 120 ms eases hold off (the spring
+   * writes every frame), and `will-change` names the two properties for the run alone. Its
+   * geometry is inline.
+   */
+  .zen-slide-leaving {
+    pointer-events: none;
+    transition: none;
+    will-change: clip-path, opacity;
+  }
   /* Frozen (sleeping) pages: still loaded, but dimmed and cooled down. */
   .zen-tab[data-frozen='true'] .zen-tab-title {
     opacity: 0.75;
@@ -2254,7 +2267,20 @@
     opacity: 0.9;
     transition:
       transform 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      opacity 120ms var(--zen-ease),
+      box-shadow 120ms var(--zen-ease);
+    /*
+     * The lift (MOT-33): the row rises from its resting form to level 2 – the scale, the
+     * shadow, the 90 % – over the state change's 120 ms as the ghost mounts, rather than
+     * standing lifted from its first frame. A mount, so `@starting-style` carries the start (a
+     * WebView before 117 mounts it lifted, as before); under reduced motion the transition is
+     * gone and the ghost mounts lifted (§11.3).
+     */
+    @starting-style {
+      transform: scale(1);
+      box-shadow: none;
+      opacity: 1;
+    }
   }
   /* Over a drop-into target the row thins out: the target, not the row, shows where it goes. */
   .zen-tab-ghost[data-into] .zen-tab-ghost-row {

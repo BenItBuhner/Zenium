@@ -51,7 +51,9 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
 
   // The rows' motion, the space panel's (`SpacePanel`): one per list, keyed by its scroller so
   // lib/drag.ts finds it from a row.
-  const [motion] = useState(() => new SlideMotion('y', { enter: true, batch: ENTER_BATCH }))
+  const [motion] = useState(
+    () => new SlideMotion('y', { enter: true, leave: true, batch: ENTER_BATCH })
+  )
   useEffect(() => () => motion.dispose(), [motion])
   const scrollerEl = useRef<HTMLDivElement | null>(null)
   const scroller = useCallback(
@@ -85,9 +87,10 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
             the foot with New Private Tab, so the row stays in view however long the list. Under
             the veil the column is out of reach until the cover lifts (the overview's Private
             pane's rule) – the list and its New Private Tab together; the rows read the
-            placeholder meanwhile, for a reader that reaches one all the same. */}
+            placeholder meanwhile, for a reader that reaches one all the same. Positioned, as
+            the space panel's column is: a closed row's picture shrinks in it (`SlideMotion.leave`). */}
         <div
-          className="flex h-full flex-col"
+          className="relative flex h-full flex-col"
           data-tab-panel
           inert={masked || undefined}
           aria-hidden={masked || undefined}

@@ -92,10 +92,13 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   // The list's edge fades are the strip's (§9.37: 24): one depth for the tab list on both axes.
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y', size: STRIP_FADE })
 
-  // The rows' motion (design-language §7): neighbours slide open for a lifted row, rows whose
-  // slot moved spring there, new rows grow into their slot. One per panel, keyed by its scroller
-  // so lib/drag.ts finds it from a row.
-  const [motion] = useState(() => new SlideMotion('y', { enter: true, batch: ENTER_BATCH }))
+  // The rows' motion (design-language §7, v2 §11.4): neighbours slide open for a lifted row, rows
+  // whose slot moved spring there, new rows grow into their slot, closed rows shrink out of it
+  // as the neighbours close the gap (MOT-33). One per panel, keyed by its scroller so
+  // lib/drag.ts finds it from a row.
+  const [motion] = useState(
+    () => new SlideMotion('y', { enter: true, leave: true, batch: ENTER_BATCH })
+  )
   useEffect(() => () => motion.dispose(), [motion])
   const scrollerEl = useRef<HTMLDivElement | null>(null)
   const scroller = useCallback(
@@ -138,9 +141,12 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           it – outside the scroller (tabs-28), so the row stays in view however long the list
           (Zen's, Edge's, the strip's + fixed at its end, §9.37); the scroller takes no more room
           than its rows, so with a short list the foot stands right under the last row as
-          before, and with a long one the rows scroll between the fades and the row holds. */}
+          before, and with a long one the rows scroll between the fades and the row holds. The
+          column is positioned: a closed row's picture is drawn in it while it shrinks
+          (`SlideMotion.leave`), placed in the box the row stood in – the scroller would clip it,
+          shrinking with its last row. */}
       <div
-        className="flex h-full w-full shrink-0 flex-col"
+        className="relative flex h-full w-full shrink-0 flex-col"
         data-tab-panel
         data-active={isActive}
         aria-hidden={!isActive}
