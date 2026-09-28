@@ -12282,9 +12282,16 @@
 /*
  * On touch where the page draws sheets – a phone – the row's hold sheet (`AddressSheet`,
  * sheets.tsx): §9.23's title block, the row's label over the whole value as its paragraph – the
- * block's own 15 at 69% – wrapped the same way, since the chassis's paragraph breaks only at
- * spaces.
+ * block's own 15 at 69% – breaking at its slashes and dots first (`breakable`'s `<wbr>`s) and
+ * wrapped anywhere past that, since the chassis's paragraph breaks only at spaces. The sheet
+ * holds nothing under the block, so the block's own 16 below comes off: the empty
+ * `.zen-settings-sheet-body`'s 8 over the chassis's 8 + inset (`SHEET_EDGE_PAD`) is §9.25's 16
+ * to the sheet's bottom edge on their own – the body rule's formula – where the three stacked
+ * to 32 (the independent review of #694, nit 2).
  */
+.zen-settings-sheet-address .zen-sheet-title-block {
+  padding-bottom: 0;
+}
 .zen-settings-sheet-address .zen-sheet-title-block p {
   overflow-wrap: anywhere;
 }

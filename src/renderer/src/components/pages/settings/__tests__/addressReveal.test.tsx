@@ -24,7 +24,11 @@ import { SheetStack } from '../sheets'
  * on touch – the row's hold sheet where the page draws sheets (a phone), whose title block reads
  * the label and the whole value, the same card standing under the row where it draws dialogs
  * (a tablet; the lead's look on #694). #685's pins stand: the row's own line is untouched by
- * the reveal.
+ * the reveal. The independent review of #694: a hold on a control inside the row – Location's
+ * Change…, a desktop switch's box – is the control's, and arms neither reveal (nit 3); either
+ * surface draws the value with a break opportunity after each slash and dot, so a spaceless
+ * value breaks there before it breaks inside a name (nit 5); the hold sheet ends §9.25's 16
+ * under its paragraph (nit 2).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -890,7 +894,7 @@ describe('main.css', () => {
     return m[1].trim()
   }
 
-  it('the card’s value wraps anywhere at the body size with no clamp, the held card takes the pointer and no selection, the sheet’s paragraph wraps anywhere, and the tab card’s chrome is untouched', () => {
+  it('the card’s value wraps anywhere at the body size with no clamp, the held card takes the pointer and no selection, the sheet’s paragraph wraps anywhere and its block ends §9.25’s 16 over the sheet’s edge, and the tab card’s chrome is untouched', () => {
     const css = stylesheet()
     const value = declarations(css, '.zen-address-hover-card-value')
     expect(value).toContain('overflow-wrap: anywhere')
@@ -905,6 +909,13 @@ describe('main.css', () => {
     expect(declarations(css, '.zen-settings-sheet-address .zen-sheet-title-block p')).toContain(
       'overflow-wrap: anywhere'
     )
+    // The sheet holds nothing under the block, so the block's own 16 below comes off: the empty
+    // body's 8 over the chassis's 8 + inset is §9.25's 16 to the sheet's edge (the review's nit 2).
+    expect(declarations(css, '.zen-settings-sheet-address .zen-sheet-title-block')).toBe(
+      'padding-bottom: 0;'
+    )
+    expect(declarations(css, '.zen-sheet-title-block')).toContain('padding: 16px')
+    expect(declarations(css, '.zen-settings-sheet-body')).toContain('padding-bottom: 8px')
     const chrome = declarations(css, '.zen-tab-hover-card')
     expect(chrome).toContain('padding: 16px')
     expect(chrome).toContain('border-radius: 8px')
