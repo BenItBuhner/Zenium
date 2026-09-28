@@ -59,7 +59,10 @@ describe('recordBlockedSites', () => {
     expect(sites).toHaveLength(BLOCKED_SITES_CAP)
     expect(sites?.[0]?.domain).toBe('t0.example')
     expect(sites?.at(-1)?.domain).toBe(`t${BLOCKED_SITES_CAP - 1}.example`)
-    sites = recordBlockedSites(sites, [{ host: 'www.t3.example', count: 2 }, { host: 'late.example' }])
+    sites = recordBlockedSites(sites, [
+      { host: 'www.t3.example', count: 2 },
+      { host: 'late.example' }
+    ])
     expect(sites).toHaveLength(BLOCKED_SITES_CAP)
     expect(sites?.[3]).toEqual({ domain: 't3.example', category: 'tracker', count: 3 })
     expect(sites?.some((s) => s.domain === 'late.example')).toBe(false)

@@ -102,7 +102,11 @@ describe('BlockingHandler', () => {
   }
 
   it('cancels blocked requests and counts them against the tab', () => {
-    const { handler: h, blocked, sources } = handler(() => ({
+    const {
+      handler: h,
+      blocked,
+      sources
+    } = handler(() => ({
       action: 'block',
       matched: { setId: 'easylist' }
     }))

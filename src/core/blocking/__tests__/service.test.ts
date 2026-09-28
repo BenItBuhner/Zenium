@@ -943,8 +943,12 @@ describe('BlockingService counters', () => {
     const service = start(h)
     h.tabs.set('tab-1', { id: 'tab-1', blockedCount: 0 } as Tab)
     const before = h.commits.volatile
-    service.recordBlocked('tab-1', 1, [{ host: 'stats.g.doubleclick.net', setId: TEXT_MATCH_SET_ID }])
-    service.recordBlocked('tab-1', 2, [{ host: 'ad.doubleclick.net', setId: TEXT_MATCH_SET_ID, count: 2 }])
+    service.recordBlocked('tab-1', 1, [
+      { host: 'stats.g.doubleclick.net', setId: TEXT_MATCH_SET_ID }
+    ])
+    service.recordBlocked('tab-1', 2, [
+      { host: 'ad.doubleclick.net', setId: TEXT_MATCH_SET_ID, count: 2 }
+    ])
     service.recordBlocked('tab-1', 1, [{ host: 'cdn.example.com', setId: USER_RULE_SET_ID }])
     service.recordBlocked('tab-1', 1)
     service.recordBlocked(undefined, 1, [{ host: 'nobody.example' }])
