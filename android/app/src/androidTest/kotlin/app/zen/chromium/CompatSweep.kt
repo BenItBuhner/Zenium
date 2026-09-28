@@ -36,6 +36,7 @@ import app.zen.chromium.ext.SweepHeapSteps
 import app.zen.chromium.ext.SweepInsertProbe
 import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepOrderProbe
+import app.zen.chromium.ext.SweepPopupClose
 import app.zen.chromium.ext.SweepScreenGuard
 import app.zen.chromium.ext.SweepSwitchGrade
 import app.zen.chromium.privacy.NonUniqueHost
@@ -970,11 +971,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var openedFirst: Pair<String, String>? = null
         var openedAt = 0L
         var view: ExtensionWebView? = null
+        var viewSeenAt = 0L
         val sheetDeadline = SystemClock.uptimeMillis() + POPUP_TIMEOUT_MS
         while (SystemClock.uptimeMillis() < sheetDeadline) {
             val v = popupView()
             if (v != null && (v.context == "popup" || (runtimePopup == null && v.context == "sidePanel")) && rendered(v)) {
                 view = v
+                viewSeenAt = SystemClock.uptimeMillis()
                 break
             }
             if (openedFirst == null) {
@@ -987,9 +990,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             }
             SystemClock.sleep(400)
         }
-        SystemClock.sleep(1_800)
+        // The settle before the read, watched for the popup's own close: a popup document that
+        // does its work and calls `window.close()` at once (Bitget Wallet's popup.html for a
+        // wallet with no vault opens its onboarding in a tab and closes) leaves the sheet loop a
+        // rendered view and the read nothing – round 23 §7 graded the row P at "0x0 css px in a
+        // 0x0 dp sheet, 0 elements", right about the surface and blind about the close. The
+        // moment the view went is kept for the stage's word ([SweepPopupClose]).
+        var closedAfterMs: Long? = null
+        val settleUntil = SystemClock.uptimeMillis() + 1_800
+        while (SystemClock.uptimeMillis() < settleUntil) {
+            if (view != null && closedAfterMs == null && popupView() !== view) closedAfterMs = SystemClock.uptimeMillis() - viewSeenAt
+            SystemClock.sleep(150)
+        }
         snap("$slug-popup")
         val live = popupView()
+        if (view != null && closedAfterMs == null && live !== view) closedAfterMs = SystemClock.uptimeMillis() - viewSeenAt
         val detail = JSONObject().put("declared", declared ?: JSONObject.NULL).put("runtimePopup", runtimePopup ?: JSONObject.NULL)
         view?.let { detail.put("surface", it.context) }
         openedFirst?.let { detail.put("openedFirstSeen", it.second) }
@@ -1001,7 +1016,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             detail.put("flow", json(tabEval(live, FLOW_REPORT)))
         }
         when {
-            view != null -> {
+            view != null && closedAfterMs == null -> {
                 val dom = detail.optJSONObject("dom") ?: JSONObject()
                 val uncaught = (live?.let(::consoleOf) ?: emptyList()).filter(::isUncaught)
                 val sheet = detail.optJSONObject("sheet") ?: JSONObject()
@@ -1034,7 +1049,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
                 raised?.let { detail.put("raisedTab", it) }
                 val answered = if (opened.isNotEmpty()) opened else listOfNotNull(raised)
-                if (runtimePopup == null && answered.isNotEmpty()) {
+                if (view != null) {
+                    // The popup came up and closed itself before the read: the tabs after it are
+                    // its answer ([SweepPopupClose]), the URL an opened tab was first seen on
+                    // leading (the click's own destination, before the site's redirect) for the
+                    // core stage's account gate to read. A tab the popup sent to a page of its
+                    // own goes back to the fixture, as the sent-tab branch below does.
+                    val closedMs = closedAfterMs ?: 0L
+                    detail.put("closedItselfAfterMs", closedMs)
+                    val first = openedFirst?.second?.takeIf { it.isNotEmpty() }
+                    val openedUrls = (listOfNotNull(first) + opened).distinct()
+                    val raisedOnly = raised?.takeIf { it !in opened && it !in sent.values }
+                    val current = opened + sent.values + listOfNotNull(raisedOnly)
+                    if (current.isNotEmpty()) {
+                        entry.put("popupOpened", JSONArray((openedUrls + sent.values + listOfNotNull(raisedOnly)).distinct()))
+                        if (row.account) openedPage(row, current[0])?.let { entry.put("popupOpenedPage", it) }
+                    }
+                    val word = SweepPopupClose.word(closedMs, openedUrls, sent.values.map { extensionPath(it) }, raisedOnly)
+                    stage(entry, "popup", word.verdict, word.note, detail)
+                    if (fixtureTab in sent.keys) {
+                        coreCall("tab.navigate", JSONObject().put("tabId", fixtureTab).put("input", "$BASE/page-a.html").toString())
+                        SystemClock.sleep(1_200)
+                    }
+                } else if (runtimePopup == null && answered.isNotEmpty()) {
                     entry.put("popupOpened", JSONArray(answered))
                     // The page the click showed, read while its tab is still there (the stage's
                     // closeExtraTabs takes it): an account row's core grade (popupLogin) is its
