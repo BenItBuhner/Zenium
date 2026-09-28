@@ -19,7 +19,9 @@ import { TOAST_UNDO_MS } from '@shared/toastCard'
  * card 8 inside the content frame's bottom edge (the layer's `--zen-message-inset`), never in
  * the dialog box, and on the top edge of a hosted sheet's footer band. While lifted the Undo is
  * the last stop of the dialog's Tab cycle (§9.22: the dialog and the toast are one modal
- * moment), and the stop leaves the cycle with the toast, the keyboard back on the dialog. When
+ * moment), and the stop leaves the cycle with the toast, the keyboard back on the dialog; and
+ * Ctrl+Z – Cmd+Z – presses that Undo (§9.33's shortcut, the lead's pick was both), never from a
+ * text field, never when the seat is not lifted or its top card offers no Undo. When
  * the dialog closes the toast keeps its seat and its clock (the orphan case), its element and
  * its one `role="status"` announcement untouched. One card per act (§9.33): the sidebar's foot
  * (`SidebarBottom`, the real one in both harnesses) draws no second copy of a toast the frame's
@@ -117,7 +119,9 @@ const allowAgain = (onPick: () => void = () => undefined): number =>
 
 /**
  * The Site permissions review as a v2 dialog on the host (`SettingsDialog`, with its own Tab
- * wrap): Allow again raises the Undo toast and keeps the dialog; Got it closes it.
+ * wrap): Allow again raises the Undo toast and keeps the dialog; Got it closes it. Between them
+ * the three kinds of text field a dialog can hold – an input, a textarea, a contenteditable –
+ * whose own undo Ctrl+Z is (no review has them; they stand for any dialog's fields).
  */
 function SitePermissions({ onClose }: { onClose: () => void }): JSX.Element {
   return (
@@ -131,6 +135,9 @@ function SitePermissions({ onClose }: { onClose: () => void }): JSX.Element {
       <button type="button" data-allow-again onClick={() => allowAgain()}>
         Allow again
       </button>
+      <input type="text" data-note aria-label="Note" />
+      <textarea data-memo aria-label="Memo" />
+      <div contentEditable tabIndex={0} role="textbox" data-scratch aria-label="Scratch" />
       <button type="button" data-got-it onClick={onClose}>
         Got it
       </button>
@@ -337,6 +344,20 @@ const tab = (shift = false, init: KeyboardEventInit = {}): KeyboardEvent => {
 }
 const focus = (el: Element | null): void => {
   act(() => (el as HTMLElement).focus())
+}
+/** A Z chord as the browser delivers it: bubbling from the focused element (the body when none). */
+const chord = (init: KeyboardEventInit): KeyboardEvent => {
+  const e = new KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true, ...init })
+  act(() => {
+    ;(active() ?? document.body).dispatchEvent(e)
+  })
+  return e
+}
+const ctrlZ = (): KeyboardEvent => chord({ ctrlKey: true })
+/** The focus left nowhere – a pointer's act, the window losing focus: the body. */
+const unfocus = (): void => {
+  act(() => (active() as HTMLElement | null)?.blur())
+  expect(active()).toBe(document.body)
 }
 
 /** A hosted sheet comes up on the chassis: on the recede stack from its mount. */
@@ -619,7 +640,7 @@ describe('the keyboard: the Undo is the last stop of the dialog’s Tab cycle (�
     expect(active()).toBe(control('data-got-it'))
   })
 
-  it('Ctrl+Tab and the shortcuts are not its: it takes the plain Tab alone (Ctrl+Z stays §9.33’s)', () => {
+  it('Ctrl+Tab and the other chords are not its: it takes the plain Tab, and Ctrl+Z alone', () => {
     render(<Desktop dialog />)
     act(() => {
       allowAgain()
@@ -630,16 +651,18 @@ describe('the keyboard: the Undo is the last stop of the dialog’s Tab cycle (�
     tab(false, { ctrlKey: true })
     expect(active()).not.toBe(undo())
     expect(dialog()!.contains(active())).toBe(true)
-    const z = new KeyboardEvent('keydown', {
-      key: 'z',
+    // Ctrl+Y (redo elsewhere) is nothing of the seat's.
+    const y = new KeyboardEvent('keydown', {
+      key: 'y',
       ctrlKey: true,
       bubbles: true,
       cancelable: true
     })
     act(() => {
-      active()!.dispatchEvent(z)
+      active()!.dispatchEvent(y)
     })
-    expect(z.defaultPrevented).toBe(false)
+    expect(y.defaultPrevented).toBe(false)
+    expect(card()).not.toBeNull()
   })
 
   it('the stop leaves the cycle with the toast: Undo pressed by keyboard, the focus returns to the dialog’s element', () => {
@@ -709,6 +732,200 @@ describe('the keyboard: the Undo is the last stop of the dialog’s Tab cycle (�
     expect(lifted()).toBe(false)
     focus(control('data-page-button'))
     expect(tab().defaultPrevented).toBe(false)
+  })
+})
+
+describe('Ctrl+Z: the Undo’s shortcut while the seat is lifted (§9.33; the lead’s pick was both)', () => {
+  it('Ctrl+Z presses the lifted card’s Undo: the act runs once, the key is taken before anything below the window, the card goes, the focus is the dialog’s', () => {
+    render(<Desktop dialog />)
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    expect(lifted()).toBe(true)
+    // A pointer's act left the focus nowhere: the body.
+    unfocus()
+    // Whatever listens below the seat's window capture listener – a dialog's own on the
+    // document, a page's – never sees the taken key.
+    const below = vi.fn()
+    document.addEventListener('keydown', below, true)
+    const e = ctrlZ()
+    document.removeEventListener('keydown', below, true)
+    expect(e.defaultPrevented).toBe(true)
+    expect(below).not.toHaveBeenCalled()
+    expect(onPick).toHaveBeenCalledTimes(1)
+    // The desktop keeps no cards' semantics: the toast is forgotten at once, the seat drops, the
+    // dialog stands on with the keyboard on its element (the Enter path's landing).
+    expect(uiStore.get().toasts).toEqual([])
+    expect(card()).toBeNull()
+    expect(lifted()).toBe(false)
+    expect(dialog()).not.toBeNull()
+    expect(underInert(dialog())).toBe(false)
+    expect(active()).toBe(dialog())
+    // From the dialog's element Tab enters at its first control: the dialog's own wrap.
+    tab()
+    expect(active()).toBe(control('data-allow-again'))
+  })
+
+  it('Cmd+Z is the same chord (a Mac); the key is one Z, whatever the case', () => {
+    render(<Desktop dialog />)
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    expect(chord({ metaKey: true }).defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(card()).toBeNull()
+    // Caps Lock: the key reads 'Z' with no Shift.
+    act(() => {
+      allowAgain(onPick)
+    })
+    expect(chord({ ctrlKey: true, key: 'Z' }).defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(2)
+    expect(card()).toBeNull()
+  })
+
+  it('with Shift (redo), Alt, both modifiers or none the key is not its: it falls through, the toast standing', () => {
+    render(<Desktop dialog />)
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    const chords: KeyboardEventInit[] = [
+      { ctrlKey: true, shiftKey: true, key: 'Z' },
+      { metaKey: true, shiftKey: true, key: 'Z' },
+      { ctrlKey: true, altKey: true },
+      { metaKey: true, altKey: true },
+      { ctrlKey: true, metaKey: true },
+      { altKey: true },
+      {}
+    ]
+    for (const init of chords)
+      expect(chord(init).defaultPrevented, JSON.stringify(init)).toBe(false)
+    expect(onPick).not.toHaveBeenCalled()
+    expect(card()).not.toBeNull()
+    expect(lifted()).toBe(true)
+  })
+
+  it('not while a text field has the focus – an input, a textarea, a contenteditable – whose own undo the chord is', () => {
+    render(<Desktop dialog />)
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    for (const field of ['data-note', 'data-memo', 'data-scratch']) {
+      focus(control(field))
+      expect(active(), field).toBe(control(field))
+      expect(ctrlZ().defaultPrevented, field).toBe(false)
+    }
+    expect(onPick).not.toHaveBeenCalled()
+    expect(card()).not.toBeNull()
+    // On a button again the chord is the Undo's.
+    focus(control('data-got-it'))
+    expect(ctrlZ().defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(card()).toBeNull()
+  })
+
+  it('nothing when no card stands, when the top card offers no Undo, or when the seat is not lifted: the key falls through as it did', () => {
+    render(<Desktop dialog />)
+    const onPick = vi.fn()
+    const view = vi.fn()
+    // No card: the seat un-lifted under the standing dialog.
+    expect(lifted()).toBe(false)
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    // A card with no action, lifted.
+    act(() => {
+      pushToast('Saved to Bookmarks', 'info', { duration: TOAST_UNDO_MS })
+    })
+    expect(lifted()).toBe(true)
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    expect(uiStore.get().toasts).toHaveLength(1)
+    // A card whose action is not Undo.
+    act(() => {
+      pushToast('Saved to Bookmarks', 'info', {
+        duration: TOAST_UNDO_MS,
+        action: { label: 'View', onPick: view }
+      })
+    })
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    expect(view).not.toHaveBeenCalled()
+    expect(uiStore.get().toasts).toHaveLength(2)
+    // The top card is the newest: an Undo under a newer card without one is not pressed.
+    act(() => {
+      allowAgain(onPick)
+    })
+    act(() => {
+      pushToast('Review complete for 3 sites', 'info', { duration: 1000 })
+    })
+    expect(uiStore.get().toasts).toHaveLength(4)
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    expect(onPick).not.toHaveBeenCalled()
+    // Its own clock takes the newest away: the Undo is the top card again, and pressed.
+    act(() => vi.advanceTimersByTime(1000))
+    expect(uiStore.get().toasts).toHaveLength(3)
+    expect(uiStore.get().toasts.at(-1)?.action?.label).toBe('Undo')
+    expect(ctrlZ().defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(uiStore.get().toasts).toHaveLength(2)
+    expect(seat()!.querySelector('[data-action="undo"]')).toBeNull()
+    // The seat not lifted with an Undo toast on top: the orphan case, the dialog gone.
+    act(() => {
+      allowAgain(onPick)
+    })
+    act(() => control('data-got-it').click())
+    endExit()
+    expect(lifted()).toBe(false)
+    expect(seat()!.querySelectorAll('.zen-message-toast[data-action="undo"]')).toHaveLength(1)
+    focus(control('data-page-button'))
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(seat()!.querySelectorAll('.zen-message-toast[data-action="undo"]')).toHaveLength(1)
+  })
+
+  it('the focus: from the Undo reached by Tab, or from the body, it returns to the dialog’s element as on the Enter path; a dialog control that has it keeps it', () => {
+    render(<Desktop dialog />)
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    focus(control('data-got-it'))
+    tab()
+    expect(active()).toBe(undo())
+    expect(ctrlZ().defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(card()).toBeNull()
+    expect(active()).toBe(dialog())
+    // From the body (a pointer's act, the window back from elsewhere).
+    act(() => {
+      allowAgain(onPick)
+    })
+    unfocus()
+    ctrlZ()
+    expect(onPick).toHaveBeenCalledTimes(2)
+    expect(active()).toBe(dialog())
+    // From a control of the dialog: the user's place is kept.
+    act(() => {
+      allowAgain(onPick)
+    })
+    focus(control('data-got-it'))
+    ctrlZ()
+    expect(onPick).toHaveBeenCalledTimes(3)
+    expect(card()).toBeNull()
+    expect(active()).toBe(control('data-got-it'))
+  })
+
+  it('a hosted sheet on its own chassis: the chord presses the Undo lifted over the sheet too', () => {
+    render(<Desktop sheet />)
+    openSheet()
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    expect(lifted()).toBe(true)
+    expect(ctrlZ().defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(card()).toBeNull()
   })
 })
 
@@ -934,5 +1151,57 @@ describe('the tablet (§9.36): the shell seats the slot in the host’s seat, th
     expect(inert(seat())).toBe(true)
     act(() => release())
     expect(inert(seat())).toBe(false)
+  })
+
+  it('Ctrl+Z on a keyboard (DeX) presses the lifted Undo: the card leaves in the seat, the key taken, the focus the dialog’s; Cmd+Z too; Shift, a text field, an un-lifted seat fall through', () => {
+    mountTablet()
+    act(() => setTabletDialog(true))
+    const onPick = vi.fn()
+    act(() => {
+      allowAgain(onPick)
+    })
+    expect(lifted()).toBe(true)
+    const live = (): number => uiStore.get().toasts.filter((t) => !t.leaving).length
+    // Ctrl+Shift+Z is redo, not the seat's; from a text field the chord is the field's own.
+    expect(chord({ ctrlKey: true, shiftKey: true, key: 'Z' }).defaultPrevented).toBe(false)
+    focus(control('data-note'))
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    expect(onPick).not.toHaveBeenCalled()
+    expect(live()).toBe(1)
+    // From the Undo reached by Tab: the act runs, the card leaves (the layer's cards'
+    // semantics), and the keyboard is back on the dialog's element as on the Enter path.
+    focus(control('data-got-it'))
+    tab()
+    expect(active()).toBe(undo())
+    const e = ctrlZ()
+    expect(e.defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(uiStore.get().toasts[0]?.leaving).toBe(true)
+    expect(live()).toBe(0)
+    expect(active()).toBe(dialog())
+    expect(dialog()).not.toBeNull()
+    // Cmd+Z, from a control of the dialog: the same press, the control keeping the focus.
+    act(() => {
+      allowAgain(onPick)
+    })
+    expect(live()).toBe(1)
+    focus(control('data-allow-again'))
+    expect(chord({ metaKey: true }).defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledTimes(2)
+    expect(live()).toBe(0)
+    expect(active()).toBe(control('data-allow-again'))
+    // The seat un-lifted – the dialog closed under the toast (the orphan case): the key falls through.
+    act(() => vi.advanceTimersByTime(1000))
+    act(() => {
+      allowAgain(onPick)
+    })
+    act(() => control('data-got-it').click())
+    endExit()
+    expect(dialog()).toBeNull()
+    expect(lifted()).toBe(false)
+    expect(live()).toBe(1)
+    expect(ctrlZ().defaultPrevented).toBe(false)
+    expect(onPick).toHaveBeenCalledTimes(2)
+    expect(live()).toBe(1)
   })
 })

@@ -25,7 +25,7 @@ import {
 } from './motion/recede'
 import { REDUCED_MOTION_FADE_MS, sheetBackPosition } from './motion/sheet'
 import { SPRING_GENTLE, SpringAnimation, reducedMotion, type SpringConfig } from './motion/spring'
-import { focusableIn, HELD } from './popover'
+import { focusableIn, HELD, isTextField } from './popover'
 import { closeAllPopovers, openPopoverCount } from './popoverStore'
 import { coverPageUnderSheet, holdFrameDialogCover, uiStore, type SheetCover } from './ui'
 
@@ -194,6 +194,29 @@ function topPanelIn(slot: HTMLElement): HTMLElement | null {
  */
 function seatStops(seat: HTMLElement): HTMLElement[] {
   return focusableIn(seat).filter((el) => el.closest('[data-leaving]') === null)
+}
+
+/**
+ * The Undo of the lifted seat's top live card – the newest card standing (the store's push
+ * order; a card on its way out has gone with its toast) – where that card's action is Undo
+ * (`ToastCard`'s `data-action="undo"`, §9.33's "when the action is Undo"): the control Ctrl+Z
+ * presses. Null where no card stands or the top one offers no Undo (a screenshot's preview, a
+ * toast with another action or none).
+ */
+function seatUndo(seat: HTMLElement): HTMLElement | null {
+  const cards = seat.querySelectorAll<HTMLElement>('.zen-message-toast:not([data-leaving])')
+  const top = cards[cards.length - 1]
+  if (!top || top.getAttribute('data-action') !== 'undo') return null
+  return top.querySelector<HTMLElement>('button.zen-message-button')
+}
+
+/**
+ * Ctrl+Z – Cmd+Z on a Mac – as the undo chord reads everywhere in the chrome (the bookmarks
+ * manager's): one of the two modifiers, never both, no Alt, and no Shift, which makes it redo.
+ */
+function isUndoChord(e: KeyboardEvent): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return false
+  return e.key.toLowerCase() === 'z'
 }
 
 /**
@@ -987,8 +1010,19 @@ function useSheetChassis(
  * ends, never while a popover is up (its own cycle) and never a key something else has taken.
  * A card on its way out has left the cycle (`seatStops`). When the toast goes while its Undo
  * has the focus – pressed, timed out – the focus returns to the dialog's own element
- * (`dialogReturn`), from which Tab enters at its first control. Ctrl+Z is untouched: §9.33
- * keeps the shortcut as the other way back where a surface has one.
+ * (`dialogReturn`), from which Tab enters at its first control.
+ *
+ * And Ctrl+Z – Cmd+Z on a Mac – is the Undo's shortcut, in the same listener (§9.33: the
+ * shortcut stays the other way back; the lead's pick was both): while the seat is lifted and
+ * its top live card – the newest standing, the store's push order – offers an Undo (`seatUndo`:
+ * `ToastCard`'s `data-action="undo"`, the action labelled Undo), the plain chord (`isUndoChord`:
+ * no Shift, which is redo, no Alt, one modifier) presses that Undo, taken with `preventDefault`
+ * and `stopPropagation`, and the focus returns to the dialog's element as on the Enter path
+ * wherever it was not on a control of the dialog – the Undo's own (the return above), the body
+ * after a pointer's act; a dialog control that has it keeps it. Never while a text field has
+ * the focus – an input, a textarea, a contenteditable – whose own undo the chord is
+ * (`isTextField`); and nothing at all when the seat is not lifted or the top card offers no
+ * Undo: the key falls through as it did.
  */
 function useToastSeat(
   active: boolean,
@@ -1028,14 +1062,29 @@ function useToastSeat(
     return () => publishFrameSeat(SEAT_DOWN)
   }, [active])
 
-  // The Tab cycle's last stop.
+  // The Tab cycle's last stop, and Ctrl+Z as the Undo's shortcut.
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Tab' || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return
+      if (e.defaultPrevented) return
       const seatEl = seatRef.current
       const slot = slotRef.current
       if (!seatEl || !slot || !seatEl.hasAttribute('data-lifted')) return
+      if (isUndoChord(e)) {
+        const focused = document.activeElement
+        if (focused && isTextField(focused)) return
+        const undoControl = seatUndo(seatEl)
+        if (!undoControl) return
+        e.preventDefault()
+        e.stopPropagation()
+        // The press is the button's own click: the same path as Enter on it (`pickToastAction`).
+        undoControl.click()
+        const topPanel = topPanelIn(slot)
+        if (topPanel && !topPanel.contains(document.activeElement))
+          dialogReturn(topPanel).focus({ preventScroll: true })
+        return
+      }
+      if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return
       if (openPopoverCount() > 0) return
       const stops = seatStops(seatEl)
       if (stops.length === 0) return

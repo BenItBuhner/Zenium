@@ -41,7 +41,9 @@ export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
       className={cn('zen-message zen-message-toast', compact && 'zen-message-compact')}
       data-surface="page"
       data-kind={toast.kind}
-      data-action={toast.action ? '' : undefined}
+      // Present with an action (the card's layout); `"undo"` when the action is Undo (§9.33):
+      // the frame dialog host's seat presses that one on Ctrl+Z (lib/portals.tsx `seatUndo`).
+      data-action={toast.action ? (toast.action.label === 'Undo' ? 'undo' : '') : undefined}
       data-glyph={toast.icon ? '' : undefined}
       // On its way out: the frame dialog host's seat drops the card's controls from the
       // dialog's Tab cycle with it (§9.33: the stop leaves the cycle with the toast) and returns
