@@ -29,6 +29,11 @@ name: Android fonts / languages UI demo
 # minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
 # file only picks the driver and the demo it runs.
 on:
+  # TEMPORARY (services pass 15 item 2, CT-35): Android's nod on #683 asks one green run of this demo at
+  # the head (FontsLanguagesUiDemo.kt changed for the Letter spacing row at the peek); the dispatch API
+  # is closed to the coordinator's token; the inputs fall to their defaults. Removed in the next commit.
+  push:
+    branches: [cursor/services-pass-15-item-2-reader-spacing-24d1]
   workflow_dispatch:
     inputs:
       theme:

@@ -15,6 +15,11 @@ name: Android reader UI demo
 # picks the driver and the demo it runs. The image stays the shared default (Google APIs, API
 # 34): that is where the speech engine is.
 on:
+  # TEMPORARY (services pass 15 item 2, CT-35): Android's nod on #683 asks one green run of this demo at
+  # the head (ReaderUiDemo.kt changed for the Line spacing / Letter spacing rows); the dispatch API is
+  # closed to the coordinator's token. Removed in the next commit; .github returns to main's bytes.
+  push:
+    branches: [cursor/services-pass-15-item-2-reader-spacing-24d1]
   workflow_dispatch:
 
 permissions:
