@@ -80,6 +80,12 @@
 //                four launches: clear-on-exit, clear-on-exit-relaunch, clear-on-exit-owed-seed,
 //                clear-on-exit-owed-launch)
 //   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
+//   launch-url   a fresh profile past onboarding launched with the fixture's first page on the
+//                command line (`zenium <url>`: the default-browser path with Zenium closed, a
+//                dropped file; W8-F14) comes up as Chrome does – ONE tab, on the page, one
+//                sidebar row, and no URL bar over it once the fresh tab's announcement would have
+//                been due (W5-F2's fresh tab took the launch as a second tab and the bar armed for
+//                the window opened over the page, bound to no tab); then a graceful quit
 //   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
 //   mv3-worker   Zenium's chrome.* layer for MV3 background workers (the service-worker preload
 //                of src/preload/extension.ts): a profile past onboarding installs the unpacked
@@ -5785,6 +5791,60 @@ async function scenarioScale() {
   )
 }
 
+/**
+ * `zenium <url>` on a fresh profile past onboarding (W8-F14): the default-browser path with
+ * Zenium closed – another app's link, a dropped file – comes up as Chrome does, with the one tab
+ * on the page and nothing over it. The main process starts the window with its fresh tab
+ * (`ensureFirstTab`), then `openLaunch` carries the URL into that tab (`Browser.openLaunchUrls`),
+ * and the fresh tab's announcement – armed for the tab, 150 ms after the chrome is ready – finds
+ * a page in its place and stays silent. Since W5-F2 (#490) and until this slice the URL opened as
+ * a SECOND tab beside the fresh `zen://newtab` one, and the bar armed for the window opened over
+ * the page, bound to no tab (`data-attached="false"`; its layer took the pointer in the drives).
+ * Read after the page has loaded and a quiet second past it, so a bar due at chrome-ready has had
+ * its moment: the tabs through app.getState (one, the launched page, active), the sidebar rows
+ * (one) and the URL bar's field (none), then a graceful quit that keeps the page.
+ */
+async function scenarioLaunchUrl() {
+  const userData = freshProfile('profile-launch-url', { onboardingDone: true })
+  const page = bootSite.first
+  return runScenario('launch-url', userData, { args: [page.url] }, async (s, out) => {
+    out.fixture = { origin: bootSite.origin, page: page.url }
+    await s.step('one-tab-no-bar', async () => {
+      const tab = await s.waitForTab(page.url, 30000)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
+      // Chrome-ready's 150 ms and the state broadcasts behind it: nothing due may still be due.
+      await delay(1500)
+      await s.settle()
+      const state = await s.chrome.evaluate(() => window.zen.invoke('app.getState'))
+      const activeIds = new Set((state.spaces ?? []).map((space) => space.activeTabId))
+      const tabs = Object.values(state.tabs ?? {}).map((t) => ({
+        url: t.url,
+        active: activeIds.has(t.id)
+      }))
+      const bar = await s.urlbarState()
+      const sidebarTabs = await s.sidebarTabCount()
+      await s.shot('01-launched-page')
+      if (tabs.length !== 1 || !tabs[0].url.startsWith(page.url) || !tabs[0].active) {
+        throw new Error(
+          `expected the one launched tab, active; state has ${JSON.stringify(tabs)} (W5-F2's fresh tab beside the page)`
+        )
+      }
+      if (sidebarTabs !== 1) throw new Error(`${sidebarTabs} sidebar rows for the one launched tab`)
+      if (bar.barVisible) {
+        throw new Error(
+          `the URL bar is open over the launched page (submit tab ${bar.submitTabId ?? 'none'}: the bar armed for the window, W8-F14)`
+        )
+      }
+      return { loaded: tab.url, tabs, sidebarTabs, bar }
+    })
+    await s.step('window', () => assertMainWindow(s))
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      return { ...r, state: assertCleanState(userData, page.url) }
+    })
+  })
+}
+
 // OS dark mode. Windows: the Personalize registry keys Chromium watches. macOS: System Events
 // posts the theme-changed notification (`defaults write` alone would not reach running apps).
 function setOsDarkMode(on) {
@@ -7940,6 +8000,7 @@ async function main() {
       crash: scenarioCrash,
       'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
+      'launch-url': scenarioLaunchUrl,
       dark: scenarioDark,
       'mv3-worker': scenarioMv3Worker,
       pip: scenarioPip,
