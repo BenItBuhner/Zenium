@@ -41,6 +41,31 @@ class SweepInsertProbeTest {
     }
 
     @Test
+    fun `the world's insert loading with no timeline entry where the page's leaves one names the timeline's blindness, not a miss`() {
+        // Compat round 23's AFTER on WebView 156 (row 39, AdGuard Extra): both of the world's
+        // inserts came to `load` and neither left an entry; the page's left one.
+        val after = Legs(
+            worldRan = true,
+            world = Verdict.LOAD,
+            worldOrigin = Verdict.LOAD,
+            page = Verdict.LOAD,
+            worldEntry = false,
+            worldOriginEntry = false,
+            pageEntry = true,
+            recoveryLines = 0
+        )
+        assertEquals(
+            "the same insertion loads from the world and the page now, and the world's load leaves no timeline entry where the page's leaves one: the row's timeline read is blind to a world load on this lane – the extension's own document_start insertion is unread, not shown missing (a read of the served-resource record, not the page's timeline, is the row's next shape)",
+            SweepInsertProbe.reading(after)
+        )
+        // One of the world's loads leaving an entry is the timing reading again: a world load
+        // does reach the timeline, so the extension's own absence there is its own.
+        assertTrue(SweepInsertProbe.reading(after.copy(worldOriginEntry = true)).contains("document_start's moment"))
+        // The page's load without an entry either is not the timeline's blindness to the world alone.
+        assertTrue(SweepInsertProbe.reading(after.copy(pageEntry = false)).contains("document_start's moment"))
+    }
+
+    @Test
     fun `the served origin loading from the world where the getURL string does not names the spelling`() {
         assertEquals(
             "the world's getURL spelling is the miss: the served origin loads from the world (a timeline entry) where the getURL string none (no timeline entry)",

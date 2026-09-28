@@ -9,10 +9,13 @@ package app.zen.chromium.ext
  * the same insertion again three ways and reads each load's verdict – in the extension's world
  * with `chrome.runtime.getURL(file)` as the content script spells it, in the world with the
  * served origin spelled out, and in the page world with the served origin – so the miss is
- * told apart: the timing of document_start (every insert loads now), the world's `getURL`
- * spelling (the served origin loads from the world, the `getURL` string does not), the world
- * itself (the page's insert alone loads) or the loader (none loads). Pure; the driver's
- * `adguardExtraProbe` records the legs and this names them.
+ * told apart: the timing of document_start (every insert loads now and the world's leaves a
+ * timeline entry), the timeline's blindness (the world's insert loads and leaves NO entry where
+ * the page's leaves one: the row's timeline read cannot see a world load on the lane, so the
+ * extension's own insertion is unread, not shown missing), the world's `getURL` spelling (the
+ * served origin loads from the world, the `getURL` string does not), the world itself (the
+ * page's insert alone loads) or the loader (none loads). Pure; the driver's `adguardExtraProbe`
+ * records the legs and this names them.
  */
 object SweepInsertProbe {
     /** What one inserted element came to: its `load` event, its `error` event, or neither within the wait. */
@@ -53,9 +56,12 @@ object SweepInsertProbe {
             } + recovery
         }
         val worldLoads = legs.world == Verdict.LOAD || legs.worldOrigin == Verdict.LOAD
+        val worldEntries = (legs.world == Verdict.LOAD && legs.worldEntry) || (legs.worldOrigin == Verdict.LOAD && legs.worldOriginEntry)
         return when {
             legs.world != Verdict.LOAD && legs.worldOrigin == Verdict.LOAD ->
                 "the world's getURL spelling is the miss: the served origin loads from the world (${entryWord(legs.worldOriginEntry)}) where the getURL string ${legs.world.name.lowercase()} (${entryWord(legs.worldEntry)})"
+            worldLoads && legs.page == Verdict.LOAD && !worldEntries && legs.pageEntry ->
+                "the same insertion loads from the world and the page now, and the world's load leaves no timeline entry where the page's leaves one: the row's timeline read is blind to a world load on this lane – the extension's own document_start insertion is unread, not shown missing (a read of the served-resource record, not the page's timeline, is the row's next shape)"
             worldLoads && legs.page == Verdict.LOAD ->
                 "the same insertion loads from the world and the page now (world ${legs.world.name.lowercase()}, ${entryWord(legs.worldEntry)}; page load, ${entryWord(legs.pageEntry)}): the extension's own miss is document_start's moment – an element appended under <html> before <head> exists –, not the world or the loader"
             !worldLoads && legs.page == Verdict.LOAD ->

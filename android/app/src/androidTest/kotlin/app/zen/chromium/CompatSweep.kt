@@ -2867,8 +2867,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * data-agx-*>`, the DOM the worlds share), the timeline's entries for the three
      * (`responseStatus` on Chromium 109+), the timeline's size and its last names, and the
      * bridge's script-recovery lines (`mainScript`, `extFetch`, `chunkScript`) of the row;
-     * [SweepInsertProbe.reading] names where the miss is (document_start's moment, the world's
-     * `getURL` spelling, the world, the loader). On a WebView without isolated worlds the page's
+     * [SweepInsertProbe.reading] names where the miss is (document_start's moment, the timeline's
+     * blindness to a world load – round 23's AFTER on 156: the world's inserts loaded and left no
+     * entry where the page's left one, so the row's timeline read cannot see the extension's own
+     * load there –, the world's `getURL` spelling, the world, the loader). On a WebView without isolated worlds the page's
      * insert stands for both realms. The file runs in the page once per insert that loads – its
      * effects are for its listed hosts alone, none on the fixture.
      */
