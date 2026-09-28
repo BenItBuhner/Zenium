@@ -32,7 +32,10 @@ const WIDTH = POPOVER_WIDTH.list
  * Ctrl+wheel, the menu) and says where the zoom stands, with a step either way and Reset. Left
  * alone it goes after 1.5 s – 5 s once one of its buttons was used – and waits while the
  * pointer rests on it; opened from the pill's zoom chip it stays until Escape, a click outside
- * or the chip itself puts it away. Escape hands the keyboard back to the chip (§9.22).
+ * or the chip itself puts it away. Escape hands the keyboard back to the chip (§9.22). A change
+ * that takes the page back to its default zoom – its own Reset, Ctrl+0, a step or the wheel
+ * landing there – ends it with the chip: at the default the chip goes (§9.29), and the bubble
+ * does not stand on over nothing to hang from (§9.20); `showZoomBubble` reads the chip's rule.
  *
  * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
  * end-aligned with the chip, through the chrome layer, and registered for the layer's light
