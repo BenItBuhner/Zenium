@@ -274,6 +274,7 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteControls/primitives.tsx',
   'components/siteControls/pane.tsx',
   'components/siteControls/SiteInfoPopover.tsx',
+  'components/siteControls/TrackersPopover.tsx',
   'components/siteControls/ClearBrowsingDataDialog.tsx',
   'components/siteControls/settingsRows.tsx',
   // The print preview (#225's UI): the option column's headings and validation lines in the
@@ -2049,14 +2050,16 @@ describe('live counts (§4)', () => {
     // "1,284 requests", "116,161 filters", "Updated 2 h ago": a count that changes under the
     // user must not reflow its row. On a phone the counts sit in the Settings tab's value slot
     // and group description; on desktop in the pane's card title, detail line and row
-    // descriptions; in the URL bar the chip's badge inherits it from the chip.
+    // descriptions; in the URL bar the chip's badge inherits it from the chip – the phone's one
+    // shield chip and the desktop's count pill (PS-33) alike.
     for (const selector of [
       '.zen-settings-description',
       '.zen-settings-group-description',
       '.zen-privacy-card-title',
       '.zen-privacy-muted',
       '.zen-privacy-row-desc',
-      '.zen-v2-blocked-chip'
+      '.zen-v2-blocked-chip',
+      '.zen-v2-blocked-count'
     ])
       expect(block(selector), selector).toMatch(/^ {2}font-variant-numeric: tabular-nums;$/m)
   })
