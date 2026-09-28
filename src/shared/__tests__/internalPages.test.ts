@@ -136,9 +136,9 @@ describe('the page registry', () => {
     // absence and is not drawn (the lead's ruling; #628's transport row, #632's Print row) –
     // whatever the host's capabilities say.
     for (const caps of [ALL, NONE]) {
-      expect(availableSections(INTERNAL_PAGES.settings, caps, 'phone').map((s) => s.id)).not.toContain(
-        'mods'
-      )
+      expect(
+        availableSections(INTERNAL_PAGES.settings, caps, 'phone').map((s) => s.id)
+      ).not.toContain('mods')
     }
     // The parser stays host neutral: the address still names the section, and the renderer's
     // `availableSections` decides what the phone draws for it (the landing, as for Performance).

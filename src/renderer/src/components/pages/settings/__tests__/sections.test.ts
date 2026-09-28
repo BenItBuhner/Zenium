@@ -9212,7 +9212,10 @@ describe('Settings › Mods on the phone (seed #31: hidden, the records untouche
     for (const layout of ['desktop', 'tablet'] as const) {
       const ids = availableSections(PAGE, ANDROID, layout).map((s) => s.id)
       expect(ids.indexOf('mods'), layout).toBe(ids.indexOf('boosts') + 1)
-      expect(on(layout).some((m) => m.section.id === 'mods'), layout).toBe(true)
+      expect(
+        on(layout).some((m) => m.section.id === 'mods'),
+        layout
+      ).toBe(true)
     }
     expect(phoneSections().map((m) => m.section.id)).not.toContain('mods')
     expect(phoneSections(withMods()).map((m) => m.section.id)).not.toContain('mods')
@@ -9231,9 +9234,10 @@ describe('Settings › Mods on the phone (seed #31: hidden, the records untouche
         .filter((id) => id.startsWith('mod:') || id === 'new-mod' || id.startsWith('import-mod'))
     for (const q of ['mods', 'css', 'round tabs', 'new mod', 'stylesheet', 'userchrome']) {
       expect(modRows(phoneSections(withMods()), q), q).toEqual([])
-      expect(searchRows(phoneSections(withMods()), q).map((h) => h.caption), q).not.toContainEqual(
-        expect.stringMatching(/^Mods/)
-      )
+      expect(
+        searchRows(phoneSections(withMods()), q).map((h) => h.caption),
+        q
+      ).not.toContainEqual(expect.stringMatching(/^Mods/))
     }
     for (const layout of ['desktop', 'tablet'] as const) {
       expect(modRows(on(layout), 'round tabs'), layout).toContain('mod:m1')
@@ -9260,7 +9264,11 @@ describe('Settings › Mods on the phone (seed #31: hidden, the records untouche
     expect(enabled.checked).toBe(true)
     enabled.onChange(false)
     expect(invoke).toHaveBeenCalledWith('mod.update', { id: 'm1', patch: { enabled: false } })
-    expect(mods.groups[1].rows.map((r) => r.id)).toEqual(['new-mod', 'import-mod-url', 'import-mod-file'])
+    expect(mods.groups[1].rows.map((r) => r.id)).toEqual([
+      'new-mod',
+      'import-mod-url',
+      'import-mod-file'
+    ])
   })
 })
 
