@@ -4983,6 +4983,12 @@ export type SuggestionKind =
    * read once, on the reveal or the pick (`clipboard.read`). `targetId` is the kind.
    */
   | 'clipboard'
+  /**
+   * A tab group whose name (or a member page's address) the typing starts a word of (OMN-15;
+   * Chrome's `TabGroupProvider`, `AutocompleteMatchType::TAB_GROUP`): the title is the group's
+   * name, the subtitle its pages' hosts, `targetId` the folder – the pick is `folder.open`.
+   */
+  | 'folder'
 
 export interface Suggestion {
   id: string
@@ -4992,7 +4998,10 @@ export interface Suggestion {
   /** URL to navigate to (or search URL). */
   url: string | null
   favicon: string | null
-  /** For kind = tab: the tab to switch to. For kind = space: the space id. For command: the action. */
+  /**
+   * For kind = tab: the tab to switch to. For kind = space: the space id. For command: the
+   * action. For kind = folder: the group (folder) to open.
+   */
   targetId: string | null
   /** Text to place in the input when the suggestion is highlighted (for inline completion). */
   fill: string

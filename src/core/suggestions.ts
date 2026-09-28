@@ -1,5 +1,6 @@
 import {
   PRIVATE_CONTAINER_ID,
+  type Folder,
   type SearchEngine,
   type Suggestion,
   type SuggestionKind
@@ -23,14 +24,17 @@ import { EXTENSION_SETTING_KEYS, effectiveSwitch } from '../shared/extensionSett
 import {
   BOOKMARKS_URL,
   HISTORY_URL,
+  addressParts,
   displayUrl,
   inputToUrl,
   isEmptyTabUrl,
+  isInternalUrl,
   isProbablyUrl
 } from '../shared/url'
+import { foldForMatch, matchableUrl, queryTerms } from '../shared/wordMatch'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { orderedTabsForSpace, tabVisibleIn } from './model'
+import { orderedTabsForSpace, regularFolderTabs, tabVisibleIn } from './model'
 import { AnswerService } from './answers'
 import { matchesAtWordStart } from './history'
 
@@ -56,6 +60,12 @@ export const RELEVANCE = {
   historyHostPrefix: 1050,
   command: 1010,
   tab: 1000,
+  /**
+   * A tab group the typing names (OMN-15): just under the open tabs, as Chrome's
+   * `TabGroupProvider` caps its score at the tab matches' 1000 – "based on these suggestions
+   * sharing a group with open tab matches" – so a group row never outranks a tab's.
+   */
+  folder: 990,
   historyTitlePrefix: 980,
   bookmark: 950,
   /** A term at the start of a word in the title or of a path segment (HistoryQuick's idea). */
@@ -76,19 +86,28 @@ const RECENT_PAGES_MAX = 8
 /**
  * The phone card's sections for a typed query (OMN-18), in the order Chrome for Android lays
  * its suggestions out: the pages first – addresses, history, bookmarks, a Wikipedia entity:
- * Chrome's URL group – then the searches, then the open tabs where any match, then Zenium's
- * own kinds (commands, spaces, the `@` engines). Rows of a kind not listed here – the answer,
- * the clipboard row, an extension's omnibox rows – belong to no section and stand with the
- * default match at the field's end.
+ * Chrome's URL group – then the searches, then the open tabs where any match – the tab groups
+ * with them, in Chrome's one section for both (OMN-15) – then Zenium's own kinds (commands,
+ * spaces, the `@` engines). Rows of a kind not listed here – the answer, the clipboard row, an
+ * extension's omnibox rows – belong to no section and stand with the default match at the
+ * field's end.
  */
 export const CARD_SECTIONS: ReadonlyArray<{ label: string; kinds: readonly SuggestionKind[] }> = [
   { label: 'Pages', kinds: ['url', 'history', 'bookmark', 'entity'] },
   { label: 'Searches', kinds: ['search'] },
-  { label: 'Open tabs', kinds: ['tab'] },
+  { label: 'Open tabs', kinds: ['tab', 'folder'] },
   { label: 'Commands', kinds: ['command'] },
   { label: 'Spaces', kinds: ['space'] },
   { label: 'Search engines', kinds: ['engine'] }
 ]
+
+/**
+ * The open tabs' heading while a tab group row stands in the section (OMN-15): Chrome for
+ * Android's `IDS_OMNIBOX_HUB_TYPED_MATCH_HEADER` over its `GROUP_MOBILE_OPEN_TABS`, the one
+ * section its open-tab and tab-group rows share. Without a group row the heading stays "Open
+ * tabs", as it names what is there.
+ */
+export const TABS_AND_GROUPS_GROUP = 'Tabs and tab groups'
 
 export interface SuggestOptions {
   /**
@@ -299,6 +318,7 @@ export class SuggestionService {
       rows.push(...this.commandRows(query, win))
       if (!local) rows.push(...this.spaceRows(query, win))
       rows.push(...this.tabRows(query, currentTabId, win, 3))
+      if (!isPrivate) rows.push(...this.folderRows(query, win, 3))
       if (wantsBookmarks) rows.push(...this.bookmarkRows(query, 3))
       if (wantsHistory) rows.push(...this.historyRows(query, 6))
     }
@@ -571,6 +591,56 @@ export class SuggestionService {
     return out
   }
 
+  /**
+   * Tab groups the typing names (OMN-15; Chrome for Android's `TabGroupProvider`, the "Open
+   * tab group" row of its tab switcher's search): every term of the query starts a word of the
+   * group's name or of a member page's address – Chrome's `ALWAYS_PREFIX_SEARCH`, the rule of
+   * `wordMatch.ts` – and the group has pages to open: its live regular tabs, else the pages a
+   * saved group keeps. Chrome's `Score` ({@link groupMatch}) ranks the groups against each
+   * other and the best `limit` are rows, in the tabs' band just under them ({@link RELEVANCE}
+   * `folder`). The row is the group's name over its pages' sites, the matching site first, as
+   * Chrome lists a group's addresses with the matching one in front. An unnamed group is no row
+   * (Chrome surfaces none), nor one with nothing to open – a private group among them, whose
+   * private tabs no regular surface opens (`regularFolderTabs`); a window of a local space sees
+   * that space's groups alone, as its tab rows are that space's.
+   */
+  private folderRows(query: string, win: ZenWindow, limit: number): Ranked[] {
+    const terms = queryTerms(query)
+    if (terms.length === 0) return []
+    const m = this.browser.state.model
+    const local = win.localSpace
+    const hits: { folder: Folder; score: number; sites: string[] }[] = []
+    for (const folder of Object.values(m.folders)) {
+      if (local ? folder.spaceId !== local.id : m.localSpaces[folder.spaceId]) continue
+      if (!folder.name.trim()) continue
+      const live = regularFolderTabs(m, folder.id)
+      const pages = (live.length > 0 ? live : (folder.savedTabs ?? []))
+        .map((t) => t.url)
+        .filter((url) => !isEmptyTabUrl(url) && !isInternalUrl(url))
+      if (pages.length === 0) continue
+      const match = groupMatch(terms, folder.name, pages)
+      if (!match) continue
+      const sites: string[] = []
+      for (const url of match.matchingUrl ? [match.matchingUrl, ...pages] : pages) {
+        const site = addressParts(displayUrl(url)).site
+        if (site && !sites.includes(site)) sites.push(site)
+      }
+      hits.push({ folder, score: match.score, sites })
+    }
+    hits.sort((a, b) => b.score - a.score)
+    return hits.slice(0, limit).map(({ folder, sites }, i) => ({
+      id: `folder:${folder.id}`,
+      kind: 'folder' as const,
+      title: folder.name,
+      subtitle: sites.join(', '),
+      url: null,
+      favicon: null,
+      targetId: folder.id,
+      fill: query,
+      relevance: RELEVANCE.folder - i
+    }))
+  }
+
   /** Bookmarks from every folder; the subtitle names the folder so "Work / Docs" is visible. */
   private bookmarkRows(query: string, limit: number): Ranked[] {
     const q = query.toLowerCase()
@@ -837,6 +907,74 @@ export function isIntranetWord(query: string): boolean {
   return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i.test(query) && query.length >= 3 && !/^\d+$/.test(query)
 }
 
+/** Chrome's `TabGroupProvider` ceiling: the score of a group that matches whole (`kMaxScore`). */
+export const GROUP_MAX_SCORE = 1000
+
+/**
+ * Chrome's `TabGroupProvider::Score` for one group (OMN-15): null unless every term of the
+ * query (`queryTerms`) starts a word of the group's title or of one of its pages' addresses –
+ * the address as Chrome formats it for matching, scheme and `www.` off, escapes decoded
+ * (`matchableUrl`) – else the score: Chrome's `ScoringFunctor` summed over the title's hits and
+ * the matching address's, each hit worth the term's length weighted towards the text's start,
+ * normalised over the title's length + 10, capped at 1, times {@link GROUP_MAX_SCORE}; with the
+ * address a term matched, which the row lists first. A term hits every word it starts, as
+ * Chrome's `QueryNodeWord::HasMatchIn` positions every prefixed word. Where two terms match two
+ * addresses, each address's hits weigh against its own length (Chrome weighs both against the
+ * last one's); with one matching address, the usual case, the two agree.
+ */
+export function groupMatch(
+  terms: readonly string[],
+  title: string,
+  pages: readonly string[]
+): { score: number; matchingUrl: string | null } | null {
+  const lowerTitle = foldForMatch(title)
+  let titleFactor = 0
+  let urlFactor = 0
+  let matchingUrl: string | null = null
+  for (const term of terms) {
+    const titleHits = wordStarts(lowerTitle, term)
+    let urlHit = false
+    for (const url of pages) {
+      const lowerUrl = foldForMatch(matchableUrl(url))
+      const hits = wordStarts(lowerUrl, term)
+      if (hits.length === 0) continue
+      urlHit = true
+      matchingUrl = url
+      urlFactor += scoringFactor(hits, term.length, lowerUrl.length)
+      break
+    }
+    if (titleHits.length === 0 && !urlHit) return null
+    titleFactor += scoringFactor(titleHits, term.length, lowerTitle.length)
+  }
+  const normalized = Math.min((titleFactor + urlFactor) / (lowerTitle.length + 10), 1)
+  return { score: normalized * GROUP_MAX_SCORE, matchingUrl }
+}
+
+/** Chrome's `ScoringFunctor`: each hit's length, weighted by how near the text's start it is. */
+function scoringFactor(starts: readonly number[], length: number, textLength: number): number {
+  let factor = 0
+  for (const start of starts) factor += (length * (textLength - start)) / textLength
+  return factor
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u
+
+/**
+ * The offsets at which `term` starts a word of `hay` (both folded) – the text's start, or after
+ * a character that is no letter or digit, `wordMatch.ts`'s rule: Chrome's match positions.
+ */
+function wordStarts(hay: string, term: string): number[] {
+  const out: number[] = []
+  if (!term) return out
+  let from = 0
+  for (;;) {
+    const at = hay.indexOf(term, from)
+    if (at === -1) return out
+    if (at === 0 || !WORD_CHAR.test(hay[at - 1] ?? '')) out.push(at)
+    from = at + 1
+  }
+}
+
 function dedupeKey(row: Suggestion): string {
   switch (row.kind) {
     case 'url':
@@ -938,6 +1076,11 @@ export function groupForCard(rows: Suggestion[], query: string): Suggestion[] {
     const i = cardSection(row)
     if (i < 0) loose.push(row)
     else sections[i].push({ ...row, group: CARD_SECTIONS[i].label })
+  }
+  // The open tabs' section holds a tab group (OMN-15): Chrome's heading for the two together.
+  for (const section of sections) {
+    if (section.some((row) => row.kind === 'folder'))
+      for (const row of section) row.group = TABS_AND_GROUPS_GROUP
   }
   const filled = sections.filter((s) => s.length > 0)
   // One kind throughout, the default match included: Chrome's flat list, no heading.

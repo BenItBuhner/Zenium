@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Fragment, act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { ClipboardContent, Suggestion, Tab, UIState } from '@shared/types'
+import type { ClipboardContent, Folder, Suggestion, Tab, UIState } from '@shared/types'
 import type { UrlbarState } from '@renderer/lib/ui'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
@@ -1248,5 +1248,212 @@ describe('the field’s engine mark (NTP-09)', () => {
     const img = s.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
     expect(img.className).not.toContain('invisible')
     expect(img.dataset.arrived).toBeUndefined()
+  })
+})
+
+/*
+ * The tab group row (OMN-15; Chrome for Android's `TabGroupSuggestionProcessor`): the one group
+ * glyph in the favicon slot (§9.37), the group's name over its sites, Chrome's sentence to
+ * assistive technology, and the pick as the Tab groups pane's Open (`folder.open`). One kind
+ * on every chassis: the phone's sheet row, the tablet's popup row with "Open tab group" where
+ * the tab row says "Switch to tab", the desktop's with its "Folder" noun.
+ */
+describe('the tab group row (OMN-15)', () => {
+  const research: Folder = {
+    id: 'folder_research',
+    spaceId: 'space',
+    name: 'Research',
+    icon: '📁',
+    collapsed: true,
+    color: 'blue'
+  }
+  const groupRow = (extra: Partial<Suggestion> = {}): Suggestion => ({
+    id: 'folder:folder_research',
+    kind: 'folder',
+    title: 'Research',
+    subtitle: 'arxiv.org, scholar.google.com',
+    url: null,
+    favicon: null,
+    targetId: 'folder_research',
+    fill: 'res',
+    ...extra
+  })
+  const tabRow = (): Suggestion => ({
+    ...row('tab', 'Research notes', 'res', 'https://notes.example/research'),
+    targetId: 't2'
+  })
+  /** The state with the group and, when `open`, a live member tab of it. */
+  const withGroup = (t: Tab, folder: Folder = research, open = true): UIState =>
+    ({
+      ...state(t),
+      tabs: open
+        ? {
+            [t.id]: t,
+            member: tab('https://arxiv.org/abs/1', { id: 'member', folderId: folder.id })
+          }
+        : { [t.id]: t },
+      folders: { [folder.id]: folder }
+    }) as UIState
+  const phoneWith = (s: UIState): ReactElement =>
+    createElement(
+      Fragment,
+      null,
+      createElement(Urlbar, {
+        state: s,
+        urlbar: urlbarState('edit'),
+        area: null,
+        phoneEdge: 'top'
+      }),
+      createElement(FrameDialogHost, { frame: true })
+    )
+  const bareWith = (s: UIState): ReactElement =>
+    createElement(Urlbar, {
+      state: s,
+      urlbar: urlbarState('edit'),
+      area: { x: 0, y: 0, width: 1200, height: 800 },
+      phoneEdge: undefined
+    })
+  const glyph = (r: HTMLElement): HTMLElement | null =>
+    r.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')
+  const hint = (r: HTMLElement): string | null =>
+    r.querySelector('.zen-omnibox-row-hint')?.textContent ?? null
+  /** The list's rows less its headings (a sectioned card has one over the group). */
+  const listRows = (el: HTMLElement): HTMLElement[] =>
+    rows(el).filter((li) => li.hasAttribute('data-kind'))
+  async function listed(el: HTMLElement, count: number): Promise<HTMLElement[]> {
+    await act(async () => {
+      await vi.waitFor(() => expect(listRows(el)).toHaveLength(count))
+    })
+    return listRows(el)
+  }
+  /** A mouse press on a desktop row: the desktop picks on the press. */
+  async function press(el: HTMLElement): Promise<void> {
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+      await Promise.resolve()
+    })
+  }
+
+  afterEach(() => layout(null))
+
+  it('phone: the sheet row wears the group glyph, its name over its sites, in Chrome’s section', async () => {
+    layout('phone')
+    suggestions = (q) =>
+      q === 'res'
+        ? [
+            { ...tabRow(), group: 'Tabs and tab groups' },
+            groupRow({ group: 'Tabs and tab groups' })
+          ]
+        : []
+    const el = await render(phoneWith(withGroup(tab(PAGE))))
+    await type(input(el), 'res')
+    const [tabLi, groupLi] = await listed(el, 2)
+    expect(tabLi.getAttribute('data-kind')).toBe('tab')
+    expect(groupLi.getAttribute('data-kind')).toBe('folder')
+    expect(groupLi.getAttribute('data-section')).toBe('Tabs and tab groups')
+    // One heading over the two, Chrome's for a section holding both kinds.
+    const headings = Array.from(el.querySelectorAll('[data-group]')).map((h) => h.textContent)
+    expect(headings).toEqual(['Tabs and tab groups'])
+    // The one group glyph (§9.37): the 10 dot in the group's colour, no kind icon beside it.
+    const mark = glyph(groupLi)!
+    expect(mark).not.toBeNull()
+    expect(mark.querySelector('.zen-group-row-dot')).not.toBeNull()
+    expect(mark.hasAttribute('data-saved')).toBe(false)
+    expect(mark.style.getPropertyValue('--zen-group-rgb-light')).not.toBe('')
+    expect(option(groupLi).querySelector('svg.lucide-folder')).toBeNull()
+    expect(option(groupLi).querySelector('[data-testid="urlbar-row-title"]')?.textContent).toBe(
+      'Research'
+    )
+    expect(option(groupLi).querySelector('[data-testid="urlbar-row-subtitle"]')?.textContent).toBe(
+      'arxiv.org, scholar.google.com'
+    )
+    // The tab row's arrow, and no Refine control: the row is a place, not a query.
+    expect(option(groupLi).querySelector('svg.lucide-arrow-right')).not.toBeNull()
+    expect(groupLi.querySelector('.zen-omnibox-refine')).toBeNull()
+    // Chrome's content description, in the touch hosts' noun.
+    expect(option(groupLi).getAttribute('aria-label')).toBe(
+      'Open Research tab group, colour Blue, with sites arxiv.org, scholar.google.com.'
+    )
+    expect(option(tabLi).hasAttribute('aria-label')).toBe(false)
+  })
+
+  it('phone: the tap opens the group (`folder.open`) and closes the bar, nothing submitted', async () => {
+    layout('phone')
+    suggestions = (q) => (q === 'res' ? [groupRow()] : [])
+    const el = await render(phoneWith(withGroup(tab(PAGE))))
+    await type(input(el), 'res')
+    const [groupLi] = await listed(el, 1)
+    invoke.mockClear()
+    await tap(option(groupLi))
+    expect(callsTo('folder.open')).toEqual([{ folderId: 'folder_research' }])
+    expect(commands()).not.toContain('urlbar.submit')
+    expect(commands()).not.toContain('tab.activate')
+    expect(uiStore.get().urlbar.open).toBe(false)
+  })
+
+  it('phone: a saved group wears the ring; a group the chrome no longer has keeps the kind’s glyph', async () => {
+    layout('phone')
+    const saved: Folder = {
+      ...research,
+      savedTabs: [{ url: 'https://arxiv.org/abs/1', title: 'Paper' }]
+    }
+    suggestions = (q) => (q === 'res' ? [groupRow()] : [])
+    let el = await render(phoneWith(withGroup(tab(PAGE), saved, false)))
+    await type(input(el), 'res')
+    let [groupLi] = await listed(el, 1)
+    expect(glyph(groupLi)?.hasAttribute('data-saved')).toBe(true)
+    act(() => root?.unmount())
+    invoke.mockClear()
+
+    // The row outlived its group (deleted between the keystroke and the answer).
+    el = await render(phoneWith({ ...state(tab(PAGE)), folders: {} } as UIState))
+    await type(input(el), 'res')
+    ;[groupLi] = await listed(el, 1)
+    expect(glyph(groupLi)).toBeNull()
+    expect(option(groupLi).querySelector('svg.lucide-folder')).not.toBeNull()
+    expect(option(groupLi).getAttribute('aria-label')).toBe(
+      'Open Research tab group, colour Grey, with sites arxiv.org, scholar.google.com.'
+    )
+  })
+
+  it('tablet: the popup row says "Open tab group" where the tab row says "Switch to tab"', async () => {
+    layout('tablet')
+    suggestions = (q) => (q === 'res' ? [tabRow(), groupRow()] : [])
+    const el = await render(bareWith(withGroup(tab(PAGE))))
+    await type(input(el), 'res')
+    const [tabLi, groupLi] = await listed(el, 2)
+    expect(tabLi.classList.contains('zen-omnibox-row')).toBe(true)
+    expect(hint(tabLi)).toBe('Switch to tab')
+    expect(groupLi.getAttribute('data-kind')).toBe('folder')
+    expect(hint(groupLi)).toBe('Open tab group')
+    expect(glyph(groupLi)?.closest('.zen-omnibox-row-icon')).not.toBeNull()
+    expect(groupLi.querySelector('.zen-omnibox-row-title')?.textContent).toBe('Research')
+    expect(groupLi.querySelector('.zen-omnibox-row-host')?.textContent).toBe(
+      ' — arxiv.org, scholar.google.com'
+    )
+    expect(option(groupLi).getAttribute('aria-label')).toBe(
+      'Open Research tab group, colour Blue, with sites arxiv.org, scholar.google.com.'
+    )
+    // No remove X: a group is not removable, as Chrome's match is not deletable.
+    expect(groupLi.querySelector('[data-testid="urlbar-remove-suggestion"]')).toBeNull()
+  })
+
+  it('desktop: the same row in the desktop’s noun, picked on the press', async () => {
+    layout('desktop')
+    suggestions = (q) => (q === 'res' ? [groupRow()] : [])
+    const el = await render(bareWith(withGroup(tab(PAGE))))
+    await type(input(el), 'res')
+    const [groupLi] = await listed(el, 1)
+    expect(hint(groupLi)).toBe('Open folder')
+    expect(option(groupLi).getAttribute('aria-label')).toBe(
+      'Open Research folder, colour Blue, with sites arxiv.org, scholar.google.com.'
+    )
+    // The typed prefix is emphasised in the name, as in every row (omnibox-21).
+    expect(groupLi.querySelector('.zen-omnibox-row-title mark')?.textContent).toBe('Res')
+    invoke.mockClear()
+    await press(groupLi)
+    expect(callsTo('folder.open')).toEqual([{ folderId: 'folder_research' }])
+    expect(commands()).not.toContain('urlbar.submit')
+    expect(uiStore.get().urlbar.open).toBe(false)
   })
 })

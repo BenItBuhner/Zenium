@@ -8,9 +8,15 @@ import type { Browser } from '../browser'
 import { BookmarkService } from '../bookmarks'
 import { HistoryService } from '../history'
 import { OmniboxShortcutsService } from '../omniboxShortcuts'
-import { createTabRecord } from '../model'
+import { createFolder, createTabRecord } from '../model'
 import { BrowserState } from '../state'
-import { RELEVANCE, SuggestionService, isIntranetWord } from '../suggestions'
+import {
+  GROUP_MAX_SCORE,
+  RELEVANCE,
+  SuggestionService,
+  groupMatch,
+  isIntranetWord
+} from '../suggestions'
 import { ZenWindow } from '../window'
 
 const io: StoreIO = {
@@ -1141,6 +1147,217 @@ describe('SuggestionService: the phone card’s sections (OMN-18)', () => {
     expect(clipped.map((r) => [r.kind, r.group])).toEqual([
       ['clipboard', undefined],
       ['history', 'Recently visited']
+    ])
+  })
+})
+
+/*
+ * Tab group rows (OMN-15; Chrome for Android's `TabGroupProvider`, components/omnibox/browser/
+ * tab_group_provider.cc): typing a group's name offers "Open tab group". Chrome matches every
+ * term of the query as a word prefix of the group's title or of a member page's address
+ * (`ALWAYS_PREFIX_SEARCH`), scores the group by its `ScoringFunctor` over the hits normalised
+ * against the title's length + 10 (`kMaxScore` 1000, "sharing a group with open tab matches"),
+ * surfaces no unnamed group and none for an off-the-record client, and lists the group's
+ * addresses with the matching one first.
+ */
+describe('SuggestionService: tab group rows (OMN-15)', () => {
+  type Fixture = ReturnType<typeof setup>
+
+  /** A tab of the first space, in `folderId`'s group when given. */
+  function addTab(
+    s: Fixture,
+    id: string,
+    url: string,
+    title: string,
+    folderId: string | null = null,
+    containerId?: string
+  ): void {
+    const space = s.state.model.spaces[0]
+    const tab = createTabRecord({
+      id,
+      url,
+      title,
+      spaceId: space.id,
+      containerId: containerId ?? space.containerId,
+      folderId
+    })
+    s.state.model.tabs[tab.id] = tab
+    space.tabIds.push(tab.id)
+  }
+
+  /** A group of the first space with `pages` as its live tabs. */
+  function addGroup(s: Fixture, name: string, pages: string[]): string {
+    const space = s.state.model.spaces[0]
+    const folder = createFolder(s.state.model, space.id, name, '📁')
+    pages.forEach((url, i) => addTab(s, `${folder.id}_tab${i}`, url, `Page ${i}`, folder.id))
+    return folder.id
+  }
+
+  const folderRows = (rows: Suggestion[]): Suggestion[] => rows.filter((r) => r.kind === 'folder')
+
+  it('offers a group whose name the typing starts, as its name over its sites', async () => {
+    const s = setup()
+    const research = addGroup(s, 'Research', [
+      'https://www.arxiv.org/abs/1234',
+      'https://scholar.google.com/q',
+      'https://arxiv.org/abs/5678'
+    ])
+    addGroup(s, 'Trip', ['https://maps.example/'])
+    const rows = await s.suggestions.suggest('res', null, s.win)
+    expect(folderRows(rows)).toEqual([
+      {
+        id: `folder:${research}`,
+        kind: 'folder',
+        title: 'Research',
+        // The sites once each, `www.` off, as the addresses of a group read (Chrome's format).
+        subtitle: 'arxiv.org, scholar.google.com',
+        url: null,
+        favicon: null,
+        targetId: research,
+        fill: 'res',
+        relevance: RELEVANCE.folder
+      }
+    ])
+    // Chrome's word-prefix rule: nothing inside a word, case folded.
+    expect(folderRows(await s.suggestions.suggest('search', null, s.win))).toEqual([])
+    expect(folderRows(await s.suggestions.suggest('RESEARCH', null, s.win))).toHaveLength(1)
+  })
+
+  it('finds a group by a member page’s address too, that site listed first', async () => {
+    const s = setup()
+    const reading = addGroup(s, 'Reading', [
+      'https://news.example/today',
+      'https://www.scholar.example/paper'
+    ])
+    const rows = await s.suggestions.suggest('scholar', null, s.win)
+    expect(folderRows(rows)).toMatchObject([
+      { targetId: reading, title: 'Reading', subtitle: 'scholar.example, news.example' }
+    ])
+    // Every term must start a word of the title or of a page: "reading paper" does, "reading
+    // tomorrow" does not; a term inside an address's word ("xample") matches nothing.
+    expect(folderRows(await s.suggestions.suggest('reading paper', null, s.win))).toHaveLength(1)
+    expect(folderRows(await s.suggestions.suggest('reading tomorrow', null, s.win))).toEqual([])
+    expect(folderRows(await s.suggestions.suggest('xample', null, s.win))).toEqual([])
+  })
+
+  it('keeps the three best by Chrome’s score: a name matched whole over one merely started', async () => {
+    const s = setup()
+    const long = addGroup(s, 'Docs for the big project', ['https://a.example/'])
+    const docs = addGroup(s, 'Docs', ['https://b.example/'])
+    const docsWork = addGroup(s, 'Docs work', ['https://c.example/'])
+    const docsHome = addGroup(s, 'Docs home', ['https://d.example/'])
+    const rows = folderRows(await s.suggestions.suggest('docs', null, s.win))
+    expect(rows).toHaveLength(3)
+    // "Docs" whole: 4 · 4/4 over 4 + 10 = .286; "Docs work" and "Docs home": 4/19 = .21 each,
+    // in the model's order; the long name's 4/34 = .12 is the fourth and dropped.
+    expect(rows.map((r) => r.targetId)).toEqual([docs, docsWork, docsHome])
+    expect(rows.map((r) => r.relevance)).toEqual([
+      RELEVANCE.folder,
+      RELEVANCE.folder - 1,
+      RELEVANCE.folder - 2
+    ])
+    expect(rows.some((r) => r.targetId === long)).toBe(false)
+  })
+
+  it('scores as Chrome’s TabGroupProvider: hits weighted to the text’s start, over the title’s length + 10', () => {
+    // "Docs" typed whole against "Docs": one hit of 4 at 0 in a text of 4 → 4; 4 / 14 → 286.
+    expect(groupMatch(['docs'], 'Docs', ['https://a.example/'])?.score).toBeCloseTo(
+      (4 / 14) * GROUP_MAX_SCORE
+    )
+    // "do" against "Docs to do": two prefixed words, at 0 (2 · 10/10) and at 8 (2 · 2/10); over 20.
+    expect(groupMatch(['do'], 'Docs to do', ['https://a.example/'])?.score).toBeCloseTo(
+      ((2 + 0.4) / 20) * GROUP_MAX_SCORE
+    )
+    // A title hit and an address hit add up (the title's 2 · 2/2, the address's 2 · 11/11 in
+    // "ab.example/"); the factors are capped at 1, Chrome's 1000.
+    const both = groupMatch(['ab'], 'Ab', ['https://ab.example/'])
+    expect(both?.matchingUrl).toBe('https://ab.example/')
+    expect(both?.score).toBeCloseTo(((2 + 2) / 12) * GROUP_MAX_SCORE)
+    expect(groupMatch(['ab', 'ab', 'ab'], 'Ab', ['https://ab.example/'])?.score).toBe(
+      GROUP_MAX_SCORE
+    )
+    // A term that starts no word of the title or of any address is no match; no terms, none.
+    expect(groupMatch(['ocs'], 'Docs', ['https://a.example/'])).toBeNull()
+    expect(groupMatch(['docs', 'zzz'], 'Docs', ['https://a.example/'])).toBeNull()
+    expect(groupMatch([], 'Docs', [])?.score).toBe(0)
+  })
+
+  it('stands under the open tabs and over the pages that merely start or hold the term', async () => {
+    const s = setup()
+    addTab(s, 'tab_docs', 'https://docs.example/guide', 'Docs guide')
+    addGroup(s, 'Docs', ['https://docs.example/inside'])
+    // A page whose title starts with the typing (980), a bookmark holding it (950).
+    s.history.visit('https://archive.example/old', 'Docs of old', null)
+    s.bookmarks.create({ title: 'My docs mark', url: 'https://marks.example/m' })
+    const rows = await s.suggestions.suggest('docs', null, s.win)
+    const k = kinds(rows)
+    expect(k.indexOf('tab')).toBeLessThan(k.indexOf('folder'))
+    expect(k.indexOf('folder')).toBeLessThan(k.indexOf('history'))
+    expect(k.indexOf('folder')).toBeLessThan(k.indexOf('bookmark'))
+    expect(rows.find((r) => r.kind === 'folder')?.relevance).toBe(RELEVANCE.folder)
+    // A tab merely containing the typing (Chrome's 1000) still outranks the group's row.
+    const t = setup()
+    addTab(t, 'tab_mid', 'https://inner.example/', 'The docs page')
+    addGroup(t, 'Docs', ['https://docs.example/inside'])
+    const mixed = kinds(await t.suggestions.suggest('docs', null, t.win))
+    expect(mixed.indexOf('tab')).toBeLessThan(mixed.indexOf('folder'))
+  })
+
+  it('offers a saved group by its kept pages, and no empty, unnamed or private one', async () => {
+    const s = setup()
+    const m = s.state.model
+    const space = m.spaces[0]
+    const saved = createFolder(m, space.id, 'Trip', '📁', 'green')
+    saved.savedTabs = [
+      { url: 'https://hotel.example/booking', title: 'Booking' },
+      { url: 'zen://newtab', title: 'New Tab' }
+    ]
+    createFolder(m, space.id, 'Trip planning', '📁')
+    createFolder(m, space.id, '', '📁').savedTabs = [{ url: 'https://trip.example/', title: '' }]
+    const secret = createFolder(m, space.id, 'Trip secrets', '📁')
+    addTab(s, 'tab_private', 'https://secret.example/', 'Secret', secret.id, PRIVATE_CONTAINER_ID)
+    const rows = folderRows(await s.suggestions.suggest('trip', null, s.win))
+    expect(rows).toMatchObject([{ targetId: saved.id, title: 'Trip', subtitle: 'hotel.example' }])
+    // A group whose pages are internal ones alone has nothing to list.
+    saved.savedTabs = [{ url: 'zen://settings', title: 'Settings' }]
+    expect(folderRows(await s.suggestions.suggest('trip', null, s.win))).toEqual([])
+  })
+
+  it('offers none in a private window or from a private tab, and none in keyword mode', async () => {
+    const s = setup('private')
+    addGroup(s, 'Docs', ['https://docs.example/'])
+    expect(folderRows(await s.suggestions.suggest('docs', null, s.win))).toEqual([])
+
+    const t = setup()
+    addGroup(t, 'Docs', ['https://docs.example/'])
+    addTab(t, 'tab_private', 'https://p.example/', 'Private', null, PRIVATE_CONTAINER_ID)
+    expect(folderRows(await t.suggestions.suggest('docs', 'tab_private', t.win))).toEqual([])
+    expect(folderRows(await t.suggestions.suggest('docs', null, t.win))).toHaveLength(1)
+    expect(folderRows(await t.suggestions.suggest('@tabs docs', null, t.win))).toEqual([])
+    expect(folderRows(await t.suggestions.suggest('@ddg docs', null, t.win))).toEqual([])
+  })
+
+  it('sections the phone card’s group row with the open tabs, under Chrome’s heading for both', async () => {
+    const s = setup()
+    addTab(s, 'tab_docs', 'https://docs.example/guide', 'Docs guide')
+    addGroup(s, 'Docs', ['https://inside.example/'])
+    s.history.visit('https://archive.example/old', 'Docs of old', null)
+    const rows = await s.suggestions.suggest('docs', null, s.win, { grouped: true })
+    expect(rows.map((r) => [r.kind, r.group])).toEqual([
+      ['search', undefined],
+      ['history', 'Pages'],
+      ['tab', 'Tabs and tab groups'],
+      ['folder', 'Tabs and tab groups']
+    ])
+    // Without a group row the section is the open tabs' as before.
+    const t = setup()
+    addTab(t, 'tab_docs', 'https://docs.example/guide', 'Docs guide')
+    t.history.visit('https://archive.example/old', 'Docs of old', null)
+    const plain = await t.suggestions.suggest('docs', null, t.win, { grouped: true })
+    expect(plain.map((r) => [r.kind, r.group])).toEqual([
+      ['search', undefined],
+      ['history', 'Pages'],
+      ['tab', 'Open tabs']
     ])
   })
 })
