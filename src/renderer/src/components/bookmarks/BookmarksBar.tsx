@@ -16,6 +16,7 @@ import { pathForFile } from '@renderer/lib/dnd'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
+import { isTouchLayout, useViewport } from '@renderer/lib/formFactor'
 import { ChromePortal, toRect } from '@renderer/lib/portals'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
@@ -301,6 +302,11 @@ export function BookmarksBar({
   const pressAt = useRef<{ x: number; y: number } | null>(null)
   const lastPointer = useRef<{ x: number; y: number } | null>(null)
   const stopFollowing = useRef<(() => void) | null>(null)
+  // A chip lifts its link only on the desktop (bookmarks-15): on the tablet's bar (NTP-34) a
+  // finger's hold is the chip's menu and its drag the page's scroll, as Chrome 152's tablet bar
+  // has no drag either; the pointer reorder along the strip already refuses a finger
+  // (`useBarDrag`), and the `draggable` mark is what would let Blink start a touch drag.
+  const linkDrags = !isTouchLayout(useViewport().formFactor)
   // The card Chromium snapshots as the drag's image (§9.4's lifted item, the URL pill's link
   // card): drawn off screen for the chip under the press, so it stands when `dragstart` asks,
   // and put away when the press ends without a link drag (a click, the reorder) or when the
@@ -708,7 +714,7 @@ export function BookmarksBar({
               tabIndex={i === focusIndex && i < visibleCount ? 0 : -1}
               className="zen-bm-chip"
               data-tooltip={node.url ?? undefined}
-              draggable={link ? true : undefined}
+              draggable={link && linkDrags ? true : undefined}
               data-drag-address={link ? link.url : undefined}
               onPointerDown={(e) => {
                 followPress(e)

@@ -4009,7 +4009,7 @@ export class Menus {
     /**
      * Items of the desktop layout alone: what acts on chrome the tablet does not draw. The
      * tablet's sidebar collapses to its icon rail from the toolbar (Zen's compact mode is the
-     * desktop's hover-revealed sidebar, which a finger cannot reveal) and it has no bookmarks bar.
+     * desktop's hover-revealed sidebar, which a finger cannot reveal).
      */
     const desktop = (...items: Template): Template => (win.formFactor === 'desktop' ? items : [])
     const separator: MenuItemTemplate = { type: 'separator' }
@@ -4131,8 +4131,9 @@ export class Menus {
           action: 'bookmark.sidebar',
           click: () => this.browser.pages.open('bookmarks', undefined, win)
         },
-        // The desktop's alone: the tablet has no bookmarks bar.
-        ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
+        // The sidebar layouts': the tablet's bar is the desktop's under the tablet's toolbar
+        // (NTP-34), on the same three settings.
+        ...sidebar({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
         // Chrome's Reading list ▸ (sidepanel-54, W6-1), seated after Show Bookmarks as Chrome's
         // Bookmarks and lists ▸ seats it: the tab's add (or its remove) and the list itself.
         // The sidebar layouts' (the page is theirs); the phone's flat list carries the two as
