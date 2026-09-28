@@ -356,10 +356,10 @@ describe('quickDeleteClear', () => {
     expect(departStore.get().items.every(isHeld)).toBe(true)
     expect(grid()?.hasAttribute('inert')).toBe(true)
     expect(released()).toEqual([])
-    // 3. Bottom-up by card bottom over the one crossing (380 ms for the grid's height): the
+    // 3. Bottom-up by card bottom over the one crossing (250 ms for the grid's height): the
     //    group's card, its bottom at the grid's bottom edge, at once; c (bottom 450 of 100…700) at
-    //    158 ms; a and b's row (bottom 250) at 285 ms – the same moment for both, had a been in
-    //    the period.
+    //    104 ms; a and b's row (bottom 250) at 188 ms – the same moment for both, had a been in
+    //    the period. (The ticks below read the constant: they hold for any positive crossing.)
     await tick(0)
     expect(released()).toEqual([`group:${GROUP}`])
     await tick(Math.round((250 / 600) * QUICK_DELETE_GRID_CROSSING_MS) - 1)
@@ -520,7 +520,7 @@ describe('quickDeleteClear', () => {
       expect(released()).toEqual([])
       expect(fades).toEqual([])
       // … and NO sweep: the group's card at the grid's bottom edge and b's row at its top set off
-      // together on the first tick, where the sweep would have held b back 285 ms.
+      // together on the first tick, where the sweep would have held b back 188 ms.
       await tick(0)
       expect(released()).toEqual(['b', 'c', `group:${GROUP}`])
       // Each fades in place over §11.3's 120 ms on `--zen-ease`, held at 0 – `Departures`'

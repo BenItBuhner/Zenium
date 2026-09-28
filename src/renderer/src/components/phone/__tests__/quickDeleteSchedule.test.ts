@@ -91,11 +91,13 @@ describe('wipeSchedule', () => {
     expect(wipeSchedule(exits, GRID, 250).map((s) => s.key)).toEqual(['a', 'group:g'])
   })
 
-  it('the crossing is one constant at Chrome’s cadence: the wipe crosses the visible grid in 380 ms', () => {
-    // The lead's ruling on gate (a): Chrome's gradient crosses the visible grid in about 380 ms of
-    // its 1200 ms curve, and the house sweep takes that cadence as one number – a schedule, not a
+  it('the crossing is one constant at Chrome’s crossing proper: the wipe crosses the visible grid bottom to top in 250 ms', () => {
+    // The lead's ruling on gate (a) and its follow-up: on Chrome's 1200 ms curve the fade's
+    // trigger crosses the grid's bottom edge at 132 ms and its top edge at 381 ms – the crossing
+    // proper is the 250 ms between (the 132 ms lead-in is not mirrored: our sweep sets off on the
+    // overview's landing) – and the house sweep takes it as one number – a schedule, not a
     // motion's length (each exit's own spring stays under §11's 300 ms cap).
-    expect(QUICK_DELETE_GRID_CROSSING_MS).toBe(380)
+    expect(QUICK_DELETE_GRID_CROSSING_MS).toBe(250)
   })
 })
 
@@ -136,7 +138,7 @@ describe('holdQuickDeleteWipe (the preview host’s still)', () => {
     const frozen = new Map(
       s.items.map((i) => [i.key, i.kind === 'new-tab' ? undefined : i.frozen] as const)
     )
-    // The bottom card is 120 ms into its run; the top one sets off 450 × 380 / 600 = 285 ms later
+    // The bottom card is 120 ms into its run; the top one sets off 450 × 250 / 600 = 188 ms later
     // (the crossing's share of its distance from the grid's bottom), so it stands whole.
     expect(frozen.get('bottom')).toBeCloseTo(exitProgressAt(120), 10)
     expect(frozen.get('top')).toBe(0)
