@@ -3,7 +3,6 @@ import { ShieldCheck } from 'lucide-react'
 import type {
   DeviceGrant,
   DeviceKind,
-  FormFactor,
   PermissionRule,
   SafetyCheckResult,
   UIState
@@ -78,12 +77,7 @@ const SAFETY_CHECK_INTRO =
  * row carrying its plain Reset, a notifying site an action that stops it after a confirmation
  * (Chrome's review pages); the extensions review leaves for that category.
  */
-export function safetyCheckGroups({
-  state,
-  tab,
-  navigate,
-  formFactor
-}: SectionContext): RowGroup[] {
+export function safetyCheckGroups({ state, tab, navigate }: SectionContext): RowGroup[] {
   const result = state.lastSafetyCheck
   const worst = result ? worstState(result) : null
   // Settled once the result has landed in the state (the reviews' acts wait on it; errors are
@@ -122,16 +116,7 @@ export function safetyCheckGroups({
         const id = `safety-check:${row.id}`
         const leading = <StatusGlyph state={row.state} />
         if (row.id === 'permissions' && row.action)
-          return permissionsReview(
-            id,
-            row.label,
-            row.summary,
-            leading,
-            result,
-            state,
-            check,
-            formFactor
-          )
+          return permissionsReview(id, row.label, row.summary, leading, result, state, check)
         if (row.id === 'notifications' && row.action)
           return notificationsReview(id, row.label, row.summary, leading, result, check)
         if (!row.action) {
@@ -225,8 +210,7 @@ function permissionsReview(
   leading: ReactNode,
   result: SafetyCheckResult,
   state: UIState,
-  recheck: () => Promise<void>,
-  formFactor: FormFactor | undefined
+  recheck: () => Promise<void>
 ): ItemRow {
   const flagged = new Map(result.permissions.review.map((r) => [r.origin, r]))
   const granted = bySite(state.permissionRules.filter((r) => r.decision === 'allow'))
@@ -237,7 +221,7 @@ function permissionsReview(
   })
   const revoked = result.permissions.revoked
   const revokedGroups: RowGroup[] =
-    revoked.length > 0 ? [revokedReview(id, summary, revoked, recheck, formFactor)] : []
+    revoked.length > 0 ? [revokedReview(id, summary, revoked, recheck)] : []
   return {
     kind: 'item',
     id,
@@ -309,21 +293,22 @@ const regranting = new Set<string>()
  * permissions alone under the host ("Camera, Microphone"), Allow again its one action, and Got
  * it closing the block. Allow again and Got it each raise Chrome's toast with Undo on §9.33's
  * Undo clock (`TOAST_UNDO_MS`); the check runs again after each act and each undo. Allow again
- * keeps the sheet open for the sites left. Got it follows the rule that the toast's Undo must
- * stay in reach, not that the sheet must stay: on the PHONE the chassis lifts its messages over
- * the sheet whose act raised them (§9.33, #651), so the sheet stays with the granted list under
- * it – as Chrome's Safety Hub collapses the module and leaves the page; on the TABLET and the
- * DESKTOP the dialog host holds the chrome and the frame inert under its scrim (`portals.tsx`
- * `holdChromeInert` / `holdFrameInert`) and the tablet's message layer has no seat above it, so
- * the toast would run its 8 s dimmed and unreachable – there Got it leaves the dialog first
- * (`closesSheet`), as it always did.
+ * keeps the sheet open for the sites left, and so does Got it, on every host: the rule is that
+ * the toast's Undo must stay in reach (the lead's on #668), and the chassis keeps it there
+ * wherever the sheet stands – on the PHONE its messages lift over the sheet whose act raised
+ * them (§9.33, #651, `PhoneMessages`); on the TABLET and the DESKTOP the frame dialog host's own
+ * toast seat lifts a toast raised while a dialog stands above the dialog and its scrim (#678,
+ * `portals.tsx` `useToastSeat` / `FrameDialogHost`, `ui.ts` `toastSeatNow`: `frameDialogsOpen >
+ * 0` seats it on the frame) – so the sheet stays with the granted list under it, as Chrome's
+ * Safety Hub collapses the module and leaves the page, and the Undo is reachable above it.
+ * A sheet that held only the block has no row left to stand for once the list is
+ * acknowledged, and leaves by the stack's orphan rule (`sheets.tsx`).
  */
 function revokedReview(
   id: string,
   summary: string,
   revoked: SafetyCheckResult['permissions']['revoked'],
-  recheck: () => Promise<void>,
-  formFactor: FormFactor | undefined
+  recheck: () => Promise<void>
 ): RowGroup {
   const groupId = `${id}:revoked`
   const allowAgain = (origin: string): void => {
@@ -397,9 +382,9 @@ function revokedReview(
     label: 'Got it',
     description: 'Clears this list. Sites ask again when they need a permission.',
     button: 'Got it',
-    // The phone's toast lifts over the sheet (#651); the tablet's and the desktop's dialog host
-    // holds the frame inert, so there the sheet leaves first – the Undo stays reachable either way.
-    closesSheet: formFactor !== 'phone' ? true : undefined,
+    // The sheet stays on every host (no `closesSheet`): the toast lifts over the sheet on the
+    // phone (#651) and over a standing dialog on the tablet and the desktop (#678), so the Undo
+    // stays in reach above the sites left.
     onPress: acknowledge
   })
   return {
