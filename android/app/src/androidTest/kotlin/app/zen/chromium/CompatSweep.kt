@@ -15848,11 +15848,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * (`webhighlights-sidebar`, `webhighlights-app-view`, `webhighlights-toggle-button`)
          * found through open shadow roots (four levels, three thousand nodes a root); the
          * sidebar's width read beside them. The elements are defined in the content script's
-         * world, so `customElements.get` in the page world stays empty (`defined`).
+         * world, so `customElements.get` in the page world stays empty (`defined`). What the
+         * click did mount is read beside the verdict (round 24's BEFORE found none of the three
+         * on either lane with the module loaded and the click answered on 156): every tag of
+         * theirs (`webhighlights-*`, `theirs`), the body's own children (`body`), the open
+         * shadow hosts met (`hosts`) and the nodes walked (`nodes`).
          */
         private const val WEB_HIGHLIGHTS_SIDEBAR =
-            "(function(){var names=['webhighlights-sidebar','webhighlights-app-view','webhighlights-toggle-button'];var found={};var width=null;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];var tag=n.tagName.toLowerCase();if(names.indexOf(tag)>=0){found[tag]=true;if(tag==='webhighlights-sidebar'&&width===null)width=Math.round(n.getBoundingClientRect().width)}if(n.shadowRoot)scan(n.shadowRoot,depth+1)}}scan(document,0);" +
-                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']),found:Object.keys(found),width:width,defined:typeof customElements!=='undefined'&&!!customElements.get('webhighlights-sidebar')})})()"
+            "(function(){var names=['webhighlights-sidebar','webhighlights-app-view','webhighlights-toggle-button'];var found={};var theirs={};var width=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if(tag==='webhighlights-sidebar'&&width===null)width=Math.round(n.getBoundingClientRect().width)}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));" +
+                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']),found:Object.keys(found),width:width,defined:typeof customElements!=='undefined'&&!!customElements.get('webhighlights-sidebar'),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
 
         /**
          * Black Menu's popup: its navigation list drawn – `.bm-ele-navlist__item` entries (its
