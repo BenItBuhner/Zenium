@@ -77,6 +77,9 @@ class BarHideGestureTest {
         assertTrue("the down's report goes through the predicate", start in (down + 1) until lift)
         assertTrue("the lift's report goes through the predicate", end > lift)
         assertFalse("no report in the touch handler bypasses it", body.contains("if (frame != null) emit("))
+        // One `start` per gesture: the down's is the file's only `start` emit – no other arm (a
+        // move, a second finger) and no other path says it again.
+        assertEquals("one start emit in the file, the down's", 1, Regex("""emit\("start"""").findAll(gesture).count())
 
         // The page's scroll (`move`, `show`) still needs the frame itself: its travel, its edge.
         val scrolled = gesture.indexOf("fun onScrollChanged(scrollY: Int, oldScrollY: Int) {")
