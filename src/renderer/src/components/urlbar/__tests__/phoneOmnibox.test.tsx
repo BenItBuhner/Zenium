@@ -28,9 +28,10 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { HEADER_SWAP_FADE_MS, Urlbar } = await import('../Urlbar')
 const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
-const { uiStore } = await import('@renderer/lib/ui')
+const { uiStore, urlbarKeepsTabDrafts } = await import('@renderer/lib/ui')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { omniboxFocusSurfaces } = await import('@renderer/lib/omniboxFocus')
+const { refreshViewport, viewportStore } = await import('@renderer/lib/formFactor')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -562,11 +563,30 @@ describe('the URL keyboard (OMN-25)', () => {
   })
 })
 
+/**
+ * The chrome's layout, forced the way the preview host forces it (`?formFactor=`,
+ * `forcedFormFactor`; `barInputSignal.test.tsx` does the same): the renderer re-derives its
+ * layout from the window on a state tick, so the chrome URL carries it. `null` lets the window
+ * decide again (happy-dom's: a desktop).
+ */
+function layout(formFactor: 'phone' | 'tablet' | 'desktop' | null): void {
+  history.replaceState(null, '', formFactor ? `?formFactor=${formFactor}` : location.pathname)
+  refreshViewport()
+  expect(viewportStore.get().formFactor).toBe(formFactor ?? 'desktop')
+}
+
 /*
- * The draft after a dismissal (a program default of 19 Sep 2026): the phone discards what was
- * typed, as Chrome for Android does, so the next focus on the same page is search-ready with the
- * header and the clipboard row; the desktop keeps Zen's per-tab draft. The scrim press and the
- * back gesture's `dismissed` share the one close path, so the scrim stands in for both here.
+ * The draft after a dismissal: the phone and the tablet discard what was typed, as Chrome for
+ * Android does on both (a program default of 19 Sep 2026 for the phone; W8-F17 for the tablet),
+ * so the next open on the same page is at rest – the phone's search-ready field with the header
+ * and the clipboard row, the tablet's field at the page's address, or empty over a new tab; the
+ * desktop keeps Zen's per-tab draft. ONE predicate governs it (`urlbarKeepsTabDrafts`, the
+ * desktop layout alone), the same that governs the draft across a tab switch (W8-F15). The layout
+ * is the renderer's, not the host's: the phone's sheet is the phone layout's, and the tablet
+ * mounts the bar bare as the desktop does (`TabletShell`), so each pin sets the layout the
+ * preview host's way. The scrim press and the back gesture's `dismissed` share the one close
+ * path, so the scrim stands in for both here; Escape over a new tab closes the bar by the same
+ * path (`close-bar`, the draft's keep asked for), so it is the tablet's Escape pin.
  */
 describe('the draft after a dismissal', () => {
   const clipRow = (): Suggestion => ({
@@ -575,11 +595,18 @@ describe('the draft after a dismissal', () => {
   })
   /** The bar's backdrop: a press on it, outside the sheet or the panel, dismisses the bar. */
   const scrim = (el: HTMLElement): HTMLElement => el.firstElementChild as HTMLElement
-  async function dismiss(el: HTMLElement): Promise<void> {
+  /**
+   * A dismissal – the scrim's press, or Escape on the field (over a new tab: nothing to revert
+   * to, the bar closes keeping its draft where the layout keeps one) – then the bar's next open.
+   */
+  async function dismiss(el: HTMLElement, how: 'scrim' | 'escape' = 'scrim'): Promise<void> {
     await act(async () => {
-      scrim(el).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      if (how === 'escape') {
+        input(el).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      } else scrim(el).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
       await Promise.resolve()
     })
+    expect(uiStore.get().urlbar.open).toBe(false)
     expect(commands()).toContain('urlbar.cancel')
     expect(commands()).not.toContain('urlbar.submit')
     // The bar is closed; the next render is the next open.
@@ -588,15 +615,35 @@ describe('the draft after a dismissal', () => {
     invoke.mockClear()
     uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
   }
-  const desktop = (t: Tab): ReactElement =>
+  /**
+   * The bar mounted bare – no `phoneEdge` – as `ContentArea` and `TabletShell` mount it: the
+   * layout alone tells the desktop's and the tablet's apart.
+   */
+  const bare = (t: Tab, mode: UrlbarState['mode'] = 'edit'): ReactElement =>
     createElement(Urlbar, {
       state: state(t),
-      urlbar: urlbarState('edit'),
+      urlbar: urlbarState(mode),
       area: { x: 0, y: 0, width: 1200, height: 800 },
       phoneEdge: undefined
     })
 
+  afterEach(() => layout(null))
+
+  it('one predicate for both ways a draft outlives its bar: the desktop layout alone keeps one', () => {
+    // The same `urlbarKeepsTabDrafts` gates the per-tab draft across a tab switch (W8-F15,
+    // `urlbarTabDrafts.test.ts`) and the dismissal drafts below: Chrome Android drops the edit
+    // on a tab switch and on Escape alike, on the phone and the tablet.
+    expect(urlbarKeepsTabDrafts('desktop')).toBe(true)
+    expect(urlbarKeepsTabDrafts('tablet')).toBe(false)
+    expect(urlbarKeepsTabDrafts('phone')).toBe(false)
+    layout('tablet')
+    expect(urlbarKeepsTabDrafts()).toBe(false)
+    layout('desktop')
+    expect(urlbarKeepsTabDrafts()).toBe(true)
+  })
+
   it('phone: dismissed with text typed, the pill reopens search-ready, with the header and the clipboard row', async () => {
+    layout('phone')
     suggestions = (q) => (q === '' ? [clipRow()] : [])
     let el = await render(phone(tab(PAGE)))
     await type(input(el), 'how to brew coffee')
@@ -615,25 +662,29 @@ describe('the draft after a dismissal', () => {
   })
 
   it('phone: a draft a desktop layout kept for the page is not restored either', async () => {
-    let el = await render(desktop(tab(PAGE)))
+    layout('desktop')
+    let el = await render(bare(tab(PAGE)))
     await type(input(el), 'how to brew coffee')
     await dismiss(el)
 
+    layout('phone')
     el = await render(phone(tab(PAGE)))
     expect(input(el).value).toBe('')
     expect(header(el)).not.toBeNull()
     // The phone's dismissal drops it for good.
     await dismiss(el)
-    el = await render(desktop(tab(PAGE)))
+    layout('desktop')
+    el = await render(bare(tab(PAGE)))
     expect(input(el).value).toBe(PAGE)
   })
 
   it('desktop: the draft comes back, selected, on the next open over the same page', async () => {
-    let el = await render(desktop(tab(PAGE)))
+    layout('desktop')
+    let el = await render(bare(tab(PAGE)))
     await type(input(el), 'how to brew coffee')
     await dismiss(el)
 
-    el = await render(desktop(tab(PAGE)))
+    el = await render(bare(tab(PAGE)))
     const field = input(el)
     expect(field.value).toBe('how to brew coffee')
     expect([field.selectionStart, field.selectionEnd]).toEqual([0, 'how to brew coffee'.length])
@@ -645,7 +696,67 @@ describe('the draft after a dismissal', () => {
     })
     expect(field.value).toBe(PAGE)
     await dismiss(el)
-    el = await render(desktop(tab(PAGE)))
+    el = await render(bare(tab(PAGE)))
+    expect(input(el).value).toBe(PAGE)
+  })
+
+  it('TABLET: dismissed with text typed over a page, the bar reopens at the page’s address, selected – the text is gone, as Chrome Android drops it', async () => {
+    layout('tablet')
+    let el = await render(bare(tab(PAGE)))
+    await type(input(el), 'how to brew coffee')
+    await dismiss(el)
+
+    el = await render(bare(tab(PAGE)))
+    const field = input(el)
+    expect(field.value).toBe(PAGE)
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, PAGE.length])
+    // The tablet's bar is the desktop's composition: no phone header, the address in the field.
+    expect(header(el)).toBeNull()
+  })
+
+  it('TABLET: Escape over a new tab closes the bar, and its next open is EMPTY; the desktop’s reopens with the text', async () => {
+    // Over a new tab there is nothing to revert to: one Escape closes the bar (`close-bar`), the
+    // draft's keep asked for – and the layout answers. The `'new'` key is every new tab page's.
+    layout('tablet')
+    let el = await render(bare(tab(NEW_TAB_URL), 'new-tab'))
+    expect(input(el).value).toBe('')
+    await type(input(el), 'how to brew coffee')
+    await dismiss(el, 'escape')
+
+    el = await render(bare(tab(NEW_TAB_URL), 'new-tab'))
+    expect(input(el).value).toBe('')
+    await dismiss(el, 'escape')
+
+    // The desktop layout, the same keys: Chrome desktop keeps the edit, and so does Zen.
+    layout('desktop')
+    el = await render(bare(tab(NEW_TAB_URL), 'new-tab'))
+    await type(input(el), 'how to brew coffee')
+    await dismiss(el, 'escape')
+
+    el = await render(bare(tab(NEW_TAB_URL), 'new-tab'))
+    expect(input(el).value).toBe('how to brew coffee')
+    // Left as the other pins expect it: the shared `'new'` draft cleared through the same path.
+    await type(input(el), '')
+    await dismiss(el, 'escape')
+    el = await render(bare(tab(NEW_TAB_URL), 'new-tab'))
+    expect(input(el).value).toBe('')
+  })
+
+  it('TABLET: a draft the desktop layout kept for the page is not read back either, and the tablet’s dismissal drops it', async () => {
+    // The window's layout changes under the map (a laptop window narrowed to the tablet's
+    // width with a touch screen; the preview host's `?formFactor=`): the tablet reads none.
+    layout('desktop')
+    let el = await render(bare(tab(PAGE)))
+    await type(input(el), 'how to brew coffee')
+    await dismiss(el)
+
+    layout('tablet')
+    el = await render(bare(tab(PAGE)))
+    expect(input(el).value).toBe(PAGE)
+    // Like the phone's, the tablet's dismissal drops it for good.
+    await dismiss(el)
+    layout('desktop')
+    el = await render(bare(tab(PAGE)))
     expect(input(el).value).toBe(PAGE)
   })
 })

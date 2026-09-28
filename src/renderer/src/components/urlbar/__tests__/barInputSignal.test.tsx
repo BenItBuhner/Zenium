@@ -301,8 +301,9 @@ describe('the draft goes with the tab, and the signal with it (W8-F15, round two
       await new Promise((r) => setTimeout(r, 0))
     })
     // The bar's own dismissal draft (`Urlbar.tsx`, `drafts`: what was typed is kept through an
-    // Escape, on the desktop and the tablet) may be up from an earlier pin's Escape – the bar's
-    // rule, not these pins' subject: cleared, so each pin starts from an empty field.
+    // Escape on the desktop layout – `urlbarKeepsTabDrafts`, the one predicate; W8-F17) may be
+    // up from an earlier pin's Escape – the bar's rule, not these pins' subject: cleared, so
+    // each pin starts from an empty field.
     const el = field()!
     if (el.value) await type(el, '')
     invoke.mockClear()
