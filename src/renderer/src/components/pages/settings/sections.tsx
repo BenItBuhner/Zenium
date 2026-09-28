@@ -4661,6 +4661,14 @@ function boostsSection({ state, tab, boost }: SectionContext): RowGroup[] {
 // Mods
 // ---------------------------------------------------------------------------
 
+/**
+ * The hint under a Mod's CSS field (the lead's line, ID-43): a Mod syncs as its CSS text, so a
+ * `data:` picture rides inside it while a `file:` or other host-local `url()` names a file only
+ * this device holds – the other devices resolve a web address alone.
+ */
+export const MOD_PICTURE_HINT =
+  'A picture stored on this device stays on it; other devices need a web address.'
+
 function modsSection({ state }: SectionContext): RowGroup[] {
   return [
     {
@@ -4703,6 +4711,7 @@ function modsSection({ state }: SectionContext): RowGroup[] {
                 <CssEditor
                   value={mod.css}
                   onCommit={(css) => run('mod.update', { id: mod.id, patch: { css } })}
+                  hint={MOD_PICTURE_HINT}
                 />
               )
             },

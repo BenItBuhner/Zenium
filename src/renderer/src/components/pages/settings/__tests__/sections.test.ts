@@ -80,6 +80,7 @@ const {
   buildSection,
   buildSections,
   autoCloseDescription,
+  MOD_PICTURE_HINT,
   PROXY_SETTINGS_COPY,
   proxyHeldDescription
 } = await import('../sections')
@@ -4428,6 +4429,33 @@ describe('what a row does', () => {
     expect(added.rows).toEqual([])
     expect(groupShows(added)).toBe(true)
     expect(added.empty).toBe('No search engines added yet')
+  })
+
+  describe('Mods › the CSS field (services pass 15, ID-43)', () => {
+    it('carries the lead’s §9.12 hint about pictures under the field, one line in one place', () => {
+      const model = section(
+        'mods',
+        state({
+          mods: [
+            { id: 'm1', name: 'Round tabs', source: null, css: '', enabled: true, updatedAt: 1 }
+          ]
+        })
+      )
+      const css = row(model, 'mod:m1:css')
+      if (css.kind !== 'custom') throw new Error('not a custom row')
+      expect(css.label).toBe('CSS')
+      const html = renderToStaticMarkup(createElement(() => css.render()))
+      expect(html).toContain('aria-label="CSS"')
+      // A Mod syncs as its CSS text (#682): a picture stored on this device never travels, so the
+      // field says so – the lead's words verbatim, a §9.12 full-width hint under the textarea.
+      expect(MOD_PICTURE_HINT).toBe(
+        'A picture stored on this device stays on it; other devices need a web address.'
+      )
+      expect(html).toContain(
+        `<span class="zen-settings-description zen-settings-description-full">${MOD_PICTURE_HINT}</span>`
+      )
+      expect(html.indexOf('</textarea>')).toBeLessThan(html.indexOf(MOD_PICTURE_HINT))
+    })
   })
 
   describe('Search › site search management on the desktop (omnibox-09, settings-43)', () => {
