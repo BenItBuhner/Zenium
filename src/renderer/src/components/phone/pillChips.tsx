@@ -382,8 +382,9 @@ export function phonePillChips(
   // quiet bell), and it waits in the sheet while the §9.33 strip asks the same question under
   // the pill (`readerOfferUp`), taking the slot when the strip leaves by any end – a muted site
   // has the chip from dom-ready, the strip never comes. The glyph is the desktop chip's
-  // (`BookOpenText`, `SidebarTop`), at rest in the slot's quiet ink, lit to the full ink on the
-  // press by `.zen-phone-pill`'s rule; its name is the row's, its description the desktop chip's
+  // (`BookOpenText`, `SidebarTop`), in the slot's rest ink as the lock and the bell are – the
+  // deemphasised window ink, `.zen-phone-pill .zen-pill-quiet` (the press fill is the docked
+  // pill's own, `.zen-phone-pill-docked:active`); its name is the row's, its description the desktop chip's
   // vocabulary ("Enter Reader View") without the desktop's chord – the phone's chips carry none,
   // and §9.31's tooltip is a mouse's or a keyboard's, so here the words are TalkBack's alone.
   // The tap is routed by `PhoneShell`'s pill (`data-reader-chip`) to the same crossing.
