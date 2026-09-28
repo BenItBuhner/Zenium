@@ -5,6 +5,7 @@ import {
   SELECTION_REPORT_MAX_CHARS,
   currentSelectionReport,
   installSelectionReporter,
+  installSelectionReporterOnFlag,
   type SelectionReport
 } from '../selectionScript'
 
@@ -442,5 +443,138 @@ describe('installSelectionReporter', () => {
       await settle()
       expect(sent.map((r) => r.text)).toEqual(['quantum foam', '', 'quantum foam', ''])
     })
+  })
+})
+
+describe('installSelectionReporterOnFlag', () => {
+  /** The reporter's listeners as they come and go on the window and the document (the spies call through). */
+  function countListeners(): { added: () => number; removed: () => number } {
+    const adds = [vi.spyOn(window, 'addEventListener'), vi.spyOn(document, 'addEventListener')]
+    const removes = [
+      vi.spyOn(window, 'removeEventListener'),
+      vi.spyOn(document, 'removeEventListener')
+    ]
+    const total = (spies: Array<{ mock: { calls: unknown[] } }>): number =>
+      spies.reduce((sum, spy) => sum + spy.mock.calls.length, 0)
+    return { added: () => total(adds), removed: () => total(removes) }
+  }
+
+  function installOnFlag(): {
+    sent: SelectionReport[]
+    flags: (selectionMenu: boolean) => void
+    listeners: number
+  } {
+    const sent: SelectionReport[] = []
+    let listener: ((flags: { selectionMenu?: boolean }) => void) | null = null
+    let listeners = 0
+    uninstall = installSelectionReporterOnFlag({
+      send: (report) => sent.push(report),
+      onFlags: (l) => {
+        listener = l
+        listeners += 1
+      }
+    })
+    return {
+      sent,
+      flags: (selectionMenu) => listener!({ selectionMenu }),
+      listeners
+    }
+  }
+
+  it('installs nothing until the flags say the menu is on, and nothing while they say off', async () => {
+    document.body.innerHTML = '<p id="p">quantum foam</p>'
+    const count = countListeners()
+    const page = installOnFlag()
+    // One subscription to the flags; no listener on the page before they arrive.
+    expect(page.listeners).toBe(1)
+    expect(count.added()).toBe(0)
+    dragSelect('p')
+    await settle()
+    expect(page.sent).toEqual([])
+    // The browser says off (the host has no menu, or the setting is off): still nothing.
+    page.flags(false)
+    expect(count.added()).toBe(0)
+    dragSelect('p')
+    await settle()
+    expect(page.sent).toEqual([])
+  })
+
+  it('installs the reporter as the flags say on, once for a repeated on', async () => {
+    document.body.innerHTML = '<p id="p">quantum foam</p>'
+    const count = countListeners()
+    const page = installOnFlag()
+    page.flags(true)
+    const installed = count.added()
+    expect(installed).toBeGreaterThan(0)
+    // Every re-send of the flags with the menu still on (a navigation, another flag changed) installs nothing twice.
+    page.flags(true)
+    page.flags(true)
+    expect(count.added()).toBe(installed)
+    dragSelect('p')
+    await settle()
+    expect(page.sent.map((r) => r.text)).toEqual(['quantum foam'])
+  })
+
+  it('takes every listener down as the flags turn off while the page lives, and puts them back as they turn on', async () => {
+    document.body.innerHTML = '<p id="p">quantum foam</p><p id="q">other text</p>'
+    const count = countListeners()
+    const page = installOnFlag()
+    page.flags(true)
+    const installed = count.added()
+    dragSelect('p')
+    await settle()
+    expect(page.sent.map((r) => r.text)).toEqual(['quantum foam'])
+    // The setting turned off in Settings › Appearance: the listeners go, all of them; the
+    // standing menu is the browser's to clear, so no empty report is owed here.
+    page.flags(false)
+    expect(count.removed()).toBe(installed)
+    expect(page.sent).toHaveLength(1)
+    // A repeated off removes nothing twice.
+    page.flags(false)
+    expect(count.removed()).toBe(installed)
+    // Gestures and collapses reach nobody now.
+    collapse()
+    dragSelect('q')
+    await settle()
+    expect(page.sent).toHaveLength(1)
+    // Turned back on: the listeners return, and the next gesture raises the menu again.
+    page.flags(true)
+    expect(count.added()).toBe(installed * 2)
+    dragSelect('p')
+    await settle()
+    expect(page.sent.map((r) => r.text)).toEqual(['quantum foam', 'quantum foam'])
+  })
+
+  it('a standing selection is raised by no toggle: the flag turning on waits for a gesture', async () => {
+    document.body.innerHTML = '<p id="p">quantum foam</p>'
+    const page = installOnFlag()
+    scriptSelect('p')
+    page.flags(true)
+    await settle()
+    expect(page.sent).toEqual([])
+    // An unrelated click over the same standing selection raises nothing either (the gesture rule).
+    down()
+    up()
+    await settle()
+    expect(page.sent).toEqual([])
+    dragSelect('p')
+    await settle()
+    expect(page.sent.map((r) => r.text)).toEqual(['quantum foam'])
+  })
+
+  it('the uninstaller takes a standing reporter down, and later flags install nothing', async () => {
+    document.body.innerHTML = '<p id="p">quantum foam</p>'
+    const count = countListeners()
+    const page = installOnFlag()
+    page.flags(true)
+    const installed = count.added()
+    uninstall!()
+    uninstall = null
+    expect(count.removed()).toBe(installed)
+    page.flags(true)
+    expect(count.added()).toBe(installed)
+    dragSelect('p')
+    await settle()
+    expect(page.sent).toEqual([])
   })
 })

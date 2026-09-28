@@ -42,8 +42,11 @@
  *
  * The top document alone: a frame's rect is the frame's, which this world cannot place in the
  * page (a cross-origin frame does not know its own offset), so a selection inside an iframe has
- * no mini menu. Runs in the Electron preload; the Android host does not install it – its
- * system toolbar is the phone's selection menu (`Menus.selectionToolbar`).
+ * no mini menu. Runs in the Electron preload, and only while the browser says the menu is on
+ * (`installSelectionReporterOnFlag` follows `PageFlags.selectionMenu`: the host has the menu and
+ * `Settings.showSelectionMenu` is on – a profile with the menu off runs none of these
+ * listeners); the Android host does not install it – its system toolbar is the phone's
+ * selection menu (`Menus.selectionToolbar`).
  */
 
 import { isEditingElement } from './editingFocus'
@@ -70,6 +73,16 @@ export interface SelectionReport {
 
 export interface SelectionReporterTransport {
   send(report: SelectionReport): void
+}
+
+/** The reporter's transport, and the browser's page flags as they arrive (`installSelectionReporterOnFlag`). */
+export interface SelectionReporterFlagTransport extends SelectionReporterTransport {
+  /**
+   * Each set of page flags the browser sends the page (`PageFlags`; the first at the document's
+   * `dom-ready`, another at each navigation and whenever a flag changed – the setting toggled).
+   * `selectionMenu` alone is read here.
+   */
+  onFlags(listener: (flags: { selectionMenu?: boolean }) => void): void
 }
 
 /** How long after the last pointer / keyboard / selection event the selection counts as settled. */
@@ -418,5 +431,39 @@ export function installSelectionReporter(
     win.removeEventListener('blur', onBlur)
     win.removeEventListener('pagehide', drop)
     doc.removeEventListener('visibilitychange', onVisibility)
+  }
+}
+
+/**
+ * Run the reporter while the browser says the mini menu is on – `PageFlags.selectionMenu`: the
+ * host has the menu and `Settings.showSelectionMenu` is on – and not otherwise. Nothing is
+ * installed until the first flags arrive (the document's `dom-ready`), so a profile with the
+ * menu off pays for none of the reporter's listeners; a set that says off while the page lives
+ * (the setting toggled in Settings › Appearance) takes them down, one that says on again puts
+ * them back, and the next gesture raises the menu – a selection standing from before is nobody's
+ * gesture (the gesture rule). A repeated value installs or removes nothing. The browser clears a
+ * standing menu on the toggle itself (`SelectionMenuService.onSettingsChanged`), so the removal
+ * owes no empty report. Returns the uninstaller: the reporter goes if it stands, and later flags
+ * install nothing.
+ */
+export function installSelectionReporterOnFlag(
+  transport: SelectionReporterFlagTransport,
+  doc: Document = document
+): () => void {
+  let remove: (() => void) | null = null
+  let stopped = false
+  transport.onFlags((flags) => {
+    if (stopped) return
+    if (flags.selectionMenu === true) {
+      if (!remove) remove = installSelectionReporter(transport, doc)
+    } else if (remove) {
+      remove()
+      remove = null
+    }
+  })
+  return () => {
+    stopped = true
+    remove?.()
+    remove = null
   }
 }

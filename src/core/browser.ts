@@ -4671,10 +4671,14 @@ export class Browser {
     // answers, and `setActive` keeps it from being deactivated again while it is the default.
     if (s.searchEngines)
       s.searchEngines = withDefaultSearchEngineActive(s.searchEngines, s.searchEngineId)
+    // The flags every live page holds (`PageFlags`): re-sent when one of them changed – the
+    // mini menu's among them, so a page installs or drops its selection reporter with the
+    // setting (`shared/selectionScript`; the model's own clear is below).
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||
-      before.thirdParty !== s.thirdPartyOnPinned
+      before.thirdParty !== s.thirdPartyOnPinned ||
+      before.selectionMenu !== (s.showSelectionMenu !== false)
     ) {
       this.tabs.broadcastPageFlags()
     }
