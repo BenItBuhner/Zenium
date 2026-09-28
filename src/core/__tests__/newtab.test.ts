@@ -10,6 +10,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
+import { emptyEducationalTipMemory } from '../../shared/educationalTips'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
 import { emptySafetyHubCardMemory } from '../../shared/safetyHubCard'
 import { makeTheme, resolveTheme, unfollowedTheme } from '../../shared/theme'
@@ -921,7 +922,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
       shortcuts: [],
       hiddenHosts: ['docs.example'],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     })
     svc.pin('javascript:alert(1)', 'nope')
     expect(device().shortcuts).toEqual([])
@@ -994,7 +996,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
         shortcuts: [],
         hiddenHosts: [],
         hiddenModules: [],
-        safetyHubCard: {}
+        safetyHubCard: {},
+        educationalTips: emptyEducationalTipMemory()
       })
       expect(f.browser.history.topSites(8, device().hiddenHosts).map((s) => s.url)).toEqual([
         'https://www.news.example/a',
@@ -1351,7 +1354,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
         shortcuts: [],
         hiddenHosts: [],
         hiddenModules: [],
-        safetyHubCard: {}
+        safetyHubCard: {},
+        educationalTips: emptyEducationalTipMemory()
       })
       expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
       expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
@@ -1413,6 +1417,14 @@ describe('NewTabService: my shortcuts and most visited', () => {
       f.browser.handleCommand(win, 'newtab.setSafetyHubCardMemory', {
         memories: { 'safe-browsing': seen }
       })
+      // A tip card seen and the browsing data once cleared: Chrome's ephemeral-card record and
+      // Quick Delete's own clock, neither the page's.
+      const tipped = {
+        cards: { 'ntp-theme': { impressions: 2, shownAt: 7, interacted: false } },
+        shownAt: 7,
+        browsingDataClearedAt: 3
+      }
+      f.browser.handleCommand(win, 'newtab.setEducationalTipMemory', { memory: tipped })
       await f.browser.handleCommand(win, 'newtab.reset', undefined)
       expect(f.browser.state.settings.newTab).toEqual({
         ...DEFAULT_NEW_TAB_SETTINGS,
@@ -1422,7 +1434,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
         shortcuts: [],
         hiddenHosts: [],
         hiddenModules: [],
-        safetyHubCard: { 'safe-browsing': seen }
+        safetyHubCard: { 'safe-browsing': seen },
+        educationalTips: tipped
       })
       expect(f.background.current).toBeNull()
       // No restore snapshot survives a reset.

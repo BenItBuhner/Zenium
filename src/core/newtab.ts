@@ -44,10 +44,12 @@ import {
   newTabBackground,
   newTabSections,
   newTabShortcutsMode,
+  noteBrowsingDataCleared,
   pinShortcut,
   removeSite,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
+  setEducationalTipMemory,
   setModuleHidden,
   setNewTabSection,
   setSafetyHubCardMemories,
@@ -57,6 +59,7 @@ import {
   unpinShortcut
 } from '../shared/newTab'
 import type { SafetyHubCardMemories } from '../shared/safetyHubCard'
+import type { EducationalTipMemory } from '../shared/educationalTips'
 import { createTabRecord, getSpace } from './model'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -794,6 +797,29 @@ export class NewTabService {
   }
 
   /**
+   * The tip card's memory as the renderer's machine left it (NTP-20,
+   * `shared/educationalTips.ts`): replaced whole in this device's new-tab sets, never synced
+   * (Chrome's `educational_tip_module_*` prefs are per device). Nothing is written when the
+   * record already reads so.
+   */
+  setEducationalTipMemory(memory: EducationalTipMemory): void {
+    const next = setEducationalTipMemory(this.device, memory)
+    if (next === this.device) return
+    this.updateDevice(() => next)
+  }
+
+  /**
+   * Browsing data was deleted on this device (the Delete browsing data sheet went through): the
+   * Quick Delete tip's signal (NTP-20; Chrome counts `Privacy.DeleteBrowsingData.Action`,
+   * `quick_delete_promo.cc:58-74`). The tip card rests on it for thirty days.
+   */
+  noteBrowsingDataCleared(now: number = Date.now()): void {
+    const next = noteBrowsingDataCleared(this.device, now)
+    if (next === this.device) return
+    this.updateDevice(() => next)
+  }
+
+  /**
    * Whether the grid is anything but a fresh profile's – a pinned shortcut, a removed site or a
    * mode other than the default – so the page menu's "Restore Default Shortcuts" has work to do
    * (the row is greyed otherwise).
@@ -865,8 +891,9 @@ export class NewTabService {
    * greeting as `DEFAULT_NEW_TAB_SETTINGS` has them, the pinned shortcuts and removed sites
    * cleared, the picked image let go. `enabled` – whether a new tab opens the page at all – is
    * not the page's content and stays; nor is the Safety check card's memory, which is Chrome's
-   * Safety Hub record (`safety_hub.menu_notifications`, not a new tab page pref): a card the
-   * user has seen enough of does not come back for a reset of the page.
+   * Safety Hub record (`safety_hub.menu_notifications`, not a new tab page pref), nor the tip
+   * card's (Chrome's `educational_tip_module_*` prefs and its histograms): a card the user has
+   * seen enough of does not come back for a reset of the page.
    */
   async reset(): Promise<void> {
     const host = this.browser.platform.newTabBackground
@@ -874,7 +901,8 @@ export class NewTabService {
     this.restoredFrom = null
     this.browser.state.newTabDevice = {
       ...emptyNewTabDevice(),
-      safetyHubCard: this.browser.state.newTabDevice.safetyHubCard
+      safetyHubCard: this.browser.state.newTabDevice.safetyHubCard,
+      educationalTips: this.browser.state.newTabDevice.educationalTips
     }
     this.setSettings({ ...DEFAULT_NEW_TAB_SETTINGS, enabled: this.settings.enabled })
   }

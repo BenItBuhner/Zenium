@@ -3466,8 +3466,13 @@ export class Browser {
         this.permissions.restoreRevokedList(records)
         this.state.commitVolatile()
       },
-      'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
-        this.privacy.clearBrowsingData(range, types, passphrase, win),
+      'privacy.clearBrowsingData': async ({ range, types, passphrase }, win) => {
+        const outcome = await this.privacy.clearBrowsingData(range, types, passphrase, win)
+        // A clear that went through is the tip card's Quick Delete signal (NTP-20); one that
+        // stopped at the re-authentication round deleted nothing and leaves no mark.
+        if (outcome.status === 'ok') this.newTab.noteBrowsingDataCleared()
+        return outcome
+      },
       'privacy.clearBrowsingDataCounts': ({ range }, win) => this.privacy.counts(range, win),
       'privacy.tabsInRange': ({ range }, win) => this.privacy.tabsInRange(range, win),
       'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
@@ -3946,6 +3951,7 @@ export class Browser {
       'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
       'newtab.setSafetyHubCardMemory': ({ memories }) =>
         this.newTab.setSafetyHubCardMemories(memories),
+      'newtab.setEducationalTipMemory': ({ memory }) => this.newTab.setEducationalTipMemory(memory),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
