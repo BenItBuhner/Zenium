@@ -53,16 +53,21 @@ import kotlin.math.roundToInt
  *     (§9.22, the lead's pick), one more Tab re-enters the dialog at its first control,
  *     Shift+Tab comes back to the Undo, and Enter undoes – the site's row is back in the block,
  *     the core's revoked list holds it again, the toast is gone and the focus is the dialog's;
- *  4. the finger: Allow again again, the lifted Undo under a touch – the block restored, the
+ *  4. Ctrl+Z (§9.33's shortcut, the other half of the lead's pick): Allow again again, then
+ *     `KEYCODE_Z` with Ctrl through the input dispatcher, the focus wherever the finger left it
+ *     – the seat's window listener presses the lifted Undo: the row back in the block, the
+ *     core's list holding the site, the toast gone and the seat down, the focus the dialog's,
+ *     the key taken as the DOM saw it (`key` z, `ctrlKey`, `defaultPrevented`);
+ *  5. the finger: Allow again again, the lifted Undo under a touch – the block restored, the
  *     toast forgotten;
- *  5. the ORPHAN case: Allow again on the second revoked site, then the dialog closed under the
+ *  6. the ORPHAN case: Allow again on the second revoked site, then the dialog closed under the
  *     toast by a touch on the scrim – the seat drops its lift and the SAME card (marked in the
  *     document before the close) stands on the page frame, not inert, still one `role="status"`,
  *     still 8 px inside the frame's bottom edge; its clock ran on through the re-seat – it leaves
  *     about 8 s after it was raised, not 8 s after the dialog closed; the still `orphan`. (The
  *     scrim, not Got it: the cards hold one live toast, and Got it's own toast would send the
  *     marked one off – the displacement is the cards' rule, not the lift's.)
- *  6. Got it, as the brief names it: on the tablet it leaves the dialog FIRST (#668's
+ *  7. Got it, as the brief names it: on the tablet it leaves the dialog FIRST (#668's
  *     `closesSheet` gate) and its "Review complete" toast lands on the page frame – the frame's
  *     un-lifted seat, one `role="status"`, in reach – and its Undo restores the block. Once
  *     services drop the gate for the tablet, this step becomes a second lifted case.
@@ -171,6 +176,7 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         reviewOpens()
         allowAgainLifts()
         undoByKeyboard()
+        undoByCtrlZ()
         undoByFinger()
         orphan()
         gotItLands()
@@ -284,10 +290,47 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         check("the dialog still stands", domRect(DIALOG) != null, "")
     }
 
-    // --- 4. Undo by the finger -----------------------------------------------------------------
+    // --- 4. Undo by Ctrl+Z ---------------------------------------------------------------------
+
+    /**
+     * §9.33's shortcut, the other half of the lead's pick: with the toast lifted and the focus
+     * wherever the finger left it – nowhere, once Allow again's row has left the block – Ctrl+Z
+     * through the input dispatcher presses the lifted Undo from the seat's window listener
+     * (lib/portals.tsx `useToastSeat`): the row back in the block, the core's list holding the
+     * site, the toast gone and the seat down, the focus the dialog's. A one-shot listener on the
+     * window records the chord as the DOM saw it – `key`, the modifiers, `defaultPrevented` – so
+     * a miss can be told from a key the WebView delivered otherwise.
+     */
+    private fun undoByCtrlZ() {
+        finding("\n4. Ctrl+Z: the shortcut presses the lifted Undo")
+        if (domRect(revokedRow(FIRST_REVOKED)) == null) {
+            check("the block holds ${hostOf(FIRST_REVOKED)} to allow again", false, "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row]')].map(function(r){return r.dataset.row})")}")
+            return
+        }
+        watchToasts()
+        check("a finger on Allow again for ${hostOf(FIRST_REVOKED)}", tapDom(allowAgain(FIRST_REVOKED)), "")
+        check("the toast rises again, lifted over the dialog", awaitDom(LIFTED_CARD, 5_000), "seat ${seatText()}")
+        SystemClock.sleep(600)
+        val before = activeText()
+        check("no text field has the focus – the chord would be its own", !jsBoolean("(function(){var a=document.activeElement;return !!a&&(a.matches('input,textarea')||a.isContentEditable)})()"), "active '$before'")
+        watchKey()
+        val pressedAt = SystemClock.uptimeMillis()
+        key(KeyEvent.KEYCODE_Z, ctrl = true)
+        check("Ctrl+Z puts ${hostOf(FIRST_REVOKED)} back in the removed-permissions block", awaitDom(revokedRow(FIRST_REVOKED), 6_000), "after ${SystemClock.uptimeMillis() - pressedAt} ms; the focus before '$before'; block ${jsText("[...document.querySelectorAll('$DIALOG [data-row^=\"safety-check:permissions:revoked:\"]')].map(function(r){return r.dataset.row})")}")
+        val seen = keySeen()
+        check("the DOM saw the chord as Ctrl+Z and the seat took it", seen.contains("\"key\":\"z\"") && seen.contains("\"ctrl\":true") && seen.contains("\"taken\":true"), "key $seen")
+        check("the core's revoked list holds it again", awaitTrue(4_000) { revokedOrigins().contains(FIRST_REVOKED) }, "revoked ${revokedOrigins()}")
+        check("the toast is gone from the seat and the seat is down", awaitDomGone(LIVE_CARD, 4_000) && awaitTrue(3_000) { !jsBoolean("!!document.querySelector('$SEAT[data-lifted]')") }, "seat ${seatText()}")
+        SystemClock.sleep(400)
+        check("the focus is the dialog's (§9.22)", activeText().endsWith(IN_DIALOG), "active '${activeText()}'")
+        check("the dialog still stands", domRect(DIALOG) != null, "")
+        SystemClock.sleep(600)
+    }
+
+    // --- 5. Undo by the finger -----------------------------------------------------------------
 
     private fun undoByFinger() {
-        finding("\n4. The finger: the lifted Undo under a touch")
+        finding("\n5. The finger: the lifted Undo under a touch")
         if (domRect(revokedRow(FIRST_REVOKED)) == null) {
             check("the block holds ${hostOf(FIRST_REVOKED)} to allow again", false, "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row]')].map(function(r){return r.dataset.row})")}")
             return
@@ -305,7 +348,7 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         SystemClock.sleep(600)
     }
 
-    // --- 5. the orphan case ----------------------------------------------------------------------
+    // --- 6. the orphan case ----------------------------------------------------------------------
 
     /**
      * The dialog closes while its toast is up – a touch on the scrim, the way a user leaves a
@@ -313,10 +356,10 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
      * so the card on the page frame after it is provably the same element – one announcement,
      * one clock – and its clock is read against the moment it was raised. Not Got it here: the
      * cards hold one live toast (lib/ui.ts `pushToast`), so Got it's own toast would send the
-     * marked one off before it could be measured; Got it is step 6's.
+     * marked one off before it could be measured; Got it is step 7's.
      */
     private fun orphan() {
-        finding("\n5. The orphan case: the dialog closes under the lifted toast")
+        finding("\n6. The orphan case: the dialog closes under the lifted toast")
         if (domRect(revokedRow(SECOND_REVOKED)) == null) {
             check("the block holds ${hostOf(SECOND_REVOKED)} to allow again", false, "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row]')].map(function(r){return r.dataset.row})")}")
             return
@@ -357,7 +400,7 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         SystemClock.sleep(800)
     }
 
-    // --- 6. Got it, as the brief names it ------------------------------------------------------
+    // --- 7. Got it, as the brief names it ------------------------------------------------------
 
     /**
      * Got it on the tablet leaves the dialog first (#668's `closesSheet` gate, settingsRows.tsx)
@@ -367,7 +410,7 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
      * step is read as the lifted case once services drop it.
      */
     private fun gotItLands() {
-        finding("\n6. Got it: the dialog leaves first on the tablet (#668), its toast lands on the page frame")
+        finding("\n7. Got it: the dialog leaves first on the tablet (#668), its toast lands on the page frame")
         check("the review opens again", openReview(), "dialogs ${jsText("[...document.querySelectorAll('[data-dialog]')].map(function(d){return d.dataset.dialog})")}")
         SystemClock.sleep(600)
         if (domRect(GOT_IT) == null) {
@@ -459,14 +502,31 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
 
     // --- the keyboard --------------------------------------------------------------------------
 
-    /** A key press (down and up), Shift held when `shift`, through the input dispatcher into the focused window. */
-    private fun key(keyCode: Int, shift: Boolean = false) {
-        val meta = if (shift) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
+    /** A key press (down and up), Shift or Ctrl held as asked, through the input dispatcher into the focused window. */
+    private fun key(keyCode: Int, shift: Boolean = false, ctrl: Boolean = false) {
+        var meta = 0
+        if (shift) meta = meta or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
+        if (ctrl) meta = meta or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         val down = SystemClock.uptimeMillis()
         injectInput(KeyEvent(down, down, KeyEvent.ACTION_DOWN, keyCode, 0, meta), true)
         SystemClock.sleep(40)
         injectInput(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, keyCode, 0, meta), true)
     }
+
+    /**
+     * A one-shot record of the next `keydown` as the DOM saw it – `key`, `code`, the modifiers,
+     * and whether something took it (`defaultPrevented`, read after the chrome's own window
+     * listeners, which registered first) – for [keySeen].
+     */
+    private fun watchKey() {
+        chromeJs(
+            "window.__zenDemoKey=null;window.addEventListener('keydown',function h(e){window.removeEventListener('keydown',h,true);" +
+                "window.__zenDemoKey={key:e.key,code:e.code,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey,taken:e.defaultPrevented}},true)"
+        )
+    }
+
+    /** The key [watchKey] recorded, as JSON; `null` while none came. */
+    private fun keySeen(): String = jsText("window.__zenDemoKey")
 
     /** The document's active element as "name @where": its reader name or text, then the dialog, the seat, or its tag. */
     private fun activeText(): String = jsText(

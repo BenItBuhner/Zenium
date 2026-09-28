@@ -14,8 +14,10 @@ name: Android tablet settings toast demo
 # frame's bottom edge and clear of the dialog box, under no `inert`, one `role="status"`, listed
 # by the accessibility tree while lifted; a keyboard's Tab from the dialog reaches the Undo as
 # the dialog's LAST stop (§9.22), one more Tab re-enters the dialog, Shift+Tab comes back, and
-# Enter undoes – the site back in the block, the core's revoked list holding it; a finger on the
-# lifted Undo does the same; the ORPHAN case – the dialog closed by its scrim under the toast –
+# Enter undoes – the site back in the block, the core's revoked list holding it; Ctrl+Z (§9.33's
+# shortcut, the other half of the lead's pick) presses the lifted Undo from wherever the focus
+# is, the key taken as the DOM saw it; a finger on the lifted Undo does the same; the ORPHAN
+# case – the dialog closed by its scrim under the toast –
 # leaves the SAME card on the page frame, not inert, its 8 s clock running on from the moment it
 # was raised; and Got it, which leaves the dialog first on the tablet (#668's closesSheet gate),
 # lands its own toast on the frame, its Undo restoring the block. Two acts, in parallel, each on
