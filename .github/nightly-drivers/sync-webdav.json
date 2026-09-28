@@ -4,6 +4,6 @@
   "shard": "phone-a",
   "mirrors": "android-sync-webdav-demo.yml",
   "dir": "sync-webdav-demo",
-  "estimate": 2.5,
-  "note": "ID-32's Android half: the WebDAV transport over sync.fetch / secrets.* against a WebDAV server on the device's loopback; the engine driven through the core's commands until Settings has a transport choice."
+  "estimate": 6,
+  "note": "ID-32's Android half: the WebDAV transport over sync.fetch / secrets.* against a WebDAV server on the device's loopback, driven through Settings › Sync under a finger (the Sync through picker, the server form's sheets, Test connection, Turn on sync, Sync now, the App password row after a refusal, Turn off sync); 9 scenes, each a light and a dark still (18), plus the core's probe checks off camera."
 }
