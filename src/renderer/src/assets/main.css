@@ -12267,9 +12267,23 @@
   font-weight: var(--v2-weight-body);
 }
 /*
- * On touch, the row's hold sheet (`AddressSheet`, sheets.tsx): §9.23's title block, the row's
- * label over the whole value as its paragraph – the block's own 15 at 69% – wrapped the same
- * way, since the chassis's paragraph breaks only at spaces.
+ * The same card standing under a touch hold where the page draws dialogs – a tablet (the
+ * lead's look on #694, point 4: "a finger on a tablet is touch"; `addressHold`). It stands
+ * until a press elsewhere, a scroll or a key takes it down, and live rows lie under it, so
+ * unlike the mouse's card (no pointer, above) it takes the pointer – a tap on the card is a tap
+ * on the card, which stays, and reaches no row beneath – and its text is not selectable: the
+ * value's copy is the row's own (`RowCopy`), never a hidden hold on the card.
+ */
+.zen-address-hover-card[data-by='hold'] {
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/*
+ * On touch where the page draws sheets – a phone – the row's hold sheet (`AddressSheet`,
+ * sheets.tsx): §9.23's title block, the row's label over the whole value as its paragraph – the
+ * block's own 15 at 69% – wrapped the same way, since the chassis's paragraph breaks only at
+ * spaces.
  */
 .zen-settings-sheet-address .zen-sheet-title-block p {
   overflow-wrap: anywhere;

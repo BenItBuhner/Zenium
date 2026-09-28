@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   addressBlur,
   addressFocus,
+  addressHold,
   addressPointerEnter,
   addressPointerLeave,
   addressRevealStore,
@@ -57,18 +58,28 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * leaving the DOM. No native `title` anywhere (§9.31's one vocabulary): the row's DOM already
  * holds the whole value for a reader (#685), so the card describes nothing twice.
  *
- * On a touch or pen pointer no card shows (§9.31: "mouse and keyboard only"); where the page
- * draws sheets (`hold` given – the phone layout, and the two panes inside the phone shell), a
- * hold on a shortened row opens the row's hold sheet (`AddressSheet`, sheets.tsx) with the
- * label as its title and the whole value as the title block's paragraph. The hold is
+ * A touch or pen pointer resting on a row shows no card (§9.31: hover is "mouse and keyboard
+ * only"); its hold is the reveal on touch (§9.2). Where the page draws sheets (`hold` given –
+ * the phone layout, and the two panes inside the phone shell), a hold on a shortened row opens
+ * the row's hold sheet (`AddressSheet`, sheets.tsx) with the label as its title and the whole
+ * value as the title block's paragraph. Where it draws dialogs (`hold` absent – the desktop's
+ * two panes, and a tablet's: the lead's look on #694, point 4, "a finger on a tablet is
+ * touch"), the hold raises the same card under the row through the machine's standing mode
+ * (`addressHold`: at once, no leave timer), placed as the mouse's card is, and it stands until
+ * a tap outside (a press elsewhere), a scroll or a wheel, Escape or another key, the window's
+ * blur or resize, or a surface opening takes it down – the dismissals below, the tab card's
+ * set. Live rows lie under that card, so unlike the mouse's it takes the pointer
+ * (`data-by="hold"`, main.css): a tap on the card itself keeps it up and reaches no row – the
+ * tab card, which no pointer reaches, has no such exemption – and its text is not selectable (no
+ * hidden copy on the card). A second hold on another row moves the card there. The hold is
  * `useLongPress`'s (components/phone): recognised at `LONG_PRESS_MS` with `SLOP` of travel,
  * fired on the click the lift raises (or `RELEASE_DELAY_MS` after the lift when none comes) so
  * the sheet cannot receive that click, or at once on the `contextmenu` Chromium raises for a
  * touch hold, and the click swallowed either way. That hook spreads onto one element; a hold
  * heard for every row from the document reads its constants and keeps its rules. A row that
- * copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets no sheet – none
- * carries an address today; the day one does, the copy is the sheet's Copy row (§9.31's
- * link-menu precedent), not a second gesture on the same hold.
+ * copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets neither sheet
+ * nor card – none carries an address today; the day one does, the copy is the sheet's Copy
+ * row (§9.31's link-menu precedent), not a second gesture on the same hold.
  */
 export function AddressReveal({
   root,
@@ -76,10 +87,13 @@ export function AddressReveal({
 }: {
   /** The page layout's root: the rows this host answers for. */
   root: RefObject<HTMLElement | null>
-  /** Opens the hold sheet; absent where the page draws dialogs (the desktop's two panes). */
+  /**
+   * Opens the hold sheet; absent where the page draws dialogs (the desktop's and a tablet's
+   * two panes), where the hold raises the card instead.
+   */
   hold?: (request: AddressHoldRequest) => void
 }): JSX.Element | null {
-  const { card, subject } = addressRevealStore.use()
+  const { card, subject, held } = addressRevealStore.use()
   const holdRef = useRef(hold)
   useEffect(() => {
     holdRef.current = hold
@@ -133,26 +147,41 @@ export function AddressReveal({
       timer = null
       press = null
     }
+    // The reveal a recognised hold makes: the row's sheet where the page draws sheets, the
+    // standing card where it draws dialogs.
     const fire = (): void => {
       if (release !== null) clearTimeout(release)
       release = null
       const subject = fired
       fired = null
       if (!subject) return
-      holdRef.current?.({
-        kind: 'address',
-        rowId: subject.row.dataset.row ?? '',
-        label: labelOf(subject.row) || subject.text,
-        text: subject.text
-      })
+      const sheet = holdRef.current
+      if (sheet) {
+        sheet({
+          kind: 'address',
+          rowId: subject.row.dataset.row ?? '',
+          label: labelOf(subject.row) || subject.text,
+          text: subject.text
+        })
+      } else {
+        addressHold(subject)
+      }
     }
     const onDown = (e: PointerEvent): void => {
+      // A tap on the standing card is a tap on the card: it stays, and no row under it hears.
+      if (insideCard(ref.current, e.target)) return
       hideAddressCard()
       clear()
       held = false
-      if (!holdRef.current || mouse(e) || e.button !== 0 || !e.isPrimary) return
+      if (mouse(e) || e.button !== 0 || !e.isPrimary) return
       const subject = elidedAddressOf(e.target)
-      if (!subject || !root.current?.contains(subject.row)) return
+      if (!subject) return
+      // The sheet is the page root's rows' (a frame dialog draws none where sheets are); the
+      // card is any row's the page answers for, a frame dialog's too, as the mouse's card is.
+      const inside = holdRef.current
+        ? (root.current?.contains(subject.row) ?? false)
+        : owned(subject.row)
+      if (!inside) return
       if (subject.row.hasAttribute('data-copies')) return
       press = { id: e.pointerId, x: e.clientX, y: e.clientY, subject }
       timer = setTimeout(() => {
@@ -189,7 +218,12 @@ export function AddressReveal({
     }
     // Chromium's own long press (`contextmenu` from a touch, a little after the timer): the
     // hold's cue, as `useLongPress` takes it – it fires now and the lift's click is swallowed.
+    // A hold on the standing card itself raises no menu and, as a tap on it, leaves it standing.
     const onContextMenu = (e: MouseEvent): void => {
+      if (insideCard(ref.current, e.target)) {
+        e.preventDefault()
+        return
+      }
       if (!press) return
       e.preventDefault()
       const { subject } = press
@@ -263,10 +297,23 @@ export function AddressReveal({
 
   // While the card is up: a press, a wheel, a scroll, a key, the window's blur or resize take
   // it down (the tab card's dismissals), and so does its row leaving the DOM (a section change
-  // under a resting pointer; the tooltip host watches its control the same way).
+  // under a resting pointer; the tooltip host watches its control the same way). The one
+  // exemption is the held card's own region: it takes the pointer, so a press or a long press
+  // on it names it – a tap on the card keeps it (the lead's rule is a tap outside), and the
+  // press reaches no row under it. The dismissals hand the listener its event; the mouse's card
+  // takes no pointer, so no event ever names that one.
   useEffect(() => {
     if (!shown || !subject) return
-    const unbind = bindHoverCardDismissals(hideAddressCard)
+    const unbind = bindHoverCardDismissals((e?: Event) => {
+      if (
+        e &&
+        (e.type === 'pointerdown' || e.type === 'contextmenu') &&
+        insideCard(ref.current, e.target)
+      ) {
+        return
+      }
+      hideAddressCard()
+    })
     const gone = new MutationObserver(() => {
       if (!subject.row.isConnected) hideAddressCard()
     })
@@ -289,7 +336,9 @@ export function AddressReveal({
         // in the chrome layer declare on their own roots (§9.29's two families).
         data-surface="page"
         data-side={box?.side}
-        data-by={card.by ?? undefined}
+        // What raised it: the pointer resting, keyboard focus, or a touch hold – the standing
+        // card that takes the pointer (main.css).
+        data-by={held ? 'hold' : (card.by ?? undefined)}
         style={{
           width: POPOVER_WIDTH.list,
           ...(box ? popoverStyle(box) : { left: 0, top: 0 }),
@@ -300,6 +349,14 @@ export function AddressReveal({
       </div>
     </ChromePortal>
   )
+}
+
+/**
+ * Whether an event landed on the card itself. Only the held card takes the pointer
+ * (`[data-by='hold']`, main.css); no event ever names the mouse's or the keyboard's.
+ */
+function insideCard(card: HTMLElement | null, target: EventTarget | null): boolean {
+  return card !== null && target instanceof Node && card.contains(target)
 }
 
 /** The row's own label – the nearest row of the label is the row, not a nested option's. */

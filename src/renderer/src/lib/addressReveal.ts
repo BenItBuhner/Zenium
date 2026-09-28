@@ -10,8 +10,10 @@ import { HOVER_CARD_HIDDEN, type HoverCardState } from './ui'
  * lead's ruling on #685 item 4): the row's description keeps its end and drops its start
  * (`.zen-settings-description-address`, blocks.tsx `Description`), the whole value stays in
  * the DOM, and the reveal shows it whole where the ellipsis actually fell – a §9.31 hover card
- * on a mouse or under keyboard focus, the row's hold sheet on touch (`AddressReveal`, the
- * Settings page's host). Nothing here reads the row's model: the host finds the row under the
+ * on a mouse or under keyboard focus, the same card standing under a touch hold where the page
+ * draws dialogs (a tablet; the lead's look on #694: "a finger on a tablet is touch"), the row's
+ * hold sheet where it draws sheets (`AddressReveal`, the Settings page's host). Nothing here
+ * reads the row's model: the host finds the row under the
  * pointer, its address line and whether that line is elided, at the event – a hover, a focus,
  * a hold – and never on a timer or a resize (`isElided`: the span's scroll width past its
  * client width, the one reading CSS's `text-overflow` also made).
@@ -80,10 +82,16 @@ export interface AddressRevealState {
   card: HoverCardState
   /** The row the card is up for and the value it shows; null while no card is. */
   subject: AddressSubject | null
+  /**
+   * Whether a touch hold raised the card (`addressHold`): the standing card of a tablet, which
+   * takes the pointer so that a tap on it falls through to no row under it. False for the
+   * mouse's and the keyboard's, and while no card is.
+   */
+  held: boolean
 }
 
 export const addressRevealStore = createStore<AddressRevealState>(
-  { card: HOVER_CARD_HIDDEN, subject: null },
+  { card: HOVER_CARD_HIDDEN, subject: null, held: false },
   'addressReveal'
 )
 
@@ -102,13 +110,14 @@ function keyOf(row: HTMLElement): string {
 
 /** The row the controller is asked about right now: `blocked` reads the surface it stands in. */
 let candidate: HTMLElement | null = null
-/** The subject `measure` read for the card on its way: the store takes it as the card shows. */
-let measured: AddressSubject | null = null
+/** What `measure` read for the card on its way – the subject, and whether a hold asked: the store takes it as the card shows. */
+let measured: { subject: AddressSubject; held: boolean } | null = null
 
 const slice: HoverCardStore = {
   get: () => addressRevealStore.get().card,
   set: (card) => {
-    addressRevealStore.set({ card, subject: card.tabId === null ? null : measured })
+    const up = card.tabId === null ? null : measured
+    addressRevealStore.set({ card, subject: up?.subject ?? null, held: up?.held ?? false })
     if (card.tabId === null) measured = null
   }
 }
@@ -125,10 +134,11 @@ export const addressCard = new HoverCardController(slice, {
  * The row's geometry, read when the card shows – not when the pointer arrived (the machine's
  * rule) – and the elision read again with it: a row re-laid out during the wait so that its
  * value fits shows no card. The row is its own bar: the card hangs under it (`placeAddressCard`).
+ * `held` marks the reading a touch hold asked for (`addressHold`).
  */
-function measure(subject: AddressSubject): RowMeasure | null {
+function measure(subject: AddressSubject, held = false): RowMeasure | null {
   if (!subject.row.isConnected || !isElided(subject.span)) return null
-  measured = { ...subject, text: subject.span.textContent ?? '' }
+  measured = { subject: { ...subject, text: subject.span.textContent ?? '' }, held }
   const rect = toRect(subject.row.getBoundingClientRect())
   return { anchor: rect, sidebar: rect }
 }
@@ -153,6 +163,20 @@ export function addressFocus(subject: AddressSubject): void {
 /** Focus left a row that carries an address line. */
 export function addressBlur(row: HTMLElement): void {
   addressCard.blur(keyOf(row))
+}
+
+/**
+ * A touch or pen held on a row whose line is elided, where the page draws no sheets (a tablet's
+ * two panes; the lead's look on #694, point 4): its card at once, and standing – the
+ * controller's focus mode, which no pointer leaving takes down – until a press elsewhere, a
+ * scroll, a key, the window's blur or resize or a surface opening does (`AddressReveal` binds
+ * `bindHoverCardDismissals`, the tab card's set). Marked `held` for the host: that card takes
+ * the pointer. A second hold on another row moves it there (the press takes the first down, the
+ * hold raises the next).
+ */
+export function addressHold(subject: AddressSubject): void {
+  candidate = subject.row
+  addressCard.focus(keyOf(subject.row), () => measure(subject, true))
 }
 
 /** A press, a scroll, a key, the window's blur, a surface opening: no card shows or is about to. */

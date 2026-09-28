@@ -20,9 +20,11 @@ import { SheetStack } from '../sheets'
  * at the hover, the focus or the hold, never watched – gets §9.31's hover card on a mouse after
  * Chrome's ~800 ms and at once under keyboard focus: a `role="tooltip"` on the tab card's
  * chrome at §9.20's 320, carrying the whole value; a value that fits shows nothing; nothing
- * carries a native `title`; a touch shows no card and a hold on the row asks the page for the
- * row's hold sheet, whose title block reads the label and the whole value. #685's pins stand:
- * the row's own line is untouched by the reveal.
+ * carries a native `title`; a touch resting shows no card, and a hold on the row is the reveal
+ * on touch – the row's hold sheet where the page draws sheets (a phone), whose title block reads
+ * the label and the whole value, the same card standing under the row where it draws dialogs
+ * (a tablet; the lead's look on #694). #685's pins stand: the row's own line is untouched by
+ * the reveal.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -142,6 +144,26 @@ async function wait(ms: number): Promise<void> {
     vi.advanceTimersByTime(ms)
     await Promise.resolve()
   })
+}
+
+/**
+ * A finger (or `pointerType`'s pointer) on `target`: the down, the hold, the lift and the click
+ * the lift raises, then the turn a card would show in; whether the click was swallowed.
+ */
+async function hold(
+  target: Element,
+  ms = LONG_PRESS_MS,
+  init: PointerEventInit = { pointerType: 'touch' }
+): Promise<boolean> {
+  pointer(target, 'pointerdown', init)
+  await wait(ms)
+  pointer(target, 'pointerup', init)
+  const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+  act(() => {
+    target.dispatchEvent(click)
+  })
+  await wait(0)
+  return click.defaultPrevented
 }
 
 describe('the hover card on a mouse', () => {
@@ -299,20 +321,8 @@ describe('the card under the keyboard', () => {
   })
 })
 
-describe('the hold on touch', () => {
-  /** A finger on `target`: the down, the hold, the lift and the click the lift raises. */
-  async function hold(target: Element, ms = LONG_PRESS_MS): Promise<boolean> {
-    pointer(target, 'pointerdown', { pointerType: 'touch' })
-    await wait(ms)
-    pointer(target, 'pointerup', { pointerType: 'touch' })
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
-    act(() => {
-      target.dispatchEvent(click)
-    })
-    return click.defaultPrevented
-  }
-
-  it('a hold on an elided row asks for the row’s hold sheet with the label and the whole value, and swallows the click the lift raises', async () => {
+describe('the hold on touch where the page draws sheets', () => {
+  it('a hold on an elided row asks for the row’s hold sheet with the label and the whole value, raises no card, and swallows the click the lift raises', async () => {
     const open = vi.fn<(request: AddressHoldRequest) => void>()
     const el = render(
       <Page hold={open}>
@@ -339,7 +349,7 @@ describe('the hold on touch', () => {
     expect(open).toHaveBeenCalledTimes(1)
   })
 
-  it('a hold that is not one asks nothing: a tap, a scroll, a fitting value, a row that copies, or a page without sheets', async () => {
+  it('a hold that is not one asks nothing: a tap, a scroll, a fitting value, a row that copies, or a mouse held where the page draws dialogs', async () => {
     const open = vi.fn<(request: AddressHoldRequest) => void>()
     const el = render(
       <Page hold={open}>
@@ -373,7 +383,8 @@ describe('the hold on touch', () => {
     await hold(lineOf(copies))
     await wait(RELEASE_DELAY_MS + 1)
     expect(open).not.toHaveBeenCalled()
-    // A page that draws dialogs mounts the host without `hold`: a hold there asks nothing.
+    // A page that draws dialogs mounts the host without `hold`: a mouse held there is no hold
+    // (a mouse's reveal is the hover) – the finger's hold there is the standing card, below.
     act(() => root?.unmount())
     mount?.remove()
     const desktop = render(
@@ -383,9 +394,10 @@ describe('the hold on touch', () => {
     )
     const desktopRow = rowOf(desktop, 'download-directory')
     measure(lineOf(desktopRow), 640, 280)
-    expect(await hold(lineOf(desktopRow))).toBe(false)
+    expect(await hold(lineOf(desktopRow), LONG_PRESS_MS, { pointerType: 'mouse' })).toBe(false)
     await wait(RELEASE_DELAY_MS + 1)
     expect(open).not.toHaveBeenCalled()
+    expect(card()).toBeNull()
   })
 
   it('Chromium’s own long press (`contextmenu` from the touch) is the hold’s cue: the sheet is asked for at once and the menu suppressed', async () => {
@@ -406,6 +418,218 @@ describe('the hold on touch', () => {
     expect(menu.defaultPrevented).toBe(true)
     expect(open).toHaveBeenCalledTimes(1)
     expect(open.mock.calls[0]?.[0]?.text).toBe(PATH)
+  })
+})
+
+/*
+ * The lead's look on #694, point 4: "§9.2 promises the reveal on touch, and a finger on a
+ * tablet is touch. The fix is not a new sheet: the hold raises the same card under the row, and
+ * the card stands until a tap outside, a scroll or Escape takes it down." The tablet's two
+ * panes draw dialogs, so they mount the host without `hold`.
+ */
+describe('the standing card under a touch hold where the page draws dialogs (a tablet)', () => {
+  const OTHER = 'https://cloud.example.com/remote.php/dav/files/alice/Backups/Personal/Devices'
+  /** The Folder row's box in the tablet's second pane, as the desktop still measured it. */
+  const FOLDER_BOX = { x: 490, y: 296, width: 696, height: 52 }
+  const OTHER_BOX = { x: 490, y: 400, width: 696, height: 52 }
+
+  beforeEach(() => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet' })
+  })
+
+  afterEach(() => {
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
+  })
+
+  /** The row's box as the layout would give it: the geometry the card hangs from. */
+  function place(
+    row: HTMLElement,
+    box: { x: number; y: number; width: number; height: number }
+  ): void {
+    row.getBoundingClientRect = () =>
+      ({
+        ...box,
+        top: box.y,
+        left: box.x,
+        right: box.x + box.width,
+        bottom: box.y + box.height,
+        toJSON: () => box
+      }) as DOMRect
+  }
+
+  /** The tablet's page: two elided rows, a fitting one and one that copies on its hold. */
+  function tablet(): {
+    folder: HTMLElement
+    other: HTMLElement
+    short: HTMLElement
+    copies: HTMLElement
+  } {
+    const el = render(
+      <Page>
+        <RowView row={folder()} ctx={ctx} variant="desktop" />
+        <RowView
+          row={location({ id: 'other', label: 'Server', description: OTHER })}
+          ctx={ctx}
+          variant="desktop"
+        />
+        <RowView row={location({ id: 'short', description: '/tmp' })} ctx={ctx} variant="desktop" />
+        <RowView
+          row={folder({ id: 'copies', copy: { text: PATH, confirmation: 'Folder copied' } })}
+          ctx={ctx}
+          variant="desktop"
+        />
+      </Page>
+    )
+    const rows = {
+      folder: rowOf(el, 'sync-server-folder'),
+      other: rowOf(el, 'other'),
+      short: rowOf(el, 'short'),
+      copies: rowOf(el, 'copies')
+    }
+    place(rows.folder, FOLDER_BOX)
+    place(rows.other, OTHER_BOX)
+    measure(lineOf(rows.folder), 640, 280)
+    measure(lineOf(rows.other), 640, 280)
+    measure(lineOf(rows.short), 40, 280)
+    measure(lineOf(rows.copies), 640, 280)
+    return rows
+  }
+
+  it('a touch hold on an elided row raises the same card under the row at once – role="tooltip", the whole value, `data-by="hold"` – standing with no leave, and swallows the click the lift raises', async () => {
+    const { folder: row } = tablet()
+    expect(await hold(lineOf(row))).toBe(true)
+    const shown = card()
+    expect(shown).not.toBeNull()
+    expect(shown?.getAttribute('role')).toBe('tooltip')
+    expect(shown?.textContent).toBe(PATH)
+    expect(shown?.getAttribute('data-by')).toBe('hold')
+    expect(shown?.classList.contains('zen-tab-hover-card')).toBe(true)
+    expect(shown?.classList.contains('zen-address-hover-card')).toBe(true)
+    expect(shown?.style.width).toBe(`${POPOVER_WIDTH.list}px`)
+    // Under the row, flush with its bottom edge and start-aligned with it (`placeAddressCard`).
+    expect(shown?.getAttribute('data-side')).toBe('below')
+    expect(shown?.style.left).toBe(`${FOLDER_BOX.x}px`)
+    expect(shown?.style.top).toBe(`${FOLDER_BOX.y + FOLDER_BOX.height}px`)
+    expect(document.querySelector('[title]')).toBeNull()
+    // It stands: no delay ran and no leave takes it – the finger leaving the row is no leave.
+    pointer(lineOf(row), 'pointerout', { pointerType: 'touch', relatedTarget: document.body })
+    await wait(HOVER_CARD_DELAY + HOVER_CARD_LEAVE_GRACE)
+    expect(card()?.getAttribute('data-by')).toBe('hold')
+    // The row's own line is #685's, untouched.
+    expect(lineOf(row).textContent).toBe(PATH)
+  })
+
+  it('a tap outside takes it down; a tap on the card itself keeps it', async () => {
+    const { folder: row } = tablet()
+    await hold(lineOf(row))
+    expect(card()).not.toBeNull()
+    // A tap outside: the press elsewhere (`bindHoverCardDismissals`' `pointerdown`).
+    pointer(document.body, 'pointerdown', { pointerType: 'touch' })
+    await wait(0)
+    expect(card()).toBeNull()
+    pointer(document.body, 'pointerup', { pointerType: 'touch' })
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBeNull()
+    // A tap on the card: the card takes the pointer, so the press names it, and it stays.
+    await hold(lineOf(row))
+    const shown = card()
+    expect(shown).not.toBeNull()
+    if (!shown) throw new Error('no card')
+    expect(await hold(shown, LONG_PRESS_MS - 1)).toBe(false)
+    expect(card()).toBe(shown)
+    // A hold on the card: Chromium's `contextmenu` is suppressed and the card stays too.
+    pointer(shown, 'pointerdown', { pointerType: 'touch' })
+    await wait(LONG_PRESS_MS + 20)
+    const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    act(() => {
+      shown.dispatchEvent(menu)
+    })
+    expect(menu.defaultPrevented).toBe(true)
+    pointer(shown, 'pointerup', { pointerType: 'touch' })
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBe(shown)
+  })
+
+  it('a scroll or a wheel takes it down', async () => {
+    const { folder: row } = tablet()
+    await hold(lineOf(row))
+    expect(card()).not.toBeNull()
+    // A scroll anywhere (`scroll`, capture, on the document).
+    act(() => {
+      document.dispatchEvent(new Event('scroll'))
+    })
+    await wait(0)
+    expect(card()).toBeNull()
+    await hold(lineOf(row))
+    expect(card()).not.toBeNull()
+    // A wheel (a tablet with a mouse).
+    act(() => {
+      row.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 40 }))
+    })
+    await wait(0)
+    expect(card()).toBeNull()
+  })
+
+  it('Escape takes it down; the rows’ own keys leave it', async () => {
+    const { folder: row } = tablet()
+    await hold(lineOf(row))
+    expect(card()).not.toBeNull()
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    })
+    await wait(0)
+    expect(card()).not.toBeNull()
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await wait(0)
+    expect(card()).toBeNull()
+  })
+
+  it('a hold on a fitting row shows nothing, a hold on a row that copies keeps its copy and shows nothing, and a mouse held shows nothing', async () => {
+    const { short, copies, folder: row } = tablet()
+    expect(await hold(lineOf(short))).toBe(false)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBeNull()
+    expect(copies.hasAttribute('data-copies')).toBe(true)
+    await hold(lineOf(copies))
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBeNull()
+    expect(await hold(lineOf(row), LONG_PRESS_MS, { pointerType: 'mouse' })).toBe(false)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()).toBeNull()
+  })
+
+  it('Chromium’s own long press (`contextmenu` from the touch) raises the card at once with the menu suppressed, and a second hold on another row moves it', async () => {
+    const { folder: row, other } = tablet()
+    pointer(lineOf(row), 'pointerdown', { pointerType: 'touch' })
+    await wait(LONG_PRESS_MS + 20)
+    const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    act(() => {
+      lineOf(row).dispatchEvent(menu)
+    })
+    expect(menu.defaultPrevented).toBe(true)
+    await wait(0)
+    expect(card()?.textContent).toBe(PATH)
+    expect(card()?.getAttribute('data-by')).toBe('hold')
+    // The lift under the standing card: its click is swallowed, the card stays.
+    pointer(lineOf(row), 'pointerup', { pointerType: 'touch' })
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    act(() => {
+      lineOf(row).dispatchEvent(click)
+    })
+    expect(click.defaultPrevented).toBe(true)
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()?.textContent).toBe(PATH)
+    // A hold on the next row: the press takes the first card down, the hold raises the next.
+    pointer(lineOf(other), 'pointerdown', { pointerType: 'touch' })
+    await wait(0)
+    expect(card()).toBeNull()
+    await wait(LONG_PRESS_MS)
+    pointer(lineOf(other), 'pointerup', { pointerType: 'touch' })
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(card()?.textContent).toBe(OTHER)
+    expect(card()?.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
   })
 })
 
@@ -486,13 +710,18 @@ describe('main.css', () => {
     return m[1].trim()
   }
 
-  it('the card’s value wraps anywhere at the body size with no clamp, the sheet’s paragraph wraps anywhere, and the tab card’s chrome is untouched', () => {
+  it('the card’s value wraps anywhere at the body size with no clamp, the held card takes the pointer and no selection, the sheet’s paragraph wraps anywhere, and the tab card’s chrome is untouched', () => {
     const css = stylesheet()
     const value = declarations(css, '.zen-address-hover-card-value')
     expect(value).toContain('overflow-wrap: anywhere')
     expect(value).toContain('font-size: var(--v2-font-body)')
     expect(value).toContain('line-height: var(--v2-line-body)')
     expect(value).not.toContain('line-clamp')
+    // The tablet's standing card: live rows lie under it, so a tap on it must land on it, and
+    // its text is no hidden copy route.
+    const held = declarations(css, ".zen-address-hover-card[data-by='hold']")
+    expect(held).toContain('pointer-events: auto')
+    expect(held).toContain('user-select: none')
     expect(declarations(css, '.zen-settings-sheet-address .zen-sheet-title-block p')).toContain(
       'overflow-wrap: anywhere'
     )
