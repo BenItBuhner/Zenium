@@ -18,10 +18,14 @@ import {
   SOFT_CHECKS,
   SoakError,
   Verdict,
+  bindReason,
+  endpointErrorOf,
   endpointPhase,
+  endpointPhaseSaid,
   fixturePage,
   formatTable,
   hasImage,
+  hostPort,
   main,
   openedTab,
   parseArgs,
@@ -364,10 +368,105 @@ describe('readEndpoint', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  // The document a failed bind writes since #690 (src/core/agent/service.ts `storeEndpoint`):
+  // `error` beside `running: false`, every key present – the desktop's, with the host's code…
+  const TAKEN = Object.freeze({
+    code: 'EADDRINUSE',
+    message: 'Port 41735 is already in use – pick another port in Settings → AI Agents',
+    address: '127.0.0.1',
+    port: 41735
+  })
+  // …and the phone's, whose bind exception carries a message only (code null; LAN on, port 0).
+  const PHONES = Object.freeze({
+    code: null,
+    message: 'bind failed: EADDRINUSE (Address already in use)',
+    address: '0.0.0.0',
+    port: 0
+  })
+  const token = 'a'.repeat(40)
+  let dir = null
+  const write = (doc) => {
+    fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'zen', 'agent.json'), JSON.stringify(doc, null, 2))
+  }
+  afterEach(() => {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true })
+    dir = null
+  })
+
+  it('reads a well-formed `error` beside running: false, whole, as the app writes it (#690)', () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    write({ token, running: false, url: null, error: TAKEN })
+    expect(readEndpoint(dir)).toStrictEqual({ url: null, token, running: false, error: TAKEN })
+    write({ token, running: false, url: null, error: PHONES })
+    expect(readEndpoint(dir)).toStrictEqual({ url: null, token, running: false, error: PHONES })
+    // Only the four keys of the contract come through, whatever else rides along.
+    write({ token, running: false, url: null, error: { ...TAKEN, syscall: 'listen', errno: -98 } })
+    expect(readEndpoint(dir).error).toStrictEqual(TAKEN)
+  })
+
+  it('reads a malformed `error` – a wrong type, a missing field, not an object – as absent, and never fails the read for it', () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    const malformed = [
+      'EADDRINUSE',
+      98,
+      true,
+      null,
+      [],
+      [TAKEN],
+      {},
+      { code: TAKEN.code, message: TAKEN.message, address: TAKEN.address },
+      { code: TAKEN.code, message: TAKEN.message, port: TAKEN.port },
+      { code: TAKEN.code, address: TAKEN.address, port: TAKEN.port },
+      { message: TAKEN.message, address: TAKEN.address, port: TAKEN.port },
+      { ...TAKEN, code: 98 },
+      { ...TAKEN, code: undefined },
+      { ...TAKEN, message: null },
+      { ...TAKEN, message: ['Port 41735 is already in use'] },
+      { ...TAKEN, address: 127 },
+      { ...TAKEN, port: '41735' },
+      { ...TAKEN, port: 41735.5 },
+      { ...TAKEN, port: null }
+    ]
+    for (const error of malformed) {
+      write({ token, running: false, url: null, error })
+      expect(readEndpoint(dir), JSON.stringify(error)).toStrictEqual({
+        url: null,
+        token,
+        running: false
+      })
+      expect(endpointErrorOf(error), JSON.stringify(error)).toBeNull()
+    }
+    expect(endpointErrorOf(undefined)).toBeNull()
+    expect(endpointErrorOf(TAKEN)).toStrictEqual(TAKEN)
+    expect(endpointErrorOf(PHONES)).toStrictEqual(PHONES)
+  })
+
+  it('reads the documents without one as before – the mint’s, a clean stop’s, and the bound one byte for byte', () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'zen', 'agent.json'), JSON.stringify({ token, running: false }))
+    expect(readEndpoint(dir)).toStrictEqual({ url: null, token, running: false })
+    write({ token, running: false, url: null })
+    expect(readEndpoint(dir)).toStrictEqual({ url: null, token, running: false })
+    write({ token, running: true, port: 41735, url: 'http://127.0.0.1:41735/mcp' })
+    expect(readEndpoint(dir)).toStrictEqual({
+      url: 'http://127.0.0.1:41735/mcp',
+      token,
+      running: true
+    })
+  })
 })
 
 describe('endpointPhase', () => {
   const url = 'http://127.0.0.1:41735/mcp'
+  const error = {
+    code: 'EADDRINUSE',
+    message: 'Port 41735 is already in use – pick another port in Settings → AI Agents',
+    address: '127.0.0.1',
+    port: 41735
+  }
 
   it('names the four ways a server can be not-there, and the one way it is there', () => {
     expect(endpointPhase(null, false)).toBe('absent')
@@ -377,10 +476,76 @@ describe('endpointPhase', () => {
     expect(endpointPhase({ token: 't', running: true, url }, true)).toBe('answered')
   })
 
+  it('is the same phase with a reason beside it – the reason is words, not a phase', () => {
+    expect(endpointPhase({ token: 't', running: false, url: null, error }, false)).toBe(
+      'not-running'
+    )
+    expect(endpointPhase({ token: 't', running: true, url: null, error }, false)).toBe(
+      'url-missing'
+    )
+    expect(endpointPhase({ token: 't', running: true, url, error }, true)).toBe('answered')
+  })
+
   it('has words for every phase', () => {
     for (const phase of ['absent', 'not-running', 'url-missing', 'url-silent', 'answered'])
       expect(typeof ENDPOINT_PHASE_SAID[phase]).toBe('string')
     expect(ENDPOINT_PHASE_SAID['not-running']).toMatch(/port was taken/)
+  })
+})
+
+describe('the phase in words (endpointPhaseSaid)', () => {
+  const url = 'http://127.0.0.1:41735/mcp'
+  const taken = {
+    code: 'EADDRINUSE',
+    message: 'Port 41735 is already in use – pick another port in Settings → AI Agents',
+    address: '127.0.0.1',
+    port: 41735
+  }
+
+  it('names the reason agent.json gives in not-running: address:port, the code, the message', () => {
+    expect(
+      endpointPhaseSaid('not-running', { token: 't', running: false, url: null, error: taken })
+    ).toBe(
+      'agent.json says the server is not running – the bind failed: 127.0.0.1:41735 (EADDRINUSE): Port 41735 is already in use – pick another port in Settings → AI Agents'
+    )
+  })
+
+  it('says what it said before without one – the two known causes – and for a missing document', () => {
+    expect(endpointPhaseSaid('not-running', { token: 't', running: false, url: null })).toBe(
+      ENDPOINT_PHASE_SAID['not-running']
+    )
+    expect(endpointPhaseSaid('absent', null)).toBe(ENDPOINT_PHASE_SAID.absent)
+  })
+
+  it('keeps the other phases’ words whatever rides beside them', () => {
+    expect(
+      endpointPhaseSaid('url-missing', { token: 't', running: true, url: null, error: taken })
+    ).toBe(ENDPOINT_PHASE_SAID['url-missing'])
+    expect(endpointPhaseSaid('url-silent', { token: 't', running: true, url, error: taken })).toBe(
+      ENDPOINT_PHASE_SAID['url-silent']
+    )
+    expect(endpointPhaseSaid('answered', { token: 't', running: true, url, error: taken })).toBe(
+      ENDPOINT_PHASE_SAID.answered
+    )
+  })
+
+  it('leaves the parenthesis off where the host named no code, and brackets an IPv6 address as the app does', () => {
+    expect(
+      bindReason({
+        code: null,
+        message: 'bind failed: EADDRINUSE (Address already in use)',
+        address: '0.0.0.0',
+        port: 0
+      })
+    ).toBe('0.0.0.0:0: bind failed: EADDRINUSE (Address already in use)')
+    expect(
+      bindReason({ code: 'EACCES', message: 'listen EACCES', address: '::1', port: 443 })
+    ).toBe('[::1]:443 (EACCES): listen EACCES')
+    expect(hostPort('127.0.0.1', 41735)).toBe('127.0.0.1:41735')
+    expect(hostPort('::1', 41735)).toBe('[::1]:41735')
+    expect(hostPort('::', 0)).toBe('[::]:0')
+    expect(hostPort('fe80::1%eth0', 8080)).toBe('[fe80::1%eth0]:8080')
+    expect(hostPort('localhost', 1)).toBe('localhost:1')
   })
 })
 
@@ -465,6 +630,170 @@ describe('waitForEndpoint', () => {
     )
     expect(lines).toHaveLength(1)
     expect(lines[0]).toMatch(/^server-up: agent\.json says the server is not running/)
+    // The two guesses, and nothing that pretends to know more than the document says.
+    expect(lines[0]).toMatch(/port was taken before the app bound it/)
+    expect(lines[0]).not.toMatch(/the bind failed/)
+  })
+
+  // The document a failed bind writes since #690: `error` beside `running: false`.
+  const bindFailed = (error) => ({ token: 't'.repeat(32), running: false, url: null, error })
+  const TAKEN = {
+    code: 'EADDRINUSE',
+    message: 'Port 41735 is already in use – pick another port in Settings → AI Agents',
+    address: '127.0.0.1',
+    port: 41735
+  }
+
+  it('names the bind failure agent.json carries – once, not once per poll – and again in the error at the deadline', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    const lines = []
+    let t = 0
+    const now = () => (t += 100)
+    // Polls: no file; the failure document; the same document three polls running (one line
+    // for all four); then the clock runs out with the document unchanged.
+    const script = [
+      () => write(bindFailed(TAKEN)),
+      () => undefined,
+      () => undefined,
+      () => undefined,
+      () => {
+        t = 70_000
+      }
+    ]
+    const sleep = async () => script.shift()?.()
+    await expect(
+      waitForEndpoint(dir, 60_000, {
+        log: (l) => lines.push(l),
+        now,
+        probe: async () => true,
+        pollMs: 0,
+        sleep
+      })
+    ).rejects.toThrow(
+      /^no MCP server answered within 60000 ms: agent\.json says the server is not running – the bind failed: 127\.0\.0\.1:41735 \(EADDRINUSE\): Port 41735 is already in use – pick another port in Settings → AI Agents \(.*agent\.json: running false, url null\)$/
+    )
+    expect(script).toHaveLength(0)
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/^server-up: agent\.json is absent or unreadable .* \(after \d+ ms\)$/)
+    expect(lines[1]).toMatch(
+      /^server-up: agent\.json says the server is not running – the bind failed: 127\.0\.0\.1:41735 \(EADDRINUSE\): Port 41735 is already in use – pick another port in Settings → AI Agents \(after \d+ ms\)$/
+    )
+    expect(lines[1]).not.toMatch(/port was taken before the app bound it/)
+  })
+
+  it('logs a changed reason as a change – and brackets an IPv6 address', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    const lines = []
+    let t = 0
+    const now = () => (t += 100)
+    const denied = {
+      code: 'EACCES',
+      message: 'listen EACCES: permission denied',
+      address: '::1',
+      port: 443
+    }
+    // The port taken; the same again; the settings changed under the wait to a port the app may
+    // not bind, on the loopback's IPv6 address; the same again; then the deadline.
+    write(bindFailed(TAKEN))
+    const script = [
+      () => undefined,
+      () => write(bindFailed(denied)),
+      () => undefined,
+      () => {
+        t = 70_000
+      }
+    ]
+    const sleep = async () => script.shift()?.()
+    await expect(
+      waitForEndpoint(dir, 60_000, {
+        log: (l) => lines.push(l),
+        now,
+        probe: async () => true,
+        pollMs: 0,
+        sleep
+      })
+    ).rejects.toThrow(
+      /the bind failed: \[::1\]:443 \(EACCES\): listen EACCES: permission denied \(.*agent\.json: running false, url null\)$/
+    )
+    expect(script).toHaveLength(0)
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/the bind failed: 127\.0\.0\.1:41735 \(EADDRINUSE\): Port 41735/)
+    expect(lines[1]).toMatch(
+      /^server-up: agent\.json says the server is not running – the bind failed: \[::1\]:443 \(EACCES\): listen EACCES: permission denied \(after \d+ ms\)$/
+    )
+  })
+
+  it('the phone’s shape – no code – reads without the parenthesis, and a reason that goes away is a change too', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    const lines = []
+    let t = 0
+    const now = () => (t += 100)
+    write(
+      bindFailed({
+        code: null,
+        message: 'bind failed: EADDRINUSE (Address already in use)',
+        address: '0.0.0.0',
+        port: 0
+      })
+    )
+    // A clean stop's document (no error) follows the failure's; then the deadline.
+    const script = [
+      () => write({ token: 't'.repeat(32), running: false, url: null }),
+      () => {
+        t = 70_000
+      }
+    ]
+    const sleep = async () => script.shift()?.()
+    await expect(
+      waitForEndpoint(dir, 60_000, {
+        log: (l) => lines.push(l),
+        now,
+        probe: async () => true,
+        pollMs: 0,
+        sleep
+      })
+    ).rejects.toThrow(/not running – it never started \(Settings → AI Agents off/)
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(
+      /^server-up: agent\.json says the server is not running – the bind failed: 0\.0\.0\.0:0: bind failed: EADDRINUSE \(Address already in use\) \(after \d+ ms\)$/
+    )
+    expect(lines[1].replace(/ \(after \d+ ms\)$/, '')).toBe(
+      `server-up: ${ENDPOINT_PHASE_SAID['not-running']}`
+    )
+  })
+
+  it('a failed bind the app then gets past ends the wait as before, the reason left in the trail', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-test-'))
+    const lines = []
+    let answering = false
+    let t = 0
+    const now = () => (t += 100)
+    write(bindFailed(TAKEN))
+    // Whatever held the port lets go and the settings are re-applied: the app binds it and
+    // writes the bound document, without `error`; the url answers a poll later.
+    const script = [
+      () => undefined,
+      () => write({ token: 't'.repeat(32), running: true, port: 41735, url }),
+      () => {
+        answering = true
+      }
+    ]
+    const sleep = async () => script.shift()?.()
+    const got = await waitForEndpoint(dir, 60_000, {
+      log: (l) => lines.push(l),
+      now,
+      probe: async () => answering,
+      pollMs: 0,
+      sleep
+    })
+    expect(got).toEqual({ url, token: 't'.repeat(32) })
+    expect(script).toHaveLength(0)
+    const phases = lines.map((l) => l.replace(/^server-up: /, '').replace(/ \(after \d+ ms\)$/, ''))
+    expect(phases).toEqual([
+      'agent.json says the server is not running – the bind failed: 127.0.0.1:41735 (EADDRINUSE): Port 41735 is already in use – pick another port in Settings → AI Agents',
+      ENDPOINT_PHASE_SAID['url-silent'],
+      ENDPOINT_PHASE_SAID.answered
+    ])
   })
 })
 

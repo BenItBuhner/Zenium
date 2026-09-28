@@ -28,6 +28,7 @@ import type {
   TopSite
 } from '../shared/types'
 import type { SafeBrowsingHit } from '../shared/privacy'
+import type { BlockedRequestSource } from './blocking/report'
 import { privateThirdPartyCookieSwitch } from '../shared/extensionSettings'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
@@ -132,8 +133,8 @@ export class ForwardingEvents implements TabViewEvents {
   onMediaStateChanged(playing: boolean): void {
     this.target?.onMediaStateChanged(playing)
   }
-  onRequestsBlocked(count: number): void {
-    this.target?.onRequestsBlocked(count)
+  onRequestsBlocked(count: number, sources?: readonly BlockedRequestSource[]): void {
+    this.target?.onRequestsBlocked(count, sources)
   }
   onEnterHtmlFullscreen(): void {
     this.target?.onEnterHtmlFullscreen()

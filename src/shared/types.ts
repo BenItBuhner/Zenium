@@ -678,6 +678,22 @@ export interface SpaceTheme {
 // Tabs, spaces, split views, folders
 // ---------------------------------------------------------------------------
 
+/**
+ * Where the rule that blocked a request came from: a filter list (`tracker` – the lists match as
+ * one set, so no finer word is known), the user's own filters, an extension's rules, or Safe
+ * Browsing refusing an unsafe frame.
+ */
+export type BlockedSiteCategory = 'tracker' | 'user' | 'extension' | 'unsafe'
+
+/** One site the blocking engine stopped requests from on a tab's current document. */
+export interface BlockedSite {
+  /** Registrable domain of the blocked requests (`doubleclick.net`). */
+  domain: string
+  category: BlockedSiteCategory
+  /** Requests blocked from `domain` on the document so far. */
+  count: number
+}
+
 export interface Tab {
   id: string
   /** Space the tab belongs to. Essentials are global (per container) and have `spaceId: null`. */
@@ -838,6 +854,12 @@ export interface Tab {
   readerable: boolean
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
+  /**
+   * The sites those requests went to, in the order the engine first saw them, at most
+   * `BLOCKED_SITES_CAP` of them (the tracker report behind the count). Absent until the first
+   * block of the document; resets with `blockedCount`. A session's own: not persisted.
+   */
+  blockedSites?: BlockedSite[]
   /**
    * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
    * page such as Settings was opened from). Mobile system back at the tab's first page closes it

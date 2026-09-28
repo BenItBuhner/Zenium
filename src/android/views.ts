@@ -22,6 +22,7 @@ import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { parsePageViewport, type PageViewport } from '@shared/capture'
 import { certificateDetailsFrom, isNewTabUrl } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
+import type { BlockedRequestSource } from '@core/blocking/report'
 import {
   zenPageHtml,
   type ImagePageLookup,
@@ -130,7 +131,8 @@ export interface ViewEventPayloads {
   crashed: { reason: string; repeat?: boolean }
   audio: { audible: boolean }
   /** The Kotlin request engine blocked `count` more requests of the page. */
-  blocked: { count: number }
+  /** `hosts`: the beat's blocked requests by hostname and matched set (the tracker report), raw. */
+  blocked: { count: number; hosts?: unknown }
   enterFullscreen: void
   leaveFullscreen: void
   found: FindResultInfo
@@ -201,6 +203,23 @@ export function newTabActionOf(payload: unknown): NewTabPageAction | null {
   return typeof (action as { type?: unknown }).type === 'string'
     ? (action as NewTabPageAction)
     : null
+}
+
+/**
+ * The `blocked` event's `hosts` as the tracker report takes them: entries with a string host and
+ * a positive count only (an older APK sends none). Exported for its test.
+ */
+export function blockedSourcesOf(hosts: unknown): BlockedRequestSource[] | undefined {
+  if (!Array.isArray(hosts)) return undefined
+  const sources: BlockedRequestSource[] = []
+  for (const entry of hosts) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const { host, set, count } = entry as { host?: unknown; set?: unknown; count?: unknown }
+    if (typeof host !== 'string' || !host) continue
+    const n = typeof count === 'number' && count > 0 ? Math.floor(count) : 1
+    sources.push({ host, setId: typeof set === 'string' ? set : undefined, count: n })
+  }
+  return sources.length ? sources : undefined
 }
 
 /**
@@ -352,7 +371,8 @@ export class AndroidTabView implements TabView {
       }
       case 'blocked': {
         const p = payload as ViewEventPayloads['blocked']
-        if (typeof p.count === 'number' && p.count > 0) ev.onRequestsBlocked(p.count)
+        if (typeof p.count === 'number' && p.count > 0)
+          ev.onRequestsBlocked(p.count, blockedSourcesOf(p.hosts))
         return
       }
       case 'enterFullscreen':
