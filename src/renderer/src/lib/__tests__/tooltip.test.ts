@@ -4,6 +4,7 @@ import type { MenuDescriptor, Rect } from '@shared/types'
 import { closeAllPopovers, openPopover } from '../popoverStore'
 import { holdChromeInert, POPOVER_MARGIN } from '../portals'
 import {
+  measureTooltipSize,
   placeTooltip,
   TOOLTIP_ATTR,
   TOOLTIP_BROWSE,
@@ -226,6 +227,53 @@ describe('tooltipSize', () => {
     Object.defineProperty(bare, 'offsetWidth', { value: 96 })
     Object.defineProperty(bare, 'offsetHeight', { value: 30 })
     expect(tooltipSize(bare)).toEqual({ width: 96, height: 30 })
+  })
+})
+
+describe('measureTooltipSize', () => {
+  it('measures the widest and tallest of the texts off a hidden probe in the tooltip’s class, and leaves nothing behind', () => {
+    // The popup surface's pill asks the core for room before any tooltip shows (`MiniMenu`,
+    // `MiniMenuRoom`): the probe is the tooltip's own box for each text, read as `tooltipSize`
+    // reads the tooltip, and gone once read.
+    const widths: Record<string, number> = {
+      Copy: 46.5,
+      'Search DuckDuckGo': 130.171875,
+      Define: 52
+    }
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    const seen: string[] = []
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (!this.classList.contains('zen-tooltip')) return 0
+        seen.push(
+          `${this.getAttribute('data-surface')}:${this.style.visibility}:${this.isConnected}`
+        )
+        return widths[this.textContent ?? ''] ?? 0
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-tooltip') ? 30 : 0
+      }
+    })
+    try {
+      expect(measureTooltipSize(['Copy', 'Search DuckDuckGo', 'Define'])).toEqual({
+        width: 130.171875,
+        height: 30
+      })
+      // Each text was read off a hidden page-surface probe in the document.
+      expect(seen).toEqual(['page:hidden:true', 'page:hidden:true', 'page:hidden:true'])
+      expect(document.querySelector('.zen-tooltip')).toBeNull()
+      expect(measureTooltipSize([])).toEqual({ width: 0, height: 0 })
+    } finally {
+      if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width)
+      else delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth
+      if (height) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', height)
+      else delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight
+    }
   })
 })
 

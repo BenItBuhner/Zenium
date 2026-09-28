@@ -313,6 +313,37 @@ export function tooltipSize(el: HTMLElement): Size {
 }
 
 /**
+ * The box the tooltip would draw for each of `texts` – the widest and the tallest of them, to
+ * the fraction as `tooltipSize` reads it – measured off a hidden probe in the tooltip's own
+ * class and surface family, for a document that has to make room before a tooltip shows: the
+ * popup surface's, which the core sizes to what its pill reports (`MiniMenu`, `MiniMenuRoom`).
+ * Zero with no texts, and in a DOM that lays nothing out.
+ */
+export function measureTooltipSize(texts: readonly string[]): Size {
+  const probe = document.createElement('div')
+  probe.className = 'zen-tooltip'
+  probe.setAttribute('data-surface', 'page')
+  probe.setAttribute('aria-hidden', 'true')
+  probe.style.visibility = 'hidden'
+  probe.style.left = '0'
+  probe.style.top = '0'
+  document.body.appendChild(probe)
+  let width = 0
+  let height = 0
+  try {
+    for (const text of texts) {
+      probe.textContent = text
+      const size = tooltipSize(probe)
+      width = Math.max(width, size.width)
+      height = Math.max(height, size.height)
+    }
+  } finally {
+    probe.remove()
+  }
+  return { width, height }
+}
+
+/**
  * Where the tooltip goes, in viewport coordinates for a `fixed` element: centred under its
  * control, `TOOLTIP_GAP` below its box, never over it. Placed first inside the control's own
  * pane (`pane`: the sidebar, the toolbar band) with §9.20's 8 px margin – slid sideways to stay
