@@ -2648,8 +2648,10 @@ describe('the section model', () => {
 
     // Got it: the list is acknowledged through the engine, which hands back the records; the
     // bulk toast counts them – on the Undo clock – and its Undo puts them back as they were.
-    // The press leaves the review sheet first (`closesSheet`): its act ends the list the sheet
-    // was opened for, and the toast then stands over the page on the phone.
+    // The rule is that the toast's Undo stays in reach, not that the sheet stays: on the desktop
+    // (this build's layout) and the tablet the dialog host holds the frame inert under its scrim,
+    // so Got it leaves the dialog first (`closesSheet`); on the phone the chassis lifts the toast
+    // over the sheet (#651), so the sheet stays with the granted list under it.
     const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
     invoke.mockImplementation(async (name) =>
       name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
@@ -2658,6 +2660,27 @@ describe('the section model', () => {
     const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
     if (gotIt.kind !== 'action') throw new Error('not an action')
     expect(gotIt).toMatchObject({ button: 'Got it', closesSheet: true })
+    const reviewState = state({
+      lastSafetyCheck: result,
+      permissionRules: rules
+    } as Partial<UIState>)
+    const privacyDef = PAGE.sections.find((x) => x.id === 'privacy')
+    if (!privacyDef) throw new Error('no privacy section')
+    const tabletPrivacy = buildSection(privacyDef, {
+      ...context(reviewState).ctx,
+      formFactor: 'tablet'
+    })
+    const tabletGotIt = row(tabletPrivacy, 'safety-check:permissions:revoked:acknowledge')
+    if (tabletGotIt.kind !== 'action') throw new Error('not an action')
+    expect(tabletGotIt.closesSheet).toBe(true)
+    const phonePrivacy = buildSection(privacyDef, {
+      ...context(reviewState).ctx,
+      formFactor: 'phone'
+    })
+    const phoneGotIt = row(phonePrivacy, 'safety-check:permissions:revoked:acknowledge')
+    if (phoneGotIt.kind !== 'action') throw new Error('not an action')
+    expect(phoneGotIt).toMatchObject({ button: 'Got it' })
+    expect(phoneGotIt.closesSheet).toBeUndefined()
     expect(gotIt.confirm).toBeUndefined()
     expect(gotIt.destructive).toBeUndefined()
     gotIt.onPress?.()

@@ -3,6 +3,7 @@ import { ShieldCheck } from 'lucide-react'
 import type {
   DeviceGrant,
   DeviceKind,
+  FormFactor,
   PermissionRule,
   SafetyCheckResult,
   UIState
@@ -77,7 +78,12 @@ const SAFETY_CHECK_INTRO =
  * row carrying its plain Reset, a notifying site an action that stops it after a confirmation
  * (Chrome's review pages); the extensions review leaves for that category.
  */
-export function safetyCheckGroups({ state, tab, navigate }: SectionContext): RowGroup[] {
+export function safetyCheckGroups({
+  state,
+  tab,
+  navigate,
+  formFactor
+}: SectionContext): RowGroup[] {
   const result = state.lastSafetyCheck
   const worst = result ? worstState(result) : null
   // Settled once the result has landed in the state (the reviews' acts wait on it; errors are
@@ -116,7 +122,16 @@ export function safetyCheckGroups({ state, tab, navigate }: SectionContext): Row
         const id = `safety-check:${row.id}`
         const leading = <StatusGlyph state={row.state} />
         if (row.id === 'permissions' && row.action)
-          return permissionsReview(id, row.label, row.summary, leading, result, state, check)
+          return permissionsReview(
+            id,
+            row.label,
+            row.summary,
+            leading,
+            result,
+            state,
+            check,
+            formFactor
+          )
         if (row.id === 'notifications' && row.action)
           return notificationsReview(id, row.label, row.summary, leading, result, check)
         if (!row.action) {
@@ -210,7 +225,8 @@ function permissionsReview(
   leading: ReactNode,
   result: SafetyCheckResult,
   state: UIState,
-  recheck: () => Promise<void>
+  recheck: () => Promise<void>,
+  formFactor: FormFactor | undefined
 ): ItemRow {
   const flagged = new Map(result.permissions.review.map((r) => [r.origin, r]))
   const granted = bySite(state.permissionRules.filter((r) => r.decision === 'allow'))
@@ -221,7 +237,7 @@ function permissionsReview(
   })
   const revoked = result.permissions.revoked
   const revokedGroups: RowGroup[] =
-    revoked.length > 0 ? [revokedReview(id, summary, revoked, recheck)] : []
+    revoked.length > 0 ? [revokedReview(id, summary, revoked, recheck, formFactor)] : []
   return {
     kind: 'item',
     id,
@@ -292,16 +308,22 @@ const regranting = new Set<string>()
  * description Chrome's subheader – which says once why they went – one item row per site, the
  * permissions alone under the host ("Camera, Microphone"), Allow again its one action, and Got
  * it closing the block. Allow again and Got it each raise Chrome's toast with Undo on §9.33's
- * Undo clock (`TOAST_UNDO_MS`); the check runs again after each act and each undo. Got it
- * leaves the review sheet with its press (`closesSheet`): its act ends the list the sheet was
- * opened for, and the toast then stands over the page on the phone, where a message sits under
- * an open sheet. Allow again keeps the sheet open for the sites left.
+ * Undo clock (`TOAST_UNDO_MS`); the check runs again after each act and each undo. Allow again
+ * keeps the sheet open for the sites left. Got it follows the rule that the toast's Undo must
+ * stay in reach, not that the sheet must stay: on the PHONE the chassis lifts its messages over
+ * the sheet whose act raised them (§9.33, #651), so the sheet stays with the granted list under
+ * it – as Chrome's Safety Hub collapses the module and leaves the page; on the TABLET and the
+ * DESKTOP the dialog host holds the chrome and the frame inert under its scrim (`portals.tsx`
+ * `holdChromeInert` / `holdFrameInert`) and the tablet's message layer has no seat above it, so
+ * the toast would run its 8 s dimmed and unreachable – there Got it leaves the dialog first
+ * (`closesSheet`), as it always did.
  */
 function revokedReview(
   id: string,
   summary: string,
   revoked: SafetyCheckResult['permissions']['revoked'],
-  recheck: () => Promise<void>
+  recheck: () => Promise<void>,
+  formFactor: FormFactor | undefined
 ): RowGroup {
   const groupId = `${id}:revoked`
   const allowAgain = (origin: string): void => {
@@ -375,7 +397,9 @@ function revokedReview(
     label: 'Got it',
     description: 'Clears this list. Sites ask again when they need a permission.',
     button: 'Got it',
-    closesSheet: true,
+    // The phone's toast lifts over the sheet (#651); the tablet's and the desktop's dialog host
+    // holds the frame inert, so there the sheet leaves first – the Undo stays reachable either way.
+    closesSheet: formFactor !== 'phone' ? true : undefined,
     onPress: acknowledge
   })
   return {
