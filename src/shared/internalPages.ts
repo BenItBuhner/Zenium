@@ -348,10 +348,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Boosts',
     keywords: ['site', 'tint', 'font', 'zap', 'dark mode']
   },
+  // A Mod styles the browser chrome (`ModStyles`), which the desktop and tablet shells mount and
+  // the phone shell never has: a phone lists no Mods page – a page whose switches applied nothing
+  // would only describe its own absence, the rule #628's transport row and #632's Print row
+  // follow. The `mod` records keep syncing beneath it and style the desktop and tablet windows.
   {
     id: 'mods',
     label: 'Mods',
-    keywords: ['css', 'userchrome', 'style']
+    keywords: ['css', 'userchrome', 'style'],
+    layouts: ['desktop', 'tablet']
   },
   {
     id: 'extensions',

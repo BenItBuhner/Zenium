@@ -488,7 +488,7 @@ describe('the section model', () => {
       'spaces',
       'containers',
       'boosts',
-      'mods',
+      // No Mods: the phone shell mounts no ModStyles (seed #31; the Mods describe below).
       'agents',
       'passwords',
       'security',
@@ -9180,6 +9180,87 @@ describe('the Privacy and security hub (W7-6, settings-12)', () => {
       (h) => h.row.id === 'hub-clear-data'
     )
     expect(hit?.caption).toBe('Privacy and Security')
+  })
+})
+
+/*
+ * Settings › Mods (seed #31, the lead's ruling): a Mod is a CSS sheet for the browser chrome,
+ * which `ModStyles` injects – mounted by the desktop and tablet shells, never the phone's. The
+ * category is the desktop's and the tablet's; a phone draws no Mods page (its switches would
+ * apply nothing – a page describing its own absence, the rule #628's transport row and #632's
+ * Print row follow), lists none of its rows in the landing's search, and opens the landing for
+ * `zen://settings/mods`, as it does for `zen://settings/performance`. The records beneath stay:
+ * `ModService`, the desktop's and tablet's page and the `mod` sync record are untouched.
+ */
+describe('Settings › Mods on the phone (seed #31: hidden, the records untouched)', () => {
+  const MOD = {
+    id: 'm1',
+    name: 'Round tabs',
+    source: null,
+    css: '.zen-tab { border-radius: 12px }',
+    enabled: true,
+    updatedAt: 1
+  }
+  const withMods = (): UIState => state({ mods: [MOD] } as Partial<UIState>)
+  const on = (layout: FormFactor, s: UIState = withMods()): Model[] =>
+    buildSections(availableSections(PAGE, s.capabilities, layout), {
+      ...context(s).ctx,
+      formFactor: layout
+    })
+
+  it('is a category of the desktop and tablet shells right after Boosts, and not of the phone – whatever the host’s capabilities or the Mods it holds', () => {
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const ids = availableSections(PAGE, ANDROID, layout).map((s) => s.id)
+      expect(ids.indexOf('mods'), layout).toBe(ids.indexOf('boosts') + 1)
+      expect(on(layout).some((m) => m.section.id === 'mods'), layout).toBe(true)
+    }
+    expect(phoneSections().map((m) => m.section.id)).not.toContain('mods')
+    expect(phoneSections(withMods()).map((m) => m.section.id)).not.toContain('mods')
+    // The gate is the model's own layout list, as Performance's and Reset Settings' are; no
+    // capability and no platform take part.
+    const def = PAGE.sections.find((s) => s.id === 'mods')!
+    expect(def.layouts).toEqual(['desktop', 'tablet'])
+    expect(def.requires).toBeUndefined()
+    expect(def.platforms).toBeUndefined()
+  })
+
+  it('surfaces none of its rows in the phone landing’s search, while the desktop’s and the tablet’s find the Mod, its switch and the Add a Mod rows', () => {
+    const modRows = (models: Model[], q: string): string[] =>
+      searchRows(models, q)
+        .map((h) => h.row.id)
+        .filter((id) => id.startsWith('mod:') || id === 'new-mod' || id.startsWith('import-mod'))
+    for (const q of ['mods', 'css', 'round tabs', 'new mod', 'stylesheet', 'userchrome']) {
+      expect(modRows(phoneSections(withMods()), q), q).toEqual([])
+      expect(searchRows(phoneSections(withMods()), q).map((h) => h.caption), q).not.toContainEqual(
+        expect.stringMatching(/^Mods/)
+      )
+    }
+    for (const layout of ['desktop', 'tablet'] as const) {
+      expect(modRows(on(layout), 'round tabs'), layout).toContain('mod:m1')
+      expect(modRows(on(layout), 'new mod'), layout).toContain('new-mod')
+      const hit = searchRows(on(layout), 'round tabs').find((h) => h.row.id === 'mod:m1')
+      expect(hit?.caption, layout).toBe('Mods › Mods')
+    }
+  })
+
+  it('leaves the section itself as it was for the shells that draw it: the Mod’s item with its Enabled switch, Name, CSS and Remove, and the Add a Mod rows', () => {
+    const mods = on('desktop').find((m) => m.section.id === 'mods')!
+    expect(mods.groups.map((g) => g.id)).toEqual(['mods', 'add-mod'])
+    const item = row(mods, 'mod:m1')
+    if (item.kind !== 'item') throw new Error('not an item row')
+    expect(item.label).toBe('Round tabs')
+    expect(item.sheet.groups.flatMap((g) => g.rows.map((r) => r.id))).toEqual([
+      'mod:m1:enabled',
+      'mod:m1:name',
+      'mod:m1:css',
+      'mod:m1:remove'
+    ])
+    const enabled = row(mods, 'mod:m1:enabled')
+    if (enabled.kind !== 'switch') throw new Error('not a switch row')
+    expect(enabled.checked).toBe(true)
+    enabled.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('mod.update', { id: 'm1', patch: { enabled: false } })
+    expect(mods.groups[1].rows.map((r) => r.id)).toEqual(['new-mod', 'import-mod-url', 'import-mod-file'])
   })
 })
 
