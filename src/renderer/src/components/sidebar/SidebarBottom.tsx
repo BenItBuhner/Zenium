@@ -50,10 +50,13 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   const fadeSpaces = useFadeEdges<HTMLDivElement>({ axis: 'auto', size: 20 })
 
   // Android's wide layouts show toasts on the message card (`components/messages`); the desktop
-  // sidebar keeps its plain toasts until the desktop program adopts the card – except a toast
-  // seated on the frame (`Toast.seat`, §9.33): one a frame dialog's act raised, which the
-  // dialog host's seat draws above the dialog as a card (`FrameSeatToasts`) and keeps for the
-  // rest of its clock, so the column never shows it.
+  // sidebar keeps its plain toasts until the desktop program adopts the card – neither of them
+  // a toast seated on the frame (`Toast.seat`, §9.33: one card per act). On the desktop that is
+  // one a frame dialog's act raised, which the dialog host's seat draws above the dialog as a
+  // card (`FrameSeatToasts`) and keeps for the rest of its clock, so the column never shows it;
+  // on the tablet it is every toast, which the shell's `MessageLayer` seats on the content
+  // frame (`TabletShell`), so the well draws no second copy of it – the frame's card is the
+  // tablet's one. The same predicate for the column's rows and the well's cards.
   const cards = state.platform === 'android'
   useEffect(() => (cards ? claimMessageCards() : undefined), [cards])
   const rows = toasts.filter((t) => t.seat !== 'frame')
@@ -61,10 +64,10 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
   return (
     <div className="flex flex-col gap-1 px-2 pb-2 pt-1">
       {agents.length > 0 && <AgentPill agents={agents} compact={compact} />}
-      {toasts.length > 0 && cards && (
+      {rows.length > 0 && cards && (
         // The well clips the card's slide in from below (and out again) to its own row.
         <div className="zen-message-well">
-          {toasts.map((t) => (
+          {rows.map((t) => (
             <ToastCard key={t.id} toast={t} compact />
           ))}
         </div>

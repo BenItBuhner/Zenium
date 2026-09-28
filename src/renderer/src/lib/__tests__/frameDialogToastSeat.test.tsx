@@ -21,10 +21,12 @@ import { TOAST_UNDO_MS } from '@shared/toastCard'
  * the last stop of the dialog's Tab cycle (§9.22: the dialog and the toast are one modal
  * moment), and the stop leaves the cycle with the toast, the keyboard back on the dialog. When
  * the dialog closes the toast keeps its seat and its clock (the orphan case), its element and
- * its one `role="status"` announcement untouched. Rendered for real in happy-dom: the desktop's
- * frame with a real `SettingsDialog` (its own Tab wrap) and the seat's cards
- * (`FrameSeatToasts`); the tablet through `TabletShell`, its `MessageLayer` seating the slot in
- * the host's seat, the children that carry none of it stubbed.
+ * its one `role="status"` announcement untouched. One card per act (§9.33): the sidebar's foot
+ * (`SidebarBottom`, the real one in both harnesses) draws no second copy of a toast the frame's
+ * seat holds – not the desktop's plain column, not the tablet's message well. Rendered for real
+ * in happy-dom: the desktop's frame with a real `SettingsDialog` (its own Tab wrap) and the
+ * seat's cards (`FrameSeatToasts`); the tablet through `TabletShell`, its `MessageLayer` seating
+ * the slot in the host's seat, the children that carry none of it stubbed.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -43,9 +45,21 @@ const stub = (name: string): (() => ReactElement) => {
   Stub.displayName = `${name}Stub`
   return Stub
 }
-vi.mock('@renderer/components/sidebar/Sidebar', () => ({
-  Sidebar: () => createElement('button', { type: 'button', 'data-sidebar-button': '' }, 'New tab')
-}))
+// The sidebar as the tablet mounts it: a control of its own for the chrome hold's reading, and
+// the real foot (`SidebarBottom`) with Android's message well in it – the well must draw none
+// of a toast the frame's seat holds.
+vi.mock('@renderer/components/sidebar/Sidebar', async () => {
+  const { SidebarBottom } = await import('@renderer/components/sidebar/SidebarBottom')
+  return {
+    Sidebar: ({ state, isDark }: { state: UIState; isDark: boolean }) =>
+      createElement(
+        'div',
+        null,
+        createElement('button', { type: 'button', 'data-sidebar-button': '' }, 'New tab'),
+        createElement(SidebarBottom, { state, compact: false, isDark })
+      )
+  }
+})
 vi.mock('@renderer/components/tablet/TabletToolbar', () => ({ TabletToolbar: stub('toolbar') }))
 vi.mock('@renderer/components/content/ContentArea', () => ({
   ContentArea: () => createElement('button', { type: 'button', 'data-page-button': '' }, 'Page')
@@ -74,6 +88,7 @@ const { viewportStore } = await import('../formFactor')
 const { registerRecedeLayer } = await import('../motion/recede')
 const { SettingsDialog } = await import('@renderer/components/pages/settings/dialogs')
 const { FrameSeatToasts } = await import('@renderer/components/messages/FrameSeatToasts')
+const { SidebarBottom } = await import('@renderer/components/sidebar/SidebarBottom')
 const { TabletShell } = await import('@renderer/components/tablet/TabletShell')
 
 // --- the dialog whose act raises the toast ------------------------------------------------------
@@ -143,8 +158,9 @@ function HostedSheet(): JSX.Element {
 }
 
 /**
- * The desktop's frame: the window chrome (`data-surface="window"`), the content frame's box with
- * the page, the frame's host and the seat's cards beside it, as `DesktopShell` mounts them.
+ * The desktop's frame: the window chrome (`data-surface="window"`) with the sidebar's real foot
+ * and its plain toast column in it, the content frame's box with the page, the frame's host and
+ * the seat's cards beside it, as `DesktopShell` mounts them.
  */
 function Desktop({ dialog, sheet }: { dialog?: boolean; sheet?: boolean }): JSX.Element {
   return (
@@ -153,6 +169,7 @@ function Desktop({ dialog, sheet }: { dialog?: boolean; sheet?: boolean }): JSX.
         <button type="button" data-sidebar-button>
           New tab
         </button>
+        <SidebarBottom state={desktopState()} compact={false} isDark={false} />
       </nav>
       <div data-frame>
         <div data-page>
@@ -224,6 +241,7 @@ function tabletState(): UIState {
     activeSpaceId: SPACE,
     folders: {},
     essentialTabIds: [],
+    agents: [],
     containers: [],
     settings: {
       colorScheme: 'light',
@@ -244,6 +262,8 @@ function tabletState(): UIState {
     sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
 }
+/** The same profile on the desktop: the foot draws its plain toast column, not the well. */
+const desktopState = (): UIState => ({ ...tabletState(), platform: 'linux' })
 
 // --- the harness --------------------------------------------------------------------------------
 
@@ -280,6 +300,17 @@ const underInert = (el: Element | null): boolean => el?.closest('[inert]') !== n
 const active = (): Element | null => document.activeElement
 /** How many toast cards announce (`role="status"`): one per toast, through lift and re-seat. */
 const statuses = (): number => document.querySelectorAll('.zen-message-toast[role="status"]').length
+/** The cards in the Android sidebar's message well (`SidebarBottom`): none of the frame's. */
+const wellCards = (): number =>
+  document.querySelectorAll('.zen-message-well .zen-message-toast').length
+/** The desktop column's plain rows (`SidebarBottom`): none of the frame's. */
+const columnRows = (): number => document.querySelectorAll('.zen-toast[role="status"]').length
+/** Every drawing of a toast in the document – a card or a plain row: one per act (§9.33). */
+const drawings = (): number =>
+  document.querySelectorAll('.zen-message-toast[role="status"], .zen-toast[role="status"]').length
+/** The layer's slot on the frame: the tablet's rest seat, inside the host's seat element. */
+const layerSlot = (): HTMLElement | null =>
+  seat()?.querySelector<HTMLElement>('.zen-message-layer > .zen-message-toasts') ?? null
 
 /** End the way out on a mouse: every kept panel's exit animation reports its end. */
 const endExit = (): void => {
@@ -508,6 +539,32 @@ describe('the seat: inside the host, outside both of its holds (desktop)', () =>
     })
     expect(uiStore.get().toasts.map((t) => t.seat)).toEqual([undefined, undefined])
     expect(card()).toBeNull()
+  })
+
+  it("the sidebar's column draws no row for a toast the seat holds – one card per act (§9.33); a toast raised after the close is the column's row", () => {
+    render(<Desktop dialog />)
+    act(() => {
+      allowAgain()
+    })
+    // The frame's card is the toast's one drawing: the plain column skips `seat === 'frame'`.
+    expect(card()).not.toBeNull()
+    expect(columnRows()).toBe(0)
+    expect(drawings()).toBe(1)
+    // Through the close and after it – the orphan keeps its seat, the column still none.
+    act(() => control('data-got-it').click())
+    endExit()
+    expect(seat()!.contains(card())).toBe(true)
+    expect(columnRows()).toBe(0)
+    expect(drawings()).toBe(1)
+    // A toast the frame does not hold is the column's, as it always was: a row, no card.
+    act(() => {
+      pushToast('Review complete for 3 sites', 'info', { duration: TOAST_UNDO_MS })
+    })
+    expect(uiStore.get().toasts.map((t) => t.seat)).toEqual(['frame', undefined])
+    expect(columnRows()).toBe(1)
+    expect(document.querySelector('.zen-toast')?.textContent).toContain('Review complete')
+    expect(seat()!.querySelectorAll('[role="status"]')).toHaveLength(1)
+    expect(drawings()).toBe(2)
   })
 
   it('at the normal seat it follows the chrome hold: inert under a hold that is no dialog of the host, in reach once it lifts', () => {
@@ -798,6 +855,57 @@ describe('the tablet (§9.36): the shell seats the slot in the host’s seat, th
     act(() => vi.advanceTimersByTime(1))
     expect(uiStore.get().toasts[0]?.leaving).toBe(true)
     expect(card()).toBe(node)
+  })
+
+  it('the well draws none of a toast the seat holds: the card is once in the document, in the seat, its Undo the one Undo (§9.33: one card per act)', () => {
+    mountTablet()
+    act(() => setTabletDialog(true))
+    act(() => control('data-allow-again').click())
+    expect(lifted()).toBe(true)
+    // Every tablet toast is the frame's (`Toast.seat`: the shell shows the cards), so the
+    // sidebar's well – the second copy the tablet drew – skips it as the desktop's rows do.
+    expect(uiStore.get().toasts[0]?.seat).toBe('frame')
+    expect(document.querySelector('.zen-message-well')).toBeNull()
+    expect(wellCards()).toBe(0)
+    expect(statuses()).toBe(1)
+    expect(drawings()).toBe(1)
+    expect(seat()!.contains(card())).toBe(true)
+    expect(document.querySelectorAll('button.zen-message-button')).toHaveLength(1)
+    expect(document.querySelector('button.zen-message-button')).toBe(undo())
+    // The sidebar's own control is under the hold; the one Undo is not.
+    expect(underInert(control('data-sidebar-button'))).toBe(true)
+    expect(underInert(undo())).toBe(false)
+  })
+
+  it("the tablet's rest state as it is today: the dialog closes and the card is the layer's slot's on the frame – the seat un-lifted around it – the well none", () => {
+    mountTablet()
+    act(() => setTabletDialog(true))
+    act(() => control('data-allow-again').click())
+    const node = card()!
+    act(() => control('data-got-it').click())
+    endExit()
+    expect(dialog()).toBeNull()
+    expect(lifted()).toBe(false)
+    expect(frameToastSeat().lifted).toBe(false)
+    // The card returned to the slot: the layer's `.zen-message-toasts` on the frame, which the
+    // tablet seats in the host's seat element for good (no remount) – the same node.
+    expect(layerSlot()!.contains(node)).toBe(true)
+    expect(card()).toBe(node)
+    expect(wellCards()).toBe(0)
+    expect(document.querySelector('.zen-message-well')).toBeNull()
+    expect(statuses()).toBe(1)
+    expect(drawings()).toBe(1)
+    // A toast with no dialog at all rests the same way: the frame's slot, the well none.
+    act(() => vi.advanceTimersByTime(TOAST_UNDO_MS + 1000))
+    act(() => {
+      pushToast('Saved to Bookmarks', 'info', { duration: TOAST_UNDO_MS })
+    })
+    expect(uiStore.get().toasts.map((t) => t.seat)).toEqual(['frame'])
+    expect(lifted()).toBe(false)
+    expect(layerSlot()!.contains(card())).toBe(true)
+    expect(card()?.textContent).toContain('Saved to Bookmarks')
+    expect(wellCards()).toBe(0)
+    expect(drawings()).toBe(1)
   })
 
   it('a toast up before the dialog opened lifts too, for the rest of its clock', () => {
