@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.graphics.PointF
+import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -13,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileInputStream
+import kotlin.math.roundToInt
 
 /**
  * OMN-15, the tab group suggestion (W6-E14), under a REAL finger, for the
@@ -43,7 +45,10 @@ import java.io.FileInputStream
  * 127.0.0.2 the second member's, the loose tab's and the seeded history's. Findings in
  * `android-omnibox-group-suggestion-findings.txt` next to the frames; the run FAILS when a claim
  * does not hold, and a touch that does not take is a fault ([DemoHarness.touchTapLabelExpecting]).
- * See [DemoHarness] for the plumbing and its rule on real touches versus accessibility clicks.
+ * The group row's place against the keyboard is measured on both chassis, and on the tablet the
+ * keyboard is put away before the still and the touch, since that chassis's list runs under it
+ * ([keyboardAway]). See [DemoHarness] for the plumbing and its rule on real touches versus
+ * accessibility clicks.
  */
 @RunWith(AndroidJUnit4::class)
 class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-state.json", "android-omnibox-group-suggestion", "omnibox-group-suggestion-demo") {
@@ -98,12 +103,57 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
         formFactor = chromeValue("document.documentElement.dataset.formFactor||''").ifEmpty { "phone" }
         finding("warm-up: the seeded page ${if (loaded) "is up" else "did NOT report complete"}; form factor $formFactor")
         // The first open pays for the editor's layout and the suggestions' first fetch: off camera.
+        armFingerProbe()
         tapPill()
-        val field = awaitField(8_000)
+        var field = awaitField(8_000)
+        if (!field && fingers() == 0) {
+            finding("warm-up: the pill's tap opened no field and the chrome's document saw no finger (pointerdowns 0): the emulator's input pipeline, not the chrome; the display override ${reapplyDisplayOverride()}; the pill again")
+            tapPill()
+            field = awaitField(8_000)
+        }
         SystemClock.sleep(1_000)
         closeField()
         settle(6_000)
-        finding("warm-up: the editor opened once off camera (field ${if (field) "seen" else "NOT seen"})")
+        finding("warm-up: the editor opened once off camera (field ${if (field) "seen" else "NOT seen"}; fingers the document saw ${fingers()})")
+    }
+
+    /**
+     * Whether a finger reaches the chrome's document at all: a count of the pointerdowns on it.
+     * The second run's light act: the system's input dispatcher dropped every injected touch –
+     * "no touchable window at (481.5, 2202.8)", the point 1.5x the one injected, the panel's
+     * 1080x2400 against the overridden 720x1600 – and the display recorded black; the chrome saw
+     * no finger and could prove nothing, while the same head's dark act ran all green. When the
+     * warm-up's tap opened no field AND the count stayed at zero, the display override is applied
+     * afresh ([reapplyDisplayOverride]) and the tap goes in once more; the findings say so either
+     * way, so a run lost this way reads as the runner's, not the build's.
+     */
+    private fun armFingerProbe() {
+        chromeJs("(function(){if(window.__zenFingers==null){window.__zenFingers=0;document.addEventListener('pointerdown',function(){window.__zenFingers++},true)}return 1})()")
+    }
+
+    private fun fingers(): Int = chromeValue("String(window.__zenFingers||0)").toIntOrNull() ?: 0
+
+    /**
+     * The display's size and density overrides (the recipe's `wm size` / `wm density`) read back
+     * and applied afresh – reset, then the same values again – which hands the input pipeline a
+     * new viewport for the window the chrome is laid out in; the activity takes size and density
+     * changes in place (its `configChanges`), and the recorder is not rolling yet. What was read,
+     * for the finding.
+     */
+    private fun reapplyDisplayOverride(): String {
+        val size = shell("wm size")
+        val density = shell("wm density")
+        val was = (size.trim() + "; " + density.trim()).replace(Regex("\\s*\\n\\s*"), ", ")
+        val overrideSize = Regex("Override size: (\\d+x\\d+)").find(size)?.groupValues?.get(1) ?: return "$was – no size override to apply afresh"
+        val overrideDensity = Regex("Override density: (\\d+)").find(density)?.groupValues?.get(1)
+        Log.w(tag, "the finger never reached the document; the display override applied afresh ($was)")
+        shell("wm size reset")
+        SystemClock.sleep(2_000)
+        shell("wm size $overrideSize")
+        if (overrideDensity != null) shell("wm density $overrideDensity")
+        SystemClock.sleep(4_000)
+        ensureForeground()
+        return "$was – applied afresh"
     }
 
     override fun demo() {
@@ -118,8 +168,8 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 "document.querySelector('$GROUP_ROW')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(QUERY)}&&!document.querySelector('$ROWS_LEAVING')",
                 15_000
             )
-            // The emulator's software GPU trails the DOM by a second or two: the still after it has caught up.
-            SystemClock.sleep(2_500)
+            keyboardAway("the still")
+            awaitPainted()
             shot("01-group-row-typed")
             val card = readCard()
             val row = card.groupRow()
@@ -169,13 +219,15 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 awaitChrome("document.querySelector('$GROUP_ROW')&&!document.querySelector('$ROWS_LEAVING')", 12_000)
                 SystemClock.sleep(1_000)
             }
+            keyboardAway("the touch")
             val before = coreState()
             finding("  before the touch: active tab '${activeCoreTab(before)?.optString("id")}', the group collapsed ${folder(before)?.optBoolean("collapsed")}")
             // THE touch: the row, found by its spoken sentence; it took once the group's first page is up.
             val took = touchTapLabelExpecting("Open $GROUP_NAME tab group", "the group's first page is the active tab and the group is unfolded", timeoutMs = 8_000, prefix = true) { groupOpened() }
             val closed = awaitChrome("!document.querySelector('$FIELD')", 8_000)
             val landed = awaitPageUrl(PAPERS_URL, 10_000)
-            SystemClock.sleep(2_000)
+            SystemClock.sleep(1_500)
+            awaitPainted()
             shot("02-group-opened")
             val after = coreState()
             val active = activeCoreTab(after)
@@ -203,7 +255,8 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
                 "document.querySelector('$SAVED_GLYPH')&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(SAVED_QUERY)}&&!document.querySelector('$ROWS_LEAVING')",
                 15_000
             )
-            SystemClock.sleep(2_500)
+            keyboardAway("the still and the touch")
+            awaitPainted()
             shot("03-saved-group-row")
             val card = readCard()
             val row = card.groupRow()
@@ -220,7 +273,8 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
             val took = touchTapLabelExpecting("Open $GROUP_NAME tab group", "the group's pages are back as its tabs and the first is up", timeoutMs = 10_000, prefix = true) { groupOpened() && memberTabs(coreState()).size == 2 }
             val closed = awaitChrome("!document.querySelector('$FIELD')", 8_000)
             val landed = awaitPageUrl(PAPERS_URL, 12_000)
-            SystemClock.sleep(2_000)
+            SystemClock.sleep(1_500)
+            awaitPainted()
             shot("04-saved-group-opened")
             val after = coreState()
             finding("  the touch ${if (took) "took" else "did NOT take"}; field closed $closed; members back ${memberTabs(after)}; active '${activeCoreTab(after)?.optString("url")}' (loaded $landed); kept pages now ${folder(after)?.optJSONArray("savedTabs")?.length() ?: 0} ${verdict(took && closed && landed)}")
@@ -309,15 +363,70 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
 
     private fun openField(): Boolean {
         settle(8_000)
+        SystemClock.sleep(500)
         tapPill()
         if (awaitField(8_000)) return true
         finding("  the pill's tap opened no field in 8 s (bar open ${urlbarOpen()}); the pill again")
         settle(6_000)
+        SystemClock.sleep(500)
         tapPill()
         return awaitField(8_000)
     }
 
     private fun awaitField(timeoutMs: Long): Boolean = awaitChrome("!!document.querySelector('$FIELD')", timeoutMs)
+
+    /**
+     * The group row's place against the keyboard, measured and reported on both chassis; on the
+     * tablet the keyboard is then put away. The tablet's list runs UNDER the keyboard – the
+     * chassis bounds its popup by the window, not by the keyboard's inset, where Chrome's tablet
+     * dropdown stops above the keyboard – so a row below the keyboard's top edge is nowhere a
+     * finger can reach: the second run's tablet act had the group row sixth, at y 409–429 under a
+     * keyboard from y 375, and the touch on it was a touch on the keyboard (the field stayed, the
+     * group stayed folded). One back puts the keyboard away and the field survives it, as
+     * `closeUrlField`'s first back does; then the still shows the whole list and the touch has the
+     * row in reach. The phone's sheet stands above the keyboard by design; there this only
+     * measures. The chassis's bound is not this row's to fix: reported for the tablet omnibox's row.
+     */
+    private fun keyboardAway(what: String) {
+        val row = groupRowOnScreen()
+        val inset = imeInset()
+        val keyboardTop = height - inset
+        if (row != null) {
+            finding("  the group row on screen at y ${row.top}–${row.bottom}; the keyboard's top edge at $keyboardTop (inset $inset px): ${if (inset == 0) "no keyboard up" else if (row.bottom <= keyboardTop) "the row in a finger's reach" else "the row UNDER the keyboard"}")
+        }
+        if (formFactor != "tablet" || inset == 0) return
+        back()
+        val down = awaitIme(shown = false, timeoutMs = 6_000)
+        val stayed = awaitChrome("!!document.querySelector('$FIELD')&&!!document.querySelector('$GROUP_ROW')", 4_000)
+        SystemClock.sleep(800)
+        finding("  the tablet's keyboard put away before $what: the keyboard ${if (down) "down" else "still up"}; the field and the row ${if (stayed) "stayed" else "did NOT stay"}")
+        if (!stayed) failures += "the back that put the tablet's keyboard away before $what took the field or the row with it"
+    }
+
+    /** Where the group row is on screen: the document's rect scaled into the chrome view's place, as the harness reads a Settings row. */
+    private fun groupRowOnScreen(): Rect? {
+        val edges = chromeValue("(function(){var r=document.querySelector('$GROUP_ROW');if(!r)return '';var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom].join(',')})()")
+            .split(',').mapNotNull { it.toDoubleOrNull() }
+        if (edges.size != 4) return null
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync { origin = IntArray(2).also((activity as MainActivity).host.chrome::getLocationOnScreen) }
+        return Rect(
+            (origin[0] + edges[0] * density).roundToInt(), (origin[1] + edges[1] * density).roundToInt(),
+            (origin[0] + edges[2] * density).roundToInt(), (origin[1] + edges[3] * density).roundToInt()
+        )
+    }
+
+    /**
+     * Two frames of the document once its DOM says the scene stands, then a moment for the
+     * emulator's compositor: the still after the pixels have caught up with the DOM. The second
+     * run's tablet still trailed the field by two keystrokes behind 1.7 s frames – its list the
+     * one for "r" under a field reading "res" – and a fixed wait is no measure of that.
+     */
+    private fun awaitPainted() {
+        chromeJs("(function(){window.__zenPainted=false;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__zenPainted=true})});return 1})()")
+        awaitChrome("window.__zenPainted===true", 8_000)
+        SystemClock.sleep(if (formFactor == "tablet") 2_000 else 1_200)
+    }
 
     private fun fieldUp(): Boolean = chromeValue("String(!!document.querySelector('$FIELD'))") == "true"
 
@@ -336,7 +445,10 @@ class OmniboxGroupSuggestionDemo : DemoHarness("omnibox-group-suggestion-demo-st
     }
 
     private fun settled(): Boolean {
-        val storeOpen = "((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true)"
+        // Five openers for five closers: the second run's every act logged this expression as a
+        // SyntaxError 150 ms apart (E/ZenChrome), so no settle() ever held and each waited its
+        // whole timeout – the acts still passed, a minute slower, the rest never measured.
+        val storeOpen = "(((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true)"
         return chromeValue("String(($storeOpen===!!document.querySelector('$FIELD'))&&document.querySelectorAll('.zen-sheet').length===0)") == "true"
     }
 
