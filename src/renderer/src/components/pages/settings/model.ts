@@ -323,8 +323,13 @@ export interface FieldRow extends RowBase {
   value: string
   /** The row's description for the value (the value itself when absent). */
   display?: string
-  /** `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`). */
-  input: 'text' | 'number' | 'url'
+  /**
+   * `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`).
+   * `password`: a masked field (`type="password"`, the passphrase form's) for a value that is
+   * a secret to keep hidden – a server's app password – never one to read back; the row shows
+   * its `display` in the value's place and the search never reads the value (`rowText`).
+   */
+  input: 'text' | 'number' | 'url' | 'password'
   /**
    * The desktop row's form. `inline` (the default, §9.21): the field trails the text block at
    * its width – 160 for text, 96 for a number – with a refused commit's validation line under
@@ -341,12 +346,27 @@ export interface FieldRow extends RowBase {
   /** A secret (an API key): the platform monospace in the field (§4), never shown on the row. */
   secret?: boolean
   /**
+   * What the value the row keeps costs (an `http://` server address sends the app password in
+   * the clear): §9.12's line under the field in the warn ink – not a refusal, so the field is
+   * not marked invalid and the value stands – shown for the committed value alone, never
+   * while typing (the three field renderers draw it while the field holds the row's value and
+   * no error; the phone's row, the field's stand-in, draws it under its value line). The builder
+   * sets it from the committed draft, so a field left holding the address shows it and one
+   * being edited does not.
+   */
+  warning?: string
+  /**
    * Commit an edited value; a returned string is a validation message that keeps the sheet up.
    * A promise makes the sheet a §9.30 busy form while it settles: the field read-only with the
    * typed value, Save busy, Cancel at .4; a message refuses (the field clears, takes the focus
    * and shows it), `undefined` accepts and closes the sheet.
    */
   onCommit(value: string): string | undefined | Promise<string | undefined>
+}
+
+/** The `<input type>` a field row's kind takes – the three field renderers ask it the same way. */
+export function fieldInputType(row: FieldRow): 'number' | 'password' | 'text' {
+  return row.input === 'number' ? 'number' : row.input === 'password' ? 'password' : 'text'
 }
 
 /**
@@ -629,7 +649,8 @@ export function currentOptionLabel(row: ValueRow): string {
 export function rowText(row: SettingsRow): string {
   const parts = [row.label, row.description ?? '', ...(row.keywords ?? [])]
   if (row.kind === 'value') parts.push(...row.options.map((o) => o.label))
-  if (row.kind === 'field') parts.push(row.display ?? row.value)
+  if (row.kind === 'field')
+    parts.push(row.input === 'password' ? (row.display ?? '') : (row.display ?? row.value))
   if (row.kind === 'slider') parts.push(row.format(row.value))
   return parts.join(' ')
 }

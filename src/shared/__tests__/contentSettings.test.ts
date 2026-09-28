@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONTENT_SETTINGS,
+  type ContentDefault,
+  type ContentSetting,
   allowOnceFor,
   builtInDefault,
   contentSetting,
@@ -54,7 +56,8 @@ describe('contentSettingsFor: the per-host catalogue (pass 10)', () => {
     for (const platform of ['desktop', 'android'] as const) {
       const listed = contentSettingsFor(platform)
       expect(listed.every((setting) => setting.support[platform] !== 'n-a')).toBe(true)
-      const hidden = CONTENT_SETTINGS.filter((setting) => !listed.includes(setting))
+      const listedIds = new Set(listed.map((setting) => setting.id))
+      const hidden = CONTENT_SETTINGS.filter((setting) => !listedIds.has(setting.id))
       expect(hidden.every((setting) => setting.support[platform] === 'n-a')).toBe(true)
       expect(contentSettingsFor(platform, ['stored'])).toEqual([])
       expect(contentSettingsFor(platform, ['enforced'])).toEqual(listed)
@@ -129,6 +132,66 @@ describe('contentSettingsFor', () => {
       ].join('\n')
       expect(words, setting.id).not.toMatch(/MIDI system messages|system-exclusive/)
       expect(words, setting.id).not.toMatch(/connect to MIDI devices|access MIDI devices/)
+    }
+  })
+
+  it('lists Clipboard on both hosts now that the phone’s page shim asks the row (MW-38)', () => {
+    // Desktop: Electron's request handler; Android: the page script's shim over
+    // `navigator.clipboard.read` / `readText` through the same prompt (`core/clipboardRead.ts`).
+    // The prompt copy is the row's – no new user-read string.
+    expect(contentSettingsFor('desktop').map((s) => s.id)).toContain('clipboard-read')
+    expect(contentSettingsFor('android').map((s) => s.id)).toContain('clipboard-read')
+    expect(contentSetting('clipboard-read')).toMatchObject({
+      label: 'Clipboard',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'read from your clipboard',
+      allowOnce: true,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // An asked row remembered per site: the unused-sites sweep and Safety check review it.
+    expect(tracksLastVisit('clipboard-read')).toBe(true)
+  })
+
+  it('hands the phone the Clipboard row in its own words – text alone until its path reads images (the lead’s copy on #657) – and the desktop the row as written', () => {
+    const row = (platform: 'desktop' | 'android'): ContentSetting => {
+      const found = contentSettingsFor(platform).find((s) => s.id === 'clipboard-read')
+      if (!found) throw new Error(`no Clipboard row on ${platform}`)
+      return found
+    }
+    // The desktop: Electron's read hands text and images; the row is the catalogue's own object.
+    expect(row('desktop')).toBe(contentSetting('clipboard-read'))
+    expect(row('desktop')).toMatchObject({
+      description: 'Sites can ask to see text and images on your clipboard',
+      descriptions: { deny: 'Sites cannot see text or images on your clipboard' }
+    })
+    // The phone: `platform.clipboard.readText()` alone answers the shim, so the row says text.
+    expect(row('android')).toMatchObject({
+      description: 'Sites can ask to see text on your clipboard',
+      descriptions: { deny: 'Sites cannot see text on your clipboard' }
+    })
+    // Two sub-lines change and nothing else: one prompt, one default, one set of choices.
+    expect(row('android')).toMatchObject({
+      label: 'Clipboard',
+      group: 'permissions',
+      builtInDefault: 'ask',
+      choices: ['ask', 'deny'],
+      promptLabel: 'read from your clipboard',
+      allowOnce: true,
+      support: { desktop: 'enforced', android: 'enforced' }
+    })
+    // The shape: the override names the phone's description and, value by value, its lines.
+    expect(
+      Object.fromEntries(CONTENT_SETTINGS.filter((s) => s.android).map((s) => [s.id, s.android]))
+    ).toEqual({
+      'clipboard-read': {
+        description: 'Sites can ask to see text on your clipboard',
+        descriptions: { deny: 'Sites cannot see text on your clipboard' }
+      }
+    })
+    // Every other phone row is the catalogue's own object, as before.
+    for (const setting of contentSettingsFor('android')) {
+      if (setting.id !== 'clipboard-read') expect(setting).toBe(contentSetting(setting.id))
     }
   })
 
@@ -242,6 +305,35 @@ describe('the rows’ per-value description lines (services pass 11, seed 3)', (
         if (value === 'deny') expect(line, where).toMatch(/\b(cannot|instead of)\b/)
         if (value === 'allow') expect(line, where).toMatch(/\bcan\b/)
         expect(line, where).not.toBe(setting.description)
+      }
+    }
+  })
+
+  it('holds a row’s phone lines (`android`) to the same register, each for a choice the row offers beyond its built-in default', () => {
+    for (const setting of CONTENT_SETTINGS) {
+      if (!setting.android) continue
+      for (const key of Object.keys(setting.android)) {
+        expect(['description', 'descriptions'], setting.id).toContain(key)
+      }
+      const others = setting.choices.filter((value) => value !== setting.builtInDefault)
+      expect(setting.android.description, setting.id).toMatch(/^[A-Z][^.!?]*[^.!?\s]$/)
+      expect(setting.android.description, setting.id).not.toBe(setting.description)
+      for (const [value, line] of Object.entries(setting.android.descriptions ?? {})) {
+        const where = `${setting.id} ${value} (android)`
+        expect(others, where).toContain(value)
+        expect(line, where).toMatch(/^[A-Z][^.!?]*[^.!?\s]$/)
+        if (value === 'deny') expect(line, where).toMatch(/\b(cannot|instead of)\b/)
+        if (value === 'allow') expect(line, where).toMatch(/\bcan\b/)
+        expect(line, where).not.toBe(setting.android.description)
+        expect(line, where).not.toBe(setting.descriptions?.[value as ContentDefault])
+      }
+    }
+    // The phone's rows read those lines through `defaultDescription`'s fields and no other.
+    for (const setting of contentSettingsFor('android')) {
+      if (!setting.android) continue
+      expect(setting.description).toBe(setting.android.description)
+      for (const [value, line] of Object.entries(setting.android.descriptions ?? {})) {
+        expect(setting.descriptions?.[value as ContentDefault], `${setting.id} ${value}`).toBe(line)
       }
     }
   })

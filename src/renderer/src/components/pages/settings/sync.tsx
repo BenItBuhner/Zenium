@@ -1,5 +1,12 @@
-import { FolderX } from 'lucide-react'
-import type { SyncDeviceTabs, SyncRemoteTab, SyncStatus, UIState } from '@shared/types'
+import { FolderX, KeyRound } from 'lucide-react'
+import type {
+  SyncDeviceTabs,
+  SyncRemoteTab,
+  SyncStatus,
+  SyncTransportKind,
+  UIState,
+  WebDavSyncCredentials
+} from '@shared/types'
 import { displayUrl, getHost } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
@@ -12,14 +19,26 @@ import {
 import {
   SYNC_COPY,
   SYNC_SCOPES,
+  editWebDavDraft,
+  probeLine,
   syncScopeRowId,
+  syncSetupRefusalLine,
   syncSetupStore,
-  syncStatusLine
+  syncStatusLine,
+  testWebDavConnection,
+  webDavAddressProblem,
+  webDavAddressWarning,
+  webDavCredentials,
+  webDavDraftComplete,
+  webDavFolderLine,
+  webDavOutcomeLine,
+  webDavServerLine,
+  type SyncSetupDraft
 } from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
 import { DeviceGlyph, anyDeviceKind } from '../../DeviceGlyph'
 import { FaviconGlyph } from './blocks'
-import type { RowGroup, SettingsRow } from './model'
+import { choice, type RowGroup, type SettingsRow } from './model'
 import type { SectionContext } from './sections'
 import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncForms'
 
@@ -46,6 +65,20 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  * together with the footer's action is a checkbox row inside the prompt (§9.23), not a second
  * action – so the phone's sheet and the desktop's dialog (`dialogs.tsx`'s form dialog, the title
  * block over the same form) are the one composition, Chrome's and Firefox's shape.
+ *
+ * A host that can reach a WebDAV server (ID-32; `webdavAvailable`: a fetch and a secret store)
+ * opens the setup with the transport choice – a folder on this device, or a WebDAV server such
+ * as Nextcloud – and the server's rows take the folder row's place: the address, the username,
+ * the app password (a masked field), the folder under the account's files, and Test connection,
+ * an action row that reports its answer in its description (§9.33) and is busy while the server
+ * is asked (§9.30). Turn on sync waits on the form as it waits on a folder. Connected through a
+ * server, the page's second group is Server and device – the account on the host and the folder,
+ * facts to read (the server is set once; the way to another is Turn off sync and set up again)
+ * – and a sign-in the server has stopped taking is the §9.33 message row over the App password
+ * row that gives the engine a new one, as the folder-lost row stands over the folder row. The
+ * server's answers reach the user in the page's sentences alone (`webDavOutcomeLine`, one
+ * mapping for the Test row, the Turn on refusal and the line under Sync now); the engine's
+ * method names and status codes never do (§9.33).
  */
 export function syncGroups({ state }: SectionContext): RowGroup[] {
   const sync = state.sync
@@ -57,45 +90,49 @@ export function syncGroups({ state }: SectionContext): RowGroup[] {
 // ---------------------------------------------------------------------------
 
 function setupGroups(sync: SyncStatus): RowGroup[] {
-  const pending = syncSetupStore.get().folder
+  const draft = syncSetupStore.get()
+  // The server is a choice only where the host can reach one; elsewhere the page is the folder's
+  // and the draft's transport is read as the folder whatever it says.
+  const server = sync.webdavAvailable && draft.transport === 'webdav'
+  const ready = server ? webDavDraftComplete(draft.webdav) : draft.folder !== null
   return [
     {
       id: 'sync-setup',
       heading: 'Set up sync',
-      description: SYNC_COPY.intro,
+      description: sync.webdavAvailable ? SYNC_COPY.introServer : SYNC_COPY.intro,
       rows: [
-        {
-          kind: 'action',
-          id: 'sync-folder',
-          label: SYNC_COPY.folder,
-          description: pending ? downloadFolderLabel(pending) : SYNC_COPY.folderUnset,
-          keywords: FOLDER_KEYWORDS,
-          // The desktop's button (§10.5): the Downloads folder row's verb once a folder is set.
-          button: pending ? 'Change…' : 'Choose…',
-          onPress: () => {
-            // A dismissed picker keeps the draft as it is.
-            void cmd('sync.chooseFolder', undefined).then((folder) => {
-              if (folder) syncSetupStore.set({ folder })
-            })
-          }
-        },
+        ...(sync.webdavAvailable ? [transportRow(draft.transport)] : []),
+        ...(server ? webDavRows(draft) : [folderDraftRow(draft.folder)]),
         deviceNameRow(sync),
         {
           kind: 'action',
           id: 'sync-turn-on',
           label: SYNC_COPY.turnOn,
-          description: pending ? SYNC_COPY.turnOnHint : SYNC_COPY.turnOnNeedsFolder,
+          description: ready
+            ? SYNC_COPY.turnOnHint
+            : server
+              ? SYNC_COPY.turnOnNeedsServer
+              : SYNC_COPY.turnOnNeedsFolder,
           keywords: ['set up', 'enable', 'passphrase', 'encrypt'],
           button: 'Turn on…',
-          // Nothing to set up without a folder: laid out at 40 %, not pressable (§10.4).
-          disabled: pending === null,
+          // Nothing to set up without a folder, or a server filled in: laid out at 40 %, not
+          // pressable (§10.4).
+          disabled: !ready,
           form: {
             title: SYNC_COPY.passphraseTitle,
             description: SYNC_COPY.passphraseDescription,
             render: (close) =>
-              pending ? (
+              server && ready ? (
                 <SyncPassphraseForm
-                  folder={pending}
+                  folder=""
+                  webdav={webDavCredentials(draft.webdav)}
+                  deviceName={sync.deviceName}
+                  scope={sync.scope}
+                  close={close}
+                />
+              ) : !server && draft.folder ? (
+                <SyncPassphraseForm
+                  folder={draft.folder}
                   deviceName={sync.deviceName}
                   scope={sync.scope}
                   close={close}
@@ -106,6 +143,148 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
       ]
     },
     scopeGroup(sync)
+  ]
+}
+
+/** The folder the setup will use: the system picker, the chosen tree's name as the description. */
+function folderDraftRow(pending: string | null): SettingsRow {
+  return {
+    kind: 'action',
+    id: 'sync-folder',
+    label: SYNC_COPY.folder,
+    description: pending ? downloadFolderLabel(pending) : SYNC_COPY.folderUnset,
+    keywords: FOLDER_KEYWORDS,
+    // The desktop's button (§10.5): the Downloads folder row's verb once a folder is set.
+    button: pending ? 'Change…' : 'Choose…',
+    onPress: () => {
+      // A dismissed picker keeps the draft as it is.
+      void cmd('sync.chooseFolder', undefined).then((folder) => {
+        if (folder) syncSetupStore.set({ folder })
+      })
+    }
+  }
+}
+
+/**
+ * Sync through (ID-32): where the encrypted records go. A value row – the phone's §9.13 picker,
+ * the current option as the row's line – that the desktop draws as §9.14's two radios, since the
+ * two options' second lines are the choice. Picking one swaps the rows under it and drops the
+ * last test's answer with the form it answered.
+ */
+function transportRow(transport: SyncTransportKind): SettingsRow {
+  return choice({
+    id: 'sync-transport',
+    label: SYNC_COPY.transport,
+    value: transport,
+    keywords: ['transport', 'webdav', 'nextcloud', 'server', 'cloud drive', 'folder'],
+    radios: true,
+    options: [
+      {
+        value: 'folder',
+        label: SYNC_COPY.transportFolder,
+        description: SYNC_COPY.transportFolderHint
+      },
+      {
+        value: 'webdav',
+        label: SYNC_COPY.transportWebDav,
+        description: SYNC_COPY.transportWebDavHint
+      }
+    ],
+    onChange: (value) => syncSetupStore.set({ transport: value, probe: { state: 'idle' } })
+  })
+}
+
+/**
+ * The server form as rows (§9.12's fields in rows on the desktop – the address stacked, since
+ * a DAV root is longer than the 160 inline field shows; the phone's one-field sheets): the
+ * address, checked as a URL when the field is left (§9.12: a refusal under the field at fault,
+ * never while typing) and, left holding an `http://` address, carrying the one risk of that in
+ * the warn ink under the field (`warning`; the lead's Q1 ruling on #628: taken, not refused,
+ * the app password named as the one thing sent unprotected); the username; the app password, a
+ * masked field whose row shows dots once it holds one and its hint before; the folder under the
+ * account's files; then Test connection, at 40 % until the three details a connection needs
+ * are in.
+ */
+function webDavRows(draft: SyncSetupDraft): SettingsRow[] {
+  const { webdav, probe } = draft
+  const complete = webDavDraftComplete(webdav)
+  return [
+    {
+      kind: 'field',
+      id: 'sync-webdav-url',
+      label: SYNC_COPY.server,
+      description: SYNC_COPY.serverHint,
+      display: webdav.url || SYNC_COPY.serverHint,
+      keywords: ['webdav', 'nextcloud', 'url', 'dav'],
+      value: webdav.url,
+      input: 'url',
+      form: 'stacked',
+      placeholder: SYNC_COPY.serverPlaceholder,
+      warning: webDavAddressWarning(webdav.url),
+      onCommit: (value) => {
+        // A refused address is not kept: the sheet clears it (§9.12), so the row does not
+        // show what was refused, and Test connection never reaches for it.
+        const problem = webDavAddressProblem(value)
+        if (problem === undefined) editWebDavDraft({ url: value })
+        return problem
+      }
+    },
+    {
+      kind: 'field',
+      id: 'sync-webdav-username',
+      label: SYNC_COPY.username,
+      description: SYNC_COPY.usernameHint,
+      display: webdav.username || SYNC_COPY.usernameHint,
+      keywords: ['account', 'login'],
+      value: webdav.username,
+      input: 'text',
+      onCommit: (value) => {
+        editWebDavDraft({ username: value })
+        return undefined
+      }
+    },
+    {
+      kind: 'field',
+      id: 'sync-webdav-password',
+      label: SYNC_COPY.appPassword,
+      description: SYNC_COPY.appPasswordHint,
+      display: webdav.password ? SYNC_COPY.appPasswordSet : SYNC_COPY.appPasswordHint,
+      keywords: ['password', 'token', 'secret'],
+      value: webdav.password,
+      input: 'password',
+      secret: true,
+      onCommit: (value) => {
+        editWebDavDraft({ password: value })
+        return undefined
+      }
+    },
+    {
+      kind: 'field',
+      id: 'sync-webdav-folder',
+      label: SYNC_COPY.serverFolder,
+      description: SYNC_COPY.serverFolderHint,
+      keywords: ['folder', 'directory', 'path'],
+      value: webdav.folder,
+      input: 'text',
+      onCommit: (value) => {
+        editWebDavDraft({ folder: value })
+        return undefined
+      }
+    },
+    {
+      kind: 'action',
+      id: 'sync-webdav-test',
+      label: SYNC_COPY.test,
+      description: probeLine(probe),
+      // The answer's ink is the description's alone (§9.33: an action row reporting its result
+      // carries no glyph); a connection is the plain line.
+      tone: probe.state === 'done' && !probe.probe.ok ? 'danger' : undefined,
+      keywords: ['test', 'check', 'connection', 'connect'],
+      button: SYNC_COPY.testAction,
+      busy: probe.state === 'busy',
+      disabled: !complete,
+      onPress: () => void testWebDavConnection()
+    }
   ]
 }
 
@@ -141,6 +320,20 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
       trailing: <FolderX className="zen-settings-trailing-glyph" aria-hidden="true" />
     })
   }
+  if (sync.authRefused) {
+    // The server's refusal (a revoked app password; ID-32) is the same lone status row: the way
+    // out as the description, the key glyph trailing in the danger ink, and the App password
+    // row that gives the engine a new one first in the group under it (§9.17).
+    status.push({
+      kind: 'info',
+      id: 'sync-auth-refused',
+      label: SYNC_COPY.authRefused,
+      description: SYNC_COPY.authRefusedHint,
+      tone: 'danger',
+      keywords: ['error', 'password', 'refused', 'revoked', '401'],
+      trailing: <KeyRound className="zen-settings-trailing-glyph" aria-hidden="true" />
+    })
+  }
   if (sync.pendingMerge) {
     status.push({
       kind: 'action',
@@ -156,9 +349,18 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
       }
     })
   }
-  // The error the engine keeps is the folder-lost sentence while the folder is lost: the row
-  // above says it, so the status line does not say it twice.
-  const error = sync.folderLost ? null : sync.lastError
+  // The error the engine keeps is the folder-lost sentence while the folder is lost, and the
+  // server's answer while the sign-in is refused: the row above says it, so the status line does
+  // not say it twice. A server's other answer is the page's sentence for its class
+  // (`lastErrorKind` through `webDavOutcomeLine`), never the engine's method and status; an
+  // error with no class – the folder transport's, a record that would not decrypt – is the
+  // engine's line, as before.
+  const error =
+    sync.folderLost || sync.authRefused
+      ? null
+      : sync.lastErrorKind
+        ? webDavOutcomeLine(sync.lastErrorKind)
+        : sync.lastError
   status.push({
     kind: 'action',
     id: 'sync-now',
@@ -168,29 +370,35 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
     keywords: ['last synced', 'status', 'refresh'],
     button: SYNC_COPY.syncNow,
     busy: sync.syncing,
-    // Nothing to sync to until the folder is chosen again or the merge is answered.
-    disabled: sync.folderLost || sync.pendingMerge,
+    // Nothing to sync to until the folder is chosen again, the server takes the sign-in again
+    // or the merge is answered.
+    disabled: sync.folderLost || sync.authRefused || sync.pendingMerge,
     onPress: () => run('sync.now', undefined)
   })
+  const server = sync.transport === 'webdav' && sync.webdav !== null ? sync.webdav : null
   return [
     { id: 'sync-status', heading: 'Status', rows: status },
     {
       id: 'sync-where',
-      heading: 'Folder and device',
+      heading: server ? SYNC_COPY.whereServer : SYNC_COPY.whereFolder,
       rows: [
-        {
-          kind: 'action',
-          id: 'sync-folder',
-          label: SYNC_COPY.folder,
-          description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
-          keywords: FOLDER_KEYWORDS,
-          button: 'Change…',
-          onPress: () => {
-            void cmd('sync.chooseFolder', undefined).then((folder) => {
-              if (folder) run('sync.setFolder', { folder })
-            })
-          }
-        },
+        ...(server
+          ? serverRows(server, sync.authRefused)
+          : [
+              {
+                kind: 'action',
+                id: 'sync-folder',
+                label: SYNC_COPY.folder,
+                description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
+                keywords: FOLDER_KEYWORDS,
+                button: 'Change…',
+                onPress: () => {
+                  void cmd('sync.chooseFolder', undefined).then((folder) => {
+                    if (folder) run('sync.setFolder', { folder })
+                  })
+                }
+              } satisfies SettingsRow
+            ]),
         deviceNameRow(sync)
       ]
     },
@@ -212,6 +420,64 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
     scopeGroup(sync),
     { id: 'sync-off', heading: null, rows: [turnOffRow()] }
   ]
+}
+
+/**
+ * Connected through a server (ID-32): the server in use as facts – the account on the host, and
+ * the folder under its files as it was typed, or the top level. Nothing to press: the server is set once, and another server is Turn off
+ * sync and set up again (the engine keeps no command to move a configured device between
+ * servers). While the server refuses the sign-in, the App password row stands first – the
+ * status row's follow-up (§9.17) – a masked field whose commit hands the engine the new
+ * password (`sync.setWebDavPassword`) and lets it sync again: the sheet is §9.30's busy form
+ * while the engine keeps the password and runs a round with it, and a secret store that
+ * cannot keep it is the field's refusal in the page's words (the typed `SyncSetupRefusal`);
+ * a password the server refuses in its turn leaves the status row standing, since the round
+ * reports it. At other times the row is not drawn (§10.4: a row for a state most users never
+ * enter appears when its state does).
+ */
+function serverRows(
+  server: Omit<WebDavSyncCredentials, 'password'>,
+  authRefused: boolean
+): SettingsRow[] {
+  const rows: SettingsRow[] = []
+  if (authRefused) {
+    rows.push({
+      kind: 'field',
+      id: 'sync-webdav-password',
+      label: SYNC_COPY.appPassword,
+      description: SYNC_COPY.appPasswordAgainHint,
+      display: SYNC_COPY.appPasswordAgainHint,
+      keywords: ['password', 'token', 'secret'],
+      value: '',
+      input: 'password',
+      secret: true,
+      onCommit: (value) => {
+        if (value === '') return undefined
+        return cmd('sync.setWebDavPassword', { password: value }).then(
+          (refusal) => (refusal ? syncSetupRefusalLine(refusal) : undefined),
+          // The host's channel failing: the password did not get kept, and the sentence says so.
+          () => SYNC_COPY.appPasswordNotKept
+        )
+      }
+    })
+  }
+  rows.push(
+    {
+      kind: 'info',
+      id: 'sync-server',
+      label: SYNC_COPY.serverInUse,
+      description: webDavServerLine(server),
+      keywords: ['webdav', 'nextcloud', 'server', 'account', server.url]
+    },
+    {
+      kind: 'info',
+      id: 'sync-server-folder',
+      label: SYNC_COPY.serverFolder,
+      description: webDavFolderLine(server.folder),
+      keywords: ['folder', 'directory', 'path']
+    }
+  )
+  return rows
 }
 
 /**
