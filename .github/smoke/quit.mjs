@@ -109,6 +109,19 @@ export function mainProcessState(probe, timeoutMs) {
 // after the quit ("the hold armed by the chord (not within 1000 ms; last value null)", "the keys
 // came up 1604 ms after they went down, past the hold") – five reds in 37 hours, the arm64 twin
 // green every time, no app defect. The judging below is pure so it can be tested here.
+//
+// The app's clock took the round trips out of the hold's length, not the runner's timer slack
+// (W8-H1): the key up is a 500 ms setTimeout in the app's main process, and on a starved runner
+// that timer fires late – macos-x64, run 36359347441: "the keys were down 1507 ms by the app's
+// clock (release at 500 ms, 1007 ms of timer slack); arming armed", a 7 ms overshoot of the hold's
+// 1500 ms with the arming proven, the other four legs green. A release at or past the hold's end
+// cannot be judged (the app quit on the hold, or would have), but when that overshoot is the ONLY
+// problem of the verdict it is the runner's timer, not the app: `hold-release` drives the chord
+// again – up to HOLD_RELEASE_ATTEMPTS times, each attempt logged, and only once the app has shown
+// it is still up with the hold cleared (`holdReleaseRedrives` decides; the step reads the state
+// and the exit) – and fails when the LAST attempt still overshoots, every attempt's verdict in the
+// failure's detail. Any other problem fails at once, as before. No budget widened: QUIT_HOLD_MS and
+// HOLD_RELEASE_AT_MS are what they were.
 // ---------------------------------------------------------------------------------------------
 
 /** The chord held this long quits (src/core/quitHold.ts's QUIT_HOLD_MS, Chrome's `kTimeToConfirmQuit`). */
@@ -116,6 +129,12 @@ export const QUIT_HOLD_MS = 1500
 
 /** How long `hold-release` keeps the chord down before the app's own timer lets it go. */
 export const HOLD_RELEASE_AT_MS = 500
+
+/**
+ * How many times `hold-release` drives the chord before an overshoot of the hold – the runner's
+ * key-up timer firing at or past QUIT_HOLD_MS with nothing else wrong – fails the step (W8-H1).
+ */
+export const HOLD_RELEASE_ATTEMPTS = 3
 
 /** How often the quit's trace reads the app once no exit has come (`Session.traceQuit`). */
 export const QUIT_TRACE_EVERY_MS = 500
@@ -151,12 +170,13 @@ export function classifyHoldPoll(poll, { downAt, upAt }) {
  * The verdict on one `hold-release`: the chord went down at `downAt` and came up at `upAt` by the
  * app's own clock (`released` false, with `error`, when the app could not send the key up) while
  * `polls` read the chrome's state for the hold. What comes back is the step's detail –
- * `heldForMs` (= upAt − downAt; `lateByMs` past `releaseAtMs`, the timer's slack on the runner),
- * the polls with their verdicts and `sinceDownMs`, `arming` ('armed' | 'not-armed' | 'unproven'),
- * the hold the state named (`hold`) – and `problems`, the step's failures; none means the
- * readings pass:
+ * `heldForMs` (= upAt − downAt; `lateByMs` past `releaseAtMs`, the timer's slack on the runner;
+ * `holdMs` the hold it was judged against), the polls with their verdicts and `sinceDownMs`,
+ * `arming` ('armed' | 'not-armed' | 'unproven'), the hold the state named (`hold`) – and
+ * `problems`, the step's failures; none means the readings pass:
  *   - the keys came up at or past the hold's end (heldForMs >= holdMs): the app quit on the
- *     hold, or would have, and the release cannot be judged;
+ *     hold, or would have, and the release cannot be judged (alone, this sends the step back
+ *     for another drive of the chord – `holdReleaseRedrives`);
  *   - the key up was not sent;
  *   - a poll read no hold with its whole round trip inside the hold: the chord armed nothing;
  *   - the hold seen names another chord or duration than the platform's (`chord`, `durationMs`,
@@ -216,6 +236,7 @@ export function judgeHoldRelease(
   }
   return {
     heldForMs,
+    holdMs,
     releaseAtMs,
     lateByMs: Number.isFinite(heldForMs) ? heldForMs - releaseAtMs : null,
     arming,
@@ -224,6 +245,24 @@ export function judgeHoldRelease(
     problems,
     ...(note ? { note } : {})
   }
+}
+
+/**
+ * Does `judged`, one `judgeHoldRelease` verdict, send `hold-release` back for another drive of
+ * the chord (W8-H1)? Only when its problems are the overshoot ALONE: the keys came up at or past
+ * the hold's end (`heldForMs >= holdMs`) and nothing else was wrong – the key up went out, no
+ * poll disproved the arming, the hold seen named the platform's chord and duration. That
+ * overshoot is the runner's timer, not the app: the key up is a 500 ms setTimeout in the app's
+ * main process, and on a starved runner it fires late (macos-x64, run 36359347441: 1507 ms, 1007
+ * ms of slack, the arming proven). Whether the app is still up to be driven again is the step's
+ * to read; here is only whether the verdict allows it. A verdict with any other problem fails
+ * the step at once, and one with none has nothing to re-drive: false for both. The overshoot is
+ * known from the numbers, not the wording: `judgeHoldRelease` pushes it for every finite
+ * heldForMs at or past holdMs, so one problem with such a heldForMs is that one.
+ */
+export function holdReleaseRedrives(judged) {
+  if (!judged || !Array.isArray(judged.problems) || judged.problems.length !== 1) return false
+  return Number.isFinite(judged.heldForMs) && judged.heldForMs >= judged.holdMs
 }
 
 /** `ms` as the trace writes an offset from the chord: `+2.5s`. */

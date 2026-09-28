@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  HOLD_RELEASE_ATTEMPTS,
   HOLD_RELEASE_AT_MS,
   NO_WINDOW_MESSAGE,
   QUIT_HOLD_MS,
@@ -8,6 +9,7 @@ import {
   classifyHoldPoll,
   exitWithin,
   formatQuitTrace,
+  holdReleaseRedrives,
   isTargetClosedError,
   judgeHoldRelease,
   mainProcessState,
@@ -251,6 +253,7 @@ describe('judgeHoldRelease', () => {
     expect(judged.heldForMs).toBeLessThan(QUIT_HOLD_MS)
     expect(judged.lateByMs).toBe(3)
     expect(judged.releaseAtMs).toBe(HOLD_RELEASE_AT_MS)
+    expect(judged.holdMs).toBe(QUIT_HOLD_MS)
     expect(judged.arming).toBe('armed')
     expect(judged.hold).toEqual(hold)
     expect(judged.problems).toEqual([])
@@ -384,6 +387,113 @@ describe('judgeHoldRelease', () => {
       expect(judged.heldForMs).toBeLessThan(QUIT_HOLD_MS)
       expect(judged.problems).toEqual([])
     }
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The re-drive (W8-H1): run 36359347441's macos-x64 red – the app's own 500 ms key-up timer fired
+// at 1507 ms on a starved runner, the arming proven, nothing else wrong – re-timed on T0.
+// ---------------------------------------------------------------------------------------------
+
+describe('holdReleaseRedrives (the chord driven again when the runner’s key-up overshot the hold, W8-H1)', () => {
+  const platform = { chord: '⌘Q', durationMs: QUIT_HOLD_MS }
+  /** The run's numbers: the keys down 1507 ms, 1007 ms of timer slack, a poll that saw the hold. */
+  const overshot = { ...released, upAt: T0 + 1507 }
+  const armedPoll = { askedAt: T0 + 4, answeredAt: T0 + 61, quitHold: hold }
+
+  it('drives up to three attempts', () => {
+    expect(HOLD_RELEASE_ATTEMPTS).toBe(3)
+  })
+
+  it('re-drives on the overshoot alone – the runner’s timer, not the app', () => {
+    const judged = judgeHoldRelease({ ...overshot, polls: [armedPoll] }, platform)
+    expect(judged.heldForMs).toBe(1507)
+    expect(judged.lateByMs).toBe(1007)
+    expect(judged.arming).toBe('armed')
+    expect(judged.problems).toEqual([
+      "the keys came up 1507 ms after they went down, past the hold's 1500 ms: the release cannot be judged"
+    ])
+    expect(holdReleaseRedrives(judged)).toBe(true)
+    // At the hold's end exactly with no poll at all, and far past it with the arming unproven
+    // (the slow runner's poll, its null answered after the release): still the overshoot alone.
+    expect(
+      holdReleaseRedrives(judgeHoldRelease({ ...released, upAt: T0 + 1500, polls: [] }, platform))
+    ).toBe(true)
+    const unproven = judgeHoldRelease(
+      {
+        ...released,
+        upAt: T0 + 3005,
+        polls: [{ askedAt: T0 + 60, answeredAt: T0 + 3100, quitHold: null }]
+      },
+      platform
+    )
+    expect(unproven).toMatchObject({ arming: 'unproven', heldForMs: 3005 })
+    expect(unproven.problems).toHaveLength(1)
+    expect(holdReleaseRedrives(unproven)).toBe(true)
+  })
+
+  it('does not re-drive when the overshoot comes with the hold not armed', () => {
+    const judged = judgeHoldRelease(
+      { ...overshot, polls: [{ askedAt: T0 + 5, answeredAt: T0 + 62, quitHold: null }] },
+      platform
+    )
+    expect(judged.problems).toHaveLength(2)
+    expect(judged.arming).toBe('not-armed')
+    expect(holdReleaseRedrives(judged)).toBe(false)
+  })
+
+  it('does not re-drive a verdict with no problem: nothing to drive again', () => {
+    const judged = judgeHoldRelease({ ...released, polls: [armedPoll] }, platform)
+    expect(judged.problems).toEqual([])
+    expect(holdReleaseRedrives(judged)).toBe(false)
+    expect(holdReleaseRedrives(judgeHoldRelease({ ...released, polls: [] }, platform))).toBe(false)
+  })
+
+  it('does not re-drive a key up the app could not send, under the hold or past it', () => {
+    const notSent = judgeHoldRelease(
+      { ...released, released: false, error: 'the window was gone', polls: [] },
+      platform
+    )
+    expect(notSent.problems).toEqual(['the key up was not sent at 500 ms: the window was gone'])
+    expect(holdReleaseRedrives(notSent)).toBe(false)
+    const notSentLate = judgeHoldRelease(
+      { ...overshot, released: false, error: 'the window was gone', polls: [] },
+      platform
+    )
+    expect(notSentLate.problems).toHaveLength(2)
+    expect(holdReleaseRedrives(notSentLate)).toBe(false)
+  })
+
+  it('does not re-drive another chord or duration, nor times that make no sense', () => {
+    const wrong = judgeHoldRelease(
+      {
+        ...overshot,
+        polls: [{ askedAt: T0 + 5, answeredAt: T0 + 62, quitHold: { ...hold, chord: 'Ctrl + Q' } }]
+      },
+      platform
+    )
+    expect(wrong.problems).toHaveLength(2)
+    expect(holdReleaseRedrives(wrong)).toBe(false)
+    expect(
+      holdReleaseRedrives(judgeHoldRelease({ downAt: T0, upAt: T0 - 5, polls: [] }, platform))
+    ).toBe(false)
+    expect(
+      holdReleaseRedrives(judgeHoldRelease({ downAt: T0, upAt: undefined, polls: [] }, platform))
+    ).toBe(false)
+  })
+
+  it('reads the verdict’s own holdMs, and nothing that is not a verdict', () => {
+    // Judged against a 3000 ms hold the same 1507 ms release is under the hold: no problem, no re-drive.
+    expect(
+      holdReleaseRedrives(judgeHoldRelease({ ...overshot, polls: [] }, { holdMs: 3000 }))
+    ).toBe(false)
+    expect(
+      holdReleaseRedrives(judgeHoldRelease({ ...released, upAt: T0 + 1000, polls: [] }, { holdMs: 1000 }))
+    ).toBe(true)
+    expect(holdReleaseRedrives(undefined)).toBe(false)
+    expect(holdReleaseRedrives(null)).toBe(false)
+    expect(holdReleaseRedrives({})).toBe(false)
+    expect(holdReleaseRedrives({ problems: ['x'], heldForMs: 1507 })).toBe(false)
   })
 })
 
