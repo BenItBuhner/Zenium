@@ -1,0 +1,788 @@
+{
+  "$comment": "Compatibility sweep round 20 list (compiled by Android compat round 23): the next 30 Chrome Web Store extensions by install count after the top 30 of round 1, the 30 of next30.json and the 30 of each of next30-round3.json to next30-round19.json (ranks 571-600; manifests under the project store internal/extensions/next30-round20/). Counts are the store detail pages' rounded figures read 2026-09-27; ties inside one rounded bucket are ordered by the page's rating count, equal rounded rating counts by name. Candidates came from the store's category listings and keyword searches, about 26,645 detail pages probed across rounds 3 to 20 (this round read the store's 20 listings and round 17's 548 search terms again - 3,274 ids, 33 new detail pages, the largest of them at 4,000 users, none at the bucket). The pool's stored figures left the rounded 300,000 bucket fewer than 30 rankable items after round 19's list, so every unlisted candidate at or above the rounded 200,000 bucket (280 detail pages) was read again on 2026-09-27, the day of this list's read; against the stored figures thirteen user counts differ and the list ranks the re-read figures - up one bucket ClassLink OneClick Extension, Mobility Print, LearnPlatform for Students and Britannica School Insights (organisation-managed, not ranked), Wallsflow New Tab from 200,000 to 300,000 (ranked first), NetSupport School Student and Assessment Lock (Vretta) from 200,000 to 300,000 (organisation-managed, not ranked); down one bucket Link Grabber, SciSpace and Web Highlights from 300,000 to 200,000 (below the cut) and Extension Manager, Instant Gaming and Points Path for Google Flights from 200,000 to 100,000 - and three detail pages published no user count on two reads (MasteryConnect LockDown Browser and Securly for Chromebooks, organisation-managed; IntoWords Cloud, 200,000 in the pool), so their stored figures stand. The buckets above 300,000 hold no unlisted rankable item (the themes, Chrome Apps and organisation-managed items named below). Ranks 571-600 are the rounded 300,000 bucket's 30 items by rating count after the 30 of next30-round19.json - Wallsflow New Tab (4,300), Bitget Wallet (309), ZoomInfo (298), AB Download Manager Browser Integration (275), NotebookLM Web Importer (255), Page Assist (244), Compose AI (243), Revision History (234), WebRTC Control (229), Clockify Time Tracker (225), Hypothesis (224), Flash Player Enable (219), JSON Viewer Pro (218), Xverse (203), Ad Block Wonder (200), Redirect Path (200; equal rating counts, so by name), Paperpile Extension (194), Angular DevTools (190), Url Shortener (175), AdGuard Extra (165), Otter.ai (141), Enable Copy Paste - E.C.P (138), Bulk URL Opener Extension (128), Speech to Text (Voice Recognition) (124), Follower Export Tool (113), GMB Everywhere (112), Figma (102), Add to Google Classroom (97), ID.me Shop (84) and Assinatura Digital no Navegador - SyngularID (40) - and the cut falls between Assinatura Digital no Navegador at 40 ratings and Add to Babylist Button at 27 (PWA Install Block at 20 and Gale In Context: Opposing Viewpoints at 8 behind it). AB Download Manager Browser Integration and Assinatura Digital no Navegador are native-messaging companions (AB Download Manager's desktop app, SyngularID's signing host), ranked as earlier lists ranked Plasma Integration, Banrisul Internet Banking, Open in VLC media player and Dragon Web Extension (their core checks stop at the host's absence). Bitget Wallet and Xverse are wallets, ranked as Petra, Ready X and Backpack; ZoomInfo, NotebookLM Web Importer, Compose AI, Revision History, Clockify Time Tracker, Paperpile, Otter.ai, Follower Export Tool, Figma and ID.me Shop ask for an identity or their services - ranked as earlier lists ranked Grammarly and HubSpot Sales. Wallsflow New Tab replaces the new-tab page (chrome_url_overrides.newtab); none carries chrome_settings_overrides. One row has no background at all (AdGuard Extra, one content script and a popup) and Redirect Path, Angular DevTools, Figma, ID.me Shop, Paperpile, Hypothesis, Bitget Wallet and AdGuard Extra name a minimum Chrome version (88 to 116). The rows carry the manifests' names, which match the store's listings for 29 of the 30; the store lists Flash Player Enable - flash emulator swf as \"Flash player enable - flash emulator swf\" (letter case alone). Not ranked: themes (Morpheon Dark, Dark Theme for Google Chrome, Sea Foam), Chrome Apps (Google Classroom, Postman), organisation-managed or organisation-login-only items (the list of round 19's comment - ClassLink OneClick, Clever, Mobility Print, Endpoint Verification, Lightspeed Insight Agent, Okta Browser Plugin, Trellix Endpoint Security Web Control, LearnPlatform for Students, OpenText Content Server Browser Web Extension, My Apps Secure Sign-in Extension, MasteryConnect LockDown Browser, HID Credential Management Extension, Snow Web Application Metering, iboss Cloud Connector, LanSchool Web Helper, Browser Security Plus, Browser Redirection Extension, ActivID CMS extension, Britannica School Insights, Securly for Chromebooks, Idira Identity Browser Extension, Citrix Web Extension, Cegid Peoplenet ClickOnce launcher, iboss Classroom Management for Students, RapidIdentity, Omnissa Horizon URL Content Redirection Helper, CXone Agent WebRTC Extension, Chrome Reporting Extension, Pix Companion - and, new at the bucket this round, NetSupport School Student, JumpCloud Go, Assessment Lock (Vretta) and Education Pro Browser Extension MV3) and Google items whose detail pages publish no user count.",
+  "measuredAt": "2026-09-27",
+  "baseline": "09513828",
+  "rows": [
+    {
+      "rank": 571,
+      "id": "onablhclbgaihanifkenpggjkkgdpnkk",
+      "name": "Wallsflow New Tab: Live Wallpapers, Widgets & Focus Music",
+      "version": "12.9",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/wallsflow-new-tab-live-wa/onablhclbgaihanifkenpggjkkgdpnkk), \"300,000 users\", read 2026-09-27; 4.3K ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "src/html/popup.html",
+      "options": null,
+      "permissions": [
+        "storage",
+        "unlimitedStorage",
+        "search",
+        "bookmarks"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 17391939
+    },
+    {
+      "rank": 572,
+      "id": "jiidiaalihmmhddjgbnbgdfflelocpak",
+      "name": "Bitget Wallet - Crypto, Web3 | Bitcoin & USDT",
+      "version": "2.21.8",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/bitget-wallet-crypto-web3/jiidiaalihmmhddjgbnbgdfflelocpak), \"300,000 users\", read 2026-09-27; 309 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": null,
+      "permissions": [
+        "storage",
+        "activeTab",
+        "notifications",
+        "unlimitedStorage",
+        "scripting",
+        "tabs",
+        "alarms",
+        "sidePanel",
+        "contextMenus"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 21044268,
+      "minimumChromeVersion": "88"
+    },
+    {
+      "rank": 573,
+      "id": "fofjcndophjadilglgimelemjkjblgpf",
+      "name": "ZoomInfo",
+      "version": "12.21.4",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/zoominfo/fofjcndophjadilglgimelemjkjblgpf), \"300,000 users\", read 2026-09-27; 298 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "contextMenus",
+        "cookies",
+        "sidePanel",
+        "storage",
+        "tabs",
+        "webNavigation"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "<all_urls>"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 10450555
+    },
+    {
+      "rank": 574,
+      "id": "bbobopahenonfdgjgaleledndnnfhooj",
+      "name": "AB Download Manager Browser Integration",
+      "version": "1.5.0",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/ab-download-manager-brows/bbobopahenonfdgjgaleledndnnfhooj), \"300,000 users\", read 2026-09-27; 275 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "src/browseractionpopup/browser-action.html",
+      "options": "src/optionsui/option-ui.html",
+      "permissions": [
+        "contextMenus",
+        "webRequest",
+        "cookies",
+        "storage",
+        "tabs",
+        "downloads",
+        "notifications",
+        "nativeMessaging"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "*://*/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": true,
+      "crxBytes": 200324
+    },
+    {
+      "rank": 575,
+      "id": "ijdefdijdmghafocfmmdojfghnpelnfn",
+      "name": "NotebookLM Web Importer",
+      "version": "3.37.0",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/notebooklm-web-importer/ijdefdijdmghafocfmmdojfghnpelnfn), \"300,000 users\", read 2026-09-27; 255 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": null,
+      "permissions": [
+        "activeTab",
+        "storage",
+        "cookies",
+        "scripting",
+        "declarativeNetRequestWithHostAccess"
+      ],
+      "optionalPermissions": [
+        "tabs"
+      ],
+      "hostPermissions": [
+        "https://notebooklm.google.com/*",
+        "https://clerk.notebooklm-web-importer.com/*"
+      ],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 1411301
+    },
+    {
+      "rank": 576,
+      "id": "jfgfiigpkhlkbnfnbobbkinehhfdhndo",
+      "name": "Page Assist - A Web UI for Local AI Models",
+      "version": "1.5.85",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/page-assist-a-web-ui-for/jfgfiigpkhlkbnfnbobbkinehhfdhndo), \"300,000 users\", read 2026-09-27; 244 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": "options.html",
+      "permissions": [
+        "storage",
+        "sidePanel",
+        "activeTab",
+        "scripting",
+        "declarativeNetRequest",
+        "action",
+        "unlimitedStorage",
+        "contextMenus",
+        "tts",
+        "notifications"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "http://*/*",
+        "https://*/*",
+        "file://*/*"
+      ],
+      "contentScripts": 3,
+      "nativeMessaging": false,
+      "crxBytes": 7213448
+    },
+    {
+      "rank": 577,
+      "id": "ddlbpiadoechcolndfeaonajmngmhblj",
+      "name": "Compose AI: AI-powered Writing Tool",
+      "version": "2.2.1",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/compose-ai-ai-powered-wri/ddlbpiadoechcolndfeaonajmngmhblj), \"300,000 users\", read 2026-09-27; 243 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": null,
+      "permissions": [
+        "scripting",
+        "tabs",
+        "webNavigation",
+        "management",
+        "alarms",
+        "clipboardWrite",
+        "storage",
+        "webRequest"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "contentScripts": 10,
+      "nativeMessaging": false,
+      "crxBytes": 30242905
+    },
+    {
+      "rank": 578,
+      "id": "dlepebghjlnddgihakmnpoiifjjpmomh",
+      "name": "Revision History: Writing Process Visibility for Google Docs & Slides",
+      "version": "1.12.1",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/revision-history-writing/dlepebghjlnddgihakmnpoiifjjpmomh), \"300,000 users\", read 2026-09-27; 234 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "js/index.html",
+      "options": null,
+      "permissions": [
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "*://*.google.com/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 3643638
+    },
+    {
+      "rank": 579,
+      "id": "fjkmabmdepjfammlpliljpnbhleegehm",
+      "name": "WebRTC Control",
+      "version": "0.3.5",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/webrtc-control/fjkmabmdepjfammlpliljpnbhleegehm), \"300,000 users\", read 2026-09-27; 229 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": "data/options/options.html",
+      "permissions": [
+        "privacy",
+        "storage",
+        "contextMenus"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 53290
+    },
+    {
+      "rank": 580,
+      "id": "pmjeegjhjdlccodhacdgbgfagbpmccpe",
+      "name": "Clockify Time Tracker",
+      "version": "2.12.11",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/clockify-time-tracker/pmjeegjhjdlccodhacdgbgfagbpmccpe), \"300,000 users\", read 2026-09-27; 225 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "index.html",
+      "options": "settings.html",
+      "permissions": [
+        "background",
+        "contextMenus",
+        "storage",
+        "tabs",
+        "activeTab",
+        "identity",
+        "idle",
+        "notifications",
+        "scripting",
+        "alarms"
+      ],
+      "optionalPermissions": [
+        "*://*/"
+      ],
+      "hostPermissions": [
+        "*://*/",
+        "*://*.clockify.me/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 1490203
+    },
+    {
+      "rank": 581,
+      "id": "bjfhmglciegochdpefhhlphglcehbmek",
+      "name": "Hypothesis - Web & PDF Annotation",
+      "version": "1.1754.0.0",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/hypothesis-web-pdf-annota/bjfhmglciegochdpefhhlphglcehbmek), \"300,000 users\", read 2026-09-27; 224 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": "options/index.html",
+      "permissions": [
+        "scripting",
+        "storage",
+        "tabs"
+      ],
+      "optionalPermissions": [
+        "webNavigation"
+      ],
+      "hostPermissions": [
+        "<all_urls>"
+      ],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 5010747,
+      "minimumChromeVersion": "88"
+    },
+    {
+      "rank": 582,
+      "id": "ocfjjghignicohbjammlhhoeimpfnlhc",
+      "name": "Flash Player Enable - flash emulator swf",
+      "version": "1.3",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/flash-player-enable-flash/ocfjjghignicohbjammlhhoeimpfnlhc), \"300,000 users\", read 2026-09-27; 219 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "html/popup.html",
+      "options": null,
+      "permissions": [
+        "storage",
+        "activeTab",
+        "scripting",
+        "notifications"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "*://*/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 4418253
+    },
+    {
+      "rank": 583,
+      "id": "eifflpmocdbdmepbjaopkkhbfmdgijcc",
+      "name": "JSON Viewer Pro",
+      "version": "1.0.7",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/json-viewer-pro/eifflpmocdbdmepbjaopkkhbfmdgijcc), \"300,000 users\", read 2026-09-27; 218 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": "options.html",
+      "permissions": [
+        "contextMenus",
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "*://*/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 488837
+    },
+    {
+      "rank": 584,
+      "id": "idnnbdplmphpflfnlkomgpfbpcgelopg",
+      "name": "Xverse: Bitcoin Crypto Wallet",
+      "version": "2.9.3",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/xverse-bitcoin-crypto-wal/idnnbdplmphpflfnlkomgpfbpcgelopg), \"300,000 users\", read 2026-09-27; 203 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": "options.html",
+      "permissions": [
+        "storage",
+        "tabs",
+        "sidePanel",
+        "declarativeNetRequest",
+        "webNavigation",
+        "alarms"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "*://*/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 23771717
+    },
+    {
+      "rank": 585,
+      "id": "fpkbnjejghdcncegfglnapabnljcimdc",
+      "name": "Ad Block Wonder",
+      "version": "5.8",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/ad-block-wonder/fpkbnjejghdcncegfglnapabnljcimdc), \"300,000 users\", read 2026-09-27; 200 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup/popup.html",
+      "options": "options/index.html",
+      "permissions": [
+        "activeTab",
+        "declarativeNetRequest",
+        "scripting",
+        "storage",
+        "unlimitedStorage",
+        "webNavigation"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "<all_urls>"
+      ],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 7829299
+    },
+    {
+      "rank": 586,
+      "id": "aomidfkchockcldhbkggjokdkkebmdll",
+      "name": "Redirect Path",
+      "version": "4.0.0",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/redirect-path/aomidfkchockcldhbkggjokdkkebmdll), \"300,000 users\", read 2026-09-27; 200 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": null,
+      "permissions": [
+        "webRequest",
+        "webNavigation",
+        "clipboardWrite",
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "https://*/*",
+        "http://*/*",
+        "https://ayima.ai/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 50333,
+      "minimumChromeVersion": "114"
+    },
+    {
+      "rank": 587,
+      "id": "bomfdkbfpdhijjbeoicnfhjbdhncfhig",
+      "name": "Paperpile Extension",
+      "version": "1.5.1182",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/paperpile-extension/bomfdkbfpdhijjbeoicnfhjbdhncfhig), \"300,000 users\", read 2026-09-27; 194 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "storage",
+        "unlimitedStorage",
+        "contextMenus",
+        "tabs",
+        "scripting",
+        "declarativeNetRequestWithHostAccess",
+        "offscreen",
+        "cookies",
+        "alarms"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "http://*/",
+        "https://*/"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 11241582,
+      "minimumChromeVersion": "103"
+    },
+    {
+      "rank": 588,
+      "id": "ienfalfjdbdpebioblfackkekamfmbnh",
+      "name": "Angular DevTools",
+      "version": "1.22.0",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/angular-devtools/ienfalfjdbdpebioblfackkekamfmbnh), \"300,000 users\", read 2026-09-27; 190 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popups/not-angular.html",
+      "options": null,
+      "permissions": [
+        "scripting",
+        "activeTab",
+        "storage",
+        "debugger"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "<all_urls>"
+      ],
+      "contentScripts": 3,
+      "nativeMessaging": false,
+      "crxBytes": 890566,
+      "minimumChromeVersion": "102"
+    },
+    {
+      "rank": 589,
+      "id": "oodfdmglhbbkkcngodjjagblikmoegpa",
+      "name": "Url Shortener",
+      "version": "2.1.100",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/url-shortener/oodfdmglhbbkkcngodjjagblikmoegpa), \"300,000 users\", read 2026-09-27; 175 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": "options.html",
+      "permissions": [
+        "activeTab",
+        "contextMenus",
+        "storage"
+      ],
+      "optionalPermissions": [
+        "scripting"
+      ],
+      "hostPermissions": [],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 855248
+    },
+    {
+      "rank": 590,
+      "id": "gkeojjjcdcopjkbelgbcpckplegclfeg",
+      "name": "AdGuard Extra",
+      "version": "1.1.38",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/adguard-extra/gkeojjjcdcopjkbelgbcpckplegclfeg), \"300,000 users\", read 2026-09-27; 165 ratings (tie-break within the rounded bucket)",
+      "bg": null,
+      "popup": "popup.html",
+      "options": null,
+      "permissions": [],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 881187,
+      "minimumChromeVersion": "88"
+    },
+    {
+      "rank": 591,
+      "id": "bnmojkbbkkonlmlfgejehefjldooiedp",
+      "name": "Otter.ai: Record & Transcribe Meetings - Google Meet & Web Audio",
+      "version": "3.10.1",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/otterai-record-transcribe/bnmojkbbkkonlmlfgejehefjldooiedp), \"300,000 users\", read 2026-09-27; 141 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "cookies",
+        "declarativeNetRequest",
+        "offscreen",
+        "storage",
+        "tabCapture",
+        "activeTab"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "https://otter.ai/*",
+        "https://api.aisense.com/*",
+        "*://meet.google.com/*"
+      ],
+      "contentScripts": 4,
+      "nativeMessaging": false,
+      "crxBytes": 1669942
+    },
+    {
+      "rank": 592,
+      "id": "fpjppnhnpnknbenelmbnidjbolhandnf",
+      "name": "Enable Copy Paste - E.C.P",
+      "version": "2.0.0.3",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/enable-copy-paste-ecp/fpjppnhnpnknbenelmbnidjbolhandnf), \"300,000 users\", read 2026-09-27; 138 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "/popup/popup.html",
+      "options": null,
+      "permissions": [
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 98253
+    },
+    {
+      "rank": 593,
+      "id": "hgenngnjgfkdggambccohomebieocekm",
+      "name": "Bulk URL Opener Extension",
+      "version": "2.7.0.1",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/bulk-url-opener-extension/hgenngnjgfkdggambccohomebieocekm), \"300,000 users\", read 2026-09-27; 128 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "index.html",
+      "options": "settings.html",
+      "permissions": [
+        "clipboardRead",
+        "clipboardWrite",
+        "storage",
+        "activeTab",
+        "scripting"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 61397
+    },
+    {
+      "rank": 594,
+      "id": "kcgloaobfaiejoiahlhnfaolfcifjjho",
+      "name": "Speech to Text (Voice Recognition)",
+      "version": "0.1.7",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/speech-to-text-voice-reco/kcgloaobfaiejoiahlhnfaolfcifjjho), \"300,000 users\", read 2026-09-27; 124 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "storage",
+        "contextMenus"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 5544763
+    },
+    {
+      "rank": 595,
+      "id": "pkafmmmfdgphkffldekomeaofhgickcg",
+      "name": "Follower Export Tool",
+      "version": "3.3.23",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/follower-export-tool/pkafmmmfdgphkffldekomeaofhgickcg), \"300,000 users\", read 2026-09-27; 113 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "popup.html",
+      "options": null,
+      "permissions": [
+        "storage",
+        "cookies",
+        "identity",
+        "unlimitedStorage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "*://*.instagram.com/*",
+        "*://*.converts.cc/*"
+      ],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 1359656
+    },
+    {
+      "rank": 596,
+      "id": "oibcaeeplepnjfjhokfcabnaafodppik",
+      "name": "GMB Everywhere - GBP Audit for Local SEO",
+      "version": "5.8.0",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/gmb-everywhere-gbp-audit/oibcaeeplepnjfjhokfcabnaafodppik), \"300,000 users\", read 2026-09-27; 112 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 1,
+      "nativeMessaging": false,
+      "crxBytes": 154873
+    },
+    {
+      "rank": 597,
+      "id": "fkmaohpngenfoccdgceedjkfhkdcohmg",
+      "name": "Figma",
+      "version": "1.3.25",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/figma/fkmaohpngenfoccdgceedjkfhkdcohmg), \"300,000 users\", read 2026-09-27; 102 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": "options.html",
+      "permissions": [
+        "storage",
+        "identity",
+        "tabs",
+        "unlimitedStorage"
+      ],
+      "optionalPermissions": [
+        "scripting",
+        "clipboardWrite"
+      ],
+      "hostPermissions": [],
+      "contentScripts": 2,
+      "nativeMessaging": false,
+      "crxBytes": 3917812,
+      "minimumChromeVersion": "116"
+    },
+    {
+      "rank": 598,
+      "id": "oaobmlmjmhedmlphfdmdjpppjmcljnkp",
+      "name": "Add to Google Classroom",
+      "version": "1.7",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/add-to-google-classroom/oaobmlmjmhedmlphfdmdjpppjmcljnkp), \"300,000 users\", read 2026-09-27; 97 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "tabs"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [],
+      "contentScripts": 0,
+      "nativeMessaging": false,
+      "crxBytes": 19083
+    },
+    {
+      "rank": 599,
+      "id": "iifmmpcbkkjplbamhfohikljoogdbadp",
+      "name": "ID.me Shop: Discover Community Discounts",
+      "version": "3.18.2",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/idme-shop-discover-commun/iifmmpcbkkjplbamhfohikljoogdbadp), \"300,000 users\", read 2026-09-27; 84 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": null,
+      "options": null,
+      "permissions": [
+        "background",
+        "cookies",
+        "webRequest",
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "<all_urls>"
+      ],
+      "contentScripts": 3,
+      "nativeMessaging": false,
+      "crxBytes": 1620827,
+      "minimumChromeVersion": "92"
+    },
+    {
+      "rank": 600,
+      "id": "ccfeeinmndbnfdodejnonelofajfnakm",
+      "name": "Assinatura Digital no Navegador - SyngularID",
+      "version": "2.1.8",
+      "mv": 3,
+      "users": 300000,
+      "usersSource": "store detail page (https://chromewebstore.google.com/detail/assinatura-digital-no-nav/ccfeeinmndbnfdodejnonelofajfnakm), \"300,000 users\", read 2026-09-27; 40 ratings (tie-break within the rounded bucket)",
+      "bg": "sw",
+      "popup": "main.html",
+      "options": "options.html",
+      "permissions": [
+        "activeTab",
+        "alarms",
+        "nativeMessaging",
+        "scripting",
+        "storage"
+      ],
+      "optionalPermissions": [],
+      "hostPermissions": [
+        "<all_urls>"
+      ],
+      "contentScripts": 1,
+      "nativeMessaging": true,
+      "crxBytes": 241409
+    }
+  ]
+}

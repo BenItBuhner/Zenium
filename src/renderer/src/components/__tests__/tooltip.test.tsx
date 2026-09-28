@@ -17,8 +17,15 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Tooltip } = await import('../Tooltip')
-const { TOOLTIP_ATTR, TOOLTIP_DELAY, TOOLTIP_ID, TOOLTIP_NO_COVER_ATTR, tooltip } =
-  await import('@renderer/lib/tooltip')
+const {
+  TOOLTIP_ATTR,
+  TOOLTIP_BROWSE,
+  TOOLTIP_DELAY,
+  TOOLTIP_ID,
+  TOOLTIP_NO_COVER_ATTR,
+  tooltip,
+  tooltipRoomStore
+} = await import('@renderer/lib/tooltip')
 const { KEYBOARD_FOCUS_ATTR } = await import('@renderer/lib/panes')
 const { chromeLayer } = await import('@renderer/lib/portals')
 const { contentAreaStore, uiStore } = await import('@renderer/lib/ui')
@@ -81,6 +88,7 @@ describe('Tooltip host', () => {
     act(() => root?.unmount())
     root = null
     tooltip.hide()
+    tooltipRoomStore.set({ awaited: false })
     chromeLayer().innerHTML = ''
     vi.useRealTimers()
   })
@@ -287,6 +295,92 @@ describe('Tooltip host', () => {
       window.dispatchEvent(new Event('blur'))
     })
     expect(shown()).toBeNull()
+  })
+
+  it('goes on a window resize, and one on its way does not come: the controls moved under the pointer', () => {
+    const resize = (): void => {
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    act(() => back.focus())
+    expect(shown()).not.toBeNull()
+    resize()
+    expect(shown()).toBeNull()
+    pointer('pointerover', reload, aside)
+    tick(TOOLTIP_DELAY / 2)
+    resize()
+    tick(TOOLTIP_DELAY)
+    expect(shown()).toBeNull()
+  })
+
+  it('mounted to place through a resize (`resize="place"`, the popup surface’s document), it keeps one on its way and places one up again rather than hiding it', () => {
+    act(() => root?.unmount())
+    render(createElement(Tooltip, { resize: 'place' }))
+    const resize = (): void => {
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    // The resize is the document growing for the tooltip (`MiniMenuRoom`): the dwell runs on
+    // through it, and the tooltip shows at its end.
+    pointer('pointerover', back, aside)
+    tick(TOOLTIP_DELAY / 2)
+    resize()
+    tick(TOOLTIP_DELAY / 2)
+    expect(shown()!.textContent).toBe('Back (Alt+←)')
+    // One up is placed again – in the document's new size – and stays.
+    const placements = vi.spyOn(back, 'getBoundingClientRect')
+    resize()
+    expect(shown()!.textContent).toBe('Back (Alt+←)')
+    expect(placements).toHaveBeenCalled()
+    expect(back.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
+    // Everything else takes it down as ever.
+    act(() => {
+      window.dispatchEvent(new Event('blur'))
+    })
+    expect(shown()).toBeNull()
+  })
+
+  it('while the document’s room is on its way (`tooltipRoomStore.awaited`, the popup surface’s handshake) a tooltip waits hidden – on keyboard focus as after the dwell – and is placed again as the room lands', () => {
+    act(() => root?.unmount())
+    render(createElement(Tooltip, { resize: 'place' }))
+    const room = (awaited: boolean): void => {
+      act(() => tooltipRoomStore.set({ awaited }))
+    }
+    // Keyboard focus: at once in the shells; here the tooltip mounts and waits, hidden, until
+    // the room has landed – then it is placed in the document as it stands and shows.
+    room(true)
+    act(() => back.focus())
+    expect(shown()!.style.visibility).toBe('hidden')
+    expect(shown()!.getAttribute('data-by')).toBe('focus')
+    const placements = vi.spyOn(back, 'getBoundingClientRect')
+    room(false)
+    expect(shown()!.style.visibility).toBe('visible')
+    expect(placements).toHaveBeenCalled()
+    act(() => back.blur())
+    expect(shown()).toBeNull()
+    // The pointer: the dwell runs out before the room has landed – the tooltip waits hidden
+    // at its end, and shows as the room lands.
+    room(true)
+    pointer('pointerover', reload, aside)
+    tick(TOOLTIP_DELAY)
+    expect(shown()!.style.visibility).toBe('hidden')
+    room(false)
+    expect(shown()!.style.visibility).toBe('visible')
+    pointer('pointerout', reload, aside)
+    pointer('pointerover', aside, reload)
+    expect(shown()).toBeNull()
+    // A room landed within the dwell shows the tooltip at the dwell's end as ever. (The leave
+    // above opened the browse window; it is waited out so the next control has its dwell.)
+    tick(TOOLTIP_BROWSE)
+    room(true)
+    pointer('pointerover', back, aside)
+    tick(TOOLTIP_DELAY / 2)
+    expect(shown()).toBeNull()
+    room(false)
+    tick(TOOLTIP_DELAY / 2)
+    expect(shown()!.style.visibility).toBe('visible')
   })
 
   describe('over the page', () => {

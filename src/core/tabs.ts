@@ -2025,7 +2025,10 @@ export class TabManager {
       glanceEnabled: this.settings.glanceEnabled && !owner?.glance,
       glanceTrigger: this.settings.glanceTrigger,
       thirdParty: tab.pinned || tab.essential ? this.settings.thirdPartyOnPinned : null,
-      linksToSplitPane
+      linksToSplitPane,
+      // The one predicate the model reads (`SelectionMenuService.available`): the host has the
+      // menu and the setting is on. Off, the page runs no selection reporter at all.
+      selectionMenu: this.browser.selectionMenu.available
     }
     this.splitLinkFlags.set(tabId, linksToSplitPane)
     page?.sendPageFlags(flags)

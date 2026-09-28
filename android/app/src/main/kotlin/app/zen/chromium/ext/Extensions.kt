@@ -1981,6 +1981,7 @@ class Extensions(private val host: Host) {
             "initiator" to request.documentUrl?.let { Domains.originOf(it) },
             "mainFrame" to (request.type == ResourceType.MAIN_FRAME),
             "document" to request.documentGeneration,
+            "redirectedFrom" to request.redirectedFrom,
             "action" to action,
             "matchedSet" to (decision.matchedSet?.takeIf { extensionRule }),
             "matchedRule" to (if (extensionRule) decision.matchedRule else null),

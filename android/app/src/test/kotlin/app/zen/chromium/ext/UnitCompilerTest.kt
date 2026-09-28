@@ -145,6 +145,57 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a text is let go at the last unit of the plan that names it - a file listed once goes in transient - so an assembly stands over what the plan still needs alone`() {
+        // Compat round 23 (R23-1): the peak step of Adblock Ad Blocker Pro's configure was its
+        // 10.6 million character carrier's assembly – 42 MB of builder and string – over the 237
+        // texts of the unit held through it (10.3 million characters; 45 of them named again by
+        // one later unit, the rest by none), and the plan's compile died at 72 MB of heap on the
+        // JVM measure. Here k names extra.js (its only use) and cs.js (k2 names it again), k2
+        // names cs.js and later.js, k3 only the CSS every unit shares.
+        val compiler = UnitCompiler { "/*boot*/" }
+        files["later.js"] = "console.log('later')"
+        val heldAtRead = ArrayList<Pair<String, Int>>()
+        val counting: (String) -> String? = { path -> heldAtRead.add(path to compiler.cachedSources(id)); reads++; files[path] }
+        val compiled = compiler.compile(
+            id, "1.0.0",
+            units("k" to listOf("extra.js", "cs.js"), "k2" to listOf("cs.js", "later.js"), "k3" to emptyList()),
+            true, counting, size
+        )
+        assertEquals(3, compiled.size)
+        assertTrue(compiled[0].script.contains("console.log('extra')") && compiled[0].script.contains("console.log('cs')"))
+        assertTrue(compiled[1].script.contains("console.log('cs')") && compiled[1].script.contains("console.log('later')"))
+        assertTrue(compiled[2].script.contains("body{color:red}"))
+        // Every file read once; what was held when each read happened: extra.js is k's alone and
+        // is never held; cs.js is held for k2 (1 when the CSS is read); k2 takes cs.js out as it
+        // copies it in, so at later.js's read the CSS alone is held – not cs.js and extra.js too.
+        assertEquals(listOf("extra.js" to 0, "cs.js" to 0, "style.css" to 1, "later.js" to 1), heldAtRead)
+        assertEquals(4, reads)
+        assertEquals(0, compiler.cachedSources(id))
+        assertEquals(0, compiler.memoryOf(id).getInt("sources"))
+    }
+
+    @Test
+    fun `a text whose last use is a cached unit goes when that unit comes round, not at the end of the plan`() {
+        val compiler = UnitCompiler { "/*boot*/" }
+        files["later.js"] = "console.log('later')"
+        // k2 compiled once, so the re-plan answers it from the cache: it reads nothing, and cs.js
+        // – held by k for it – is let go when k2's turn comes, before k3 reads its own file.
+        compiler.compile(id, "1.0.0", units("k2" to listOf("cs.js")), true, read, size)
+        val heldAtRead = ArrayList<Pair<String, Int>>()
+        val counting: (String) -> String? = { path -> heldAtRead.add(path to compiler.cachedSources(id)); reads++; files[path] }
+        val compiled = compiler.compile(
+            id, "1.0.0",
+            units("k" to listOf("cs.js", "extra.js"), "k2" to listOf("cs.js"), "k3" to listOf("later.js")),
+            true, counting, size
+        )
+        assertEquals(listOf(false, true, false), compiled.map { it.cached })
+        // k reads cs.js (held for k2), extra.js (its own) and the CSS (held for k3); k2 is cached
+        // and releases cs.js; k3 reads later.js with the CSS alone still held, then takes the CSS.
+        assertEquals(listOf("cs.js" to 0, "extra.js" to 1, "style.css" to 1, "later.js" to 1), heldAtRead)
+        assertEquals(0, compiler.cachedSources(id))
+    }
+
+    @Test
     fun `a unit is 16-bit for its sources alone - the config and the glue are Latin-1 - and memoryOf counts it`() {
         // Compat round 22 (R22-2): the width the lanes read on every unit of Adblock Ad Blocker Pro
         // was the extension's own text – a U+205D in each uBlock scriptlet's `makeLogPrefix`, the

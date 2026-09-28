@@ -400,6 +400,36 @@ export interface SelectionMenuState {
 }
 
 /**
+ * The room the pill's document asks of the popup surface beyond the pill's padded box, for the
+ * folded glyph buttons' tooltips (the chrome's `Tooltip`, hosted in the surface's document;
+ * `selectionMenu.surfaceSize`): `below`, the pixels the surface reaches under the box so a
+ * tooltip 8 under a button stays 8 inside the document, and `width`, the least width of the
+ * surface for the widest title's tooltip and its margins. CSS pixels, whole; the core adds
+ * them around the pill (`placeMiniMenuSurface`), never moving the pill for them. Asked for the
+ * tooltip's moment alone – while one is on its way or up – and given back the instant it is
+ * over: at rest the surface is the pill's padded box, and nothing under it eats the page's
+ * pointer.
+ */
+export interface MiniMenuRoom {
+  below: number
+  width: number
+}
+
+/**
+ * The core's word back to a `selectionMenu.surfaceSize` report: the popup surface's size as
+ * the core set it for the report – window CSS pixels, whole: the pill's padded box, with the
+ * room while the report asked one – or null when the report placed no surface (another tab's
+ * pill, a nonsensical report, the box off the view). The pill's document holds a tooltip's
+ * show on the room until this word has come and its own frame is at the size (`awaitTooltipRoom`
+ * – §11's paint handshake, the reader cover's: the word, or the ceiling for one that never
+ * comes), so no first frame of a tooltip is clipped by the surface's old bounds.
+ */
+export interface MiniMenuSurfaceSize {
+  width: number
+  height: number
+}
+
+/**
  * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
  * than three words, no letters, an address), Wiktionary has no page for it (`not-found`), the
  * network did not answer (`offline`), it answered with an error (`unavailable`) or with
@@ -5813,13 +5843,21 @@ export interface Commands {
    * (the phone's Quick Delete, HB-07) the tabs the range holds AT THIS MOMENT close last, after
    * the data – the set `privacy.tabsInRange` named a moment earlier, give or take a tab that
    * navigated in between – with no undo and no "Recently closed" entry (Chrome's
-   * `QuickDeleteTabsFilter`: `allowUndo(false).saveToTabRestoreService(false)`).
+   * `QuickDeleteTabsFilter`: `allowUndo(false).saveToTabRestoreService(false)`). The Settings tab
+   * the form was confirmed from – the active tab of the window the command comes from, when it is
+   * the Settings page (a tab here where Chrome's surface is none) – stays, as it is left out of
+   * `privacy.tabsInRange`; any other active tab is a tab of the period and closes with it.
    */
   'privacy.clearBrowsingData': {
     args: { range: BrowsingDataRange; types: BrowsingDataType[]; passphrase?: string }
     result: ReauthOutcome<ClearBrowsingDataResult>
   }
-  /** How much of each type the range holds, for the dialog's preview lines (the `tabs` row last). */
+  /**
+   * How much of each type the range holds, for the dialog's preview lines (the `tabs` row last;
+   * its count leaves out the Settings tab the form is up over, when the active tab of the window
+   * the command comes from is one, as `privacy.tabsInRange` does – the row counts the tabs that
+   * will close).
+   */
   'privacy.clearBrowsingDataCounts': {
     args: { range: BrowsingDataRange }
     result: BrowsingDataCount[]
@@ -5829,10 +5867,14 @@ export interface Commands {
    * order the overview lists them: every tab of every space and window whose last committed
    * navigation (`Tab.lastNavigatedAt`) is at or after the range's start – pinned and essential
    * tabs among them, private tabs never – or, for `'all'`, every tab (Chrome's ALL_TIME takes the
-   * whole model). The chrome asks BEFORE `privacy.clearBrowsingData` with `'tabs'`, as Chrome
-   * shows the tab switcher and runs its motion on the cards first, then closes; the clear takes
-   * the set as it stands at clear time, so a tab that navigates between the two calls joins or
-   * leaves it – the motion's list may differ by that tab, as Chrome's may (cosmetic).
+   * whole model); less the Settings tab the form was confirmed from, when the active tab of the
+   * window the command comes from is one (the tab the phone's form is a sheet over: Chrome runs
+   * Quick Delete from no tab, so the surface the user acted from is never in its set) – any
+   * other active tab, a site under Quick Delete from the app menu, is a tab of the period. The
+   * chrome asks BEFORE `privacy.clearBrowsingData` with `'tabs'`, as Chrome shows the tab
+   * switcher and runs its motion on the cards first, then closes; the clear takes the set as it
+   * stands at clear time, so a tab that navigates between the two calls joins or leaves it – the
+   * motion's list may differ by that tab, as Chrome's may (cosmetic).
    */
   'privacy.tabsInRange': { args: { range: BrowsingDataRange }; result: string[] }
 
@@ -6637,12 +6679,23 @@ export interface Commands {
   /**
    * The pill's document measured the size its content wants (CSS px, the pill's box without the
    * surface's shadow margin) for the selection `UIState.selectionMenu` holds for `tabId`, in the
-   * pose it drew (`folded`: the glyph row, or the full pill); the core keeps one measurement per
-   * pose and places the popup surface to fit (`SelectionMenuService.surfaceSize`).
+   * pose it drew (`folded`: the glyph row, or the full pill) – with, for the folded row, the
+   * room its glyph buttons' tooltips need beyond the box while one is on its way or up (`room`,
+   * `MiniMenuRoom`; null at rest, the same box told again as the moment comes and goes); the
+   * core keeps one measurement per pose and places the popup surface to fit
+   * (`SelectionMenuService.surfaceSize`), back at the padded box on the null. Answers with the
+   * surface's size as set – the room's acknowledgement, which the document's tooltip waits for
+   * before it paints (`MiniMenuSurfaceSize`) – or null when the report placed no surface.
    */
   'selectionMenu.surfaceSize': {
-    args: { tabId: string; width: number; height: number; folded: boolean }
-    result: void
+    args: {
+      tabId: string
+      width: number
+      height: number
+      folded: boolean
+      room?: MiniMenuRoom | null
+    }
+    result: MiniMenuSurfaceSize | null
   }
   /**
    * A definition of `term` from Wiktionary (`core/define.ts`; English Wiktionary's REST
