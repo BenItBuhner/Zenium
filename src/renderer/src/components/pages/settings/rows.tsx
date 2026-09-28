@@ -39,7 +39,7 @@ import {
   type SwitchRow,
   type ValueRow
 } from './model'
-import { RadioOption, ValidationMessage } from './blocks'
+import { Description, RadioOption, ValidationMessage } from './blocks'
 import { attachLineCount } from './lineCount'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
@@ -338,6 +338,7 @@ function PlainRowView({
           row={row}
           caption={caption}
           description={row.description}
+          address={row.address}
           leading={row.leading}
           role="switch"
           checked={row.checked}
@@ -354,6 +355,7 @@ function PlainRowView({
           row={row}
           caption={caption}
           description={row.description}
+          address={row.address}
           leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
@@ -372,12 +374,15 @@ function PlainRowView({
     }
     case 'field':
       // The row stands in for the field on the phone: its warning (`FieldRow.warning`) is the
-      // line under the value it shows, where the desktop's stands under the field.
+      // line under the value it shows, where the desktop's stands under the field. The value's
+      // line is the one `address` names (a folder, a server's address); the sheet it opens
+      // holds the value whole.
       return (
         <PressableRow
           row={row}
           caption={caption}
           description={row.display ?? row.value}
+          address={row.address}
           warning={row.warning}
           haspopup="dialog"
           onPress={() => ctx.open({ kind: 'field', rowId: row.id })}
@@ -389,6 +394,7 @@ function PlainRowView({
           row={row}
           caption={caption}
           description={row.description}
+          address={row.address}
           leading={row.leading}
           haspopup="dialog"
           onPress={() => ctx.open({ kind: 'item', rowId: row.id })}
@@ -401,6 +407,7 @@ function PlainRowView({
           row={row}
           caption={caption}
           description={row.description}
+          address={row.address}
           leading={row.leading}
           haspopup="dialog"
           trailing={
@@ -488,7 +495,12 @@ function InfoRowView({ row, caption }: { row: InfoRow; caption?: string }): JSX.
           {row.leading}
         </span>
       )}
-      <RowText label={row.label} description={row.description} caption={caption} />
+      <RowText
+        label={row.label}
+        description={row.description}
+        address={row.address}
+        caption={caption}
+      />
       {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
     </div>
   )
@@ -691,7 +703,12 @@ function DesktopRowView({
     case 'action':
       if (row.button && !row.leaves) {
         return (
-          <ControlRow row={row} caption={caption} description={row.description}>
+          <ControlRow
+            row={row}
+            caption={caption}
+            description={row.description}
+            address={row.address}
+          >
             {row.popover || row.anchors ? (
               <PopoverActionButton row={row} ctx={ctx} dismissSheet={dismissSheet} />
             ) : (
@@ -713,6 +730,7 @@ function DesktopRowView({
           row={row}
           caption={caption}
           description={row.description}
+          address={row.address}
           leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
@@ -733,7 +751,12 @@ function DesktopRowView({
       // viewer's Clear is, since a list of them reads "Remove" many times over.
       if (row.action) {
         return (
-          <ControlRow row={row} caption={caption} description={row.description}>
+          <ControlRow
+            row={row}
+            caption={caption}
+            description={row.description}
+            address={row.address}
+          >
             <InlineActionButton row={row} action={row.action} />
           </ControlRow>
         )
@@ -760,7 +783,12 @@ function DesktopRowView({
                 {row.leading}
               </span>
             )}
-            <RowText label={row.label} description={row.description} caption={caption} />
+            <RowText
+              label={row.label}
+              description={row.description}
+              address={row.address}
+              caption={caption}
+            />
             <span className="zen-settings-trailing zen-settings-control">
               <RowMenuButton
                 menu={{
@@ -803,6 +831,7 @@ function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX
       row={row}
       caption={caption}
       description={row.sheetDescription ?? row.description}
+      address={row.address}
       labelId={labelId}
     >
       <V2Menulist
@@ -877,7 +906,7 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
         {text && (
           <span className="zen-settings-row-text">
             {caption && <span className="zen-settings-caption">{caption}</span>}
-            {description && <span className="zen-settings-description">{description}</span>}
+            {description && <Description text={description} address={row.address} />}
           </span>
         )}
         <div
@@ -893,6 +922,7 @@ function RadioListRow({ row, caption }: { row: ValueRow; caption?: string }): JS
               key={option.value}
               label={option.label}
               description={option.description}
+              address={option.address}
               leading={option.leading}
               font={option.font}
               checked={option.value === row.value}
@@ -923,7 +953,13 @@ function InlineFieldRow({ row, caption }: { row: FieldRow; caption?: string }): 
 function DesktopSliderRow({ row, caption }: { row: SliderRow; caption?: string }): JSX.Element {
   const labelId = `${useId()}-label`
   return (
-    <ControlRow row={row} caption={caption} description={row.description} labelId={labelId}>
+    <ControlRow
+      row={row}
+      caption={caption}
+      description={row.description}
+      address={row.address}
+      labelId={labelId}
+    >
       <SliderControl row={row} labelledBy={labelId} />
     </ControlRow>
   )
@@ -1011,7 +1047,7 @@ function SliderControl({
         </span>
         <span className="zen-settings-slider-value">{row.format(local)}</span>
       </span>
-      {row.description && <span className="zen-settings-description">{row.description}</span>}
+      {row.description && <Description text={row.description} address={row.address} />}
       <span className="zen-zoom-stepper zen-settings-slider-stepper flex items-center">
         <StepButton row={row} value={local} direction={-1} />
         {slider}
@@ -1172,6 +1208,7 @@ function ControlRow({
   row,
   caption,
   description,
+  address,
   labelFor,
   labelId,
   children
@@ -1179,6 +1216,8 @@ function ControlRow({
   row: SettingsRow
   caption?: string
   description?: string
+  /** The description is a path or an address (`RowBase.address`), where the caller's line is the row's own. */
+  address?: boolean
   labelFor?: string
   labelId?: string
   children: ReactNode
@@ -1199,6 +1238,7 @@ function ControlRow({
         labelFor={labelFor}
         labelId={labelId}
         description={description}
+        address={address}
         caption={caption}
       />
       <span className="zen-settings-trailing zen-settings-control">{children}</span>
@@ -1277,7 +1317,12 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
           {row.leading}
         </span>
       )}
-      <RowText label={row.label} description={row.description} caption={caption} />
+      <RowText
+        label={row.label}
+        description={row.description}
+        address={row.address}
+        caption={caption}
+      />
     </label>
   )
 }
@@ -1440,6 +1485,7 @@ function PressableRow({
   row,
   caption,
   description,
+  address,
   warning,
   name,
   leading,
@@ -1455,6 +1501,8 @@ function PressableRow({
   row: SettingsRow
   caption?: string
   description?: string
+  /** The description is a path or an address (`RowBase.address`), where the caller's line is the row's own. */
+  address?: boolean
   /** A field row's warning line under the description (`FieldRow.warning`). */
   warning?: string
   name?: string
@@ -1497,7 +1545,13 @@ function PressableRow({
           {leading}
         </span>
       )}
-      <RowText label={row.label} description={description} warning={warning} caption={caption} />
+      <RowText
+        label={row.label}
+        description={description}
+        address={address}
+        warning={warning}
+        caption={caption}
+      />
       {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
@@ -1512,13 +1566,15 @@ function PressableRow({
  * the label carries that id, for a button-like control's `aria-labelledby` (a menulist, a
  * slider's thumb) to name itself by the visible label. A `warning` is §9.12's line in the warn
  * ink under the description (the phone field row's, `FieldRow.warning`): a third line of the
- * block, not a third line of the description.
+ * block, not a third line of the description. `address` is the description as a path or an
+ * address (`RowBase.address`): one line, shortened from its start (`Description`).
  */
 export function RowText({
   label,
   labelFor,
   labelId,
   description,
+  address,
   warning,
   caption
 }: {
@@ -1526,6 +1582,7 @@ export function RowText({
   labelFor?: string
   labelId?: string
   description?: string
+  address?: boolean
   warning?: string
   caption?: string
 }): JSX.Element {
@@ -1541,7 +1598,7 @@ export function RowText({
           {label}
         </span>
       )}
-      {description && <span className="zen-settings-description">{description}</span>}
+      {description && <Description text={description} address={address} />}
       {warning && <ValidationMessage message={warning} tone="warn" />}
     </span>
   )

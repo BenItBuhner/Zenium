@@ -1037,6 +1037,77 @@ describe('keyboard-relative detents', () => {
 })
 
 /**
+ * A control panel's peek end (§9.13; the reader's text preferences with CT-35's sixth type row):
+ * the hairline after the last live row carries `data-sheet-peek-end`, and where the 52 % peek
+ * would cut the row before it the peek ends at the top of what follows the hairline instead –
+ * the live rows whole, then the hairline – measured from the sheet's top edge.
+ */
+describe("a control panel's peek end (§9.13)", () => {
+  /**
+   * A panel 1000 px tall on the 800 px layer: the fraction's peek at 416. The boxes are given
+   * before the mount, since the chassis measures as it mounts: the sheet's top edge 384 px down
+   * the layer; the last live row ending `lastRowFoot` px under it, the hairline's box the 17
+   * after (8 + 1 + 8), the first aid at its foot.
+   */
+  const panel = (lastRowFoot: number): HTMLElement => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 1000
+    })
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      if (this.classList.contains('zen-sheet')) return box(384, 416)
+      if (this.getAttribute('data-row') === 'last') return box(384 + lastRowFoot - 48, 48)
+      if (this.hasAttribute('data-sheet-peek-end')) return box(384 + lastRowFoot + 8, 1)
+      if (this.getAttribute('data-row') === 'aid') return box(384 + lastRowFoot + 17, 52)
+      return box(0, 0)
+    })
+    render(
+      <BottomSheet onDismissed={() => undefined}>
+        <div className="flex flex-col">
+          <div data-row="live">Line spacing</div>
+          <div data-row="last">Letter spacing</div>
+          <div className="zen-sheet-sep" data-sheet-peek-end="" />
+          <div data-row="aid">Line focus</div>
+        </div>
+      </BottomSheet>
+    )
+    return sheets()[0]
+  }
+
+  it('the peek is the fraction while the last live row stands whole within it', async () => {
+    const sheet = panel(400)
+    await settle()
+    act(() => frames.run(60))
+    expect(sheet.style.height).toBe('416px')
+  })
+
+  it('a sheet without the mark keeps the fraction', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 1000
+    })
+    render(<BottomSheet onDismissed={() => undefined}>rows</BottomSheet>)
+    await settle()
+    act(() => frames.run(60))
+    expect(sheets()[0].style.height).toBe('416px')
+  })
+
+  it('the peek ends at the live rows’ foot plus the hairline where the fraction would cut the last row', async () => {
+    const sheet = panel(421)
+    await settle()
+    act(() => frames.run(60))
+    // 421 + 17: the hairline's lower edge at 430 sits on the body's box, the sheet's 8 under it.
+    expect(sheet.style.height).toBe('438px')
+    // Measured again over a 24 gesture bar: the named end rides on the inset as the fraction does.
+    keyboard(24)
+    act(() => frames.run(60))
+    expect(sheet.style.height).toBe('462px')
+  })
+})
+
+/**
  * A ResizeObserver for happy-dom, which has none: every `observe` goes on record, with whether
  * it was made inside a delivery, and a test delivers a target's resize by hand, as the WebView
  * does at the end of a frame.

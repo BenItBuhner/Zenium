@@ -34,13 +34,15 @@ import java.util.concurrent.TimeUnit
  *     (`aria-pressed="true"`; the design lead's fold (e) on #658, §9.29 as amended) – and no
  *     Text preferences chip: the sheet is the phone's one way to the text controls.
  *  2. The app menu's Text Preferences… (the phone's way in): the §9.13 sheet with the read-aloud
- *     row first, the four picker rows, then the extras – Text spacing, Line focus, Lines in
- *     focus, Syllables. The sheet opens at its peek, where the last rows sit below the fold; a
+ *     row first, the six type rows (Text size, Font, Colour theme, Column width, then CT-35's
+ *     Line spacing and Letter spacing), then the extras – Line focus, Lines in focus, Syllables.
+ *     The sheet opens at its peek, where the last rows sit below the fold; a
  *     finger pulls it to its expanded detent by its handle first (as the app menu is pulled).
  *     Real touches: Line focus on (the document's `data-line-focus` reads 3 and the page
  *     script's masks are in the document), Syllables on (`data-syllables`, the marks in the
  *     text), Lines in focus from 3 to 5 lines through its menulist's picker sheet (§9.13: the
- *     pick closes the sheet by itself), Text spacing to Wider (`data-spacing`) the same way.
+ *     pick closes the sheet by itself), Line spacing to Very loose (`data-line-spacing`) the
+ *     same way.
  *  3. A phone read of the reader article: a real touch on the sheet's Listen to this article
  *     starts a session with `source: reader` (the sheet leaves; the player docks under the
  *     document); the engine speaks the reader document's sentences with the sentence highlight
@@ -59,8 +61,8 @@ import java.util.concurrent.TimeUnit
  * PR's own scenes – the Text preferences sheet's open under the finger on the menu's row
  * (`reader-prefs-sheet-open`, `open`), its pull to the expanded detent by its handle
  * (`reader-prefs-sheet-expand`, `gesture`) and its dismiss on a back (`reader-prefs-sheet-close`,
- * `open`); the Lines in focus and Text spacing pickers' open from the menulist and the pick that
- * closes them (`lines-in-focus-picker-open` / `-pick`, `text-spacing-picker-open` / `-pick`, all
+ * `open`); the Lines in focus and Line spacing pickers' open from the menulist and the pick that
+ * closes them (`lines-in-focus-picker-open` / `-pick`, `line-spacing-picker-open` / `-pick`, all
  * `open`); the player docking on Listen to this article and leaving on Close
  * (`read-aloud-player-dock` / `-close`, `open`). Each block is the finger (or the back) and
  * [MOTION_MS] for what it does, nothing else – the node is found and the finger's point fixed
@@ -323,8 +325,8 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         if (!openSheet(scenes = true)) return
         val rows = sheetRows()
         finding("  rows: $rows")
-        check("the sheet's rows: Listen to this article, then Text size, Font, Colour theme, Column width, then Text spacing, Line focus, Lines in focus, Syllables",
-            rows.indexOf("Listen to this article") == 0 && listOf("Text size", "Font", "Colour theme", "Column width", "Text spacing", "Line focus", "Lines in focus", "Syllables").all { it in rows } && rows.indexOf("Text spacing") < rows.indexOf("Line focus") && rows.indexOf("Line focus") < rows.indexOf("Lines in focus") && rows.indexOf("Lines in focus") < rows.indexOf("Syllables"))
+        check("the sheet's rows: Listen to this article, then Text size, Font, Colour theme, Column width, Line spacing, Letter spacing, then Line focus, Lines in focus, Syllables (CT-35: the two spacing rows among the type rows, never among the aids)",
+            rows.indexOf("Listen to this article") == 0 && listOf("Text size", "Font", "Colour theme", "Column width", "Line spacing", "Letter spacing", "Line focus", "Lines in focus", "Syllables").all { it in rows } && "Text spacing" !in rows && rows.indexOf("Column width") < rows.indexOf("Line spacing") && rows.indexOf("Line spacing") < rows.indexOf("Letter spacing") && rows.indexOf("Letter spacing") < rows.indexOf("Line focus") && rows.indexOf("Line focus") < rows.indexOf("Lines in focus") && rows.indexOf("Lines in focus") < rows.indexOf("Syllables"))
         val heights = menulistHeights()
         finding("  the picker menulists' heights (CSS px): $heights")
         check("the sheet's menulists are the phone's 40 px controls", heights.isNotEmpty() && heights.all { Math.abs(it - 40.0) <= 1.0 })
@@ -370,29 +372,29 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         } else {
             check("the Lines in focus menulist opens its picker", false)
         }
-        // Text spacing: Normal -> Wider through its menulist (Column width has a "Wide" of its own;
-        // "Wider" is spacing's alone).
-        revealPrefix("Text spacing")
-        val spacing = pickerScene("text-spacing-picker-open", "Text spacing", "the Text spacing picker lists Wider") { rowNode("Wider") != null }
+        // Line spacing: Standard -> Very loose through its menulist (CT-35; Column width and Letter
+        // spacing each have a "Wide" of their own; "Very loose" is line spacing's alone).
+        revealPrefix("Line spacing")
+        val spacing = pickerScene("line-spacing-picker-open", "Line spacing", "the Line spacing picker lists Very loose") { rowNode("Very loose") != null }
         if (spacing) {
-            pickScene("text-spacing-picker-pick", "Wider", "the document's data-spacing reads wider") { readerProbe().optString("spacing") == "wider" }
+            pickScene("line-spacing-picker-pick", "Very loose", "the document's data-line-spacing reads very-loose") { readerProbe().optString("lineSpacing") == "very-loose" }
             probe = readerProbe()
-            finding("  after Wider: document $probe")
-            check("Text spacing Wider: the document's data-spacing wider (the stylesheet's letter, word and line spacing)", probe.optString("spacing") == "wider")
+            finding("  after Very loose: document $probe")
+            check("Line spacing Very loose: the document's data-line-spacing very-loose (the stylesheet's line height), letter spacing standing at standard", probe.optString("lineSpacing") == "very-loose" && probe.optString("letterSpacing") == "standard")
         } else {
-            check("the Text spacing menulist opens its picker", false)
+            check("the Line spacing menulist opens its picker", false)
         }
-        // The band re-placed at the wider line height (readerExtras.ts's relayout on the root's
+        // The band re-placed at the looser line height (readerExtras.ts's relayout on the root's
         // typography change), before the still that records it.
         SystemClock.sleep(800)
-        snap("preferences-sheet-wider-five-lines")
+        snap("preferences-sheet-very-loose-five-lines")
         beat()
         // The system back closes the sheet alone (the `reader-prefs-sheet-close` scene); the
         // document keeps its extras.
         val closed = backFromSheet(measured = true)
         probe = readerProbe()
         finding("  back: sheet gone=$closed; document $probe")
-        check("back closes the sheet and the document keeps line focus 5, syllables, wider spacing", closed && probe.optString("lineFocus") == "5" && probe.optString("syllables") == "true" && probe.optString("spacing") == "wider")
+        check("back closes the sheet and the document keeps line focus 5, syllables, very loose line spacing", closed && probe.optString("lineFocus") == "5" && probe.optString("syllables") == "true" && probe.optString("lineSpacing") == "very-loose")
         SystemClock.sleep(800)
         snap("reader-line-focus-syllables")
         beat()
@@ -781,7 +783,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
             "(function(){var d=document,r=d.documentElement;var meta=d.querySelector('header .meta');var top=d.querySelector('.zen-focus-mask[data-edge=\"top\"]');" +
                 "return JSON.stringify({title:(d.querySelector('header h1')||{}).textContent||'',byline:!!(meta&&/Zenium read-aloud demo|127\\.0\\.0\\.1/.test(meta.textContent)),readingTime:!!(meta&&/min read/.test(meta.textContent))," +
                 "toolbar:!!d.querySelector('nav.toolbar, .toolbar, [data-set], [data-size]'),lineFocus:r.getAttribute('data-line-focus')||'0',syllables:r.getAttribute('data-syllables')||'false'," +
-                "spacing:r.getAttribute('data-spacing')||'normal',masks:d.querySelectorAll('.zen-focus-mask').length,marks:d.querySelectorAll('.zen-syl').length," +
+                "lineSpacing:r.getAttribute('data-line-spacing')||'standard',letterSpacing:r.getAttribute('data-letter-spacing')||'standard',masks:d.querySelectorAll('.zen-focus-mask').length,marks:d.querySelectorAll('.zen-syl').length," +
                 "bandTop:top?Math.round(top.getBoundingClientRect().height):-1,theme:r.getAttribute('data-theme')||''," +
                 "bg:getComputedStyle(d.body).backgroundColor,scheme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'})})()"
         )

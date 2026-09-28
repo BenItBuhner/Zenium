@@ -23,7 +23,8 @@ import {
   SheetMotion,
   type SheetBody,
   type SheetDetent,
-  type SheetDetents
+  type SheetDetents,
+  type SheetPeekEnd
 } from '@renderer/lib/motion/sheet'
 import { SheetRestContext, type SheetRest } from '@renderer/lib/motion/sheetRest'
 import { reducedMotion } from '@renderer/lib/motion/spring'
@@ -172,6 +173,27 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
   } else {
     tracker.add(e.timeStamp, e.clientX, e.clientY)
   }
+}
+
+/**
+ * Where a control panel asks its peek to end (§9.13: the peek shows the live rows whole): the
+ * body's `[data-sheet-peek-end]` is the hairline after the last live row, and the peek ends
+ * after it – `foot` the row's bottom edge, `end` the top edge of what follows the hairline
+ * (the hairline's own box where nothing does), both from the sheet's top edge, which the
+ * content is anchored to. Measured in `measure`'s auto-height layout, so the sheet's own
+ * detent never enters into it; at a detent of `end` plus the bottom inset the body's box ends
+ * on the hairline's lower edge, with the sheet's 8 (`SHEET_EDGE_PAD`) under it. Null where the
+ * content names no end: the peek is the fraction's.
+ */
+function measurePeekEnd(sheet: HTMLElement, body: HTMLElement | null): SheetPeekEnd | null {
+  const marker = body?.querySelector<HTMLElement>('[data-sheet-peek-end]')
+  if (!marker || !body) return null
+  // The content's place in the sheet, whatever the body has scrolled by since it was laid out.
+  const top = sheet.getBoundingClientRect().top - body.scrollTop
+  const own = marker.getBoundingClientRect()
+  const before = marker.previousElementSibling?.getBoundingClientRect()
+  const after = marker.nextElementSibling?.getBoundingClientRect()
+  return { foot: (before?.bottom ?? own.top) - top, end: (after?.top ?? own.bottom) - top }
 }
 
 /**
@@ -507,13 +529,15 @@ export function BottomSheet({
     // The footer band's top edge over the sheet's bottom edge, the inset left out: the band's
     // height on the chassis's 8 (§9.25) – where a message seated over the sheet stands (§9.33).
     recede.current?.footer(footerRef.current ? footerHeight + SHEET_EDGE_PAD : 0)
+    const peekEnd = measurePeekEnd(sheet, scrollRef.current)
     sheet.style.height = height
     detents.current = computeDetents(
       intrinsic,
       layer.clientHeight,
       insetTop.current,
       insetBottom.current,
-      body
+      body,
+      peekEnd
     )
     const m = motion()
     if (m.isOpen) m.refresh()

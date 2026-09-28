@@ -209,7 +209,7 @@ beforeEach(() => {
     memorySaverBubble: null
   })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
-  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null })
+  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null, view: 'site' })
   invoke.mockClear()
 })
 
@@ -333,6 +333,65 @@ describe('desktop pill (NavRow)', () => {
     expect(chip('Bookmark this tab').getAttribute('data-open')).toBe('true')
     act(() => uiStore.set({ starDialog: { ...bubble, tabId: 't2' } }))
     expect(chip('Bookmark this tab').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  // PS-33: once the engine blocked something on the page, the count is a pill of its own beside
+  // the shield – a button with its own name and `aria-haspopup`, whose popup is the tracker
+  // report (`view: 'trackers'` in the site-information store) and which alone wears the pressed
+  // state while the report hangs from it; the shield keeps opening the site information.
+  it('opens the tracker report from the count pill, pressed on it alone, and hands focus back', async () => {
+    const blocked = tab(page.url, {
+      readerable: true,
+      blockedCount: 5,
+      blockedSites: [{ domain: 'ads.example', category: 'tracker', count: 5 }]
+    })
+    const base = state(blocked)
+    const el = render(
+      <NavRow
+        state={
+          {
+            ...base,
+            capabilities: { ...base.capabilities, requestBlocking: true },
+            settings: { ...base.settings, blocking: { level: 'balanced' } },
+            blocking: { enabled: true, siteExceptions: [] }
+          } as unknown as UIState
+        }
+        tab={blocked}
+        compact={false}
+      />
+    )
+    const shield = el.querySelector<HTMLElement>('.zen-v2-blocked-chip')!
+    const count = el.querySelector<HTMLElement>('[data-tracker-count]')!
+    expectChip(shield, '5 requests blocked on this page · Site information')
+    expectChip(count, '5 requests blocked on this page · Trackers blocked')
+    expect(count.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(count.getAttribute('aria-expanded')).toBe('false')
+    expect(count.classList.contains('zen-v2-blocked-count')).toBe(true)
+    expect(count.querySelector('.zen-v2-badge')?.textContent).toBe('5')
+    // The count follows the shield in the tab order; the shield carries no badge of its own now.
+    const order = focusable(el.querySelector('[role="group"][aria-label="Address"]')!)
+    expect(order.indexOf(count)).toBe(order.indexOf(shield) + 1)
+    expect(shield.querySelector('.zen-v2-badge')).toBeNull()
+
+    await openFromChip(count)
+    expect(siteInfoStore.get().tabId).toBe('t1')
+    expect(siteInfoStore.get().openedBy).toBe('count')
+    expect(siteInfoStore.get().view).toBe('trackers')
+    expect(count.getAttribute('aria-expanded')).toBe('true')
+    expect(shield.getAttribute('aria-expanded')).toBe('false')
+    await dismiss()
+    expect(count.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(count)
+    expect(siteInfoStore.get().view).toBe('site')
+
+    // The shield still opens the site information itself, on the overview, pressed on the shield.
+    await openFromChip(shield)
+    expect(siteInfoStore.get().openedBy).toBe('shield')
+    expect(siteInfoStore.get().view).toBe('site')
+    expect(siteInfoStore.get().level).toBe('overview')
+    expect(shield.getAttribute('aria-expanded')).toBe('true')
+    expect(count.getAttribute('aria-expanded')).toBe('false')
+    await dismiss()
   })
 
   it('names the star by whether the page is bookmarked and fills it once it is', () => {

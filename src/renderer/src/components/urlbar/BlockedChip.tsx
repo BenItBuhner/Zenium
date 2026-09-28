@@ -1,7 +1,12 @@
 import type { JSX } from 'react'
 import { Shield, ShieldOff } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
-import { blockedChipLabel, chipCount, siteBlockingState } from '@renderer/lib/blockingUi'
+import {
+  blockedChipLabel,
+  chipCount,
+  siteBlockingState,
+  trackerReportChipLabel
+} from '@renderer/lib/blockingUi'
 import { openSiteInfo, siteInfoAnchoredOn, siteInfoStore } from '@renderer/lib/siteInfo'
 import { uiStore } from '@renderer/lib/ui'
 import { TOOLBAR_STROKE } from '../v2/controls'
@@ -10,9 +15,12 @@ import { PillChip } from './PillChip'
 /**
  * The URL bar's blocked-count chip: a shield for the page's blocking state and, once the engine
  * stopped something on the page, the count as the shared §9.19 badge (`.zen-v2-badge`, in the
- * window family through the §9.29 control roles like the chip itself). It opens the site
+ * window family through the §9.29 control roles like the chip itself). The shield opens the site
  * information, where the "Ads and trackers" permission is listed and reset (Firefox's shield →
- * protections panel).
+ * protections panel). On the desktop the count is a pill of its own (PS-33): it opens the
+ * tracker report, the §9.20 list of the sites the engine blocked requests to on the page
+ * (`TrackersPopover`), and wears the pressed fill while that list hangs from it; the phone's
+ * count stays part of the one chip, its report a level of the site-information sheet.
  *
  * Geometry is §9.3's icon button: a 28 px box with a 16 px glyph and a radius-6 hover fill on
  * desktop, 44 with 20 and radius 8 on phones. The chassis is the pill's shared `PillChip`
@@ -45,44 +53,76 @@ export function BlockedChip({
   // and wears the fill when it did); the phone's sheet has no anchor, and every site chip on
   // that pill reflects it.
   const anchored = siteInfoStore.use((s) => siteInfoAnchoredOn(s, 'shield'))
+  const countAnchored = siteInfoStore.use((s) => siteInfoAnchoredOn(s, 'count'))
   const sheetOpen = uiStore.use((s) => s.siteInfoOpen)
   const expanded = variant === 'desktop' ? anchored : sheetOpen
   if (siteState === 'no-site') return null
-  if (collapsed && !expanded) return null
+  if (collapsed && !expanded && !countAnchored) return null
   const label = blockedChipLabel(siteState, tab.blockedCount)
   const Icon = siteState === 'blocking' ? Shield : ShieldOff
   const showCount = siteState === 'blocking' && tab.blockedCount > 0
-  // The glyph's size and stroke come from the tokens through `.zen-v2-blocked-chip > svg` (the
-  // phone's 1.75 included); the desktop row also carries §9.3's stroke as the attribute, as its
-  // other 16 px glyphs do, so the row reads one stroke end to end.
+  // The phone's one chip: the glyph and, blocking something, the badge beside it. The glyph's
+  // size and stroke come from the tokens through `.zen-v2-blocked-chip > svg` (the phone's 1.75
+  // included); the desktop's shield carries §9.3's stroke as the attribute, as its other 16 px
+  // glyphs do, so the row reads one stroke end to end.
   const content = (
     <>
-      <Icon aria-hidden strokeWidth={variant === 'desktop' ? TOOLBAR_STROKE : undefined} />
+      <Icon aria-hidden />
       {showCount && <span className="zen-v2-badge">{chipCount(tab.blockedCount)}</span>}
     </>
   )
   if (variant === 'desktop') {
+    const countLabel = trackerReportChipLabel(tab.blockedCount)
     return (
-      <PillChip
-        label={label}
-        title={label}
-        popup="dialog"
-        expanded={expanded}
-        // Site information hangs from the shield while the shield opened it (§9.20): the
-        // pill's hover-only run stays drawn under it (L7).
-        anchored
-        data-state={siteState}
-        className="zen-v2-blocked-chip -my-1"
-        onActivate={(e) => {
-          const chip = e.currentTarget
-          const r = chip.getBoundingClientRect()
-          void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height }, chip, {
-            by: 'shield'
-          })
-        }}
-      >
-        {content}
-      </PillChip>
+      <>
+        <PillChip
+          label={label}
+          title={label}
+          popup="dialog"
+          expanded={expanded}
+          // Site information hangs from the shield while the shield opened it (§9.20): the
+          // pill's hover-only run stays drawn under it (L7).
+          anchored
+          data-state={siteState}
+          className="zen-v2-blocked-chip -my-1"
+          onActivate={(e) => {
+            const chip = e.currentTarget
+            const r = chip.getBoundingClientRect()
+            void openSiteInfo(
+              tab,
+              { x: r.left, y: r.top, width: r.width, height: r.height },
+              chip,
+              { by: 'shield' }
+            )
+          }}
+        >
+          <Icon aria-hidden strokeWidth={TOOLBAR_STROKE} />
+        </PillChip>
+        {showCount && (
+          <PillChip
+            label={countLabel}
+            title={countLabel}
+            popup="dialog"
+            expanded={countAnchored}
+            anchored
+            data-state={siteState}
+            data-tracker-count=""
+            className="zen-v2-blocked-count -my-1"
+            onActivate={(e) => {
+              const chip = e.currentTarget
+              const r = chip.getBoundingClientRect()
+              void openSiteInfo(
+                tab,
+                { x: r.left, y: r.top, width: r.width, height: r.height },
+                chip,
+                { by: 'count', view: 'trackers' }
+              )
+            }}
+          >
+            <span className="zen-v2-badge">{chipCount(tab.blockedCount)}</span>
+          </PillChip>
+        )}
+      </>
     )
   }
   if (!interactive) {

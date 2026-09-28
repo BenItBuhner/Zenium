@@ -400,34 +400,42 @@ export interface SelectionMenuState {
 }
 
 /**
- * The room the pill's document asks of the popup surface beyond the pill's padded box, for the
- * folded glyph buttons' tooltips (the chrome's `Tooltip`, hosted in the surface's document;
- * `selectionMenu.surfaceSize`): `below`, the pixels the surface reaches under the box so a
- * tooltip 8 under a button stays 8 inside the document, and `width`, the least width of the
- * surface for the widest title's tooltip and its margins. CSS pixels, whole; the core adds
- * them around the pill (`placeMiniMenuSurface`), never moving the pill for them. Asked for the
- * tooltip's moment alone – while one is on its way or up – and given back the instant it is
- * over: at rest the surface is the pill's padded box, and nothing under it eats the page's
- * pointer.
+ * The room a popup surface's document asks of the surface beyond its content's padded box, for
+ * its controls' tooltips (the chrome's `Tooltip`, hosted in the surface's document, §9.31: the
+ * folded pill's glyph buttons, `selectionMenu.surfaceSize`; the autofill picker's edge controls,
+ * `autofill.surfaceSize`): `below`, the pixels the surface reaches under the box so a tooltip
+ * 8 under a control stays 8 inside the document, and `width`, the least width of the surface
+ * for the widest title's tooltip and its margins. CSS pixels, whole; the core adds them around
+ * the box (`placeMiniMenuSurface`, `placePickerSurface`), never moving the content for them.
+ * Asked for the tooltip's moment alone – while one is on its way or up – and given back the
+ * instant it is over: at rest the surface is the content's padded box, and nothing under it
+ * eats the page's pointer.
  */
-export interface MiniMenuRoom {
+export interface PopupSurfaceRoom {
   below: number
   width: number
 }
 
+/** The pill's room (`MiniMenu`, `selectionMenu.surfaceSize`): a `PopupSurfaceRoom`. */
+export type MiniMenuRoom = PopupSurfaceRoom
+
 /**
- * The core's word back to a `selectionMenu.surfaceSize` report: the popup surface's size as
- * the core set it for the report – window CSS pixels, whole: the pill's padded box, with the
- * room while the report asked one – or null when the report placed no surface (another tab's
- * pill, a nonsensical report, the box off the view). The pill's document holds a tooltip's
- * show on the room until this word has come and its own frame is at the size (`awaitTooltipRoom`
- * – §11's paint handshake, the reader cover's: the word, or the ceiling for one that never
- * comes), so no first frame of a tooltip is clipped by the surface's old bounds.
+ * The core's word back to a surface-size report (`selectionMenu.surfaceSize`,
+ * `autofill.surfaceSize`): the popup surface's size as the core set it for the report – window
+ * CSS pixels, whole: the content's padded box, with the room while the report asked one – or
+ * null when the report placed no surface (another tab's pill, a picker gone, a nonsensical
+ * report, the box off the view). The document holds a tooltip's show on the room until this
+ * word has come and its own frame is at the size (`awaitTooltipRoom` – §11's paint handshake,
+ * the reader cover's: the word, or the ceiling for one that never comes), so no first frame of
+ * a tooltip is clipped by the surface's old bounds.
  */
-export interface MiniMenuSurfaceSize {
+export interface PopupSurfaceSize {
   width: number
   height: number
 }
+
+/** The pill's word back (`selectionMenu.surfaceSize`): a `PopupSurfaceSize`. */
+export type MiniMenuSurfaceSize = PopupSurfaceSize
 
 /**
  * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
@@ -670,6 +678,22 @@ export interface SpaceTheme {
 // Tabs, spaces, split views, folders
 // ---------------------------------------------------------------------------
 
+/**
+ * Where the rule that blocked a request came from: a filter list (`tracker` – the lists match as
+ * one set, so no finer word is known), the user's own filters, an extension's rules, or Safe
+ * Browsing refusing an unsafe frame.
+ */
+export type BlockedSiteCategory = 'tracker' | 'user' | 'extension' | 'unsafe'
+
+/** One site the blocking engine stopped requests from on a tab's current document. */
+export interface BlockedSite {
+  /** Registrable domain of the blocked requests (`doubleclick.net`). */
+  domain: string
+  category: BlockedSiteCategory
+  /** Requests blocked from `domain` on the document so far. */
+  count: number
+}
+
 export interface Tab {
   id: string
   /** Space the tab belongs to. Essentials are global (per container) and have `spaceId: null`. */
@@ -830,6 +854,12 @@ export interface Tab {
   readerable: boolean
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
+  /**
+   * The sites those requests went to, in the order the engine first saw them, at most
+   * `BLOCKED_SITES_CAP` of them (the tracker report behind the count). Absent until the first
+   * block of the document; resets with `blockedCount`. A session's own: not persisted.
+   */
+  blockedSites?: BlockedSite[]
   /**
    * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
    * page such as Settings was opened from). Mobile system back at the tab's first page closes it
@@ -1256,6 +1286,22 @@ export interface SyncScope {
    * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
    */
   readingList: boolean
+  /**
+   * The Mods (`Mod`: the browser chrome's CSS mods, Settings › Mods), one `mod` record per Mod
+   * under the Mod's own id (services pass 15, ID-43); on by default, as Chrome's Themes type is
+   * a toggle of its own among what you sync (`UserSelectableType::kThemes`,
+   * `components/sync/base/user_selectable_type.h`; the one theme per profile travels through
+   * `ThemeSyncableService`, `syncer::THEMES`) and Edge carries appearance inside Settings. The
+   * look settings themselves travel as they did – the colour scheme and the app icon on the
+   * settings record key by key, each space's gradient theme (`SpaceTheme`, its colours among
+   * it) on its space record – and `useSystemAccent` stays each device's own
+   * (`DEVICE_LOCAL_SETTINGS`): this key toggles the Mod list alone.
+   * While off, the device neither publishes the type nor takes it in, and its metadata for the
+   * type is frozen, as with every scoped type. Absent on a `sync.json` older than the key, where
+   * the engine completes it with the default; a scope object from an older build says nothing
+   * for it, so `collectLocal` under one publishes no Mod (`__tests__/compat.test.ts`).
+   */
+  mods: boolean
 }
 
 /** One open tab of another device, as its `open-tabs` record carries it (ID-28). */
@@ -6990,9 +7036,17 @@ export interface Commands {
   }
   /**
    * The desktop picker's document (`?surface=popup`, `PickerSurface`) reports the height its
-   * content wants; the core sizes and places the popup surface from it (`placePickerSurface`).
+   * content wants – with, for a tooltip's moment on one of its edge controls, the room the
+   * tooltip needs beyond the panel's box (`room`, `PopupSurfaceRoom`; null at rest, the same
+   * height told again as the moment comes and goes); the core sizes and places the popup
+   * surface from it (`placePickerSurface`), back at the panel's padded box on the null. Answers
+   * with the surface's size as set – the room's acknowledgement, which the document's tooltip
+   * waits for before it paints (`PopupSurfaceSize`) – or null when the report placed no surface.
    */
-  'autofill.surfaceSize': { args: { id: string; height: number }; result: void }
+  'autofill.surfaceSize': {
+    args: { id: string; height: number; room?: PopupSurfaceRoom | null }
+    result: PopupSurfaceSize | null
+  }
   /**
    * The popup surface took or lost the keyboard: while it holds it the page field's blur does
    * not close the picker (a press on a row blurs the field first).

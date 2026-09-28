@@ -39,6 +39,8 @@ const { Toolbar } = await import('../Toolbar')
 const { BookmarksBar } = await import('../bookmarks/BookmarksBar')
 const { V2IconButton } = await import('../extensions/v2')
 const { MiniMenu } = await import('../selection/MiniMenu')
+const { PickerPanel } = await import('../autofill/PickerPanel')
+const { IconBtn } = await import('../autofill/controls')
 const { SkipForward } = await import('lucide-react')
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
@@ -325,6 +327,49 @@ describe('the desktop chrome, rendered: one tooltip vocabulary (§9.31, a11y-26)
     for (const button of all('[data-mini-menu-chip]', el))
       expect(button.getAttribute('aria-label')).toBe(button.getAttribute(TOOLTIP_ATTR))
   })
+
+  // The autofill picker is drawn in the same popup surface document (W8-F18, §9.31): the lock
+  // on a row whose fill asks for the passphrase names its meaning by the chrome's tooltip, and
+  // the autofill surfaces' icon button by the tooltip and its accessible name – no toolkit
+  // `title` on either.
+  it('the picker’s lock and the autofill icon button carry data-tooltip and no title; the icon button keeps its name', () => {
+    const el = render(
+      <PickerPanel
+        picker={{
+          id: 'picker_1',
+          tabId: 't1',
+          group: 'login',
+          field: 'password',
+          anchor: { x: 100, y: 200, width: 240, height: 32 },
+          items: [
+            {
+              id: 'c1',
+              title: 'ada@example.com',
+              subtitle: '',
+              favicon: null,
+              needsPassphrase: true
+            },
+            { id: 'c2', title: 'grace@example.com', subtitle: '', favicon: null }
+          ],
+          manageLabel: 'Manage passwords'
+        }}
+      />
+    )
+    const texts = expectOneVocabulary(el, 'picker').map((c) => tooltipText(c))
+    expect(texts).toEqual(['Asks for the vault passphrase'])
+    expect(all('.zen-v2-af-row-lock', el)).toHaveLength(1)
+
+    const button = render(
+      <IconBtn title="Close">
+        <SkipForward aria-hidden />
+      </IconBtn>
+    )
+    const [carrier] = expectOneVocabulary(button, 'autofill icon button')
+    expect(carrier.tagName).toBe('BUTTON')
+    expect(tooltipText(carrier)).toBe('Close')
+    expect(carrier.getAttribute('aria-label')).toBe('Close')
+    expect(carrier.hasAttribute('title')).toBe(false)
+  })
 })
 
 describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)', () => {
@@ -342,7 +387,6 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
     // The extension program's surfaces (the Extensions page, its details, the prompt dialog) –
     // except the two files walked by name in `ALSO_WALKED`.
     'extensions/',
-    'autofill/',
     // Site information and the confirm chassis: W5-2's and W5-3's.
     'siteControls/',
     'siteinfo/',
@@ -352,9 +396,15 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
   /**
    * Walked although their directory is not: the v2 primitives (`V2IconButton` is the desktop
    * chrome's icon button in a dozen surfaces) and the extensions toolbar with its panel, both
-   * of which the chrome's tooltip host reaches.
+   * of which the chrome's tooltip host reaches; and the autofill surfaces as a whole (W8-F18):
+   * the picker is drawn in the popup surface's document, which mounts the host (`PopupSurface`),
+   * and its prompts in the chrome's – the same host reaches every one.
    */
-  const ALSO_WALKED = ['extensions/v2.tsx', 'extensions/ToolbarActions.tsx']
+  const ALSO_WALKED = ['extensions/v2.tsx', 'extensions/ToolbarActions.tsx', 'autofill/']
+
+  /** Whether `rel` is walked by name: a file of `ALSO_WALKED`'s, or one under a directory it names. */
+  const alsoWalked = (rel: string): boolean =>
+    ALSO_WALKED.some((entry) => (entry.endsWith('/') ? rel.startsWith(entry) : rel === entry))
 
   /**
    * The native titles left, by file, each with its reason – a follow-up in the wave report. A
@@ -428,14 +478,20 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
 
   const files = sources(root)
     .map((f) => ({ path: f, rel: relative(root, f).split('\\').join('/') }))
-    .filter(
-      ({ rel }) =>
-        ALSO_WALKED.includes(rel) || !NOT_DESKTOP_CHROME.some((dir) => rel.startsWith(dir))
-    )
+    .filter(({ rel }) => alsoWalked(rel) || !NOT_DESKTOP_CHROME.some((dir) => rel.startsWith(dir)))
 
-  it('the walk reaches the v2 primitives and the extensions toolbar', () => {
+  it('the walk reaches the v2 primitives, the extensions toolbar and the autofill surfaces', () => {
     const rels = files.map(({ rel }) => rel)
-    for (const rel of ALSO_WALKED) expect(rels).toContain(rel)
+    for (const entry of ALSO_WALKED) {
+      if (entry.endsWith('/')) expect(rels.filter((rel) => rel.startsWith(entry))).not.toEqual([])
+      else expect(rels).toContain(entry)
+    }
+    for (const rel of [
+      'autofill/PickerPanel.tsx',
+      'autofill/PickerSurface.tsx',
+      'autofill/controls.tsx'
+    ])
+      expect(rels).toContain(rel)
   })
 
   it('no DOM element in the desktop chrome carries both title and data-tooltip', () => {
