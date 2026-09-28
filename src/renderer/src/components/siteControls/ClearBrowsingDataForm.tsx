@@ -9,8 +9,16 @@ import { RowView, type RowContext } from '../pages/settings/rows'
 import { useSheetRelayout } from '../pages/settings/sheetContext'
 import { OptionsSheet } from '../pages/settings/sheets'
 import { usePhone } from '@renderer/lib/surfaces'
+import { quickDeleteClear } from '../phone/quickDelete'
 import { BusyButton } from './primitives'
-import { QUICK_DELETE_FORM, useClearForm } from './useClearForm'
+import { QUICK_DELETE_FORM, useClearForm, type ClearFormOptions } from './useClearForm'
+
+/**
+ * The phone's form clears through Quick Delete's runner (MOT-24): with the Tabs row on, the
+ * overview opens and the period's cards depart before the core closes them; without it the
+ * runner is the plain command.
+ */
+const QUICK_DELETE_PHONE_FORM: ClearFormOptions = { ...QUICK_DELETE_FORM, clear: quickDeleteClear }
 
 /**
  * Delete browsing data under a finger (design-language-v2-draft §9.12–§9.14, §9.23, §9.25,
@@ -45,11 +53,13 @@ import { QUICK_DELETE_FORM, useClearForm } from './useClearForm'
  * `classifyViewport` (`PHONE_MAX_WIDTH = 600`), so a desktop window narrower than 600 px gets
  * this form too and an Android tablet's wide layout gets the dialog's rows without the Tabs row.
  * The toast once it is done is W8-7's `clearedToast(range, cleared)` on both – "Last 15 minutes
- * deleted".
+ * deleted". With the Tabs row on, the phone's clear is Chrome's Quick Delete sequence around the
+ * command (`quickDeleteClear`, MOT-24): the data first, then this sheet goes, the overview opens
+ * and the period's cards depart in place before the core closes their tabs; the toast follows.
  */
 export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Element {
   const phone = usePhone()
-  const state = useClearForm(close, phone ? QUICK_DELETE_FORM : undefined)
+  const state = useClearForm(close, phone ? QUICK_DELETE_PHONE_FORM : undefined)
   const { form, types, selected, unavailableFor, setRange, setMode, toggle, setPassphrase } = state
   const busy = form.busy
   const [picker, setPicker] = useState(false)

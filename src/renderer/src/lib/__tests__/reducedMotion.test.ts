@@ -23,6 +23,7 @@ const CHROME_SHEETS: ReadonlyArray<readonly [name: string, css: string]> = [
   ['main.css', asset('main.css')],
   ['extensions.css', asset('extensions.css')],
   ['translate.css', asset('translate.css')],
+  ['selection.css', asset('selection.css')],
   ['autofill.css', asset('autofill.css')],
   ['passwords.css', asset('passwords.css')],
   [

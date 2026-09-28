@@ -246,6 +246,20 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('readerEntry=offer&network=offline')).toEqual(offer)
   })
 
+  it('holds Quick Delete’s wipe on the overview this far into its release (MOT-24)', () => {
+    expect(parsePreviewSpec('overview&wipe=120')).toEqual({ kind: 'overview', wipe: 120 })
+    expect(parsePreviewSpec('overview&wipe=0')).toEqual({ kind: 'overview', wipe: 0 })
+    expect(parsePreviewSpec('overview&wipe=120&then=tap:More')).toEqual({
+      kind: 'overview',
+      wipe: 120,
+      then: [{ kind: 'tap', text: 'More' }]
+    })
+    // Not a time: no hold (the overview alone); nothing without the overview.
+    expect(parsePreviewSpec('overview&wipe=abc')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('overview&wipe=-5')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('wipe=120')).toEqual({ kind: 'idle' })
+  })
+
   it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
     expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
     expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({

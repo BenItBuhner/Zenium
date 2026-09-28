@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './extensions.css';
 @import './translate.css';
+@import './selection.css';
 /* The chrome is built from two roots (Electron renderer, Android WebView); always scan the UI. */
 @source '../';
 

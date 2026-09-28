@@ -4177,6 +4177,8 @@ export class Browser {
 
       'selectionMenu.run': ({ tabId, id }) => this.selectionMenu.run(tabId, id),
       'selectionMenu.dismiss': ({ tabId }) => this.selectionMenu.dismiss(tabId),
+      'selectionMenu.surfaceSize': ({ tabId, width, height, folded }) =>
+        this.selectionMenu.surfaceSize(tabId, width, height, folded === true),
       'define.lookup': ({ term, lang }) => this.define.lookup(term, lang),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {
@@ -4500,7 +4502,8 @@ export class Browser {
       readAloud: JSON.stringify(s.readAloud),
       fonts: JSON.stringify(s.fonts),
       languages: s.languages.join(','),
-      caretBrowsing: s.caretBrowsing === true
+      caretBrowsing: s.caretBrowsing === true,
+      selectionMenu: s.showSelectionMenu !== false
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -4697,6 +4700,8 @@ export class Browser {
     if (before.fonts !== JSON.stringify(s.fonts)) this.pageFonts.onSettingsChanged()
     if (before.languages !== s.languages.join(',')) this.languages.onSettingsChanged()
     if (before.caretBrowsing !== (s.caretBrowsing === true)) this.caretBrowsing.onSettingsChanged()
+    if (before.selectionMenu !== (s.showSelectionMenu !== false))
+      this.selectionMenu.onSettingsChanged()
     this.state.commit()
   }
 

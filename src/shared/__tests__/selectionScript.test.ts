@@ -383,4 +383,64 @@ describe('installSelectionReporter', () => {
     await settle()
     expect(sent).toEqual([])
   })
+
+  describe('Escape and the context menu', () => {
+    it('takes the menu down on Escape and keeps it down while the selection stands, until a gesture changes it', async () => {
+      document.body.innerHTML = '<p id="p">quantum foam</p><p id="q">other text</p>'
+      const sent = install()
+      dragSelect('p')
+      await settle()
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam'])
+      keyDown('Escape')
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam', ''])
+      // Escape's up changes nothing; nor does a scroll, a script's move of the standing
+      // selection, or a click that leaves it standing bring the menu back.
+      keyUp('Escape')
+      window.dispatchEvent(new Event('scroll'))
+      selectChars('p', 0, 7)
+      down()
+      up()
+      await settle()
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam', ''])
+      // A gesture that makes another selection does.
+      dragSelect('q')
+      await settle()
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam', '', 'other text'])
+    })
+
+    it('Escape during the settle cancels the report, and Escape with nothing shown or owed sends nothing', async () => {
+      document.body.innerHTML = '<p id="p">quantum foam</p>'
+      const sent = install()
+      keyDown('Escape')
+      keyUp('Escape')
+      dragSelect('p')
+      keyDown('Escape')
+      keyUp('Escape')
+      await settle()
+      expect(sent).toEqual([])
+    })
+
+    it('takes the menu down as the context menu opens, and does not return over it', async () => {
+      document.body.innerHTML = '<p id="p">quantum foam</p>'
+      const sent = install()
+      dragSelect('p')
+      await settle()
+      // The keyboard's menu key: the press changes nothing; the context menu is the menu now.
+      keyDown('ContextMenu')
+      window.dispatchEvent(new Event('contextmenu'))
+      keyUp('ContextMenu')
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam', ''])
+      await settle()
+      expect(sent).toHaveLength(2)
+      // A right-click over the standing selection: the down takes the menu, the up brings nothing.
+      dragSelect('p')
+      await settle()
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam', '', 'quantum foam'])
+      down()
+      window.dispatchEvent(new Event('contextmenu'))
+      up()
+      await settle()
+      expect(sent.map((r) => r.text)).toEqual(['quantum foam', '', 'quantum foam', ''])
+    })
+  })
 })

@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PhoneBarPosition, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import type { BarHideHostFrame } from '@renderer/lib/barHide'
 import type { Toast } from '@renderer/lib/ui'
 
 /*
@@ -36,8 +37,15 @@ const {
   TAB_SWITCHER_HINT_ACCESSIBILITY_TEXT,
   TAB_SWITCHER_HINT_TEXT
 } = await import('@renderer/lib/iph')
-const { dispatchBarScroll, setBarHideTouchExploration } = await import('@renderer/lib/barHide')
-const { uiStore } = await import('@renderer/lib/ui')
+const {
+  barHideStore,
+  dispatchBarScroll,
+  resetBarHide,
+  setBarHideContext,
+  setBarHideHost,
+  setBarHideTouchExploration
+} = await import('@renderer/lib/barHide')
+const { browserStore, uiStore } = await import('@renderer/lib/ui')
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000
@@ -319,6 +327,62 @@ describe('the bubble comes down', () => {
     up()
     act(() => dispatchBarScroll('t1', 'start', null))
     expect(leaving()).toBe(true)
+  })
+
+  it("on the host's word with hide-on-scroll off – the down alone, and the bar's machine unmoved", () => {
+    // TB-19's (f) clause. With the setting off the gate is closed: the chrome's word to the host
+    // is `null` (`{ enabled: false }` on the bridge, `src/android/boot.ts`; no frame for
+    // `BarHideGesture`), and the host reports a finger's down all the same
+    // (`BarHideGesture.reports`, pinned by `BarHideGestureTest`). The bubble hears it, as
+    // Chrome's hears the `ACTION_OUTSIDE` of a page touch whatever its toolbar does; the machine,
+    // its gate closed, does not stir, and nothing more is said to the host.
+    const hostFrames: Array<BarHideHostFrame | null> = []
+    const settingIs = (hideToolbarOnScroll: boolean): void => {
+      // The hook's state, filled out to what the stores' other listeners read of a browser state.
+      const state = stateOf()
+      browserStore.set({
+        state: {
+          ...state,
+          platform: 'android',
+          folders: [],
+          spaces: state.spaces.map((s) => ({ ...s, tabIds: ['t1'] })),
+          settings: { ...state.settings, hideToolbarOnScroll },
+          window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null }
+        } as unknown as UIState
+      })
+      setBarHideContext({ edge: 'bottom', present: true, band: 56, gutter: 8 })
+    }
+    try {
+      settingIs(false)
+      setBarHideHost({ apply: (frame) => hostFrames.push(frame) })
+      expect(hostFrames).toEqual([null])
+      expect(barHideStore.get()).toMatchObject({ allowed: false, phase: 'rest', progress: 0 })
+      up()
+      act(() => dispatchBarScroll('t1', 'start', null))
+      expect(leaving()).toBe(true)
+      expect(barHideStore.get()).toMatchObject({ allowed: false, phase: 'rest', progress: 0 })
+      expect(hostFrames).toEqual([null])
+      wait(HINT_BUBBLE_EXIT_MS)
+      expect(bubble()).toEqual({ bubble: null, leaving: false })
+
+      // The setting on: the same word takes the bubble down and sets the bar's drag going, as before.
+      forgetHintBubble()
+      resetIphSession()
+      act(() => root!.unmount())
+      root = createRoot(host!)
+      settingIs(true)
+      expect(barHideStore.get()).toMatchObject({ allowed: true, phase: 'rest', progress: 0 })
+      expect(hostFrames.at(-1)).toMatchObject({ edge: 'bottom', offset: 0 })
+      up()
+      act(() => dispatchBarScroll('t1', 'start', null))
+      expect(leaving()).toBe(true)
+      expect(barHideStore.get()).toMatchObject({ allowed: true, phase: 'dragging' })
+    } finally {
+      resetBarHide()
+      setBarHideContext({ present: false })
+      setBarHideHost(null)
+      browserStore.set({ state: null })
+    }
   })
 
   it('when the chrome gets busy, the page navigates or another tab comes in front', () => {

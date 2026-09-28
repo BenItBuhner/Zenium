@@ -23,7 +23,12 @@ import { isCertificateError } from '@shared/siteInfo'
 import type { UpdateStatus } from '@shared/updates'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
-import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
+import {
+  dismissOverview,
+  openOverview,
+  overviewIsOpen,
+  stageStore
+} from '@renderer/lib/gestures/stage'
 import { chromeInertHeld } from '@renderer/lib/portals'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/privateLock'
@@ -47,6 +52,8 @@ import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { closeMagicStackCustomize } from '@renderer/components/newtab/magicStackCustomize'
+import { clearDepartures } from '@renderer/components/phone/departureStore'
+import { holdQuickDeleteWipe } from '@renderer/components/phone/quickDelete'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
@@ -334,6 +341,8 @@ function apply(browser: Browser, spec: string): void {
     closeTabsMenu()
     closeUrlbar()
     dismissOverview()
+    // A wipe an `overview&wipe=` state held goes with the overview (nothing else lets it go).
+    clearDepartures()
     closeReaderPreferences({ keepFocus: true })
     closeCustomize()
     // The Magic Stack's Customise sheet a card menu's step opened (NTP-16) goes with the page.
@@ -1666,7 +1675,20 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     seed()
     openOverview(state)
     const then = target.then ?? []
-    if (then.length === 0) requestAnimationFrame(() => done(spec))
+    const wipe = target.wipe
+    if (wipe !== undefined) {
+      // The wipe's frame reads the cards where the landed grid has them: once the overview is at
+      // rest, the steps taken, the range's exits are held at `wipe` ms into the release.
+      whenOverviewUp(() =>
+        whenOverviewLanded(() =>
+          afterFrames(2, () =>
+            steps(then, () => {
+              void holdQuickDeleteWipe('15min', wipe).then(() => afterFrames(2, finish))
+            })
+          )
+        )
+      )
+    } else if (then.length === 0) requestAnimationFrame(() => done(spec))
     else whenOverviewUp(() => afterFrames(2, () => steps(then, finish)))
   } else if (target.kind === 'urlbar') {
     applyUrlbar(target, tab?.id ?? null, finish)
@@ -3280,6 +3302,20 @@ function whenOverviewUp(fn: () => void, deadline = performance.now() + PAGE_REND
     return
   }
   setTimeout(() => whenOverviewUp(fn, deadline), 50)
+}
+
+/**
+ * Runs `fn` once the overview's settle is at rest (`stage.overview.phase` `open`: the cards
+ * where the grid keeps them), or after {@link PAGE_RENDER_MS} – a frame that reads the cards'
+ * rects (a held wipe's) must not read them mid-settle.
+ */
+function whenOverviewLanded(fn: () => void, deadline = performance.now() + PAGE_RENDER_MS): void {
+  const phase = stageStore.get().overview.phase
+  if (phase === 'open' || phase === 'closed' || performance.now() > deadline) {
+    fn()
+    return
+  }
+  setTimeout(() => whenOverviewLanded(fn, deadline), 50)
 }
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */

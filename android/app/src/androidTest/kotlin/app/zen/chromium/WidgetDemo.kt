@@ -55,6 +55,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
@@ -541,17 +542,94 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         }
     }
 
+    /** The overlay off the screen (GONE): from here the scene's touches reach the chrome. Only [tapThenHide] calls it after a tap. */
     private fun hideOverlay() = onMain { overlay?.visibility = View.GONE }
-    private fun showOverlay() = onMain { overlay?.visibility = View.VISIBLE }
+
+    /**
+     * The overlay back over the previous tab, drawn again ([tapThenHide] left it at alpha 0). Safe
+     * with the capture: the previous tab is being SHOWN under it, and a show takes no picture; the
+     * next landing that hides it goes through [tapThenHide], which clears the pixels first.
+     */
+    private fun showOverlay() = onMain {
+        overlay?.apply {
+            alpha = 1f
+            visibility = View.VISIBLE
+        }
+    }
 
     // --- 2–4. a finger on the face, Zenium in front ----------------------------------------------
 
-    /** A real finger on the middle of a face part: the RemoteViews' click sends the part's PendingIntent. */
-    private fun touchPart(id: Int): Boolean {
+    /**
+     * A real finger on the middle of a face part – the RemoteViews' click sends the part's
+     * PendingIntent – with the overlay's pixels out of the window BEFORE it lands and the overlay
+     * GONE once the landing has arrived. The one way a face is tapped here; whether the finger
+     * found the part.
+     *
+     * Why this order, and not a tap followed by a hide. A launcher's face lives in the launcher's
+     * window; Zenium's never holds it. This driver's backdrop stands in for the launcher INSIDE
+     * Zenium's own window ([showOnTheBackdrop] adds it to `android.R.id.content`, over the page).
+     * The part's PendingIntent lands in `onNewIntent`, and the landing (`landing.ts`) creates its tab
+     * `active: true`: the core hides the previous tab, and the host takes the previous tab's card
+     * picture on its way off the screen ([Host.setTabVisible] → [TabWebView.captureThumbnail] →
+     * `captureBitmap`: `PixelCopy.request(host.activity.window, rect, …)`, a copy of the WINDOW
+     * over the page's rect). With the backdrop still drawn at that moment the previous tab's card
+     * picture is the wallpaper and the face – a picture no user can see, and the one #607's
+     * overview stills showed; `touchPart; sleep(150); hideOverlay()` lost that race every time,
+     * the copy landing inside the 150 ms, and a hide right after the tap would still race the
+     * landing's copy against the frame that draws the hide. So the backdrop turns transparent
+     * FIRST – alpha 0: still laid out and still the touch target (alpha plays no part in hit
+     * testing), drawn no more (HWUI skips a node at alpha 0) – and one frame of the window is
+     * waited for ([overlayOffTheWindowsPixels]), so the RenderThread holds the frame without the
+     * backdrop before any copy the landing asks for is queued behind it; only then the finger
+     * lands, and the landing's copy finds the page. The overlay goes GONE once the landing's intent
+     * has arrived (`activity.intent` is another object after `onNewIntent`; 3 s at most), never
+     * before the tap has been taken: from then the scene's touches (the stage, the Tabs button,
+     * the field) must reach the chrome under it.
+     */
+    private fun tapThenHide(id: Int): Boolean {
         val bounds = viewBounds(id)
         if (bounds.isEmpty) return false
+        val intentBefore = onMain { activity.intent }
+        expect("the overlay is out of the window's pixels before the finger lands (a frame drawn with it at alpha 0)", overlayOffTheWindowsPixels())
         Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        awaitTrue(3_000) { onMain { activity.intent } !== intentBefore }
+        hideOverlay()
         return true
+    }
+
+    /**
+     * The overlay out of the window's pixels while it keeps its place and its touches: alpha 0 on
+     * the backdrop, then one traversal's draw of the window waited for. An `OnDrawListener` on the
+     * decor fires inside the traversal, before the frame is handed to the RenderThread; a post
+     * from it runs once the traversal has returned, the frame handed over – so a `PixelCopy` of
+     * the window asked for after this returns is queued on the RenderThread behind the frame
+     * without the backdrop and copies that frame. True when the frame came within [timeoutMs];
+     * false when it did not (the backdrop is transparent all the same). True at once with no
+     * overlay up: the window's pixels are the page already.
+     */
+    private fun overlayOffTheWindowsPixels(timeoutMs: Long = 3_000): Boolean {
+        val drawn = CountDownLatch(1)
+        val decor = activity.window.decorView
+        onMain {
+            val overlay = overlay
+            if (overlay == null) {
+                drawn.countDown()
+                return@onMain
+            }
+            val listener = object : ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    // Not inside onDraw: the observer refuses a removal there, and the frame is
+                    // handed to the RenderThread only when the traversal returns.
+                    decor.post {
+                        decor.viewTreeObserver.removeOnDrawListener(this)
+                        drawn.countDown()
+                    }
+                }
+            }
+            decor.viewTreeObserver.addOnDrawListener(listener)
+            overlay.alpha = 0f
+        }
+        return drawn.await(timeoutMs, TimeUnit.MILLISECONDS)
     }
 
     /** The [part] (its view [id] on the face) under a finger: voice search; [still] the shot's name. */
@@ -559,9 +637,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val before = activeCoreTab()?.optString("id").orEmpty()
         val intentBefore = onMain { activity.intent }
         val starts = recognizer.starts
-        expect("a finger reaches $part on the face", touchPart(id))
-        SystemClock.sleep(150)
-        hideOverlay()
+        expect("a finger reaches $part on the face", tapThenHide(id))
         val up = awaitVoicePhase(setOf("starting", "listening"), 10_000)
         expect("$part lands in voice search: the sheet is up (phase ${voicePhase()})", up)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
@@ -590,9 +666,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         var reading: OmniboxOpen? = null
         var keyboard = false
         val traced = traceFrames(scene, JankBudget.Kind.OPEN) {
-            expect("a finger reaches $part on the face", touchPart(id))
-            SystemClock.sleep(150)
-            hideOverlay()
+            expect("a finger reaches $part on the face", tapThenHide(id))
             reading = awaitOmniboxOpen(10_000)
             keyboard = awaitIme(true, 8_000)
         }
@@ -616,9 +690,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     private fun touchTheMask(id: Int = R.id.widget_search_private, still: String = "04-mask-private", part: String = "the mask") {
         val before = activeCoreTab()?.optString("id").orEmpty()
         watchToasts()
-        expect("a finger reaches $part on the face", touchPart(id))
-        SystemClock.sleep(150)
-        hideOverlay()
+        // The private landing hides the previous tab on a WebView with profiles (a private tab,
+        // active) and on one without leaves it shown (the toast, no tab): the helper's clearing
+        // costs the toast leg one frame and spares the profiles leg the same picture as the others.
+        expect("a finger reaches $part on the face", tapThenHide(id))
         val landed = privateLanded(12_000)
         expect("$part lands in a new private tab, or in the toast where this WebView has no profiles ($landed)", landed != null)
         val tab = activeCoreTab()
@@ -637,6 +712,12 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         showOverlay()
     }
 
+    /**
+     * The overlay and the host gone before the cold landings. Safe with the capture without
+     * [tapThenHide]'s clearing: no tap lands here and no tab changes – the removal itself takes no
+     * picture, and the previous tab is painted again ([preparePrevious]) with nothing over it
+     * before the task is removed and the landing's new window draws.
+     */
     private fun takeDownTheHost() {
         onMain {
             overlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
@@ -1306,9 +1387,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val before = activeCoreTab()?.optString("id").orEmpty()
         val intentBefore = onMain { activity.intent }
         val starts = camera.starts
-        expect("a finger reaches the scan button on the face", touchPart(id))
-        SystemClock.sleep(150)
-        hideOverlay()
+        expect("a finger reaches the scan button on the face", tapThenHide(id))
         val landed = scanLanded(12_000)
         expect("the scan button lands in the QR scanner ($landed)", landed != null)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })
@@ -1503,9 +1582,9 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     private fun touchTheGame() {
         val before = activeCoreTab()?.optString("id").orEmpty()
         val intentBefore = onMain { activity.intent }
-        expect("a finger reaches the face", touchPart(R.id.widget_game_face))
-        SystemClock.sleep(150)
-        hideOverlay()
+        // The overview still after this ([theGlyphInTheOverview]) shows the previous tab's card:
+        // its picture is the page only because the overlay's pixels left the window before the tap.
+        expect("a finger reaches the face", tapThenHide(R.id.widget_game_face))
         val landed = gameLanded(12_000)
         expect("the face lands in a new tab on $GAME_URL with Roll's stage up ($landed)", landed in GAME_STAGED_WORDS)
         expect("the widget's intent arrived through onNewIntent (the running activity, no relaunch)", onMain { activity.intent } !== intentBefore && !onMain { activity.isDestroyed })

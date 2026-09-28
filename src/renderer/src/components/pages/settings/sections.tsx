@@ -751,7 +751,37 @@ function lookSection({
           description: 'Hide the rounded frame around web content.',
           checked: s.borderless,
           onChange: (v) => set({ borderless: v })
-        }
+        },
+        // Edge's "Show mini menu when selecting text" (Settings › Appearance › Context menus;
+        // CT-39, `Settings.showSelectionMenu`, on by default – an absent value reads as on): the
+        // pill of chips – Copy, Search, Define, Translate, Read aloud – over a settled text
+        // selection. Desktop hosts with the popup surface alone (`capabilities.selectionMenu`),
+        // in the desktop and the tablet layouts – a desktop host at a tablet width still runs
+        // the menu; the phone's selection toolbar is the system's.
+        ...(caps.selectionMenu
+          ? [
+              {
+                kind: 'switch',
+                id: 'show-selection-menu',
+                label: 'Show the mini menu when text is selected',
+                keywords: [
+                  'mini menu',
+                  'selection',
+                  'select text',
+                  'selected text',
+                  'copy',
+                  'search',
+                  'define',
+                  'translate',
+                  'read aloud',
+                  'context menu'
+                ],
+                layouts: ['desktop', 'tablet'],
+                checked: s.showSelectionMenu !== false,
+                onChange: (v) => set({ showSelectionMenu: v })
+              } satisfies SettingsRow
+            ]
+          : [])
       ]
     }
   ]
