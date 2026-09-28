@@ -27,6 +27,7 @@ Object.assign(window, { zen: { invoke, on } })
 
 const { Urlbar } = await import('../Urlbar')
 const { browserStore, openNewTabPageUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { refreshViewport, viewportStore } = await import('@renderer/lib/formFactor')
 
 function tab(patch: Partial<Tab> = {}): Tab {
   return {
@@ -233,7 +234,11 @@ function windowState(active: string, tabs: Tab[]): UIState {
   } as unknown as UIState
 }
 
-function Host(): ReactElement | null {
+/**
+ * The shell's mount of the bar: `ContentArea` and `TabletShell` mount it bare, `PhoneShell` with
+ * its `phoneEdge` – the same component, keyed to the tab it is bound to.
+ */
+function Host({ phoneEdge }: { phoneEdge?: 'top' | 'bottom' }): ReactElement | null {
   const urlbar = uiStore.use((s) => s.urlbar)
   const st = browserStore.use((s) => s.state)
   if (!urlbar.open || !st) return null
@@ -241,8 +246,21 @@ function Host(): ReactElement | null {
     key: `${urlbar.mode}-${urlbar.tabId ?? 'new'}`,
     state: st,
     urlbar,
-    area: { x: 0, y: 0, width: 1200, height: 800 }
+    area: { x: 0, y: 0, width: 1200, height: 800 },
+    phoneEdge
   })
+}
+
+/**
+ * The chrome's layout, forced the way the preview host forces it (`?formFactor=`,
+ * `forcedFormFactor`): the renderer re-derives its layout from the window on every state tick
+ * (`formFactor.ts`, `refresh`), so a value set on the store alone would not outlive the first
+ * `arrive` – the chrome URL does. `null` lets the window decide again (happy-dom's: a desktop).
+ */
+function layout(formFactor: 'phone' | 'tablet' | 'desktop' | null): void {
+  history.replaceState(null, '', formFactor ? `?formFactor=${formFactor}` : location.pathname)
+  refreshViewport()
+  expect(viewportStore.get().formFactor).toBe(formFactor ?? 'desktop')
 }
 
 /** A state from the core, and the turn after it: the capture behind a palette's open, the rows' fetch. */
@@ -272,18 +290,27 @@ describe('the draft goes with the tab, and the signal with it (W8-F15, round two
   const other = tab({ id: 't3' })
 
   /** The boot's palette over the New Tab `t1`, mounted by the shell. */
-  async function bootPalette(tabs: Tab[] = [ntp, page]): Promise<HTMLInputElement> {
-    await render(createElement(Host))
+  async function bootPalette(
+    tabs: Tab[] = [ntp, page],
+    phoneEdge?: 'top' | 'bottom'
+  ): Promise<HTMLInputElement> {
+    await render(createElement(Host, { phoneEdge }))
     await arrive(windowState('t1', tabs))
     await act(async () => {
       openNewTabPageUrlbar('t1', undefined, false)
       await new Promise((r) => setTimeout(r, 0))
     })
+    // The bar's own dismissal draft (`Urlbar.tsx`, `drafts`: what was typed is kept through an
+    // Escape, on the desktop and the tablet) may be up from an earlier pin's Escape – the bar's
+    // rule, not these pins' subject: cleared, so each pin starts from an empty field.
+    const el = field()!
+    if (el.value) await type(el, '')
     invoke.mockClear()
-    return field()!
+    return el
   }
 
   beforeEach(() => {
+    layout('desktop')
     uiStore.set({
       urlbar: {
         open: false,
@@ -299,6 +326,7 @@ describe('the draft goes with the tab, and the signal with it (W8-F15, round two
   afterEach(async () => {
     await unmount()
     browserStore.set({ state: null })
+    layout(null)
     uiStore.set({
       urlbar: {
         open: false,
@@ -453,5 +481,42 @@ describe('the draft goes with the tab, and the signal with it (W8-F15, round two
     await arrive(windowState('t2', [ntp, page]))
     await arrive(windowState('t1', [ntp, page]))
     expect(field()).toBeNull()
+  })
+
+  /*
+   * The form-factor gate (`urlbarKeepsTabDrafts`, `formFactor === 'desktop'`): Chrome's per-tab
+   * omnibox state is Chrome desktop's; Chrome for Android drops the edit on a switcher tab
+   * switch, and the Android tablet is Chrome Android too. The same `Urlbar`, two behaviours
+   * (§9.34): on the phone and the tablet the palette follows the active tab as W5-F4 had it and
+   * the tab's return brings no bar back – while the input signal to the core is the desktop's on
+   * every layout (round one, ungated).
+   */
+  async function typedLeftAndBack(phoneEdge?: 'top' | 'bottom'): Promise<void> {
+    const el = await bootPalette([ntp, page], phoneEdge)
+    await type(el, 'hello world')
+    expect(inputs()).toEqual([{ tabId: 't1', active: true }])
+    await arrive(windowState('t2', [ntp, page]))
+    expect(field()).toBeNull()
+    // Nothing written on the leave – whatever the field held.
+    expect(uiStore.get().urlbarDrafts).toEqual({})
+    await arrive(windowState('t1', [ntp, page]))
+    // No bar back on the return, and the signal has no `true` to add: the tab is fresh again.
+    expect(field()).toBeNull()
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(inputs()).toEqual([
+      { tabId: 't1', active: true },
+      { tabId: 't1', active: false }
+    ])
+  }
+
+  it('the TABLET shows no restore on the return: Chrome Android drops the edit on a tab switch; the signal is the same', async () => {
+    // `TabletShell` mounts the bar bare, as the desktop does: the layout alone tells them apart.
+    layout('tablet')
+    await typedLeftAndBack()
+  })
+
+  it('the phone shows no restore on the return either; the signal is the same', async () => {
+    layout('phone')
+    await typedLeftAndBack('bottom')
   })
 })

@@ -6,9 +6,10 @@ vi.mock('../api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
-import type { UIState } from '@shared/types'
+import type { FormFactor, UIState } from '@shared/types'
 import { NEW_TAB_URL } from '@shared/url'
 import { cmd, run } from '../api'
+import { viewportStore } from '../formFactor'
 import {
   browserStore,
   closeUrlbar,
@@ -28,6 +29,9 @@ import {
  * fix: what the leaving tab's field held is now saved by tab id (`UiState.urlbarDrafts`), and the
  * bar re-opens with it – text, selection, keyword chip, its stance – when the tab is active again.
  * The field is what the mounted desktop bar lends through `provideUrlbarField`; here a fake one.
+ * The desktop layout's behaviour alone (`urlbarKeepsTabDrafts`, the form-factor gate): Chrome for
+ * Android drops the edit on a switcher tab switch, so the phone and the tablet – both Chrome
+ * Android's – save nothing and read nothing back.
  */
 
 const PAGE = 'https://gamma.test/'
@@ -88,13 +92,20 @@ async function bootPalette(attached = false): Promise<void> {
 
 const drafts = (): Record<string, UrlbarTabDraft> => uiStore.get().urlbarDrafts
 
+/** The chrome's layout, as the renderer classifies its window (`viewportStore`). */
+const layout = (formFactor: FormFactor): void =>
+  viewportStore.set({ ...viewportStore.get(), formFactor })
+const initialViewport = viewportStore.get()
+
 beforeEach(() => {
   field = null
   releaseField = provideUrlbarField(() => field)
+  layout('desktop')
 })
 
 afterEach(() => {
   releaseField()
+  viewportStore.set(initialViewport)
   uiStore.set({
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     urlbarDrafts: {},
@@ -320,6 +331,80 @@ describe("the New Tab palette's draft goes with its tab (W8-F15)", () => {
     typed('hello')
     browserStore.set({ state: window('b') })
     expect(uiStore.get().urlbar.open).toBe(false)
+    expect(drafts()).toEqual({})
+  })
+})
+
+describe('the draft is the desktop layout’s alone (W8-F15, the form-factor gate)', () => {
+  /**
+   * A touch layout's palette, bound to `a`, typed into, and left for `b`: the bar follows the
+   * active tab as W5-F4 had it – and that is all. A field IS lent here, so it is the save seam's
+   * own gate that holds, not the lend's (`Urlbar.tsx` lends nothing on these layouts besides).
+   */
+  async function leaveAndReturn(): Promise<void> {
+    await bootPalette()
+    typed('hello world', { selectionStart: 6, selectionEnd: 11 })
+    browserStore.set({ state: window('b') })
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+    expect(drafts()).toEqual({})
+    vi.mocked(cmd).mockClear()
+    browserStore.set({ state: window('a') })
+    await settled()
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(cmd).not.toHaveBeenCalledWith('overlay.snapshot', expect.anything())
+    expect(drafts()).toEqual({})
+  }
+
+  it('the tablet saves nothing on the leave and restores nothing on the return: Chrome Android drops the edit on a tab switch', async () => {
+    layout('tablet')
+    await leaveAndReturn()
+  })
+
+  it('the phone: the same – no draft written, no bar back on the tab’s return', async () => {
+    layout('phone')
+    await leaveAndReturn()
+  })
+
+  it('a draft the desktop left is not read back on a touch layout, and stays for the window widened again', async () => {
+    // The desktop window's palette over `a`, typed into and left for `b`: the draft saved.
+    await bootPalette()
+    typed('hello')
+    browserStore.set({ state: window('b') })
+    expect(drafts()).toEqual({ a: expect.objectContaining({ text: 'hello' }) })
+    // The window narrowed under the phone line on the laptop (`classifyViewport`): `a` back in
+    // front opens no bar for a draft the layout would not read back – and takes nothing away.
+    layout('phone')
+    vi.mocked(cmd).mockClear()
+    browserStore.set({ state: window('a') })
+    await settled()
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(cmd).not.toHaveBeenCalledWith('overlay.snapshot', expect.anything())
+    expect(drafts()).toEqual({ a: expect.objectContaining({ text: 'hello' }) })
+    // Ctrl+T on that layout: the palette over the fresh `n`, then re-bound to `a` – `a`'s draft
+    // is not read into it either (`openNewTabPageUrlbar` spends none), and stays.
+    const tabs = { a: NEW_TAB_URL, n: NEW_TAB_URL }
+    browserStore.set({ state: window('n', { tabs }) })
+    openNewTabPageUrlbar('n', undefined, false)
+    await settled()
+    browserStore.set({ state: window('a', { tabs }) })
+    await settled()
+    expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 'a', typed: false })
+    expect(uiStore.get().urlbar.draft).toBeUndefined()
+    expect(drafts()).toEqual({ a: expect.objectContaining({ text: 'hello' }) })
+    closeUrlbar()
+    // Widened back to the desktop layout: the tab's next arrival brings the draft back.
+    layout('desktop')
+    browserStore.set({ state: window('n', { tabs }) })
+    browserStore.set({ state: window('a', { tabs }) })
+    await settled()
+    expect(uiStore.get().urlbar).toMatchObject({
+      open: true,
+      mode: 'new-tab',
+      tabId: 'a',
+      initialText: 'hello',
+      typed: true
+    })
     expect(drafts()).toEqual({})
   })
 })
