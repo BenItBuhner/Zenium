@@ -5,6 +5,7 @@ import {
   armIph,
   dismissHintBubble,
   forgetHintBubble,
+  hintBubbleBarItem,
   hintBubbleStore,
   markTabSwitcherHintShown,
   showHintBubble,
@@ -119,8 +120,10 @@ export function useTabSwitcherHint(state: UIState, edge: PhoneBarPosition, calm:
     insets
   ])
 
-  // The moment changing under a bubble that is up takes it down.
-  const up = hintBubbleStore.use((s) => s.bubble !== null && !s.leaving)
+  // The moment changing under a bubble that is up takes it down – this hook's bubble, the bar's:
+  // the overview's card bubble (`useOverviewGroupsHint`) stands under a chrome the open overview
+  // keeps from calm, and comes down by its own rules.
+  const up = hintBubbleStore.use((s) => hintBubbleBarItem(s.bubble) !== null && !s.leaving)
   useEffect(() => {
     if (!up) return
     const at = moment.current

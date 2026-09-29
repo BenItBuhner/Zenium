@@ -225,6 +225,8 @@ function sync(enabled: boolean, openTabs = true): SyncStatus {
       containers: true,
       bookmarks: true,
       passwords: true,
+      addresses: true,
+      paymentMethods: true,
       settings: true,
       shortcuts: true,
       boosts: true,

@@ -7531,15 +7531,17 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(invoke).toHaveBeenCalledWith('sync.setDeviceName', { name: 'Ben’s phone' })
   })
 
-  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Reading list, Settings first, then Zenium’s own; each runs sync.setScope', () => {
+  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Addresses, Payment methods, Reading list, Settings first, then Zenium’s own; each runs sync.setScope', () => {
     const model = section('sync', syncState(syncStatus()))
     const scope = model.groups.find((g) => g.id === 'sync-scope')
     expect(scope?.heading).toBe('What you sync')
-    expect(scope?.rows.map((r) => r.label).slice(0, 6)).toEqual([
+    expect(scope?.rows.map((r) => r.label).slice(0, 8)).toEqual([
       'Bookmarks',
       'History',
       'Open tabs',
       'Passwords',
+      'Addresses',
+      'Payment methods',
       'Reading list',
       'Settings'
     ])
@@ -7555,6 +7557,28 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(passwords.checked).toBe(true)
     passwords.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { passwords: false })
+    // The vault's addresses and payment methods (services pass 16, ID-45; the lead's ruling on
+    // #712): a row each right after Passwords, Chrome's "Addresses and more" and "Payment
+    // methods" as the two types they are; on by default as Passwords; one scope key each, so a
+    // switch gates its own type alone; and the one hint on both – the fact the name cannot
+    // carry, that the entries travel under the folder's passphrase like the logins.
+    const addresses = row(model, 'sync-scope:addresses')
+    if (addresses.kind !== 'switch') throw new Error('not a switch')
+    expect(addresses.checked).toBe(true)
+    expect(addresses.description).toBe('Encrypted with your sync passphrase.')
+    addresses.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { addresses: false })
+    expect(invoke).not.toHaveBeenCalledWith('sync.setScope', { paymentMethods: false })
+    const paymentMethods = row(model, 'sync-scope:paymentMethods')
+    if (paymentMethods.kind !== 'switch') throw new Error('not a switch')
+    expect(paymentMethods.checked).toBe(true)
+    expect(paymentMethods.description).toBe('Encrypted with your sync passphrase.')
+    paymentMethods.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { paymentMethods: false })
+    // Passwords' own hint stands as it was: the two rows took nothing from it.
+    expect(passwords.description).toBe(
+      'Saved passwords and passkey records, encrypted with your sync passphrase.'
+    )
     // History is on by default, as Chrome's (ID-13).
     const history = row(model, 'sync-scope:history')
     if (history.kind !== 'switch') throw new Error('not a switch')

@@ -33,6 +33,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
+const { viewportStore } = await import('@renderer/lib/formFactor')
 const { folderDeleteWords, folderHoldsAnything, requestFolderDelete } =
   await import('@renderer/lib/folderDelete')
 const { FolderDeleteDialog } = await import('../FolderDeleteDialog')
@@ -171,6 +172,20 @@ describe('folderDeleteWords', () => {
       title: 'Delete folder?',
       detail: 'Its 1 saved page is forgotten with it. There is no undo.'
     })
+  })
+
+  it('names a nameless one in the host’s word (v2 §6): the desktop’s "folder", the touch hosts’ "this group" – the phone sheet’s – and a named one by its name on either, with no noun', () => {
+    expect(folderDeleteWords('  ', 1, true, 'group')).toEqual({
+      title: 'Delete this group?',
+      detail: 'Its 1 saved page is forgotten with it. There is no undo.'
+    })
+    expect(folderDeleteWords('', 2, false, 'group')).toEqual({
+      title: 'Delete this group?',
+      detail: 'Its 2 tabs close with it; Recently Closed keeps their pages.'
+    })
+    expect(folderDeleteWords('', 2, false, 'folder').title).toBe('Delete folder?')
+    expect(folderDeleteWords('Research', 2, false, 'group').title).toBe('Delete Research?')
+    expect(folderDeleteWords('Research', 2, false, 'folder').title).toBe('Delete Research?')
   })
 })
 
@@ -353,6 +368,39 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(dialog()!.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
       'Its 3 saved pages are forgotten with it. There is no undo.'
     )
+  })
+
+  it('asks a nameless group’s question in the host’s word (v2 §6): "Delete folder?" on the desktop, "Delete this group?" on the tablet, whose group menu lands here – the rest of the prompt the same', async () => {
+    browserStore.set({
+      state: state([tab('home', null), tab('a', 'g')], [folder({ name: '  ' })])
+    })
+    render(<Dialogs />)
+    requestFolderDelete('g', false)
+    await settle()
+    expect(dialog()!.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Delete folder?')
+    click(buttons(dialog()!)[0])
+    await settle()
+    expect(dialog()).toBeNull()
+
+    // The tablet's layout – forced after the state is set, since the viewport re-derives itself
+    // on a state change – and the same ask.
+    const before = viewportStore.get()
+    act(() => viewportStore.set({ ...before, formFactor: 'tablet', coarse: true }))
+    try {
+      requestFolderDelete('g', false)
+      await settle()
+      const d = dialog()!
+      expect(d).not.toBeNull()
+      expect(d.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Delete this group?')
+      expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
+        'Its 1 tab closes with it; Recently Closed keeps its page.'
+      )
+      expect(d.style.width).toBe('320px')
+      expect(buttons(d).map((b) => b.textContent)).toEqual(['Cancel', 'Delete'])
+      expect(d.dataset.destructive).toBe('true')
+    } finally {
+      act(() => viewportStore.set(before))
+    }
   })
 
   it('Delete runs folder.delete without unpacking and closes; the page takes the keyboard back', async () => {

@@ -558,6 +558,61 @@ export class CredentialStore {
     return true
   }
 
+  /**
+   * An address another device published, in place of this device's copy (or added), under the
+   * other device's id and timestamps as `applySynced` keeps a login's; the bounds this device
+   * puts on its own addresses (`clipAddress`) hold here too, a no-op for one the other device
+   * saved through the same store.
+   */
+  applySyncedAddress(address: AddressEntry): void {
+    this.requireKey()
+    this.addresses.set(address.id, {
+      id: address.id,
+      ...clipAddress(address),
+      createdAt: address.createdAt,
+      updatedAt: address.updatedAt,
+      lastUsedAt: address.lastUsedAt
+    })
+    this.changed([address.id])
+  }
+
+  removeSyncedAddress(id: string): boolean {
+    this.requireKey()
+    if (!this.addresses.delete(id)) return false
+    this.sealed.delete(id)
+    this.changed([])
+    return true
+  }
+
+  /**
+   * A payment card another device published: the number exactly as that device's vault keeps
+   * it (the digits, `addCard`), never widened – no security code exists to carry – under the
+   * other device's id and timestamps.
+   */
+  applySyncedCard(card: PaymentCard): void {
+    this.requireKey()
+    this.cards.set(card.id, {
+      id: card.id,
+      number: card.number.replace(/\D/g, '').slice(0, 19),
+      expMonth: card.expMonth,
+      expYear: card.expYear,
+      name: clip(card.name, MAX_FIELD),
+      nickname: clip(card.nickname, MAX_FIELD),
+      createdAt: card.createdAt,
+      updatedAt: card.updatedAt,
+      lastUsedAt: card.lastUsedAt
+    })
+    this.changed([card.id])
+  }
+
+  removeSyncedCard(id: string): boolean {
+    this.requireKey()
+    if (!this.cards.delete(id)) return false
+    this.sealed.delete(id)
+    this.changed([])
+    return true
+  }
+
   neverSaveAdd(domainOrUrl: string): void {
     this.requireKey()
     const domain = normalizeDomain(domainOrUrl)

@@ -19,6 +19,7 @@ import type {
   Rect,
   SearchEngine,
   Settings,
+  SettingsPatch,
   ShareAction,
   SharePayload,
   Shortcut,
@@ -1450,6 +1451,7 @@ export class Browser {
     this.fullscreen.onWindowClosed(win)
     this.mediaSession.onWindowClosed(win)
     this.newTab.onWindowClosed(win)
+    this.webApps.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     const pageId = this.pageWindowIdOf(win)
@@ -4510,7 +4512,7 @@ export class Browser {
       this.state.afterBroadcast(() => this.revealFreshTab(active, win))
   }
 
-  updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
+  updateSettings(patch: SettingsPatch, win: ZenWindow): void {
     const s = this.state.settings
     const before = {
       glance: s.glanceEnabled,

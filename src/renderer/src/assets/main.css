@@ -3723,7 +3723,15 @@
    * up over 200 ms as alpha 0 → 1 with 10 px of travel out of the bar's band
    * (`textbubble_in.xml`; `--zen-hint-from` turns it round under a top-docked bar), out on a
    * 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade §11.3
-   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down.
+   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down and
+   * passes through to what it touched (§9.33) – and a finger on the bubble touched the bubble:
+   * it stays the touch's target through its fade (`.zen-message`'s `pointer-events: auto`,
+   * kept under `[data-leaving]`), so the tap that took it down does not land on what the
+   * bubble stood over – in the overview, a card, which a tap picks (Chrome's popup consumes a
+   * touch on itself; a touch outside it is the control's, `AnchoredPopupWindow.onTouch`). The
+   * fade alone is not the whole of that: the tap's `click` is hit-tested after the finger
+   * lifts, and a slow frame has put it after the fade's sweep – the card's `holdTouch`
+   * (HintBubbleCard.tsx) swallows the one click a touch on the bubble becomes.
    */
   .zen-hint-bubble {
     --zen-message-text-inset: 0;
@@ -3747,7 +3755,22 @@
   }
   .zen-hint-bubble[data-leaving] {
     animation: zen-fade-out 200ms linear forwards;
-    pointer-events: none;
+  }
+  /*
+   * The bubble on a tab card in the overview (the drag-to-group teaching, `useOverviewGroupsHint`;
+   * the second kind, `OverviewHintBubble`): the same card, placed by the layout effect as `left`
+   * and `top` in §9.20's pose against the card's box (`messages/stack.ts` `hintBubbleOnCard`) –
+   * flush under the card at gap 0, or over it when the room below runs out (`data-side`) – so
+   * it sits on no edge: the edge rules above give way to the written `top`. It arrives out of the
+   * card: 10 px from above when it stands below it, from below when it stands above.
+   */
+  .zen-hint-bubble[data-at='overview'] {
+    --zen-hint-from: -10px;
+    top: 0;
+    bottom: auto;
+  }
+  .zen-hint-bubble[data-at='overview'][data-side='above'] {
+    --zen-hint-from: 10px;
   }
   @keyframes zen-hint-bubble-in {
     from {
@@ -3793,6 +3816,34 @@
     }
     to {
       transform: scale(1.2);
+    }
+  }
+  /*
+   * The same halo on a tab card the overview's bubble is about (`OverviewCard`'s
+   * `data-iph-anchor` on the cell): the card's own box grown by 6 px, in the card's radius –
+   * a disc is a button's shape, not a card's – in the same accent at 30 %, breathing 1 → 1.04
+   * on the same 1.25 s alternate (a 160 px card's 4 % is the 32 px disc's 20 %); behind the
+   * card, so the picture and the title stay clean. Under reduced motion the one remover takes
+   * the animation and the halo stands at its rest.
+   */
+  .zen-overview-grid [data-cell][data-iph-anchor] {
+    z-index: 1;
+  }
+  .zen-overview-grid [data-cell][data-iph-anchor]::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: calc(var(--zen-card-radius) + 6px);
+    background: color-mix(in srgb, var(--v2-accent) 30%, transparent);
+    pointer-events: none;
+    animation: zen-iph-pulse-card 1250ms cubic-bezier(0.8, 0, 0.6, 1) infinite alternate;
+  }
+  @keyframes zen-iph-pulse-card {
+    from {
+      transform: scale(1);
+    }
+    to {
+      transform: scale(1.04);
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -5586,6 +5637,15 @@
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
+  }
+  /*
+   * Under a field pinned in the grip (`BottomSheet`'s `pinned`, §9.12) the field's wrapper
+   * carries 8 of the 48 (`.zen-phone-top`'s `pb-2`), as the phone panels' empty note under
+   * their field does (phonePanels.css: "the 8 under the field and 40 here"): the sentence
+   * stands 48 below the field, not 56.
+   */
+  .zen-sheet[data-pinned] .zen-sheet-empty {
+    padding-top: 40px;
   }
   /*
    * Levels inside one sheet (site information): the panes slide past each other on a spring

@@ -1268,9 +1268,29 @@ export interface SyncScope {
   boosts: boolean
   /**
    * Saved logins and the passkeys' public records (ID-09), under the same end-to-end key as
-   * everything else; on by default as Chrome's password sync is.
+   * everything else; on by default as Chrome's password sync is. The vault's addresses and
+   * payment cards have keys of their own below, as Chrome's types do.
    */
   passwords: boolean
+  /**
+   * The vault's saved addresses (`AddressEntry`, one `address` record per entry under the
+   * entry's own id; services pass 16, ID-45 – Chrome's "Addresses and more" type, a toggle of
+   * its own beside Passwords), under the same end-to-end key as the logins; on by default, as
+   * Chrome's is under "Sync everything" and as Passwords is here. While off, the device neither
+   * publishes the type nor takes it in, and its metadata for the type is frozen, as with every
+   * scoped type; while the vault is locked the type is held with the logins. Absent on a
+   * `sync.json` older than the key, where the engine completes it with the default; a scope
+   * object from an older build says nothing for it, so `collectLocal` under one publishes no
+   * address (`__tests__/compat.test.ts`).
+   */
+  addresses: boolean
+  /**
+   * The vault's saved payment cards (`PaymentCard`, one `payment-method` record per entry under
+   * the entry's own id; ID-45 – Chrome's "Payment methods" type): the card as the vault keeps it
+   * (the number's digits, no security code), under the same end-to-end key as a login's
+   * password; on by default as `addresses`, held, frozen and completed the same way.
+   */
+  paymentMethods: boolean
   /**
    * Browsing history (ID-13 / HB-48): the device's visits and deletions as a stream the other
    * devices import into their own history, on by default as Chrome's is. Off, a device neither
@@ -3476,9 +3496,9 @@ export interface Settings {
   fullscreenHintDone: boolean
   /**
    * The phone's in-product help bubbles (TB-19, `shared/iph.ts`): one record per bubble Chrome
-   * Android shows on its toolbar. Device-local (`DEVICE_LOCAL_SETTINGS`), as Chrome's feature
-   * engagement store is the profile's own; a profile from before it reads the defaults
-   * (`sanitizeIphState`).
+   * Android shows on its toolbar or in its tab switcher. Device-local (`DEVICE_LOCAL_SETTINGS`),
+   * as Chrome's feature engagement store is the profile's own; a profile from before it reads
+   * the defaults (`sanitizeIphState`).
    */
   iph: IphState
   /**
@@ -3732,11 +3752,28 @@ export interface IphBubbleState {
   shown: boolean
 }
 
-/** The bubbles, one record each: the ones Chrome Android 152 shows by default. */
+/** The bubbles, one record each, named after the Chrome Android 152 IPH feature each mirrors. */
 export interface IphState {
   /** Chrome's `IPH_TabSwitcherButton`: the bubble on the bar's Tabs button. */
   tabSwitcher: IphBubbleState
+  /**
+   * Chrome's `IPH_TabGroupsDragAndDrop`: the drag-to-group teaching in the tab overview, shown
+   * once when the overview opens from the Zenium tips card's tab-groups tip (TB-19; Chrome's
+   * `TabGridIphDialogCoordinator` opened by `openTabGroupIphDialog`). `shown` is spent as the
+   * bubble goes up (a drag that groups does not spend it: Chrome's dialog opens on the tip's tap
+   * whatever its tracker holds); `availableAt` is stamped as the record is spent – Chrome's
+   * `availability` is ANY for this feature, so no clock runs ahead of it and the stamp gates
+   * nothing.
+   */
+  tabGroupsDragAndDrop: IphBubbleState
 }
+
+/**
+ * A `settings.update` patch: any of the settings, and the phone's bubble records one at a time
+ * – `updateSettings`' `iph` branch merges a one-bubble patch over the others' records, so the
+ * renderer's writes (`lib/iph.ts`) need not carry a copy of a record they did not read.
+ */
+export type SettingsPatch = Omit<Partial<Settings>, 'iph'> & { iph?: Partial<IphState> }
 
 export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
@@ -6022,7 +6059,7 @@ export interface Commands {
    */
   'tasks.end': { args: { pid: number }; result: boolean }
 
-  'settings.update': { args: Partial<Settings>; result: void }
+  'settings.update': { args: SettingsPatch; result: void }
   /**
    * Settings › Reset settings › "Restore settings to their original defaults" (settings-70;
    * Chrome's `chrome://settings/reset`), after the row's §9.23 confirmation: what the dialog's

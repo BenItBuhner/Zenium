@@ -197,6 +197,14 @@ export interface PageFlags {
    * without the menu (the phone).
    */
   selectionMenu: boolean
+  /**
+   * The page is an installed app's document in the app's own window (MW-51): the window is the
+   * app's (`ZenWindow.app`) and the page's URL is inside the app's scope. The page script relays
+   * `navigator.setAppBadge` / `clearAppBadge` to the core while this is on; anywhere else the
+   * calls resolve and go nowhere (Chrome's no-op for a page that is no installed app's). Turned
+   * as the tab moves between windows and as it navigates.
+   */
+  installedApp: boolean
 }
 
 /**
@@ -323,11 +331,18 @@ export interface PageMessage {
   /**
    * `webapp`: `manifest` carries the page's web app manifest (or only its URL when the page
    * could not fetch it), `deferred` says the site took over the install prompt
-   * (`beforeinstallprompt` was cancelled) and `prompt` that it now wants the prompt shown.
+   * (`beforeinstallprompt` was cancelled) and `prompt` that it now wants the prompt shown;
+   * `badge` carries the app's badge from `navigator.setAppBadge` / `clearAppBadge` (MW-51).
    */
-  webapp?: 'manifest' | 'deferred' | 'prompt'
+  webapp?: 'manifest' | 'deferred' | 'prompt' | 'badge'
   manifestUrl?: string
   manifest?: RawWebAppManifest | null
+  /**
+   * `webapp: 'badge'`: the badge as the page script posted it – a count, a flag or null for a
+   * cleared badge (`shared/appBadge`'s `AppBadge`); the core checks the shape (`appBadgeOf`)
+   * before it keeps anything.
+   */
+  badge?: unknown
   /** `reader`: the changed keys, as the page sent them (the core validates them). */
   reader?: unknown
   /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */

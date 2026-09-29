@@ -21,6 +21,7 @@ const {
   dismissHintBubble,
   forgetHintBubble,
   HINT_BUBBLE_EXIT_MS,
+  hintBubbleEdge,
   hintBubbleStore,
   hintBubbleUp,
   IPH_ARM_DELAY_MS,
@@ -42,7 +43,7 @@ const NOW = 1_800_000_000_000
 const settings = (
   tabSwitcher: Partial<{ availableAt: number | null; shown: boolean }> = {},
   onboardingDone = true
-): { onboardingDone: boolean; iph: typeof DEFAULT_IPH_STATE } => ({
+): { onboardingDone: boolean; iph: Pick<typeof DEFAULT_IPH_STATE, 'tabSwitcher'> } => ({
   onboardingDone,
   iph: { tabSwitcher: { availableAt: NOW - 15 * DAY, shown: false, ...tabSwitcher } }
 })
@@ -245,6 +246,6 @@ describe('the bubble on screen', () => {
     expect(hintBubbleStore.get()).toEqual({ bubble: null, leaving: false })
     showHintBubble({ ...BUBBLE, edge: 'top' })
     vi.advanceTimersByTime(HINT_BUBBLE_EXIT_MS)
-    expect(hintBubbleStore.get().bubble?.edge).toBe('top')
+    expect(hintBubbleEdge(hintBubbleStore.get().bubble)).toBe('top')
   })
 })
