@@ -37,10 +37,11 @@ export interface ExtensionRecord {
    * When `enabled` / `toolbarPinned` were last written on this device (ms) – each switch's own
    * clock for the sync merge (ID-44): a peer's record lands a switch only when its clock for
    * that switch is the later one, so one device's pin and another's disable both survive. Set
-   * by the desktop host at install and on every flip; absent on a record from before the
-   * clocks and on a host that keeps none (the phone), where such a switch reads as written at
-   * the record's own time. Never written by the shared `newRecord`, so a host without clocks
-   * does not stamp a stale install time over a peer's later flip.
+   * by the desktop host at install and on every flip, by the phone's on every flip made there
+   * (`AndroidExtensions.setEnabled` / `setToolbarPinned`; its install writes none); absent on a
+   * record from before the clocks and on a switch a host never flipped, which the merge reads
+   * as written at 0 – older than any clocked switch (`syncedExtensionData`). Never written by
+   * the shared `newRecord`, so an install stamps no clock over a peer's later flip.
    */
   enabledAt?: number
   toolbarPinnedAt?: number
@@ -443,7 +444,7 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
   // an enabled record cannot be waiting, whatever a hand-edited registry says.
   if (r.pendingApproval === true && !record.enabled) record.pendingApproval = true
   // The switches' clocks (ID-44): kept when they are times, left out otherwise, so a record from
-  // before the clocks keeps reading its switches as written at the record's own time.
+  // before the clocks keeps reading its switches as never clocked (0 to the merge).
   const enabledAt = clock(r.enabledAt)
   if (enabledAt !== undefined) record.enabledAt = enabledAt
   const toolbarPinnedAt = clock(r.toolbarPinnedAt)

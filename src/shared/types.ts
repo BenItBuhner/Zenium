@@ -1086,8 +1086,9 @@ export interface ExtensionInfo {
   /**
    * When `enabled` and `toolbarPinned` were last written on this device (ms), each switch's own
    * clock for the sync merge (ID-44: a peer's record lands a switch only when its clock for that
-   * switch is the later one). Absent on a record from before the clocks and on a host that
-   * keeps none (the phone): such a switch reads as written at the record's own time.
+   * switch is the later one). Written by every flip made on the device (the desktop's and the
+   * phone's alike); absent on a record from before the clocks and on a switch never flipped
+   * here, which the merge reads as written at 0 – older than any clocked switch.
    */
   enabledAt?: number
   toolbarPinnedAt?: number

@@ -25,9 +25,9 @@ import { extensionStoreOf, type SyncedExtensionData } from '../../core/sync/reco
  *   – the engine's re-delivery every round meets the back-off, not the store.
  * - An extension this device holds takes the record's switches through the ordinary paths
  *   (`setToolbarPinned`; `setEnabled`), SWITCH BY SWITCH under each switch's own clock
- *   (`ExtensionRecordData.enabledAt` / `toolbarPinnedAt`; an absent clock read as the
- *   record's `modified` by the engine, `syncedExtensionData`): a switch is taken from the
- *   record when the record's clock for it is not older than this device's – ties take the
+ *   (`ExtensionRecordData.enabledAt` / `toolbarPinnedAt`; an absent clock read as 0 by the
+ *   engine, `syncedExtensionData` – older than any switch a host wrote): a switch is taken from
+ *   the record when the record's clock for it is not older than this device's – ties take the
  *   record's, an equal value under a later clock adopts the clock alone – and kept otherwise,
  *   so one device's pin and another's disable both stand on both. The commit that lands a
  *   switch is this device's edit: the engine publishes the merged record under a fresh stamp,
@@ -296,6 +296,25 @@ export function syncedRemovalToast(name: string, from: string | null): string {
  */
 export function awaitsApproval(record: SyncedExtensionRecord): boolean {
   return record.pendingApproval === true || (record.pendingWarnings?.length ?? 0) > 0
+}
+
+/**
+ * The clock the Enabled switch is written under when a flip of it goes through
+ * (`ExtensionService.switchEnabled`): a synced record's flip carries the record's own clock
+ * (`at`); the user's flip (`at` null) takes the device's time when the flip COMPLETES – once
+ * the prompts it may raise (`prompts`: a synced landing's approval, an update's pending
+ * permission warnings) are answered – never the click's. A peer's flip that landed while the
+ * prompt stood open wrote a later clock than the click's; stamped at the click, the approval
+ * the user then gave would read as the older write and lose the merge (ID-44). Null when a
+ * prompt was declined: nothing is written.
+ */
+export async function flipClock(
+  at: number | null,
+  prompts: () => Promise<boolean>,
+  now: () => number = Date.now
+): Promise<number | null> {
+  if (!(await prompts())) return null
+  return at ?? now()
 }
 
 /**

@@ -119,6 +119,7 @@ import { popupKey } from './extensionPopupKeys'
 import {
   ExtensionSyncApplier,
   approvalPrompt,
+  flipClock,
   syncedRemovalToast,
   type SyncedExtensionRecord
 } from './extensionSync'
@@ -1138,64 +1139,71 @@ export class ExtensionService implements ExtensionHost {
   async setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void> {
     const record = this.record(id)
     if (!record || record.enabled === enabled) return
-    await this.switchEnabled(id, enabled, Date.now(), win)
+    await this.switchEnabled(id, enabled, null, win)
   }
 
   /**
-   * The Enabled switch written under a clock (ID-44): the user's flip at its time
-   * (`setEnabled`), or a synced record's under the record's clock for the switch – the merge
-   * (`ExtensionSyncApplier.applyOne`) calls this only when that clock is not older than the
-   * one here. An equal value under a later clock takes the clock alone – no load or unload, no
-   * registry event – so the two devices' records hash the same afterwards and neither
-   * re-publishes the other's state as its own edit.
+   * The Enabled switch written under a clock (ID-44): the user's flip (`setEnabled`, `at` null)
+   * at the time the flip COMPLETES – after the prompts it may raise are answered, never the
+   * click's (`flipClock`: a peer's flip landing while the prompt stood open must not outrank
+   * the approval the user then gave) – or a synced record's under the record's clock for the
+   * switch – the merge (`ExtensionSyncApplier.applyOne`) calls this only when that clock is not
+   * older than the one here. An equal value under a later clock takes the clock alone – no load
+   * or unload, no registry event – so the two devices' records hash the same afterwards and
+   * neither re-publishes the other's state as its own edit.
    */
   private async switchEnabled(
     id: string,
     enabled: boolean,
-    at: number,
+    at: number | null,
     win?: ZenWindow
   ): Promise<void> {
     const record = this.record(id)
     if (!record) return
     if (record.enabled === enabled) {
-      if (record.enabledAt !== undefined && at <= record.enabledAt) return
-      record.enabledAt = at
+      const clock = at ?? Date.now()
+      if (record.enabledAt !== undefined && clock <= record.enabledAt) return
+      record.enabledAt = clock
       this.persist()
       this.browser.state.commitVolatile()
       return
     }
-    if (enabled && record.pendingApproval) {
-      // A synced landing (ID-44): the install prompt an install made here would have shown –
-      // the extension's name, its icon, every permission warning of its manifest, the store it
-      // came from – before it runs for the first time. Declined, it stays off and waiting.
-      const manifest = readManifest(record.path)
-      const ok = await this.confirmInstall(
-        approvalPrompt(
-          record,
-          permissionWarningLines(manifest ?? {}, warningPlatform()),
-          this.icon(record.path, record.version, manifest)
-        ),
-        win
-      )
-      if (!ok) return
-      delete record.pendingApproval
-    }
-    if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
-      const ok = await this.confirmInstall(
-        {
-          kind: 'permissions',
-          name: record.name,
-          icon: this.icon(record.path, record.version, readManifest(record.path)),
-          warnings: record.pendingWarnings,
-          source: record.source
-        },
-        win
-      )
-      if (!ok) return
-      record.pendingWarnings = null
-    }
+    const clock = await flipClock(at, async () => {
+      if (enabled && record.pendingApproval) {
+        // A synced landing (ID-44): the install prompt an install made here would have shown –
+        // the extension's name, its icon, every permission warning of its manifest, the store
+        // it came from – before it runs for the first time. Declined, it stays off and waiting.
+        const manifest = readManifest(record.path)
+        const ok = await this.confirmInstall(
+          approvalPrompt(
+            record,
+            permissionWarningLines(manifest ?? {}, warningPlatform()),
+            this.icon(record.path, record.version, manifest)
+          ),
+          win
+        )
+        if (!ok) return false
+        delete record.pendingApproval
+      }
+      if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
+        const ok = await this.confirmInstall(
+          {
+            kind: 'permissions',
+            name: record.name,
+            icon: this.icon(record.path, record.version, readManifest(record.path)),
+            warnings: record.pendingWarnings,
+            source: record.source
+          },
+          win
+        )
+        if (!ok) return false
+        record.pendingWarnings = null
+      }
+      return true
+    })
+    if (clock === null) return
     record.enabled = enabled
-    record.enabledAt = at
+    record.enabledAt = clock
     if (enabled) await this.load(record)
     else {
       if (this.popup?.id === record.id) this.closePopup()
