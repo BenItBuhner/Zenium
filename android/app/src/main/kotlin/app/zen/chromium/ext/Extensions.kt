@@ -1931,10 +1931,10 @@ class Extensions(private val host: Host) {
             // else of an unserved extension (a frame, a resource) is simply not there.
             // (A tab's document on an unserved origin is HeldPages' matter, not the record's: the
             // hold's release asks the intercept again, and that answer is recorded.)
-            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else recorded(id, request, null, notFound(), ServedRecord.UNSERVED)
+            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else recorded(id, request, null, notFound(NetErrorAnswer.BLOCKED), ServedRecord.UNSERVED)
             // Chrome does not load a chrome-extension:// URL in incognito for an extension not allowed there.
             if (tab?.isPrivateTab == true && !ext.allowPrivate) {
-                return recorded(id, request, null, if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound(), ServedRecord.PRIVATE)
+                return recorded(id, request, null, if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound(NetErrorAnswer.BLOCKED), ServedRecord.PRIVATE)
             }
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
@@ -1955,7 +1955,7 @@ class Extensions(private val host: Host) {
             // document resolves here, ExtensionPageNavigation) gets the web-accessible resources
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
-            if (foreign && !ext.webAccessible.any { it.matches(path) }) return recorded(id, request, true, notFound(), ServedRecord.NOT_WEB_ACCESSIBLE)
+            if (foreign && !ext.webAccessible.any { it.matches(path) }) return recorded(id, request, true, notFound(NetErrorAnswer.BLOCKED), ServedRecord.NOT_WEB_ACCESSIBLE)
             // A web-accessible document going into a frame of the tab's page: its own requests follow.
             if (foreign && tab != null && !request.isForMainFrame && document) frames.framed(tab, id)
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
@@ -2250,8 +2250,9 @@ class Extensions(private val host: Host) {
             val html = ext.backgroundHtml ?: return notFound()
             return response("text/html", 200, "OK", html.toByteArray())
         }
-        val file = fileIn(ext.dir, path) ?: return notFound()
-        if (!file.isFile) return notFound()
+        // A file the extension has not is Chrome's `ERR_FILE_NOT_FOUND`: no response, a network error.
+        val file = fileIn(ext.dir, path) ?: return notFound(NetErrorAnswer.FILE_NOT_FOUND)
+        if (!file.isFile) return notFound(NetErrorAnswer.FILE_NOT_FOUND)
         val mime = ExtensionScripts.mimeType(path)
         if (moduleChromeFor != null && chunkStubUrl != null &&
             (ExtensionScripts.isWebpackChunk(ExtensionFiles.head(file, ExtensionScripts.WEBPACK_CHUNK_HEAD)) || ExtensionScripts.isScriptShapedModule(file))
@@ -2262,7 +2263,7 @@ class Extensions(private val host: Host) {
         // (`ExtensionLocalizationThrottle`): read whole, its placeholders substituted, whatever
         // linked it. Anything else streams from disk.
         if (mime == "text/css" && ext.cssMessages.isNotEmpty() && file.length() <= ExtensionFiles.LOCALIZED_CSS_LIMIT) {
-            val text = runCatching { file.readText() }.getOrNull() ?: return notFound()
+            val text = runCatching { file.readText() }.getOrNull() ?: return notFound(NetErrorAnswer.FILE_NOT_FOUND)
             return response(mime, 200, "OK", ExtensionFiles.localizeCss(text, ext.cssMessages).toByteArray())
         }
         // Streamed from disk, the module bracket on either side (ExtensionFiles.servedBody); the
@@ -2272,7 +2273,7 @@ class Extensions(private val host: Host) {
             file,
             moduleChromeFor?.let { ExtensionScripts.moduleChromeOpen(it, ExtensionFiles.head(file, ExtensionScripts.MODULE_SCAN_HEAD)) },
             moduleChromeFor?.let(ExtensionScripts::moduleChromeClose)
-        ) ?: return notFound()
+        ) ?: return notFound(NetErrorAnswer.FILE_NOT_FOUND)
         return response(mime, 200, "OK", body.stream, body.length)
     }
 
@@ -2287,7 +2288,17 @@ class Extensions(private val host: Host) {
         return WebResourceResponse(mime, if (mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json")) "utf-8" else null, status, reason, headers, body)
     }
 
-    private fun notFound() = response("text/plain", 404, "Not Found", ByteArray(0))
+    /**
+     * Not Found; with [netError] (a [NetErrorAnswer] code) the refusal Chrome gives as a network
+     * error, which the extension page's `fetch` rejects (`extensionCorsProxy.ts`).
+     */
+    private fun notFound(netError: String? = null) = response(
+        "text/plain",
+        404,
+        "Not Found",
+        ByteArray(0),
+        if (netError == null) emptyMap() else NetErrorAnswer.headers(netError)
+    )
 
     /**
      * A tab's document on the origin of an extension that is not served (network thread). While
