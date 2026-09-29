@@ -35,6 +35,9 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
   const status = state.blocking
   const setB = (patch: Partial<BlockingSettings>): void => set({ blocking: { ...b, ...patch } })
   const active = status.enabled && b.level !== 'off'
+  // The private-browsing noun follows the host, through the same read the cookies twin uses:
+  // windows on the desktop, tabs on Android (phone and tablet alike – `platform.ts` says so).
+  const windows = state.capabilities.windows
   const defaults = status.lists.filter((l) => l.tier !== null)
   const custom = status.lists.filter((l) => l.tier === null)
   const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
@@ -73,12 +76,21 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
       {
         // The Level row's dependent (§10.4; the cookies block's private-tabs switch is its twin):
         // moot – at .4, `aria-disabled`, still laid out and read – while blocking is off or the
-        // level above is already Strict; never hidden. The same row on every layout.
+        // level above is already Strict; never hidden. The same row on every layout; only the
+        // noun follows the host, as the twin's does.
         kind: 'switch',
         id: 'tracking-level-private',
-        label: 'Always use Strict in private windows',
-        description: 'Whatever the level above, private windows block at Strict.',
-        keywords: ['private windows', 'strict', 'tracking prevention level'],
+        label: windows
+          ? 'Always use Strict in private windows'
+          : 'Always use Strict in private tabs',
+        description: windows
+          ? 'Whatever the level above, private windows block at Strict.'
+          : 'Whatever the level above, private tabs block at Strict.',
+        keywords: [
+          windows ? 'private windows' : 'private tabs',
+          'strict',
+          'tracking prevention level'
+        ],
         disabled: !status.enabled || b.level === 'strict',
         checked: b.levelPrivate === 'strict',
         onChange: (on) => setB({ levelPrivate: on ? 'strict' : 'default' })

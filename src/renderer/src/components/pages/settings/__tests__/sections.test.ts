@@ -5421,31 +5421,60 @@ describe('what a row does', () => {
     expect(row(off, 'tracking-blocked').description).toBe('Filter lists are loading')
   })
 
-  it('PS-49: “Always use Strict in private windows” follows the Level row as its dependent on every layout', () => {
+  it('PS-49: “Always use Strict in private windows” (private tabs on Android) follows the Level row as its dependent on every layout', () => {
     const def = PAGE.sections.find((x) => x.id === 'privacy')!
     const withLevel = (
       level: TrackingLevel,
       levelPrivate: TrackingLevelPrivateMode = 'default',
-      enabled = true
+      enabled = true,
+      host: Partial<UIState> = {}
     ): UIState =>
       state(
-        { blocking: { ...emptyBlockingStatus(), ready: true, enabled } },
+        { blocking: { ...emptyBlockingStatus(), ready: true, enabled }, ...host },
         { blocking: { ...DEFAULT_BLOCKING_SETTINGS, level, levelPrivate } }
       )
-    // Directly after the Level row in the Tracking prevention group, by name, on the three layouts.
-    for (const formFactor of ['phone', 'tablet', 'desktop'] as const) {
-      const privacy = buildSection(def, { ...context(withLevel('balanced')).ctx, formFactor })
+    // Directly after the Level row in the Tracking prevention group, by name, on the three
+    // layouts. The noun follows the host through the same `capabilities.windows` read the cookies
+    // twin uses: windows on the desktop; tabs on Android – the phone and the tablet alike, since
+    // `src/android/platform.ts` sets `windows: false` for all of Android. Both pairs verbatim.
+    const WINDOWS = {
+      label: 'Always use Strict in private windows',
+      description: 'Whatever the level above, private windows block at Strict.',
+      keywords: ['private windows', 'strict', 'tracking prevention level'],
+      twin: 'Only in private windows'
+    }
+    const TABS = {
+      label: 'Always use Strict in private tabs',
+      description: 'Whatever the level above, private tabs block at Strict.',
+      keywords: ['private tabs', 'strict', 'tracking prevention level'],
+      twin: 'Only in private tabs'
+    }
+    const desktop: Partial<UIState> = {
+      platform: 'linux',
+      capabilities: { ...ANDROID, windows: true }
+    }
+    const chassis = [
+      { name: 'desktop', formFactor: 'desktop', host: desktop, words: WINDOWS },
+      { name: 'tablet', formFactor: 'tablet', host: {}, words: TABS },
+      { name: 'phone', formFactor: 'phone', host: {}, words: TABS }
+    ] as const
+    for (const { name, formFactor, host, words } of chassis) {
+      const privacy = buildSection(def, {
+        ...context(withLevel('balanced', 'default', true, host)).ctx,
+        formFactor
+      })
       const ids = privacy.groups.find((g) => g.id === 'tracking-prevention')!.rows.map((r) => r.id)
-      expect(ids.indexOf('tracking-level-private'), formFactor).toBe(
-        ids.indexOf('tracking-level') + 1
-      )
-      expect(row(privacy, 'tracking-level-private'), formFactor).toMatchObject({
+      expect(ids.indexOf('tracking-level-private'), name).toBe(ids.indexOf('tracking-level') + 1)
+      expect(row(privacy, 'tracking-level-private'), name).toMatchObject({
         kind: 'switch',
-        label: 'Always use Strict in private windows',
-        description: 'Whatever the level above, private windows block at Strict.',
+        label: words.label,
+        description: words.description,
+        keywords: words.keywords,
         checked: false,
         disabled: false
       })
+      // The cookies twin on the same chassis speaks the same noun.
+      expect(row(privacy, 'site-data-private-only').label, name).toBe(words.twin)
     }
     // Moot – at .4, still laid out and read – while blocking is off or the level above is already
     // Strict; live at every other level, Off included (private windows then block at Strict alone).
