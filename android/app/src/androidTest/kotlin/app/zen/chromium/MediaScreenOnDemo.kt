@@ -37,7 +37,8 @@ import java.util.concurrent.TimeUnit
  * screen still interactive after 22 s; paused – the screen goes off; a track alone – off (Chrome
  * takes no display lock for audio); a tab switch, fullscreen, Home and a close of the playing
  * tab – where the flag goes each time (the tab view's, the fullscreen view's, the window's as
- * `dumpsys window` reports it, the `WindowManager` lock as `dumpsys power` lists it).
+ * `dumpsys window` reports it, the window manager's hold-screen lock as `dumpsys power` lists
+ * it – `WindowManager/displayId:0` on Android 14, its work source the app).
  * OS-14 rides along as facts in the warm-up: the tab view's `isAutoHandwritingEnabled` (the
  * framework's default is true; WebView's own `AndroidStylusWritingHandler` sets it false on a
  * T+ device whose default IME supports handwriting and starts handwriting itself), the global
@@ -137,7 +138,8 @@ class MediaScreenOnDemo : MediaDemoBase("w6-s25c-media-screen-on") {
         val held = poll(6_000) { viewKeepsScreenOn() == true }
         note("  playing: ${screenState()}")
         check("1: playing, the engine sets keepScreenOn on the tab's WebView (PowerSaveBlocker.applyBlock on the container view)", held)
-        check("1: the window manager sees the flag on the app's window and holds its WindowManager wake lock", windowHolds() && wmLockHeld())
+        check("1: the window manager sees the flag on the app's window and holds its WindowManager wake lock", poll(4_000) { windowHolds() && wmLockHeld() })
+        note("  wake lock: ${wmLockLine() ?: "none"}")
         shot("01-inline-playing")
         idle(22_000)
         note("  22 s idle while playing: ${screenState()}; page ${title()}")
@@ -183,11 +185,13 @@ class MediaScreenOnDemo : MediaDemoBase("w6-s25c-media-screen-on") {
         play()
         poll(6_000) { viewKeepsScreenOn() == true }
         check("4: playing again, the hold is back", viewKeepsScreenOn() == true && windowHolds())
+        val switchedAt = SystemClock.uptimeMillis()
         val other = createTab(BLANK)
         val dropped = poll(8_000) { !windowHolds() }
-        note("  other tab active ($other): tab view visibility=${viewVisibility()} keepScreenOn=${viewKeepsScreenOn()}; ${screenState()}; page ${title()}")
+        note("  other tab active ($other): tab view visibility=${viewVisibility()} keepScreenOn=${viewKeepsScreenOn()} (read ${SystemClock.uptimeMillis() - switchedAt} ms after the switch); ${screenState()}; page ${title()}")
         check("4: with the tab's view gone from the screen, the window's KEEP_SCREEN_ON drops (the framework collects the flag from visible views only)", dropped)
-        check("4: and the WindowManager lock with it", !wmLockHeld())
+        note("  fact: ${engineReleaseTiming(switchedAt)}")
+        check("4: and the WindowManager lock with it", poll(4_000) { !wmLockHeld() })
         coreInvoke("tab.activate", """{"tabId":${JSONObject.quote(TAB)}}""")
         poll(6_000) { viewVisibility() == "VISIBLE" }
         if (other != null) coreInvoke("tab.close", """{"tabId":${JSONObject.quote(other)}}""")
@@ -204,12 +208,19 @@ class MediaScreenOnDemo : MediaDemoBase("w6-s25c-media-screen-on") {
         SystemClock.sleep(2_000)
         val fullscreenView = fullscreenKeepsScreenOn()
         note("  fullscreen: fullscreen view keepScreenOn=$fullscreenView tab view keepScreenOn=${viewKeepsScreenOn()}; ${screenState()}")
-        check("5: fullscreen, a view in the window holds the screen (the engine moves the hold to its fullscreen view) and the window manager sees it", (fullscreenView == true || viewKeepsScreenOn() == true) && windowHolds() && wmLockHeld())
+        check("5: fullscreen, a view in the window holds the screen (the tab's view, still VISIBLE under the fullscreen layer, or the fullscreen view) and the window manager sees it", (fullscreenView == true || viewKeepsScreenOn() == true) && poll(4_000) { windowHolds() && wmLockHeld() })
         shot("05-fullscreen")
         back()
         val left = poll(8_000) { field("fs") == "0" }
-        note("  Back: fullscreen left=$left; ${screenState()}; state ${field("state")}")
-        if (!left) coreInvoke("tab.reload", """{"tabId":${JSONObject.quote(TAB)}}""")
+        note("  Back (the harness's global back action): fullscreen left=$left; ${screenState()}; state ${field("state")}")
+        if (!left) {
+            pageJs("document.exitFullscreen&&document.exitFullscreen()")
+            val leftByPage = poll(8_000) { field("fs") == "0" }
+            note("  the page's own exitFullscreen(): left=$leftByPage; ${screenState()}; state ${field("state")}")
+            if (!leftByPage) coreInvoke("tab.reload", """{"tabId":${JSONObject.quote(TAB)}}""")
+        }
+        SystemClock.sleep(1_500)
+        note("  after fullscreen: fullscreen view keepScreenOn=${fullscreenKeepsScreenOn()} ${screenState()}; state ${field("state")}")
     }
 
     private fun homeReleasesTheLock() {
@@ -296,7 +307,7 @@ class MediaScreenOnDemo : MediaDemoBase("w6-s25c-media-screen-on") {
         val files = fields["files"]?.toIntOrNull() ?: 0
         val magic = fields["magic"] ?: "-"
         val type = fields["type"] ?: "-"
-        note("  FACT  PUI-38 ($what): clipboardData.types=${fields["types"]} items=${fields["items"]} files=$files file name=${fields["name"]} type=$type size=${fields["size"]} bytes=$magic; editor inserted ${fields["ce"]}; text/plain=${fields["text"]}")
+        note("  FACT  PUI-38 ($what): clipboardData.types=${fields["types"]} items=${fields["items"]} files=$files file name=${fields["name"]} type=$type size=${fields["size"]} bytes=$magic; editor inserted ${fields["ce"]}; text/plain=${fields["text"]}; getData('image-uri')=${fields["uri"]}")
         check("8: the paste of $what arrives in clipboardData.files as an image File", files >= 1 && type.startsWith("image~"))
         when (what) {
             "a JPEG" -> {
@@ -567,19 +578,31 @@ class MediaScreenOnDemo : MediaDemoBase("w6-s25c-media-screen-on") {
         return flags?.contains("KEEP_SCREEN_ON") == true
     }
 
-    /** The `WindowManager` wake lock in `dumpsys power` naming the app's uid, or none. */
+    /**
+     * The window manager's hold-screen wake lock in `dumpsys power` with the app's uid in its
+     * work source, or none. Android 14 holds one per display, tagged `WindowManager/displayId:N`
+     * (`DisplayContent.mHoldScreenWakeLock`), its work source the holding window's uid and
+     * package; older releases one, tagged `WindowManager`.
+     */
     private fun wmLockLine(): String? {
         val dump = shell("dumpsys power")
         val uid = app.applicationInfo.uid.toString()
-        return dump.lines().map { it.trim() }.firstOrNull { it.contains("'WindowManager'") && it.substringAfter("ws=", "").contains(uid) }
+        return dump.lines().map { it.trim() }.firstOrNull { it.contains("'WindowManager") && it.substringAfter("ws=", "").contains(uid) }
     }
 
     private fun wmLockHeld(): Boolean = wmLockLine() != null
 
     private fun powerSummary(): String {
         val dump = shell("dumpsys power")
-        val hold = dump.lines().map { it.trim() }.filter { it.startsWith("mHoldingDisplaySuspendBlocker") || it.startsWith("mWakefulness=") || it.startsWith("mStayOn=") || it.contains("'WindowManager'") }
+        val hold = dump.lines().map { it.trim() }.filter { it.startsWith("mHoldingDisplaySuspendBlocker") || it.startsWith("mWakefulness=") || it.startsWith("mStayOn=") || it.contains("'WindowManager") }
         return hold.joinToString("; ").ifEmpty { "dumpsys power: no matching lines" }
+    }
+
+    /** How long until the engine's own release lands on the tab view's flag after `since` (uptime ms), as a note. */
+    private fun engineReleaseTiming(since: Long, tab: String = TAB): String {
+        val released = poll(6_000) { viewKeepsScreenOn(tab) != true }
+        val took = SystemClock.uptimeMillis() - since
+        return if (released) "the engine's own release (PowerSaveBlocker.removeBlock on the hidden WebContents) landed on the view's flag ${took} ms after the switch" else "the view's flag was still set ${took} ms after the switch (the engine's release did not land within the wait)"
     }
 
     private fun screenState(): String =

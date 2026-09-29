@@ -22,12 +22,12 @@
 (function () {
   // The page's word on every paste it hears, in its title (the driver reads the core's title):
   // PP|pastes:N|target:id|types:a+b|items:kind~type+..|files:N|name:..|type:..|size:N|magic:png|ce:img-data|fileinput:N|text:..
-  var state = { pastes: 0, target: '-', types: '-', items: '-', files: 0, name: '-', type: '-', size: 0, magic: '-', ce: 'none', fileinput: 0, text: '-' };
+  var state = { pastes: 0, target: '-', types: '-', items: '-', files: 0, name: '-', type: '-', size: 0, magic: '-', ce: 'none', fileinput: 0, text: '-', uri: '-' };
   function esc(s) { return String(s).replace(/[|:]/g, '_').replace(/\//g, '~'); }
   function render() {
     document.title = 'PP|pastes:' + state.pastes + '|target:' + state.target + '|types:' + state.types + '|items:' + state.items +
       '|files:' + state.files + '|name:' + state.name + '|type:' + state.type + '|size:' + state.size + '|magic:' + state.magic +
-      '|ce:' + state.ce + '|fileinput:' + state.fileinput + '|text:' + state.text;
+      '|ce:' + state.ce + '|fileinput:' + state.fileinput + '|text:' + state.text + '|uri:' + state.uri;
     document.getElementById('log').textContent = document.title;
   }
   function magic(buffer) {
@@ -58,6 +58,9 @@
     state.files = d ? d.files.length : 0;
     var t = d ? d.getData('text/plain') : '';
     state.text = t ? esc(encodeURIComponent(t).slice(0, 60)) : '-';
+    // Chromium on Android lists the clipboard's image as a string item typed "image-uri" too.
+    var u = d ? d.getData('image-uri') : '';
+    state.uri = u ? esc(encodeURIComponent(u).slice(0, 80)) : '-';
     state.name = '-'; state.type = '-'; state.size = 0; state.magic = '-';
     if (d && d.files.length) {
       var f = d.files[0];
