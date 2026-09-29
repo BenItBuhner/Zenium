@@ -1,5 +1,5 @@
 import type { ExtensionPackage } from '../../core/extensions/install'
-import { storeLabel } from '../../core/extensions/hostStore'
+import { storeLabel, type InstallConfirmation } from '../../core/extensions/hostStore'
 import type { ExtensionRecord } from '../../core/extensions/registry'
 import type { StoreId } from '../../core/extensions/store'
 import type { SyncedExtensionChange } from '../../core/platform'
@@ -203,6 +203,21 @@ export function syncedRemovalToast(name: string, from: string | null): string {
  */
 export function awaitsApproval(record: SyncedExtensionRecord): boolean {
   return record.pendingApproval === true || (record.pendingWarnings?.length ?? 0) > 0
+}
+
+/**
+ * The prompt a synced landing's first enable shows (`ExtensionService.setEnabled`): the install
+ * prompt an install made here would have shown – `kind: 'install'`, the extension's name and
+ * icon, every permission warning of its manifest (`permissionWarningLines`), the store it came
+ * from – before the extension runs for the first time. Declined, the extension stays off and
+ * waiting; accepted, `pendingApproval` is cleared and the ordinary enable follows.
+ */
+export function approvalPrompt(
+  record: Pick<ExtensionRecord, 'name' | 'source'>,
+  warnings: string[],
+  icon: string | null
+): InstallConfirmation {
+  return { kind: 'install', name: record.name, icon, warnings, source: record.source }
 }
 
 function describeWait(ms: number): string {

@@ -117,6 +117,7 @@ import { ExtensionErrorConsole } from './extensionErrors'
 import { popupKey } from './extensionPopupKeys'
 import {
   ExtensionSyncApplier,
+  approvalPrompt,
   syncedRemovalToast,
   type SyncedExtensionRecord
 } from './extensionSync'
@@ -1078,13 +1079,11 @@ export class ExtensionService implements ExtensionHost {
       // came from – before it runs for the first time. Declined, it stays off and waiting.
       const manifest = readManifest(record.path)
       const ok = await this.confirmInstall(
-        {
-          kind: 'install',
-          name: record.name,
-          icon: this.icon(record.path, record.version, manifest),
-          warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
-          source: record.source
-        },
+        approvalPrompt(
+          record,
+          permissionWarningLines(manifest ?? {}, warningPlatform()),
+          this.icon(record.path, record.version, manifest)
+        ),
         win
       )
       if (!ok) return
