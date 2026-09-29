@@ -1819,12 +1819,14 @@ class Extensions(private val host: Host) {
                 runCatching { proxy.postMessage(reply) }
             }
         }
-        val uri = Uri.parse(url)
         val ext = served[extId]
-        val path = (uri.path ?: "/").trimStart('/')
+        // The file at the extension's origin, or at its page-origin alias – the spelling a
+        // content script's own `import()` asks with once the page's policy refused the origin
+        // (`extensionScriptRecovery.ts`); the alias is served from the same directory.
+        val path = ExtensionUrls.ownFile(url, extId)
         when {
             ext == null -> refuse("the extension is not attached")
-            uri.scheme != "https" || uri.host != "$extId$ORIGIN_SUFFIX" -> refuse("$url is not on the extension's origin")
+            path == null -> refuse("$url is not on the extension's origin")
             !isMainFrame -> refuse("a chunk runs in the content script's scope of a main frame only")
             !ext.webAccessible.any { it.matches(path) } -> refuse("$path is not a web-accessible resource")
             else -> io.execute {

@@ -81,6 +81,27 @@ import { pageAliasUrl, presentExtensionUrl } from '@core/extensions/runtime/exte
  * the page's policy cannot refuse. Only script files change spelling (a page, an image, a
  * fetch keep the served origin; a stylesheet has the `<link>` recovery), and only after the
  * refusal: a world whose page admits the served origin never sees the alias.
+ *
+ * A loader that awaits its own `import()` and goes on from there gets nothing from a retry
+ * beside its promise: Web Scrobbler's `main.js` sets `window.Connector`, awaits
+ * `import(runtime.getURL('connectors/youtube.js'))` – a web-accessible file of its own – and
+ * only then starts its observer; on m.youtube.com (`script-src 'self' https://…`) the promise
+ * rejected on both WebViews, the retry evaluated the connector for nobody, and the popup read
+ * "This website is not supported" (compat round 25, rank 640). Chrome judges a content
+ * script's `import()` of a `chrome-extension://` resource by the extension's policy, so it
+ * resolves there. A dynamic `import()` is syntax, not a function to wrap, so the host rewrites
+ * the keyword in a content script's files as they are copied into their unit
+ * (`RelativeImports`, the Kotlin side) to `__zenExtImport(` ({@link IMPORT_HELPER}), a binding
+ * of the extension's scope (the world's global, or the `with` scope's store) the bootstrap
+ * points here (`importModule`): the world's own `import()` first – a page without a policy,
+ * or one admitting the served origin, sees no difference, and a URL of no extension's is the
+ * native call's alone – and, when that rejects for an extension's URL, the alias imported
+ * once; its namespace is what the extension's `await` gets, its rejection (a nonce-only
+ * policy; no such web-accessible file) leaves the extension its own error, as Chrome leaves it
+ * one for a file its manifest never exposed. The refusal's `securitypolicyviolation` still
+ * fires and is ignored while the helper's own retry is pending; on the one-realm WebView the
+ * nonce path stays as it was for a page that refuses the alias too. `world: "MAIN"` scripts
+ * are not rewritten: their `import()` is the page's own in Chrome as well.
  */
 
 /** What the bootstrap lends the recovery: the attached extensions, the bridge and a file read. */
@@ -106,11 +127,20 @@ export interface ScriptRecoveryHost {
   pageOrigin?: string
   /**
    * The world's own dynamic `import()` (an isolated world's: the graph evaluates beside the
-   * content script's `chrome`); without it, or without `pageOrigin`, an isolated world's refusal
-   * is recorded and nothing is retried.
+   * content script's `chrome`; the bootstrap's own, on the one-realm WebView, for the content
+   * script's rewritten call); `options` is the call's second argument, when it had one.
+   * Without it, or without `pageOrigin`, an isolated world's refusal is recorded and nothing
+   * is retried.
    */
-  importModule?(url: string): Promise<unknown>
+  importModule?(url: string, options?: unknown): Promise<unknown>
 }
+
+/**
+ * The name a content script's dynamic `import(` is rewritten to as its file is copied into its
+ * unit (`RelativeImports.HELPER` on the host; the two must agree): a binding of the extension's
+ * scope the bootstrap points at `ScriptRecovery.importModule`.
+ */
+export const IMPORT_HELPER = '__zenExtImport'
 
 /** A `securitypolicyviolation` event, the little of it the recovery reads. */
 export interface ViolationEventLike {
@@ -158,6 +188,13 @@ export interface ScriptRecovery {
   onError(event: ErrorEventLike): void
   /** The window's capturing `securitypolicyviolation` listener: a refused module import. */
   onViolation(event: ViolationEventLike): void
+  /**
+   * A content script's own `import(specifier, options?)` (`__zenExtImport`, the rewritten
+   * keyword): the world's import of the specifier, and for an attached extension's URL the
+   * page's policy refused, the alias imported once in its place – the namespace the
+   * extension's `await` gets. Rejects as the world's import did when nothing else loads.
+   */
+  importModule(specifier: unknown, options?: unknown): Promise<unknown>
   /** The host's answer to `request`: `error` null when the file ran in the main world. */
   done(id: string, error: string | null): void
   /** Requests still waiting for the host, and module retries still loading (tests, diagnostics). */
@@ -288,6 +325,22 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
 
   /** The extensions whose refused graph this isolated world asked for from the alias (`aliasFor`). */
   const aliased = new Set<string>()
+
+  /** Served URLs a content script's own `import()` (`importModule`) has in flight: their refusal's violation is that call's to retry. */
+  const pending = new Set<string>()
+
+  /** The world's import, as a promise whatever the call did (a synchronous throw is a rejection). */
+  const worldImport = (
+    importModule: (url: string, options?: unknown) => Promise<unknown>,
+    url: string,
+    options: unknown
+  ): Promise<unknown> => {
+    try {
+      return Promise.resolve(options === undefined ? importModule(url) : importModule(url, options))
+    } catch (reason) {
+      return Promise.reject(reason)
+    }
+  }
 
   /**
    * The one-realm retry's element: a `<script type="module">` of the document at `src` (the
@@ -464,9 +517,51 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       // A `<script src>` of the document (the page's, or this retry's own): the element's `error`
       // is where that one is recovered or given up.
       if (host.document && inScripts(host.document, blocked)) return
+      // The content script's own call (`importModule`): its rejection is where the retry goes.
+      if (pending.has(blocked)) return
       if (retried.has(blocked)) return
       retried.add(blocked)
       retryModule(blocked)
+    },
+    async importModule(specifier, options) {
+      const importModule = host.importModule
+      if (!importModule) throw new TypeError('import() is not available in this world')
+      const url = String(specifier)
+      const extId = extensionFor(url)
+      if (extId === null) return worldImport(importModule, url, options)
+      pending.add(url)
+      try {
+        return await worldImport(importModule, url, options)
+      } catch (error) {
+        // The page's policy refused the served origin (or the file is not there: then the alias
+        // is not either, and the error stands). Asked for once from the page's own origin,
+        // which `'self'` or the page's host admits; the graph's own chunk imports then follow it
+        // there (`aliasFor`; on the one-realm WebView the host brackets the served text).
+        const alias = aliasOf(url)
+        if (alias !== null) {
+          try {
+            const namespace = await worldImport(importModule, alias, options)
+            retried.add(url)
+            aliased.add(extId)
+            return namespace
+          } catch (reason) {
+            // The alias refused too (a policy naming neither a nonce nor the page's origin), or
+            // nothing web-accessible is there: the extension gets its own error, this is the record.
+            ;(host.warn ?? host.error)(
+              `[Zenium] ${url} could not load past the page's policy from its page-origin alias ${alias} either; the content script's import() rejects: ${String(reason)}`
+            )
+          }
+        }
+        // Marked retried, so a violation event of this refusal arriving late is not retried
+        // again; the one-realm WebView's nonce path once, as the violation would have taken it
+        // (a graph that evaluates for a loader that never awaited it, Buyhatke's shape).
+        const first = !retried.has(url)
+        retried.add(url)
+        if (host.pageModules && first) retryModule(url)
+        throw error
+      } finally {
+        pending.delete(url)
+      }
     },
     done(id, error) {
       const entry = waiting.get(id)

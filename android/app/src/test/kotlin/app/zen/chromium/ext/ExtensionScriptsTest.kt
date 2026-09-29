@@ -244,11 +244,13 @@ class ExtensionScriptsTest {
         ExtensionScripts.documentStartTo(first, "", "{}", listOf(once), emptyMap(), false)
         assertTrue(first.contains("var t = 1"))
         assertTrue(runCatching { ExtensionScripts.documentStartTo(StringBuilder(), "", "{}", listOf(once), emptyMap(), false) }.isFailure)
-        // A relative import is rewritten on the way through the sink as it is through the builder.
+        // A relative import is rewritten on the way through the sink as it is through the builder:
+        // the specifier resolved and, for a content script's own call, the keyword to the helper.
         val edits = RelativeImports.edits("""import("./chunk.js");""", group.extensionId, "dir/cs.js")
         val rewritten = ExtensionScripts.Group(group.extensionId, 0, listOf(RelativeImports.source("""import("./chunk.js");""", edits, true)), "world")
         val viaSink = StringBuilder().also { ExtensionScripts.documentStartTo(it, "", "{}", listOf(rewritten), emptyMap(), false) }.toString()
-        assertTrue(viaSink.contains("""import("https://${group.extensionId}.ext.zenium.invalid/dir/chunk.js")"""))
+        assertTrue(viaSink.contains("""${RelativeImports.HELPER}("https://${group.extensionId}.ext.zenium.invalid/dir/chunk.js")"""))
+        assertFalse(viaSink.contains("""import("https://"""))
     }
 
     @Test

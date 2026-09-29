@@ -39,6 +39,7 @@ import { installModuleChrome } from './extensionModuleChrome'
 import { createChunkRelay, type ChunkRelay, type ChunkStats } from './extensionChunkRelay'
 import {
   createScriptRecovery,
+  IMPORT_HELPER,
   type ScriptRecovery,
   type ViolationEventLike
 } from './extensionScriptRecovery'
@@ -790,8 +791,12 @@ declare const __zenExtBoot: Boot
     // The page's own origin (an `about:blank` frame's is "null": no alias there).
     pageOrigin: location.origin,
     // The bundler leaves a computed specifier as the native `import()` (the bootstrap is a
-    // classic script; the world's `import()` is what the content script's own call was).
-    importModule: (url) => import(/* @vite-ignore */ url)
+    // classic script; the world's `import()` is what the content script's own call was, and
+    // the call's second argument rides along when it had one).
+    importModule: (url, options) =>
+      options === undefined
+        ? import(/* @vite-ignore */ url)
+        : import(/* @vite-ignore */ url, options as ImportCallOptions)
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
@@ -1067,6 +1072,14 @@ declare const __zenExtBoot: Boot
         (id, url) => chunks.claim(id, url)
       )
     }
+    // The content script's own dynamic `import()` – the keyword rewritten to this binding as
+    // its files went into the unit (`RelativeImports`, the host) – is the recovery's: the
+    // world's import, and the page-origin alias in its place when the page's policy refused
+    // the extension's URL, so the promise the script awaits resolves as Chrome's does
+    // (extensionScriptRecovery.ts). In the world's global or the scope's store, never on the
+    // page's window; a `world: "MAIN"` script keeps the native call and is never rewritten.
+    root[IMPORT_HELPER] = (specifier: unknown, options?: unknown): Promise<unknown> =>
+      recovery.importModule(specifier, options)
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
     const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null
     // The Web Speech API's synthesis in the content scripts' scope: Chrome's content script
