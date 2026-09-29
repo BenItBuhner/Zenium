@@ -1,0 +1,51 @@
+name: Android overview groups hint demo
+
+# Runs the drag-to-group hint bubble in the tab overview on a device, every act a finger's
+# (TB-19, W6-L2; Chrome 152's IPH_TabGroupsDragAndDrop dialog – "To group tabs, touch & hold a
+# tab. Then, drag it onto another tab." – as a §9.33 bubble, opened from the Zenium tips card):
+# a seeded profile of twelve loose tabs and no group with the tip module's memory standing eight
+# days past the theme tip and the default browser tip, so a fresh new tab page draws the stack
+# with the tab-groups tip alone (Chrome's title over Chrome's sentence, one filled Try it now);
+# Try it now opens the tab overview and at its rest the bubble stands on the page's own card –
+# the active tab's, the card the page morphed into – in §9.33's dress (320 wide, the accent fill
+# with the on-accent ink, no hairline, 15/400, role status) and §9.20's pose against the card
+# (flush at gap 0, start- or end-aligned by the card's half of the screen, 8 inside the frame),
+# the card wearing §9.23's halo and naming the bubble as its description for TalkBack, the
+# record (settings.iph.tabGroupsDragAndDrop) spent as it goes up, shot light and dark; a touch
+# anywhere takes it down (the finger on the bubble itself: nothing under it is picked, the
+# overview stays open, the halo and the description go with it); the gesture it teaches – a card
+# held and dragged onto its neighbour, the merge ring on the target, the two a group on release
+# with the dropped card right behind its target; and once and for all: the overview closed and
+# opened again by the bar's Tabs button shows no bubble. The driver (OverviewGroupsHintDemo)
+# writes its findings next to the recording; a claim that does not hold fails the run.
+# Dispatch-only, like the other demos: it takes about two minutes. The build, the emulator and
+# the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-L2): the branch's one run rides the push; removed in the branch's last commit,
+  # dispatch-only at head like the other demos.
+  push:
+    branches:
+      - cursor/android-overview-groups-hint-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-overview-groups-hint-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Overview groups hint demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OverviewGroupsHintDemo
+        DEMO_DIR=overview-groups-hint-demo
+        DEMO_OUT=artifacts/android-overview-groups-hint-demo
+        DEMO_VIDEO=android-overview-groups-hint-demo.mp4
+      artifact-name: android-overview-groups-hint-demo
+      artifact-path: artifacts/android-overview-groups-hint-demo/
