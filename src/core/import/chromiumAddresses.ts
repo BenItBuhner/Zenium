@@ -11,10 +11,14 @@ import type { ImportDatabase } from '../platform'
  *   `addresses` table (guid, use_count, use_date, date_modified, language_code, label,
  *   initial_creator_id, record_type) with every field of a profile as a (guid, type, value) row
  *   of `address_type_tokens`.
- * - `split` (schema 107–133): the same two-table layout twice – `local_addresses` +
- *   `local_addresses_type_tokens` for the profile's own addresses, `contact_info` +
- *   `contact_info_type_tokens` for the account's.
- * - `legacy` (before schema 113): `autofill_profiles` with the address as columns
+ * - `split` (schema 107–133): the same two-table layout per store – `contact_info` +
+ *   `contact_info_type_tokens` for the account's addresses
+ *   (`MigrateToVersion107AddContactInfoTables`) and, from schema 113, `local_addresses` +
+ *   `local_addresses_type_tokens` for the profile's own
+ *   (`MigrateToVersion113MigrateLocalAddressProfilesToNewTable`). Between 107 and 112 the
+ *   profile's own are still the legacy columns below, beside the account's pair; at 113 the
+ *   legacy tables linger, already copied, until `MigrateToVersion114DropLegacyAddressTables`.
+ * - `legacy` (before schema 107): `autofill_profiles` with the address as columns
  *   (company_name, street_address, city, state, zipcode, sorting_code, country_code) and the
  *   name, email and phone in `autofill_profile_names`, `autofill_profile_emails` and
  *   `autofill_profile_phones`, one row per guid.
@@ -84,7 +88,11 @@ export interface ImportedAddresses {
   schema: ChromiumAddressSchema
 }
 
-/** Which shape the database has, by the tables present; null when none of the three is there. */
+/**
+ * Which shape the database has, by the tables present; null when none of the three is there.
+ * Either token pair makes `split` – between schema 107 and 112 only the account's is there, the
+ * profile's own addresses still in the legacy tables beside it.
+ */
 export function detectChromiumAddressSchema(db: ImportDatabase): ChromiumAddressSchema | null {
   const tables = tableNames(db)
   const both = (pair: { rows: string; tokens: string }): boolean =>
@@ -112,9 +120,19 @@ export function chromiumAddresses(db: ImportDatabase): ImportedAddresses {
     for (const address of tokenAddresses(db, CHROMIUM_ADDRESS_TABLES.unified, true)) take(address)
   } else if (schema === 'split') {
     const tables = tableNames(db)
-    for (const pair of [CHROMIUM_ADDRESS_TABLES.local, CHROMIUM_ADDRESS_TABLES.account]) {
-      if (!tables.has(pair.rows) || !tables.has(pair.tokens)) continue
-      for (const address of tokenAddresses(db, pair, false)) take(address)
+    const has = (pair: { rows: string; tokens: string }): boolean =>
+      tables.has(pair.rows) && tables.has(pair.tokens)
+    // The profile's own addresses first: `local_addresses` from schema 113; before it, the legacy
+    // columns beside the account's pair. At 113 both are there and the legacy rows are the copies
+    // the migration made, so they are read through the new pair alone.
+    if (has(CHROMIUM_ADDRESS_TABLES.local)) {
+      for (const address of tokenAddresses(db, CHROMIUM_ADDRESS_TABLES.local, false)) take(address)
+    } else if (tables.has(CHROMIUM_ADDRESS_TABLES.legacy.rows)) {
+      for (const address of legacyAddresses(db)) take(address)
+    }
+    if (has(CHROMIUM_ADDRESS_TABLES.account)) {
+      for (const address of tokenAddresses(db, CHROMIUM_ADDRESS_TABLES.account, false))
+        take(address)
     }
   } else {
     for (const address of legacyAddresses(db)) take(address)

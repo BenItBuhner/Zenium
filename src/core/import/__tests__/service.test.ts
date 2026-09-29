@@ -260,9 +260,10 @@ async function seedChrome(
             ADDRESS_HOME_COUNTRY: 'US'
           }
         },
+        // The account's (kAccount): kept apart from the profile's own in the split shapes.
         {
           guid: '0b1c2d3e-0000-4000-8000-000000000003',
-          recordType: 0,
+          recordType: 1,
           fields: {
             NAME_FIRST: 'Ada',
             NAME_LAST: 'Lovelace',
@@ -727,7 +728,7 @@ describe('ImportService: browser profiles', () => {
     expect(h.vault.unlocked).toBe(true)
   })
 
-  it.each<ChromiumAddressShape>(['unified', 'split', 'legacy'])(
+  it.each<ChromiumAddressShape>(['unified', 'split', 'transitional', 'legacy'])(
     'imports Chrome’s saved addresses (%s Web Data) into the vault from a temp copy, one per place, the vault’s own left alone (ID-57)',
     async (shape) => {
       const h = harness()

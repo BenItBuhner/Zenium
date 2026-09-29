@@ -8,6 +8,7 @@ import {
   detectChromiumAddressSchema
 } from '../chromiumAddresses'
 import {
+  chromiumLegacyAddressTables,
   chromiumWebDataSchema,
   insertChromiumAddresses,
   memoryDatabase,
@@ -16,11 +17,12 @@ import {
 } from './helpers'
 
 /*
- * `Web Data`'s saved addresses (ID-57) in the three shapes Chromium has kept them in: the
- * unified `addresses` + `address_type_tokens` of today's Chrome, the split local/account pairs
- * before it, the `autofill_profiles*` columns of old. Each reads to the same vault inputs; the
- * account's name-and-email record is no address; a shape the reader does not know is refused,
- * not read as empty.
+ * `Web Data`'s saved addresses (ID-57) in the shapes Chromium has kept them in: the unified
+ * `addresses` + `address_type_tokens` of today's Chrome, the split local/account pairs before
+ * it (with the 107–112 layout that had the account's pair beside the old columns), the
+ * `autofill_profiles*` columns of old. Each reads to the same vault inputs; the account's
+ * name-and-email record is no address; a shape the reader does not know is refused, not read
+ * as empty.
  */
 
 const HOME: ChromiumAddressRow = {
@@ -95,13 +97,14 @@ function webData(
 }
 
 describe('chromiumAddresses', () => {
-  it.each<ChromiumAddressShape>(['unified', 'split', 'legacy'])(
+  it.each<ChromiumAddressShape>(['unified', 'split', 'transitional', 'legacy'])(
     'reads the %s shape into the vault’s fields, the name from the parts when the whole is missing, dependent locality left out',
     (shape) => {
       const db = webData(shape, [HOME, PARTS])
-      expect(detectChromiumAddressSchema(db)).toBe(shape)
+      const schema = shape === 'transitional' ? 'split' : shape
+      expect(detectChromiumAddressSchema(db)).toBe(schema)
       const read = chromiumAddresses(db)
-      expect(read.schema).toBe(shape)
+      expect(read.schema).toBe(schema)
       expect(read.invalid).toBe(0)
       expect(read.addresses).toEqual([HOME_ADDRESS, PARTS_ADDRESS])
     }
@@ -137,6 +140,29 @@ describe('chromiumAddresses', () => {
     })
     expect(detectChromiumAddressSchema(accountOnly)).toBe('split')
     expect(chromiumAddresses(accountOnly).addresses).toEqual([HOME_ADDRESS])
+  })
+
+  it('schema 107–112: the account’s pair beside the profile’s own still in autofill_profiles – both read, the profile’s first; at 113 the copied legacy rows are not read again', () => {
+    const between = webData('transitional', [
+      { ...PARTS, recordType: 1 },
+      { ...HOME, recordType: 0 }
+    ])
+    expect(detectChromiumAddressSchema(between)).toBe('split')
+    expect(chromiumAddresses(between)).toEqual({
+      schema: 'split',
+      invalid: 0,
+      addresses: [HOME_ADDRESS, PARTS_ADDRESS]
+    })
+
+    // `…113MigrateLocalAddressProfilesToNewTable` copies the rows into `local_addresses`; the
+    // legacy tables stay, filled, until `…114DropLegacyAddressTables`.
+    const at113 = memoryDatabase((native) => {
+      chromiumWebDataSchema(native, 'split')
+      insertChromiumAddresses(native, 'split', [HOME, { ...PARTS, recordType: 1 }])
+      chromiumLegacyAddressTables(native)
+      insertChromiumAddresses(native, 'legacy', [HOME])
+    })
+    expect(chromiumAddresses(at113).addresses).toEqual([HOME_ADDRESS, PARTS_ADDRESS])
   })
 
   it('the legacy shape: a side table missing reads as its fields empty, the first row per guid counts', () => {
