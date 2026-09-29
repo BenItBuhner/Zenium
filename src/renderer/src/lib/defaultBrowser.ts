@@ -66,7 +66,7 @@ export function describeDefaultBrowserRequest(platform: Platform): string {
 }
 
 /**
- * "Make default" on the strip: the prompt goes up first and says what the OS will do; its own
+ * "Set as default" on the strip: the prompt goes up first and says what the OS will do; its own
  * "Make default" runs the request (`requestDefaultBrowser`) and takes the strip down.
  */
 export function askDefaultBrowser(source: DefaultBrowserRequestSource): void {

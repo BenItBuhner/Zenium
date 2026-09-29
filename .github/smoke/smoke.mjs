@@ -234,7 +234,7 @@
 //                moved, the same moves on a throwaway BrowserWindow + WebContentsView made in
 //                the app's process record what Electron forwards natively on the OS (the
 //                `native-forwarding` step; not judged) (Linux, Windows and macOS jobs)
-//   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
+//   default-browser  Set as default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
 //                to change your default web browser?" dialog answers; the dialog is on the
