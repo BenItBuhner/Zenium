@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 
-const LONG_PRESS_MS = 380
-const SLOP = 8
+/** How long a finger rests before the hold is recognised (the Settings rows' address hold reads it too). */
+export const LONG_PRESS_MS = 380
+/** How far the finger may move, in CSS px, before the hold is a scroll instead. */
+export const SLOP = 8
 /** How long a released hold waits for its click before firing regardless. */
-const RELEASE_DELAY_MS = 250
+export const RELEASE_DELAY_MS = 250
 
 export interface LongPressHandlers {
   onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void

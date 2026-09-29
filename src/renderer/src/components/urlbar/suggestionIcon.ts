@@ -2,6 +2,7 @@ import {
   Calculator,
   Clipboard,
   Clock,
+  Folder,
   Globe,
   Info,
   Layers,
@@ -20,7 +21,9 @@ import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
  * The glyph a suggestion row of each kind falls back to when it has no favicon to show (v2
  * draft, shell pass 7(b): the globe for an address, the magnifier for a search or an engine
  * without a site icon, the clock for a page from history, the star for a bookmark – the same
- * star as the bookmarks page's registry glyph and the pill's – and a tab for an open tab).
+ * star as the bookmarks page's registry glyph and the pill's – and a tab for an open tab). A tab
+ * group's row (OMN-15) draws the one group glyph (`GroupGlyph`, §9.37) in the slot instead; the
+ * folder here stands in only while the row outlives its group.
  */
 const ROW_ICONS: Record<SuggestionKind, LucideIcon> = {
   url: Globe,
@@ -34,7 +37,8 @@ const ROW_ICONS: Record<SuggestionKind, LucideIcon> = {
   answer: Calculator,
   entity: Info,
   omnibox: Puzzle,
-  clipboard: Clipboard
+  clipboard: Clipboard,
+  folder: Folder
 }
 
 /**

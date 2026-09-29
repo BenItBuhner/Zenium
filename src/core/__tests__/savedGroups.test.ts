@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
-import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type {
+  FormFactor,
+  HostCapabilities,
+  Platform as PlatformOs,
+  Suggestion
+} from '../../shared/types'
 import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
@@ -1013,5 +1018,54 @@ describe('private browsing and the space’s groups (a private group named on no
     expect(foldersOffered(h.shown())).toEqual(['📁 Trip'])
     h.browser.menus.showTabContextMenu(a, h.win)
     expect(foldersOffered(h.shown())).toEqual(['📁 Trip'])
+  })
+})
+
+describe('the omnibox’s tab group row (OMN-15)', () => {
+  it('typing a group’s name offers the group, and its pick opens it as the pane’s Open does', async () => {
+    const h = harness()
+    const m = h.browser.state.model
+    const trip = h.group('Trip')
+    const a = h.open('https://hotel.test/booking', { folderId: trip })
+    h.open('https://flights.test/', { folderId: trip })
+    const loose = h.open('https://loose.test/')
+    h.browser.updateFolder(trip, { collapsed: true })
+    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(loose)
+    // The local sources alone: no engine, answer or intranet lookups from this harness's host.
+    h.browser.state.settings.searchSuggestions = false
+    h.browser.platform.net.resolveHost = undefined
+
+    const rows = (await h.browser.handleCommand(h.win, 'urlbar.suggest', {
+      query: 'tri',
+      tabId: loose,
+      grouped: true
+    })) as Suggestion[]
+    const row = rows.find((r) => r.kind === 'folder')!
+    expect(row).toMatchObject({
+      title: 'Trip',
+      subtitle: 'hotel.test, flights.test',
+      targetId: trip,
+      group: 'Tabs and tab groups'
+    })
+    // The pick is the group's Open (`folder.open`): unfolded, its first tab shown, used now.
+    expect(h.browser.handleCommand(h.win, 'folder.open', { folderId: row.targetId! })).toBe(a)
+    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(a)
+    expect(m.folders[trip].collapsed).toBe(false)
+    expect(typeof m.folders[trip].lastUsedAt).toBe('number')
+
+    // A saved group is offered by the pages it kept, and its pick brings them back.
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: trip })
+    const saved = (await h.browser.handleCommand(h.win, 'urlbar.suggest', {
+      query: 'hotel',
+      tabId: loose,
+      grouped: true
+    })) as Suggestion[]
+    expect(saved.find((r) => r.kind === 'folder')).toMatchObject({
+      title: 'Trip',
+      subtitle: 'hotel.test, flights.test'
+    })
+    const restored = h.browser.handleCommand(h.win, 'folder.open', { folderId: trip }) as string
+    expect(m.tabs[restored]).toMatchObject({ url: 'https://hotel.test/booking', folderId: trip })
+    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(restored)
   })
 })
