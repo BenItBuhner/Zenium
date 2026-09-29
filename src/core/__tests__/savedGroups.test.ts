@@ -860,7 +860,7 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     expect(labels(h.shown())).toContain('Close Group (2 Tabs)')
   })
 
-  it('Ungroup keeps the tabs, loose; Delete Group closes them with the group; one member counts in the singular', () => {
+  it('Ungroup keeps the tabs, loose; Delete Group asks the chrome first and, answered, closes them with the group; one member counts in the singular', () => {
     const h = harness('tablet', false)
     const m = h.browser.state.model
     const { folder, a, b } = trip(h)
@@ -875,9 +875,44 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     const c = h.open('https://c.test/', { folderId: one })
     h.browser.menus.showFolderContextMenu(one, h.win)
     expect(labels(h.shown())).toContain('Close Group (1 Tab)')
+    h.sent.length = 0
     click(h.shown(), 'Delete Group')
+    // The prompt is the chrome's (§9.23, the desktop's Delete Folder path): nothing deleted
+    // yet, the window asked to show it – Chrome for Android asks on the tablet too.
+    expect(h.sent.filter((e) => e.name === 'folder.confirmDelete').map((e) => e.payload)).toEqual([
+      { folderId: one }
+    ])
+    expect(m.folders[one]).toBeDefined()
+    expect(m.tabs[c]).toBeDefined()
+    // The chrome's answer: the group and its tab go.
+    h.browser.handleCommand(h.win, 'folder.delete', { folderId: one, unpack: false })
     expect(m.folders[one]).toBeUndefined()
     expect(m.tabs[c]).toBeUndefined()
+  })
+
+  it('Delete Group asks for a SAVED group too – its pages are what goes – and deletes an empty group outright', () => {
+    const h = harness('tablet', false)
+    const m = h.browser.state.model
+    const { folder } = trip(h)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'Close Group (2 Tabs)')
+    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
+    h.sent.length = 0
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'Delete Group')
+    expect(h.sent.filter((e) => e.name === 'folder.confirmDelete').map((e) => e.payload)).toEqual([
+      { folderId: folder }
+    ])
+    expect(m.folders[folder]).toBeDefined()
+    expect(m.folders[folder].savedTabs).toHaveLength(2)
+
+    // An empty group holds nothing to lose: gone without a prompt.
+    const empty = h.group('Empty')
+    h.sent.length = 0
+    h.browser.menus.showFolderContextMenu(empty, h.win)
+    click(h.shown(), 'Delete Group')
+    expect(h.sent.filter((e) => e.name === 'folder.confirmDelete')).toEqual([])
+    expect(m.folders[empty]).toBeUndefined()
   })
 
   it('is the desktop’s folder menu on a desktop window', () => {

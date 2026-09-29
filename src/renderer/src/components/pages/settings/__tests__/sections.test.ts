@@ -4712,7 +4712,7 @@ describe('what a row does', () => {
       ])
     })
 
-    it('the phone and tablet shells keep every engine under Added with Make default and Remove alone, the Inactive heading and the desktop rows gone', () => {
+    it('the phone and tablet shells keep every engine under Added with Make default, Edit and Remove, the Inactive heading and the desktop’s Activate / Deactivate gone', () => {
       for (const layout of ['phone', 'tablet'] as const) {
         const { model } = searchOn(layout)
         expect(ids(model, 'search-engines')).toEqual([
@@ -4725,11 +4725,15 @@ describe('what a row does', () => {
         expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
           description: 'Inactive · @forum · forum.example'
         })
+        // Edit on every engine of the user's, active or not (SET-10; Chrome 152's row menu
+        // offers Edit on each custom engine, Make default and Delete on those not the default).
         expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+          'search-engine:discovered:forum.example:edit',
           'search-engine:discovered:forum.example:remove'
         ])
         expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
           'search-engine:custom:wiki:default',
+          'search-engine:custom:wiki:edit',
           'search-engine:custom:wiki:remove'
         ])
         // The picker still leaves the deactivated engine out: the flag is the model's, not the
@@ -4737,6 +4741,45 @@ describe('what a row does', () => {
         const picker = row(model, 'search-engine')
         if (picker.kind !== 'value') throw new Error('not a value row')
         expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+      }
+    })
+
+    it('on the phone and the tablet, Edit is the desktop’s row – the chassis’s Add / Edit form pre-filled, Save keeping the engine’s id through search.updateEngine (SET-10)', () => {
+      for (const layout of ['phone', 'tablet'] as const) {
+        invoke.mockClear()
+        const { model } = searchOn(layout)
+        const edit = row(model, 'search-engine:custom:wiki:edit')
+        if (edit.kind !== 'action') throw new Error('not an action')
+        expect(edit).toMatchObject({ label: 'Edit', button: 'Edit…' })
+        expect(edit.layouts).toBeUndefined()
+        expect(edit.form).toMatchObject({
+          title: 'Edit search engine',
+          description: 'Put %s in the URL where the search terms go.'
+        })
+        const form = edit.form!.render(() => {})
+        if (!isValidElement<ComponentProps<typeof SearchEngineForm>>(form))
+          throw new Error('not an element')
+        expect(form.type).toBe(SearchEngineForm)
+        expect(form.props).toMatchObject({
+          initial: { name: 'Wiki', url: wiki.searchUrl, shortcut: '@wiki' },
+          action: 'Save',
+          engineId: wiki.id
+        })
+        expect(form.props.engines).toContain(wiki)
+        form.props.onSubmit({ name: 'Wiki 2', url: wiki.searchUrl, shortcut: '@w' })
+        // The same command as the desktop's, the id the engine's own: the edit is in place, and
+        // the default flag – `searchEngineId` – is not the command's to touch.
+        expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
+          id: wiki.id,
+          name: 'Wiki 2',
+          searchUrl: wiki.searchUrl,
+          keyword: '@w'
+        })
+        // The default engine's Edit is the same row; the inactive engine's, too.
+        expect(row(model, 'search-engine:custom:mine:edit')).toMatchObject({ label: 'Edit' })
+        expect(row(model, 'search-engine:discovered:forum.example:edit')).toMatchObject({
+          label: 'Edit'
+        })
       }
     })
 

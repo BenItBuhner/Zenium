@@ -550,17 +550,29 @@ describe('the star', () => {
     // One spring to the end, not a ramp and a cut: every frame climbs; no frame steps more than
     // the spring's own largest 16 ms step (.12 – the px-scaled rest thresholds snapped .52 → 1 in
     // one frame); the frame that lands closes less than a hundredth (the unit-scaled restDelta);
-    // and the motion takes the spring's time (22 frames at 16 ms), not five.
+    // and the motion takes the spring's time, not five frames.
     const path = seen.slice(0, rest + 1)
     const steps = path.slice(1).map((o, i) => o - path[i])
     expect(steps.every((step) => step > 0)).toBe(true)
     expect(Math.max(...steps)).toBeLessThan(0.2)
     expect(steps[steps.length - 1]).toBeLessThan(0.01)
     expect(path.length).toBeGreaterThanOrEqual(15)
-    // The scale rides the same value: .6 at the start, 1 at rest, climbing with the opacity.
+    // PINNED (MOT-20, the bar star test's figures – the one `StarGlyph`): `SPRING_FILL` at 16 ms
+    // rests on the 23rd frame (368 ms – its thresholds' own hair past v1 §7's 300 ms cap, not
+    // motion the eye reads: by the cap's frame, the 18th, the fill is within two hundredths of
+    // its end), its largest step .121. A change to the spring, its thresholds or the glyph's
+    // paint shows up here as a number.
+    expect(rest).toBe(23)
+    expect(Math.max(...steps)).toBeCloseTo(0.121, 2)
+    expect(Math.abs(seen[Math.floor(300 / 16)] - 1)).toBeLessThan(0.02)
+    // The scale rides the same value: .6 at the start, 1 at rest, climbing with the opacity, by
+    // two fifths of its step a frame – the filled star grows into place; nothing pops. The glyph
+    // around the two stars is never scaled: no inline style on it at all (§11).
     expect(scales[0]).toBeCloseTo(0.6)
     expect(scales[rest]).toBeCloseTo(1)
     for (let i = 1; i <= rest; i++) expect(scales[i]).toBeGreaterThanOrEqual(scales[i - 1])
+    for (let i = 0; i <= rest; i++) expect(scales[i]).toBeCloseTo(0.6 + 0.4 * path[i], 6)
+    expect(document.querySelector<HTMLElement>('.zen-star-glyph')!.getAttribute('style')).toBeNull()
     runAll()
     expect(fillOpacity()).toBe(1)
     expect(fillScale()).toBeCloseTo(1, 1)
