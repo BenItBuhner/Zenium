@@ -1,6 +1,7 @@
 import {
   PRIVATE_CONTAINER_ID,
   type Folder,
+  type HistoryEntry,
   type SearchEngine,
   type Suggestion,
   type SuggestionKind
@@ -32,11 +33,19 @@ import {
   isProbablyUrl
 } from '../shared/url'
 import { foldForMatch, matchableUrl, queryTerms } from '../shared/wordMatch'
+import { touchLayout } from '../shared/formFactor'
+import {
+  MOST_VISITED_GROUP,
+  RECENT_SEARCH_SCAN,
+  searchEnginesInOrder,
+  searchesInHistory
+} from '../shared/zeroSuggest'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { orderedTabsForSpace, regularFolderTabs, tabVisibleIn } from './model'
 import { AnswerService } from './answers'
 import { matchesAtWordStart } from './history'
+import type { Shortcut } from './omniboxShortcuts'
 
 /**
  * Chromium's relevance scale, so rows from every source sort against each other: the verbatim
@@ -195,7 +204,14 @@ export class SuggestionService {
       query = query.slice(1).trim()
     }
 
-    if (!query) return isPrivate || modeEngine ? [] : await this.emptyState(wantsHistory)
+    if (!query) {
+      if (isPrivate || modeEngine) return []
+      const currentTab = currentTabId ? state.model.tabs[currentTabId] : undefined
+      return await this.emptyState(wantsHistory, {
+        touch: touchLayout(win.formFactor),
+        onNewTab: currentTab !== undefined && isEmptyTabUrl(currentTab.url)
+      })
+    }
 
     // An extension's `chrome.omnibox` keyword owns the input from the space after it on: the
     // rows are what the extension suggests, nothing else (Chrome's keyword mode).
@@ -774,8 +790,16 @@ export class SuggestionService {
    * Nothing typed yet: what the clipboard holds first (Chrome's "Link you copied" / "Text you
    * copied"; the kind alone, from the clip's description – the content is read only when the
    * user reveals or picks the row), then the recent history.
+   *
+   * On a touch layout (OMN-04; Chrome for Android's zero-suggest on a web page) the list also
+   * has the most visited sites as a row of tiles ({@link MOST_VISITED_GROUP}) and remembers the
+   * searches the history holds – the results pages of the user's engines, whoever's field the
+   * terms went into – among the recent searches; the desktop's list is as it was.
    */
-  private async emptyState(wantsHistory: boolean): Promise<Suggestion[]> {
+  private async emptyState(
+    wantsHistory: boolean,
+    layout: { touch: boolean; onNewTab: boolean }
+  ): Promise<Suggestion[]> {
     const rows: Suggestion[] = []
     const clip = await this.browser.searchEngines.peekClipboard()
     // An image on the clipboard has nowhere to go: Zenium has no visual search, so no row.
@@ -792,31 +816,63 @@ export class SuggestionService {
       })
     }
     if (!wantsHistory) return rows
+    // The most visited sites (Chrome's `MostVisitedSitesProvider`, local): the new tab page's own
+    // list, which the page already shows – so not over the page itself (Chrome's
+    // `SupportsMostVisitedSites` leaves the NTP out), and on the touch layouts alone.
+    const tiles = layout.touch && !layout.onNewTab ? this.browser.newTab.mostVisited() : []
+    const tileUrls = new Set<string>()
+    for (const site of tiles) {
+      tileUrls.add(site.url)
+      rows.push({
+        id: `tile:${site.url}`,
+        kind: 'url',
+        title: site.title || displayUrl(site.url),
+        subtitle: displayUrl(site.url),
+        url: site.url,
+        favicon: site.favicon,
+        targetId: null,
+        fill: displayUrl(site.url),
+        group: MOST_VISITED_GROUP
+      })
+    }
     // Zero-suggest (omnibox-20): the searches the user made, most recent first, as a section of
-    // their own over the recent pages – every row removable.
+    // their own over the recent pages – every row removable. The shortcuts provider remembers
+    // the searches submitted through this field; on a touch layout the history's results pages
+    // are read back through the engines' templates too (Chrome's `LocalHistoryZeroSuggestProvider`
+    // reads the history's search terms), so a search typed into the engine's own page counts.
+    // The same terms from both sources, or on two engines, are one row, the most recent.
     const engines = this.browser.state.searchEngines
     const defaultEngine = this.browser.state.defaultSearchEngine()
-    const recent = this.browser.omniboxShortcuts.recentSearches(RECENT_SEARCHES_MAX)
+    const remembered = this.browser.omniboxShortcuts.recentSearches(RECENT_SEARCHES_MAX)
+    const pool = RECENT_PAGES_MAX + remembered.length
+    const recentEntries = this.browser.history.recent(
+      layout.touch ? Math.max(RECENT_SEARCH_SCAN, pool) : pool
+    )
+    const recent = recentSearches(
+      remembered,
+      layout.touch ? recentEntries : [],
+      engines,
+      defaultEngine
+    )
     // What the searches were, by engine, so the engine's results page for the same terms – the
     // history entry the search left – is not listed again under them as a recent page (the
     // lead's #289 ruling: zero-suggest dedupes the default engine's results pages against
     // "Recent searches"). A search remembered without its engine went to the default one.
     const searched: { engine: SearchEngine; terms: Set<string>; urls: Set<string> }[] = []
     for (const s of recent) {
-      const engine = s.engineId ? engines.find((e) => e.id === s.engineId) : undefined
       rows.push({
         id: `recent:${s.url}`,
         kind: 'search',
         title: s.fill,
-        subtitle: `Search with ${engine?.name ?? 'the web'}`,
+        subtitle: `Search with ${s.engine?.name ?? 'the web'}`,
         url: s.url,
         favicon: null,
-        targetId: engine?.id ?? null,
+        targetId: s.engine?.id ?? null,
         fill: s.fill,
         deletable: true,
         group: RECENT_SEARCHES_GROUP
       })
-      const searchedWith = engine ?? defaultEngine
+      const searchedWith = s.engine ?? defaultEngine
       let hit = searched.find((e) => e.engine.id === searchedWith.id)
       if (!hit) searched.push((hit = { engine: searchedWith, terms: new Set(), urls: new Set() }))
       hit.terms.add(s.fill.trim().toLowerCase())
@@ -829,11 +885,11 @@ export class SuggestionService {
         return found !== null && terms.has(found.toLowerCase())
       })
     // The pages a dropped results page would have stood among come up in its place, so the
-    // section keeps its size.
+    // section keeps its size. A page standing as a tile is not listed again under the tiles.
     let pages = 0
-    for (const entry of this.browser.history.recent(RECENT_PAGES_MAX + recent.length)) {
+    for (const entry of recentEntries) {
       if (pages >= RECENT_PAGES_MAX) break
-      if (duplicatesRecentSearch(entry.url)) continue
+      if (duplicatesRecentSearch(entry.url) || tileUrls.has(entry.url)) continue
       pages += 1
       rows.push({
         id: `hist:${entry.url}`,
@@ -1101,4 +1157,60 @@ function ungroup(row: Suggestion): Suggestion {
   const copy = { ...row }
   delete copy.group
   return copy
+}
+
+/** A recent search on its way to a row: the remembered pick's, or the history's results page's. */
+interface RecentSearch {
+  /** The terms, as the row shows and refines them. */
+  fill: string
+  /** Where the row goes: the remembered search's address, or the engine's template filled. */
+  url: string
+  /** The engine searched with; undefined for a pick remembered without one (the default's). */
+  engine: SearchEngine | undefined
+  /** When the search was last made, for the order. */
+  at: number
+}
+
+/**
+ * The "Recent searches" (OMN-04), most recent first, {@link RECENT_SEARCHES_MAX} at most: the
+ * searches the shortcuts provider remembers (the picks made in this field) and the searches
+ * the history holds among `entries` (`searchesInHistory`: the results pages of the user's
+ * engines, the default engine's template read first, an inactive engine's not at all) – the
+ * same terms from both, case aside, are one row: the remembered pick's, dated by whichever was
+ * later. With no history entries to read the list is the remembered searches as they were.
+ */
+export function recentSearches(
+  remembered: readonly Shortcut[],
+  entries: readonly Pick<HistoryEntry, 'url' | 'lastVisit'>[],
+  engines: readonly SearchEngine[],
+  defaultEngine: SearchEngine
+): RecentSearch[] {
+  const byTerms = new Map<string, RecentSearch>()
+  for (const s of remembered) {
+    const key = s.fill.trim().toLowerCase()
+    if (!key || byTerms.has(key)) continue
+    byTerms.set(key, {
+      fill: s.fill,
+      url: s.url,
+      engine: s.engineId ? engines.find((e) => e.id === s.engineId) : undefined,
+      at: s.lastUsed
+    })
+  }
+  if (entries.length > 0) {
+    for (const found of searchesInHistory(entries, searchEnginesInOrder(engines, defaultEngine))) {
+      const key = found.terms.toLowerCase()
+      const seen = byTerms.get(key)
+      if (seen) {
+        if (found.lastVisit > seen.at) seen.at = found.lastVisit
+        continue
+      }
+      byTerms.set(key, {
+        fill: found.terms,
+        url: buildSearchUrl(found.engine, found.terms),
+        engine: found.engine,
+        at: found.lastVisit
+      })
+    }
+  }
+  return [...byTerms.values()].sort((a, b) => b.at - a.at).slice(0, RECENT_SEARCHES_MAX)
 }

@@ -252,6 +252,7 @@ export class NewTabService {
   private readonly ready = new Set<string>()
   private readonly lastPushed = new Map<string, string>()
   private topSitesCache: { key: string; sites: TopSite[] } | null = null
+  private mostVisitedCache: { key: string; sites: TopSite[] } | null = null
   private shortcutsCache: { key: string; favicons: Map<string, string | null> } | null = null
   private historyVersion = 0
 
@@ -500,6 +501,28 @@ export class NewTabService {
     const sites = this.browser.history.topSites(n, excluded)
     this.topSitesCache = { key, sites }
     return sites
+  }
+
+  /**
+   * The most visited sites as the grid's own source ranks them – `history.topSites` under the
+   * grid's exclusions, none the user removed from the page – with the tiles' icons (HB-47), for
+   * the omnibox's most-visited row before anything is typed (OMN-04; Chrome's tiles are its
+   * `TopSites` under the same blocklist the page's tiles honour). The user's pinned shortcuts
+   * are not among them: the row names what is most visited, as Chrome's does, whatever the grid
+   * is set to show. Cached on the history's version as the grid's list is.
+   */
+  mostVisited(): TopSite[] {
+    const excluded = this.device.hiddenHosts
+    const key = `${this.historyVersion}|${excluded.join(',')}`
+    if (this.mostVisitedCache?.key !== key) {
+      const sites = this.browser.history.topSites(MAX_NEW_TAB_SHORTCUTS, excluded)
+      this.mostVisitedCache = { key, sites }
+    }
+    const open = openHosts(Object.values(this.browser.state.model.tabs))
+    return this.mostVisitedCache.sites.map((s) => ({
+      ...s,
+      favicon: this.tileFavicon(s.favicon, s.url, open)
+    }))
   }
 
   /**
