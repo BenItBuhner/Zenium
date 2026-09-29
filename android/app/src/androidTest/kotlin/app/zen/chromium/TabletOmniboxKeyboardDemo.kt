@@ -35,9 +35,10 @@ import kotlin.math.roundToInt
  *     to y 659 of 800 against a keyboard edge at 374 (W6-E14's measure).
  *  2. THE LAST ROW BY A FINGER. Real swipes inside the list bring the twelfth row into the
  *     list's box; a real touch on it is the pick – the core's active tab lands on that row's
- *     page and the field closes.
+ *     page and the field closes. (The new tab is that page from then on; the later scenes take
+ *     a fresh new tab, since a field opened over a page edits its address instead.)
  *  3. THE KEYBOARD DOWN. One back puts the keyboard away and the field survives; the popup is
- *     then at its natural height (the field's 62 px row, the list's 520 px cap and the border),
+ *     then at its natural height (the field's row, the list's 520 px cap and the borders: 584),
  *     as before this change, and still above the system bar's inset.
  *  4. TYPED. Over a page the field is opened and "re" typed: the engine's rows and the recent
  *     pages fill the core's ceiling of ten rows; the popup is bounded the same way.
@@ -62,6 +63,8 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
     private var originY = 0f
     /** The scheme the stills are named for. */
     private var scheme = "light"
+    /** The new tab the scenes open the field over: the seeded one, then a fresh one after each pick. */
+    private var newTab = NEW_TAB
 
     @Test
     fun record() {
@@ -158,7 +161,7 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
 
         // 1. The bound, with the keyboard up over a new tab's zero-suggest.
         step("[$scheme] the popup stops above the keyboard") {
-            showTab(NEW_TAB, NEW_TAB_URL)
+            showNewTab()
             if (!openField()) error("the pill's tap opened no field")
             val imeUp = awaitIme(shown = true, timeoutMs = 6_000)
             val twelve = awaitRows(ZERO_SUGGEST_ROWS, 12_000)
@@ -176,7 +179,7 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
         // 2. The last row reached by a finger, and picked.
         step("[$scheme] a finger scrolls the list and picks the last row") {
             if (!fieldUp()) {
-                showTab(NEW_TAB, NEW_TAB_URL)
+                showNewTab()
                 if (!openField()) error("the pill's tap opened no field")
                 awaitIme(shown = true, timeoutMs = 6_000)
                 awaitRows(ZERO_SUGGEST_ROWS, 12_000)
@@ -207,7 +210,7 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
         // 3. The keyboard down: the popup as before this change.
         step("[$scheme] with the keyboard down the popup is at its natural height") {
             closeField()
-            showTab(NEW_TAB, NEW_TAB_URL)
+            showNewTab()
             if (!openField()) error("the pill's tap opened no field")
             awaitIme(shown = true, timeoutMs = 6_000)
             awaitRows(ZERO_SUGGEST_ROWS, 12_000)
@@ -233,12 +236,13 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
             val imeUp = awaitIme(shown = true, timeoutMs = 6_000)
             SystemClock.sleep(600)
             instrumentation.sendStringSync(QUERY)
-            val typed = awaitChrome("(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(QUERY)}", 8_000)
+            // The field's value starts with the typing; an inline autocompletion may follow it.
+            val typed = awaitChrome("(((document.querySelector('$FIELD')||{}).value||'').toLowerCase().indexOf(${JSONObject.quote(QUERY)})===0)", 8_000)
             val filled = awaitRows(TYPED_ROWS, 12_000)
             awaitChrome("document.querySelectorAll('$SEARCH_ROWS').length>=2&&!document.querySelector('$ROWS_LEAVING')", 6_000)
             SystemClock.sleep(900)
             val m = measure()
-            finding("  typed '$QUERY' ($typed); keyboard ${if (imeUp) "up" else "NOT up"}; rows ${m.rows}; popup ${m.describe()}")
+            finding("  typed '$QUERY' ($typed; the field's value '${jsText("(document.querySelector('$FIELD')||{}).value||''")}'); keyboard ${if (imeUp) "up" else "NOT up"}; rows ${m.rows}; popup ${m.describe()}")
             check("[$scheme] the typed list holds the core's ten rows", typed && filled && m.rows == TYPED_ROWS, "rows ${m.rows}")
             if (imeUp && m.insetPx > 100) claimBounded(m) else check("[$scheme] the keyboard is up for the typed scene", false, "inset ${m.insetPx}")
             steadyShot("04-typed-ten-rows-$scheme-tablet")
@@ -369,6 +373,33 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
             finding("  the field's close: ${close.describe()}")
             failures += "the field's close: ${close.describe()}"
         }
+    }
+
+    /**
+     * A new tab as the active tab, the field closed: the seeded one while it is still at
+     * `zen://newtab`, else a fresh one – the pick of scene 2 lands the new tab on the row's page,
+     * and a field opened over a page edits its address (one row) rather than showing zero-suggest.
+     */
+    private fun showNewTab(): Boolean {
+        settle(8_000)
+        closeField()
+        settle(8_000)
+        if (activeTabId() != newTab) {
+            coreInvoke("tab.activate", "{\"tabId\":${JSONObject.quote(newTab)}}")
+            SystemClock.sleep(800)
+        }
+        if (!awaitPageUrl(NEW_TAB_URL, 3_000)) {
+            val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote(NEW_TAB_URL)},\"active\":true}").trim().trim('"')
+            finding("  the new tab $newTab is at ${activeUrl()} (the pick's page): a fresh new tab ${id.ifEmpty { "(no id came back)" }}")
+            if (id.isNotEmpty()) newTab = id
+            SystemClock.sleep(800)
+            if (!awaitPageUrl(NEW_TAB_URL, 10_000)) return false
+            settle(6_000)
+            if (fieldUp()) closeField()
+        }
+        SystemClock.sleep(600)
+        ensureForeground()
+        return true
     }
 
     /** The seeded tab as the active tab, the field closed. */
@@ -588,7 +619,11 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
         private const val HOME_TAB = "tab_home"
         private const val NEW_TAB = "tab_new"
         private const val ENGINE_ID = "custom:notes"
-        /** The eight recent pages, most recent first in zero-suggest; the twelfth row is the eighth page. */
+        /**
+         * The eight recent pages, most recent first in zero-suggest under the four searches. The
+         * demo page's own visit (the warm-up's) is the most recent, so the section holds it and
+         * pages 1–7 – the twelfth row is 'Recent page 7' (the core's eight-page ceiling).
+         */
         private const val PAGES = 8
         private fun pagePath(i: Int) = "/recent-$i.html"
         private fun pageUrl(i: Int) = "$ORIGIN${pagePath(i)}"
@@ -605,7 +640,7 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
         private const val OMNIBOX_POPUP_MIN_HEIGHT = 120
         private const val OMNIBOX_POPUP_MARGIN = 8
         private const val POPUP_GAP = 4
-        /** The popup's natural height with a full list: the input row (62) + the list's cap (520) + the border (2). */
+        /** The popup's natural height with a full list: the field's row under the top border (63) + the list's cap (520) + the bottom border (1). */
         private const val NATURAL_HEIGHT = 584.0
 
         private const val FENCE_ID = "__zenFence"
