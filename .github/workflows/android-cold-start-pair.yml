@@ -24,13 +24,6 @@ name: Android cold start pair
 # first-run tour, under which the first tab's path is not measured); the phone's pairs leave both
 # at their defaults. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
-  # TEMPORARY (services pass 16 item 6, PS-49): the P0 pair on this head – `Blocking.kt`, `Engine.kt`,
-  # `Rules.kt` and `IndexReader.kt` are on the boot path and the engine's rebuild gains the
-  # per-partition text engines; the base pinned to the main tip this head sits on,
-  # 94a0ae939eef8d41c7d27d41dd44adb73c64529b (its merge base). Removed after the run; .github
-  # returns to main's bytes.
-  push:
-    branches: [cursor/services-p16-ps49-strict-private-24d1]
   workflow_dispatch:
     inputs:
       base-ref:
@@ -81,7 +74,7 @@ concurrency:
 
 jobs:
   pair:
-    name: Cold start pair (before ${{ inputs.base-ref || '94a0ae939eef8d41c7d27d41dd44adb73c64529b' }} / after this commit)
+    name: Cold start pair (before ${{ inputs.base-ref || 'main' }} / after this commit)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-cold-start-pair.sh
@@ -96,7 +89,7 @@ jobs:
       # chrome, 411 dp wide – the phone's Pixel 6 layout otherwise. The seed is the caller's opt-in
       # (main's pairs do not seed).
       script-env: |
-        P0_BASE_REF=${{ inputs.base-ref || '94a0ae939eef8d41c7d27d41dd44adb73c64529b' }}
+        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=${{ inputs.runs || 15 }}
         P0_STARTS=${{ inputs.starts || 2 }}
