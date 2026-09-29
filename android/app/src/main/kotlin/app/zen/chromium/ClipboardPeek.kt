@@ -149,17 +149,30 @@ object ClipboardPeek {
     }
 
     /** The clipboard's text, read once; empty when it holds none (or the read is refused). */
-    fun read(context: Context): String = readClip(context).text
+    fun read(context: Context): String {
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        return runCatching {
+            manager.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+        }.getOrNull() ?: ""
+    }
 
     /**
-     * The primary clip's first item, read once: its text (`coerceToText`, as [read] has always
-     * had it) and its image's `Uri` when the clip's description carries an `image/` type and
-     * the item a `Uri` – Chrome's reading of an Android clip (`Clipboard.java` `getImageUri`);
-     * null for a clip without one. The decode is [encodeImage]'s, off the caller's thread.
+     * The primary clip's first item for a page's `read()`, read once: its text and its image's
+     * `Uri` when the clip's description carries an `image/` type and the item a `Uri` – Chrome's
+     * reading of an Android clip (`Clipboard.java` `getImageUri`); null for a clip without one.
+     * The decode is [encodeImage]'s, off the caller's thread.
      */
     class Clip(val text: String, val imageUri: Uri?)
 
-    /** The primary clip; [NO_CLIP] for an empty clipboard or a refused read (Android 10+ hides the clipboard from an app that is not in the foreground). */
+    /**
+     * The primary clip for a page's `read()`; [NO_CLIP] for an empty clipboard or a refused read
+     * (Android 10+ hides the clipboard from an app that is not in the foreground). The text is
+     * [read]'s `coerceToText` – except for an image item with no text of its own, which is ""
+     * here: Chrome offers no `text/plain` for an image-only clip, and on API levels before the
+     * platform's scheme guard `coerceToText` renders a `content://` URI it cannot open as text as
+     * the URI's string, which no page's `text/plain` should carry. [read] itself – the page's
+     * `readText()`, the URL bar's row – is not touched by this.
+     */
     fun readClip(context: Context): Clip {
         val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         return runCatching {
@@ -169,12 +182,11 @@ object ClipboardPeek {
             } else {
                 val item = clip.getItemAt(0)
                 val imageUri = item.uri?.takeIf { clip.description.hasMimeType("image/*") }
-                // `coerceToText` as ever – except for an image item with no text of its own: on
-                // API levels before the platform's scheme guard it renders a `content://` URI it
-                // cannot open as text as the URI's string, and neither a page's `text/plain` nor
-                // the URL bar's row has a use for the image's address ('' there, as on later ones).
-                val text = item.text?.toString()
-                    ?: (if (imageUri != null) "" else (item.coerceToText(context)?.toString() ?: ""))
+                val text = if (imageUri != null) {
+                    item.text?.toString() ?: ""
+                } else {
+                    item.coerceToText(context)?.toString() ?: ""
+                }
                 Clip(text, imageUri)
             }
         }.getOrDefault(NO_CLIP)
