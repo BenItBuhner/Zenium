@@ -586,13 +586,15 @@ describe('the extension records on a fixed extension list (services pass 16, ID-
       expect(landed).not.toBeNull()
       const source = extensionFixture.extensions.find((e) => e.id === r.id)!
       // What the receiving device holds once the install landed as the record says, published
-      // again: the same bytes, the same hash – the round stamps nothing.
+      // again: the same bytes, the same hash – the round stamps nothing. The landing publishes
+      // the install time its record carried (`syncedInstalledAt`) – none here, 0 – never its own.
       const republished = extensionRecordData(
         {
           id: r.id,
           source: landed.store,
           enabled: landed.enabled,
-          toolbarPinned: landed.toolbarPinned
+          toolbarPinned: landed.toolbarPinned,
+          installedAt: landed.installedAt ?? 0
         },
         landed.store
       )
@@ -671,6 +673,60 @@ describe('the extension records on a fixed extension list (services pass 16, ID-
     expect(inScope(live, defaultScope())).toBe(true)
     expect(inScope(gone, defaultScope())).toBe(true)
     expect(inScope(live, fullScope())).toBe(true)
+  })
+
+  it('`installedAt` is additive (round 5): the fixture’s sources hold no install time, so its payload and hashes stand byte for byte; a record carrying the field reads here with it and hashes as an edit; a reader that does not know a field drops it and reads the record without it (this build’s, on a key from a later one – the mirror of a build before the field on this one); a pre-type peer drops the record whole (above)', () => {
+    // The fixture as this build writes it: the sources project no time (0, none) and the field
+    // is left out – the bytes the build that introduced the type wrote.
+    expect(extensionFixture.extensions.every((e) => !('installedAt' in e))).toBe(true)
+    const local = collectLocal(withExtensions(), extensionFixture.scope)
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, local, extensionFixture.now).records })
+    ).toBe(extensionFixture.plaintext)
+    const atZero = collectLocal(
+      {
+        ...withExtensions(),
+        extensions: extensionFixture.extensions.map((e) => ({ ...e, installedAt: 0 }))
+      },
+      extensionFixture.scope
+    )
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, atZero, extensionFixture.now).records })
+    ).toBe(extensionFixture.plaintext)
+    // The same sources with the install's time held (a hand install at the fixture's `now`):
+    // the field travels after the three, the record hashes as an edit of the fixture's.
+    const held = collectLocal(
+      {
+        ...withExtensions(),
+        extensions: extensionFixture.extensions.map((e) => ({
+          ...e,
+          installedAt: extensionFixture.now
+        }))
+      },
+      extensionFixture.scope
+    )
+    const payload = JSON.parse(extensionFixture.plaintext) as { records: SyncRecord[] }
+    for (const r of payload.records) {
+      const data = held.get(r.id)!.data as Record<string, unknown>
+      expect(Object.keys(data)).toEqual(['store', 'enabled', 'toolbarPinned', 'installedAt'])
+      expect(data.installedAt).toBe(extensionFixture.now)
+      expect(hashData(data)).not.toBe(extensionFixture.hashes[r.id])
+      // This build reads the field; a build before it reads the same record without the field –
+      // what this build does with a key it does not know – and lands the switches as before.
+      expect(readExtensionData(r.id, data)).toEqual({
+        ...(r.data as object),
+        installedAt: extensionFixture.now
+      })
+      const { installedAt: _dropped, ...asAnOlderReaderSees } = data
+      void _dropped
+      expect(readExtensionData(r.id, asAnOlderReaderSees)).toEqual(r.data)
+      expect(readExtensionData(r.id, { ...data, installedOn: 'phone', reinstalls: 2 })).toEqual(
+        readExtensionData(r.id, data)
+      )
+      expect(hashData(readExtensionData(r.id, asAnOlderReaderSees))).toBe(
+        extensionFixture.hashes[r.id]
+      )
+    }
   })
 })
 

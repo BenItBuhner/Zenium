@@ -49,7 +49,13 @@ import { extensionStoreOf, type SyncedExtensionData } from '../../core/sync/reco
  *   the peer's record to this device (`SyncEngine.sources`, `Persisted.declinedExtensions`);
  *   here, `declined` keeps a live record handed over before the decline – still queued – from
  *   putting the landing back. Only an extension the user approved (on or off) uninstalls
- *   everywhere when removed.
+ *   everywhere when removed. What re-offers a declined extension is a fresh install of it BY
+ *   HAND on a peer after the decline, once, and nothing else (round 5): the record carries the
+ *   install's time (`ExtensionRecordData.installedAt` – the latest hand install any copy knows
+ *   of; a landing here publishes its record's, `syncedInstalledAt`, not its own, and the merge
+ *   adopts a later one from a peer like a later switch clock), and the engine re-offers on
+ *   `installedAt > declinedAt` alone (`extensionDeclineStands`) – a flip's newer stamp, a
+ *   landing on a third device, a record without the time re-offer nothing.
  *
  * Serialised per id (`chains`): two records for one extension never race the registry, and a
  * tombstone queued behind an install waits for it. Nothing runs while the extension layer's
@@ -94,6 +100,8 @@ export type SyncedExtensionRecord = Pick<
   | 'toolbarPinned'
   | 'enabledAt'
   | 'toolbarPinnedAt'
+  | 'installedAt'
+  | 'syncedInstalledAt'
   | 'pendingApproval'
   | 'pendingWarnings'
 >
@@ -121,8 +129,9 @@ export interface ExtensionSyncHost {
   /**
    * Land the package as a synced landing (`ExtensionService.installPackage` with `synced`):
    * turned off, `pendingApproval`, pinned to the toolbar as the record says, the switches'
-   * clocks the record's, never loaded. `'in-progress'` when the id is busy or landed meanwhile
-   * on another path.
+   * clocks the record's, the install time it publishes the record's (`syncedInstalledAt`, 0 for
+   * none – a landing is nobody's install), never loaded. `'in-progress'` when the id is busy or
+   * landed meanwhile on another path.
    */
   install(
     pkg: ExtensionPackage,
@@ -133,6 +142,12 @@ export interface ExtensionSyncHost {
   /** The switch written under the record's clock for it (`ExtensionService.switchEnabled`). */
   setEnabled(id: string, enabled: boolean, at: number): Promise<void>
   setToolbarPinned(id: string, pinned: boolean, at: number): void
+  /**
+   * The record carries a later install of the extension than the time this copy publishes
+   * (`ExtensionService.adoptInstalledAt`): publish the record's from now on
+   * (`syncedInstalledAt`); this device's own `installedAt` stands.
+   */
+  adoptInstalledAt(id: string, at: number): void
   /**
    * Commit the registry unchanged, so the engine's next state broadcast publishes this
    * device's copy of the record under a fresh stamp (a winner that landed nothing here while
@@ -319,13 +334,24 @@ export class ExtensionSyncApplier {
    * approval's own write travels – but it is no early exit: the pin's merge stands as made,
    * and a pin clock here later than the record's still re-publishes, so the two copies do not
    * stay divergent until the next flip (a pin flipped here while the landing waits, and the
-   * peer's copy still unpinned).
+   * peer's copy still unpinned). The install's time merges the same way (round 5): the record's
+   * `installedAt` – when the extension was installed by hand, on whichever device did – is
+   * adopted when later than the time this copy publishes (`adoptInstalledAt`, a landing), and
+   * a record carrying an earlier one, or none (0), while this copy publishes a later time is
+   * re-published, so every copy travels with the latest install and the same state hashes the
+   * same on every device (the extension record's doc, `records.ts`).
    */
   private async mergeSwitches(
     record: SyncedExtensionRecord,
     remote: SyncedExtensionData
   ): Promise<void> {
     let landed = false
+    const installedAt = record.syncedInstalledAt ?? record.installedAt
+    const installFromRecord = remote.installedAt >= installedAt
+    if (remote.installedAt > installedAt) {
+      this.host.adoptInstalledAt(record.id, remote.installedAt)
+      landed = true
+    }
     const pinAt = record.toolbarPinnedAt ?? 0
     const pinFromRecord = remote.toolbarPinnedAt >= pinAt
     if (
@@ -345,7 +371,8 @@ export class ExtensionSyncApplier {
       await this.host.setEnabled(record.id, remote.enabled, remote.enabledAt)
       landed = true
     }
-    if (!landed && (!pinFromRecord || !enabledFromRecord)) this.host.republish(record.id)
+    if (!landed && (!pinFromRecord || !enabledFromRecord || !installFromRecord))
+      this.host.republish(record.id)
   }
 
   private async installAbsent(id: string, data: SyncedExtensionData): Promise<void> {

@@ -17,6 +17,7 @@ import { FOLDER_LOST_MESSAGE } from '../engine'
 import {
   SETTINGS_RECORD_ID,
   hashData,
+  readExtensionData,
   settingsKeyTime,
   type ExtensionSyncSource,
   type MetaMap,
@@ -2439,6 +2440,8 @@ interface ExtensionOpts {
   pendingApproval?: boolean
   enabledAt?: number
   toolbarPinnedAt?: number
+  /** The registry's install time (`ExtensionRecord.installedAt`); the host's `add` stamps the device's time unless given. */
+  installedAt?: number
 }
 
 function extensionInfo(
@@ -2459,8 +2462,8 @@ function extensionInfo(
     source,
     publisher: source === 'chrome-web-store' || source === 'edge-add-ons' ? source : null,
     updateUrl: null,
-    installedAt: 1_000,
-    updatedAt: 1_000,
+    installedAt: opts.installedAt ?? 1_000,
+    updatedAt: opts.installedAt ?? 1_000,
     pinned: false,
     toolbarPinned: opts.toolbarPinned ?? false,
     ...(opts.enabledAt !== undefined ? { enabledAt: opts.enabledAt } : {}),
@@ -2488,8 +2491,9 @@ function extensionInfo(
 /**
  * A host with store installs that publishes them and lands none – the phone's shape (Android's
  * `AndroidExtensions` installs from the stores, clocks the switches it flips and none other –
- * its install writes no clock – and has no `applySyncedExtensions` and no `syncSources`: the
- * engine reads its `list()`).
+ * its install writes no clock but the registry's `installedAt`, the shared `newRecord`'s `now`,
+ * which its `list()` projects and the record carries (round 5) – and has no
+ * `applySyncedExtensions` and no `syncSources`: the engine reads its `list()`).
  */
 class PublishingExtensions extends NoExtensions {
   readonly installed = new Map<string, ExtensionInfo>()
@@ -2506,9 +2510,9 @@ class PublishingExtensions extends NoExtensions {
     return [...this.installed.keys()].sort()
   }
 
-  /** The user installs an extension here – from a store, or from a file or folder. */
+  /** The user installs an extension here – from a store, or from a file or folder – at the device's time. */
   add(id: string, source: ExtensionSource, opts: ExtensionOpts = {}): void {
-    this.installed.set(id, extensionInfo(id, source, opts))
+    this.installed.set(id, extensionInfo(id, source, { installedAt: Date.now(), ...opts }))
     this.b.state.commitVolatile()
   }
 
@@ -2557,20 +2561,36 @@ class PublishingExtensions extends NoExtensions {
  * this device's copy afresh; a record for an absent one
  * starts a download the test lands (`land`) or lets fail (nothing). An install here stamps both
  * clocks with the device's time, as `ExtensionService.installPackage` does; a user's flip
- * (`set`) stamps its switch.
+ * (`set`) stamps its switch. The install's time the record carries (round 5) is the one the
+ * desktop's `syncSources()` projects: a landing's the time its record carried
+ * (`ExtensionRecord.syncedInstalledAt`, held here in `synced`; 0 for none), an install made
+ * here its own – and the merge adopts a later one from a peer's record, as `adoptInstalledAt`.
  */
 class StoreExtensions extends PublishingExtensions {
   readonly applied: SyncedExtensionChange[][] = []
   /** The commits made to re-publish a record that landed nothing (`republish`). */
   republished: string[] = []
+  /** `ExtensionRecord.syncedInstalledAt` by id: the install time a landing publishes in place of its own. */
+  readonly synced = new Map<string, number>()
 
   add(id: string, source: ExtensionSource, opts: ExtensionOpts = {}): void {
     const now = Date.now()
-    super.add(id, source, { enabledAt: now, toolbarPinnedAt: now, ...opts })
+    super.add(id, source, { installedAt: now, enabledAt: now, toolbarPinnedAt: now, ...opts })
   }
 
   set(id: string, patch: Partial<ExtensionInfo>, stamps = true): void {
     super.set(id, patch, stamps)
+  }
+
+  drop(id: string): void {
+    this.synced.delete(id)
+    super.drop(id)
+  }
+
+  /** The install time this copy publishes (`syncSources()`): the landing's record's, or its own. */
+  publishedInstalledAt(id: string): number | undefined {
+    const have = this.installed.get(id)
+    return have ? (this.synced.get(id) ?? have.installedAt) : undefined
   }
 
   syncSources(): ExtensionSyncSource[] {
@@ -2579,6 +2599,7 @@ class StoreExtensions extends PublishingExtensions {
       source: e.source,
       enabled: e.enabled,
       toolbarPinned: e.toolbarPinned,
+      installedAt: this.synced.get(e.id) ?? e.installedAt,
       ...(e.pendingApproval ? { pendingApproval: true } : {}),
       ...(e.enabledAt !== undefined ? { enabledAt: e.enabledAt } : {}),
       ...(e.toolbarPinnedAt !== undefined ? { toolbarPinnedAt: e.toolbarPinnedAt } : {})
@@ -2605,6 +2626,16 @@ class StoreExtensions extends PublishingExtensions {
 
   private merge(have: ExtensionInfo, remote: SyncedExtensionData): void {
     const patch: Partial<ExtensionInfo> = {}
+    // The install's time, merged like a clock (round 5): a later one on the record is adopted
+    // as the time this copy publishes (`adoptInstalledAt`); an earlier one, or none, while this
+    // copy publishes a later time re-publishes.
+    const installedAt = this.synced.get(have.id) ?? have.installedAt
+    const installFromRecord = remote.installedAt >= installedAt
+    let adopted = false
+    if (remote.installedAt > installedAt) {
+      this.synced.set(have.id, remote.installedAt)
+      adopted = true
+    }
     const pinAt = have.toolbarPinnedAt ?? 0
     const pinFromRecord = remote.toolbarPinnedAt >= pinAt
     if (
@@ -2627,7 +2658,8 @@ class StoreExtensions extends PublishingExtensions {
       patch.enabledAt = remote.enabledAt
     }
     if (Object.keys(patch).length > 0) this.set(have.id, patch, false)
-    else if (!pinFromRecord || !enabledFromRecord) {
+    else if (adopted) this.b.state.commitVolatile()
+    else if (!pinFromRecord || !enabledFromRecord || !installFromRecord) {
       this.republished.push(have.id)
       this.b.state.commitVolatile()
     }
@@ -2636,11 +2668,14 @@ class StoreExtensions extends PublishingExtensions {
   /**
    * The download landed: installed turned off, waiting for approval, pinned as the record says,
    * the switches' clocks the record's (none when the record carried none – a record first
-   * seen, `modified` 0, as the desktop's `installPackage` keeps no clock of 0).
+   * seen, `modified` 0, as the desktop's `installPackage` keeps no clock of 0), its own
+   * `installedAt` this device's time and the install time it publishes the record's
+   * (`syncedInstalledAt`, 0 when the record carried none).
    */
   land(id: string): void {
     const change = this.applied.flat().findLast((c) => c.id === id && c.data !== null)!
     const data = change.data!
+    this.synced.set(id, data.installedAt)
     this.add(id, data.store, {
       enabled: false,
       toolbarPinned: data.toolbarPinned,
@@ -2756,12 +2791,13 @@ describe('the extensions across two devices', () => {
     A.add(EXT_B, 'edge-add-ons', { enabled: false })
     A.add(EXT_U, 'unpacked')
     const installedAt = A.installed.get(EXT_A)!.enabledAt!
+    expect(A.installed.get(EXT_A)!.installedAt).toBe(installedAt)
 
     await setup(a)
     expect(a.engine.status().scope.extensions).toBe(true)
     // The records as they go over the wire: the store, the two switches, each switch's clock
-    // (the install's time here), nothing else; the unpacked one stays home; `modified` 0 for a
-    // record first seen.
+    // (the install's time here), the install's time (round 5), nothing else; the unpacked one
+    // stays home; `modified` 0 for a record first seen.
     const aRecords = await extensionRecords(a)
     expect(aRecords.map((r) => r.id).sort()).toEqual([EXT_A, EXT_B].sort())
     expect(aRecords.find((r) => r.id === EXT_A)).toEqual({
@@ -2772,7 +2808,8 @@ describe('the extensions across two devices', () => {
         enabled: true,
         toolbarPinned: true,
         enabledAt: installedAt,
-        toolbarPinnedAt: installedAt
+        toolbarPinnedAt: installedAt,
+        installedAt
       },
       modified: 0,
       deleted: false
@@ -2782,7 +2819,8 @@ describe('the extensions across two devices', () => {
       enabled: false,
       toolbarPinned: false,
       enabledAt: A.installed.get(EXT_B)!.enabledAt,
-      toolbarPinnedAt: A.installed.get(EXT_B)!.toolbarPinnedAt
+      toolbarPinnedAt: A.installed.get(EXT_B)!.toolbarPinnedAt,
+      installedAt: A.installed.get(EXT_B)!.installedAt
     })
     // The wire, decrypted, device by device: the desktop's file alone so far, and the unpacked
     // one in nobody's – it stays home (the verifier's N1: the claim is made on the records, not
@@ -2830,8 +2868,9 @@ describe('the extensions across two devices', () => {
     expect(await extensionRecords(b)).toEqual([])
 
     // The first download lands: turned off, waiting for approval, pinned as the record said, the
-    // switches' clocks the record's. The laptop publishes nothing for it still – a landing is
-    // not its state – and the desktop's copy stays on.
+    // switches' clocks the record's, its own install time the laptop's and the one it will
+    // publish the desktop's (a landing is nobody's install). The laptop publishes nothing for it
+    // still – a landing is not its state – and the desktop's copy stays on.
     B.land(EXT_A)
     await settle()
     expect(B.installed.get(EXT_A)).toMatchObject({
@@ -2842,6 +2881,8 @@ describe('the extensions across two devices', () => {
       enabledAt: installedAt,
       toolbarPinnedAt: installedAt
     })
+    expect(B.installed.get(EXT_A)!.installedAt).toBeGreaterThan(installedAt)
+    expect(B.publishedInstalledAt(EXT_A)).toBe(installedAt)
     await b.engine.syncNow()
     expect(await extensionRecords(b)).toEqual([])
     await a.engine.syncNow()
@@ -2877,7 +2918,8 @@ describe('the extensions across two devices', () => {
         enabled: true,
         toolbarPinned: true,
         enabledAt: approvedAt,
-        toolbarPinnedAt: installedAt
+        toolbarPinnedAt: installedAt,
+        installedAt
       },
       modified: expect.any(Number) as number,
       deleted: false
@@ -2905,7 +2947,8 @@ describe('the extensions across two devices', () => {
       enabled: false,
       toolbarPinned: true,
       enabledAt: B.installed.get(EXT_A)!.enabledAt,
-      toolbarPinnedAt: installedAt
+      toolbarPinnedAt: installedAt,
+      installedAt
     })
     await a.engine.syncNow()
     expect(A.log().at(-1)).toBe(`${EXT_A.slice(0, 4)} chrome-web-store off pinned from Work laptop`)
@@ -3113,8 +3156,43 @@ describe('the extensions across two devices', () => {
     expect(await wireFor(b, EXT_A)).toEqual([])
     expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
 
-    // A uninstalls it and installs it again later: a fresh install, stamped after the decline.
-    // The tombstone reaches B (nothing to remove) and C (which uninstalls, with the toast).
+    // THE CRITERION (round 5). A turns the extension off, then unpins it: two clocked flips,
+    // each stamping A's record anew – well after the decline – and each landing on C. B is NOT
+    // re-offered across three rounds: a flip moves no install, and the record's `installedAt`
+    // (A's install, before the decline) is all the decline reads. Nor does C's copy re-offer:
+    // a landing publishes the install time its record carried, never its own.
+    await settle()
+    A.set(EXT_A, { enabled: false })
+    await settle()
+    await a.engine.syncNow()
+    await c.engine.syncNow()
+    await settle()
+    A.set(EXT_A, { toolbarPinned: false })
+    await settle()
+    await a.engine.syncNow()
+    const flipped = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    expect(flipped.modified).toBeGreaterThan(declinedAt)
+    const installedOnA = A.installed.get(EXT_A)!.installedAt
+    expect(readExtensionData(EXT_A, flipped.data)!.installedAt).toBe(installedOnA)
+    expect(installedOnA).toBeLessThanOrEqual(declinedAt)
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await c.engine.syncNow()
+      await settle()
+      await a.engine.syncNow()
+      await settle()
+    }
+    expect(C.installed.get(EXT_A)).toMatchObject({ enabled: false, toolbarPinned: false })
+    expect(C.publishedInstalledAt(EXT_A)).toBe(installedOnA)
+    expect(C.installed.get(EXT_A)!.installedAt).toBeGreaterThan(installedOnA)
+    expect(B.applied.flat().filter((ch) => ch.id === EXT_A)).toHaveLength(before)
+    expect(B.ids()).toEqual([EXT_B])
+    expect(await wireFor(b, EXT_A)).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
+
+    // A uninstalls it and installs it again later: a fresh install BY HAND, whose record carries
+    // an `installedAt` after the decline – the one re-offer. The tombstone reaches B (nothing to
+    // remove) and C (which uninstalls, with the toast).
     await settle()
     A.drop(EXT_A)
     await settle()
@@ -3131,6 +3209,7 @@ describe('the extensions across two devices', () => {
     const fresh = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
     expect(fresh.deleted).toBe(false)
     expect(fresh.modified).toBeGreaterThan(declinedAt)
+    expect(readExtensionData(EXT_A, fresh.data)!.installedAt).toBeGreaterThan(declinedAt)
     // B is offered it again – once: the request reaches its host, the decline is closed.
     await b.engine.syncNow()
     expect(B.log().at(-1)).toBe(
@@ -3162,14 +3241,27 @@ describe('the extensions across two devices', () => {
     expect(C.log().at(-1)).toBe(`${EXT_B.slice(0, 4)} removed from Work laptop`)
     expect(declinedOf(b)).toBeUndefined()
 
-    // B declines the re-offered landing too, and relaunches: the decline is persisted, so the
-    // relaunched laptop is not offered the desktop's copy again either.
+    // B declines the re-offered landing too – the decline stands again (once was the re-offer)
+    // – and A pins the extension afterwards, stamping the record anew under the same install;
+    // then B relaunches: the decline is persisted, so the relaunched laptop is offered neither
+    // the desktop's copy nor its flip.
     B.land(EXT_A)
     await settle()
     B.drop(EXT_A)
     await settle()
     await b.engine.syncNow()
     expect(declinedOf(b)).toEqual({ [EXT_A]: expect.any(Number) as number })
+    const declinedAgainAt = declinedOf(b)![EXT_A]!
+    expect(declinedAgainAt).toBeGreaterThan(declinedAt)
+    await settle()
+    A.set(EXT_A, { toolbarPinned: true })
+    await settle()
+    await a.engine.syncNow()
+    const pinnedAfter = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    expect(pinnedAfter.modified).toBeGreaterThan(declinedAgainAt)
+    expect(readExtensionData(EXT_A, pinnedAfter.data)!.installedAt).toBeLessThanOrEqual(
+      declinedAgainAt
+    )
     const files = close(b)
     const io = memoryIo()
     Object.assign(io.files, files)
@@ -3184,8 +3276,128 @@ describe('the extensions across two devices', () => {
     expect(AGAIN.applied.flat().filter((ch) => ch.id === EXT_A)).toEqual([])
     expect(AGAIN.ids()).toEqual([])
     expect(await wireFor(again, EXT_A)).toEqual([])
-    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true })
-    expect(declinedOf(again)).toEqual({ [EXT_A]: expect.any(Number) as number })
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true, toolbarPinned: true })
+    expect(declinedOf(again)).toEqual({ [EXT_A]: declinedAgainAt })
+  }, 30_000)
+
+  it('the re-offer criterion (round 5): a peer’s record WITHOUT `installedAt` – a build before the field – never re-offers a declined extension, however it is stamped, nor does the desktop’s copy that merged its switches; a record carrying an install AFTER the decline re-offers it, once', async () => {
+    const a = device('Desk (Linux)', { extensions: desktopExtensions })
+    const b = device('Work laptop', { extensions: desktopExtensions })
+    const A = hostOf<StoreExtensions>(a)
+    const B = hostOf<StoreExtensions>(b)
+    const declinedOf = (d: Device): Record<string, number> | undefined => {
+      d.engine.flushSync()
+      return (
+        JSON.parse(d.io.files['sync.json']!) as { declinedExtensions?: Record<string, number> }
+      ).declinedExtensions
+    }
+    A.add(EXT_A, 'chrome-web-store', { enabled: true })
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    const declinedAt = declinedOf(b)![EXT_A]!
+    expect(declinedAt).toBeGreaterThanOrEqual(A.installed.get(EXT_A)!.installedAt)
+    const before = B.applied.flat().filter((ch) => ch.id === EXT_A).length
+
+    // A peer on a build before the field writes its file under the folder's key: the same
+    // extension, its switches flipped and clocked well AFTER the decline, the record stamped
+    // there too – and no `installedAt`, as such a build writes. Under round 4's reading the
+    // stamp alone would have re-offered it.
+    const own = folderFiles('/drive').get(deviceFileName(a.engine.status().deviceId))!
+    const salt = (JSON.parse(own) as { envelope: { salt: string } }).envelope.salt
+    const key = await folderKey(salt)
+    const later = declinedAt + 1_000
+    const olderBuild: SyncRecord = {
+      id: EXT_A,
+      type: 'extension',
+      modified: later,
+      deleted: false,
+      data: {
+        store: 'chrome-web-store',
+        enabled: false,
+        toolbarPinned: true,
+        enabledAt: later,
+        toolbarPinnedAt: later
+      }
+    }
+    const peerFile = async (record: SyncRecord): Promise<void> => {
+      folderFiles('/drive').set(
+        deviceFileName('peer-older-build'),
+        serializeDeviceFile({
+          deviceId: 'peer-older-build',
+          deviceName: 'Studio',
+          updatedAt: record.modified,
+          envelope: await encryptJson(key, salt, { v: 1, records: [record] })
+        })
+      )
+    }
+    await peerFile(olderBuild)
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await a.engine.syncNow()
+      await settle()
+      expect(b.engine.status().lastError, `round ${round}`).toBeNull()
+    }
+    // B: no request for the id reached its host, the decline stands with its time. A: the
+    // peer's later switches landed, and its copy – re-published with A's own install time,
+    // which is before the decline – re-offers nothing on B either.
+    expect(B.applied.flat().filter((ch) => ch.id === EXT_A)).toHaveLength(before)
+    expect(B.ids()).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
+    expect(A.installed.get(EXT_A)).toMatchObject({
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: later,
+      toolbarPinnedAt: later
+    })
+    expect(A.publishedInstalledAt(EXT_A)).toBeLessThanOrEqual(declinedAt)
+
+    // The peer, on a build with the field, installs the extension again by hand: its record
+    // carries an `installedAt` after the decline (the peer's clock, in step with B's – a peer
+    // clock ahead of B's would hold the re-offer open until B's clock passed the install, as
+    // any cross-device comparison of times does). B is offered it – once – and A adopts the
+    // later install as the time its copy publishes (`adoptInstalledAt`), its own untouched.
+    const reinstalledAt = Date.now()
+    expect(reinstalledAt).toBeGreaterThan(declinedAt)
+    const reinstalled: SyncRecord = {
+      ...olderBuild,
+      modified: later + 1_000,
+      data: { ...(olderBuild.data as object), installedAt: reinstalledAt }
+    }
+    await peerFile(reinstalled)
+    await b.engine.syncNow()
+    expect(B.applied.flat().filter((ch) => ch.id === EXT_A)).toHaveLength(before + 1)
+    expect(B.log().at(-1)).toBe(`${EXT_A.slice(0, 4)} chrome-web-store off pinned from Studio`)
+    expect(declinedOf(b)).toBeUndefined()
+    const ownInstall = A.installed.get(EXT_A)!.installedAt
+    await a.engine.syncNow()
+    await settle()
+    expect(A.publishedInstalledAt(EXT_A)).toBe(reinstalledAt)
+    expect(A.installed.get(EXT_A)!.installedAt).toBe(ownInstall)
+    // B lands it and declines once more: the same record, however many rounds, re-offers
+    // nothing – once was the re-offer.
+    B.land(EXT_A)
+    await settle()
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    const declinedAgainAt = declinedOf(b)![EXT_A]!
+    expect(declinedAgainAt).toBeGreaterThan(reinstalledAt)
+    const after = B.applied.flat().filter((ch) => ch.id === EXT_A).length
+    for (let round = 0; round < 3; round += 1) {
+      await a.engine.syncNow()
+      await b.engine.syncNow()
+      await settle()
+    }
+    expect(B.applied.flat().filter((ch) => ch.id === EXT_A)).toHaveLength(after)
+    expect(B.ids()).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAgainAt })
   }, 30_000)
 
   it('turning the Extensions off stops sending and receiving them without deleting anything, on either device; a merge declined uninstalls nothing on the peers', async () => {
@@ -3343,7 +3555,8 @@ describe('the extensions across devices – the verifier’s round', () => {
       enabled: false,
       toolbarPinned: true,
       enabledAt: t2,
-      toolbarPinnedAt: t1
+      toolbarPinnedAt: t1,
+      installedAt: t0
     })
     expect(merged.modified).toBeGreaterThan(t2)
     await b.engine.syncNow()
@@ -3436,7 +3649,8 @@ describe('the extensions across devices – the verifier’s round', () => {
       enabled: false,
       toolbarPinned: true,
       enabledAt: mine.enabledAt,
-      toolbarPinnedAt: mine.toolbarPinnedAt
+      toolbarPinnedAt: mine.toolbarPinnedAt,
+      installedAt: mine.installedAt
     })
     await b.engine.syncNow()
     await settle()
@@ -3469,8 +3683,17 @@ describe('the extensions across devices – the verifier’s round', () => {
     await b.engine.syncNow()
     await settle()
     const shape = A.installed.get(EXT_A)!
-    expect(B.installed.get(EXT_A)).toEqual({ ...shape, enabledAt: shape.enabledAt })
+    const landing = B.installed.get(EXT_A)!
+    // The same switches under the same clocks; a device's own install time is its own (the
+    // landing's), and what the landing publishes for it is the desktop's (round 5).
+    expect(landing).toEqual({
+      ...shape,
+      installedAt: landing.installedAt,
+      updatedAt: landing.updatedAt
+    })
+    expect(B.publishedInstalledAt(EXT_A)).toBe(shape.installedAt)
     expect(C.installed.get(EXT_A)!.enabledAt).toBe(shape.enabledAt)
+    expect(C.publishedInstalledAt(EXT_A)).toBe(shape.installedAt)
 
     // The desktop turns the extension off: its record goes out at t1.
     await settle()
@@ -3740,12 +3963,23 @@ describe('the extensions across devices – the verifier’s round', () => {
     const P = hostOf<PublishingExtensions>(p)
     const A = hostOf<InFlightExtensions>(a)
     const B = hostOf<InFlightExtensions>(b)
-    // Installed from the store on all three: the phone's install writes no clock, the desktops'
-    // stamp both switches at T0.
+    // Installed from the store on all three at T0: the phone's install writes no clock, the
+    // desktops' stamp both switches at T0; every copy carries the one install time (the
+    // scenario is the switches' – the install time's merge has its own pins below).
     const T0 = Date.now() - 60_000
-    P.add(EXT_A, 'chrome-web-store', { enabled: true })
-    A.add(EXT_A, 'chrome-web-store', { enabled: true, enabledAt: T0, toolbarPinnedAt: T0 })
-    B.add(EXT_A, 'chrome-web-store', { enabled: true, enabledAt: T0, toolbarPinnedAt: T0 })
+    P.add(EXT_A, 'chrome-web-store', { enabled: true, installedAt: T0 })
+    A.add(EXT_A, 'chrome-web-store', {
+      enabled: true,
+      enabledAt: T0,
+      toolbarPinnedAt: T0,
+      installedAt: T0
+    })
+    B.add(EXT_A, 'chrome-web-store', {
+      enabled: true,
+      enabledAt: T0,
+      toolbarPinnedAt: T0,
+      installedAt: T0
+    })
     const phoneId = p.engine.status().deviceId
     /** The phone's copy of the record on the wire, decrypted – undefined when its file carries none. */
     const phoneCopy = async (): Promise<SyncRecord | undefined> =>
@@ -3777,14 +4011,17 @@ describe('the extensions across devices – the verifier’s round', () => {
       }
     }
 
-    // The phone's record goes out first, clock-less, at 0. The desktop's merge takes it, lands
-    // nothing from it (its clocks read as 0, older than the install's) and re-publishes its own
-    // copy under a fresh stamp; the laptop holds the same bytes and adopts the record as it is.
+    // The phone's record goes out first, clock-less, at 0 – the install's time alone beside the
+    // three fields (the phone's `list()` projects its registry's). The desktop's merge takes it,
+    // lands nothing from it (its clocks read as 0, older than the install's) and re-publishes
+    // its own copy under a fresh stamp; the laptop holds the same bytes and adopts the record
+    // as it is.
     await setup(p)
     expect((await phoneCopy())?.data).toEqual({
       store: 'chrome-web-store',
       enabled: true,
-      toolbarPinned: false
+      toolbarPinned: false,
+      installedAt: T0
     })
     await setup(a)
     await a.engine.confirmMerge(true)
@@ -3797,7 +4034,8 @@ describe('the extensions across devices – the verifier’s round', () => {
       enabled: true,
       toolbarPinned: false,
       enabledAt: T0,
-      toolbarPinnedAt: T0
+      toolbarPinnedAt: T0,
+      installedAt: T0
     })
     expect(first.modified).toBeGreaterThan(0)
     await setup(b)
@@ -3833,7 +4071,8 @@ describe('the extensions across devices – the verifier’s round', () => {
       enabled: false,
       toolbarPinned: false,
       enabledAt: t2,
-      toolbarPinnedAt: T0
+      toolbarPinnedAt: T0,
+      installedAt: T0
     })
     for (let round = 0; round < 3; round += 1) {
       await p.engine.syncNow()
@@ -3899,7 +4138,8 @@ describe('the extensions across devices – the verifier’s round', () => {
       store: 'chrome-web-store',
       enabled: true,
       toolbarPinned: false,
-      enabledAt: t4
+      enabledAt: t4,
+      installedAt: T0
     })
     expect(flipped.modified).toBeGreaterThan(pinned.modified)
     await a.engine.syncNow()
@@ -3928,7 +4168,8 @@ describe('the extensions across devices – the verifier’s round', () => {
       enabled: true,
       toolbarPinned: true,
       enabledAt: t4,
-      toolbarPinnedAt: t3
+      toolbarPinnedAt: t3,
+      installedAt: T0
     })
     expect(merged.modified).toBeGreaterThan(flipped.modified)
     await b.engine.syncNow()

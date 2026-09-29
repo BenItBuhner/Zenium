@@ -24,6 +24,14 @@ const ID_C = 'cccccccccccccccccccccccccccccccc'
 
 const HOUR = 60 * 60 * 1000
 
+/**
+ * The install every copy of an extension in these tests travels with unless a test says
+ * otherwise (round 5): one made by hand before the tests' clocks, the same on the registry
+ * record and on the record handed over – two copies of ONE install tie, and the install's time
+ * moves nothing.
+ */
+const INSTALLED_AT = 500_000
+
 function record(
   id: string,
   source: SyncedExtensionRecord['source'],
@@ -35,17 +43,21 @@ function record(
     source,
     enabled: opts.enabled ?? true,
     toolbarPinned: opts.toolbarPinned ?? false,
+    installedAt: opts.installedAt ?? INSTALLED_AT,
     pendingWarnings: opts.pendingWarnings ?? null,
     ...(opts.pendingApproval ? { pendingApproval: true } : {}),
     ...(opts.enabledAt !== undefined ? { enabledAt: opts.enabledAt } : {}),
-    ...(opts.toolbarPinnedAt !== undefined ? { toolbarPinnedAt: opts.toolbarPinnedAt } : {})
+    ...(opts.toolbarPinnedAt !== undefined ? { toolbarPinnedAt: opts.toolbarPinnedAt } : {}),
+    ...(opts.syncedInstalledAt !== undefined ? { syncedInstalledAt: opts.syncedInstalledAt } : {})
   }
 }
 
 /**
  * A record as the engine hands it over (`syncedExtensionData`): each switch with its clock –
  * 0 here unless the test says, as old as any clock this device holds, so a record without one
- * ties with a registry record without one and its switch lands where the values differ.
+ * ties with a registry record without one and its switch lands where the values differ – and
+ * the install's time, `INSTALLED_AT` unless the test says (0: a record without one, an older
+ * build's).
  */
 const live = (
   id: string,
@@ -58,7 +70,8 @@ const live = (
     enabled: data.enabled ?? true,
     toolbarPinned: data.toolbarPinned ?? false,
     enabledAt: data.enabledAt ?? 0,
-    toolbarPinnedAt: data.toolbarPinnedAt ?? 0
+    toolbarPinnedAt: data.toolbarPinnedAt ?? 0,
+    installedAt: data.installedAt ?? INSTALLED_AT
   },
   from
 })
@@ -143,13 +156,17 @@ class FakeHost implements ExtensionSyncHost {
     )
     if (this.registry.has(id) || this.busyIds.has(id)) return 'in-progress'
     // The synced landing as `ExtensionService.installPackage` writes it: off, pending, pinned
-    // as the record says, the switches' clocks the record's (none of 0) – never loaded.
+    // as the record says, the switches' clocks the record's (none of 0), its own `installedAt`
+    // the landing's time and the install time it PUBLISHES the record's (`syncedInstalledAt`,
+    // 0 for none) – never loaded.
     this.registry.set(
       id,
       record(id, store, {
         enabled: false,
         toolbarPinned: data.toolbarPinned,
         pendingApproval: true,
+        installedAt: this.clock,
+        syncedInstalledAt: data.installedAt,
         ...(data.enabledAt > 0 ? { enabledAt: data.enabledAt } : {}),
         ...(data.toolbarPinnedAt > 0 ? { toolbarPinnedAt: data.toolbarPinnedAt } : {})
       })
@@ -172,6 +189,12 @@ class FakeHost implements ExtensionSyncHost {
     this.calls.push(`setToolbarPinned ${id.slice(0, 4)} ${pinned ? 'on' : 'off'}`)
     const have = this.registry.get(id)
     if (have) this.registry.set(id, { ...have, toolbarPinned: pinned, toolbarPinnedAt: at })
+  }
+
+  adoptInstalledAt(id: string, at: number): void {
+    this.calls.push(`adoptInstalledAt ${id.slice(0, 4)} ${at}`)
+    const have = this.registry.get(id)
+    if (have) this.registry.set(id, { ...have, syncedInstalledAt: at })
   }
 
   republish(id: string): void {
@@ -497,7 +520,11 @@ describe('ExtensionSyncApplier – the switch-by-switch merge under each switch�
     const { enabled, enabledAt, toolbarPinned, toolbarPinnedAt } = host.registry.get(ID_A)!
     return { enabled, enabledAt, toolbarPinned, toolbarPinnedAt }
   }
-  /** The record the engine would hand over for the registry's copy (`syncedExtensionData`). */
+  /**
+   * The record the engine would hand over for the registry's copy (`syncedExtensionData`), the
+   * install's time as `syncSources()` projects it: the one a landing took from its record over
+   * the landing's own.
+   */
   const recordOf = (host: FakeHost, from: string): SyncedExtensionChange => {
     const have = host.registry.get(ID_A)!
     return live(
@@ -506,7 +533,8 @@ describe('ExtensionSyncApplier – the switch-by-switch merge under each switch�
         enabled: have.enabled,
         toolbarPinned: have.toolbarPinned,
         enabledAt: have.enabledAt,
-        toolbarPinnedAt: have.toolbarPinnedAt
+        toolbarPinnedAt: have.toolbarPinnedAt,
+        installedAt: have.syncedInstalledAt ?? have.installedAt
       },
       from
     )
@@ -727,6 +755,100 @@ describe('ExtensionSyncApplier – the switch-by-switch merge under each switch�
     ])
     expect(host.registry.get(ID_A)!.enabled).toBe(false)
     expect(host.registry.get(ID_B)!.enabled).toBe(true)
+  })
+
+  it('the install’s time merges like a clock (round 5): a record carrying a LATER install than the time this copy publishes is adopted (`adoptInstalledAt`; the copy’s own `installedAt` stands); an equal one moves nothing; an earlier one, or none, while this copy publishes a later time lands nothing and is re-published – beside the switches, one commit', async () => {
+    const host = new FakeHost()
+    host.registry.set(ID_A, held())
+    const applier = new ExtensionSyncApplier(host)
+    // A fresh install by hand on a peer at T1 (`installedAt` later than this copy's): adopted as
+    // the time this copy publishes, its own install time untouched; the switches tie – the
+    // adoption is the commit, no `republish` beside it.
+    applier.apply([live(ID_A, { enabledAt: T0, toolbarPinnedAt: T0, installedAt: T1 })])
+    await applier.settled()
+    expect(host.calls).toEqual([`adoptInstalledAt ${ID_A.slice(0, 4)} ${T1}`])
+    expect(host.registry.get(ID_A)).toMatchObject({
+      installedAt: INSTALLED_AT,
+      syncedInstalledAt: T1
+    })
+    // The same time again: nothing.
+    host.calls.length = 0
+    applier.apply([live(ID_A, { enabledAt: T0, toolbarPinnedAt: T0, installedAt: T1 })])
+    await applier.settled()
+    expect(host.calls).toEqual([])
+    // An earlier install on the record (a peer's copy from before the adoption), and one
+    // without the time (an older build's, 0): each keeps the time here and re-publishes it.
+    for (const installedAt of [INSTALLED_AT, 0]) {
+      host.calls.length = 0
+      applier.apply([live(ID_A, { enabledAt: T0, toolbarPinnedAt: T0, installedAt })])
+      await applier.settled()
+      expect(host.calls).toEqual([`republish ${ID_A.slice(0, 4)}`])
+      expect(host.registry.get(ID_A)!.syncedInstalledAt).toBe(T1)
+    }
+    // A later install beside a later switch: both land, in one commit's worth of calls.
+    host.calls.length = 0
+    applier.apply([
+      live(ID_A, { enabled: false, enabledAt: T1 + 1, toolbarPinnedAt: T0, installedAt: T1 + 5 })
+    ])
+    await applier.settled()
+    expect(host.calls).toEqual([
+      `adoptInstalledAt ${ID_A.slice(0, 4)} ${T1 + 5}`,
+      `setEnabled ${ID_A.slice(0, 4)} off`
+    ])
+    expect(host.registry.get(ID_A)).toMatchObject({ enabled: false, syncedInstalledAt: T1 + 5 })
+    // An earlier install beside a later switch: the switch lands, the time stays – the commit
+    // that landed the switch publishes this copy's later time; no `republish` beside it.
+    host.calls.length = 0
+    applier.apply([
+      live(ID_A, { enabled: true, enabledAt: T1 + 2, toolbarPinnedAt: T0, installedAt: T1 })
+    ])
+    await applier.settled()
+    expect(host.calls).toEqual([`setEnabled ${ID_A.slice(0, 4)} on`])
+    expect(host.registry.get(ID_A)!.syncedInstalledAt).toBe(T1 + 5)
+  })
+
+  it('a synced landing publishes its record’s install time, not its own (`syncedInstalledAt` – a landing is nobody’s install), 0 when the record carried none; a third device’s landing from a re-installed peer carries the peer’s install, so the exchange back moves nothing', async () => {
+    const host = new FakeHost()
+    const applier = new ExtensionSyncApplier(host)
+    // A record from a hand install at T1: the landing here is stamped at this device's clock
+    // and publishes T1.
+    applier.apply([live(ID_A, { installedAt: T1 })])
+    await applier.settled()
+    expect(host.registry.get(ID_A)).toMatchObject({
+      pendingApproval: true,
+      installedAt: host.clock,
+      syncedInstalledAt: T1
+    })
+    // A record without the time (an older build's): the landing publishes none.
+    applier.apply([live(ID_B, { installedAt: 0 })])
+    await applier.settled()
+    expect(host.registry.get(ID_B)).toMatchObject({ installedAt: host.clock, syncedInstalledAt: 0 })
+    // The landing, approved, handed back to the peer that made the install at T1 and holds the
+    // same switches under the same clocks: nothing lands, nothing is re-published – the two
+    // copies carry ONE install, whatever each device's own `installedAt` says.
+    host.approve(ID_A)
+    const have = host.registry.get(ID_A)!
+    const peer = new FakeHost()
+    peer.registry.set(
+      ID_A,
+      record(ID_A, 'chrome-web-store', {
+        installedAt: T1,
+        enabledAt: have.enabledAt,
+        toolbarPinnedAt: have.toolbarPinnedAt
+      })
+    )
+    const peerApplier = new ExtensionSyncApplier(peer)
+    peerApplier.apply([
+      live(ID_A, {
+        enabled: have.enabled,
+        toolbarPinned: have.toolbarPinned,
+        enabledAt: have.enabledAt,
+        toolbarPinnedAt: have.toolbarPinnedAt,
+        installedAt: have.syncedInstalledAt ?? have.installedAt
+      })
+    ])
+    await peerApplier.settled()
+    expect(peer.calls).toEqual([])
   })
 })
 

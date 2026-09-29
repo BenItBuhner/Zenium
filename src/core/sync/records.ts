@@ -428,9 +428,24 @@ export function readModData(id: string, data: unknown): Mod | null {
  * version travels nowhere: each device takes the store's current one. The per-device grants –
  * `allowFileAccess`, `allowPrivate`, `allowUserScripts` – travel nowhere either: each is a
  * permission the user gives THIS device's copy, and Chrome's `incognito_enabled` is the one
- * such grant it syncs; we sync none. Nor do `installedAt` and `updatedAt`: when the files were
+ * such grant it syncs; we sync none. `updatedAt` travels nowhere either: when the files were
  * written on a device is that device's fact, and the same state must hash the same on every
  * device (`winningRemote` skips an equal hash; the round adopts a peer's entry on one).
+ *
+ * `installedAt` DOES travel (round 5), as the DECLINE's re-offer criterion and nothing else:
+ * when the extension was installed by hand, on whichever device did – the latest such install
+ * the publishing device knows of. A device that declined a synced landing
+ * (`Persisted.declinedExtensions`) is offered the extension again only by a record whose
+ * `installedAt` is later than its decline (`extensionDeclineStands`) – a fresh install by hand
+ * somewhere – never by a flip's newer stamp, nor by a landing elsewhere. For that the time must
+ * be the INSTALL's, not each copy's: an install made here publishes its own (`newRecord`, the
+ * registry's `installedAt`); a synced landing publishes the time the record it landed from
+ * carried (`ExtensionRecord.syncedInstalledAt` – a landing is nobody's install), none when that
+ * record carried none; and a later time on a record merges in like a later switch clock
+ * (`ExtensionSyncApplier.mergeSwitches` adopts it; a copy holding the later one is
+ * re-published), so every device's copy of one extension carries one time and the same state
+ * hashes the same everywhere, as above. Absent on a record from a build before the field and on
+ * a landing from one, which the criterion reads as "no install after the decline".
  *
  * The transport's conflict clock is the record's `modified` – the engine's stamp at the commit
  * that changed the extension (`SyncEngine.onLocalChange`) – last writer per extension picks the
@@ -460,6 +475,12 @@ export interface ExtensionRecordData {
   /** The switches' clocks (ms); absent when the publishing host keeps none for that switch. */
   enabledAt?: number
   toolbarPinnedAt?: number
+  /**
+   * When the extension was installed by hand (ms), on whichever device did – the decline's
+   * re-offer criterion (the doc above); absent when the publishing host holds no such time (a
+   * build before the field, a landing from a record without one).
+   */
+  installedAt?: number
 }
 
 /**
@@ -468,11 +489,14 @@ export interface ExtensionRecordData {
  * beats a clocked switch on the receiving host (`ExtensionSyncApplier.mergeSwitches` takes a
  * switch only under a clock not older than its own). Never the record's `modified`: that stamp
  * is the whole record's, and on a copy re-published by a host that changed nothing it would
- * be a peer's time lent to a stale switch.
+ * be a peer's time lent to a stale switch. `installedAt` the same way: 0 for none, which no
+ * time this device holds is older than, so a record without one neither moves the time here
+ * nor re-offers a decline.
  */
 export type SyncedExtensionData = ExtensionRecordData & {
   enabledAt: number
   toolbarPinnedAt: number
+  installedAt: number
 }
 
 export function syncedExtensionData(data: ExtensionRecordData): SyncedExtensionData {
@@ -481,7 +505,8 @@ export function syncedExtensionData(data: ExtensionRecordData): SyncedExtensionD
     enabled: data.enabled,
     toolbarPinned: data.toolbarPinned,
     enabledAt: data.enabledAt ?? 0,
-    toolbarPinnedAt: data.toolbarPinnedAt ?? 0
+    toolbarPinnedAt: data.toolbarPinnedAt ?? 0,
+    installedAt: data.installedAt ?? 0
   }
 }
 
@@ -496,10 +521,13 @@ export function extensionStoreOf(source: ExtensionInfo['source']): StoreId | nul
 /**
  * What `collectLocal` reads of an installed extension (`ExtensionHost.syncSources()`, the
  * registry alone – no manifest is read for it; `list()` where a host has no projection): its
- * id, where it came from, the two synced switches with their clocks, and whether it is a synced
- * landing still waiting for the user's approval here (`ExtensionInfo.pendingApproval`) – such a
- * landing is not this device's state to publish (`collectLocal` leaves it out; `frozenRecords`
- * holds its entry).
+ * id, where it came from, the two synced switches with their clocks, the install's time the
+ * record carries (`installedAt` – the desktop's `syncSources()` projects the time a synced
+ * landing took from its record over the landing's own, `ExtensionRecord.syncedInstalledAt`; the
+ * phone's `list()` its registry's, every install there being one made by hand), and whether it
+ * is a synced landing still waiting for the user's approval here
+ * (`ExtensionInfo.pendingApproval`) – such a landing is not this device's state to publish
+ * (`collectLocal` leaves it out; `frozenRecords` holds its entry).
  */
 export type ExtensionSyncSource = Pick<
   ExtensionInfo,
@@ -510,13 +538,15 @@ export type ExtensionSyncSource = Pick<
   | 'pendingApproval'
   | 'enabledAt'
   | 'toolbarPinnedAt'
+  | 'installedAt'
 >
 
 /**
  * The record's payload for a store extension: the three fields in the interface's order, then
- * each switch's clock when the host keeps one (a clock of 0 or none is left out, so a record
- * from a host without clocks carries the three fields alone – the bytes a build from before the
- * clocks wrote, and the fixture's).
+ * each switch's clock when the host keeps one, then the install's time when the host holds one
+ * (a time of 0 or none is left out, so a record from a host without clocks and without the time
+ * carries the three fields alone – the bytes a build from before the clocks wrote, and the
+ * fixture's).
  */
 export function extensionRecordData(ext: ExtensionSyncSource, store: StoreId): ExtensionRecordData {
   const data: ExtensionRecordData = {
@@ -527,6 +557,7 @@ export function extensionRecordData(ext: ExtensionSyncSource, store: StoreId): E
   if (ext.enabledAt !== undefined && ext.enabledAt > 0) data.enabledAt = ext.enabledAt
   if (ext.toolbarPinnedAt !== undefined && ext.toolbarPinnedAt > 0)
     data.toolbarPinnedAt = ext.toolbarPinnedAt
+  if (Number.isFinite(ext.installedAt) && ext.installedAt > 0) data.installedAt = ext.installedAt
   return data
 }
 
@@ -534,11 +565,13 @@ export function extensionRecordData(ext: ExtensionSyncSource, store: StoreId): E
  * Read an extension record from another device – the apply side's reader, before the host acts
  * on it (`ExtensionHost.applySyncedExtensions`): the id must be an extension id (32 letters
  * a–p, `isExtensionId`), the store one this build knows, the two switches booleans, each
- * switch's clock a positive finite number when present (anything else reads as no clock). Null
- * for anything else, and the record is ignored – an unknown store id (a store a later build
- * adds) lands nothing here, as a type this build does not know does. Idempotent: what it
- * returns, `extensionRecordData` publishes again as the same bytes, so a device that applied a
- * record re-collects it to the received hash once the extension stands as the record says.
+ * switch's clock and the install's time a positive finite number when present (anything else
+ * reads as none). Null for anything else, and the record is ignored – an unknown store id (a
+ * store a later build adds) lands nothing here, as a type this build does not know does; a
+ * field this build does not know (one a later build adds) is dropped, the record read without
+ * it. Idempotent: what it returns, `extensionRecordData` publishes again as the same bytes, so
+ * a device that applied a record re-collects it to the received hash once the extension stands
+ * as the record says.
  */
 export function readExtensionData(id: string, data: unknown): ExtensionRecordData | null {
   if (!isExtensionId(id)) return null
@@ -559,6 +592,8 @@ export function readExtensionData(id: string, data: unknown): ExtensionRecordDat
     d.toolbarPinnedAt > 0
   )
     read.toolbarPinnedAt = d.toolbarPinnedAt
+  if (typeof d.installedAt === 'number' && Number.isFinite(d.installedAt) && d.installedAt > 0)
+    read.installedAt = d.installedAt
   return read
 }
 
@@ -1744,7 +1779,8 @@ export function frozenRecords(
  * either – the metadata never took it, and the host could land nothing from it; and a record
  * the user DECLINED here (`declined`: the landing removed before its approval, at that time –
  * `Persisted.declinedExtensions`) is closed on this device while the decline stands against it
- * (`extensionDeclineStands`), a fresh install on the peer after it being the one re-offer.
+ * (`extensionDeclineStands`), a record carrying an install made by hand AFTER the decline
+ * (`installedAt`) being the one re-offer.
  */
 export function pendingExtensionRequests(
   local: MetaMap,
@@ -1770,19 +1806,24 @@ export function pendingExtensionRequests(
 
 /**
  * Whether the user's decline of a synced extension on this device stands against `record`
- * (ID-44; the lead's ruling, round 4): the user removed the landing before approving it, at
- * `declinedAt` (this device's time), which closes the request HERE alone – no tombstone, the
- * other devices keep the extension – and the peer's record as it stood then, or any copy not
- * stamped after the decline, is not offered to this device again. A live record stamped LATER
- * than the decline – a fresh install of the same id on a peer after it – beats the decline and
- * is offered once more; a tombstone is no offer and beats nothing. Undefined `declinedAt`: no
- * decline.
+ * (ID-44; the lead's ruling, round 4; the criterion of round 5): the user removed the landing
+ * before approving it, at `declinedAt` (this device's time), which closes the request HERE
+ * alone – no tombstone, the other devices keep the extension – and the extension is not offered
+ * to this device again by any copy of the record whose install is not later than the decline.
+ * A live record carrying an `installedAt` LATER than the decline – a fresh install of the same
+ * id by hand on a peer after it (the doc at `ExtensionRecordData`) – beats the decline and is
+ * offered once more; the record's `modified` counts for nothing here – a flip of a switch on a
+ * peer stamps the record anew and re-offers nothing – nor does a landing of the extension on a
+ * third device; a record WITHOUT `installedAt` (a build before the field) never re-offers; a
+ * tombstone is no offer and beats nothing. Undefined `declinedAt`: no decline.
  */
 export function extensionDeclineStands(
   declinedAt: number | undefined,
-  record: Pick<SyncRecord, 'modified' | 'deleted'>
+  record: Pick<SyncRecord, 'id' | 'deleted' | 'data'>
 ): boolean {
-  return declinedAt !== undefined && !record.deleted && record.modified <= declinedAt
+  if (declinedAt === undefined || record.deleted) return false
+  const installedAt = readExtensionData(record.id, record.data)?.installedAt ?? 0
+  return !(installedAt > declinedAt)
 }
 
 export interface DiffResult {

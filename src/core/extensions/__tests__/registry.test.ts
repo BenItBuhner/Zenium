@@ -502,4 +502,76 @@ describe('migrateRegistry', () => {
     expect(record()).not.toHaveProperty('enabledAt')
     expect(record()).not.toHaveProperty('toolbarPinnedAt')
   })
+
+  it('keeps the install time a synced landing publishes (`syncedInstalledAt`, ID-44 round 5) as a finite number of 0 or more – 0 being "the record carried none" – and drops anything else; an install made by hand carries none, `newRecord` sets none', () => {
+    const migrated = migrateRegistry(
+      {
+        version: 2,
+        extensions: [
+          {
+            id: 'landed',
+            path: '/l',
+            source: 'chrome-web-store',
+            enabled: false,
+            pendingApproval: true,
+            syncedInstalledAt: 1000
+          },
+          {
+            id: 'landedFromBefore',
+            path: '/lb',
+            source: 'chrome-web-store',
+            enabled: true,
+            syncedInstalledAt: 0
+          },
+          {
+            id: 'damaged',
+            path: '/d',
+            source: 'edge-add-ons',
+            enabled: true,
+            syncedInstalledAt: '1000'
+          },
+          {
+            id: 'negative',
+            path: '/n',
+            source: 'edge-add-ons',
+            enabled: true,
+            syncedInstalledAt: -1
+          },
+          {
+            id: 'infinite',
+            path: '/i',
+            source: 'edge-add-ons',
+            enabled: true,
+            syncedInstalledAt: Number.POSITIVE_INFINITY
+          },
+          { id: 'byHand', path: '/h', source: 'edge-add-ons', enabled: true }
+        ]
+      },
+      helpers,
+      NOW
+    )
+    expect(
+      migrated.extensions.map((r) => [
+        r.id,
+        'syncedInstalledAt' in r ? r.syncedInstalledAt : 'absent'
+      ])
+    ).toEqual([
+      ['landed', 1000],
+      ['landedFromBefore', 0],
+      ['damaged', 'absent'],
+      ['negative', 'absent'],
+      ['infinite', 'absent'],
+      ['byHand', 'absent']
+    ])
+    // The record's own `installedAt` is untouched by it: the landing's time stands beside.
+    expect(migrated.extensions[0]!.installedAt).toBe(NOW)
+    // A well-formed landing passes through unchanged.
+    const doc = {
+      version: 2,
+      extensions: [{ ...record(), enabled: false, pendingApproval: true, syncedInstalledAt: 1000 }],
+      lastUpdateCheck: null
+    }
+    expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
+    expect(record()).not.toHaveProperty('syncedInstalledAt')
+  })
 })

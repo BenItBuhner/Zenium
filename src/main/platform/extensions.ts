@@ -363,6 +363,7 @@ export class ExtensionService implements ExtensionHost {
       remove: (id) => this.remove(id),
       setEnabled: (id, enabled, at) => this.switchEnabled(id, enabled, at),
       setToolbarPinned: (id, pinned, at) => this.switchToolbarPinned(id, pinned, at),
+      adoptInstalledAt: (id, at) => this.adoptInstalledAt(id, at),
       republish: () => this.browser.state.commitVolatile(),
       toastRemoved: (record, store, from) => this.toastSyncedRemoval(record, store, from),
       error: (message) => console.error(message),
@@ -756,7 +757,10 @@ export class ExtensionService implements ExtensionHost {
   /**
    * What the sync engine collects (`ExtensionHost.syncSources`, ID-44), from the registry alone:
    * no manifest is read for it, where `list()` reads one per extension that is not loaded – the
-   * engine reads this at every state broadcast.
+   * engine reads this at every state broadcast. The install time published is the one the
+   * record travels with (round 5): a synced landing's is the time its record carried
+   * (`syncedInstalledAt`, 0 for none – left out of the record by `extensionRecordData`), an
+   * install made here its own.
    */
   syncSources(): ExtensionSyncSource[] {
     return this.registry.extensions.map((record) => ({
@@ -764,6 +768,7 @@ export class ExtensionService implements ExtensionHost {
       source: record.source,
       enabled: record.enabled,
       toolbarPinned: record.toolbarPinned,
+      installedAt: record.syncedInstalledAt ?? record.installedAt,
       ...(record.pendingApproval ? { pendingApproval: true } : {}),
       ...syncClocks(record)
     }))
@@ -1084,6 +1089,9 @@ export class ExtensionService implements ExtensionHost {
         if (options.synced.enabledAt > 0) record.enabledAt = options.synced.enabledAt
         if (options.synced.toolbarPinnedAt > 0)
           record.toolbarPinnedAt = options.synced.toolbarPinnedAt
+        // A landing is nobody's install: what this copy publishes as the install's time is the
+        // record's (0 when it carried none), never the landing's own (`syncSources`).
+        record.syncedInstalledAt = options.synced.installedAt
       } else if (!existing) {
         record.enabledAt = now
         record.toolbarPinnedAt = now
@@ -1266,6 +1274,22 @@ export class ExtensionService implements ExtensionHost {
       if (record.toolbarPinnedAt !== undefined && at <= record.toolbarPinnedAt) return
     } else record.toolbarPinned = pinned
     record.toolbarPinnedAt = at
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * A peer's record carries a LATER install of this extension than the time this copy publishes
+   * (ID-44, round 5; `ExtensionSyncApplier.mergeSwitches`): the extension was installed by hand
+   * again somewhere after this copy's time, and every copy travels with the latest such
+   * install, so this one publishes the peer's from now on (`syncedInstalledAt`; `syncSources`)
+   * – its own `installedAt`, the time shown here, stands. A time not later than the published
+   * one moves nothing.
+   */
+  private adoptInstalledAt(id: string, at: number): void {
+    const record = this.record(id)
+    if (!record || at <= (record.syncedInstalledAt ?? record.installedAt)) return
+    record.syncedInstalledAt = at
     this.persist()
     this.browser.state.commitVolatile()
   }

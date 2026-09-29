@@ -96,6 +96,20 @@ export interface ExtensionRecord {
    */
   pendingApproval?: true
   /**
+   * The install time this device's copy PUBLISHES in place of its own `installedAt` (ID-44,
+   * round 5): the `installedAt` the `extension` record carried when sync landed the extension
+   * here – when the extension was installed by hand, on whichever device did – or 0 when that
+   * record carried none (a build before the field). A landing is nobody's install: `installedAt`
+   * above stays this device's own (the time shown, the "newest install wins" resolutions), and
+   * a decline elsewhere (`extensionDeclineStands`) is re-offered by an install made by hand
+   * alone, never by a landing. Set by the desktop host at a synced install and when the merge
+   * adopts a later time from a peer's record (`ExtensionSyncApplier.mergeSwitches`); read by its
+   * `syncSources()` (`syncedInstalledAt ?? installedAt`). Never written by the shared
+   * `newRecord`, so an install made by hand publishes its own time; absent on the phone, whose
+   * every install is one made by hand (its `list()` projects `installedAt`).
+   */
+  syncedInstalledAt?: number
+  /**
    * An update downloaded and unpacked but not applied yet (see [StagedUpdate]); absent or null
    * when none waits.
    */
@@ -449,6 +463,14 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
   if (enabledAt !== undefined) record.enabledAt = enabledAt
   const toolbarPinnedAt = clock(r.toolbarPinnedAt)
   if (toolbarPinnedAt !== undefined) record.toolbarPinnedAt = toolbarPinnedAt
+  // The install time a synced landing publishes (ID-44, round 5): kept when it is a time or the
+  // 0 of "the record carried none", left out otherwise – an install made here publishes its own.
+  if (
+    typeof r.syncedInstalledAt === 'number' &&
+    Number.isFinite(r.syncedInstalledAt) &&
+    r.syncedInstalledAt >= 0
+  )
+    record.syncedInstalledAt = r.syncedInstalledAt
   const staged = sanitizeStaged(r.staged, publisher)
   return staged ? { ...record, staged } : record
 }

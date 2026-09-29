@@ -151,10 +151,12 @@ interface Persisted {
    * user's approval – was removed here before being approved. A decline closes the request on
    * this device alone: no tombstone goes out (the other devices keep the extension), and the
    * peer's live record is not handed to this device's applier again while the decline stands
-   * against it – any copy not stamped after the decline (`extensionDeclineStands`). A copy
-   * stamped later (a fresh install on a peer after the decline) is offered once more and closes
-   * the entry, as does a tombstone for the id, or an install of it here. Persisted, so a
-   * relaunch does not re-offer what the user declined. Absent when nothing is declined.
+   * against it – any copy whose install is not later than the decline (`extensionDeclineStands`
+   * on the record's `installedAt`; a flip's newer stamp re-offers nothing, nor does a record
+   * without the time). A copy carrying a LATER install (a fresh install of the id by hand on a
+   * peer after the decline) is offered once more and closes the entry, as does a tombstone for
+   * the id, or an install of it here. Persisted, so a relaunch does not re-offer what the user
+   * declined. Absent when nothing is declined.
    */
   declinedExtensions?: Record<string, number>
 }
@@ -1074,10 +1076,11 @@ export class SyncEngine implements SyncHost {
 
   /**
    * The winners as they go to the host, less the extension records the user declined here
-   * (ID-44; `Persisted.declinedExtensions`): a live winner not stamped after the decline stands
-   * declined – it stays among the winners for the metadata merge (the entry follows the peer's
-   * copy, so nothing is re-published under this device's name) but is not handed to the
-   * applier; a live winner stamped after it (a fresh install on the peer) or a tombstone for
+   * (ID-44; `Persisted.declinedExtensions`): a live winner whose install is not later than the
+   * decline (`installedAt`; `extensionDeclineStands`) stands declined – it stays among the
+   * winners for the metadata merge (the entry follows the peer's copy, so nothing is
+   * re-published under this device's name) but is not handed to the applier; a live winner
+   * carrying a later install (a fresh install of the id by hand on a peer) or a tombstone for
    * the id closes the decline and goes through as any winner.
    */
   private admitDeclined(winners: readonly SyncRecord[]): SyncRecord[] {

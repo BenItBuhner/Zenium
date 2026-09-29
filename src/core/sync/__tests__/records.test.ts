@@ -2654,13 +2654,17 @@ describe('extension records (services pass 16, ID-44)', () => {
   const ID_C = 'cccccccccccccccccccccccccccccccc'
   const ID_D = 'dddddddddddddddddddddddddddddddd'
   const ID_E = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  /**
+   * A source as `syncSources()` / `list()` project it. The install's time is 0 – none held –
+   * unless a test says (round 5): the three-field bytes of before, and of the fixture.
+   */
   const ext = (
     id: string,
     source: ExtensionSyncSource['source'],
     enabled: boolean,
     toolbarPinned: boolean,
     extra: Partial<ExtensionSyncSource> = {}
-  ): ExtensionSyncSource => ({ id, source, enabled, toolbarPinned, ...extra })
+  ): ExtensionSyncSource => ({ id, source, enabled, toolbarPinned, installedAt: 0, ...extra })
 
   it('collectLocal emits one record per store extension under its id – store, enabled, toolbarPinned – and never one for a crx, zip or unpacked install', () => {
     const src = {
@@ -2689,7 +2693,9 @@ describe('extension records (services pass 16, ID-44)', () => {
     })
     for (const id of [ID_C, ID_D, ID_E]) expect(out.has(id)).toBe(false)
     expect([...out.values()].filter((r) => r.type === 'extension')).toHaveLength(2)
-    // The payload carries nothing else of the extension: no id, no version, no time, no grant.
+    // The payload carries nothing else of the extension: no id, no version, no `updatedAt`, no
+    // grant – and no `installedAt` from a host that holds none (0), the one time that travels
+    // when held (round 5; the pin below).
     for (const key of [
       'id',
       'version',
@@ -3024,14 +3030,19 @@ describe('extension records (services pass 16, ID-44)', () => {
     ).toEqual([ID_A, ID_B])
   })
 
-  it('extensionDeclineStands / pendingExtensionRequests’ `declined` (the lead’s ruling, round 4): a record the user declined here is no request while the decline stands – any live copy not stamped after it; a copy stamped later (a fresh install on the peer) beats the decline and is offered once more; a tombstone beats nothing; no decline, no bar', () => {
-    const live: SyncRecord = {
+  it('extensionDeclineStands / pendingExtensionRequests’ `declined` (the lead’s ruling, round 4; the criterion of round 5): the four cases – no decline: no bar; a decline against a record without `installedAt`: stands, whatever its stamp; against `installedAt` ≤ the decline: stands, whatever its stamp; against `installedAt` > the decline (a fresh install by hand on a peer): beaten, offered once more – and a tombstone beats nothing', () => {
+    const unstamped: SyncRecord = {
       id: ID_A,
       type: 'extension',
       modified: 5000,
       deleted: false,
       data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
     }
+    const installed = (installedAt: number, modified = 5000): SyncRecord => ({
+      ...unstamped,
+      modified,
+      data: { ...(unstamped.data as object), installedAt }
+    })
     const tomb: SyncRecord = {
       id: ID_A,
       type: 'extension',
@@ -3039,45 +3050,155 @@ describe('extension records (services pass 16, ID-44)', () => {
       deleted: true,
       data: null
     }
-    // The rule: the decline stands against a live record stamped at or before it.
-    expect(extensionDeclineStands(undefined, live)).toBe(false)
-    expect(extensionDeclineStands(7000, live)).toBe(true)
-    expect(extensionDeclineStands(5000, live)).toBe(true)
-    expect(extensionDeclineStands(4999, live)).toBe(false)
-    expect(extensionDeclineStands(7000, { ...live, modified: 7001 })).toBe(false)
+    // Case 1 – no decline: nothing stands, whatever the record.
+    expect(extensionDeclineStands(undefined, unstamped)).toBe(false)
+    expect(extensionDeclineStands(undefined, installed(9000))).toBe(false)
+    expect(extensionDeclineStands(undefined, tomb)).toBe(false)
+    // Case 2 – a record without `installedAt` (a build before the field): the decline stands,
+    // however the record is stamped – a flip's newer stamp, a stamp after the decline, none of
+    // it re-offers.
+    const stampedAt = (modified: number): SyncRecord => ({ ...unstamped, modified })
+    expect(extensionDeclineStands(7000, unstamped)).toBe(true)
+    expect(extensionDeclineStands(7000, stampedAt(7001))).toBe(true)
+    expect(extensionDeclineStands(7000, stampedAt(90_000))).toBe(true)
+    expect(extensionDeclineStands(4999, unstamped)).toBe(true)
+    // Case 3 – `installedAt` at or before the decline (the install the user declined; a flip or
+    // a landing elsewhere re-stamps the record but moves no install): stands, whatever `modified`.
+    expect(extensionDeclineStands(7000, installed(4000))).toBe(true)
+    expect(extensionDeclineStands(7000, installed(7000))).toBe(true)
+    expect(extensionDeclineStands(7000, installed(4000, 7001))).toBe(true)
+    expect(extensionDeclineStands(7000, installed(7000, 90_000))).toBe(true)
+    // Case 4 – `installedAt` after the decline (a fresh install by hand on a peer): beaten,
+    // even under a stamp that is not (the stamp counts for nothing either way).
+    expect(extensionDeclineStands(7000, installed(7001))).toBe(false)
+    expect(extensionDeclineStands(7000, installed(7001, 6000))).toBe(false)
+    expect(extensionDeclineStands(7000, installed(90_000, 90_000))).toBe(false)
+    // A tombstone is no offer and beats nothing.
     expect(extensionDeclineStands(7000, tomb)).toBe(false)
     expect(extensionDeclineStands(9000, tomb)).toBe(false)
+    // A record this build cannot read carries no install: stands (it is no request either).
+    expect(
+      extensionDeclineStands(7000, {
+        ...unstamped,
+        data: { store: 'firefox-add-ons', enabled: true, toolbarPinned: false, installedAt: 9000 }
+      })
+    ).toBe(true)
     // In the requests: the declined id is closed on this device while the decline stands, and
-    // asked for again once the peer's copy is stamped after it. Another id is untouched.
+    // asked for again once the peer's copy carries an install after it – never on a stamp
+    // alone. Another id is untouched.
     const other: SyncRecord = {
-      ...live,
+      ...unstamped,
       id: ID_B,
       data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true }
     }
-    const local = metaFromRemote([live, other])
-    const remote = new Map([live, other].map((r) => [r.id, r] as const))
-    const none = new Map<string, unknown>()
-    expect(
-      pendingExtensionRequests(local, none, remote, [], defaultScope(), { [ID_A]: 7000 }).map(
-        (r) => r.id
-      )
-    ).toEqual([ID_B])
-    expect(
-      pendingExtensionRequests(local, none, remote, [], defaultScope(), { [ID_A]: 4999 }).map(
-        (r) => r.id
-      )
-    ).toEqual([ID_A, ID_B])
-    const fresh: SyncRecord = { ...live, modified: 7001 }
-    const remoteFresh = new Map([fresh, other].map((r) => [r.id, r] as const))
-    expect(
-      pendingExtensionRequests(local, none, remoteFresh, [], defaultScope(), { [ID_A]: 7000 }).map(
-        (r) => r.id
-      )
-    ).toEqual([ID_A, ID_B])
+    const requests = (a: SyncRecord, declined?: Record<string, number>): string[] =>
+      pendingExtensionRequests(
+        metaFromRemote([a, other]),
+        new Map<string, unknown>(),
+        new Map([a, other].map((r) => [r.id, r] as const)),
+        [],
+        defaultScope(),
+        declined
+      ).map((r) => r.id)
+    expect(requests(unstamped, { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(stampedAt(7001), { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(installed(4000, 7001), { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(installed(7000, 8000), { [ID_A]: 7000 })).toEqual([ID_B])
+    expect(requests(installed(7001, 7001), { [ID_A]: 7000 })).toEqual([ID_A, ID_B])
+    expect(requests(installed(7001, 5000), { [ID_A]: 7000 })).toEqual([ID_A, ID_B])
     // Without the argument, nothing is declined (the callers from before).
+    expect(requests(unstamped)).toEqual([ID_A, ID_B])
+    expect(requests(installed(4000))).toEqual([ID_A, ID_B])
+  })
+
+  it('`installedAt` travels (round 5) – after the clocks, when the source holds one (a positive finite time; 0 or none is left out, the bytes of before and of the fixture); the reader takes a positive finite time alone, drops a field it does not know, and round-trips the rest byte for byte; `syncedExtensionData` reads none as 0; the time is part of the hash', () => {
+    const before = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true),
+      'chrome-web-store'
+    )
+    expect(Object.keys(before)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    // Held: after the clocks, in the interface's order.
+    const full = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true, {
+        enabledAt: 1500,
+        toolbarPinnedAt: 1200,
+        installedAt: 1000
+      }),
+      'chrome-web-store'
+    )
+    expect(full).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200,
+      installedAt: 1000
+    })
+    expect(Object.keys(full)).toEqual([
+      'store',
+      'enabled',
+      'toolbarPinned',
+      'enabledAt',
+      'toolbarPinnedAt',
+      'installedAt'
+    ])
+    // Alone – the phone's shape before any flip: no clock, the install's time.
     expect(
-      pendingExtensionRequests(local, none, remote, [], defaultScope()).map((r) => r.id)
-    ).toEqual([ID_A, ID_B])
+      extensionRecordData(
+        ext(ID_A, 'chrome-web-store', true, true, { installedAt: 1000 }),
+        'chrome-web-store'
+      )
+    ).toEqual({ store: 'chrome-web-store', enabled: true, toolbarPinned: true, installedAt: 1000 })
+    // None held (0 – a landing from a record without one; the fixture's sources): left out.
+    for (const none of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(
+        extensionRecordData(
+          ext(ID_A, 'chrome-web-store', true, true, { installedAt: none }),
+          'chrome-web-store'
+        )
+      ).toEqual(before)
+    // Part of the hash: a later install under the same switches is an edit (the time adopted
+    // from a peer's record makes this device's copy the peer's bytes).
+    expect(hashData(full)).not.toBe(hashData({ ...full, installedAt: 1001 }))
+    expect(hashData({ ...before, installedAt: 1000 })).not.toBe(hashData(before))
+    // The reader: round-trip, none for anything that is no time, an unknown field dropped.
+    expect(readExtensionData(ID_A, full)).toEqual(full)
+    expect(hashData(readExtensionData(ID_A, full))).toBe(hashData(full))
+    expect(readExtensionData(ID_A, { ...before, installedAt: 1000 })).toEqual({
+      ...before,
+      installedAt: 1000
+    })
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, '1000', null, true, {}])
+      expect(readExtensionData(ID_A, { ...before, installedAt: bad })).toEqual(before)
+    expect(readExtensionData(ID_A, { ...full, uninstalledAt: 2000, origin: 'phone' })).toEqual(full)
+    // What the apply hands the host: none read as 0, older than any install a device made.
+    expect(syncedExtensionData(readExtensionData(ID_A, before)!).installedAt).toBe(0)
+    expect(syncedExtensionData(readExtensionData(ID_A, full)!).installedAt).toBe(1000)
+    // `collectLocal` writes what the source projects: a hand install's own time, a landing's the
+    // time its record carried (`syncSources()`), none from a source at 0.
+    const out = collectLocal(
+      {
+        ...sources(),
+        extensions: [
+          ext(ID_A, 'chrome-web-store', true, false, { enabledAt: 1500, installedAt: 1000 }),
+          ext(ID_B, 'edge-add-ons', true, false, { enabledAt: 1500 })
+        ]
+      },
+      defaultScope()
+    )
+    expect(out.get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false,
+      enabledAt: 1500,
+      installedAt: 1000
+    })
+    expect(out.get(ID_B)!.data).toEqual({
+      store: 'edge-add-ons',
+      enabled: true,
+      toolbarPinned: false,
+      enabledAt: 1500
+    })
   })
 
   it('the switches’ clocks (round 2): `enabledAt` and `toolbarPinnedAt` travel when the source holds them, after the three fields, and never otherwise – a source without them writes the bytes of before, hash and all; the reader takes finite positive clocks alone; each clock is part of the hash', () => {
@@ -3153,7 +3274,7 @@ describe('extension records (services pass 16, ID-44)', () => {
     })
   })
 
-  it('syncedExtensionData: what the apply hands the host – each switch with its clock, an absent one read as 0 (older than any clocked switch: a switch its host never flipped, or a record from before the clocks, never beats a clocked one – never the record’s `modified`)', () => {
+  it('syncedExtensionData: what the apply hands the host – each switch with its clock and the install’s time, an absent one read as 0 (older than any clocked switch: a switch its host never flipped, or a record from before the clocks, never beats a clocked one – never the record’s `modified`; an install of none, round 5, neither moves the time here nor re-offers a decline)', () => {
     const data = readExtensionData(ID_A, {
       store: 'edge-add-ons',
       enabled: false,
@@ -3164,23 +3285,28 @@ describe('extension records (services pass 16, ID-44)', () => {
       enabled: false,
       toolbarPinned: true,
       enabledAt: 0,
-      toolbarPinnedAt: 0
+      toolbarPinnedAt: 0,
+      installedAt: 0
     })
     // One clock carried, the other not: the carried one travels, the absent one is 0 – the
-    // phone's shape after a flip of one switch.
+    // phone's shape after a flip of one switch (from a build before the install's time).
     expect(syncedExtensionData({ ...data, enabledAt: 1500 })).toEqual({
       store: 'edge-add-ons',
       enabled: false,
       toolbarPinned: true,
       enabledAt: 1500,
-      toolbarPinnedAt: 0
+      toolbarPinnedAt: 0,
+      installedAt: 0
     })
-    expect(syncedExtensionData({ ...data, enabledAt: 1500, toolbarPinnedAt: 1200 })).toEqual({
+    expect(
+      syncedExtensionData({ ...data, enabledAt: 1500, toolbarPinnedAt: 1200, installedAt: 1000 })
+    ).toEqual({
       store: 'edge-add-ons',
       enabled: false,
       toolbarPinned: true,
       enabledAt: 1500,
-      toolbarPinnedAt: 1200
+      toolbarPinnedAt: 1200,
+      installedAt: 1000
     })
     // The function has no eye on the record's stamp: the same bytes read the same whatever
     // `modified` the record travelled under.
