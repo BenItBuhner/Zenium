@@ -111,3 +111,20 @@ export function autoscrollStep(
   if (step === 0) return 0
   return Math.max(-1, Math.min(1, step)) * AUTOSCROLL_MAX_STEP
 }
+
+/**
+ * The frame `AUTOSCROLL_MAX_STEP` is counted in – 60 Hz – and the most frames one tick may
+ * stand for. A finger's drag (TABLET-03) scales each tick's step by its frame's real length
+ * against this one, so the band scrolls at the same speed (840 px/s at the edge) on a 60, 90 or
+ * 120 Hz tablet where the per-frame step alone would run 1.5 or 2 × as fast; a tick after a
+ * stall (a hidden window, a long frame) counts for two frames at most, never a jump. The mouse's
+ * tick keeps the per-frame step.
+ */
+export const AUTOSCROLL_FRAME_MS = 1000 / 60
+export const AUTOSCROLL_MAX_FRAMES = 2
+
+/** How many 60 Hz frames' worth of step an autoscroll tick `elapsedMs` after the last one adds. */
+export function autoscrollFrames(elapsedMs: number): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0
+  return Math.min(AUTOSCROLL_MAX_FRAMES, elapsedMs / AUTOSCROLL_FRAME_MS)
+}

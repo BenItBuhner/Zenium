@@ -1,0 +1,10 @@
+{
+  "id": "tablet-tab-drag",
+  "order": 114,
+  "class": "TabletTabDragDemo",
+  "shard": "tablet",
+  "mirrors": "android-tab-groups-demo.yml:tablet",
+  "dir": "tablet-tab-drag-demo",
+  "estimate": 3.5,
+  "note": "The tablet sidebar's tab drag under a real finger (TABLET-03): a hold lifts the row (the ghost at scale 1.02 under the level-2 shadow), the finger carried across another row shows the caret in the gap the rows slide open, the release reorders the core's track; an overflowing list – a plain swipe scrolls and lifts nothing, a lifted row held in the 32 px top band has the list scroll under it (time-based on touch) and lands further up; a drop onto the Research header joins the group and a drop beside a loose row leaves it; reduced motion where the WebView reflects it; the lift and the drop mark again in the dark scheme."
+}
