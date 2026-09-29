@@ -791,7 +791,8 @@ function installAppBadgeRelay(
   } catch {
     return
   }
-  let installedApp = false
+  /** Whether this is an installed app's page: null until the document's first flags arrive. */
+  let installedApp: boolean | null = null
   /** The last badge posted before the flags said whether this is an installed app's page. */
   let pending: AppBadge | null | undefined
   /** The last badge sent to the browser for this document (undefined: none yet). */
@@ -814,17 +815,17 @@ function installAppBadgeRelay(
     const badge = appBadgeOf((parsed as { badge?: unknown }).badge)
     if (badge === undefined) return
     if (installedApp) forward(badge)
-    else pending = badge
+    else if (installedApp === null) pending = badge
+    // A plain page's badge is Chrome's no-op: dropped, not held for a window it may join later.
   })
   onFlags((flags) => {
-    if (flags.installedApp === installedApp) return
     installedApp = flags.installedApp
     if (installedApp) {
       if (pending !== undefined) forward(pending)
     } else {
-      // The page left the app (moved to a plain window, went out of scope in place): what the
-      // browser holds for the app by the time the page is back inside is not known here, so
-      // the next badge goes out afresh.
+      // Not an installed app's page (or no longer: moved to a plain window, out of scope in
+      // place): what the browser holds for the app by the time the page is back inside is not
+      // known here, so the next badge then goes out afresh.
       sent = undefined
     }
     pending = undefined
