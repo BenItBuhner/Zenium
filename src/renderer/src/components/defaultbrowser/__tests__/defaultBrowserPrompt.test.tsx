@@ -181,12 +181,13 @@ describe('the desktop prompt', () => {
     )
     expect(d.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
     expect(d.getAttribute('aria-describedby')).toBe(description.id)
-    const [notNow, makeDefault] = buttons(d)
+    const [notNow, setDefault] = buttons(d)
     expect(buttons(d)).toHaveLength(2)
     expect(notNow.textContent).toBe('Not now')
-    expect(makeDefault.textContent).toBe('Make default')
-    expect(makeDefault.hasAttribute('data-primary')).toBe(true)
-    expect(document.activeElement).toBe(makeDefault)
+    // The strip's word again (§9.29): one flow, one name for the act.
+    expect(setDefault.textContent).toBe('Set as default')
+    expect(setDefault.hasAttribute('data-primary')).toBe(true)
+    expect(document.activeElement).toBe(setDefault)
     // Up over the page's picture: the host hides the view meanwhile.
     expect(uiStore.get().defaultBrowserPrompt).toBe(true)
   })
@@ -239,7 +240,7 @@ describe('the desktop prompt', () => {
     expect(container.querySelector('.zen-frame-strip')).not.toBeNull()
   })
 
-  it('runs the request from the strip and takes the strip down for this release on Make default', async () => {
+  it('runs the request from the strip and takes the strip down for this release on Set as default', async () => {
     render(view(state('linux')))
     click(buttons(container.querySelector('.zen-frame-strip')!)[1])
     await settle()
