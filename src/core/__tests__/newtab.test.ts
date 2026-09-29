@@ -893,6 +893,29 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(view.pushes.at(-1)!.shortcuts.map((s) => s.favicon)).toEqual([c])
   })
 
+  it("the omnibox's most-visited row reads the grid's source (OMN-04): the top sites under the page's removals, eight at most, the icons by the tiles' rule", () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    for (let i = 0; i < 10; i += 1)
+      for (let v = 0; v <= i; v += 1)
+        f.browser.history.visit(
+          `https://site${i}.example/`,
+          `Site ${i}`,
+          `https://site${i}.example/icon.png`
+        )
+    const urls = (): string[] => svc.mostVisited().map((s) => s.url)
+    expect(urls()).toEqual([9, 8, 7, 6, 5, 4, 3, 2].map((i) => `https://site${i}.example/`))
+    // A site removed from the page is gone here too; the next most visited takes the slot.
+    svc.remove('https://site9.example/')
+    expect(urls()).toEqual([8, 7, 6, 5, 4, 3, 2, 1].map((i) => `https://site${i}.example/`))
+    // A pinned shortcut adds nothing: the row names what is most visited, whatever the grid shows.
+    svc.addShortcut('Mine', 'https://mine.example/')
+    expect(urls()).toEqual([8, 7, 6, 5, 4, 3, 2, 1].map((i) => `https://site${i}.example/`))
+    // The icon is the tiles' (HB-47): uncached and no tab open on the site → none (the letter).
+    expect(svc.mostVisited().map((s) => s.favicon)).toEqual(Array(8).fill(null))
+    expect(svc.mostVisited()[0]).toMatchObject({ title: 'Site 8' })
+  })
+
   it("the phone's tile menu pins, unpins and removes through the same device state", () => {
     const f = fixture()
     const svc = f.browser.newTab

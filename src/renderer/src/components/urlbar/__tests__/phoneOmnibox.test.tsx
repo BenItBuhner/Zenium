@@ -18,9 +18,12 @@ import { NEW_TAB_URL } from '@shared/url'
 /** What the host answers per command; `urlbar.suggest` answers from `suggestions`. */
 let suggestions: (query: string) => Suggestion[] = () => []
 let clip: ClipboardContent = { kind: 'url', text: 'https://copied.example/page' }
+/** The history's recent entries (`history.recent`), read by a recent search's removal (OMN-04). */
+let recentHistory: Array<{ url: string; title: string; lastVisit: number }> = []
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name, args) => {
   if (name === 'urlbar.suggest') return suggestions((args as { query: string }).query)
   if (name === 'clipboard.read') return clip
+  if (name === 'history.recent') return recentHistory
   return null
 })
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
@@ -34,6 +37,7 @@ const { omniboxFocusSurfaces } = await import('@renderer/lib/omniboxFocus')
 const { refreshViewport, viewportStore } = await import('@renderer/lib/formFactor')
 const { omniboxPopupBound, omniboxPopupMaxHeight } =
   await import('@renderer/components/tablet/omniboxPopup')
+const { tileLabel } = await import('@renderer/lib/newtab')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -187,6 +191,7 @@ beforeEach(() => {
   invoke.mockClear()
   suggestions = () => []
   clip = { kind: 'url', text: 'https://copied.example/page' }
+  recentHistory = []
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
 })
 
@@ -1536,5 +1541,301 @@ describe('the tablet popup above the keyboard (W6-L1)', () => {
     const box = panel(el)
     expect(box.style.maxHeight).toMatch(/^\d+px$/)
     expect(box.style.maxHeight).not.toContain('var(')
+  })
+})
+
+/*
+ * Zero-suggest on the touch layouts (OMN-04; Chrome for Android's on-focus list over a web
+ * page): the core's `Most visited` rows come up as one row of tiles at the list's head, apart
+ * from the options; a remembered search wears the clock and its removal takes the search's
+ * visits out of the history too; the tablet's bar asks for the zero-suggest list on focus while
+ * its field still holds the address, untyped, and for the address's rows no more. The desktop
+ * bar is as it was: the address's rows on focus, the magnifier on its remembered searches.
+ */
+describe('zero-suggest on the touch layouts (OMN-04)', () => {
+  const GITHUB = 'https://github.com/'
+  const CATS = 'https://www.google.com/search?q=cats'
+  const tile = (title: string, url: string): Suggestion => ({
+    ...row('url', title, url.replace(/^https:\/\//, ''), url),
+    id: `tile:${url}`,
+    group: 'Most visited'
+  })
+  const tiles = (): Suggestion[] => [
+    tile('Example Domain', 'https://example.com/'),
+    tile('Wikipedia, the free encyclopedia', 'https://en.wikipedia.org/'),
+    tile('GitHub: Let’s build from here', GITHUB)
+  ]
+  const recentSearch = (terms: string, url: string): Suggestion => ({
+    ...row('search', terms, terms, url),
+    id: `recent:${url}`,
+    subtitle: 'Search with Google',
+    deletable: true,
+    group: 'Recent searches'
+  })
+  const zero = (grouped: boolean): Suggestion[] => [
+    ...tiles(),
+    recentSearch('cats', CATS),
+    recentSearch('two words', 'https://duckduckgo.com/?q=two%20words'),
+    {
+      ...row('history', 'Some page', 'a.example/page', 'https://a.example/page'),
+      id: 'hist:https://a.example/page',
+      deletable: true,
+      ...(grouped ? { group: 'Recently visited' } : {})
+    }
+  ]
+  /** The touch layouts' answers: the zero-suggest list for nothing, a query's rows for 'c'. */
+  const touchAnswers =
+    (grouped: boolean) =>
+    (q: string): Suggestion[] =>
+      q === '' ? zero(grouped) : q === 'c' ? [row('search', 'c', 'c', null)] : []
+  const carousel = (el: HTMLElement): HTMLElement | null =>
+    el.querySelector<HTMLElement>('[data-testid="urlbar-most-visited"]')
+  const tileButtons = (el: HTMLElement): HTMLButtonElement[] =>
+    Array.from(carousel(el)?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+  const options = (el: HTMLElement): HTMLElement[] =>
+    Array.from(el.querySelectorAll<HTMLElement>('[role="option"]'))
+  /** An option's title: the desktop row's title span; the sheet row's first span. */
+  const titleOf = (o: HTMLElement): string =>
+    (o.querySelector('.zen-omnibox-row-title') ?? o.querySelector('span'))!.textContent!.trim()
+  const optionTitled = (el: HTMLElement, title: string): HTMLElement =>
+    options(el).find((o) => titleOf(o) === title)!
+  const headingTexts = (el: HTMLElement): string[] =>
+    Array.from(el.querySelectorAll('[data-testid="urlbar-group-heading"]')).map(
+      (h) => h.textContent!
+    )
+  const submits = (): Array<Record<string, unknown>> =>
+    callsTo('urlbar.submit') as Array<Record<string, unknown>>
+  /** The tablet's bar as `TabletShell` mounts it: the window as its box, the pill as its anchor. */
+  const tablet = (t: Tab = tab(PAGE)): ReactElement =>
+    createElement(Urlbar, {
+      state: state(t),
+      urlbar: urlbarState('edit'),
+      area: { x: 0, y: 0, width: 1280, height: 800 },
+      anchor: { x: 300, y: 36, width: 680, height: 36 }
+    })
+  const desktop = (): ReactElement =>
+    createElement(Urlbar, {
+      state: state(tab(PAGE)),
+      urlbar: urlbarState('edit'),
+      area: { x: 0, y: 0, width: 1200, height: 800 }
+    })
+  async function listed(el: HTMLElement): Promise<void> {
+    await act(async () => {
+      await vi.waitFor(() => expect(carousel(el)).not.toBeNull())
+    })
+  }
+
+  afterEach(() => layout(null))
+
+  it('phone: the most visited sites are one row of tiles at the list’s head, apart from the options; no heading of their own', async () => {
+    layout('phone')
+    suggestions = touchAnswers(true)
+    const el = await render(phone(tab(PAGE)))
+    await listed(el)
+    expect(callsTo('urlbar.suggest')[0]).toMatchObject({ query: '', grouped: true })
+    const list = el.querySelector<HTMLElement>('ul[role="listbox"]')!
+    // First in the list, before the searches; a presentational item holding a named group of
+    // buttons, so the options a screen reader counts are the rows alone.
+    expect(list.firstElementChild).toBe(carousel(el))
+    expect(carousel(el)!.getAttribute('role')).toBe('presentation')
+    const group = carousel(el)!.querySelector<HTMLElement>('[role="group"]')!
+    expect(group.getAttribute('aria-label')).toBe('Most visited')
+    expect(group.classList.contains('zen-omnibox-tiles')).toBe(true)
+    expect(group.classList.contains('zen-omnibox-tiles-sheet')).toBe(true)
+    // The new tab page's tile at a smaller size: the shared tile, its caption the page's label.
+    const buttons = tileButtons(el)
+    expect(buttons).toHaveLength(3)
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(
+      tiles().map((t) => tileLabel(t.title, t.url!))
+    )
+    expect(buttons[2].getAttribute('aria-label')).toBe('GitHub')
+    expect(buttons[2].querySelector('.zen-ntp-tile')).not.toBeNull()
+    expect(buttons[2].querySelector('.zen-ntp-caption')!.textContent).toBe('GitHub')
+    expect(buttons[2].querySelector('.zen-ntp-tile')!.className).toContain('h-12 w-12')
+    expect(options(el)).toHaveLength(3)
+    expect(headingTexts(el)).toEqual(['Recent searches', 'Recently visited'])
+    expect(el.querySelector('[data-group="Most visited"]')).toBeNull()
+  })
+
+  it('phone: a tap on a tile opens its site as a row’s pick would, and a remembered search re-runs the search', async () => {
+    layout('phone')
+    suggestions = touchAnswers(true)
+    const el = await render(phone(tab(PAGE)))
+    await listed(el)
+    await tap(tileButtons(el)[2])
+    expect(submits()).toHaveLength(1)
+    expect(submits()[0]).toMatchObject({ input: GITHUB, tabId: 't1', newTab: false })
+    // Nothing was typed: nothing is learned for the shortcuts provider.
+    expect(submits()[0]).not.toHaveProperty('learn')
+    uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
+    await tap(optionTitled(el, 'cats'))
+    expect(submits()).toHaveLength(2)
+    expect(submits()[1]).toMatchObject({ input: CATS, tabId: 't1' })
+  })
+
+  it('phone: a remembered search wears the clock; a query’s row the magnifier', async () => {
+    layout('phone')
+    suggestions = touchAnswers(true)
+    const el = await render(phone(tab(PAGE)))
+    await listed(el)
+    expect(optionTitled(el, 'cats').querySelector('svg.lucide-clock')).not.toBeNull()
+    expect(optionTitled(el, 'cats').querySelector('svg.lucide-search')).toBeNull()
+    expect(optionTitled(el, 'Some page').querySelector('svg.lucide-clock')).not.toBeNull()
+    await type(input(el), 'c')
+    await act(async () => {
+      await vi.waitFor(() => expect(optionTitled(el, 'c')).toBeDefined())
+    })
+    expect(optionTitled(el, 'c').querySelector('svg.lucide-search')).not.toBeNull()
+    expect(optionTitled(el, 'c').querySelector('svg.lucide-clock')).toBeNull()
+  })
+
+  it('phone: the tiles go the moment a key is typed; nothing of them while typing', async () => {
+    layout('phone')
+    suggestions = touchAnswers(true)
+    const el = await render(phone(tab(PAGE)))
+    await listed(el)
+    await type(input(el), 'c')
+    await act(async () => {
+      await vi.waitFor(() => expect(options(el).map((o) => o.textContent)).toContain('c'))
+    })
+    expect(carousel(el)).toBeNull()
+    expect(callsTo('urlbar.suggest').at(-1)).toMatchObject({ query: 'c' })
+  })
+
+  it('phone, bottom dock: the tiles stay first in the DOM, nearest the field on the reversed list', async () => {
+    layout('phone')
+    suggestions = touchAnswers(true)
+    const el = await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: null,
+        phoneEdge: 'bottom'
+      })
+    )
+    await listed(el)
+    const list = el.querySelector<HTMLElement>('ul[role="listbox"]')!
+    expect(list.getAttribute('data-edge')).toBe('bottom')
+    expect(list.firstElementChild).toBe(carousel(el))
+  })
+
+  it('phone: tiles alone still put the list up, not the empty hint', async () => {
+    layout('phone')
+    suggestions = (q) => (q === '' ? tiles() : [])
+    const el = await render(phone(tab(PAGE)))
+    await listed(el)
+    expect(el.querySelector('ul[role="listbox"]')).not.toBeNull()
+    expect(options(el)).toHaveLength(0)
+    // The hint is the input's placeholder alone, not the empty sheet's centred sentence.
+    expect(el.querySelector('.zen-omnibox-sheet div.text-center')).toBeNull()
+  })
+
+  it('tablet: on focus over a page the field holds the address, selected, and the rows are the zero-suggest list – the tiles first – until a key is typed', async () => {
+    layout('tablet')
+    suggestions = touchAnswers(false)
+    const el = await render(tablet())
+    await listed(el)
+    // The on-focus request is the zero-prefix one (Chrome's `kInteractionFocus`), flat.
+    expect(callsTo('urlbar.suggest')[0]).toEqual({ query: '', tabId: 't1' })
+    expect(input(el).value).toBe(PAGE)
+    expect(input(el).selectionStart).toBe(0)
+    expect(input(el).selectionEnd).toBe(PAGE.length)
+    const list = el.querySelector<HTMLElement>('#zen-omnibox-results')!
+    expect(list.firstElementChild).toBe(carousel(el))
+    expect(carousel(el)!.querySelector('.zen-omnibox-tiles-sheet')).toBeNull()
+    expect(tileButtons(el)).toHaveLength(3)
+    expect(input(el).getAttribute('aria-expanded')).toBe('true')
+    // The popup's rows: the remembered searches under their heading, then the recent page.
+    expect(headingTexts(el)).toEqual(['Recent searches'])
+    expect(options(el)).toHaveLength(3)
+    expect(optionTitled(el, 'cats').querySelector('svg.lucide-clock')).not.toBeNull()
+    // A key typed: the query's rows, the tiles gone, the typed branch as it was.
+    await type(input(el), 'c')
+    await act(async () => {
+      await vi.waitFor(() => expect(carousel(el)).toBeNull())
+    })
+    expect(callsTo('urlbar.suggest').at(-1)).toEqual({ query: 'c', tabId: 't1' })
+    expect(options(el).map(titleOf)).toEqual(['c'])
+  })
+
+  it('tablet: a press on a tile opens its site, learning nothing for the address in the field', async () => {
+    layout('tablet')
+    suggestions = touchAnswers(false)
+    const el = await render(tablet())
+    await listed(el)
+    await act(async () => {
+      tileButtons(el)[0].dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 })
+      )
+      await Promise.resolve()
+    })
+    expect(submits()).toHaveLength(1)
+    expect(submits()[0]).toMatchObject({ input: 'https://example.com/', tabId: 't1' })
+    expect(submits()[0]).not.toHaveProperty('learn')
+  })
+
+  it('tablet: removing a remembered search forgets it and deletes the search’s visits on every engine, so it does not come back', async () => {
+    layout('tablet')
+    suggestions = touchAnswers(false)
+    recentHistory = [
+      { url: CATS, title: 'cats - Google Search', lastVisit: 4 },
+      { url: 'https://duckduckgo.com/?q=cats', title: 'cats at DuckDuckGo', lastVisit: 3 },
+      { url: 'https://www.google.com/search?q=dogs', title: 'dogs - Google Search', lastVisit: 2 },
+      { url: 'https://a.example/page', title: 'Some page', lastVisit: 1 }
+    ]
+    const el = await render(tablet())
+    await listed(el)
+    const cats = optionTitled(el, 'cats').closest('li')!
+    const remove = cats.querySelector<HTMLButtonElement>(
+      '[data-testid="urlbar-remove-suggestion"]'
+    )!
+    await act(async () => {
+      remove.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(callsTo('urlbar.forgetShortcut')).toEqual([{ url: CATS }])
+    expect(callsTo('history.recent')).toEqual([{ limit: 1000 }])
+    await act(async () => {
+      await vi.waitFor(() => expect(callsTo('history.deleteUrls')).toHaveLength(1))
+    })
+    expect(callsTo('history.deleteUrls')).toEqual([
+      { urls: [CATS, 'https://duckduckgo.com/?q=cats'] }
+    ])
+    // The row is gone from the list at once, the tiles and the other rows as they were.
+    expect(options(el).map(titleOf)).toEqual(['two words', 'Some page'])
+    expect(tileButtons(el)).toHaveLength(3)
+  })
+
+  it('desktop: as it was – the address’s rows on focus, the magnifier on a remembered search, no tiles', async () => {
+    layout(null)
+    suggestions = (q) =>
+      q === PAGE
+        ? [row('history', 'Example Domain', 'example.com/some/path', PAGE)]
+        : q === ''
+          ? zero(false).filter((r) => r.group !== 'Most visited')
+          : []
+    const el = await render(desktop())
+    expect(callsTo('urlbar.suggest')[0]).toEqual({ query: PAGE, tabId: 't1' })
+    await act(async () => {
+      await vi.waitFor(() => expect(options(el)).toHaveLength(1))
+    })
+    expect(carousel(el)).toBeNull()
+    await type(input(el), '')
+    await act(async () => {
+      await vi.waitFor(() => expect(options(el)).toHaveLength(3))
+    })
+    expect(carousel(el)).toBeNull()
+    expect(optionTitled(el, 'cats').querySelector('svg.lucide-search')).not.toBeNull()
+    expect(optionTitled(el, 'cats').querySelector('svg.lucide-clock')).toBeNull()
+    // A desktop removal forgets the shortcut alone: the history is not searched for the visits.
+    const cats = optionTitled(el, 'cats').closest('li')!
+    await act(async () => {
+      cats.querySelector<HTMLButtonElement>('[data-testid="urlbar-remove-suggestion"]')!.click()
+      await Promise.resolve()
+    })
+    expect(callsTo('urlbar.forgetShortcut')).toEqual([{ url: CATS }])
+    expect(callsTo('history.recent')).toEqual([])
+    expect(callsTo('history.deleteUrls')).toEqual([])
   })
 })

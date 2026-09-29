@@ -36,7 +36,9 @@ import { foldForMatch, matchableUrl, queryTerms } from '../shared/wordMatch'
 import { touchLayout } from '../shared/formFactor'
 import {
   MOST_VISITED_GROUP,
+  RECENT_SEARCHES_GROUP,
   RECENT_SEARCH_SCAN,
+  RECENTLY_VISITED_GROUP,
   searchEnginesInOrder,
   searchesInHistory
 } from '../shared/zeroSuggest'
@@ -83,10 +85,8 @@ export const RELEVANCE = {
   history: 880
 } as const
 
-/** The "Recent searches" section of zero-suggest (omnibox-20). */
-export const RECENT_SEARCHES_GROUP = 'Recent searches'
-/** The recent pages' section of the phone card's zero-suggest (OMN-18; Chrome's heading). */
-export const RECENTLY_VISITED_GROUP = 'Recently visited'
+// Zero-suggest's section names live with the shared module the chrome reads them from too.
+export { RECENT_SEARCHES_GROUP, RECENTLY_VISITED_GROUP }
 /** Remembered searches shown on focus at most (Chrome shows up to eight zero-suggest rows). */
 export const RECENT_SEARCHES_MAX = 8
 /** Recent pages shown on focus at most, under the recent searches. */

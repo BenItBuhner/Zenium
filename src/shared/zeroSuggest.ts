@@ -1,10 +1,14 @@
 import type { HistoryEntry, SearchEngine } from './types'
 import { isActiveSearchEngine, searchTermsFromUrl } from './search'
 
+/** The "Recent searches" section of zero-suggest (omnibox-20). */
+export const RECENT_SEARCHES_GROUP = 'Recent searches'
+/** The recent pages' section of the phone card's zero-suggest (OMN-18; Chrome's heading). */
+export const RECENTLY_VISITED_GROUP = 'Recently visited'
 /**
  * Zero-suggest's most-visited row (OMN-04; Chrome for Android's `GROUP_MOBILE_MOST_VISITED`): the
- * core lists the tiles as rows of this group, and the phone sheet and the tablet popup draw the
- * group as one horizontal row of tiles instead of rows.
+ * core lists the tiles as address rows of this group, and the phone sheet and the tablet popup
+ * draw the group as one horizontal row of tiles instead of rows.
  */
 export const MOST_VISITED_GROUP = 'Most visited'
 
