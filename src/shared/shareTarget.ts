@@ -128,7 +128,10 @@ export interface ShareChooser {
    * share's subject, else the address's host – with the site's favicon; null for text.
    */
   link: MenuHeader | null
-  /** Shared text's header: its first line, which the sheet clips to one (§9.31); null for a link. */
+  /**
+   * Shared text's header: its first line, on the share panel's read-only twin of the link header
+   * (two lines at most, then an ellipsis); null for a link.
+   */
   text: string | null
   apps: ShareChooserApp[]
 }
