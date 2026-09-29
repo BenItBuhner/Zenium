@@ -1,4 +1,4 @@
-// The `default-browser` scenario: Make default on macOS (os-07) and on Windows (ci-08's registry
+// The `default-browser` scenario: Set as default on macOS (os-07) and on Windows (ci-08's registry
 // read). Its own file so the harness's scenario table gains one line for it (the `downloads`
 // shape); the macOS steps are skipped with a note off macOS, the Windows steps off Windows.
 //
@@ -214,7 +214,7 @@ export function webHandlers(handlers) {
 }
 
 /**
- * The verdict on Make default's hand-over to LaunchServices, from the calls the wrapped `app`
+ * The verdict on Set as default's hand-over to LaunchServices, from the calls the wrapped `app`
  * methods recorded (`{ method, args, result }` each, in order) and whether http was held before
  * the request. The app has to ask for http, first and (while http is not held) alone; the answer
  * LaunchServices gave to the http request is recorded in `reading`, not judged – an ad-hoc-signed
@@ -441,7 +441,7 @@ function describeRequest(request) {
 }
 
 /**
- * The verdict on Make default's hand-over on Windows, from the calls the wrapped `app` methods
+ * The verdict on Set as default's hand-over on Windows, from the calls the wrapped `app` methods
  * (`calls`: `{ method, args, result }`) and the wrapped `shell.openExternal` (`opens`: `{ url,
  * settled, error }`) recorded, whether the installer's registration was there (`registered`:
  * RegisteredApplications\Zenium – what the app keys on), whether the app already held the role
@@ -765,7 +765,7 @@ function wrapLaunchServices({ app }) {
 /**
  * Installed in the main process: records every `shell.openExternal` call the app makes from now
  * on (the URL, when, and how the OS took it – resolved, or rejected with its message) and lets
- * it through: on Windows the Make default path opens the Default apps page for the user, and
+ * it through: on Windows the Set as default path opens the Default apps page for the user, and
  * the OS's half (the Settings window) is read afterwards. Keeps the original under `orig`.
  */
 function wrapOpenExternal({ shell }) {
@@ -910,7 +910,7 @@ export async function scenarioDefaultBrowser(h) {
   }
 
   return runScenario(DEFAULT_BROWSER_SCENARIO, userData, {}, async (s, out) => {
-    const skip = { skipped: 'Make default through LaunchServices is macOS-only' }
+    const skip = { skipped: 'Set as default through LaunchServices is macOS-only' }
     // The app's process name as System Events sees it (the bundle's executable): its own windows
     // are no candidates for the OS's dialog.
     const appName = await s.app.evaluate(({ app }) => app.getName())
@@ -1153,7 +1153,7 @@ export async function scenarioDefaultBrowser(h) {
     })
 
     // --- Windows: the registry before and after the request (ci-08) ---------------------------
-    const winSkip = { skipped: 'Make default through Windows Settings is Windows-only' }
+    const winSkip = { skipped: 'Set as default through Windows Settings is Windows-only' }
     let registered = null
     let isDefaultBefore = null
     let opens = []

@@ -9492,3 +9492,49 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     expect(searchRows(models, 'proxy')[0]!.caption).toBe('System')
   })
 })
+
+/*
+ * Settings › Default browser (the desktop OSes' section; Android keeps its row under About): the
+ * action row's button is §9.29's one name for the act – "Set as default", the strip's and the
+ * prompt's word (W8-F21) – and on Windows the hint names that button and then Windows' own
+ * "Set default", the OS's label kept. Chrome's "Make default" stays a search alias, no label.
+ */
+describe('Settings › Default browser: the row’s button says Set as default (§9.29, W8-F21)', () => {
+  const notDefault = (platform: Platform): UIState =>
+    state({
+      platform,
+      capabilities: { ...ANDROID, windows: true, defaultBrowser: true },
+      defaultBrowser: { isDefault: false, prompt: null }
+    })
+
+  it('offers Set as default – the strip’s and the prompt’s word – and asks the host from the settings', () => {
+    const model = section('default-browser', notDefault('linux'))
+    expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['default-browser', 'Default browser']
+    ])
+    const r = row(model, 'default-browser')
+    if (r.kind !== 'action') throw new Error('not an action row')
+    expect(r.label).toBe('Zenium is not your default browser')
+    expect(r.description).toBe('Open links from other apps in Zenium.')
+    expect(r.button).toBe('Set as default')
+    r.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('defaultBrowser.request', { source: 'settings' })
+  })
+
+  it('on Windows names its own button, then Windows’ Set default – the OS’s word, kept', () => {
+    const r = row(section('default-browser', notDefault('win32')), 'default-browser')
+    expect(r.description).toBe(
+      'Set as default opens Windows Settings, where you press Set default.'
+    )
+  })
+
+  it('is found under Set as default and still under Chrome’s Make default', () => {
+    const model = section('default-browser', notDefault('linux'))
+    for (const query of ['set as default', 'make default']) {
+      expect(
+        searchRows([model], query).map((h) => h.row.id),
+        query
+      ).toContain('default-browser')
+    }
+  })
+})
