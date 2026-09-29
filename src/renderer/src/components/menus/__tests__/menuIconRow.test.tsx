@@ -154,9 +154,11 @@ const button = (label: string): HTMLButtonElement =>
   buttons().find((b) => b.getAttribute('aria-label') === label)!
 const textRows = (): string[] =>
   [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map((b) => b.textContent ?? '')
+const starGlyph = (): HTMLElement => document.querySelector<HTMLElement>('.zen-star-glyph')!
 const starFill = (): HTMLElement => document.querySelector<HTMLElement>('.zen-star-glyph-fill')!
 const fillOpacity = (): number => Number(starFill().style.opacity)
-const fillScale = (): number => parseFloat(/scale\(([\d.]+)\)/.exec(starFill().style.transform)![1])
+const glyphScale = (): number =>
+  parseFloat(/scale\(([\d.]+)\)/.exec(starGlyph().style.transform)![1])
 const click = (el: Element): void => {
   act(() => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -522,48 +524,55 @@ describe('the icon row', () => {
 })
 
 describe('the star', () => {
-  it('opens unfilled on a page that is not bookmarked and fills on the press, on one spring to the end, as the sheet leaves; the core’s save follows once the sheet is gone', async () => {
+  it('opens unfilled on a page that is not bookmarked and pops on the press – 1.0 → 1.2 → 1.0 on one spring, the fill riding the return – as the sheet leaves; the core’s save follows once the sheet is gone', async () => {
     await show(appMenu({ bookmarked: false }))
     const star = button('Bookmark')
     expect(star.dataset.filled).toBe('false')
     expect(fillOpacity()).toBe(0)
-    expect(fillScale()).toBeCloseTo(0.6)
+    expect(glyphScale()).toBe(1)
 
     click(star)
     expect(star.dataset.filled).toBe('true')
-    // The fill is under way before the sheet has landed: opacity climbs frame by frame, the
-    // filled star growing with it, and nothing is picked yet.
-    const seen: number[] = [fillOpacity()]
-    const scales: number[] = [fillScale()]
+    // The pop is under way before the sheet has landed: the glyph's scale rises frame by frame
+    // and turns back, the fill coming in with the return, and nothing is picked yet.
+    const opacities: number[] = [fillOpacity()]
+    const scales: number[] = [glyphScale()]
     let landed = false
     for (let n = 0; n < 40 && !landed; n++) {
       frame()
-      seen.push(fillOpacity())
-      scales.push(fillScale())
+      opacities.push(fillOpacity())
+      scales.push(glyphScale())
       landed = picks().length > 0
     }
-    // The fill comes to rest before the sheet lands (the same spring over 1 rests before the
-    // same spring over the sheet's height does), and stays there.
-    const rest = seen.indexOf(1)
-    expect(rest).toBeGreaterThan(0)
-    expect(seen.slice(rest).every((o) => o === 1)).toBe(true)
-    // One spring to the end, not a ramp and a cut: every frame climbs; no frame steps more than
-    // the spring's own largest 16 ms step (.12 – the px-scaled rest thresholds snapped .52 → 1 in
-    // one frame); the frame that lands closes less than a hundredth (the unit-scaled restDelta);
-    // and the motion takes the spring's time (22 frames at 16 ms), not five.
-    const path = seen.slice(0, rest + 1)
-    const steps = path.slice(1).map((o, i) => o - path[i])
-    expect(steps.every((step) => step > 0)).toBe(true)
-    expect(Math.max(...steps)).toBeLessThan(0.2)
-    expect(steps[steps.length - 1]).toBeLessThan(0.01)
-    expect(path.length).toBeGreaterThanOrEqual(15)
-    // The scale rides the same value: .6 at the start, 1 at rest, climbing with the opacity.
-    expect(scales[0]).toBeCloseTo(0.6)
-    expect(scales[rest]).toBeCloseTo(1)
-    for (let i = 1; i <= rest; i++) expect(scales[i]).toBeGreaterThanOrEqual(scales[i - 1])
+    // The pop comes to rest before the sheet lands (the same spring over a fifth rests before
+    // the same spring over the sheet's height does), and stays there.
+    const top = scales.indexOf(Math.max(...scales))
+    const rest = scales.indexOf(1, top)
+    expect(rest).toBeGreaterThan(top)
+    expect(scales.slice(rest).every((s) => s === 1)).toBe(true)
+    expect(opacities.slice(rest).every((o) => o === 1)).toBe(true)
+    expect(opacities.indexOf(1)).toBe(rest)
+    // One spring struck once, not a ramp and a cut (MOT-20, the bar star test's own bounds):
+    // the top of 1.2 in the spring's first frames (the third at 16 ms), every frame after it
+    // falling, no frame stepping the scale further than the spring's largest 16 ms step (under
+    // a fifth), and the motion takes the spring's time (21 frames at 16 ms), not five.
+    expect(Math.max(...scales)).toBeCloseTo(1.2, 2)
+    expect(top).toBe(3)
+    expect(rest).toBe(21)
+    for (let i = 1; i <= top; i++) expect(scales[i]).toBeGreaterThan(scales[i - 1])
+    for (let i = top + 1; i <= rest; i++) expect(scales[i]).toBeLessThan(scales[i - 1])
+    const scaleSteps = scales.slice(1, rest + 1).map((s, i) => Math.abs(s - scales[i]))
+    expect(Math.max(...scaleSteps)).toBeLessThan(0.2)
+    // The fill rides the same value: an outline still at the top, then climbing with the
+    // return by less than the same fifth a frame, landing on the frame the scale does.
+    for (let i = 0; i <= top; i++) expect(opacities[i]).toBe(0)
+    const fillSteps = opacities.slice(top + 1, rest + 1).map((o, i) => o - opacities[top + i])
+    expect(fillSteps.every((step) => step > 0)).toBe(true)
+    expect(Math.max(...fillSteps)).toBeLessThan(0.2)
+    expect(fillSteps[fillSteps.length - 1]).toBeLessThan(0.03)
     runAll()
     expect(fillOpacity()).toBe(1)
-    expect(fillScale()).toBeCloseTo(1, 1)
+    expect(glyphScale()).toBe(1)
     expect(picks()).toEqual([['menu.click', { menuId: 'menu_1', itemId: 'menu_1_2' }]])
   })
 
@@ -572,17 +581,18 @@ describe('the star', () => {
     const star = button('Edit Bookmark')
     expect(star.dataset.filled).toBe('true')
     expect(fillOpacity()).toBe(1)
-    expect(fillScale()).toBeCloseTo(1)
+    expect(glyphScale()).toBe(1)
     click(star)
     frame()
     frame()
     expect(fillOpacity()).toBe(1)
+    expect(glyphScale()).toBe(1)
     runAll()
     expect(star.dataset.filled).toBe('true')
     expect(picks()).toEqual([['menu.click', { menuId: 'menu_1', itemId: 'menu_1_2' }]])
   })
 
-  it('under reduced motion the fill jumps to its end (§11.3)', async () => {
+  it('under reduced motion the pop is a cut: the star fills at its size (§11.3)', async () => {
     // The spring's own check (`reducedMotion()` inside `SpringAnimation.start`) reads the media
     // query; the system says reduce.
     Object.defineProperty(window, 'matchMedia', {
@@ -593,23 +603,20 @@ describe('the star', () => {
     expect(fillOpacity()).toBe(0)
     click(button('Bookmark'))
     expect(fillOpacity()).toBe(1)
-    expect(fillScale()).toBeCloseTo(1)
+    expect(glyphScale()).toBe(1)
   })
 
-  it('the fill runs on transform and opacity alone (§11: nothing else per frame)', async () => {
+  it('the pop runs on transform and opacity alone – the glyph’s transform, the fill’s opacity (§11: nothing else per frame)', async () => {
     await show(appMenu({ bookmarked: false }))
     click(button('Bookmark'))
     frame()
     frame()
-    const style = starFill().getAttribute('style') ?? ''
-    expect(style).toMatch(/opacity/)
-    expect(style).toMatch(/transform/)
-    expect(
-      style
-        .replace(/opacity:[^;]*;?/, '')
-        .replace(/transform:[^;]*;?/, '')
-        .trim()
-    ).toBe('')
+    const glyphStyle = starGlyph().getAttribute('style') ?? ''
+    expect(glyphStyle).toMatch(/transform/)
+    expect(glyphStyle.replace(/transform:[^;]*;?/, '').trim()).toBe('')
+    const fillStyle = starFill().getAttribute('style') ?? ''
+    expect(fillStyle).toMatch(/opacity/)
+    expect(fillStyle.replace(/opacity:[^;]*;?/, '').trim()).toBe('')
   })
 })
 
