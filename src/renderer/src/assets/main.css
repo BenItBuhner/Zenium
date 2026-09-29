@@ -5588,6 +5588,15 @@
     color: var(--v2-text-deemphasized);
   }
   /*
+   * Under a field pinned in the grip (`BottomSheet`'s `pinned`, §9.12) the field's wrapper
+   * carries 8 of the 48 (`.zen-phone-top`'s `pb-2`), as the phone panels' empty note under
+   * their field does (phonePanels.css: "the 8 under the field and 40 here"): the sentence
+   * stands 48 below the field, not 56.
+   */
+  .zen-sheet[data-pinned] .zen-sheet-empty {
+    padding-top: 40px;
+  }
+  /*
    * Levels inside one sheet (site information): the panes slide past each other on a spring
    * while the sheet's own height follows its chassis; the one arriving is in flow and sizes the
    * track, the one leaving is laid over it. Only transform and opacity move per frame. The
