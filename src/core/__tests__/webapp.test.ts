@@ -536,6 +536,11 @@ describe('WebAppService badges (MW-51)', () => {
     post: (badge: unknown) => void
   }
 
+  /** The tab shows in `win` from here on (`tabs.windowFor`). */
+  function showIn(h: Harness, win: ZenWindow): void {
+    ;(h.browser.tabs as unknown as { windowFor: () => ZenWindow }).windowFor = () => win
+  }
+
   /** An installed app with its window open on the desktop; the tab shows in that window. */
   async function installed(): Promise<Badged> {
     const h = harness({ desktop: true })
@@ -543,7 +548,7 @@ describe('WebAppService badges (MW-51)', () => {
     await h.service.pin(h.tab.id, 'Sketch', h.win)
     h.service.onPinned(h.pins[0].id)
     const appWin = h.appWindows[0].win
-    ;(h.browser.tabs as { windowFor: () => ZenWindow }).windowFor = () => appWin
+    showIn(h, appWin)
     h.tab.url = 'https://app.example/inbox'
     const changes: Array<[string, AppBadge | null]> = []
     h.service.onBadgeChange((appId, badge) => changes.push([appId, badge]))
@@ -586,10 +591,10 @@ describe('WebAppService badges (MW-51)', () => {
   it('takes no badge from a page that is no installed app’s, out of scope, or malformed', async () => {
     const h = await installed()
     // A browser window's tab: the page script sends none, and the core holds the same line.
-    ;(h.browser.tabs as { windowFor: () => ZenWindow }).windowFor = () => h.win
+    showIn(h, h.win)
     h.post(count(2))
     expect(h.changes).toEqual([])
-    ;(h.browser.tabs as { windowFor: () => ZenWindow }).windowFor = () => h.appWin
+    showIn(h, h.appWin)
     // The app's window showing a page outside the app's scope.
     h.tab.url = 'https://elsewhere.example/'
     h.post(count(2))
@@ -613,11 +618,11 @@ describe('WebAppService badges (MW-51)', () => {
     expect(h.changes).toEqual([])
     // An `--app=<url>` window that is no installed app's (`appId` null).
     const anonymous = { ...h.appWin, app: { ...h.appWin.app!, appId: null } } as ZenWindow
-    ;(h.browser.tabs as { windowFor: () => ZenWindow }).windowFor = () => anonymous
+    showIn(h, anonymous)
     h.post(count(2))
     expect(h.changes).toEqual([])
     // ...and the app's own window takes it.
-    ;(h.browser.tabs as { windowFor: () => ZenWindow }).windowFor = () => h.appWin
+    showIn(h, h.appWin)
     h.post(count(2))
     expect(h.changes).toEqual([[MANIFEST_ID, count(2)]])
   })
