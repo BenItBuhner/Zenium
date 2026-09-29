@@ -22,9 +22,11 @@
 # Between two drivers the device is put back to the shard's baseline: the app's data cleared (the
 # next driver starts from the fresh install its own workflow gives it; the shared script's
 # `adb install -g` grants the permissions again, and any the driver had revoked are granted back
-# here too), the recording's parts taken off /sdcard, the font scale, the accessibility services and
-# the animation scales as the image boots with them, three-button navigation, the device PIN
-# cleared, the display as the shard names it. What a driver needs beyond that is a `needs` word in
+# here too), the managed driver's seam released when it was left behind (the test package as the
+# device owner and the app's restrictions bundle: see reset_managed_seam), the recording's parts
+# taken off /sdcard, the font scale, the accessibility services and the animation scales as the
+# image boots with them, three-button navigation, the device PIN cleared, the display as the shard
+# names it. What a driver needs beyond that is a `needs` word in
 # its manifest entry: `pin` (a device PIN before it – its wrapper's own when it has one – cleared
 # after), `browser-role` (Chrome enabled and holding the browser role for the choice, both put back
 # after), `navigation` (gestural navigation its script sets, three-button put back after).
@@ -36,6 +38,8 @@
 set -uo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
+# The instrumentation package (the drivers' own APK; the managed driver makes it the device owner).
+test_package=io.github.benitbuhner.zenium.debug.test
 helper=.github/scripts/android-nightly-drivers.mjs
 shard=${NIGHTLY_SHARD:?NIGHTLY_SHARD names the shard}
 out=${NIGHTLY_OUT:-artifacts/nightly/$shard}
@@ -166,10 +170,38 @@ echo "   the device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); $(a
 
 device_alive() { [ "$(adb get-state 2> /dev/null | tr -d '\r' || true)" = device ]; }
 
+# The managed driver's seam put back when it was left behind (ManagedDemo.kt, act F): the shell
+# made the test package the device owner and, as the owner, it handed the app an app-restrictions
+# bundle. The driver's own `finally` releases both; when it never ran (the driver cut at its cap,
+# its process killed) every driver after it on the boot would meet a managed browser (the app
+# menu ending on Managed Browser, `managed.status` naming an organisation). Only the owner itself
+# can give the ownership back from here: the test APK is installed without `-t`, so it is not a
+# testOnly admin and the shell's `dpm remove-active-admin` refuses it ("Attempt to remove non-test
+# admin"). So the release is the demo's own – the owner's exported ManagedSeedReceiver, reached by
+# an ordered broadcast, clears the app's bundle (setApplicationRestrictions with an empty bundle)
+# and calls clearDeviceOwnerApp, which also clears every package's application restrictions
+# (DevicePolicyManagerService.clearDeviceOwnerLocked). Idempotent: when `dpm list-owners` names
+# no owner of ours there is nothing to do and nothing is printed.
+reset_managed_seam() {
+  local owners out
+  owners=$(adb shell dpm list-owners 2> /dev/null | tr -d '\r' || true)
+  case "$owners" in *"$test_package"*) ;; *) return 0 ;; esac
+  echo "   the managed seam left behind: $(printf '%s\n' "$owners" | grep -F -m1 "$test_package" | sed 's/^ *//'); the app's bundle cleared and the ownership given back through the owner's own receiver"
+  out=$(timeout 40 adb shell am broadcast -f 0x10000000 \
+    -n "$test_package/app.zen.chromium.ManagedSeedReceiver" -a app.zen.chromium.test.MANAGED_RELEASE \
+    --es package "$app_id" 2>&1 | tr -d '\r' || true)
+  printf '%s\n' "$out" | grep 'Broadcast completed' | sed 's/^/   /' || true
+  owners=$(adb shell dpm list-owners 2> /dev/null | tr -d '\r' || true)
+  case "$owners" in
+    *"$test_package"*) echo "::warning::$shard: the test package still holds the device owner after the release; the drivers after this one run against a managed browser" ;;
+  esac
+}
+
 # The shard's baseline between two drivers (see the header).
 reset_device() {
   adb shell am force-stop "$app_id" > /dev/null 2>&1 || true
   adb shell pm clear "$app_id" > /dev/null 2>&1 || true
+  reset_managed_seam
   adb shell rm -f '/sdcard/demo-part-*' > /dev/null 2>&1 || true
   adb shell settings put system font_scale 1.0 > /dev/null 2>&1 || true
   adb shell settings put secure enabled_accessibility_services '""' > /dev/null 2>&1 || true
