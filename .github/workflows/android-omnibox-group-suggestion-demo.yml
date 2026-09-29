@@ -24,8 +24,6 @@ name: Android omnibox tab group suggestion demo
 # when the driver failed.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-omnibox-zero-suggest-9271]
 
 permissions:
   contents: read
@@ -42,13 +40,13 @@ jobs:
       script: .github/scripts/android-gesture-demo.sh
       # The shared driver chooses the demo from its environment (see the script's header).
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-light.mp4
+        DEMO_CLASS=app.zen.chromium.OmniboxGroupSuggestionDemo
+        DEMO_DIR=omnibox-group-suggestion-demo
+        DEMO_OUT=artifacts/android-omnibox-group-suggestion-demo
+        DEMO_VIDEO=android-omnibox-group-suggestion-demo-light.mp4
         DEMO_THEME=light
-      artifact-name: android-omnibox-zero-suggest-demo-light
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
+      artifact-name: android-omnibox-group-suggestion-demo-light
+      artifact-path: artifacts/android-omnibox-group-suggestion-demo/
 
   light-again:
     name: Omnibox tab group suggestion demo, light, second boot
@@ -58,13 +56,13 @@ jobs:
     with:
       script: .github/scripts/android-gesture-demo.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-light.mp4
+        DEMO_CLASS=app.zen.chromium.OmniboxGroupSuggestionDemo
+        DEMO_DIR=omnibox-group-suggestion-demo
+        DEMO_OUT=artifacts/android-omnibox-group-suggestion-demo
+        DEMO_VIDEO=android-omnibox-group-suggestion-demo-light.mp4
         DEMO_THEME=light
-      artifact-name: android-omnibox-zero-suggest-demo-light-second-boot
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
+      artifact-name: android-omnibox-group-suggestion-demo-light-second-boot
+      artifact-path: artifacts/android-omnibox-group-suggestion-demo/
 
   dark:
     name: Omnibox tab group suggestion demo, dark
@@ -72,13 +70,13 @@ jobs:
     with:
       script: .github/scripts/android-gesture-demo.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-dark.mp4
+        DEMO_CLASS=app.zen.chromium.OmniboxGroupSuggestionDemo
+        DEMO_DIR=omnibox-group-suggestion-demo
+        DEMO_OUT=artifacts/android-omnibox-group-suggestion-demo
+        DEMO_VIDEO=android-omnibox-group-suggestion-demo-dark.mp4
         DEMO_THEME=dark
-      artifact-name: android-omnibox-zero-suggest-demo-dark
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
+      artifact-name: android-omnibox-group-suggestion-demo-dark
+      artifact-path: artifacts/android-omnibox-group-suggestion-demo/
 
   dark-again:
     name: Omnibox tab group suggestion demo, dark, second boot
@@ -88,13 +86,13 @@ jobs:
     with:
       script: .github/scripts/android-gesture-demo.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-dark.mp4
+        DEMO_CLASS=app.zen.chromium.OmniboxGroupSuggestionDemo
+        DEMO_DIR=omnibox-group-suggestion-demo
+        DEMO_OUT=artifacts/android-omnibox-group-suggestion-demo
+        DEMO_VIDEO=android-omnibox-group-suggestion-demo-dark.mp4
         DEMO_THEME=dark
-      artifact-name: android-omnibox-zero-suggest-demo-dark-second-boot
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
+      artifact-name: android-omnibox-group-suggestion-demo-dark-second-boot
+      artifact-path: artifacts/android-omnibox-group-suggestion-demo/
 
   tablet:
     name: Omnibox tab group suggestion demo, tablet
@@ -106,14 +104,14 @@ jobs:
       profile: pixel_tablet
       api-level: '34'
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-tablet.mp4
+        DEMO_CLASS=app.zen.chromium.OmniboxGroupSuggestionDemo
+        DEMO_DIR=omnibox-group-suggestion-demo
+        DEMO_OUT=artifacts/android-omnibox-group-suggestion-demo
+        DEMO_VIDEO=android-omnibox-group-suggestion-demo-tablet.mp4
         DEMO_THEME=light
         DEMO_DISPLAY=1280x800@160
-      artifact-name: android-omnibox-zero-suggest-demo-tablet
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
+      artifact-name: android-omnibox-group-suggestion-demo-tablet
+      artifact-path: artifacts/android-omnibox-group-suggestion-demo/
 
   tablet-again:
     name: Omnibox tab group suggestion demo, tablet, second boot
@@ -125,47 +123,11 @@ jobs:
       profile: pixel_tablet
       api-level: '34'
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-tablet.mp4
+        DEMO_CLASS=app.zen.chromium.OmniboxGroupSuggestionDemo
+        DEMO_DIR=omnibox-group-suggestion-demo
+        DEMO_OUT=artifacts/android-omnibox-group-suggestion-demo
+        DEMO_VIDEO=android-omnibox-group-suggestion-demo-tablet.mp4
         DEMO_THEME=light
         DEMO_DISPLAY=1280x800@160
-      artifact-name: android-omnibox-zero-suggest-demo-tablet-second-boot
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
-
-  tablet-dark:
-    name: Omnibox tab group suggestion demo, tablet, dark
-    uses: ./.github/workflows/android-emulator-demo.yml
-    with:
-      script: .github/scripts/android-gesture-demo.sh
-      profile: pixel_tablet
-      api-level: '34'
-      script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-tablet-dark.mp4
-        DEMO_THEME=dark
-        DEMO_DISPLAY=1280x800@160
-      artifact-name: android-omnibox-zero-suggest-demo-tablet-dark
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
-
-  tablet-dark-again:
-    name: Omnibox tab group suggestion demo, tablet, dark, second boot
-    needs: tablet-dark
-    if: ${{ failure() && needs.tablet-dark.outputs.emulator-died == 'true' }}
-    uses: ./.github/workflows/android-emulator-demo.yml
-    with:
-      script: .github/scripts/android-gesture-demo.sh
-      profile: pixel_tablet
-      api-level: '34'
-      script-env: |
-        DEMO_CLASS=app.zen.chromium.OmniboxZeroSuggestDemo
-        DEMO_DIR=omnibox-zero-suggest-demo
-        DEMO_OUT=artifacts/android-omnibox-zero-suggest-demo
-        DEMO_VIDEO=android-omnibox-zero-suggest-demo-tablet-dark.mp4
-        DEMO_THEME=dark
-        DEMO_DISPLAY=1280x800@160
-      artifact-name: android-omnibox-zero-suggest-demo-tablet-dark-second-boot
-      artifact-path: artifacts/android-omnibox-zero-suggest-demo/
+      artifact-name: android-omnibox-group-suggestion-demo-tablet-second-boot
+      artifact-path: artifacts/android-omnibox-group-suggestion-demo/
