@@ -5796,6 +5796,50 @@ describe('the Extensions category', () => {
     expect(ids).toContain(`extension:${noisy.id}:error:2`)
   })
 
+  it('a synced landing waiting for approval (services pass 16, ID-44) reads the pending line in the warn ink for Off, and again under its Enabled switch; approved, the line goes', () => {
+    const pending = ext({
+      id: 'c'.repeat(32),
+      name: 'Adblock',
+      enabled: false,
+      pendingApproval: true
+    })
+    const model = section('extensions', extState([pending, ext({})]))
+    const item = row(model, `extension:${pending.id}`)
+    expect(item).toMatchObject({
+      description: 'Synced from another device — needs your permission',
+      tone: 'warn'
+    })
+    const enabled = row(model, `extension:${pending.id}:enabled`)
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(false)
+    expect(enabled.description).toBe('Synced from another device — needs your permission')
+    // The switch runs the same command as ever: the host's `setEnabled` opens the prompt.
+    enabled.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', { id: pending.id, enabled: true })
+    // The other extension, installed here, says nothing of the kind.
+    expect(row(model, `extension:${EXT_ID}`).tone).toBeUndefined()
+    const plainSwitch = row(model, `extension:${EXT_ID}:enabled`)
+    if (plainSwitch.kind !== 'switch') throw new Error('not a switch')
+    expect(plainSwitch.description).toBeUndefined()
+    // Approved (on, the flag gone) or merely off: the description is the extension's own, or Off.
+    const approved = section('extensions', extState([ext({ id: pending.id, name: 'Adblock' })]))
+    expect(row(approved, `extension:${pending.id}`).description).toBe(ext({}).description)
+    expect(row(approved, `extension:${pending.id}`).tone).toBeUndefined()
+    const off = section('extensions', extState([ext({ id: pending.id, enabled: false })]))
+    expect(row(off, `extension:${pending.id}`)).toMatchObject({ description: 'Off' })
+    // A load error outranks the line: one red line per row (the lead's ruling on #212).
+    const broken = section(
+      'extensions',
+      extState([
+        ext({ id: pending.id, enabled: false, pendingApproval: true, error: 'Bad manifest' })
+      ])
+    )
+    expect(row(broken, `extension:${pending.id}`)).toMatchObject({
+      description: 'Bad manifest',
+      tone: 'danger'
+    })
+  })
+
   it('the Errors detail row sums the console and lists it newest first, then Clear errors', () => {
     const noisy = ext({ errors: CONSOLE })
     const model = section('extensions', extState([noisy]))
