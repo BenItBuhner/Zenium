@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useLayoutEffect, useRef } from 'react'
 import { HINT_BUBBLE_ID, type HintBubble } from '@renderer/lib/iph'
+import { holdTouch } from './holdTouch'
 import { hintBubbleLeft, hintBubbleOnCard } from './stack'
 
 interface Props {
@@ -31,6 +32,10 @@ interface Props {
  * the card at gap 0, start-aligned, flipped above when the room below runs out – and written as
  * `left` and `top`; `data-side` turns its arrival round so it comes out of the card. It sits on
  * no bar edge (`data-edge` absent) and covers no page: the overview is under it, not a page.
+ *
+ * A touch that begins on the bubble ends on it: the first touch anywhere takes the bubble down
+ * and passes through, but the one `click` a touch on the bubble itself becomes lands on nothing
+ * under it, arrive it after the fade has swept the node away (`holdTouch`).
  */
 export function HintBubbleCard({ bubble, leaving, onMeasure }: Props): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -69,6 +74,7 @@ export function HintBubbleCard({ bubble, leaving, onMeasure }: Props): JSX.Eleme
       data-anchor={overview ? bubble.tabId : bubble.anchorItem}
       data-leaving={leaving ? '' : undefined}
       role="status"
+      onPointerDown={(e) => holdTouch(e.pointerId)}
     >
       <span className="zen-message-text">{bubble.text}</span>
     </div>

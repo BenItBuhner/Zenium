@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement } from 'react'
+import { act, createElement, Fragment } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { HintBubble } from '@renderer/lib/iph'
 
@@ -25,6 +25,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { HintBubbleCard } = await import('../HintBubbleCard')
+const { HINT_TAP_SETTLE_MS, releaseHeldTouch } = await import('../holdTouch')
 const { MessageLayer } = await import('../MessageLayer')
 const { hintBubbleOnCard, MESSAGE_INSET } = await import('../stack')
 const {
@@ -80,6 +81,7 @@ afterEach(() => {
   host = null
   releaseCards?.()
   releaseCards = null
+  releaseHeldTouch()
   forgetHintBubble()
   delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth
   delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight
@@ -203,6 +205,78 @@ describe('the layer', () => {
     expect(coverBandStore.get()).toEqual({ top: 0, bottom: 0 })
     act(() => dismissHintBubble())
     expect(coverBandStore.get()).toEqual({ top: 0, bottom: 0 })
+  })
+})
+
+describe('the touch (a touch that begins on the bubble ends on it, `holdTouch`)', () => {
+  /** The bubble over the grid's last row – the New Tab card under it (the emulator's fourth run). */
+  const opened = vi.fn()
+  const scene = (bubble: HintBubble | null): void =>
+    act(() =>
+      root!.render(
+        createElement(
+          Fragment,
+          null,
+          bubble ? createElement(HintBubbleCard, { bubble, leaving: false }) : null,
+          createElement('button', { type: 'button', onClick: opened }, 'New tab')
+        )
+      )
+    )
+  const bubbleEl = (): HTMLElement => host!.querySelector<HTMLElement>('.zen-hint-bubble')!
+  const plus = (): HTMLElement => host!.querySelector<HTMLElement>('button')!
+  const pointer = (type: string, on: HTMLElement, pointerId = 1): void => {
+    on.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId }))
+  }
+  const click = (on: HTMLElement): void => {
+    on.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  }
+  beforeEach(() => opened.mockReset())
+
+  it("a tap on the bubble lands on nothing under it – though the bubble is gone before the tap's click arrives (the fourth run: the New Tab card beneath opened a tab)", () => {
+    scene(CARD_BUBBLE)
+    act(() => pointer('pointerdown', bubbleEl()))
+    // The first touch took the bubble down and the fade swept its node before the click came.
+    scene(null)
+    expect(host!.querySelector('.zen-hint-bubble')).toBeNull()
+    act(() => pointer('pointerup', document.body))
+    act(() => click(plus()))
+    expect(opened).not.toHaveBeenCalled()
+    // One shot: the swallow stood down with the click it took.
+    act(() => click(plus()))
+    expect(opened).toHaveBeenCalledTimes(1)
+  })
+
+  it('the next touch is its own: a tap elsewhere after a touch on the bubble runs what it touched', () => {
+    scene(CARD_BUBBLE)
+    act(() => pointer('pointerdown', bubbleEl()))
+    scene(null)
+    act(() => pointer('pointerdown', plus(), 2))
+    act(() => pointer('pointerup', plus(), 2))
+    act(() => click(plus()))
+    expect(opened).toHaveBeenCalledTimes(1)
+  })
+
+  it('stands down when the touch is cancelled – a scroll took it, no click follows', () => {
+    scene(CARD_BUBBLE)
+    act(() => pointer('pointerdown', bubbleEl()))
+    act(() => pointer('pointercancel', document.body))
+    act(() => click(plus()))
+    expect(opened).toHaveBeenCalledTimes(1)
+  })
+
+  it(`holds ${HINT_TAP_SETTLE_MS} ms after the finger lifts – a slow frame's late click is still the bubble's – and no longer`, () => {
+    scene(CARD_BUBBLE)
+    act(() => pointer('pointerdown', bubbleEl()))
+    act(() => pointer('pointerup', document.body))
+    act(() => vi.advanceTimersByTime(HINT_TAP_SETTLE_MS - 1))
+    act(() => click(plus()))
+    expect(opened).not.toHaveBeenCalled()
+
+    act(() => pointer('pointerdown', bubbleEl()))
+    act(() => pointer('pointerup', document.body))
+    act(() => vi.advanceTimersByTime(HINT_TAP_SETTLE_MS))
+    act(() => click(plus()))
+    expect(opened).toHaveBeenCalledTimes(1)
   })
 })
 

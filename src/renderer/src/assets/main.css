@@ -3728,7 +3728,10 @@
    * it stays the touch's target through its fade (`.zen-message`'s `pointer-events: auto`,
    * kept under `[data-leaving]`), so the tap that took it down does not land on what the
    * bubble stood over – in the overview, a card, which a tap picks (Chrome's popup consumes a
-   * touch on itself; a touch outside it is the control's, `AnchoredPopupWindow.onTouch`).
+   * touch on itself; a touch outside it is the control's, `AnchoredPopupWindow.onTouch`). The
+   * fade alone is not the whole of that: the tap's `click` is hit-tested after the finger
+   * lifts, and a slow frame has put it after the fade's sweep – the card's `holdTouch`
+   * (HintBubbleCard.tsx) swallows the one click a touch on the bubble becomes.
    */
   .zen-hint-bubble {
     --zen-message-text-inset: 0;
