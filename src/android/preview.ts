@@ -160,19 +160,60 @@ export const PREVIEW_WEB_APP = {
   }
 }
 
+/** A manifest a preview page "declares": its address and its parsed JSON. */
+export interface PreviewManifest {
+  manifestUrl: string
+  manifest: Record<string, unknown> & { short_name: string }
+}
+
 /**
- * Post a manifest for `tabId` as its page script would: the demo app's, or none (an empty
- * manifest describes no app) so the tab is a plain page again.
+ * Two installed apps declaring Web Share Targets (MW-63), for the share chooser's states: the
+ * demo app taking a share by GET, and a notes app on the same origin taking one by POST – with
+ * no icon of its own, so its chooser row draws the letter tile. Both stand on `/`, the page the
+ * default profile opens on, so either can be installed from it.
  */
-export function postPreviewManifest(tabId: string, app: boolean): void {
+export const PREVIEW_SHARE_APPS: readonly PreviewManifest[] = [
+  {
+    manifestUrl: PREVIEW_WEB_APP.manifestUrl,
+    manifest: {
+      ...PREVIEW_WEB_APP.manifest,
+      share_target: { action: '/app/share', params: { title: 'title', text: 'text', url: 'url' } }
+    }
+  },
+  {
+    manifestUrl: 'https://example.com/notes/manifest.webmanifest',
+    manifest: {
+      id: '/notes/',
+      name: 'Field Notes',
+      short_name: 'Notes',
+      start_url: '/notes/',
+      scope: '/',
+      display: 'standalone',
+      theme_color: '#6b4e2e',
+      share_target: {
+        action: '/notes/new',
+        method: 'POST',
+        enctype: 'application/x-www-form-urlencoded',
+        params: { title: 'subject', text: 'body', url: 'link' }
+      }
+    }
+  }
+]
+
+/**
+ * Post a manifest for `tabId` as its page script would: the demo app's (`true`), the one given,
+ * or none (`false`: an empty manifest describes no app) so the tab is a plain page again.
+ */
+export function postPreviewManifest(tabId: string, app: boolean | PreviewManifest): void {
+  const declared = app === true ? PREVIEW_WEB_APP : app === false ? null : app
   hostGlobal().viewEvent(
     tabId,
     'pageMessage',
     JSON.stringify({
       type: 'webapp',
       webapp: 'manifest',
-      manifestUrl: PREVIEW_WEB_APP.manifestUrl,
-      manifest: app ? PREVIEW_WEB_APP.manifest : {}
+      manifestUrl: declared?.manifestUrl ?? PREVIEW_WEB_APP.manifestUrl,
+      manifest: declared?.manifest ?? {}
     })
   )
 }
