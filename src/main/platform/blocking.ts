@@ -34,7 +34,7 @@ import {
   type TextMatcher
 } from '../../core/blocking/engine'
 import type { BlockingHost, BundledFilterList } from '../../core/platform'
-import type { Decision, RequestContext, RuleSet } from '../../core/blocking/rules'
+import type { Decision, RequestContext, RuleSet, RuleSetSummary } from '../../core/blocking/rules'
 import { BLOCKING_DIR, type RuleSetStore } from '../../core/blocking/store'
 import {
   GHOSTERY_COMPILE_TASK,
@@ -232,6 +232,19 @@ export interface TextSource {
  */
 export type GhosteryCompile = (parts: string[]) => Promise<GhosteryCompileOutput>
 
+/** One compiled matcher: Ghostery's engine over some sets' text and the lists' document filters. */
+interface Compiled {
+  engine: FiltersEngine
+  /** The lists' document-level filters, decided here rather than by Ghostery. */
+  documents: DocumentFilters
+}
+
+/** The sets one matcher is built from: the partition it answers for (null: every unscoped one). */
+interface Scope {
+  partition: string | null
+  sets: RuleSetSummary[]
+}
+
 /**
  * Matches the enabled `filterText` sets with Ghostery's `FiltersEngine`. The engine is rebuilt
  * (off the current tick) whenever one of those sets changes – compiled in the background worker
@@ -239,11 +252,19 @@ export type GhosteryCompile = (parts: string[]) => Promise<GhosteryCompileOutput
  * changes that land while a build is out are folded into the one build after it – and its
  * serialised form is cached under `blocking/engine.bin` so later starts deserialise in
  * milliseconds instead of parsing.
+ *
+ * One matcher per partition the sets name (`RuleEngine.textPartitions`): the unscoped sets make
+ * the matcher every partition uses; a partition an enabled text set is scoped to or excluded
+ * from gets a matcher of its own over the sets that apply there (`RuleEngine.textSetsFor`) – the
+ * filter lists private windows alone turn on under "Always use Strict in private windows" name
+ * `private`, so a private window's request meets the Strict lists and no other window's does.
+ * Each is built, cached (`engine.<partition>.bin`) and adopted by the same rules.
  */
 export class GhosteryTextMatcher implements TextMatcher, CspSource {
-  private engine: FiltersEngine | null = null
-  /** The lists' document-level filters, decided here rather than by Ghostery. */
-  private documents: DocumentFilters = DocumentFilters.EMPTY
+  /** The matcher of the unscoped sets: every partition no scoped text set names. */
+  private general: Compiled | null = null
+  /** The matchers of the partitions a scoped text set names, by partition. */
+  private readonly scoped = new Map<string, Compiled>()
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null
   private building = false
   private dirty = false
@@ -251,7 +272,7 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   private readonly pendingText = new Map<string, string>()
   /** Builds so far, for tests and diagnostics. */
   builds = 0
-  /** Whether the current engine came out of the cache. */
+  /** Whether the current unscoped matcher came out of the cache. */
   fromCache = false
   /** Builds compiled off the main process so far (diagnostics and the tests). */
   compiledInBackground = 0
@@ -286,23 +307,37 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
 
   /** True once a build reflects the current sets. */
   get ready(): boolean {
-    return this.engine !== null && !this.dirty && !this.building
+    return this.general !== null && !this.dirty && !this.building
+  }
+
+  /** The partitions with a matcher of their own right now (diagnostics and the tests). */
+  get scopedPartitions(): string[] {
+    return [...this.scoped.keys()]
+  }
+
+  /**
+   * The matcher a request from `partition` is answered by: the partition's own while it has
+   * one, else the unscoped sets'. A partition whose own matcher is still being built answers
+   * from the unscoped one meanwhile, as every partition did before it was named.
+   */
+  private compiledFor(partition: string | undefined): Compiled | null {
+    return (partition !== undefined ? this.scoped.get(partition) : undefined) ?? this.general
   }
 
   match(ctx: RequestContext): TextMatch | null {
-    const engine = this.engine
-    if (!engine) return null
+    const compiled = this.compiledFor(ctx.partition)
+    if (!compiled) return null
     if (ctx.type === 'main_frame') {
-      const document = this.documents.decide(ctx.url)
+      const document = compiled.documents.decide(ctx.url)
       return document ? { action: document.action, filter: document.filter } : null
     }
     // An `@@…$document` exception on the page switches the lists off for everything it loads.
     const page = ctx.documentUrl ?? ctx.initiator
     if (page) {
-      const exception = this.documents.exception(page)
+      const exception = compiled.documents.exception(page)
       if (exception) return { action: 'allow', filter: exception }
     }
-    const result = engine.match(this.requestFor(ctx))
+    const result = compiled.engine.match(this.requestFor(ctx))
     if (result.exception) return { action: 'allow', filter: result.exception.toString() }
     if (result.redirect)
       return {
@@ -316,9 +351,9 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
 
   /** `$csp` directives the lists want injected into a document, or null. */
   cspDirectives(ctx: RequestContext): string | null {
-    const engine = this.engine
-    if (!engine) return null
-    return engine.getCSPDirectives(this.requestFor(ctx)) ?? null
+    const compiled = this.compiledFor(ctx.partition)
+    if (!compiled) return null
+    return compiled.engine.getCSPDirectives(this.requestFor(ctx)) ?? null
   }
 
   private requestFor(ctx: RequestContext): Request {
@@ -340,9 +375,10 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   }
 
   /**
-   * Parse (or deserialise) the enabled text sets. Synchronous without a {@link GhosteryCompile}
-   * (~100 ms for the default lists on the spot); with one, the parse runs in the background and
-   * the old engine answers until the new one is adopted (`ready` is false meanwhile).
+   * Parse (or deserialise) the enabled text sets – the unscoped sets' matcher and one per
+   * partition a scoped set names. Synchronous without a {@link GhosteryCompile} (~100 ms for the
+   * default lists on the spot); with one, the parses run in the background and the old matchers
+   * answer until the new ones are adopted (`ready` is false meanwhile).
    */
   rebuild(): void {
     if (this.building) {
@@ -351,69 +387,97 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }
     this.building = true
     this.dirty = false
-    const sets = this.source.engine.enabledTextSets()
-    const fingerprint = sets.map((s) => `${s.id}:${s.updatedAt ?? 0}:${s.filterCount}`).join('|')
-    let handedOff = false
+    const engine = this.source.engine
+    const scopes: Scope[] = [
+      { partition: null, sets: engine.textSetsFor(undefined) },
+      ...engine.textPartitions().map((partition) => ({
+        partition,
+        sets: engine.textSetsFor(partition)
+      }))
+    ]
+    // A partition no scoped set names any more answers from the unscoped matcher again.
+    const named = new Set(scopes.map((scope) => scope.partition))
+    for (const partition of this.scoped.keys())
+      if (!named.has(partition)) this.scoped.delete(partition)
+    // The unpersisted text this build reads; only that is forgotten once it is in, so a set
+    // that changes again while a background build is out keeps its newer text for the next.
+    const used = new Map<string, string>()
+    const handedOff: Promise<void>[] = []
     try {
-      if (sets.length === 0) {
-        // The master switch off disables every list. An empty engine is not worth caching, and
-        // writing it would evict the lists' serialised form that the next switch on (and the
-        // next start) deserialise instead of parsing.
-        this.engine = FiltersEngine.parse('', { loadCosmeticFilters: false, debug: false })
-        this.documents = DocumentFilters.parse([])
-        this.fromCache = false
-        this.pendingText.clear()
-        return
+      for (const scope of scopes) {
+        const out = this.buildScope(scope, used)
+        if (out) handedOff.push(out)
       }
-      const cached = this.readCache(fingerprint)
-      if (cached) {
-        this.engine = cached.engine
-        this.documents = cached.documents
-        this.fromCache = true
-        this.pendingText.clear()
-        return
-      }
-      const parts: string[] = []
-      // The unpersisted text this build reads; only that is forgotten once it is in, so a set
-      // that changes again while a background build is out keeps its newer text for the next.
-      const used = new Map<string, string>()
-      for (const summary of sets) {
-        const pending = this.pendingText.get(summary.id)
-        if (pending !== undefined) used.set(summary.id, pending)
-        const text = pending ?? this.source.store.readFilterText(summary.id)
-        if (text) parts.push(text)
-      }
-      if (this.compile) {
-        handedOff = true
-        void this.compile(parts)
-          .then((output) => {
-            this.compiledInBackground++
-            this.adopt(
-              FiltersEngine.deserialize(output.engine),
-              DocumentFilters.parse([output.documents])
-            )
-            this.forgetUsed(used)
-            this.writeCache(fingerprint, output.engine, output.documents)
-          })
-          .catch((error: unknown) => console.error('[zenium] filter engine build failed', error))
-          .finally(() => this.finishBuild())
-        return
-      }
-      const { engine, documents } = compileGhosteryEngine(parts)
-      this.adopt(engine, documents)
-      this.forgetUsed(used)
-      this.writeCache(fingerprint, engine.serialize(), documents.lines.join('\n'))
     } catch (error) {
       console.error('[zenium] filter engine build failed', error)
     } finally {
-      if (!handedOff) this.finishBuild()
+      if (handedOff.length === 0) {
+        this.forgetUsed(used)
+        this.finishBuild()
+      } else {
+        void Promise.all(handedOff).finally(() => {
+          this.forgetUsed(used)
+          this.finishBuild()
+        })
+      }
     }
   }
 
-  private adopt(engine: FiltersEngine, documents: DocumentFilters): void {
-    this.engine = engine
-    this.documents = documents
-    this.fromCache = false
+  /**
+   * One scope's matcher: nothing for no sets (the master switch off disables every list – an
+   * empty engine is not worth caching, and writing it would evict the lists' serialised form
+   * that the next switch on, and the next start, deserialise instead of parsing), the cache
+   * when its fingerprint matches, else a parse – on the spot, or handed to the worker, whose
+   * promise is returned so the build waits for it.
+   */
+  private buildScope(scope: Scope, used: Map<string, string>): Promise<void> | null {
+    const fingerprint = scope.sets
+      .map((s) => `${s.id}:${s.updatedAt ?? 0}:${s.filterCount}`)
+      .join('|')
+    if (scope.sets.length === 0) {
+      this.adopt(scope.partition, {
+        engine: FiltersEngine.parse('', { loadCosmeticFilters: false, debug: false }),
+        documents: DocumentFilters.parse([])
+      })
+      if (scope.partition === null) this.fromCache = false
+      return null
+    }
+    const cached = this.readCache(scope.partition, fingerprint)
+    if (cached) {
+      this.adopt(scope.partition, cached)
+      if (scope.partition === null) this.fromCache = true
+      return null
+    }
+    const parts: string[] = []
+    for (const summary of scope.sets) {
+      const pending = this.pendingText.get(summary.id)
+      if (pending !== undefined) used.set(summary.id, pending)
+      const text = pending ?? this.source.store.readFilterText(summary.id)
+      if (text) parts.push(text)
+    }
+    if (this.compile) {
+      return this.compile(parts)
+        .then((output) => {
+          this.compiledInBackground++
+          this.adopt(scope.partition, {
+            engine: FiltersEngine.deserialize(output.engine),
+            documents: DocumentFilters.parse([output.documents])
+          })
+          if (scope.partition === null) this.fromCache = false
+          this.writeCache(scope.partition, fingerprint, output.engine, output.documents)
+        })
+        .catch((error: unknown) => console.error('[zenium] filter engine build failed', error))
+    }
+    const { engine, documents } = compileGhosteryEngine(parts)
+    this.adopt(scope.partition, { engine, documents })
+    if (scope.partition === null) this.fromCache = false
+    this.writeCache(scope.partition, fingerprint, engine.serialize(), documents.lines.join('\n'))
+    return null
+  }
+
+  private adopt(partition: string | null, compiled: Compiled): void {
+    if (partition === null) this.general = compiled
+    else this.scoped.set(partition, compiled)
   }
 
   private forgetUsed(used: Map<string, string>): void {
@@ -427,18 +491,22 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     if (this.dirty) this.scheduleRebuild()
   }
 
-  private cachePaths(): { bin: string; meta: string; documents: string } {
+  /**
+   * The cache files of one scope: the unscoped matcher's are the names every build before the
+   * scoped ones wrote (`engine.bin`, `engine.json`, `documents.txt`), a partition's carry the
+   * partition in the name.
+   */
+  private cachePaths(partition: string | null): { bin: string; meta: string; documents: string } {
+    const tag = partition === null ? '' : `.${partition.replace(/[^a-z0-9_-]/gi, '_')}`
     return {
-      bin: join(this.cacheDir, 'engine.bin'),
-      meta: join(this.cacheDir, 'engine.json'),
-      documents: join(this.cacheDir, 'documents.txt')
+      bin: join(this.cacheDir, `engine${tag}.bin`),
+      meta: join(this.cacheDir, `engine${tag}.json`),
+      documents: join(this.cacheDir, `documents${tag}.txt`)
     }
   }
 
-  private readCache(
-    fingerprint: string
-  ): { engine: FiltersEngine; documents: DocumentFilters } | null {
-    const { bin, meta, documents } = this.cachePaths()
+  private readCache(partition: string | null, fingerprint: string): Compiled | null {
+    const { bin, meta, documents } = this.cachePaths(partition)
     try {
       if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
       const info = JSON.parse(readFileSync(meta, 'utf8')) as {
@@ -455,8 +523,13 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }
   }
 
-  private writeCache(fingerprint: string, engine: Uint8Array, documents: string): void {
-    const paths = this.cachePaths()
+  private writeCache(
+    partition: string | null,
+    fingerprint: string,
+    engine: Uint8Array,
+    documents: string
+  ): void {
+    const paths = this.cachePaths(partition)
     try {
       mkdirSync(this.cacheDir, { recursive: true })
       const tmp = `${paths.bin}.${process.pid}.tmp`
