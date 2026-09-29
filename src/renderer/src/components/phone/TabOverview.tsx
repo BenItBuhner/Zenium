@@ -24,6 +24,7 @@ import type {
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
+import { isEmptyTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { announce } from '@renderer/lib/announce'
 import { cmd, run } from '@renderer/lib/api'
@@ -170,7 +171,7 @@ import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { placeholderPx } from './tabPlaceholder'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
-import { useOverviewGroupsHint } from './useOverviewGroupsHint'
+import { overviewHintCandidates, useOverviewGroupsHint } from './useOverviewGroupsHint'
 import { useFlip } from './useFlip'
 import { SEGMENT_LINE_CLASS, usePaneSwipe } from './usePaneSwipe'
 import { useOverviewHandle } from './usePillGestures'
@@ -478,17 +479,21 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
   const heroCell = useRef<Rect | null>(null)
   // The drag-to-group teaching's bubble (TB-19, `useOverviewGroupsHint`): on the Tabs pane of
-  // the phone's overview, on the active card when it is a loose tab – the card the page just
-  // morphed into, in view by that fact – else the first loose card; the Private pane groups
-  // nothing, the Groups pane has no cards, the tablet has no tips card. While it stands, its
-  // card pulses and carries it as its description (`OverviewCard`'s `hinted`).
-  const hintAnchorTabId =
+  // the phone's overview, on the loose page card in view nearest the active card – the cell
+  // before it in grid order, else the one after; the active card itself only when no other page
+  // card is in view; never the new tab page's card, the one the tip's "Try it now" left (the
+  // design lead's fold on #701). The cards go in grid order, the hook chooses among them as the
+  // bubble goes up; the Private pane groups nothing, the Groups pane has no cards, the tablet
+  // has no tips card. While it stands, its card pulses and carries it as its description
+  // (`OverviewCard`'s `hinted`).
+  const hintCandidates =
     tablet || pane !== 'tabs'
-      ? null
-      : active && loose.some((t) => t.id === active.id)
-        ? active.id
-        : (loose[0]?.id ?? null)
-  useOverviewGroupsHint({ state, overview, anchorTabId: hintAnchorTabId, grid: scrollRef })
+      ? []
+      : overviewHintCandidates(
+          loose.map((t) => ({ id: t.id, page: !isEmptyTabUrl(t.url) })),
+          active?.id ?? null
+        )
+  useOverviewGroupsHint({ state, overview, candidates: hintCandidates, grid: scrollRef })
   const hintedTabId = hintBubbleStore.use((s) => (s.leaving ? null : hintBubbleTabId(s.bubble)))
   const sheet = overviewUiStore.use((s) => s.sheet)
   const setSheet = setOverviewSheet

@@ -6,8 +6,9 @@ name: Android overview groups hint demo
 # a seeded profile of twelve loose tabs and no group with the tip module's memory standing eight
 # days past the theme tip and the default browser tip, so a fresh new tab page draws the stack
 # with the tab-groups tip alone (Chrome's title over Chrome's sentence, one filled Try it now);
-# Try it now opens the tab overview and at its rest the bubble stands on the page's own card –
-# the active tab's, the card the page morphed into – in §9.33's dress (320 wide, the accent fill
+# Try it now opens the tab overview and at its rest the bubble stands on the loose page card in
+# view nearest the active card – the cell before it in grid order, else the one after; never the
+# new tab page's card, the one the finger came from – in §9.33's dress (320 wide, the accent fill
 # with the on-accent ink, no hairline, 15/400, role status) and §9.20's pose against the card
 # (flush at gap 0, start- or end-aligned by the card's half of the screen, 8 inside the frame),
 # the card wearing §9.23's halo and naming the bubble as its description for TalkBack, the

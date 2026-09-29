@@ -24,16 +24,18 @@ import kotlin.math.roundToInt
  *     so a fresh new tab page draws the stack with one card – the tab-groups tip, "Tidy up with
  *     tab groups" over Chrome's sentence and one filled "Try it now" – alone at full width.
  *  2. Try it now opens the tab overview (#695's CTA) and, once the overview is at rest, the
- *     bubble stands on the card of the page the finger came from – the active tab's, the card
- *     the page morphed into – in §9.33's dress: 320 wide, the accent fill with the on-accent
- *     ink and no hairline, the body 15/400, `role="status"`; in §9.20's pose against the card –
- *     flush under it at gap 0, or over it when the room below runs out, start- or end-aligned
- *     with it by the card's half of the screen, 8 inside the frame; the card wearing §9.23's
- *     halo (`data-iph-anchor`, the card-shaped ring breathing on the 1.25 s alternate) and
- *     naming the bubble as its description for TalkBack (`aria-describedby`). The sentence is
- *     Chrome's dialog's folded into one: "Touch and hold a tab, then drag it onto another to
- *     group them". The record (`settings.iph.tabGroupsDragAndDrop`) is spent as the bubble goes
- *     up. Shot on the light scheme and the dark – the bubble stands through the scheme's flip.
+ *     bubble stands on the loose page card in view nearest the active card – the cell before it
+ *     in grid order, else the one after; never the new tab page's card, the one the finger came
+ *     from (the design lead's fold on #701) – in §9.33's dress: 320 wide, the accent fill with
+ *     the on-accent ink and no hairline, the body 15/400, `role="status"`; in §9.20's pose
+ *     against the card – flush under it at gap 0, or over it when the room below runs out,
+ *     start- or end-aligned with it by the card's half of the screen, 8 inside the frame; the
+ *     card wearing §9.23's halo (`data-iph-anchor`, the card-shaped ring breathing on the 1.25 s
+ *     alternate) and naming the bubble as its description for TalkBack (`aria-describedby`).
+ *     The sentence is Chrome's dialog's folded into one: "Touch and hold a tab, then drag it
+ *     onto another to group them". The record (`settings.iph.tabGroupsDragAndDrop`) is spent as
+ *     the bubble goes up. Shot on the light scheme and the dark – the bubble stands through the
+ *     scheme's flip.
  *  3. A touch anywhere takes it down (§9.33; Chrome's dialog cancels on a touch outside): the
  *     finger lands on the bubble itself – nothing under it is picked, the overview stays open –
  *     and the bubble fades out over 200 ms, the halo and the description going with it.
@@ -181,7 +183,7 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
     // --- 2. the bubble ---------------------------------------------------------------------------
 
     private fun theBubble() {
-        step("2. Try it now opens the overview; at its rest the bubble stands on the page's own card in §9.33's dress and §9.20's pose, the card haloed and describing it; the record spent as it goes up; light and dark") {
+        step("2. Try it now opens the overview; at its rest the bubble stands on the page card before the active one – never the new tab page's own – in §9.33's dress and §9.20's pose, the card haloed and describing it; the record spent as it goes up; light and dark") {
             val opened = touchControlExpecting("$TIP_BUTTON: $TIP_TITLE", TIP_ACTION_JS, "the overview is open", 10_000) { overviewOpen() }
             expect("$TIP_BUTTON opens the tab overview – as Chrome's tip shows the Hub (ChromeTabbedActivity.java l.3500–3508)", opened, "cta-opens-overview")
             val up = awaitChrome("!!document.getElementById('$BUBBLE_ID')", 8_000)
@@ -190,8 +192,18 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
             finding("  the bubble: $b")
             expect("the bubble is up once the overview rests, on the overview kind (data-at '${b.optString("at")}', edge '${b.optString("edge")}')", up && b.optBoolean("up") && b.optString("at") == "overview" && b.optString("edge").isEmpty(), "bubble-up")
             expect("it says Chrome's dialog's sentence folded into one: '$HINT_TEXT' ('${b.optString("text")}')", b.optString("text") == HINT_TEXT, "bubble-text")
-            expect("it stands on the page's own card – the active tab's, the one the page morphed into (anchor '${b.optString("anchor")}', the page $pageTabId; the active card ${activeCoreTab()?.optString("id")})", b.optString("anchor") == pageTabId && b.optString("anchor") == activeCoreTab()?.optString("id"), "bubble-anchor")
+            val cards = hintCards()
+            val active = activeCoreTab()?.optString("id")
+            val want = expectedAnchor(cards, active)
+            val anchor = b.optString("anchor")
+            val anchorUrl = coreState().getJSONObject("tabs").optJSONObject(anchor)?.optString("url").orEmpty()
+            finding("  the grid's loose cards in order (page or blank, in or out of view): ${cards.joinToString(" ") { "${it.id}(${if (it.page) "page" else "blank"}, ${if (it.inView) "in" else "out"})" }}; the rule names '$want'")
+            expect("it stands on the loose page card in view nearest the active card – before it in grid order, else after – never on the new tab page's card, the one the finger came from (anchor '$anchor' $anchorUrl; the rule names '$want'; the page's own card $pageTabId, the active card $active)", want != null && anchor == want && anchor != pageTabId && anchorUrl.isNotEmpty() && anchorUrl != BLANK_URL, "bubble-anchor")
             val cell = b.optJSONObject("cell")
+            val view = b.optJSONObject("view")
+            val seen = if (cell != null && view != null) minOf(cell.optDouble("bottom"), view.optDouble("bottom")) - maxOf(cell.optDouble("top"), view.optDouble("top")) else Double.NaN
+            val cellHeight = if (cell != null) cell.optDouble("bottom") - cell.optDouble("top") else Double.NaN
+            expect("its card is in the grid's view – more than half its height inside the scroller's box (card ${cell.px("top")}–${cell.px("bottom")}, view ${view.px("top")}–${view.px("bottom")}: ${seen.whole()} of ${cellHeight.whole()} inside)", !seen.isNaN() && seen > cellHeight / 2, "bubble-anchor-in-view")
             val side = b.optString("side")
             val flush = cell != null && when (side) {
                 "below" -> near(b.optDouble("top"), cell.optDouble("bottom"))
@@ -312,9 +324,50 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
     private fun bubble(): JSONObject = runCatching { JSONObject(chromeValue(BUBBLE_JS)) }.getOrElse { JSONObject().put("up", false) }
 
     /**
-     * Two loose cards side by side in the grid's view – the same row, neither the bubble's card
-     * nor the New Tab card nor a group – the one further from the page's card first as the source,
-     * its neighbour the target; null with none.
+     * A loose card of the grid as the fold's rule reads it (`HintCard`, useOverviewGroupsHint.ts):
+     * its tab, whether a page's – not the new tab page's, by the core's url – and whether in the
+     * grid's view, more than half its height inside the scroller's box (`cellInView`).
+     */
+    private data class HintCard(val id: String, val page: Boolean, val inView: Boolean)
+
+    /**
+     * The grid's loose cards in grid order – the tab cards outside any group, the New Tab card not
+     * among them – each marked a page's or blank and in or out of the grid's view.
+     */
+    private fun hintCards(): List<HintCard> {
+        val grid = runCatching { JSONObject(chromeValue(GRID_JS)) }.getOrElse { return emptyList() }
+        val view = grid.optJSONObject("view") ?: return emptyList()
+        val cells = grid.optJSONArray("cells") ?: return emptyList()
+        val tabs = coreState().getJSONObject("tabs")
+        return (0 until cells.length()).map { cells.getJSONObject(it) }.filter { it.optBoolean("loose") }.map { c ->
+            val top = c.optDouble("top")
+            val bottom = c.optDouble("bottom")
+            val seen = minOf(bottom, view.optDouble("bottom")) - maxOf(top, view.optDouble("top"))
+            val url = tabs.optJSONObject(c.optString("id"))?.optString("url").orEmpty()
+            HintCard(c.optString("id"), url.isNotEmpty() && url != BLANK_URL, seen > (bottom - top) / 2)
+        }
+    }
+
+    /**
+     * The card the fold's rule names (`overviewHintCandidates` with `cellInView`,
+     * useOverviewGroupsHint.ts): among the loose cards, the page card in view nearest the active
+     * card – at each distance the one before it ahead of the one after – and the active card
+     * itself only when a page's and no other page card is in view; null with none. With no active
+     * card among the loose ones, the page cards from the first.
+     */
+    private fun expectedAnchor(cards: List<HintCard>, active: String?): String? {
+        val at = cards.indexOfFirst { it.id == active }
+        val order = if (at < 0) cards.indices.toList() else (1 until cards.size).flatMap { d -> listOf(at - d, at + d) }.filter { it in cards.indices } + at
+        return order.map { cards[it] }.firstOrNull { it.page && it.inView }?.id
+    }
+
+    /** A length for a finding line: whole pixels, or a dash for one the probe never read. */
+    private fun Double.whole(): String = if (isNaN()) "–" else roundToInt().toString()
+
+    /**
+     * Two loose cards side by side in the grid's view – the same row, neither the page's own card
+     * (the new tab page's) nor the New Tab card nor a group – the one further from the page's
+     * card first as the source, its neighbour the target; null with none.
      */
     private fun neighbours(): Pair<String, String>? {
         val cells = runCatching { JSONArray(chromeValue(CELLS_JS)) }.getOrElse { JSONArray() }
@@ -507,11 +560,12 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
             "button:b?b.textContent.trim():'',buttonLabel:b?b.getAttribute('aria-label'):'',primary:!!(b&&b.hasAttribute('data-primary'))})})()"
         /**
          * The bubble as drawn – its words, kind, anchor, side, box, fill and ink against the tokens
-         * painted on a probe, its font, the anchor cell's box, the cell's halo (the ring's
-         * animation) and the card's description – in CSS px.
+         * painted on a probe, its font, the anchor cell's box and the grid's view it stands in, the
+         * cell's halo (the ring's animation) and the card's description – in CSS px.
          */
         private const val BUBBLE_JS = "(function(){var b=document.getElementById('zen-hint-bubble');if(!b)return JSON.stringify({up:false});" +
             "var r=b.getBoundingClientRect(),cs=getComputedStyle(b);var id=b.getAttribute('data-anchor')||'';var l=b.parentElement.getBoundingClientRect();" +
+            "var g=document.querySelector('.zen-overview-grid'),gv=g?g.getBoundingClientRect():null;" +
             "var cell=id?document.querySelector('.zen-overview-grid [data-cell=\"'+id+'\"]'):null;var c=cell?cell.getBoundingClientRect():null;" +
             "var halo=cell?getComputedStyle(cell,'::before').animationName:'';var btn=cell?cell.querySelector('[aria-describedby]'):null;" +
             "var p=document.createElement('div');p.style.background='var(--v2-accent)';p.style.color='var(--v2-on-accent)';document.body.appendChild(p);" +
@@ -519,8 +573,13 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
             "return JSON.stringify({up:true,text:b.textContent,at:b.getAttribute('data-at')||'',edge:b.getAttribute('data-edge')||'',anchor:id," +
             "side:b.getAttribute('data-side')||'',role:b.getAttribute('role')||'',leaving:b.hasAttribute('data-leaving'),left:r.left,top:r.top,right:r.right,bottom:r.bottom," +
             "width:r.width,height:r.height,fill:cs.backgroundColor,ink:cs.color,border:cs.borderTopWidth,font:cs.fontSize+'/'+cs.fontWeight+'/'+cs.lineHeight," +
-            "accent:accent,onAccent:onAccent,cell:c?{left:c.left,top:c.top,right:c.right,bottom:c.bottom}:null,halo:halo,haloed:cell?cell.hasAttribute('data-iph-anchor'):false," +
+            "accent:accent,onAccent:onAccent,cell:c?{left:c.left,top:c.top,right:c.right,bottom:c.bottom}:null,view:gv?{top:gv.top,bottom:gv.bottom}:null," +
+            "halo:halo,haloed:cell?cell.hasAttribute('data-iph-anchor'):false," +
             "describedBy:btn?btn.getAttribute('aria-describedby'):'',vw:innerWidth,layer:{left:l.left,top:l.top,right:l.right,bottom:l.bottom}})})()"
+        /** The grid's box and its cells in grid order – id, top and bottom, whether a loose tab card (a tab id outside any group; not the New Tab card's) – in CSS px. */
+        private const val GRID_JS = "(function(){var g=document.querySelector('.zen-overview-grid');if(!g)return JSON.stringify({});var gr=g.getBoundingClientRect();" +
+            "return JSON.stringify({view:{top:gr.top,bottom:gr.bottom},cells:[].map.call(g.querySelectorAll('[data-cell]'),function(e){var r=e.getBoundingClientRect();" +
+            "return {id:e.getAttribute('data-cell')||'',top:r.top,bottom:r.bottom,loose:!!e.getAttribute('data-tab-id')&&!e.closest('[data-cell^=\"group:\"]')}})})})()"
         /** The grid's cells in view – id, box, whether a loose tab card (a tab id, not a group's or the New Tab card's) – in CSS px. */
         private const val CELLS_JS = "(function(){var g=document.querySelector('.zen-overview-grid');if(!g)return '[]';var gr=g.getBoundingClientRect();" +
             "return JSON.stringify([].map.call(g.querySelectorAll('[data-cell]'),function(e){var r=e.getBoundingClientRect();var id=e.getAttribute('data-cell')||'';" +
