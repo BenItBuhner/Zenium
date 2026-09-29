@@ -11,10 +11,19 @@
  * Following one: an engine with text fragments (`document.fragmentDirective` present) scrolls to
  * and highlights the text itself and strips the directive from `location.hash`; one without
  * (Android's WebView leaves the feature off) shows the page's top and the directive stays in the
- * URL. The script then does the engine's part once the document has loaded: the directives'
- * first matches are found (`findTextDirective`), painted through the CSS Custom Highlight API in
- * the `::target-text` colours (or selected, where the API is missing), and the first one is
- * scrolled to the middle of the viewport, as Chrome's `TextFragmentAnchor` does.
+ * URL. The script then does the engine's part (PUI-40): at document start – before the page's
+ * own scripts read `location.hash` – the directives are taken out of the URL
+ * (`history.replaceState`; the spec keeps the fragment directive out of the document's URL) and
+ * kept; once the document has loaded, their first matches are found (`findTextDirective`, the
+ * document read up to `LINEARIZE_LIMITS`), painted through the CSS Custom Highlight API in the
+ * `::target-text` colours (or selected, where the API is missing), and the first one is scrolled
+ * to the middle of the viewport, as Chrome's `TextFragmentAnchor` does. Web documents alone: a
+ * `zen:` or `about:` document never runs it, nor does a frame, nor a same-document fragment
+ * change (the spec's "full navigation" rule; Chrome does not follow `#:~:text=` set in place).
+ *
+ * The phone's toolbar asks for the link without the bridge (`TEXT_FRAGMENT_LINK_EVENT`, a DOM
+ * event the host's `evaluateJavascript` dispatches; `TextFragmentLink.kt`): the listener writes
+ * the selection's directive into the event's `detail`, and the host builds the URL.
  */
 
 import {
@@ -22,7 +31,9 @@ import {
   generateForSelection,
   hasFragmentDirective,
   linearize,
-  parseTextDirectives
+  parseTextDirectives,
+  stripFragmentDirective,
+  type TextDirective
 } from './textFragment'
 
 /** Browser → page: make the directive for the current selection, answered under `id`. */
@@ -51,6 +62,18 @@ export const HIGHLIGHT_NAME = 'zen-text-fragment'
 const STYLE_ID = 'zen-text-fragment-style'
 /** Content that renders late (a framework's first paint) gets one more look after this long. */
 export const LATE_CONTENT_MS = 600
+/** Directives followed at most per document (the spec allows any number; Chrome paints them all). */
+export const MAX_DIRECTIVES = 16
+/** The documents the fallback follows a directive in: web pages and files, never the browser's own. */
+const FOLLOWED_PROTOCOLS: readonly string[] = ['http:', 'https:', 'file:']
+
+/**
+ * The DOM event the phone's host dispatches on the document to ask for the selection's directive
+ * (`TextFragmentLink.kt`'s script, through `evaluateJavascript`): dispatched with an object as
+ * `detail`, answered by writing `detail.directive` – the encoded `text=` directive, or null when
+ * the selection cannot be linked to. Nothing a page cannot compute of its own selection itself.
+ */
+export const TEXT_FRAGMENT_LINK_EVENT = 'zen-text-fragment-link'
 
 /** The Custom Highlight API's constructor, where the engine has it (the DOM lib in use predates it). */
 type HighlightConstructor = new (...ranges: Range[]) => object
@@ -75,33 +98,44 @@ export function isTextFragmentPageMessage(value: unknown): value is TextFragment
   )
 }
 
-/** Answer the browser's `generate` requests, and follow the URL's own directive when the engine did not. */
+/**
+ * Answer the browser's `generate` requests (the bridge's, and the host's DOM event), and follow
+ * the URL's own directive when the engine did not.
+ */
 export function installTextFragmentScript(
   transport: TextFragmentTransport,
   win: Window = window
 ): void {
+  const generate = (): string | null => {
+    const run = (): string | null => generateForSelection(win.document)
+    try {
+      return transport.withSelection ? transport.withSelection(run) : run()
+    } catch {
+      return null
+    }
+  }
   transport.onCommand((message) => {
     if (!isTextFragmentHostMessage(message)) return
-    const run = (): string | null => generateForSelection(win.document)
-    let directive: string | null = null
-    try {
-      directive = transport.withSelection ? transport.withSelection(run) : run()
-    } catch {
-      directive = null
-    }
-    transport.send({ type: 'textFragment', id: message.id, directive })
+    transport.send({ type: 'textFragment', id: message.id, directive: generate() })
+  })
+  win.document.addEventListener(TEXT_FRAGMENT_LINK_EVENT, (e) => {
+    const detail: unknown = (e as CustomEvent<unknown>).detail
+    if (!detail || typeof detail !== 'object') return
+    ;(detail as { directive?: string | null }).directive = generate()
   })
   followTextFragment(win)
 }
 
 /**
  * Whether this document is one for the script to follow the directive in: the top document of
- * an engine without text fragments, whose URL carries one.
+ * a web page (or a file) in an engine without text fragments, whose URL carries one. Nothing but
+ * the URL is read here, at document start: one look for `#` and one for `:~:` after it.
  */
 export function needsTextFragmentFallback(win: Window): boolean {
   try {
     if (win !== win.top) return false
     if ('fragmentDirective' in win.document) return false
+    if (!FOLLOWED_PROTOCOLS.includes(win.location.protocol)) return false
     return hasFragmentDirective(win.location.href)
   } catch {
     return false
@@ -109,16 +143,38 @@ export function needsTextFragmentFallback(win: Window): boolean {
 }
 
 /**
+ * Take the text directives out of the document's URL, as the spec keeps them out of the URL a
+ * document sees: parsed and kept, then `history.replaceState` to the URL without them, so the
+ * page's own scripts – a hash router among them – read the fragment as the author wrote it.
+ * Null when there is nothing to follow (the engine's own case, no directive, not a web page).
+ */
+export function takeTextDirectives(win: Window): TextDirective[] | null {
+  if (!needsTextFragmentFallback(win)) return null
+  const href = win.location.href
+  const directives = parseTextDirectives(href.slice(href.indexOf('#') + 1)).slice(
+    0,
+    MAX_DIRECTIVES
+  )
+  try {
+    win.history.replaceState(win.history.state, '', stripFragmentDirective(href))
+  } catch {
+    /* a document whose URL cannot be replaced keeps the directive in its hash */
+  }
+  return directives.length > 0 ? directives : null
+}
+
+/**
  * Scroll to and highlight the URL's text directives once the document has loaded (and once more a
  * moment later, for content that renders late), where the engine did not. Nothing when it did.
  */
 export function followTextFragment(win: Window): void {
-  if (!needsTextFragmentFallback(win)) return
+  const directives = takeTextDirectives(win)
+  if (!directives) return
   const doc = win.document
   let done = false
   const attempt = (): void => {
     if (done) return
-    if (highlightTextFragments(win)) done = true
+    if (highlightTextFragments(win, directives)) done = true
   }
   const start = (): void => {
     attempt()
@@ -129,17 +185,14 @@ export function followTextFragment(win: Window): void {
 }
 
 /**
- * Find the directives of the document's URL in it, paint their matches and scroll the first
- * into view. True when at least one matched. The engine's own processing is not repeated:
- * callers check `needsTextFragmentFallback` first.
+ * Find the `directives` (the document URL's, as `takeTextDirectives` kept them) in the document,
+ * paint their matches and scroll the first into view. True when at least one matched. The
+ * engine's own processing is not repeated: callers check `needsTextFragmentFallback` first.
  */
-export function highlightTextFragments(win: Window): boolean {
+export function highlightTextFragments(win: Window, directives: TextDirective[]): boolean {
   const doc = win.document
   const root = doc.body
-  if (!root) return false
-  const hash = win.location.href.slice(win.location.href.indexOf('#') + 1)
-  const directives = parseTextDirectives(hash)
-  if (directives.length === 0) return false
+  if (!root || directives.length === 0) return false
   const linear = linearize(root)
   const ranges: Range[] = []
   for (const directive of directives) {

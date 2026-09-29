@@ -109,6 +109,20 @@ export function hasFragmentDirective(url: string): boolean {
   return hash >= 0 && url.indexOf(FRAGMENT_DIRECTIVE, hash) >= 0
 }
 
+/**
+ * `url` without its fragment directive, the URL the spec exposes to the document: the page's
+ * own fragment stays (`#section:~:text=a` → `#section`), and a fragment that was the directive
+ * alone goes with its `#` (the spec serialises the empty fragment left behind as a bare `#`;
+ * dropped here, where the URL is also what the address bar shows). Unchanged without one.
+ */
+export function stripFragmentDirective(url: string): string {
+  const hash = url.indexOf('#')
+  if (hash < 0) return url
+  const at = url.indexOf(FRAGMENT_DIRECTIVE, hash)
+  if (at < 0) return url
+  return at === hash + 1 ? url.slice(0, hash) : url.slice(0, at)
+}
+
 // --- the linear document ----------------------------------------------------------------------
 
 /**
@@ -121,7 +135,28 @@ export interface LinearText {
   text: string
   /** Text-node stretches, in order: `[start, end)` of `text` is `node`'s data. */
   segments: { start: number; end: number; node: Text }[]
+  /** The walk stopped at a cap (`LinearizeLimits`): text past it is not in `text`. */
+  truncated: boolean
 }
+
+/**
+ * The bounds on a reading of the document: the fallback runs in the page's own thread, so a
+ * document of pathological size is read up to here and no further – a passage past the cap is
+ * not found (the page shows its top, as without the feature) rather than the page stalling.
+ */
+export interface LinearizeLimits {
+  /** Text nodes read at most. */
+  maxNodes: number
+  /** Characters of `text` gathered at most (a node that crosses the cap is still taken whole). */
+  maxChars: number
+}
+
+/**
+ * The default bounds: fifty thousand text nodes and a million and a half characters – ten times
+ * a long encyclopaedia article, read in tens of milliseconds; beyond it the page is not one a
+ * link to a passage is made for.
+ */
+export const LINEARIZE_LIMITS: LinearizeLimits = { maxNodes: 50_000, maxChars: 1_500_000 }
 
 /** The block boundary character inserted between blocks; never a character of the document's text. */
 const BLOCK = '\n'
@@ -203,14 +238,20 @@ function hidden(element: Element): boolean {
   return false
 }
 
-/** Read `root` (a document's body, or an element) into a `LinearText`. */
-export function linearize(root: Node): LinearText {
+/** Read `root` (a document's body, or an element) into a `LinearText`, up to `limits`. */
+export function linearize(root: Node, limits: LinearizeLimits = LINEARIZE_LIMITS): LinearText {
   const segments: LinearText['segments'] = []
   let text = ''
+  let truncated = false
   const walk = (node: Node): void => {
+    if (truncated) return
     if (node.nodeType === 3) {
       const data = (node as Text).data
       if (!data) return
+      if (segments.length >= limits.maxNodes || text.length >= limits.maxChars) {
+        truncated = true
+        return
+      }
       segments.push({ start: text.length, end: text.length + data.length, node: node as Text })
       text += data
       return
@@ -220,11 +261,11 @@ export function linearize(root: Node): LinearText {
     if (element && hidden(element)) return
     const block = element !== null && BLOCK_TAGS.has(element.tagName)
     if (block && !text.endsWith(BLOCK)) text += BLOCK
-    for (let child = node.firstChild; child; child = child.nextSibling) walk(child)
+    for (let child = node.firstChild; child && !truncated; child = child.nextSibling) walk(child)
     if (block && !text.endsWith(BLOCK)) text += BLOCK
   }
   walk(root)
-  return { text, segments }
+  return { text, segments, truncated }
 }
 
 /** The `[start, end)` of `text` a DOM range covers, or null when the range touches no rendered text. */
