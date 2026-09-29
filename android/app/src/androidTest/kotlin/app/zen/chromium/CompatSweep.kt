@@ -8254,7 +8254,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // its download buttons on the timeline's media; Mouse Tooltip Translator's content script
         // (every frame, `document_start`) reads the word under the pointer on a `mousemove`
         // (`caretRangeFromPoint`, debounced), translates it through its worker (Google by default,
-        // target `en`) and shows a tippy tooltip in its `#mttContainer`; Super Simple
+        // target `en`) and shows a tippy tooltip in its `#mttContainer` – once its move gate is
+        // open (a `touchstart`, or four moves apart; MTT_TOOLTIP); Super Simple
         // Highlighter's action has no popup until its defaults are granted – its click runs
         // `permissions.request({permissions: ["webNavigation", "scripting"], origins: [<the tab's
         // origin>/*]})`, then `onCompleted` sets `popup.html` as the global popup and creates its
@@ -16131,15 +16132,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:!!d&&n>0,player:!!p,mounted:!!d,elements:n,captionSegments:caps,path:location.pathname,host:location.host})})()"
 
         /**
-         * Mouse Tooltip Translator's tooltip over `fonts-lang.html`'s Japanese span: a
-         * `mousemove` dispatched on the window and the span at a point in its first glyphs each
-         * poll (its content script's listener reads the word under the pointer through
-         * `caretRangeFromPoint`, debounced, and asks its worker for the translation), then its
-         * tippy box in `#mttContainer` shown with text.
+         * Mouse Tooltip Translator's tooltip over `fonts-lang.html`'s Japanese span. Its content
+         * script translates the word under the pointer only once its own move gate is open
+         * (`L` in its main module): a `touchstart` opens it at once (`we`, the phone's input), a
+         * mouse opens it after three `mousemove`s each more than 3 px from the last position and
+         * a fourth (`Ce`; `Ge` stores every move's point), and a text selection opens it too.
+         * Round 25's BEFORE dispatched every `mousemove` at one point, so the gate never opened
+         * on either WebView (`container: false` for 35 s with the script applied and no error).
+         * The first poll now arms the gate both ways – a `touchstart`/`touchend` pair on the span
+         * (a `Touch` at the point) and five `mousemove`s 8 px apart approaching the point – and
+         * every poll dispatches one `mousemove` on the span at the point (its `cT` listener on the
+         * window keeps the pointer's position and, 300 ms after the last move, raises its
+         * `mouseoverText` with the word read through `caretRangeFromPoint`; the poll's 700 ms is
+         * over that debounce), then its tippy box in `#mttContainer` shown with text is the pass.
+         * The arming is recorded (`gate`: `touch`, `approach`).
          */
         private const val MTT_TOOLTIP =
-            "(function(){var s=document.getElementById('ja');if(!s)return JSON.stringify({pass:false,why:'no #ja span'});var r=s.getBoundingClientRect();var x=Math.round(r.left+10),y=Math.round(r.top+r.height/2);var init={clientX:x,clientY:y,bubbles:true,cancelable:true,view:window};window.dispatchEvent(new MouseEvent('mousemove',init));s.dispatchEvent(new MouseEvent('mousemove',init));var c=document.getElementById('mttContainer');var box=document.querySelector('#mttContainer .tippy-box, [data-tippy-root] .tippy-box, .tippy-box');var t=box?(box.textContent||'').replace(/\\s+/g,' ').trim():'';var br=box?box.getBoundingClientRect():{width:0,height:0};" +
-                "return JSON.stringify({pass:!!box&&t.length>0&&br.width>0,container:!!c,box:!!box,text:t.slice(0,160),w:Math.round(br.width),h:Math.round(br.height),x:x,y:y})})()"
+            "(function(){var s=document.getElementById('ja');if(!s)return JSON.stringify({pass:false,why:'no #ja span'});var r=s.getBoundingClientRect();var x=Math.round(r.left+10),y=Math.round(r.top+r.height/2);" +
+                "var move=function(cx,cy){s.dispatchEvent(new MouseEvent('mousemove',{clientX:cx,clientY:cy,screenX:cx,screenY:cy,bubbles:true,cancelable:true,view:window}))};var g=window.__mttGate;" +
+                "if(!g){g=window.__mttGate={touch:false,approach:0};try{var tp=new Touch({identifier:1,target:s,clientX:x,clientY:y,pageX:x+window.scrollX,pageY:y+window.scrollY,screenX:x,screenY:y});" +
+                "s.dispatchEvent(new TouchEvent('touchstart',{touches:[tp],targetTouches:[tp],changedTouches:[tp],bubbles:true,cancelable:true,view:window}));s.dispatchEvent(new TouchEvent('touchend',{touches:[],targetTouches:[],changedTouches:[tp],bubbles:true,cancelable:true,view:window}));g.touch=true}catch(e){g.touchError=String(e&&e.message||e)}" +
+                "for(var i=5;i>=1;i--){move(x-8*i,y);g.approach++}}move(x,y);" +
+                "var c=document.getElementById('mttContainer');var box=document.querySelector('#mttContainer .tippy-box, [data-tippy-root] .tippy-box, .tippy-box');var t=box?(box.textContent||'').replace(/\\s+/g,' ').trim():'';var br=box?box.getBoundingClientRect():{width:0,height:0};" +
+                "return JSON.stringify({pass:!!box&&t.length>0&&br.width>0,container:!!c,box:!!box,text:t.slice(0,160),w:Math.round(br.width),h:Math.round(br.height),x:x,y:y,gate:g})})()"
 
         /**
          * Super Simple Highlighter's popup once its defaults are granted and `popup.html` set:
