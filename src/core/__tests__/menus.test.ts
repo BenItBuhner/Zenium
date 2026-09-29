@@ -36,6 +36,8 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { MANAGED_MENU_WAIT_MS } from '../managed'
+import type { ManagedStatus } from '../../shared/managed'
 import { readerArticleId } from '../reader'
 import { reportUnsafeSiteUrl } from '../help'
 import { bindingFor, toAccelerator } from '../../shared/shortcuts'
@@ -588,6 +590,105 @@ describe('the app menu', () => {
       expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
       expect(read).toHaveBeenCalledTimes(1)
     })
+
+    /** A host whose read answers when the test says, not before (the read itself is asked on a microtask). */
+    const slowHost = (
+      h: ReturnType<typeof harness>
+    ): { answer: (status: ManagedStatus) => void } => {
+      let resolve: ((status: ManagedStatus) => void) | null = null
+      let early: ManagedStatus | null = null
+      vi.spyOn(h.browser.platform.managed!, 'read').mockImplementation(
+        () =>
+          new Promise<ManagedStatus>((settle) => {
+            if (early) settle(early)
+            else resolve = settle
+          })
+      )
+      return {
+        answer: (status) => {
+          if (resolve) resolve(status)
+          else early = status
+        }
+      }
+    }
+
+    it('bounds the first build’s wait at MANAGED_MENU_WAIT_MS: a host that has not answered by then shows the menu unmanaged, no later opening waits, and the answer, kept when it lands, is on the next opening with no second read', async () => {
+      const h = harness(ANDROID, {
+        formFactor: 'phone',
+        managed: { by: null, keys: ['URLBlocklist'] }
+      })
+      vi.useFakeTimers()
+      try {
+        const host = slowHost(h)
+        // The bound: an order past the read's slow case, short of a tap reading as a stall.
+        expect(MANAGED_MENU_WAIT_MS).toBe(400)
+        expect(h.browser.managed.waits()).toBe(true)
+        const first = h.browser.handleCommand(h.win, 'app.menu', {})
+        expect(first).toBeInstanceOf(Promise)
+        // Short of the bound the tap still waits for the read.
+        await vi.advanceTimersByTimeAsync(MANAGED_MENU_WAIT_MS - 1)
+        expect(h.popups()).toBe(0)
+        // At the bound the menu shows as an unmanaged host's, the status still unread.
+        await vi.advanceTimersByTimeAsync(1)
+        await first
+        expect(h.popups()).toBe(1)
+        expect(h.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+        expect(h.shown().at(-1)).toMatchObject({ label: 'Change Menu', key: 'menu.change' })
+        expect(h.browser.managed.status()).toBeNull()
+        expect(h.browser.platform.managed!.read).toHaveBeenCalledTimes(1)
+        // The read still out, a second opening does not wait again: a stuck host lags one tap,
+        // not every one. Still no row, and no second read.
+        expect(h.browser.managed.waits()).toBe(false)
+        expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+        expect(h.popups()).toBe(2)
+        expect(h.browser.platform.managed!.read).toHaveBeenCalledTimes(1)
+        expect(h.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+        // The host answers: the status is kept, and the next opening is synchronous with the row.
+        host.answer({ by: null, keys: ['URLBlocklist'] })
+        await h.browser.managed.ensure()
+        expect(h.browser.managed.status()).toEqual({ by: null, keys: ['URLBlocklist'] })
+        expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+        expect(h.popups()).toBe(3)
+        expect(h.shown().at(-1)).toStrictEqual(managedRow)
+        expect(h.browser.platform.managed!.read).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('shows the row on the first build when the read lands within the bound, its timer cleared, and the second opening is synchronous', async () => {
+      const h = harness(ANDROID, {
+        formFactor: 'phone',
+        managed: { by: 'Example Corp', keys: ['URLBlocklist'] }
+      })
+      vi.useFakeTimers()
+      try {
+        const host = slowHost(h)
+        const timers = vi.getTimerCount()
+        const first = h.browser.handleCommand(h.win, 'app.menu', {})
+        expect(first).toBeInstanceOf(Promise)
+        // The bound is one timer, set only while the read is out.
+        expect(vi.getTimerCount()).toBe(timers + 1)
+        await vi.advanceTimersByTimeAsync(MANAGED_MENU_WAIT_MS / 2)
+        expect(h.popups()).toBe(0)
+        host.answer({ by: 'Example Corp', keys: ['URLBlocklist'] })
+        await first
+        expect(h.popups()).toBe(1)
+        expect(h.shown().at(-1)).toStrictEqual(managedRow)
+        expect(h.browser.managed.waits()).toBe(false)
+        // The bound passing later changes nothing: the one popup stands, and the next opening is
+        // synchronous with the row, on the kept answer.
+        await vi.advanceTimersByTimeAsync(MANAGED_MENU_WAIT_MS)
+        expect(h.popups()).toBe(1)
+        expect(h.browser.handleCommand(h.win, 'app.menu', {})).toBeUndefined()
+        expect(h.popups()).toBe(2)
+        expect(h.shown().at(-1)).toStrictEqual(managedRow)
+        expect(h.browser.platform.managed!.read).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
   })
 
   describe("Chrome's Tab groups submenu (shortcuts-menus-111)", () => {
