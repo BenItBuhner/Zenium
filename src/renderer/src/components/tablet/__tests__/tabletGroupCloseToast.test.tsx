@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import type { ClosedEntrySummary, Events, Folder, Space, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 
@@ -16,8 +17,9 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
  * (the phone's, `TOAST_ACTION_DURATION` – lib/closeUndo.ts sets no other), drawn once in the
  * document (not in the sidebar's well, not in the message frame's banner stack); Undo restores
  * the entries newest first through `session.restoreClosed` – the core putting each back into the
- * group, whose record the saved group kept – and activates the user's tab. A group with no name
- * reads "Group" in the name slot (v2 §6).
+ * group, whose record the saved group kept – and activates the user's tab. A group still wearing
+ * a default name (`isDefaultGroupName`, the shared module) is not called by it: "Tab group closed
+ * and saved" (the Lead's addendum).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -347,13 +349,13 @@ describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)'
     expect(uiStore.get().toasts[0]?.leaving).toBe(true)
   })
 
-  it('a group with no name reads "Group" in the name slot (v2 §6)', async () => {
-    mountTablet(tabletState(''))
+  it('a group still wearing the default name is not called by it: "Tab group closed and saved" (the Lead’s addendum; the name read through the shared module)', async () => {
+    mountTablet(tabletState(TOUCH_GROUP_DEFAULT_NAME))
     act(() => fire('folder.closeUndoable', { folderId: GROUP }))
     file(entry(tab('alpha'), NOW), entry(tab('beta'), NOW))
     await flush()
-    expect(card()?.textContent).toContain('Group tab group closed and saved')
-    expect(uiStore.get().toasts[0]?.message).toBe('Group tab group closed and saved')
+    expect(card()?.textContent).toContain('Tab group closed and saved')
+    expect(uiStore.get().toasts[0]?.message).toBe('Tab group closed and saved')
     expect(drawings()).toBe(1)
   })
 

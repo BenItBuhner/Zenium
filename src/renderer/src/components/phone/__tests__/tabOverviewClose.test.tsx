@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ClosedEntrySummary, Folder, Space, Tab, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import { BLANK_URL } from '@shared/url'
 
 /*
@@ -811,14 +812,14 @@ describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete
     expect(of('folder.delete')).toEqual([])
   })
 
-  it('a group with no name closes to "Group tab group closed and saved" (v2 §6)', async () => {
-    show(grouped(research({ name: '' }), 'n'))
-    await rowMenu('')
+  it('a group still wearing the default name closes to "Tab group closed and saved" – not called by it (the Lead’s addendum)', async () => {
+    show(grouped(research({ name: TOUCH_GROUP_DEFAULT_NAME }), 'n'))
+    await rowMenu(TOUCH_GROUP_DEFAULT_NAME)
     await pick('Close Group (2 Tabs)')
     expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
     fileMembers('n')
     await settle()
-    expect(toasts()).toEqual([['Group tab group closed and saved', 'Undo', false]])
+    expect(toasts()).toEqual([['Tab group closed and saved', 'Undo', false]])
   })
 
   it('Delete Group asks first – "Its N tabs close with it; Recently Closed keeps their pages." – and Cancel keeps the group', async () => {

@@ -8,6 +8,7 @@ import type {
   Settings,
   Tab
 } from '@shared/types'
+import { isDefaultGroupName } from '@shared/groupNames'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { isEmptyTabUrl } from '@shared/url'
 import { cmd, onEvent } from './api'
@@ -139,11 +140,15 @@ export function closedMessage(entries: readonly ClosedEntrySummary[]): string {
 
 /**
  * The toast's text for a group's close (TAB-16, the Design Lead's option C; the phone and the
- * tablet alike): the group by its name – a group with no name is "Group" in the name slot (v2
- * §6's noun on the touch hosts) – closed and saved, its pages kept.
+ * tablet alike): a group the user named is called by that name, "<Name> tab group closed and
+ * saved"; a group still wearing a default name (`isDefaultGroupName`: no name, the touch hosts'
+ * default, a legacy "New Folder" – the Lead's addendum) is not called by it, "Tab group closed
+ * and saved". The name is read through the shared module and nowhere else.
  */
 export function groupClosedMessage(group: { name: string }): string {
-  return `${group.name.trim() || 'Group'} tab group closed and saved`
+  return isDefaultGroupName(group.name)
+    ? 'Tab group closed and saved'
+    : `${group.name.trim()} tab group closed and saved`
 }
 
 /** An undo over `invoke` and `on`; the app uses {@link closeUndo}, tests build their own. */

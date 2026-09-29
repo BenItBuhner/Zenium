@@ -104,6 +104,8 @@ const {
   leavesClosedEntry
 } = await import('../closeUndo')
 const { TOAST_ACTION_DURATION, claimMessageCards, pickToastAction, uiStore } = await import('../ui')
+const { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME, isDefaultGroupName } =
+  await import('@shared/groupNames')
 
 // --- fixtures ----------------------------------------------------------------------------------
 
@@ -464,11 +466,26 @@ async function closeAllRun(
 // --- a group ------------------------------------------------------------------------------------
 
 describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close, on both touch hosts)', () => {
-  it('the toast reads "<Name> tab group closed and saved"; a group with no name is "Group" in the name slot (v2 §6)', () => {
+  it('the toast reads "<Name> tab group closed and saved" for a group the user named; a group still wearing a default name is not called by it – "Tab group closed and saved" (the Lead’s addendum; the default read through the shared module)', () => {
     expect(groupClosedMessage({ name: 'Research' })).toBe('Research tab group closed and saved')
     expect(groupClosedMessage({ name: '  Reading ' })).toBe('Reading tab group closed and saved')
-    expect(groupClosedMessage({ name: '' })).toBe('Group tab group closed and saved')
-    expect(groupClosedMessage({ name: '   ' })).toBe('Group tab group closed and saved')
+    // The default names are the shared module's set, never a literal here: the touch hosts'
+    // constant, no name at all, and whatever else `isDefaultGroupName` counts as one.
+    expect(isDefaultGroupName(TOUCH_GROUP_DEFAULT_NAME)).toBe(true)
+    expect(groupClosedMessage({ name: TOUCH_GROUP_DEFAULT_NAME })).toBe(
+      'Tab group closed and saved'
+    )
+    expect(groupClosedMessage({ name: '' })).toBe('Tab group closed and saved')
+    expect(groupClosedMessage({ name: '   ' })).toBe('Tab group closed and saved')
+    // The legacy "New Folder" – a touch group made before the touch hosts had a word of their own
+    // – is a default name too, on every host (the Lead's ruling; no migration renames records).
+    expect(isDefaultGroupName(NEW_FOLDER_NAME)).toBe(true)
+    expect(groupClosedMessage({ name: NEW_FOLDER_NAME })).toBe('Tab group closed and saved')
+    // A name the module does not count as a default is spoken – the constant with more on it.
+    expect(isDefaultGroupName(`${TOUCH_GROUP_DEFAULT_NAME} 2`)).toBe(false)
+    expect(groupClosedMessage({ name: `${TOUCH_GROUP_DEFAULT_NAME} 2` })).toBe(
+      `${TOUCH_GROUP_DEFAULT_NAME} 2 tab group closed and saved`
+    )
     // The tab closes' words stand as they were: the one by name, several by their count.
     expect(closedMessage([entry(tab('a', { title: 'Zenium docs' }), 1)])).toBe('Closed Zenium docs')
     expect(closedMessage([entry(tab('a'), 1), entry(tab('b'), 2)])).toBe('2 tabs closed')
@@ -493,13 +510,13 @@ describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close,
     expect(core.of('tab.activate')).toEqual([{ tabId: 'b' }])
   })
 
-  it('a group of one tab still reads the group’s words, not "Closed <title>"; a nameless group says Group', async () => {
+  it('a group of one tab still reads the group’s words, not "Closed <title>"; a group with the default name is not called by it', async () => {
     const h = harness()
     const a = tab('a', { title: 'Zenium docs', folderId: 'g' })
-    h.close([a], null, UNLOAD, { name: '' })
+    h.close([a], null, UNLOAD, { name: TOUCH_GROUP_DEFAULT_NAME })
     core.file(entry(a, h.now.value))
     await flush()
-    expect(h.toasts.map((t) => t.message)).toEqual(['Group tab group closed and saved'])
+    expect(h.toasts.map((t) => t.message)).toEqual(['Tab group closed and saved'])
   })
 
   it('a group close that files nothing (private members alone) gets no toast, as a tab close does', async () => {
