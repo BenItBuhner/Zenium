@@ -300,7 +300,9 @@ export function parseShareTarget(
   if (!(SHARE_ENCTYPES as string[]).includes(enctypeRaw ?? '')) return null
   const enctype = enctypeRaw as WebAppShareEnctype
   if (method === 'GET' && enctype !== 'application/x-www-form-urlencoded') return null
-  if (!t.params || typeof t.params !== 'object') return null
+  // `params` is a dictionary of field names: an array (or null) is malformed, not a target
+  // with no fields – a target with none would never be offered anyway.
+  if (!t.params || typeof t.params !== 'object' || Array.isArray(t.params)) return null
   const p = t.params as Record<string, unknown>
   const files = parseShareFiles(p.files)
   if (!files) return null

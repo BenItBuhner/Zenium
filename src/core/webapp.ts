@@ -222,7 +222,10 @@ export class WebAppService {
    */
   launchShare(appId: string, fields: SharedFields, win?: ZenWindow): boolean {
     const app = this.pinnedById(appId)
-    if (!app?.shareTarget) return false
+    // The share's kind as the chooser offered it: a link when it carries one, text otherwise.
+    // The chooser only offers apps that take the kind, so this guard is the comment's word.
+    const kind: ShareKind = fields.url !== null ? 'url' : 'text'
+    if (!app?.shareTarget || !shareTargetAccepts(app.shareTarget, kind)) return false
     const launch = shareTargetLaunch(app.shareTarget, fields)
     const post = launch.method === 'POST' ? launch.post : undefined
     if (this.surface === 'desktop') {

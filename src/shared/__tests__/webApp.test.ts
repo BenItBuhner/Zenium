@@ -299,6 +299,19 @@ describe('share_target (MW-63)', () => {
         ?.params
     ).toEqual({ title: null, text: 'body', url: null, files: [] })
   })
+
+  it('drops a target whose params is an array or null rather than keeping one with no fields', () => {
+    // An array is an object to `typeof` but no dictionary of field names; null is no params.
+    for (const params of [['title', 'text', 'url'], [], null]) {
+      expect(parseShareTarget({ action: 'share', params }, MANIFEST, SCOPE)).toBeNull()
+    }
+    // The app installs, with no target.
+    const info = parsed({
+      name: 'App',
+      share_target: { action: 'share', params: ['url'] }
+    })
+    expect(info.shareTarget).toBeNull()
+  })
 })
 
 describe('scope', () => {

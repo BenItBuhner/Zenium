@@ -293,6 +293,24 @@ describe('the chooser (MW-63)', () => {
     ])
   })
 
+  it('launchShare of an app whose target takes none of the share does nothing and says so', () => {
+    const f = fixture([sketch, notes])
+    const before = loads(f).length
+    const share = { title: null, text: LINK, url: LINK }
+    // Notes takes text alone: a link handed to it is refused – the chooser never offers it one,
+    // so this is the guard's word, not a route.
+    expect(f.browser.webApps.launchShare(notes.id, share)).toBe(false)
+    // An id that is no installed app's, likewise.
+    expect(f.browser.webApps.launchShare('https://nowhere.example/', share)).toBe(false)
+    expect(loads(f).length).toBe(before)
+    expect(f.views.flatMap((v) => v.posts)).toEqual([])
+    // Sketch takes a URL: the same share is launched, the link under its field name.
+    expect(f.browser.webApps.launchShare(sketch.id, share)).toBe(true)
+    const launched = new URL(loads(f).at(-1)!)
+    expect(launched.origin + launched.pathname).toBe('https://app.example/share')
+    expect(launched.searchParams.get('link')).toBe(LINK)
+  })
+
   it('a dismissal drops the share; a pick of a chooser no longer standing is nothing', () => {
     const f = fixture([sketch])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
