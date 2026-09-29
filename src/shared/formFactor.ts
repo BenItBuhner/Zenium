@@ -1,4 +1,3 @@
-import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME } from './groupNames'
 import type { FormFactor } from './types'
 
 /**
@@ -48,24 +47,4 @@ export function classifyViewport({ width, height, coarse, hover }: ViewportMetri
  */
 export function touchLayout(formFactor: FormFactor): boolean {
   return formFactor !== 'desktop'
-}
-
-/**
- * The desktop's name for a group made with no name of its own: the desktop says Folder (§6). The
- * word lives in `groupNames.ts` beside the touch hosts' (that module imports nothing, so no
- * cycle); re-exported here for the callers that read it with `newFolderName`.
- */
-export { NEW_FOLDER_NAME } from './groupNames'
-
-/**
- * What a group made with no name of its own is called on the host `formFactor` draws – the
- * desktop's "New Folder", the phone's and the tablet's `TOUCH_GROUP_DEFAULT_NAME` (§6: a group
- * a touch host makes is named "Group", never "New Folder"). A caller with no window to read a
- * form factor from (the menu bar's binding, a command with no window) names as the desktop
- * does, which is what every path named before this helper.
- */
-export function newFolderName(formFactor: FormFactor | undefined): string {
-  return formFactor !== undefined && touchLayout(formFactor)
-    ? TOUCH_GROUP_DEFAULT_NAME
-    : NEW_FOLDER_NAME
 }
