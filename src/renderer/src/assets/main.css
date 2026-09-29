@@ -12358,12 +12358,27 @@
  * until a press elsewhere, a scroll or a key takes it down, and live rows lie under it, so
  * unlike the mouse's card (no pointer, above) it takes the pointer – a tap on the card is a tap
  * on the card, which stays, and reaches no row beneath – and its text is not selectable: the
- * value's copy is the row's own (`RowCopy`), never a hidden hold on the card.
+ * value's copy is the row's own (`RowCopy`) – shown, where the row copies, as the held card's
+ * footer button below – never a hidden hold on the card.
  */
 .zen-address-hover-card[data-by='hold'] {
   pointer-events: auto;
   -webkit-user-select: none;
   user-select: none;
+}
+/*
+ * The held card's one action, for a row that both copies on the hold and carries an address
+ * (services seed #34; the lead's rule: "the held card carries Copy as its single §9.20 footer
+ * action (a right-aligned text button)"; §9.2): §9.20's first footer form – the last body
+ * element, 16, the verb, 16 to the edge (the card's own padding), no hairline – holding the
+ * chassis's text button (`.zen-v2-button`, 40 tall under a finger) at the card's end edge. Only
+ * the held card draws it (`AddressReveal`); the mouse's and the keyboard's card is a tooltip
+ * with no action.
+ */
+.zen-address-hover-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 /*
  * On touch where the page draws sheets – a phone – the row's hold sheet (`AddressSheet`,
@@ -12380,6 +12395,17 @@
 }
 .zen-settings-sheet-address .zen-sheet-title-block p {
   overflow-wrap: anywhere;
+}
+/*
+ * The same sheet for a row that both copies on the hold and carries an address (services seed
+ * #34; the lead's rule on #694, point 3: "the hold opens the sheet and the copy becomes its one
+ * Copy row"): one action row, Copy, stands under the block, so the block keeps its own 16 below
+ * – the rows follow it as they follow an item sheet's block – and the sheet ends on the row as
+ * any sheet of rows does. The block's rule above is the address sheet's alone; this one is the
+ * Copy row's over it.
+ */
+.zen-settings-sheet-address.zen-settings-sheet-address-copy .zen-sheet-title-block {
+  padding-bottom: 16px;
 }
 /*
  * A description that reports a status (a load error, a retirement notice, the folder-lost

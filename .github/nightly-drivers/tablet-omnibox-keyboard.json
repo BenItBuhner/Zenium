@@ -1,0 +1,11 @@
+{
+  "id": "tablet-omnibox-keyboard",
+  "order": 119,
+  "class": "TabletOmniboxKeyboardDemo",
+  "shard": "tablet-webview",
+  "mirrors": "android-tablet-omnibox-keyboard-demo.yml",
+  "dir": "tablet-omnibox-keyboard-demo",
+  "timeout": 1200,
+  "estimate": 4,
+  "note": "W6-L1: the tablet's omnibox popup stops above the keyboard – hung from the toolbar pill, bounded by the visible viewport (the shell's box less the host's bottom inset, `--zen-inset-bottom`) as Chrome's tablet dropdown is measured at most the window less the keyboard. Once in each scheme, every touch a finger's: a new tab's zero-suggest of twelve seeded rows with the keyboard up (the box ending 8 CSS px above the keyboard's edge, the computed max-height window − top − 8 − inset, the list scrolling inside with the last row below the fold, the popup's top and width the pill's), real swipes bringing the twelfth row into reach and a real touch picking it, one back putting the keyboard away with the popup at its natural height, a typed query's ten rows bounded the same way. On the tablet-webview shard (the Google APIs tablet shard stands at its headroom line); the driver sets the dark scheme itself, so DEMO_THEME is not read. The estimate is the measure: run 36515542811's instrumentation took 148 s (the first run's 209 s carried the driver's own failing waits), plus the install, the seeding and the nightly runner's slower page loads."
+}

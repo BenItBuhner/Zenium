@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useRef, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { holdCopyOf } from '@renderer/lib/addressReveal'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { HOVER_CARD_DELAY, HOVER_CARD_LEAVE_GRACE } from '@renderer/lib/hoverCard'
 import { FrameDialogHost, POPOVER_WIDTH } from '@renderer/lib/portals'
@@ -32,8 +33,13 @@ import { SheetStack } from '../sheets'
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-// The core's bridge, for the copy a row with a `copy` runs on its own hold (SET-54).
-Object.assign(window, { zen: { invoke: async () => null, on: () => () => undefined } })
+// The core's bridge, for the copy a row with a `copy` runs on its own hold (SET-54) – a spy, so
+// a hold that must copy is seen to, and one that must not (a both-row's, seed #34) is seen not to.
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
+Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+/** The copies the core was asked for since the last clear. */
+const copies = (): unknown[][] =>
+  invoke.mock.calls.filter(([name]) => name === 'clipboard.writeText')
 
 let root: Root | null = null
 let mount: HTMLElement | null = null
@@ -48,6 +54,7 @@ function render(element: ReactElement): HTMLElement {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  invoke.mockClear()
 })
 
 afterEach(() => {
@@ -408,13 +415,22 @@ describe('the hold on touch where the page draws sheets', () => {
     expect(open).toHaveBeenCalledTimes(1)
   })
 
-  it('a hold that is not one asks nothing: a tap, a scroll, a fitting value, a row that copies, or a mouse held where the page draws dialogs', async () => {
+  it('a hold that is not one asks nothing: a tap, a scroll, a fitting value, a row that copies and carries no address, or a mouse held where the page draws dialogs', async () => {
     const open = vi.fn<(request: AddressHoldRequest) => void>()
     const el = render(
       <Page hold={open}>
         <RowView row={location()} ctx={ctx} />
         <RowView row={location({ id: 'short', description: '/tmp' })} ctx={ctx} />
-        <RowView row={folder({ copy: { text: PATH, confirmation: 'Folder copied' } })} ctx={ctx} />
+        <RowView
+          row={folder({
+            id: 'version',
+            label: 'Zenium',
+            description: 'Version 0.5.50',
+            address: false,
+            copy: { text: 'Zenium 0.5.50', confirmation: 'Version copied' }
+          })}
+          ctx={ctx}
+        />
       </Page>
     )
     const row = rowOf(el, 'download-directory')
@@ -435,13 +451,19 @@ describe('the hold on touch where the page draws sheets', () => {
     measure(lineOf(short), 40, 280)
     expect(await hold(lineOf(short))).toBe(false)
     expect(open).not.toHaveBeenCalled()
-    // A row that copies on the hold keeps its copy (SET-54).
-    const copies = rowOf(el, 'sync-server-folder')
-    expect(copies.hasAttribute('data-copies')).toBe(true)
-    measure(lineOf(copies), 640, 280)
-    await hold(lineOf(copies))
+    // A row that copies on the hold and carries no address keeps its copy, exactly as SET-54
+    // has it: `data-copies`, the hold copies with the toast's word, and the host asks nothing.
+    const version = rowOf(el, 'version')
+    expect(version.hasAttribute('data-copies')).toBe(true)
+    expect(version.hasAttribute('data-copy-text')).toBe(false)
+    expect(version.querySelector('.zen-settings-description-address')).toBeNull()
+    expect(await hold(version)).toBe(true)
     await wait(RELEASE_DELAY_MS + 1)
+    expect(copies()).toEqual([
+      ['clipboard.writeText', { text: 'Zenium 0.5.50', confirmation: 'Version copied' }]
+    ])
     expect(open).not.toHaveBeenCalled()
+    expect(card()).toBeNull()
     // A page that draws dialogs mounts the host without `hold`: a mouse held there is no hold
     // (a mouse's reveal is the hover) – the finger's hold there is the standing card, below.
     act(() => root?.unmount())
@@ -457,6 +479,70 @@ describe('the hold on touch where the page draws sheets', () => {
     await wait(RELEASE_DELAY_MS + 1)
     expect(open).not.toHaveBeenCalled()
     expect(card()).toBeNull()
+  })
+
+  it('a row that both copies and carries an address (seed #34): the hold asks for the sheet with the copy riding along – whether or not the line is elided – and the row’s own hold-to-copy does not fire: one hold, one act', async () => {
+    const open = vi.fn<(request: AddressHoldRequest) => void>()
+    const copy = { text: PATH, confirmation: 'Folder copied' }
+    const el = render(
+      <Page hold={open}>
+        <RowView row={folder({ copy })} ctx={ctx} />
+        <RowView
+          row={folder({ id: 'fits', description: '/tmp', copy: { ...copy, text: '/tmp' } })}
+          ctx={ctx}
+        />
+      </Page>
+    )
+    const both = rowOf(el, 'sync-server-folder')
+    // No `data-copies`: that marker means "copies itself on the hold" – the preview host's
+    // finder and the Android demo read it so – and this row does not; the copy rides on the
+    // attributes the host reads at the hold (`holdCopyOf`). The row is still no target (§9.34).
+    expect(both.hasAttribute('data-copies')).toBe(false)
+    expect(both.getAttribute('data-copy-text')).toBe(PATH)
+    expect(both.getAttribute('data-copy-confirmation')).toBe('Folder copied')
+    expect(holdCopyOf(both)).toEqual(copy)
+    expect(both.tagName).toBe('DIV')
+    expect(both.hasAttribute('data-static')).toBe(true)
+    expect(both.getAttribute('role')).toBeNull()
+    // #685's line stands as it is: the whole value in the DOM, shortened from its start.
+    expect(lineOf(both).textContent).toBe(PATH)
+    measure(lineOf(both), 640, 280)
+    expect(await hold(lineOf(both))).toBe(true)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith({
+      kind: 'address',
+      rowId: 'sync-server-folder',
+      label: 'Folder',
+      text: PATH,
+      copy
+    })
+    expect(card()).toBeNull()
+    // One hold, one act: the row armed no hold of its own, so nothing was copied on the way.
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(copies()).toEqual([])
+    // A value that fits still holds for the sheet: the sheet is the copy's surface, and a
+    // short path is no less a thing to copy.
+    const fits = rowOf(el, 'fits')
+    measure(lineOf(fits), 40, 280)
+    expect(await hold(lineOf(fits))).toBe(true)
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(open).toHaveBeenLastCalledWith({
+      kind: 'address',
+      rowId: 'fits',
+      label: 'Folder',
+      text: '/tmp',
+      copy: { ...copy, text: '/tmp' }
+    })
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(copies()).toEqual([])
+    expect(card()).toBeNull()
+    // The next tap is a tap again.
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    act(() => {
+      both.dispatchEvent(click)
+    })
+    expect(click.defaultPrevented).toBe(false)
+    expect(open).toHaveBeenCalledTimes(2)
   })
 
   it('Chromium’s own long press (`contextmenu` from the touch) is the hold’s cue: the sheet is asked for at once and the menu suppressed', async () => {
@@ -582,12 +668,16 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
       }) as DOMRect
   }
 
-  /** The tablet's page: two elided rows, a fitting one and one that copies on its hold. */
+  /**
+   * The tablet's page: two elided rows, a fitting one, one that both copies and carries an
+   * address (elided), and one that copies and carries none.
+   */
   function tablet(): {
     folder: HTMLElement
     other: HTMLElement
     short: HTMLElement
     copies: HTMLElement
+    version: HTMLElement
   } {
     const el = render(
       <Page>
@@ -603,16 +693,29 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
           ctx={ctx}
           variant="desktop"
         />
+        <RowView
+          row={folder({
+            id: 'version',
+            label: 'Zenium',
+            description: 'Version 0.5.50',
+            address: false,
+            copy: { text: 'Zenium 0.5.50', confirmation: 'Version copied' }
+          })}
+          ctx={ctx}
+          variant="desktop"
+        />
       </Page>
     )
     const rows = {
       folder: rowOf(el, 'sync-server-folder'),
       other: rowOf(el, 'other'),
       short: rowOf(el, 'short'),
-      copies: rowOf(el, 'copies')
+      copies: rowOf(el, 'copies'),
+      version: rowOf(el, 'version')
     }
     place(rows.folder, FOLDER_BOX)
     place(rows.other, OTHER_BOX)
+    place(rows.copies, OTHER_BOX)
     measure(lineOf(rows.folder), 640, 280)
     measure(lineOf(rows.other), 640, 280)
     measure(lineOf(rows.short), 40, 280)
@@ -620,12 +723,20 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     return rows
   }
 
-  it('a touch hold on an elided row raises the same card under the row at once – role="tooltip", the whole value, `data-by="hold"` – standing with no leave, and swallows the click the lift raises', async () => {
+  it('a touch hold on an elided row raises the same card under the row at once – a non-modal role="dialog" named by the row’s label, the whole value, `data-by="hold"` – standing with no leave, and swallows the click the lift raises', async () => {
     const { folder: row } = tablet()
     expect(await hold(lineOf(row))).toBe(true)
     const shown = card()
     expect(shown).not.toBeNull()
-    expect(shown?.getAttribute('role')).toBe('tooltip')
+    // The lead's ruling on #709: the hold-raised card is a dialog labelled by the row's label,
+    // non-modal – no `aria-modal` – and takes no focus on its raise; `aria-label`, since an
+    // info row's label has no id for an `aria-labelledby` to name.
+    expect(shown?.getAttribute('role')).toBe('dialog')
+    expect(shown?.getAttribute('aria-label')).toBe('Folder')
+    expect(shown?.hasAttribute('aria-labelledby')).toBe(false)
+    expect(shown?.hasAttribute('aria-modal')).toBe(false)
+    expect(shown?.hasAttribute('tabindex')).toBe(false)
+    expect(document.activeElement).toBe(document.body)
     expect(shown?.textContent).toBe(PATH)
     expect(shown?.getAttribute('data-by')).toBe('hold')
     expect(shown?.classList.contains('zen-tab-hover-card')).toBe(true)
@@ -636,6 +747,9 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     expect(shown?.style.left).toBe(`${FOLDER_BOX.x}px`)
     expect(shown?.style.top).toBe(`${FOLDER_BOX.y + FOLDER_BOX.height}px`)
     expect(document.querySelector('[title]')).toBeNull()
+    // An address-alone row's held card is #694's: no footer, no button, nothing to press.
+    expect(shown?.querySelector('.zen-address-hover-card-footer')).toBeNull()
+    expect(shown?.querySelector('button')).toBeNull()
     // It stands: no delay ran and no leave takes it – the finger leaving the row is no leave.
     pointer(lineOf(row), 'pointerout', { pointerType: 'touch', relatedTarget: document.body })
     await wait(HOVER_CARD_DELAY + HOVER_CARD_LEAVE_GRACE)
@@ -711,18 +825,240 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     expect(card()).toBeNull()
   })
 
-  it('a hold on a fitting row shows nothing, a hold on a row that copies keeps its copy and shows nothing, and a mouse held shows nothing', async () => {
-    const { short, copies, folder: row } = tablet()
+  it('a hold on a fitting row shows nothing, a hold on a row that copies and carries no address keeps its copy and shows nothing, and a mouse held shows nothing', async () => {
+    const { short, version, folder: row } = tablet()
     expect(await hold(lineOf(short))).toBe(false)
     await wait(RELEASE_DELAY_MS + 1)
     expect(card()).toBeNull()
-    expect(copies.hasAttribute('data-copies')).toBe(true)
-    await hold(lineOf(copies))
+    // SET-54 stands where the row carries no address: the hold copies, and no card.
+    expect(version.hasAttribute('data-copies')).toBe(true)
+    expect(await hold(version)).toBe(true)
     await wait(RELEASE_DELAY_MS + 1)
     expect(card()).toBeNull()
+    expect(copies()).toEqual([
+      ['clipboard.writeText', { text: 'Zenium 0.5.50', confirmation: 'Version copied' }]
+    ])
     expect(await hold(lineOf(row), LONG_PRESS_MS, { pointerType: 'mouse' })).toBe(false)
     await wait(RELEASE_DELAY_MS + 1)
     expect(card()).toBeNull()
+  })
+
+  it('a row that both copies and carries an address (seed #34), where the page draws dialogs: the bare hold reveals and copies nothing – the held card with exactly one footer button, Copy – and the button copies once, then takes the card down; a value that fits has the card too', async () => {
+    const { copies: both } = tablet()
+    // The renderer's rule is one for every layout: the both-row arms no hold of its own and is
+    // no `data-copies` row; the copy rides with the hold to the hold's surface.
+    expect(both.hasAttribute('data-copies')).toBe(false)
+    expect(holdCopyOf(both)).toEqual({ text: PATH, confirmation: 'Folder copied' })
+    expect(await hold(lineOf(both))).toBe(true)
+    const shown = card()
+    expect(shown).not.toBeNull()
+    if (!shown) throw new Error('no card')
+    expect(shown.getAttribute('data-by')).toBe('hold')
+    // The card that carries an action is the dialog the lead ruled (#709), named by its row.
+    expect(shown.getAttribute('role')).toBe('dialog')
+    expect(shown.getAttribute('aria-label')).toBe('Folder')
+    expect(shown.hasAttribute('aria-modal')).toBe(false)
+    expect(shown.querySelector('.zen-address-hover-card-value')?.textContent).toBe(PATH)
+    expect(shown.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
+    // The bare hold copied nothing (the lead: "the bare hold still reveals and doesn't copy").
+    await wait(RELEASE_DELAY_MS + 1)
+    expect(copies()).toEqual([])
+    // §9.20's footer: one action, the chassis's text button, Copy – and nothing else pressable.
+    const footers = shown.querySelectorAll('.zen-address-hover-card-footer')
+    expect(footers).toHaveLength(1)
+    const buttons = Array.from(shown.querySelectorAll('button'))
+    expect(buttons).toHaveLength(1)
+    const button = buttons[0]
+    expect(button.parentElement).toBe(footers[0])
+    expect(button.textContent).toBe('Copy')
+    expect(button.classList.contains('zen-v2-button')).toBe(true)
+    expect(button.getAttribute('type')).toBe('button')
+    expect(button.hasAttribute('tabindex')).toBe(false)
+    expect(shown.textContent).toBe(`${PATH}Copy`)
+    // A tap on the button: the press is a press inside the held card (the #694 exemption keeps
+    // it up), the click is the button's own – not swallowed – and it copies first, with the card
+    // still standing, then takes the card down.
+    let cardUpAtCopy: boolean | null = null
+    invoke.mockImplementationOnce(async () => {
+      cardUpAtCopy = card() !== null
+      return null
+    })
+    pointer(button, 'pointerdown', { pointerType: 'touch' })
+    await wait(0)
+    expect(card()).toBe(shown)
+    pointer(button, 'pointerup', { pointerType: 'touch' })
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    act(() => {
+      button.dispatchEvent(click)
+    })
+    await wait(0)
+    expect(click.defaultPrevented).toBe(false)
+    expect(copies()).toEqual([
+      ['clipboard.writeText', { text: PATH, confirmation: 'Folder copied' }]
+    ])
+    expect(cardUpAtCopy).toBe(true)
+    expect(card()).toBeNull()
+    // Nothing else copied on the way out, and the row is still no `data-copies` row.
+    await wait(RELEASE_DELAY_MS + LONG_PRESS_MS)
+    expect(copies()).toHaveLength(1)
+    expect(both.hasAttribute('data-copies')).toBe(false)
+    // A both-row whose line fits: the hold's surface is the copy's, so the card stands for it
+    // too, with the same one button (the phone sheet's rule; an address-alone row that fits
+    // shows nothing, above).
+    measure(lineOf(both), 40, 280)
+    expect(await hold(lineOf(both))).toBe(true)
+    const again = card()
+    expect(again).not.toBeNull()
+    expect(again?.getAttribute('data-by')).toBe('hold')
+    expect(again?.querySelector('.zen-address-hover-card-value')?.textContent).toBe(PATH)
+    expect(again?.querySelectorAll('button')).toHaveLength(1)
+    expect(again?.querySelector('button')?.textContent).toBe('Copy')
+  })
+
+  it('the mouse’s card and the keyboard’s card for the same both-row (seed #34) carry no footer and no action, and stay the role="tooltip" #694 landed: only the held card is the dialog', async () => {
+    const { copies: both } = tablet()
+    // A mouse resting on the row: the tooltip after the delay, the whole value, and no button.
+    pointer(lineOf(both), 'pointerover', { pointerType: 'mouse', relatedTarget: document.body })
+    await wait(HOVER_CARD_DELAY)
+    const hovered = card()
+    expect(hovered).not.toBeNull()
+    expect(hovered?.getAttribute('data-by')).toBe('pointer')
+    expect(hovered?.getAttribute('role')).toBe('tooltip')
+    expect(hovered?.hasAttribute('aria-label')).toBe(false)
+    expect(hovered?.hasAttribute('aria-modal')).toBe(false)
+    expect(hovered?.textContent).toBe(PATH)
+    expect(hovered?.querySelector('.zen-address-hover-card-footer')).toBeNull()
+    expect(hovered?.querySelector('button')).toBeNull()
+    pointer(lineOf(both), 'pointerout', { pointerType: 'mouse', relatedTarget: document.body })
+    await wait(HOVER_CARD_LEAVE_GRACE)
+    expect(card()).toBeNull()
+    // Keyboard focus landing on the row: the card at once, and no button either.
+    both.setAttribute('data-keyboard-focus', '')
+    act(() => {
+      both.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    await wait(0)
+    const focused = card()
+    expect(focused).not.toBeNull()
+    expect(focused?.getAttribute('data-by')).toBe('focus')
+    expect(focused?.getAttribute('role')).toBe('tooltip')
+    expect(focused?.hasAttribute('aria-label')).toBe(false)
+    expect(focused?.hasAttribute('aria-modal')).toBe(false)
+    expect(focused?.textContent).toBe(PATH)
+    expect(focused?.querySelector('.zen-address-hover-card-footer')).toBeNull()
+    expect(focused?.querySelector('button')).toBeNull()
+    act(() => {
+      both.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    await wait(HOVER_CARD_LEAVE_GRACE)
+    expect(card()).toBeNull()
+    expect(copies()).toEqual([])
+  })
+
+  it('the held card, a dialog, gives focus back as it leaves (§9.22; the lead’s ruling on #709): the focus its Copy button takes goes back to what held focus when the finger came down – after the Copy, a press outside or Escape – off the button to the body when nothing did, and focus outside the card is left alone', async () => {
+    const { copies: both } = tablet()
+    // A control elsewhere on the page holding focus as the finger comes down: the Folder row is
+    // a static row with no tab stop, so the return target is whatever held focus before the
+    // hold – here a button standing for the page's Sync now.
+    const before = document.createElement('button')
+    before.textContent = 'Sync now'
+    document.body.appendChild(before)
+    const returned = vi.spyOn(before, 'focus')
+    /** A hold on the both-row with its card up, and its Copy button. */
+    const raise = async (): Promise<{ shown: HTMLElement; button: HTMLButtonElement }> => {
+      expect(await hold(lineOf(both))).toBe(true)
+      const shown = card()
+      if (!shown) throw new Error('no card')
+      const button = shown.querySelector('button')
+      if (!button) throw new Error('no button')
+      return { shown, button }
+    }
+    /** Chromium's tap on the button: the press (inside the card), the focus the press gives it, the lift and the click. */
+    const tap = async (button: HTMLButtonElement): Promise<void> => {
+      pointer(button, 'pointerdown', { pointerType: 'touch' })
+      button.focus()
+      expect(document.activeElement).toBe(button)
+      pointer(button, 'pointerup', { pointerType: 'touch' })
+      act(() => {
+        button.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+        )
+      })
+      await wait(0)
+    }
+    try {
+      before.focus()
+      expect(document.activeElement).toBe(before)
+      // The spy counts the card's returns alone, not the test's own focus above.
+      returned.mockClear()
+      // The raise takes no focus: the dialog has no tab stop of its own, and focus is where it was.
+      const first = await raise()
+      expect(first.shown.getAttribute('role')).toBe('dialog')
+      expect(first.shown.hasAttribute('tabindex')).toBe(false)
+      expect(document.activeElement).toBe(before)
+      // The Copy: the copy, the card down, and focus back on the control that held it – with no
+      // scroll to it – rather than dropped on the body with the button React took down.
+      await tap(first.button)
+      expect(copies()).toHaveLength(1)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(1)
+      expect(returned).toHaveBeenCalledWith({ preventScroll: true })
+      // A press outside with the button focused: the card down and focus back, before the
+      // press's own focus lands wherever it lands (§9.22's close by a click outside).
+      const second = await raise()
+      second.button.focus()
+      expect(document.activeElement).toBe(second.button)
+      pointer(document.body, 'pointerdown', { pointerType: 'touch' })
+      await wait(0)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(2)
+      pointer(document.body, 'pointerup', { pointerType: 'touch' })
+      await wait(RELEASE_DELAY_MS + 1)
+      expect(card()).toBeNull()
+      // Escape with the button focused: the same return.
+      const third = await raise()
+      third.button.focus()
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      await wait(0)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(3)
+      // Focus outside the card is not the card's: a card leaving with the control still focused
+      // moves nothing.
+      const fourth = await raise()
+      expect(document.activeElement).toBe(before)
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      await wait(0)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(3)
+      expect(fourth.shown.isConnected).toBe(false)
+      // Nothing held focus as the finger came down – the usual case on touch, the hold's own
+      // lift having cleared the page's focus: the Copy's focus goes off the button to the body
+      // by an explicit blur while the button still stands in the card, not by the button's
+      // removal stranding it.
+      before.blur()
+      expect(document.activeElement).toBe(document.body)
+      const fifth = await raise()
+      const blurred = vi.fn<(connected: boolean) => void>()
+      fifth.button.addEventListener('blur', () => blurred(fifth.button.isConnected))
+      await tap(fifth.button)
+      expect(copies()).toHaveLength(2)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(document.body)
+      expect(blurred).toHaveBeenCalledTimes(1)
+      expect(blurred).toHaveBeenCalledWith(true)
+      expect(returned).toHaveBeenCalledTimes(3)
+    } finally {
+      returned.mockRestore()
+      before.remove()
+    }
   })
 
   it('Chromium’s own long press (`contextmenu` from the touch) raises the card at once with the menu suppressed, and a second hold on another row moves it', async () => {
@@ -853,10 +1189,13 @@ describe('the hold sheet', () => {
     expect(dialog?.getAttribute('aria-labelledby')).toBe(block?.querySelector('h2')?.id)
     expect(dialog?.getAttribute('aria-describedby')).toBe(block?.querySelector('p')?.id)
     expect(dialog?.querySelector('[title]')).toBeNull()
-    // Nothing else: no rows, no verbs (the grip's handle is the chassis's own).
+    // Nothing else: no rows, no verbs (the grip's handle is the chassis's own) – the address-
+    // alone row's sheet stays #694's title block, no Copy row and no hold on the header (the
+    // lead's point 2); the Copy row is the both-row's alone (seed #34, sheets.test.tsx).
     expect(dialog?.querySelector('.zen-settings-row')).toBeNull()
     expect(dialog?.querySelector('.zen-settings-sheet-body')?.textContent).toBe('')
     expect(dialog?.querySelector('.zen-settings-sheet-footer')).toBeNull()
+    expect(dialog?.classList.contains('zen-settings-sheet-address-copy')).toBe(false)
   })
 
   it('draws the value with a break opportunity after each slash and dot: a spaceless value breaks there before it breaks inside a name', async () => {
@@ -906,6 +1245,10 @@ describe('main.css', () => {
     const held = declarations(css, ".zen-address-hover-card[data-by='hold']")
     expect(held).toContain('pointer-events: auto')
     expect(held).toContain('user-select: none')
+    // The held card's footer for a both-row (seed #34): §9.20's first footer form – the value,
+    // 16, the verb at the end edge, the card's own 16 to the edge – and no hairline.
+    const footer = declarations(css, '.zen-address-hover-card-footer')
+    expect(footer).toBe('display: flex; justify-content: flex-end; margin-top: 16px;')
     expect(declarations(css, '.zen-settings-sheet-address .zen-sheet-title-block p')).toContain(
       'overflow-wrap: anywhere'
     )
@@ -914,6 +1257,14 @@ describe('main.css', () => {
     expect(declarations(css, '.zen-settings-sheet-address .zen-sheet-title-block')).toBe(
       'padding-bottom: 0;'
     )
+    // With the Copy row under it (seed #34) the block keeps its own 16 below, as an item
+    // sheet's block does over its rows; the rule above stays the address sheet's alone.
+    expect(
+      declarations(
+        css,
+        '.zen-settings-sheet-address.zen-settings-sheet-address-copy .zen-sheet-title-block'
+      )
+    ).toBe('padding-bottom: 16px;')
     expect(declarations(css, '.zen-sheet-title-block')).toContain('padding: 16px')
     expect(declarations(css, '.zen-settings-sheet-body')).toContain('padding-bottom: 8px')
     const chrome = declarations(css, '.zen-tab-hover-card')

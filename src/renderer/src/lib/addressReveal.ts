@@ -97,6 +97,34 @@ export function controlUnder(target: EventTarget | null, row: HTMLElement): Elem
 }
 
 /**
+ * The copy a row that both copies on a hold and carries an address hands to the hold's surface
+ * (services seed #34; the lead's rule on #694, point 3: "when a row both copies on hold and
+ * carries an address, the hold opens the sheet and the copy becomes its one Copy row", and on
+ * the tablet "the held card carries Copy as its single §9.20 footer action"; §9.2). Such a row
+ * arms no hold of its own and is no `data-copies` row – that marker means "copies itself on the
+ * hold" to the preview host's `hold:` finder and the Android demo – and carries the copy on
+ * these two attributes instead (`InfoRowView`, rows.tsx), for the host to read at the hold the
+ * way it reads the row's address line: from the DOM, never from the model. The sheet draws it
+ * as its one Copy row where the page draws sheets; the held card as its one footer button
+ * where it draws dialogs; the mouse's and the keyboard's card never carry it.
+ */
+export const HOLD_COPY_TEXT_ATTR = 'data-copy-text'
+export const HOLD_COPY_CONFIRMATION_ATTR = 'data-copy-confirmation'
+
+/** What the hold's Copy copies (`RowCopy`'s shape): the text, and the toast's word for it. */
+export interface HoldCopy {
+  text: string
+  confirmation: string
+}
+
+/** The copy `row` hands the hold's surface, or null for a row that carries none. */
+export function holdCopyOf(row: HTMLElement): HoldCopy | null {
+  const text = row.getAttribute(HOLD_COPY_TEXT_ATTR)
+  const confirmation = row.getAttribute(HOLD_COPY_CONFIRMATION_ATTR)
+  return text !== null && confirmation !== null ? { text, confirmation } : null
+}
+
+/**
  * The value with a break opportunity after each of its separators – a `<wbr>` after every `/`
  * and `.` – so a spaceless path or host breaks at its slashes and dots (§9.23: "a host too long
  * for a line breaking at its dots") before `overflow-wrap: anywhere` has to break it inside a
@@ -128,10 +156,17 @@ export interface AddressRevealState {
    * mouse's and the keyboard's, and while no card is.
    */
   held: boolean
+  /**
+   * The copy the held card carries as its one footer action – a row that both copies and
+   * carries an address, held (seed #34; the lead: "the held card carries Copy as its single
+   * §9.20 footer action"). Null for the mouse's and the keyboard's card, for an address-alone
+   * row's held card, and while no card is.
+   */
+  copy: HoldCopy | null
 }
 
 export const addressRevealStore = createStore<AddressRevealState>(
-  { card: HOVER_CARD_HIDDEN, subject: null, held: false },
+  { card: HOVER_CARD_HIDDEN, subject: null, held: false, copy: null },
   'addressReveal'
 )
 
@@ -150,14 +185,19 @@ function keyOf(row: HTMLElement): string {
 
 /** The row the controller is asked about right now: `blocked` reads the surface it stands in. */
 let candidate: HTMLElement | null = null
-/** What `measure` read for the card on its way – the subject, and whether a hold asked: the store takes it as the card shows. */
-let measured: { subject: AddressSubject; held: boolean } | null = null
+/** What `measure` read for the card on its way – the subject, whether a hold asked, and the copy a hold carried: the store takes it as the card shows. */
+let measured: { subject: AddressSubject; held: boolean; copy: HoldCopy | null } | null = null
 
 const slice: HoverCardStore = {
   get: () => addressRevealStore.get().card,
   set: (card) => {
     const up = card.tabId === null ? null : measured
-    addressRevealStore.set({ card, subject: up?.subject ?? null, held: up?.held ?? false })
+    addressRevealStore.set({
+      card,
+      subject: up?.subject ?? null,
+      held: up?.held ?? false,
+      copy: up?.copy ?? null
+    })
     if (card.tabId === null) measured = null
   }
 }
@@ -174,11 +214,17 @@ export const addressCard = new HoverCardController(slice, {
  * The row's geometry, read when the card shows – not when the pointer arrived (the machine's
  * rule) – and the elision read again with it: a row re-laid out during the wait so that its
  * value fits shows no card. The row is its own bar: the card hangs under it (`placeAddressCard`).
- * `held` marks the reading a touch hold asked for (`addressHold`).
+ * `held` marks the reading a touch hold asked for (`addressHold`); `copy` the copy that hold
+ * carried, whose card stands whether or not the line is elided – the card is the copy's surface
+ * too (the phone sheet's rule, seed #34), so a both-row whose value fits still has its Copy.
  */
-function measure(subject: AddressSubject, held = false): RowMeasure | null {
-  if (!subject.row.isConnected || !isElided(subject.span)) return null
-  measured = { subject: { ...subject, text: subject.span.textContent ?? '' }, held }
+function measure(
+  subject: AddressSubject,
+  held = false,
+  copy: HoldCopy | null = null
+): RowMeasure | null {
+  if (!subject.row.isConnected || (!copy && !isElided(subject.span))) return null
+  measured = { subject: { ...subject, text: subject.span.textContent ?? '' }, held, copy }
   const rect = toRect(subject.row.getBoundingClientRect())
   return { anchor: rect, sidebar: rect }
 }
@@ -212,11 +258,13 @@ export function addressBlur(row: HTMLElement): void {
  * scroll, a key, the window's blur or resize or a surface opening does (`AddressReveal` binds
  * `bindHoverCardDismissals`, the tab card's set). Marked `held` for the host: that card takes
  * the pointer. A second hold on another row moves it there (the press takes the first down, the
- * hold raises the next).
+ * hold raises the next). `copy`, for a row that both copies and carries an address (seed #34):
+ * the card carries it as its one footer action, Copy (`AddressReveal`), and stands for that row
+ * whether or not its line is elided.
  */
-export function addressHold(subject: AddressSubject): void {
+export function addressHold(subject: AddressSubject, copy: HoldCopy | null = null): void {
   candidate = subject.row
-  addressCard.focus(keyOf(subject.row), () => measure(subject, true))
+  addressCard.focus(keyOf(subject.row), () => measure(subject, true, copy))
 }
 
 /** A press, a scroll, a key, the window's blur, a surface opening: no card shows or is about to. */

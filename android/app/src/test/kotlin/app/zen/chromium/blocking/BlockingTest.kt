@@ -218,31 +218,7 @@ class BlockingTest {
         assertEquals(listOf("https://news.example/next" to 0L), generations)
     }
 
-    @Test
-    fun `a redirect hop's follow-up is paired with the tab's previous main-frame request`() {
-        val pairs = RedirectPairs()
-        val tab = FakeTab()
-        // A fresh navigation has no pair; its URL is remembered.
-        assertNull(pairs.redirectedFrom(tab, "https://short.example/x", isMainFrame = true, isRedirect = false))
-        // The follow-up WebView issues for the 3xx names the request it hopped from.
-        assertEquals("https://short.example/x", pairs.redirectedFrom(tab, "https://news.example/story", isMainFrame = true, isRedirect = true))
-        // A chain: every hop pairs with the request before it; a hop back to the same URL is still a hop.
-        assertEquals("https://news.example/story", pairs.redirectedFrom(tab, "https://news.example/story", isMainFrame = true, isRedirect = true))
-        assertEquals("https://news.example/story", pairs.redirectedFrom(tab, "https://news.example/story?ok", isMainFrame = true, isRedirect = true))
-        // A subresource is never paired and does not disturb the tab's memory, redirected or not.
-        assertNull(pairs.redirectedFrom(tab, "https://cdn.example/app.js", isMainFrame = false, isRedirect = false))
-        assertNull(pairs.redirectedFrom(tab, "https://cdn.example/app.v2.js", isMainFrame = false, isRedirect = true))
-        assertEquals("https://news.example/story?ok", pairs.redirectedFrom(tab, "https://news.example/amp", isMainFrame = true, isRedirect = true))
-        // A new navigation resets: no pair of its own, and the next hop pairs with it.
-        assertNull(pairs.redirectedFrom(tab, "https://other.example/", isMainFrame = true, isRedirect = false))
-        assertEquals("https://other.example/", pairs.redirectedFrom(tab, "https://other.example/home", isMainFrame = true, isRedirect = true))
-        // Tabs keep their own memory; a tab's first request has nothing to pair with even when marked a redirect.
-        val second = FakeTab(tabId = "tab-2")
-        assertNull(pairs.redirectedFrom(second, "https://a.example/", isMainFrame = true, isRedirect = true))
-        assertEquals("https://a.example/", pairs.redirectedFrom(second, "https://b.example/", isMainFrame = true, isRedirect = true))
-        assertEquals("https://other.example/home", pairs.redirectedFrom(tab, "https://other.example/last", isMainFrame = true, isRedirect = true))
-    }
-
+    // The pair's own rules – the hook's stamp, the target's intercept spending it – are RedirectPairsTest's.
     @Test
     fun `the observer's record carries the redirect pair, through either evaluate`() {
         val heard = ArrayList<Pair<String, String?>>()
