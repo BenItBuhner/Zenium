@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Suggestion } from '../../shared/types'
+import {
+  PRIVATE_CONTAINER_ID,
+  type HostCapabilities,
+  type Suggestion,
+  type TopSite
+} from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
 import { customSearchEngine } from '../../shared/search'
 import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
@@ -63,8 +68,8 @@ function setup(
   win: ZenWindow
   net: FakeNet
   state: BrowserState
-  /** The new tab page's most-visited source as the fixture stands in for it (OMN-04). */
-  newTab: { hiddenHosts: string[] }
+  /** The new tab page's tile source as the fixture stands in for it (OMN-04). */
+  newTab: { hiddenHosts: string[]; tiles: Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null }
 } {
   const state = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
   state.load()
@@ -79,10 +84,13 @@ function setup(
   const extensions = { omniboxSuggest: async () => null }
   // Nothing on the clipboard: the empty state (nothing typed) is the recent history alone.
   const searchEngines = { peekClipboard: async () => 'none' as const }
-  // The new tab page's most visited sites: history's top sites under the page's hidden hosts.
+  // The new tab page's tiles (`NewTabService.pageTiles`, the grid as the page lays it): the
+  // fixture's own list when a test sets one, else history's top sites under the page's hidden
+  // hosts – the grid under "most visited" with no shortcut pinned.
   const newTab = {
     hiddenHosts: [] as string[],
-    mostVisited: () => history.topSites(8, newTab.hiddenHosts)
+    tiles: null as Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null,
+    pageTiles: () => newTab.tiles ?? history.topSites(8, newTab.hiddenHosts)
   }
   const browser = {
     state,
@@ -1518,6 +1526,47 @@ describe('SuggestionService: zero-suggest on the touch layouts (OMN-04)', () => 
       history.visit(`https://site${i}.example/`, `Site ${i}`, null, { at: NOW - i })
     const rows = await suggestions.suggest('', null, win)
     expect(rows.filter((r) => r.group === 'Most visited')).toHaveLength(8)
+  })
+
+  it("the row is the page's list as the page gives it (the Lead's fold on #725): a pinned shortcut is a tile in its place, an untitled one named by its host; no tiles at all while the page has none", async () => {
+    const { suggestions, history, newTab, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1) history.visit('https://a.example/', 'A', null, { at: NOW - i })
+    // The page under "most visited" with a shortcut pinned: the shortcut fronts, the most
+    // visited site follows – the very list `NewTabService.pageTiles` composes.
+    newTab.tiles = [
+      { url: 'https://mine.example/', title: '', favicon: null },
+      { url: 'https://a.example/', title: 'A', favicon: null }
+    ]
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.filter((r) => r.group === 'Most visited')).toMatchObject([
+      { id: 'tile:https://mine.example/', title: 'mine.example', url: 'https://mine.example/' },
+      { id: 'tile:https://a.example/', title: 'A', url: 'https://a.example/' }
+    ])
+    // A page with no tiles – its shortcuts section off, or "my shortcuts" with none pinned –
+    // gives the omnibox no row; the pages the tiles would have stood for are recent pages.
+    newTab.tiles = []
+    const none = await suggestions.suggest('', null, win)
+    expect(none.some((r) => r.group === 'Most visited')).toBe(false)
+    expect(none.map((r) => [r.kind, r.url])).toEqual([['history', 'https://a.example/']])
+  })
+
+  it("offers no tiles over the default engine's results page (Chrome's SRP classification), the recent searches and pages as ever; another engine's results page and a plain page get them", async () => {
+    const { suggestions, history, state, shortcuts, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1) history.visit('https://a.example/', 'A', null, { at: NOW - i })
+    learnSearch(shortcuts, 'cats')
+    expect(state.defaultSearchEngine().id).toBe('google')
+    openTab(state, 'tab_srp', 'https://www.google.com/search?q=cats&sourceid=chrome')
+    openTab(state, 'tab_other_srp', 'https://duckduckgo.com/?q=cats&t=h_')
+    openTab(state, 'tab_web', 'https://news.example/')
+    const onResults = await suggestions.suggest('', 'tab_srp', win)
+    expect(onResults.some((r) => r.group === 'Most visited')).toBe(false)
+    expect(onResults.map((r) => r.group ?? r.kind)).toEqual(['Recent searches', 'history'])
+    for (const tabId of ['tab_other_srp', 'tab_web']) {
+      const rows = await suggestions.suggest('', tabId, win)
+      expect(rows.map((r) => r.group ?? r.kind)).toEqual(['Most visited', 'Recent searches'])
+    }
   })
 
   it('offers no tiles over the new tab page itself (Chrome: the page already shows them), the recent searches and pages as ever', async () => {

@@ -209,7 +209,9 @@ export class SuggestionService {
       const currentTab = currentTabId ? state.model.tabs[currentTabId] : undefined
       return await this.emptyState(wantsHistory, {
         touch: touchLayout(win.formFactor),
-        onNewTab: currentTab !== undefined && isEmptyTabUrl(currentTab.url)
+        onNewTab: currentTab !== undefined && isEmptyTabUrl(currentTab.url),
+        onResultsPage:
+          currentTab !== undefined && searchTermsFromUrl(defaultEngine, currentTab.url) !== null
       })
     }
 
@@ -792,13 +794,19 @@ export class SuggestionService {
    * user reveals or picks the row), then the recent history.
    *
    * On a touch layout (OMN-04; Chrome for Android's zero-suggest on a web page) the list also
-   * has the most visited sites as a row of tiles ({@link MOST_VISITED_GROUP}) and remembers the
+   * has the new tab page's tiles as a row ({@link MOST_VISITED_GROUP}) and remembers the
    * searches the history holds – the results pages of the user's engines, whoever's field the
    * terms went into – among the recent searches; the desktop's list is as it was.
    */
   private async emptyState(
     wantsHistory: boolean,
-    layout: { touch: boolean; onNewTab: boolean }
+    layout: {
+      touch: boolean
+      /** The focused tab is a new tab page: it shows the tiles itself. */
+      onNewTab: boolean
+      /** The focused tab is the default engine's results page (Chrome's SRP classification). */
+      onResultsPage: boolean
+    }
   ): Promise<Suggestion[]> {
     const rows: Suggestion[] = []
     const clip = await this.browser.searchEngines.peekClipboard()
@@ -816,10 +824,15 @@ export class SuggestionService {
       })
     }
     if (!wantsHistory) return rows
-    // The most visited sites (Chrome's `MostVisitedSitesProvider`, local): the new tab page's own
-    // list, which the page already shows – so not over the page itself (Chrome's
-    // `SupportsMostVisitedSites` leaves the NTP out), and on the touch layouts alone.
-    const tiles = layout.touch && !layout.onNewTab ? this.browser.newTab.mostVisited() : []
+    // The new tab page's tiles (Chrome's `MostVisitedSitesProvider`, local): the very list the
+    // page shows – its most visited sites or the user's shortcuts, as the page's mode has it, and
+    // none while the page's shortcuts section is off – so not over the page itself, nor over the
+    // default engine's results page (Chrome's `SupportsMostVisitedSites` leaves the NTP and the
+    // SRP out), and on the touch layouts alone.
+    const tiles =
+      layout.touch && !layout.onNewTab && !layout.onResultsPage
+        ? this.browser.newTab.pageTiles()
+        : []
     const tileUrls = new Set<string>()
     for (const site of tiles) {
       tileUrls.add(site.url)

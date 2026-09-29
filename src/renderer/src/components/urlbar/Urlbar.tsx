@@ -1447,6 +1447,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
             key="most-visited"
             tiles={tiles}
             sheet={sheet}
+            phone={phone}
             onPick={(item, e) =>
               submit(item, {
                 where: clickTarget({

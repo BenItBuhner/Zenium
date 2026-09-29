@@ -1560,11 +1560,19 @@ describe('zero-suggest on the touch layouts (OMN-04)', () => {
     id: `tile:${url}`,
     group: 'Most visited'
   })
+  /** An inline icon: `faviconSrc` hands it to the `<img>` as it is (no site is asked). */
+  const WIKI_ICON = 'data:image/png;base64,iVBORw0KGgo='
   const tiles = (): Suggestion[] => [
     tile('Example Domain', 'https://example.com/'),
-    tile('Wikipedia, the free encyclopedia', 'https://en.wikipedia.org/'),
+    {
+      ...tile('Wikipedia, the free encyclopedia', 'https://en.wikipedia.org/'),
+      favicon: WIKI_ICON
+    },
     tile('GitHub: Let’s build from here', GITHUB)
   ]
+  /** A tile's icon `<img>`, its box and its fade-in mark (the page's `TileIcon`). */
+  const iconOf = (button: HTMLButtonElement): HTMLImageElement =>
+    button.querySelector<HTMLImageElement>('img.zen-ntp-icon')!
   const recentSearch = (terms: string, url: string): Suggestion => ({
     ...row('search', terms, terms, url),
     id: `recent:${url}`,
@@ -1642,7 +1650,8 @@ describe('zero-suggest on the touch layouts (OMN-04)', () => {
     expect(group.getAttribute('aria-label')).toBe('Most visited')
     expect(group.classList.contains('zen-omnibox-tiles')).toBe(true)
     expect(group.classList.contains('zen-omnibox-tiles-sheet')).toBe(true)
-    // The new tab page's tile at a smaller size: the shared tile, its caption the page's label.
+    // The host's own new tab page tile (the Lead's fold on #725): the phone page's 56 square
+    // with the 24 icon or letter (§9.29), the shared look, its caption the page's label 8 under.
     const buttons = tileButtons(el)
     expect(buttons).toHaveLength(3)
     expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(
@@ -1651,7 +1660,22 @@ describe('zero-suggest on the touch layouts (OMN-04)', () => {
     expect(buttons[2].getAttribute('aria-label')).toBe('GitHub')
     expect(buttons[2].querySelector('.zen-ntp-tile')).not.toBeNull()
     expect(buttons[2].querySelector('.zen-ntp-caption')!.textContent).toBe('GitHub')
-    expect(buttons[2].querySelector('.zen-ntp-tile')!.className).toContain('h-12 w-12')
+    expect(buttons[2].className).toContain('gap-2')
+    expect(buttons[2].querySelector('.zen-ntp-tile')!.className).toContain('h-14 w-14')
+    expect(buttons[2].querySelector('.zen-ntp-letter')!.className).toContain('h-6 w-6')
+    // The icon is the page's `TileIcon`: 24 square, and marked loaded once it is – the phone's
+    // fade-in rule (`zen-ntp-icon` is transparent until `zen-ntp-icon-loaded`), which the
+    // omnibox's own copy never met.
+    const icon = iconOf(buttons[1])
+    expect([
+      icon.getAttribute('src'),
+      icon.getAttribute('width'),
+      icon.getAttribute('height')
+    ]).toEqual([WIKI_ICON, '24', '24'])
+    expect(icon.className).toContain('h-6 w-6')
+    await act(async () => {
+      await vi.waitFor(() => expect(iconOf(buttons[1]).className).toContain('zen-ntp-icon-loaded'))
+    })
     expect(options(el)).toHaveLength(3)
     expect(headingTexts(el)).toEqual(['Recent searches', 'Recently visited'])
     expect(el.querySelector('[data-group="Most visited"]')).toBeNull()
@@ -1744,6 +1768,12 @@ describe('zero-suggest on the touch layouts (OMN-04)', () => {
     expect(list.firstElementChild).toBe(carousel(el))
     expect(carousel(el)!.querySelector('.zen-omnibox-tiles-sheet')).toBeNull()
     expect(tileButtons(el)).toHaveLength(3)
+    // The host's own tile at the tablet's size: the served page's 64 square with the 32 icon.
+    expect(tileButtons(el)[2].querySelector('.zen-ntp-tile')!.className).toContain('h-16 w-16')
+    expect(tileButtons(el)[2].querySelector('.zen-ntp-letter')!.className).toContain('h-8 w-8')
+    const icon = iconOf(tileButtons(el)[1])
+    expect([icon.getAttribute('width'), icon.getAttribute('height')]).toEqual(['32', '32'])
+    expect(icon.className).toContain('h-8 w-8')
     expect(input(el).getAttribute('aria-expanded')).toBe('true')
     // The popup's rows: the remembered searches under their heading, then the recent page.
     expect(headingTexts(el)).toEqual(['Recent searches'])

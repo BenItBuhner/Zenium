@@ -15657,13 +15657,14 @@ ol.zen-page-prose-list {
     border-top: 1px solid var(--v2-border);
   }
   /*
-   * The most visited sites over the zero-suggest list on the touch layouts (OMN-04,
-   * components/urlbar/MostVisitedTiles.tsx; Chrome for Android's carousel): one row of the new
-   * tab page's tiles at a smaller size – the shared `zen-ntp-tile` look, 48 square with a 20
-   * icon, the 13 caption under it on one line – 8 apart, panning sideways with no scrollbar and
+   * The new tab page's tiles over the zero-suggest list on the touch layouts (OMN-04,
+   * components/urlbar/MostVisitedTiles.tsx; Chrome for Android's carousel): one row of the
+   * host's own new tab page tile – the shared `zen-ntp-tile` look at the layout's size, the
+   * phone page's 56 square with the 24 icon or the tablet's 64 with the 32, the 13 caption 8
+   * under it on one line – in 64-wide columns 8 apart, panning sideways with no scrollbar and
    * dissolving at the edge that has more past it (`useFadeEdges`). The tiles stand on the rows'
    * text edge: the tablet popup's 16 gutter, the phone card's 10 inside the list's own 4. Each
-   * tile is 64 wide, so a phone's card shows four and a half and tells of the rest.
+   * column is 64 wide, so a phone's card shows four and a half and tells of the rest.
    */
   .zen-omnibox-tiles {
     gap: 8px;

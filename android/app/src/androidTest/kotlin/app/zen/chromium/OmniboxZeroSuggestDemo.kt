@@ -25,9 +25,12 @@ import kotlin.math.roundToInt
  * `android-omnibox-zero-suggest-demo` workflow – five scenes, each with its claim read off the
  * chrome's DOM or the core's state, never off the still alone:
  *
- *  1. The empty field over a web page offers, before anything is typed: the MOST VISITED sites
- *     as a row of tiles first (Chrome's `MostVisitedSitesProvider` carousel; the new tab page's
- *     own list – `NewTabService.mostVisited()` – at most 8 of the 9 hosts the history holds),
+ *  1. The empty field over a web page offers, before anything is typed: the NEW TAB PAGE'S
+ *     TILES as a row first (Chrome's `MostVisitedSitesProvider` carousel; the page's own list –
+ *     `NewTabService.pageTiles()`, the grid as the page lays it: the seed pins no shortcut, so
+ *     the most visited sites, at most 8 of the 9 hosts the history holds – each tile the host's
+ *     own new tab page tile at its size, the phone's 56 square with the 24 icon or letter, the
+ *     tablet's 64 with the 32; the row reads the box, and asserts the list),
  *     then the RECENT SEARCHES read back out of the history through the default engine's
  *     template (the two searches seeded on it, most recent first, each under the clock glyph –
  *     Chrome's `SEARCH_HISTORY` glyph), then the RECENTLY VISITED pages that are neither a tile
