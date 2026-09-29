@@ -64,6 +64,7 @@ import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { GroupGlyph } from '../GroupGlyph'
 import { barLayout } from '../phone/barItems'
 import { useLongPress } from '../phone/useLongPress'
+import { omniboxPopupMaxHeight } from '../tablet/omniboxPopup'
 import { V2_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
 import { EngineFieldGlyph } from './EngineFieldGlyph'
@@ -107,7 +108,8 @@ interface Props {
   /**
    * Tablet layout: the toolbar's address pill, in the coordinates of the layer the bar is drawn
    * in. The bar is then the pill's popup (TB-21): attached, hung `POPUP_GAP` under it and as
-   * wide as it, growing down over the page as far as `area` (the shell's box) lets it.
+   * wide as it, growing down over the page as far as the visible part of `area` (the shell's
+   * box above the host's bottom inset – the keyboard while it is up) lets it.
    */
   anchor?: Rect | null
 }
@@ -1308,13 +1310,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     if (!area) return undefined
     if (anchor) {
       // Hung `POPUP_GAP` under the pill and as wide as it (TB-21), down to the bottom of the
-      // shell's box less a gutter – the keyboard's inset has already taken its share of the box.
+      // VISIBLE viewport less a gutter: the shell's box runs under the host's bottom inset (the
+      // keyboard while it is up), which the bound takes off in CSS (W6-L1, `omniboxPopup.ts`).
       const top = anchor.y + anchor.height + POPUP_GAP
       return {
         left: anchor.x,
         top,
         width: anchor.width,
-        maxHeight: Math.max(120, area.height - top - 8)
+        maxHeight: omniboxPopupMaxHeight(area.height, top)
       }
     }
     const field = urlbarFieldBox(area, floating)

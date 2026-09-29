@@ -32,6 +32,8 @@ const { uiStore, urlbarKeepsTabDrafts } = await import('@renderer/lib/ui')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { omniboxFocusSurfaces } = await import('@renderer/lib/omniboxFocus')
 const { refreshViewport, viewportStore } = await import('@renderer/lib/formFactor')
+const { omniboxPopupBound, omniboxPopupMaxHeight } =
+  await import('@renderer/components/tablet/omniboxPopup')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -1455,5 +1457,84 @@ describe('the tab group row (OMN-15)', () => {
     expect(callsTo('folder.open')).toEqual([{ folderId: 'folder_research' }])
     expect(commands()).not.toContain('urlbar.submit')
     expect(uiStore.get().urlbar.open).toBe(false)
+  })
+})
+
+/*
+ * The tablet popup above the keyboard (W6-L1): hung from the toolbar pill, the popup is bounded
+ * by the VISIBLE viewport – the shell's box less the host's bottom inset (`--zen-inset-bottom`,
+ * the keyboard while it is up) less §9.20's 8 px margin – so a long list ends above the keyboard
+ * and scrolls inside, as Chrome's tablet dropdown is measured at most the window less the
+ * keyboard. The bound is a CSS `max()`/`calc()` on the root variable (no render per keyboard
+ * frame); the desktop's floating bar reads the box alone, as it did, and never passes an anchor.
+ */
+describe('the tablet popup above the keyboard (W6-L1)', () => {
+  const twelve = (): Suggestion[] =>
+    Array.from({ length: 12 }, (_, i) =>
+      row('history', `Result ${i + 1}`, `res${i + 1}`, `https://example.com/r${i + 1}`)
+    )
+  /** The bar as `TabletShell` mounts it: the window as its box, the pill as its anchor. */
+  const hung = (anchor: { x: number; y: number; width: number; height: number }): ReactElement =>
+    createElement(Urlbar, {
+      state: state(tab(PAGE)),
+      urlbar: urlbarState('edit'),
+      area: { x: 0, y: 0, width: 1280, height: 800 },
+      anchor
+    })
+  const panel = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>('.zen-omnibox')!
+
+  afterEach(() => layout(null))
+
+  it('the bound: the room under the pill less the margin, less the inset CSS resolves', () => {
+    // pixel_tablet, 1280×800: the pill at y 36, 36 tall, the popup 4 under it → its top at 76.
+    expect(omniboxPopupMaxHeight(800, 76)).toBe('max(120px, calc(716px - var(--zen-inset-bottom)))')
+    // The keyboard up (E14 measured its inset at 426 px): 800 − 76 − 8 − 426.
+    expect(omniboxPopupBound(800, 76, 426)).toBe(290)
+    // The keyboard down, no bar inset: the box's own room, as before this change.
+    expect(omniboxPopupBound(800, 76, 0)).toBe(716)
+    // A short window with the keyboard up: the floor, the field's row and one suggestion.
+    expect(omniboxPopupBound(600, 76, 426)).toBe(120)
+  })
+
+  it('tablet: twelve rows, the popup’s max height is the visible viewport’s bound', async () => {
+    layout('tablet')
+    suggestions = (q) => (q === 'res' ? twelve() : [])
+    const el = await render(hung({ x: 300, y: 36, width: 680, height: 36 }))
+    await type(input(el), 'res')
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(12))
+    })
+    const box = panel(el)
+    expect(box.getAttribute('data-attached')).toBe('true')
+    // Its top anchor under the pill and the pill's width are as they were (TB-21).
+    expect(box.style.left).toBe('300px')
+    expect(box.style.top).toBe('76px')
+    expect(box.style.width).toBe('680px')
+    expect(box.style.maxHeight).toBe('max(120px, calc(716px - var(--zen-inset-bottom)))')
+    // The list is the panel's scrolling part: the field's row is fixed, the list gives way.
+    const list = box.querySelector<HTMLElement>('ul[role="listbox"]')!
+    expect(list.classList.contains('overflow-y-auto')).toBe(true)
+    expect(list.classList.contains('min-h-0')).toBe(true)
+    expect(list.previousElementSibling?.classList.contains('shrink-0')).toBe(true)
+    expect(rows(el)[11].textContent).toContain('Result 12')
+  })
+
+  it('desktop: the floating bar’s bound reads the box alone, no inset in it', async () => {
+    layout('desktop')
+    suggestions = (q) => (q === 'res' ? twelve() : [])
+    const el = await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: { x: 0, y: 0, width: 1200, height: 800 }
+      })
+    )
+    await type(input(el), 'res')
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(12))
+    })
+    const box = panel(el)
+    expect(box.style.maxHeight).toMatch(/^\d+px$/)
+    expect(box.style.maxHeight).not.toContain('var(')
   })
 })
