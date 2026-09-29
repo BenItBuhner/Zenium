@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The demo harness's device admin (ManagedTestAdmin, the managed-configuration driver's seam):
+  no policies of its own – the driver only needs the test package to be the device owner so it
+  can hand Zenium an app-restrictions bundle through DevicePolicyManager.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

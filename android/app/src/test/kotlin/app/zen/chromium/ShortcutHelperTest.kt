@@ -63,7 +63,7 @@ class ShortcutHelperTest {
         row("capture.start", "pageOperations", "Screenshot…", chord("s", ctrl = true, shift = true), layouts = listOf("desktop")),
         row("zoom.in", "mediaAndDisplay", "Zoom In", chord("=", ctrl = true)),
         row("bookmark.add", "historyAndBookmarks", "Bookmark This Page", chord("d", ctrl = true)),
-        row("bookmark.toggleBar", "historyAndBookmarks", "Show / Hide Bookmarks Bar", chord("b", ctrl = true, shift = true), layouts = listOf("desktop")),
+        row("bookmark.toggleBar", "historyAndBookmarks", "Show / Hide Bookmarks Bar", chord("b", ctrl = true, shift = true), layouts = listOf("desktop", "tablet")),
         row("devtools.toggle", "devTools", "Toggle Developer Tools", chord("i", ctrl = true, shift = true), unsupported = true),
         row("tasks.open", "devTools", "Task Manager", chord("Escape", shift = true), layouts = listOf("desktop")),
         row("boost.new", "zen-other", "New Boost", chord("b", ctrl = true, alt = true), hidden = true)
@@ -119,7 +119,9 @@ class ShortcutHelperTest {
         )
         val features = ShortcutHelper.groups(table, "tablet").first { it.title == ShortcutHelper.FEATURES }
         assertEquals(
-            listOf("Open Find Bar", "Bookmark the current page", "Copy current URL", "Home", "Find next"),
+            // Chrome's rows in Chrome's order – the tablet's bar (NTP-34) lists its Ctrl+Shift+B
+            // as Chrome 152's tablet helper does – then Zenium's.
+            listOf("Open Find Bar", "Bookmark the current page", "Show or hide Bookmarks bar", "Copy current URL", "Home", "Find next"),
             features.items.map { it.label }
         )
         // A product's name keeps its capitals in the sentence form.
@@ -164,10 +166,11 @@ class ShortcutHelperTest {
         assertFalse("the desktop layout's row", "capture.start" in tablet)
         assertFalse("the desktop layout's row", "tasks.open" in tablet)
         assertFalse("the desktop layout's row", "compact.toggle" in tablet)
-        assertFalse("the desktop layout's row", "bookmark.toggleBar" in tablet)
+        assertTrue("the sidebar layouts' row (NTP-34: the tablet has the bookmarks bar)", "bookmark.toggleBar" in tablet)
         assertTrue("F11 lists on every layout", "page.fullscreen" in tablet)
         val phone = listed("phone")
-        assertEquals("no layout-bound row in this slice differs between phone and tablet", tablet, phone)
+        assertFalse("the phone has no bookmarks bar", "bookmark.toggleBar" in phone)
+        assertEquals("the bookmarks bar's row is the one layout-bound row in this slice that differs between phone and tablet", tablet - "bookmark.toggleBar", phone)
         val desktopRow = listOf(row("capture.start", "pageOperations", "Screenshot…", chord("s", ctrl = true, shift = true), layouts = listOf("tablet")))
         assertEquals(listOf("capture.start"), listed("tablet", desktopRow))
         assertTrue(ShortcutHelper.groups(desktopRow, "phone").isEmpty())
@@ -176,13 +179,14 @@ class ShortcutHelperTest {
     @Test
     fun aDesktopOnlyRowIsListedOnNoTouchLayout() {
         // A `layouts: ['desktop']` entry of the core's table (Name Window…, Screenshot…, Task
-        // Manager, Show / Hide Bookmarks Bar, the two Compact Mode rows; #588's Report an issue…,
-        // Alt+Shift+I) travels with its layouts (`helperShortcuts`) and the helper lists it on the
-        // desktop's layout alone: the tablet's and the phone's helper never show it, whatever its
-        // group and however bound – so the Compact Mode group leaves both touch layouts' sheets.
+        // Manager, the two Compact Mode rows; #588's Report an issue…, Alt+Shift+I) travels with
+        // its layouts (`helperShortcuts`) and the helper lists it on the desktop's layout alone:
+        // the tablet's and the phone's helper never show it, whatever its group and however
+        // bound – so the Compact Mode group leaves both touch layouts' sheets. (Show / Hide
+        // Bookmarks Bar is `['desktop', 'tablet']` since the tablet's bar, NTP-34: the pin above.)
         val reportIssue = row("help.reportIssue", "windowAndTabManagement", "Report an issue…", chord("i", alt = true, shift = true), layouts = listOf("desktop"))
         val rows = table + reportIssue
-        val desktopOnly = setOf("help.reportIssue", "window.name", "capture.start", "tasks.open", "compact.toggle", "bookmark.toggleBar")
+        val desktopOnly = setOf("help.reportIssue", "window.name", "capture.start", "tasks.open", "compact.toggle")
         for (layout in listOf("tablet", "phone")) {
             val groups = ShortcutHelper.groups(rows, layout)
             assertFalse("$layout lists no desktop-only row", groups.flatMap { it.items }.any { it.action in desktopOnly })

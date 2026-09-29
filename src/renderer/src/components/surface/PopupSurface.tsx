@@ -17,9 +17,10 @@ import { Tooltip } from '../Tooltip'
  * (`MiniMenu`, `UIState.selectionMenu`) – the order the core places the surface in
  * (`POPUP_SURFACE_OWNERS`: the picker in front of the pill). The chrome's tooltip host
  * (`Tooltip`, §9.31) stands in this document as it does in the window's shells, so a control
- * here that carries `data-tooltip` – the folded pill's glyph buttons – names itself in the one
- * vocabulary; the surface is sized for the tooltip by the core from what the pill asks for the
- * tooltip's moment (`MiniMenuRoom`), the document being the whole of the tooltip's window. The
+ * here that carries `data-tooltip` – the folded pill's glyph buttons, the picker's lock on a
+ * row that asks for the passphrase – names itself in the one vocabulary; the surface is sized
+ * for the tooltip by the core from what the pill or the picker asks for the tooltip's moment
+ * (`PopupSurfaceRoom`), the document being the whole of the tooltip's window. The
  * room's coming is a resize of this window, so the host here places through a resize rather
  * than hiding for it (`resize="place"`): the room made for the tooltip must not take it down.
  * And the tooltip waits, hidden, until the room has landed – the core's word back to the ask

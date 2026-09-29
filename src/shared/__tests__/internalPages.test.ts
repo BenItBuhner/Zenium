@@ -37,6 +37,7 @@ describe('the page registry', () => {
       'whats-new',
       'privacy-notice',
       'terms',
+      'management',
       'print',
       'pdf',
       'tasks',
@@ -118,6 +119,33 @@ describe('the page registry', () => {
     // Chrome's two names and the governor's words all land on it.
     for (const q of ['memory saver', 'energy saver', 'battery', 'inactive tabs']) {
       expect(matchSections(SETTINGS_SECTIONS, q).map((s) => s.id)).toContain('performance')
+    }
+  })
+
+  it('keeps Mods to the desktop and tablet shells, right after Boosts: the shells that mount ModStyles (seed #31)', () => {
+    const mods = SETTINGS_SECTIONS.find((s) => s.id === 'mods')!
+    expect(mods).toMatchObject({ label: 'Mods', layouts: ['desktop', 'tablet'] })
+    // Gated by the layout alone – no capability, every platform: a tablet applies Mods as the
+    // desktop does, whatever the host.
+    expect(mods.requires).toBeUndefined()
+    expect(mods.platforms).toBeUndefined()
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const ids = availableSections(INTERNAL_PAGES.settings, ALL, layout).map((s) => s.id)
+      expect(ids.indexOf('mods')).toBe(ids.indexOf('boosts') + 1)
+    }
+    // The phone shell mounts no `ModStyles`, so a Mods page there would only describe its own
+    // absence and is not drawn (the lead's ruling; #628's transport row, #632's Print row) –
+    // whatever the host's capabilities say.
+    for (const caps of [ALL, NONE]) {
+      expect(
+        availableSections(INTERNAL_PAGES.settings, caps, 'phone').map((s) => s.id)
+      ).not.toContain('mods')
+    }
+    // The parser stays host neutral: the address still names the section, and the renderer's
+    // `availableSections` decides what the phone draws for it (the landing, as for Performance).
+    expect(parseInternalPageUrl('zen://settings/mods')).toEqual({ id: 'settings', section: 'mods' })
+    for (const q of ['css', 'userchrome', 'style']) {
+      expect(matchSections(SETTINGS_SECTIONS, q).map((s) => s.id)).toContain('mods')
     }
   })
 
@@ -503,7 +531,7 @@ describe('the section model', () => {
       'spaces',
       'containers',
       'boosts',
-      'mods',
+      // No Mods: the phone shell applies none (seed #31), as it lists no Performance or Reset.
       // Ungated, as the desktop Security pane is: every host keeps per-site answers (#62).
       'security',
       // Ungated too: every host can take a bookmarks HTML or passwords CSV file (ID-23).
@@ -599,7 +627,7 @@ describe('the landing list', () => {
       run.map((s) => s.id)
     )
     expect(bare).toEqual([
-      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods', 'security'],
+      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'security'],
       ['import'],
       ['about']
     ])
@@ -610,7 +638,7 @@ describe('the landing list', () => {
       availableSections(page, NONE, 'phone').filter((s) => s.id !== 'import')
     ).map((run) => run.map((s) => s.id))
     expect(emptied).toEqual([
-      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods', 'security'],
+      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'security'],
       ['about']
     ])
   })

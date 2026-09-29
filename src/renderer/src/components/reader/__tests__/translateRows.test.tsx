@@ -415,7 +415,8 @@ describe('the panel’s order', () => {
       'Font',
       'Colour theme',
       'Column width',
-      'Text spacing',
+      'Line spacing',
+      'Letter spacing',
       '—',
       'Line focus',
       'Lines in focus',
@@ -438,6 +439,55 @@ describe('the panel’s order', () => {
       expect(child.firstElementChild?.tagName).not.toBe('SPAN')
       expect(child.querySelector('.lucide-languages, .lucide-audio-lines')).toBeNull()
     }
+  })
+
+  it('Line spacing and Letter spacing are menulist value rows among the type rows – Chrome’s three live steps each, no description – the hairline after them carrying the sheet’s peek-end mark; a pick patches its own key alone (CT-35)', async () => {
+    desktop()
+    const patches: Array<Partial<ReaderPreferences>> = []
+    const el = render(
+      <Rows
+        prefs={{ ...DEFAULT_READER_PREFERENCES, letterSpacing: 'wide' }}
+        onChange={(patch) => void patches.push(patch)}
+        onListen={null}
+        translate={null}
+      />
+    )
+    const rows = el.querySelector('[data-reader-prefs-rows]')!
+    const labels = [...rows.children].map((c) => c.querySelector('.truncate')?.textContent ?? '')
+    const line = rows.children[labels.indexOf('Line spacing')] as HTMLElement
+    const letter = rows.children[labels.indexOf('Letter spacing')] as HTMLElement
+    expect(labels.indexOf('Line spacing')).toBe(labels.indexOf('Column width') + 1)
+    expect(labels.indexOf('Letter spacing')).toBe(labels.indexOf('Line spacing') + 1)
+    expect(labels).not.toContain('Text spacing')
+    // Value rows (§9.13's menulist), the saved value read, no second line.
+    const lineControl = line.querySelector<HTMLButtonElement>('.zen-v2-menulist')!
+    const letterControl = letter.querySelector<HTMLButtonElement>('.zen-v2-menulist')!
+    expect(lineControl.getAttribute('aria-haspopup')).toBe('listbox')
+    expect(lineControl.textContent).toBe('Standard')
+    expect(letterControl.textContent).toBe('Wide')
+    for (const r of [line, letter]) expect(r.querySelectorAll('.line-clamp-2')).toHaveLength(0)
+    // The hairline after the type rows – the one after Letter spacing, no other – is where the
+    // phone sheet's peek ends when the 52 % detent would cut the sixth row (`BottomSheet`).
+    const hairline = letter.nextElementSibling!
+    expect(hairline.getAttribute('aria-hidden')).toBe('true')
+    expect(hairline.hasAttribute('data-sheet-peek-end')).toBe(true)
+    expect(rows.querySelectorAll('[data-sheet-peek-end]')).toHaveLength(1)
+    expect(hairline.nextElementSibling?.querySelector('.truncate')?.textContent).toBe('Line focus')
+
+    // Chrome's steps, in Chrome's order (`read_anything.mojom`: the tight steps deprecated).
+    const list = (label: string): HTMLElement =>
+      document.querySelector<HTMLElement>(`[role="listbox"][aria-label="${label}"]`)!
+    const items = (label: string): HTMLElement[] => [
+      ...list(label).querySelectorAll<HTMLElement>('[role="option"]')
+    ]
+    await open(lineControl)
+    expect(items('Line spacing').map(optionLabel)).toEqual(['Standard', 'Loose', 'Very loose'])
+    act(() => items('Line spacing')[2].click())
+    expect(patches).toEqual([{ lineSpacing: 'very-loose' }])
+    await open(letterControl)
+    expect(items('Letter spacing').map(optionLabel)).toEqual(['Standard', 'Wide', 'Very wide'])
+    act(() => items('Letter spacing')[2].click())
+    expect(patches).toEqual([{ lineSpacing: 'very-loose' }, { letterSpacing: 'very-wide' }])
   })
 
   it('Translate alone heads the panel where the article cannot be read aloud', () => {
@@ -527,7 +577,8 @@ describe('the panel’s order', () => {
       'Font',
       'Colour theme',
       'Column width',
-      'Text spacing',
+      'Line spacing',
+      'Letter spacing',
       '—',
       'Line focus',
       'Lines in focus',

@@ -103,6 +103,7 @@ import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
 import { ConnectivityService } from './connectivity'
+import { ManagedService } from './managed'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
 import { BackgroundWork } from './background/work'
@@ -337,6 +338,8 @@ export class Browser {
   readonly defaultBrowser: DefaultBrowserService
   /** The device's connectivity: the offline banner's state and the error pages that reload themselves. */
   readonly connectivity: ConnectivityService
+  /** The managed configuration behind the app menu's "Managed Browser" row and `zen://management` (TB-13). */
+  readonly managed: ManagedService
   /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
   readonly imports: ImportService
   /**
@@ -620,6 +623,7 @@ export class Browser {
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.connectivity = new ConnectivityService(this)
+    this.managed = new ManagedService(this)
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -3466,8 +3470,13 @@ export class Browser {
         this.permissions.restoreRevokedList(records)
         this.state.commitVolatile()
       },
-      'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
-        this.privacy.clearBrowsingData(range, types, passphrase, win),
+      'privacy.clearBrowsingData': async ({ range, types, passphrase }, win) => {
+        const outcome = await this.privacy.clearBrowsingData(range, types, passphrase, win)
+        // A clear that went through is the tip card's Quick Delete signal (NTP-20); one that
+        // stopped at the re-authentication round deleted nothing and leaves no mark.
+        if (outcome.status === 'ok') this.newTab.noteBrowsingDataCleared()
+        return outcome
+      },
       'privacy.clearBrowsingDataCounts': ({ range }, win) => this.privacy.counts(range, win),
       'privacy.tabsInRange': ({ range }, win) => this.privacy.tabsInRange(range, win),
       'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
@@ -3492,7 +3501,7 @@ export class Browser {
       'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
       'autofill.pick': ({ id, itemId, passphrase }, win) =>
         this.autofill.pick(id, itemId, passphrase, win),
-      'autofill.surfaceSize': ({ id, height }) => this.autofill.surfaceSize(id, height),
+      'autofill.surfaceSize': ({ id, height, room }) => this.autofill.surfaceSize(id, height, room),
       'autofill.surfaceFocus': ({ id, focused }) => this.autofill.surfaceFocus(id, focused),
       'autofill.manage': (_args, win) => this.autofill.manage(win),
       'autofill.listAddresses': () => this.autofill.listAddresses(),
@@ -3692,12 +3701,17 @@ export class Browser {
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title, tabId }, win) =>
         this.menus.showTopSiteContextMenu(url, title, tabId ?? null, win),
-      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) =>
-        this.menus.showAppMenu(win, {
-          anchor,
-          keyboard: Boolean(keyboard),
-          mediaHubFolded: Boolean(mediaHubFolded)
-        }),
+      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) => {
+        const show = (): void =>
+          this.menus.showAppMenu(win, {
+            anchor,
+            keyboard: Boolean(keyboard),
+            mediaHubFolded: Boolean(mediaHubFolded)
+          })
+        // The first build reads the host's app-restrictions bundle (the "Managed Browser" row,
+        // TB-13) and no later one does; hosts without a bundle never wait.
+        return this.managed.known() ? show() : this.managed.ensure().then(show)
+      },
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
       haptic: ({ kind }, win) => win.haptic(kind),
@@ -3946,6 +3960,7 @@ export class Browser {
       'newtab.setModuleHidden': ({ id, hidden }) => this.newTab.setModuleHidden(id, hidden),
       'newtab.setSafetyHubCardMemory': ({ memories }) =>
         this.newTab.setSafetyHubCardMemories(memories),
+      'newtab.setEducationalTipMemory': ({ memory }) => this.newTab.setEducationalTipMemory(memory),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
@@ -4285,6 +4300,8 @@ export class Browser {
       'updates.install': () => this.updates.install(),
       'updates.cancel': () => this.updates.cancel(),
       'updates.openRelease': (_a, win) => this.updates.openRelease(win),
+
+      'managed.status': () => this.managed.ensure(),
 
       'passwords.unlock': ({ passphrase }) => this.passwords.unlock(passphrase),
       'passwords.lock': () => this.passwords.lock(),

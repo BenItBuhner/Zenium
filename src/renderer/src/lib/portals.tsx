@@ -13,13 +13,21 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { Rect } from '@shared/types'
+import { toastSeat } from '@renderer/components/messages/lift'
 import { useBackSurface } from './back'
 import { useViewport } from './formFactor'
-import { registerRecedeLayer, type RecedeHandle, type RecedeLayerFrame } from './motion/recede'
+import {
+  recedeFooter,
+  registerRecedeLayer,
+  subscribeRecedeFooter,
+  type RecedeHandle,
+  type RecedeLayerFrame
+} from './motion/recede'
 import { REDUCED_MOTION_FADE_MS, sheetBackPosition } from './motion/sheet'
 import { SPRING_GENTLE, SpringAnimation, reducedMotion, type SpringConfig } from './motion/spring'
-import { closeAllPopovers } from './popoverStore'
-import { coverPageUnderSheet, holdFrameDialogCover, type SheetCover } from './ui'
+import { focusableIn, HELD, isTextField } from './popover'
+import { closeAllPopovers, openPopoverCount } from './popoverStore'
+import { coverPageUnderSheet, holdFrameDialogCover, uiStore, type SheetCover } from './ui'
 
 export {
   closeAllPopovers,
@@ -112,6 +120,116 @@ function subscribeFrameHost(listener: () => void): () => void {
 }
 
 /**
+ * The frame host's toast seat (v2 draft §9.33, as the lead ruled for W8-F16 – the desktop's
+ * and the tablet's twin of the phone's lift, #651): where a toast up while a dialog stands is
+ * drawn, above the dialog and its scrim, its Undo in reach. Published for the shells: the
+ * tablet seats its message layer's toast slot in it (`MessageLayer toastSeat`), the desktop
+ * its dialog-raised toasts (`FrameSeatToasts`).
+ */
+export interface FrameToastSeat {
+  /** The seat element, once the frame's host has mounted it; never on a phone (its own lift). */
+  element: HTMLElement | null
+  /** A dialog stands on the frame's host: its registry, or a panel on its way out. */
+  standing: boolean
+  /** The seat is lifted above the dialogs: one stands and the seat holds a card. */
+  lifted: boolean
+}
+
+const SEAT_DOWN: FrameToastSeat = { element: null, standing: false, lifted: false }
+let frameSeat: FrameToastSeat = SEAT_DOWN
+const frameSeatListeners = new Set<() => void>()
+
+function publishFrameSeat(next: FrameToastSeat): void {
+  const prev = frameSeat
+  if (
+    prev.element === next.element &&
+    prev.standing === next.standing &&
+    prev.lifted === next.lifted
+  )
+    return
+  frameSeat = next
+  for (const listener of Array.from(frameSeatListeners)) listener()
+}
+
+/** The frame host's toast seat as it stands. */
+export function frameToastSeat(): FrameToastSeat {
+  return frameSeat
+}
+
+export function subscribeFrameToastSeat(listener: () => void): () => void {
+  frameSeatListeners.add(listener)
+  return () => {
+    frameSeatListeners.delete(listener)
+  }
+}
+
+/** The frame host's toast seat, as a subscription. */
+export function useFrameToastSeat(): FrameToastSeat {
+  return useSyncExternalStore(subscribeFrameToastSeat, frameToastSeat, () => SEAT_DOWN)
+}
+
+/**
+ * The dialog on top in a host's slot: the last panel standing – not `inert` (a dialog under
+ * another), not hidden from assistive technology, not on its way out (`data-leaving`).
+ */
+function topPanelIn(slot: HTMLElement): HTMLElement | null {
+  for (let i = slot.children.length - 1; i >= 0; i--) {
+    const el = slot.children[i]
+    if (!(el instanceof HTMLElement)) continue
+    if (
+      el.hasAttribute('inert') ||
+      el.getAttribute('aria-hidden') === 'true' ||
+      el.hasAttribute('data-leaving')
+    )
+      continue
+    return el
+  }
+  return null
+}
+
+/**
+ * The lifted seat's stops in the Tab cycle: the controls of the cards that stand – a card on
+ * its way out (`data-leaving`) has left the cycle with the toast (§9.33: the stop leaves the
+ * cycle with the toast).
+ */
+function seatStops(seat: HTMLElement): HTMLElement[] {
+  return focusableIn(seat).filter((el) => el.closest('[data-leaving]') === null)
+}
+
+/**
+ * The Undo of the lifted seat's top live card – the newest card standing (the store's push
+ * order; a card on its way out has gone with its toast) – where that card's action is Undo
+ * (`ToastCard`'s `data-action="undo"`, §9.33's "when the action is Undo"): the control Ctrl+Z
+ * presses. Null where no card stands or the top one offers no Undo (a screenshot's preview, a
+ * toast with another action or none).
+ */
+function seatUndo(seat: HTMLElement): HTMLElement | null {
+  const cards = seat.querySelectorAll<HTMLElement>('.zen-message-toast:not([data-leaving])')
+  const top = cards[cards.length - 1]
+  if (!top || top.getAttribute('data-action') !== 'undo') return null
+  return top.querySelector<HTMLElement>('button.zen-message-button')
+}
+
+/**
+ * Ctrl+Z – Cmd+Z on a Mac – as the undo chord reads everywhere in the chrome (the bookmarks
+ * manager's): one of the two modifiers, never both, no Alt, and no Shift, which makes it redo.
+ */
+function isUndoChord(e: KeyboardEvent): boolean {
+  if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return false
+  return e.key.toLowerCase() === 'z'
+}
+
+/**
+ * The control the keyboard returns to as the toast goes (§9.22): the dialog's own element – the
+ * held container, `tabIndex -1`, from which Tab enters at its first control – or, for a panel
+ * that is no held container, its first control.
+ */
+function dialogReturn(top: HTMLElement): HTMLElement {
+  const held = top.matches(HELD) ? top : top.querySelector<HTMLElement>(HELD)
+  return held ?? focusableIn(top)[0] ?? top
+}
+
+/**
  * The window chrome roots: what goes inert while a frame dialog or a sheet is open (§9.5,
  * §9.22). On a mouse, the window surfaces (§9.29: the toolbar, the sidebar, the bookmarks bar);
  * on a phone, the shell's chrome under its sheets – the content column, the messages, the bar,
@@ -127,6 +245,12 @@ const NOT_CHROME = '.zen-frame-dialogs, .zen-chrome-layer'
 let inertHolds = 0
 const inertMarked = new Set<Element>()
 let inertObserver: MutationObserver | null = null
+/** Who hears the chrome hold begin and end (`subscribeChromeInert`). */
+const inertListeners = new Set<() => void>()
+
+function notifyChromeInert(): void {
+  for (const listener of Array.from(inertListeners)) listener()
+}
 
 function markWindowChromeInert(): void {
   for (const el of document.querySelectorAll(WINDOW_CHROME_ROOTS)) {
@@ -154,6 +278,7 @@ export function holdChromeInert(): () => void {
       inertObserver = new MutationObserver(markWindowChromeInert)
       inertObserver.observe(document.body, { childList: true, subtree: true })
     }
+    notifyChromeInert()
   }
   let released = false
   return () => {
@@ -164,12 +289,27 @@ export function holdChromeInert(): () => void {
     inertObserver = null
     for (const el of inertMarked) el.removeAttribute('inert')
     inertMarked.clear()
+    notifyChromeInert()
   }
 }
 
 /** Whether a hold on the window chrome is in force right now: a frame dialog is open. */
 export function chromeInertHeld(): boolean {
   return inertHolds > 0
+}
+
+/**
+ * Hear the chrome hold begin (the first hold taken) and end (the last released), for what
+ * stands outside the chrome roots and follows the hold on its own – the frame host's toast
+ * seat at its normal seat (`FrameDialogHost`): inside the host, so no hold marks it, it goes
+ * inert with the chrome while nothing lifts it, as the phone's toast frame does through the
+ * shell's `inert` (`PhoneMessages`).
+ */
+export function subscribeChromeInert(listener: () => void): () => void {
+  inertListeners.add(listener)
+  return () => {
+    inertListeners.delete(listener)
+  }
 }
 
 /**
@@ -840,6 +980,187 @@ function useSheetChassis(
 }
 
 /**
+ * The frame host's toast seat (v2 draft §9.33; the lead's picks for W8-F16): a frame of the
+ * host's own box, after the slot, that holds the toast's slot on the desktop and the tablet –
+ * the phone has its own lift (#651, `PhoneMessages`), and this seat is never rendered there.
+ * Inside the host both holds leave it alone: `holdChromeInert` marks nothing under
+ * `.zen-frame-dialogs`, and `holdFrameInert` covers the host's siblings, never the host. The
+ * lift is `messages/lift.ts`'s, the phone's rule word for word with the sheet read as the
+ * dialog stack: while a dialog stands on the host's registry – a panel on its way out counts,
+ * the host still holds the chrome for it – and the seat holds a card, the seat is lifted
+ * (`data-lifted`): z 2 in the host, over the slot's 1, so the card paints above the dialogs
+ * and the scrim, undimmed and in reach; the toast's element, motion and one `role="status"`
+ * announcement are untouched by a lift or a re-seat, since only the seat's attributes change.
+ * The card stands 8 inside the content frame's bottom edge (`.zen-message-toasts`, the layer's
+ * inset – the frame's own on the tablet), never inside the dialog box; over a hosted sheet
+ * with a footer band (`ownScrim`, the recede registry's `footer`) the seat's bottom stands on
+ * the band's top edge, as the phone's does, so the card is never over an actions row. When the
+ * dialog closes the seat drops its lift and the toast keeps its seat, its clock running on
+ * (the orphan case). At the normal seat it follows the chrome's hold as the phone's frame
+ * follows the shell's (`subscribeChromeInert`): inert under a capture overlay or a sheet on
+ * its own chassis, never while lifted.
+ *
+ * Keyboard (§9.22, as the lead ruled: the dialog and the toast are one modal moment): while
+ * lifted, the seat's controls are the last stop of the top dialog's Tab cycle – Tab at the
+ * dialog's last control goes to the Undo, Shift+Tab at its first (or from the held container
+ * itself) too, and from the Undo Tab goes to the dialog's first control, Shift+Tab to its last.
+ * A `keydown` listener on the window in the capture phase, placed at the host's mount so it
+ * runs before every dialog's own wrap (`wrapTab` on the dialog's root, `useConfirmKeyboard`'s
+ * listener, a hosted sheet's window listener placed later); it takes the key only at those
+ * ends, never while a popover is up (its own cycle) and never a key something else has taken.
+ * A card on its way out has left the cycle (`seatStops`). When the toast goes while its Undo
+ * has the focus – pressed, timed out – the focus returns to the dialog's own element
+ * (`dialogReturn`), from which Tab enters at its first control.
+ *
+ * And Ctrl+Z – Cmd+Z on a Mac – is the Undo's shortcut, in the same listener (§9.33: the
+ * shortcut stays the other way back; the lead's pick was both): while the seat is lifted and
+ * its top live card – the newest standing, the store's push order – offers an Undo (`seatUndo`:
+ * `ToastCard`'s `data-action="undo"`, the action labelled Undo), the plain chord (`isUndoChord`:
+ * no Shift, which is redo, no Alt, one modifier) presses that Undo, taken with `preventDefault`
+ * and `stopPropagation`, and the focus returns to the dialog's element as on the Enter path
+ * wherever it was not on a control of the dialog – the Undo's own (the return above), the body
+ * after a pointer's act; a dialog control that has it keeps it. Never while a text field has
+ * the focus – an input, a textarea, a contenteditable – whose own undo the chord is
+ * (`isTextField`); and nothing at all when the seat is not lifted or the top card offers no
+ * Undo: the key falls through as it did.
+ */
+function useToastSeat(
+  active: boolean,
+  slotRef: RefObject<HTMLDivElement | null>,
+  dialogs: FrameDialogEntry[],
+  standing: boolean
+): {
+  bindSeat: (el: HTMLDivElement | null) => void
+  lifted: boolean
+  foot: number
+  inert: boolean
+} {
+  const seatRef = useRef<HTMLDivElement | null>(null)
+  // The seat as state too, so the shells' subscription follows the element after the commit.
+  const [seat, setSeat] = useState<HTMLDivElement | null>(null)
+  const bindSeat = useCallback((el: HTMLDivElement | null): void => {
+    seatRef.current = el
+    setSeat(el)
+  }, [])
+  const toasts = uiStore.use((s) => s.toasts)
+  const shots = uiStore.use((s) => s.screenshotCards)
+  // The seat holds a card: a toast seated on the frame (`Toast.seat`, live or leaving) or a
+  // screenshot's preview – the cards the shells draw in it.
+  const held = active && (toasts.some((t) => t.seat === 'frame') || shots.length > 0)
+  const top = dialogs[dialogs.length - 1]
+  const footer = useSyncExternalStore(subscribeRecedeFooter, recedeFooter, () => 0)
+  const { lifted, foot } = toastSeat(held, active && standing, top?.ownScrim ? footer : 0)
+  const chromeHeld = useSyncExternalStore(subscribeChromeInert, chromeInertHeld, () => false)
+  const inert = active && !lifted && chromeHeld
+
+  useLayoutEffect(() => {
+    if (!active) return
+    publishFrameSeat({ element: seat, standing, lifted })
+  }, [active, seat, standing, lifted])
+  useLayoutEffect(() => {
+    if (!active) return
+    return () => publishFrameSeat(SEAT_DOWN)
+  }, [active])
+
+  // The Tab cycle's last stop, and Ctrl+Z as the Undo's shortcut.
+  useEffect(() => {
+    if (!active) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return
+      const seatEl = seatRef.current
+      const slot = slotRef.current
+      if (!seatEl || !slot || !seatEl.hasAttribute('data-lifted')) return
+      if (isUndoChord(e)) {
+        const focused = document.activeElement
+        if (focused && isTextField(focused)) return
+        const undoControl = seatUndo(seatEl)
+        if (!undoControl) return
+        e.preventDefault()
+        e.stopPropagation()
+        // The press is the button's own click: the same path as Enter on it (`pickToastAction`).
+        undoControl.click()
+        const topPanel = topPanelIn(slot)
+        if (topPanel && !topPanel.contains(document.activeElement))
+          dialogReturn(topPanel).focus({ preventScroll: true })
+        return
+      }
+      if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return
+      if (openPopoverCount() > 0) return
+      const stops = seatStops(seatEl)
+      if (stops.length === 0) return
+      const topPanel = topPanelIn(slot)
+      const current = document.activeElement
+      if (!topPanel || !(current instanceof HTMLElement)) return
+      const items = focusableIn(topPanel)
+      let next: HTMLElement | undefined
+      const at = stops.indexOf(current)
+      if (at !== -1) {
+        // From the toast: past its last control to the dialog's first; before its first to the
+        // dialog's last (the dialog's own element where it has no control).
+        if (!e.shiftKey && at === stops.length - 1) next = items[0] ?? dialogReturn(topPanel)
+        else if (e.shiftKey && at === 0) next = items.at(-1) ?? dialogReturn(topPanel)
+      } else if (topPanel.contains(current)) {
+        // From the dialog: a level that is a dialog of its own inside the panel (a confirmation
+        // level, `HELD`) wraps on its own; the panel's outermost container is the cycle's.
+        const level = current.closest<HTMLElement>(HELD)
+        const outermost = topPanel.matches(HELD) ? topPanel : topPanel.querySelector(HELD)
+        if (level && level !== outermost) return
+        const index = items.indexOf(current)
+        if (!e.shiftKey && (index === items.length - 1 || items.length === 0)) next = stops[0]
+        else if (e.shiftKey && index <= 0) next = stops.at(-1)
+      } else return
+      if (!next) return
+      e.preventDefault()
+      e.stopPropagation()
+      next.focus({ preventScroll: true })
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [active, slotRef])
+
+  // The seat's control the focus was last on, kept until the focus goes somewhere of its own
+  // (a `focusout` naming where it went, outside the seat). A control removed with its toast –
+  // pressed, timed out – leaves the focus on the body: Chromium blurs it as it goes with no
+  // `relatedTarget`, the very events a press on the scrim or the window losing focus give (and
+  // happy-dom, like Firefox, fires none), so that blur decides nothing; the control itself
+  // does, read when the cards change – gone or on its way out, the focus is returned.
+  const seatFocus = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!seat) return
+    const onIn = (e: FocusEvent): void => {
+      if (e.target instanceof HTMLElement) seatFocus.current = e.target
+    }
+    const onOut = (e: FocusEvent): void => {
+      if (e.relatedTarget instanceof Node && !seat.contains(e.relatedTarget))
+        seatFocus.current = null
+    }
+    seat.addEventListener('focusin', onIn)
+    seat.addEventListener('focusout', onOut)
+    return () => {
+      seat.removeEventListener('focusin', onIn)
+      seat.removeEventListener('focusout', onOut)
+    }
+  }, [seat])
+  useEffect(() => {
+    const seatEl = seatRef.current
+    const last = seatFocus.current
+    if (!active || !seatEl || !last) return
+    const standsIn = (el: Element): boolean =>
+      el.isConnected && seatEl.contains(el) && el.closest('[data-leaving]') === null
+    const now = document.activeElement
+    if (now instanceof HTMLElement && standsIn(now)) return
+    // The control still stands and the focus left it on its own: nothing to return.
+    if (standsIn(last)) return
+    seatFocus.current = null
+    const slot = slotRef.current
+    const topPanel = slot && topPanelIn(slot)
+    if (topPanel) dialogReturn(topPanel).focus({ preventScroll: true })
+  }, [active, toasts, shots, slotRef])
+
+  return { bindSeat, lifted, foot, inert }
+}
+
+/**
  * The layer modal dialogs render into: `absolute; inset: 0` over the box it is placed in (the
  * content frame on desktop, the whole shell on phones, where dialogs are sheets), its own
  * stacking context, taking the pointer only while a dialog is open. It draws the §9.5 scrim
@@ -900,7 +1221,19 @@ function useSheetChassis(
  * its chassis stays down for it (the sheet is the chassis; two would recede the page twice),
  * and it keeps no panel for it: the sheet's motion is its own way out. `frame` marks the
  * frame's host (TabDialogs'): `FrameDialogPortal` reaches it from anywhere in the tree, for a
- * dialog whose state lives inside the content frame.
+ * dialog whose state lives inside the content frame, and the frame's host alone carries the
+ * toast seat (`useToastSeat`, §9.33) and tells the store its count (`frameDialogsOpen`).
+ *
+ * The toast seat (§9.33; the lead's picks for W8-F16): on a mouse and on a tablet the frame's
+ * host renders one more frame after the slot, `.zen-frame-toast-seat`, where the shells seat
+ * the toast's slot (`useFrameToastSeat`: the tablet's `MessageLayer toastSeat`, the desktop's
+ * `FrameSeatToasts`). Inside the host it is outside both holds – `holdChromeInert` marks
+ * nothing under `.zen-frame-dialogs`, `holdFrameInert` covers the host's siblings – and while
+ * a dialog stands and the seat holds a card it is lifted over the slot (`data-lifted`: z 2 over
+ * the slot's 1), so a toast a dialog's act raised stands above the dialog and its scrim,
+ * undimmed, its Undo in reach by pointer and as the last stop of the dialog's Tab cycle; when
+ * the dialog closes the seat drops its lift and the toast keeps its element and its clock. The
+ * phone has its own lift (`PhoneMessages`, #651) and no seat here.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -1011,6 +1344,30 @@ export function FrameDialogHost({
     if (count > seen.current) closeAllPopovers('all')
     seen.current = count
   }, [count])
+  // The frame's host tells the store how many dialogs stand on it (`frameDialogsOpen`): a toast
+  // raised while one does is seated on the frame (`Toast.seat`, §9.33) for the seat below to
+  // draw above the dialog. The registry's count, not the way out: a toast raised once the last
+  // dialog has closed (one raised after the last dialog closed) is the column's.
+  useLayoutEffect(() => {
+    if (!frame) return
+    uiStore.set({ frameDialogsOpen: count })
+  }, [frame, count])
+  useLayoutEffect(() => {
+    if (!frame) return
+    return () => uiStore.set({ frameDialogsOpen: 0 })
+  }, [frame])
+  // The toast seat (§9.33, `useToastSeat`): the frame's host on a mouse or a tablet, never on a
+  // phone (its own lift, `PhoneMessages`) and never a nested host (one host's seat per frame).
+  // Lifted while a dialog stands – a panel on its way out included, the host holds the chrome
+  // for it – and the seat holds a card.
+  const standing = count > 0 || leaving.exiting
+  const seatActive = frame && !sheet
+  const {
+    bindSeat,
+    lifted: seatLifted,
+    foot: seatFoot,
+    inert: seatInert
+  } = useToastSeat(seatActive, slotRef, dialogs, standing)
   const showScrim = top !== undefined && !top.ownScrim
   // On a mouse the scrim leaves with the panels when it was up as the way out began; one that a
   // sheet's own scrim had already replaced on top is not brought back to fade. `scrimUp` is
@@ -1043,6 +1400,23 @@ export function FrameDialogHost({
         <div ref={setSlot} className="zen-frame-dialogs-slot">
           {children}
         </div>
+        {/* The toast seat (§9.33): the frame's box after the slot, where the shells seat the
+            toast's slot – lifted over the slot (`data-lifted`, main.css) while a dialog stands
+            and it holds a card; inert with the chrome at the normal seat under another hold.
+            Over a hosted sheet's footer band its bottom stands on the band (`--zen-sheet-footer`). */}
+        {seatActive && (
+          <div
+            ref={bindSeat}
+            className="zen-frame-toast-seat"
+            data-lifted={seatLifted || undefined}
+            inert={seatInert || undefined}
+            style={
+              seatLifted && seatFoot > 0
+                ? ({ '--zen-sheet-footer': `${seatFoot}px` } as CSSProperties)
+                : undefined
+            }
+          />
+        )}
       </div>
     </FrameDialogHostContext.Provider>
   )

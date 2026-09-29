@@ -71,6 +71,16 @@ const CLIENT_VERSION = '1'
 /** A tool call that has not answered by then failed the session (the server has no such limit). */
 const CALL_TIMEOUT_MS = 90_000
 
+/**
+ * A background snapshot may run a beat before the staged off-screen view lays out (MCP-C, #568):
+ * the viewport reads 0×0 and the page's heading is not there yet, so an immediate snapshot fails
+ * the hard check (`background-snapshot ×1 (viewport 0×0, headings [], N refs)`, run 36371842431).
+ * A real agent would snapshot again; the soak settles the same way – re-snapshot until the page has
+ * laid out, bounded, and judge the settled snapshot. Not a per-agent limit: the server's snapshot
+ * is instant; this waits on the layout the stage gives a hidden view.
+ */
+export const SNAPSHOT_SETTLE = Object.freeze({ attempts: 8, ms: 250 })
+
 // ---------------------------------------------------------------------------------------------
 // Arguments
 // ---------------------------------------------------------------------------------------------
@@ -241,6 +251,20 @@ export function parseSnapshot(text) {
 }
 
 /**
+ * Whether a background snapshot has laid out enough to check (`SNAPSHOT_SETTLE`): a non-zero
+ * viewport and the fixture's heading (a custom fixture: any heading). The same predicate the hard
+ * `background-snapshot` check applies, so the settle loop stops exactly when the check would pass –
+ * a page that never lays out still fails at the bound, as a genuinely blank hidden view should.
+ */
+export function snapshotLaidOut(snap, fixture) {
+  const viewportOk = Boolean(snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0)
+  const heading = fixture.custom
+    ? snap.headings.length > 0
+    : snap.headings.some((h) => h.startsWith(FIXTURE.heading))
+  return viewportOk && heading
+}
+
+/**
  * The groups a `zen_groups list` names, from their header lines
  * (`Group "name" (folder_x) [flags] in space "…" – N tabs:`): id, name, tab count, and what the
  * flags say – `home`, `yours`, `orphaned` (with `was`, the former owner), `owner` (a live
@@ -306,19 +330,57 @@ export function randomSessionId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** `<userDataDir>/zen/agent.json` as the shim reads it: `{ url, token, running }`, or null. */
+/**
+ * `<userDataDir>/zen/agent.json` as the shim reads it – `{ url, token, running }` – plus `error`
+ * when the document carries a well-formed one: why the last start failed, which the app writes
+ * beside `running: false` since #690 (`EndpointError` in src/core/agent/service.ts: `code` the
+ * host's or null, `message`, and the `address` and `port` the bind was asked for). A malformed
+ * `error` reads as absent and never fails the read; the bound document reads as it always did.
+ * Null without a readable document or a token.
+ */
 export function readEndpoint(userDataDir) {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(userDataDir, 'zen', 'agent.json'), 'utf8'))
     if (!raw || typeof raw.token !== 'string') return null
-    return {
+    const endpoint = {
       url: typeof raw.url === 'string' ? raw.url : null,
       token: raw.token,
       running: raw.running === true
     }
+    const error = endpointErrorOf(raw.error)
+    if (error) endpoint.error = error
+    return endpoint
   } catch {
     return null
   }
+}
+
+/**
+ * The `error` field of `agent.json` when it has the shape the app writes (every key present:
+ * `code` a string or null, `message` and `address` strings, `port` a whole number), copied to
+ * exactly those four keys; null for anything else – a missing field, a wrong type, not an object.
+ */
+export function endpointErrorOf(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const { code, message, address, port } = raw
+  if (code !== null && typeof code !== 'string') return null
+  if (typeof message !== 'string' || typeof address !== 'string') return null
+  if (typeof port !== 'number' || !Number.isInteger(port)) return null
+  return { code, message, address, port }
+}
+
+/** `host:port`, the host bracketed when it is an IPv6 address – as the app's own log line has it. */
+export function hostPort(host, port) {
+  return `${host.includes(':') ? `[${host}]` : host}:${port}`
+}
+
+/**
+ * A bind failure in the words of the app's log line (`[zen mcp] the server could not bind
+ * <address>:<port>[ (<code>)]: <message>`, without the prefix): `127.0.0.1:41735 (EADDRINUSE):
+ * Port 41735 is already in use – …`; no parenthesis where the host named no code (the phone's).
+ */
+export function bindReason(error) {
+  return `${hostPort(error.address, error.port)}${error.code ? ` (${error.code})` : ''}: ${error.message}`
 }
 
 /** Whether something answers MCP at `url` (an OPTIONS is 204 there; anything HTTP will do). */
@@ -331,19 +393,79 @@ export async function answers(url) {
   }
 }
 
-/** The endpoint once agent.json says `running: true` and the URL answers; throws at the deadline. */
-export async function waitForEndpoint(userDataDir, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
+/**
+ * The phase a wait for the endpoint stands in, from what `agent.json` says and whether the URL
+ * answered – so a `server-up` that never comes says WHICH of the four it was stuck on, not just
+ * "timed out" (runs 36451930938 / 36274678598 stalled at `not-running`: the app's server never
+ * bound its port and nothing said so).
+ */
+export function endpointPhase(endpoint, answered) {
+  if (!endpoint) return 'absent'
+  if (!endpoint.running) return 'not-running'
+  if (!endpoint.url) return 'url-missing'
+  return answered ? 'answered' : 'url-silent'
+}
+
+/**
+ * What each phase means, in words, for the wait's log lines and its final error – the words
+ * with no reason to give; {@link endpointPhaseSaid} adds the one `agent.json` names.
+ */
+export const ENDPOINT_PHASE_SAID = Object.freeze({
+  absent: 'agent.json is absent or unreadable (no server file written yet)',
+  'not-running':
+    'agent.json says the server is not running – it never started (Settings → AI Agents off, or the port was taken before the app bound it)',
+  'url-missing': 'agent.json says running but names no url',
+  'url-silent': 'agent.json says running, but the url did not answer an OPTIONS yet',
+  answered: 'agent.json says running and the url answered'
+})
+
+/**
+ * A phase in words, with the reason where `agent.json` gives one: in `not-running`, the bind
+ * failure the document carries (#690) stands in for the two guesses – `agent.json says the server
+ * is not running – the bind failed: 127.0.0.1:41735 (EADDRINUSE): Port 41735 is already in use –
+ * …`. Without an `error`, and in every other phase, {@link ENDPOINT_PHASE_SAID}'s words.
+ */
+export function endpointPhaseSaid(phase, endpoint) {
+  if (phase === 'not-running' && endpoint?.error)
+    return `agent.json says the server is not running – the bind failed: ${bindReason(endpoint.error)}`
+  return ENDPOINT_PHASE_SAID[phase]
+}
+
+/**
+ * The endpoint once `agent.json` says `running: true` and the URL answers; throws at the deadline.
+ * `log` (optional) is called whenever what there is to say changes – the phase, or the reason
+ * `agent.json` gives in `not-running` – so a wait that stalls leaves a trail of which phase it
+ * reached and when, and why, without a line per poll; `now`, `probe`, `pollMs` and `sleep` are
+ * injectable for the unit tests.
+ */
+export async function waitForEndpoint(userDataDir, timeoutMs, opts = {}) {
+  const {
+    log = () => undefined,
+    now = Date.now,
+    probe = answers,
+    pollMs = 250,
+    sleep = delay
+  } = opts
+  const started = now()
+  const deadline = started + timeoutMs
+  let lastSaid = null
   for (;;) {
     const e = readEndpoint(userDataDir)
-    if (e?.running && e.url && (await answers(e.url))) return { url: e.url, token: e.token }
-    if (Date.now() >= deadline)
+    const answered = Boolean(e?.running && e.url) && (await probe(e.url))
+    const phase = endpointPhase(e, answered)
+    const said = endpointPhaseSaid(phase, e)
+    if (said !== lastSaid) {
+      log(`server-up: ${said} (after ${now() - started} ms)`)
+      lastSaid = said
+    }
+    if (phase === 'answered') return { url: e.url, token: e.token }
+    if (now() >= deadline)
       throw new Error(
-        `no MCP server answered within ${timeoutMs} ms (${path.join(userDataDir, 'zen', 'agent.json')}: ${
+        `no MCP server answered within ${timeoutMs} ms: ${said} (${path.join(userDataDir, 'zen', 'agent.json')}: ${
           e ? `running ${e.running}, url ${e.url}` : 'absent or unreadable'
-        }) – is Zenium running with Settings → AI Agents on?`
+        })`
       )
-    await delay(250)
+    await sleep(pollMs)
   }
 }
 
@@ -1070,20 +1192,35 @@ export async function soakSession(client, ctx, { index, leg }) {
 
     if (tabId) {
       at = 'background-snapshot'
-      r = await call('browser_snapshot', { tabId })
-      const snap = parseSnapshot(r.text)
+      // The staged off-screen view (MCP-C, #568) lays out a beat after the tab opens; a snapshot
+      // taken at once can read a 0×0 viewport with no heading yet. Re-snapshot until it has laid
+      // out, bounded (`SNAPSHOT_SETTLE`) – the check then judges the settled page, not the race.
+      const settle = ctx.snapshotSettle ?? SNAPSHOT_SETTLE
+      let snap = null
+      let tries = 0
+      for (;;) {
+        r = await call('browser_snapshot', { tabId })
+        tries++
+        snap = parseSnapshot(r.text)
+        if (r.isError || snapshotLaidOut(snap, fixture) || tries >= settle.attempts) break
+        await delay(settle.ms)
+      }
       const heading = fixture.custom
         ? snap.headings.length > 0
         : snap.headings.some((h) => h.startsWith(FIXTURE.heading))
       const viewportOk = Boolean(
         snap.viewport && snap.viewport.width > 0 && snap.viewport.height > 0
       )
+      if (tries > 1)
+        ctx.log(
+          `${label}: background snapshot ${viewportOk && heading ? `laid out after ${tries} tries` : `never laid out in ${tries} tries`}`
+        )
       verdict.hard(
         at,
         !r.isError && viewportOk && heading,
         r.isError
           ? `error: ${r.text}`
-          : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs`
+          : `viewport ${snap.viewport ? `${snap.viewport.width}×${snap.viewport.height}` : 'missing'}, headings ${JSON.stringify(snap.headings)}, ${snap.nodes.length} refs after ${tries} tr${tries === 1 ? 'y' : 'ies'}`
       )
 
       at = 'background-screenshot'
@@ -1579,7 +1716,7 @@ export async function main(argv) {
         return 2
       }
       browser.launch()
-      endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
+      endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
     }
   }
   secrets.push(endpoint.token)
@@ -1634,7 +1771,7 @@ export async function main(argv) {
       diagnostics = await readDiagnostics(ctx)
       await browser.quit()
       browser.launch()
-      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000)
+      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
       log(`server back at ${endpoint.url}`)
       await restartVerify(ctx, carry)
       await tidy(ctx)

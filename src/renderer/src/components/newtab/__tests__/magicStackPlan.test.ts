@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type {
-  BookmarkNode,
-  ClosedEntrySummary,
-  DefaultBrowserStatus,
-  DownloadItem
-} from '@shared/types'
+import type { BookmarkNode, ClosedEntrySummary, DownloadItem } from '@shared/types'
+import type { EducationalTipInputs } from '@shared/educationalTips'
 import type { SafetyHubInputs } from '@shared/safetyHubCard'
 import {
   BOOKMARKS_CARD_LIMIT,
@@ -82,8 +78,6 @@ const ROOTS: BookmarkNode[] = [
   }
 ]
 
-const NOT_DEFAULT: DefaultBrowserStatus = { isDefault: false, prompt: null }
-
 /** A profile with nothing for the Safety check to say. */
 const SAFE: SafetyHubInputs = {
   revokedOrigins: [],
@@ -91,14 +85,23 @@ const SAFE: SafetyHubInputs = {
   compromisedPasswords: 0
 }
 
+/** A phone every tip card has a word for: the default page, not the default browser, no group over many tabs. */
+const TIPPABLE: EducationalTipInputs = {
+  customizedBackground: false,
+  canRequestDefault: true,
+  isDefault: false,
+  defaultBrowserPromptUp: false,
+  groups: 0,
+  tabs: 12
+}
+
 function sources(over: Partial<MagicStackSources> = {}): MagicStackSources {
   return {
     recentlyClosed: [],
     downloads: [],
     bookmarks: [],
-    defaultBrowser: { isDefault: true, prompt: null },
-    canRequestDefault: true,
     safetyHub: { type: null, inputs: SAFE },
+    tips: { card: null, inputs: TIPPABLE },
     ...over
   }
 }
@@ -108,14 +111,14 @@ describe('planMagicStack', () => {
     expect(planMagicStack(sources(), [])).toEqual([])
   })
 
-  it('keeps the stack order: continue, downloads, bookmarks, the Safety check, then the promo', () => {
+  it('keeps the stack order: continue, downloads, bookmarks, the Safety check, then the tip', () => {
     const cards = planMagicStack(
       sources({
         recentlyClosed: [closed()],
         downloads: [download()],
         bookmarks: [...ROOTS, bookmark('a', 5)],
-        defaultBrowser: NOT_DEFAULT,
-        safetyHub: { type: 'safe-browsing', inputs: { ...SAFE, safeBrowsingEnabled: false } }
+        safetyHub: { type: 'safe-browsing', inputs: { ...SAFE, safeBrowsingEnabled: false } },
+        tips: { card: 'default-browser', inputs: TIPPABLE }
       }),
       []
     )
@@ -124,7 +127,7 @@ describe('planMagicStack', () => {
       'downloads',
       'bookmarks',
       'safety-hub',
-      'default-browser'
+      'tips'
     ])
   })
 
@@ -133,20 +136,18 @@ describe('planMagicStack', () => {
       recentlyClosed: [closed()],
       downloads: [download()],
       bookmarks: [...ROOTS, bookmark('a', 5)],
-      defaultBrowser: NOT_DEFAULT
+      tips: { card: 'ntp-theme', inputs: TIPPABLE }
     })
     expect(planMagicStack(all, ['downloads']).map((c) => c.id)).toEqual([
       'continue',
       'bookmarks',
-      'default-browser'
+      'tips'
     ])
     expect(planMagicStack({ ...all, downloads: [] }, ['continue']).map((c) => c.id)).toEqual([
       'bookmarks',
-      'default-browser'
+      'tips'
     ])
-    expect(planMagicStack(all, ['continue', 'downloads', 'bookmarks', 'default-browser'])).toEqual(
-      []
-    )
+    expect(planMagicStack(all, ['continue', 'downloads', 'bookmarks', 'tips'])).toEqual([])
   })
 })
 
@@ -213,29 +214,33 @@ describe('buildCard', () => {
     expect(buildCard('bookmarks', sources())).toBeNull()
   })
 
-  it('the default-browser reminder shows while Zenium is known not to be the default and nothing else asks', () => {
-    expect(buildCard('default-browser', sources({ defaultBrowser: NOT_DEFAULT }))).toEqual({
-      id: 'default-browser'
-    })
-    // Already the default, or the host cannot tell yet.
-    expect(buildCard('default-browser', sources())).toBeNull()
-    expect(
-      buildCard('default-browser', sources({ defaultBrowser: { isDefault: null, prompt: null } }))
-    ).toBeNull()
-    // The first-run banner or sheet is up: one ask at a time.
+  it('the tip card shows the card the machine picked for as long as its live signals hold', () => {
+    const tips = (
+      card: MagicStackSources['tips']['card'],
+      over: Partial<EducationalTipInputs> = {}
+    ): MagicStackSources => sources({ tips: { card, inputs: { ...TIPPABLE, ...over } } })
+    for (const card of ['ntp-theme', 'default-browser', 'tab-groups', 'quick-delete'] as const)
+      expect(buildCard('tips', tips(card))).toEqual({ id: 'tips', card })
+    // No pick: nothing, whatever the signals say (the machine decides when a tip is due).
+    expect(buildCard('tips', tips(null))).toBeNull()
+    // A signal cleared under the picked card: the card leaves (Chrome's signal handler).
+    expect(buildCard('tips', tips('ntp-theme', { customizedBackground: true }))).toBeNull()
+    // Already the default, or the host cannot tell yet, or the first-run banner or sheet is up
+    // (one ask at a time), or the host cannot ask at all (the desktop).
+    expect(buildCard('tips', tips('default-browser', { isDefault: true }))).toBeNull()
+    expect(buildCard('tips', tips('default-browser', { isDefault: null }))).toBeNull()
+    expect(buildCard('tips', tips('default-browser', { defaultBrowserPromptUp: true }))).toBeNull()
+    expect(buildCard('tips', tips('default-browser', { canRequestDefault: false }))).toBeNull()
+    // A group made, or the tabs down to ten.
+    expect(buildCard('tips', tips('tab-groups', { groups: 1 }))).toBeNull()
+    expect(buildCard('tips', tips('tab-groups', { tabs: 10 }))).toBeNull()
+    // The Quick Delete card has no live signal: it holds while picked.
     expect(
       buildCard(
-        'default-browser',
-        sources({ defaultBrowser: { isDefault: false, prompt: 'banner' } })
+        'tips',
+        tips('quick-delete', { customizedBackground: true, isDefault: true, groups: 3, tabs: 1 })
       )
-    ).toBeNull()
-    // A host that cannot ask (the desktop) has no module.
-    expect(
-      buildCard(
-        'default-browser',
-        sources({ defaultBrowser: NOT_DEFAULT, canRequestDefault: false })
-      )
-    ).toBeNull()
+    ).toEqual({ id: 'tips', card: 'quick-delete' })
   })
 
   it('the Safety check card shows the type the machine picked for as long as its trigger holds', () => {
@@ -286,29 +291,28 @@ describe('the modules', () => {
       'downloads',
       'bookmarks',
       'safety-hub',
-      'default-browser'
+      'tips'
     ])
     for (const m of MAGIC_STACK_MODULES) {
-      expect(m.title).toMatch(/^[A-Z][^A-Z]*$/)
+      // Sentence case (§9.1): one capital, the product's name aside.
+      expect(m.title).toMatch(/^[A-Z]/)
+      expect(m.title.slice(1).replace(/Zenium/g, 'zenium')).not.toMatch(/[A-Z]/)
       expect(m.description.length).toBeGreaterThan(0)
       expect(magicStackModule(m.id)).toBe(m)
     }
   })
 
-  it('lists the default-browser module only where the host can ask', () => {
-    expect(availableModules({ canRequestDefault: true }).map((m) => m.id)).toEqual([
+  it('lists every module on every host – the tip card has cards that need nothing of the host – as a copy', () => {
+    const listed = availableModules()
+    expect(listed.map((m) => m.id)).toEqual([
       'continue',
       'downloads',
       'bookmarks',
       'safety-hub',
-      'default-browser'
+      'tips'
     ])
-    expect(availableModules({ canRequestDefault: false }).map((m) => m.id)).toEqual([
-      'continue',
-      'downloads',
-      'bookmarks',
-      'safety-hub'
-    ])
+    expect(listed).toEqual(MAGIC_STACK_MODULES)
+    expect(listed).not.toBe(MAGIC_STACK_MODULES)
   })
 })
 

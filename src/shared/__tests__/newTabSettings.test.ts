@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { NewTabDeviceState, NewTabSettings } from '../types'
 import { DEFAULT_SETTINGS } from '../defaults'
+import { emptyEducationalTipMemory, type EducationalTipMemory } from '../educationalTips'
 import { emptySafetyHubCardMemory } from '../safetyHubCard'
 import {
   DEFAULT_NEW_TAB_MODULES,
@@ -15,6 +16,7 @@ import {
   newTabPresetChoices,
   newTabSections,
   newTabShortcutsMode,
+  noteBrowsingDataCleared,
   pickNewTabPreset,
   pinShortcut,
   presetAvailable,
@@ -24,6 +26,7 @@ import {
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
   sanitizeNewTabShortcuts,
+  setEducationalTipMemory,
   setModuleHidden,
   setNewTabBackground,
   setSafetyHubCardMemories,
@@ -44,6 +47,9 @@ const device = (patch: Partial<NewTabDeviceState> = {}): NewTabDeviceState => ({
   ...emptyNewTabDevice(),
   ...patch
 })
+
+/** No tip shown, the browsing data never cleared: `emptyEducationalTipMemory()` as a literal. */
+const NO_TIPS: EducationalTipMemory = { cards: {}, shownAt: null, browsingDataClearedAt: null }
 
 /** Ids the migration mints, predictable for the fixtures. */
 const ids = (): (() => string) => {
@@ -319,16 +325,20 @@ describe('device-local sets', () => {
       shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }],
       hiddenHosts: ['b.example'],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: NO_TIPS
     })
   })
 
-  it('sanitises the hidden Magic Stack modules to known ids in stack order, once each', () => {
+  it('sanitises the hidden Magic Stack modules to known ids in stack order, once each; the retired default-browser module reads as the tip card', () => {
     expect(sanitizeHiddenModules(['bookmarks', 'continue', 'bookmarks', 'price', 7, null])).toEqual(
       ['continue', 'bookmarks']
     )
     expect(sanitizeHiddenModules(undefined)).toEqual([])
     expect(sanitizeHiddenModules('continue')).toEqual([])
+    // A device that hid the default-browser reminder before it became one of the tip card's
+    // cards keeps the module hidden: the id maps to the tip card's, once.
+    expect(sanitizeHiddenModules(['default-browser', 'tips', 'default-browser'])).toEqual(['tips'])
     expect(
       sanitizeNewTabDevice({
         shortcuts: [],
@@ -338,8 +348,9 @@ describe('device-local sets', () => {
     ).toEqual({
       shortcuts: [],
       hiddenHosts: [],
-      hiddenModules: ['default-browser'],
-      safetyHubCard: {}
+      hiddenModules: ['tips'],
+      safetyHubCard: {},
+      educationalTips: NO_TIPS
     })
   })
 
@@ -374,6 +385,55 @@ describe('device-local sets', () => {
     expect(setSafetyHubCardMemories(pinned, { passwords: shown }).shortcuts).toEqual(
       pinned.shortcuts
     )
+  })
+
+  it('replaces the tip card’s memory whole, sanitised; the same record changes nothing', () => {
+    const seen = { impressions: 1, shownAt: 5, interacted: false }
+    const memory: EducationalTipMemory = {
+      cards: { 'ntp-theme': seen },
+      shownAt: 5,
+      browsingDataClearedAt: null
+    }
+    const d = setEducationalTipMemory(device(), memory)
+    expect(d.educationalTips).toEqual(memory)
+    expect(setEducationalTipMemory(d, { ...memory, cards: { 'ntp-theme': { ...seen } } })).toBe(d)
+    // A record from anywhere else is read as one from disk: unknown cards dropped, fields coerced.
+    const next = setEducationalTipMemory(d, {
+      cards: {
+        'quick-delete': { impressions: -3, shownAt: 9, interacted: true },
+        ...({ 'history-sync': seen } as object)
+      },
+      shownAt: 9,
+      browsingDataClearedAt: 2
+    })
+    expect(next.educationalTips).toEqual({
+      cards: { 'quick-delete': { impressions: 0, shownAt: 9, interacted: true } },
+      shownAt: 9,
+      browsingDataClearedAt: 2
+    })
+    expect(setEducationalTipMemory(next, emptyEducationalTipMemory())).toEqual(device())
+    // The document's other fields are left as they were.
+    const pinned = device({ shortcuts: [{ id: 'a', url: 'https://a.example/', title: 'A' }] })
+    expect(setEducationalTipMemory(pinned, memory).shortcuts).toEqual(pinned.shortcuts)
+  })
+
+  it('stamps a clearing of the browsing data on the tip card’s memory; an earlier or equal stamp changes nothing', () => {
+    const d = noteBrowsingDataCleared(device(), 50)
+    expect(d.educationalTips).toEqual({ ...NO_TIPS, browsingDataClearedAt: 50 })
+    expect(noteBrowsingDataCleared(d, 40)).toBe(d)
+    expect(noteBrowsingDataCleared(d, 50)).toBe(d)
+    expect(noteBrowsingDataCleared(d, 60).educationalTips.browsingDataClearedAt).toBe(60)
+    // The cards' records are kept.
+    const seen = setEducationalTipMemory(device(), {
+      cards: { 'tab-groups': { impressions: 1, shownAt: 5, interacted: false } },
+      shownAt: 5,
+      browsingDataClearedAt: null
+    })
+    expect(noteBrowsingDataCleared(seen, 7).educationalTips).toEqual({
+      cards: { 'tab-groups': { impressions: 1, shownAt: 5, interacted: false } },
+      shownAt: 5,
+      browsingDataClearedAt: 7
+    })
   })
 
   it('siteHost lower-cases and drops www.', () => {
@@ -583,23 +643,26 @@ describe('migrateNewTabDevice', () => {
       hiddenHosts: ['a.example']
     }
     // A v5 document from before the Magic Stack has no hidden modules: none are hidden; one
-    // from before the Safety check card has no card memory: nothing has been shown.
+    // from before the Safety check card has no card memory: nothing has been shown; one from
+    // before the tip card has no tip memory: no tip has been shown either.
     expect(migrateNewTabDevice({ newTabDevice: v5 })).toEqual({
       ...v5,
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: NO_TIPS
     })
     expect(migrateNewTabDevice({ newTabDevice: { ...v5, hiddenModules: ['continue'] } })).toEqual({
       ...v5,
       hiddenModules: ['continue'],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: NO_TIPS
     })
     expect(
       migrateNewTabDevice({
         newTabShortcuts: v5.shortcuts,
         newTabHiddenHosts: ['WWW.A.example', 'a.example']
       })
-    ).toEqual({ ...v5, hiddenModules: [], safetyHubCard: {} })
+    ).toEqual({ ...v5, hiddenModules: [], safetyHubCard: {}, educationalTips: NO_TIPS })
     expect(migrateNewTabDevice({})).toEqual(emptyNewTabDevice())
   })
 

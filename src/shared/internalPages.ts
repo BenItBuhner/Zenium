@@ -58,6 +58,7 @@ export type InternalPageId =
   | 'tasks'
   | 'version'
   | 'game'
+  | 'management'
 
 /**
  * How a page's tab holds its page.
@@ -79,8 +80,9 @@ export type InternalPageRender = 'chrome' | 'document'
  * The glyph a page tab shows in its favicon slot – the pill, the sidebar row, the tab strip, the
  * overview card – named for the renderer to draw (Lucide's `settings`, `history`, `star`,
  * `download`, `scale` for the Licences page, `sparkles` for What's new, `file-text` for the
- * legal pages, `activity` for the task manager; `roll` is Roll's own picture, `shared/game/
- * mark.ts`, not a Lucide glyph); a page tab never fetches a favicon.
+ * legal pages, `activity` for the task manager, `building-2` for the Management page – Chrome's
+ * `ic_domain`; `roll` is Roll's own picture, `shared/game/mark.ts`, not a Lucide glyph); a page
+ * tab never fetches a favicon.
  */
 export type InternalPageGlyph =
   | 'settings'
@@ -92,6 +94,7 @@ export type InternalPageGlyph =
   | 'file-text'
   | 'activity'
   | 'book-open'
+  | 'building-2'
   | 'roll'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
@@ -348,10 +351,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Boosts',
     keywords: ['site', 'tint', 'font', 'zap', 'dark mode']
   },
+  // A Mod styles the browser chrome (`ModStyles`), which the desktop and tablet shells mount and
+  // the phone shell never has: a phone lists no Mods page – a page whose switches applied nothing
+  // would only describe its own absence, the rule #628's transport row and #632's Print row
+  // follow. The `mod` records keep syncing beneath it and style the desktop and tablet windows.
   {
     id: 'mods',
     label: 'Mods',
-    keywords: ['css', 'userchrome', 'style']
+    keywords: ['css', 'userchrome', 'style'],
+    layouts: ['desktop', 'tablet']
   },
   {
     id: 'extensions',
@@ -641,6 +649,23 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     render: 'chrome',
     singleton: true,
     glyph: 'file-text',
+    pill: { showStar: false },
+    splittable: false,
+    sections: []
+  },
+  /**
+   * Management (`zen://management`, TB-13; Chrome's chrome://management): who manages the browser
+   * and what the managed configuration names (`shared/managed.ts`), from the app menu's "Managed
+   * Browser" row, which a host shows while its app-restrictions bundle is non-empty. A chrome
+   * page tab on every layout with page tabs, one scroll, no sections, no star – Chrome's page
+   * is a notice, not a site.
+   */
+  management: {
+    id: 'management',
+    title: 'Management',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'building-2',
     pill: { showStar: false },
     splittable: false,
     sections: []

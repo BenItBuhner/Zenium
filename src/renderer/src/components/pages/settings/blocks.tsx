@@ -354,21 +354,29 @@ export function CodeBlock({ label, value }: { label: string; value: string }): J
 /** A mod's CSS, edited in place; saved when the field loses focus. */
 export function CssEditor({
   value,
-  onCommit
+  onCommit,
+  hint
 }: {
   value: string
   onCommit: (css: string) => void
+  /** A §9.12 hint line under the field – a fact about what the sheet can carry. */
+  hint?: string
 }): JSX.Element {
   const [css, setCss] = useState(value)
   return (
-    <textarea
-      value={css}
-      spellCheck={false}
-      aria-label="CSS"
-      className="zen-settings-textarea zen-v2-field"
-      onChange={(e) => setCss(e.target.value)}
-      onBlur={() => css !== value && onCommit(css)}
-    />
+    <>
+      <textarea
+        value={css}
+        spellCheck={false}
+        aria-label="CSS"
+        className="zen-settings-textarea zen-v2-field"
+        onChange={(e) => setCss(e.target.value)}
+        onBlur={() => css !== value && onCommit(css)}
+      />
+      {hint && (
+        <span className="zen-settings-description zen-settings-description-full">{hint}</span>
+      )}
+    </>
   )
 }
 
@@ -560,17 +568,51 @@ export function NewContainerForm({
 }
 
 /**
+ * A row's §9.2 description line: 13 at 69% under the label, two lines then an end ellipsis –
+ * or, for a path or an address (`address`; `RowBase.address`, `RowOption.address`), ONE line
+ * that never wraps, shortened from its START so the end stays readable. The second form is
+ * CSS alone (`.zen-settings-description-address`, main.css): the span becomes a right-to-left
+ * block – whose end edge, where `text-overflow` draws its ellipsis, is the left – holding the
+ * value in a left-to-right isolate (`<bdi dir="ltr">`) that lays the characters out in their
+ * own order, so a leading "/" and a trailing ")" keep their places (the one-element trick sends
+ * them across the line, since the bidi algorithm gives a neutral at a paragraph's edge the
+ * paragraph's direction). Nothing is measured and the text is whole in the DOM: the ellipsis is
+ * the renderer's, as §9.2's own is. Every renderer of a row's or an option's description draws
+ * it through here, so the two forms are one element's on every host.
+ */
+export function Description({
+  text,
+  address,
+  id
+}: {
+  text: string
+  address?: boolean
+  id?: string
+}): JSX.Element {
+  return (
+    <span
+      id={id}
+      className={cn('zen-settings-description', address && 'zen-settings-description-address')}
+    >
+      {address ? <bdi dir="ltr">{text}</bdi> : text}
+    </span>
+  )
+}
+
+/**
  * One §9.14 radio option: a 20 px circle, the label to its right, the whole row the target. A
  * `leading` glyph (an engine's favicon) sits between the circle and the label. `font` – a CSS
  * `font-family` value – draws the label in that face (a font picker's row is its own sample).
  * `tabIndex` is the group's roving stop where a group walks its options with the arrow keys
  * (the desktop's radio-form value row, `rows.tsx`); `disabled` is a dependent row's option
  * while its switch is off, or a held row's (an extension's homepage) – laid out, not pressable
- * (§10.4), the row above it carrying §9.30's one .4; the checked one stays marked.
+ * (§10.4), the row above it carrying §9.30's one .4; the checked one stays marked. `address`
+ * is the option's description as a path or an address (`RowOption.address`).
  */
 export function RadioOption({
   label,
   description,
+  address,
   leading,
   font,
   checked,
@@ -580,6 +622,7 @@ export function RadioOption({
 }: {
   label: string
   description?: string
+  address?: boolean
   leading?: ReactNode
   font?: string
   checked: boolean
@@ -609,7 +652,7 @@ export function RadioOption({
       )}
       <span className="zen-settings-row-text">
         <span className="zen-settings-label">{label}</span>
-        {description && <span className="zen-settings-description">{description}</span>}
+        {description && <Description text={description} address={address} />}
       </span>
     </button>
   )

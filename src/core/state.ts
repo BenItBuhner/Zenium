@@ -1301,6 +1301,7 @@ export class BrowserState {
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabHiddenModules: this.newTabDevice.hiddenModules,
       newTabSafetyHubCard: this.newTabDevice.safetyHubCard,
+      newTabEducationalTips: this.newTabDevice.educationalTips,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
       updateDot: this.updateDot,
       newTabBackground: this.newTabBackgroundFor(),
@@ -1419,6 +1420,8 @@ export class BrowserState {
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,
           blockedCount: 0,
+          // The tracker report behind that count is the document's own: the key is not written.
+          blockedSites: undefined,
           // Restored by us, not sent by an app that is long gone (Chrome: FROM_RESTORE).
           fromIntent: false,
           // The page posts its manifest again on the next load; the document stays compact.

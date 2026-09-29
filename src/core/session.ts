@@ -53,6 +53,8 @@ export function closedTabEntry(
       audible: false,
       // The toolbox went with the page: a session's own, never in the entry.
       devtools: undefined,
+      // So did the tracker report behind the blocked count: the document's own, never written.
+      blockedSites: undefined,
       // Reopened by the user later, not by the app that once sent the URL.
       fromIntent: false
     },

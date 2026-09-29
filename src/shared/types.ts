@@ -12,8 +12,10 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { ManagedStatus } from './managed'
 import type { UpdateDotRecord } from '../core/updateDot'
 import type { SafetyHubCardMemories } from './safetyHubCard'
+import type { EducationalTipMemory } from './educationalTips'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
@@ -400,34 +402,42 @@ export interface SelectionMenuState {
 }
 
 /**
- * The room the pill's document asks of the popup surface beyond the pill's padded box, for the
- * folded glyph buttons' tooltips (the chrome's `Tooltip`, hosted in the surface's document;
- * `selectionMenu.surfaceSize`): `below`, the pixels the surface reaches under the box so a
- * tooltip 8 under a button stays 8 inside the document, and `width`, the least width of the
- * surface for the widest title's tooltip and its margins. CSS pixels, whole; the core adds
- * them around the pill (`placeMiniMenuSurface`), never moving the pill for them. Asked for the
- * tooltip's moment alone – while one is on its way or up – and given back the instant it is
- * over: at rest the surface is the pill's padded box, and nothing under it eats the page's
- * pointer.
+ * The room a popup surface's document asks of the surface beyond its content's padded box, for
+ * its controls' tooltips (the chrome's `Tooltip`, hosted in the surface's document, §9.31: the
+ * folded pill's glyph buttons, `selectionMenu.surfaceSize`; the autofill picker's edge controls,
+ * `autofill.surfaceSize`): `below`, the pixels the surface reaches under the box so a tooltip
+ * 8 under a control stays 8 inside the document, and `width`, the least width of the surface
+ * for the widest title's tooltip and its margins. CSS pixels, whole; the core adds them around
+ * the box (`placeMiniMenuSurface`, `placePickerSurface`), never moving the content for them.
+ * Asked for the tooltip's moment alone – while one is on its way or up – and given back the
+ * instant it is over: at rest the surface is the content's padded box, and nothing under it
+ * eats the page's pointer.
  */
-export interface MiniMenuRoom {
+export interface PopupSurfaceRoom {
   below: number
   width: number
 }
 
+/** The pill's room (`MiniMenu`, `selectionMenu.surfaceSize`): a `PopupSurfaceRoom`. */
+export type MiniMenuRoom = PopupSurfaceRoom
+
 /**
- * The core's word back to a `selectionMenu.surfaceSize` report: the popup surface's size as
- * the core set it for the report – window CSS pixels, whole: the pill's padded box, with the
- * room while the report asked one – or null when the report placed no surface (another tab's
- * pill, a nonsensical report, the box off the view). The pill's document holds a tooltip's
- * show on the room until this word has come and its own frame is at the size (`awaitTooltipRoom`
- * – §11's paint handshake, the reader cover's: the word, or the ceiling for one that never
- * comes), so no first frame of a tooltip is clipped by the surface's old bounds.
+ * The core's word back to a surface-size report (`selectionMenu.surfaceSize`,
+ * `autofill.surfaceSize`): the popup surface's size as the core set it for the report – window
+ * CSS pixels, whole: the content's padded box, with the room while the report asked one – or
+ * null when the report placed no surface (another tab's pill, a picker gone, a nonsensical
+ * report, the box off the view). The document holds a tooltip's show on the room until this
+ * word has come and its own frame is at the size (`awaitTooltipRoom` – §11's paint handshake,
+ * the reader cover's: the word, or the ceiling for one that never comes), so no first frame of
+ * a tooltip is clipped by the surface's old bounds.
  */
-export interface MiniMenuSurfaceSize {
+export interface PopupSurfaceSize {
   width: number
   height: number
 }
+
+/** The pill's word back (`selectionMenu.surfaceSize`): a `PopupSurfaceSize`. */
+export type MiniMenuSurfaceSize = PopupSurfaceSize
 
 /**
  * Why a definition could not be had: the text is not a term to define (`invalid-term`: more
@@ -670,6 +680,22 @@ export interface SpaceTheme {
 // Tabs, spaces, split views, folders
 // ---------------------------------------------------------------------------
 
+/**
+ * Where the rule that blocked a request came from: a filter list (`tracker` – the lists match as
+ * one set, so no finer word is known), the user's own filters, an extension's rules, or Safe
+ * Browsing refusing an unsafe frame.
+ */
+export type BlockedSiteCategory = 'tracker' | 'user' | 'extension' | 'unsafe'
+
+/** One site the blocking engine stopped requests from on a tab's current document. */
+export interface BlockedSite {
+  /** Registrable domain of the blocked requests (`doubleclick.net`). */
+  domain: string
+  category: BlockedSiteCategory
+  /** Requests blocked from `domain` on the document so far. */
+  count: number
+}
+
 export interface Tab {
   id: string
   /** Space the tab belongs to. Essentials are global (per container) and have `spaceId: null`. */
@@ -830,6 +856,12 @@ export interface Tab {
   readerable: boolean
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
+  /**
+   * The sites those requests went to, in the order the engine first saw them, at most
+   * `BLOCKED_SITES_CAP` of them (the tracker report behind the count). Absent until the first
+   * block of the document; resets with `blockedCount`. A session's own: not persisted.
+   */
+  blockedSites?: BlockedSite[]
   /**
    * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
    * page such as Settings was opened from). Mobile system back at the tab's first page closes it
@@ -1256,6 +1288,22 @@ export interface SyncScope {
    * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
    */
   readingList: boolean
+  /**
+   * The Mods (`Mod`: the browser chrome's CSS mods, Settings › Mods), one `mod` record per Mod
+   * under the Mod's own id (services pass 15, ID-43); on by default, as Chrome's Themes type is
+   * a toggle of its own among what you sync (`UserSelectableType::kThemes`,
+   * `components/sync/base/user_selectable_type.h`; the one theme per profile travels through
+   * `ThemeSyncableService`, `syncer::THEMES`) and Edge carries appearance inside Settings. The
+   * look settings themselves travel as they did – the colour scheme and the app icon on the
+   * settings record key by key, each space's gradient theme (`SpaceTheme`, its colours among
+   * it) on its space record – and `useSystemAccent` stays each device's own
+   * (`DEVICE_LOCAL_SETTINGS`): this key toggles the Mod list alone.
+   * While off, the device neither publishes the type nor takes it in, and its metadata for the
+   * type is frozen, as with every scoped type. Absent on a `sync.json` older than the key, where
+   * the engine completes it with the default; a scope object from an older build says nothing
+   * for it, so `collectLocal` under one publishes no Mod (`__tests__/compat.test.ts`).
+   */
+  mods: boolean
 }
 
 /** One open tab of another device, as its `open-tabs` record carries it (ID-28). */
@@ -2956,6 +3004,13 @@ export interface NewTabDeviceState {
    * `safety_hub.menu_notifications` pref, per device as that is.
    */
   safetyHubCard: SafetyHubCardMemories
+  /**
+   * The tip card's memory (NTP-20; `shared/educationalTips.ts`): per card, its impressions, when
+   * it was last shown and whether its button was tapped; when any tip was last shown; when
+   * browsing data was last deleted on this device (the Quick Delete tip's signal) – Chrome's
+   * `educational_tip_module_*` prefs and the histograms its rules read, per device as those are.
+   */
+  educationalTips: EducationalTipMemory
 }
 
 /**
@@ -2963,11 +3018,11 @@ export interface NewTabDeviceState {
  * through under its tiles. `continue` is the recently closed tab (Chrome's local tab
  * resumption), `downloads` the last completed download, `bookmarks` the newest bookmark,
  * `safety-hub` the Safety check card (NTP-19: revoked permissions, Safe Browsing off, compromised
- * passwords – one at a time), `default-browser` the "Set Zenium as your default browser" promo
- * (DEF-04).
+ * passwords – one at a time), `tips` the tip card (NTP-20: Chrome's educational tip module – the
+ * theme, the default browser (DEF-04's promo, W6-4's `default-browser` module folded in), tab
+ * groups, Quick Delete – one at a time).
  */
-export type MagicStackModuleId =
-  'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'default-browser'
+export type MagicStackModuleId = 'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'tips'
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
 export interface NewTabPageShortcut extends NewTabShortcut {
@@ -4805,6 +4860,8 @@ export interface UIState {
   newTabHiddenModules: MagicStackModuleId[]
   /** The Safety check card's memory on this device (NTP-19; `NewTabDeviceState.safetyHubCard`). */
   newTabSafetyHubCard: SafetyHubCardMemories
+  /** The tip card's memory on this device (NTP-20; `NewTabDeviceState.educationalTips`). */
+  newTabEducationalTips: EducationalTipMemory
   /**
    * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
    * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
@@ -4983,6 +5040,12 @@ export type SuggestionKind =
    * read once, on the reveal or the pick (`clipboard.read`). `targetId` is the kind.
    */
   | 'clipboard'
+  /**
+   * A tab group whose name (or a member page's address) the typing starts a word of (OMN-15;
+   * Chrome's `TabGroupProvider`, `AutocompleteMatchType::TAB_GROUP`): the title is the group's
+   * name, the subtitle its pages' hosts, `targetId` the folder – the pick is `folder.open`.
+   */
+  | 'folder'
 
 export interface Suggestion {
   id: string
@@ -4992,7 +5055,10 @@ export interface Suggestion {
   /** URL to navigate to (or search URL). */
   url: string | null
   favicon: string | null
-  /** For kind = tab: the tab to switch to. For kind = space: the space id. For command: the action. */
+  /**
+   * For kind = tab: the tab to switch to. For kind = space: the space id. For command: the
+   * action. For kind = folder: the group (folder) to open.
+   */
   targetId: string | null
   /** Text to place in the input when the suggestion is highlighted (for inline completion). */
   fill: string
@@ -5135,6 +5201,14 @@ export interface MenuItemDescriptor {
    * takes the page under its picture before the core's toggle runs (`lib/readerTransition.ts`).
    */
   action?: ShortcutAction
+  /**
+   * A mark the row carries after its label, in the trailing slot – the sheet's state seat, the
+   * one its secondary ink and the popover's hint take: `managed` is Chrome's `ic_domain` on the
+   * "Managed Browser" row (TB-13; `shared/managed.ts`), the building glyph the row keeps on the
+   * phone's sheet and the tablet's popover alike. A native menu host has no glyph in its ink and
+   * draws the text.
+   */
+  mark?: 'managed'
 }
 
 /**
@@ -6143,6 +6217,12 @@ export interface Commands {
    * back whole; the core sanitises and keeps it with the device's other new-tab sets.
    */
   'newtab.setSafetyHubCardMemory': { args: { memories: SafetyHubCardMemories }; result: void }
+  /**
+   * The tip card's memory after an impression or a tap on its button (NTP-20): the renderer runs
+   * the machine (`shared/educationalTips.ts`) over the published state and writes the record
+   * back whole; the core sanitises and keeps it with the device's other new-tab sets.
+   */
+  'newtab.setEducationalTipMemory': { args: { memory: EducationalTipMemory }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }
@@ -6902,6 +6982,13 @@ export interface Commands {
   'updates.openRelease': { args: void; result: void }
 
   /**
+   * Who manages the browser (TB-13; `shared/managed.ts`): the host's app-restrictions bundle,
+   * read once on the first ask – the app menu's first build or the Management page's mount,
+   * never at start – or the unmanaged status on a host without a bundle to read.
+   */
+  'managed.status': { args: void; result: ManagedStatus }
+
+  /**
    * Open (or first create) the vault. `passphrase` answers a `passphrase` outcome, and creates
    * the vault after a `setup-passphrase` one (no OS keystore on this device).
    */
@@ -6981,9 +7068,17 @@ export interface Commands {
   }
   /**
    * The desktop picker's document (`?surface=popup`, `PickerSurface`) reports the height its
-   * content wants; the core sizes and places the popup surface from it (`placePickerSurface`).
+   * content wants – with, for a tooltip's moment on one of its edge controls, the room the
+   * tooltip needs beyond the panel's box (`room`, `PopupSurfaceRoom`; null at rest, the same
+   * height told again as the moment comes and goes); the core sizes and places the popup
+   * surface from it (`placePickerSurface`), back at the panel's padded box on the null. Answers
+   * with the surface's size as set – the room's acknowledgement, which the document's tooltip
+   * waits for before it paints (`PopupSurfaceSize`) – or null when the report placed no surface.
    */
-  'autofill.surfaceSize': { args: { id: string; height: number }; result: void }
+  'autofill.surfaceSize': {
+    args: { id: string; height: number; room?: PopupSurfaceRoom | null }
+    result: PopupSurfaceSize | null
+  }
   /**
    * The popup surface took or lost the keyboard: while it holds it the page field's blur does
    * not close the picker (a press on a row blurs the field first).

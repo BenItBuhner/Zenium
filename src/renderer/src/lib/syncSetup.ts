@@ -7,7 +7,7 @@ import type {
   WebDavProbe,
   WebDavSyncCredentials
 } from '@shared/types'
-import { DEFAULT_WEBDAV_FOLDER } from '@core/sync/webdav'
+import { DEFAULT_WEBDAV_FOLDER, webDavFolderSegments } from '@core/sync/webdav'
 import { cmd } from './api'
 import { createStore } from './store'
 import { browserStore, forgetToast, uiStore } from './ui'
@@ -160,7 +160,7 @@ export const SYNC_COPY = {
  * The data types in the page's own order: Chrome's types first – Bookmarks, History, Open tabs,
  * Passwords, Reading list, Settings; Chrome's "Manage what you sync" seats Reading list directly
  * after Bookmarks, ours sits beside Passwords, as the lead seated it – then Zenium's own:
- * Spaces, folders, pinned tabs, Essentials, containers, shortcuts, Boosts. Every key of
+ * Spaces, folders, pinned tabs, Essentials, containers, shortcuts, Boosts, Mods. Every key of
  * `SyncScope` is here once (the engine's toggles are the page's).
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
@@ -183,7 +183,14 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
   { key: 'essentials', label: 'Essentials' },
   { key: 'containers', label: 'Containers' },
   { key: 'shortcuts', label: 'Keyboard shortcuts' },
-  { key: 'boosts', label: 'Boosts' }
+  { key: 'boosts', label: 'Boosts' },
+  // The Mods' row (services pass 15, ID-43, the `mod` record): the browser chrome's CSS mods,
+  // named as Settings › Mods names them. Chrome's row for the type is "Themes" (its one theme
+  // per profile, `UserSelectableType::kThemes`); ours toggles the Mod list alone – the look
+  // settings travel with Settings and each space's theme with Spaces – so the row says what it
+  // moves. No hint, as with Boosts (the lead's rule: a hint never restates the name). DRAFT
+  // until the lead approves the label.
+  { key: 'mods', label: 'Mods' }
 ]
 
 /**
@@ -235,8 +242,14 @@ export interface SyncSetupDraft {
   probe: SyncProbeState
 }
 
-/** The folder the server form starts with (the engine's default, written as a folder). */
-export const WEBDAV_FOLDER_DEFAULT = `${DEFAULT_WEBDAV_FOLDER}/`
+/**
+ * The folder the server form starts with: the engine's default by its name – `Zenium`, the
+ * folder under the account's files that holds the `zenium-sync` directory, with no trailing
+ * slash. The one value the connected page's Folder row reads back (`webDavFolderLine`), so
+ * the two surfaces say the same thing; the engine reads `Zenium` and `Zenium/` alike
+ * (`webDavFolderSegments`).
+ */
+export const WEBDAV_FOLDER_DEFAULT = DEFAULT_WEBDAV_FOLDER
 
 export function emptySyncSetup(): SyncSetupDraft {
   return {
@@ -391,15 +404,15 @@ export function probeLine(state: SyncProbeState): string {
 }
 
 /**
- * The server folder as the connected page names it: the folder as the engine reads it (empty,
- * dot and parent segments dropped, one trailing slash), or the account's top level for none.
+ * The server folder as the connected page names it: the folder by its name, as the engine reads
+ * what was typed (`webDavFolderSegments`: empty, dot and parent segments dropped, the segments
+ * joined with `/`, no trailing slash – `Zenium`, `Backups/Zenium`), or the account's top level
+ * for none. The same string the form's Folder field holds for the same folder, so the setup
+ * and the connected page never disagree on it.
  */
 export function webDavFolderLine(folder: string): string {
-  const segments = folder
-    .split(/[\\/]+/)
-    .map((s) => s.trim())
-    .filter((s) => s !== '' && s !== '.' && s !== '..')
-  return segments.length === 0 ? SYNC_COPY.serverRootFolder : `${segments.join('/')}/`
+  const segments = webDavFolderSegments(folder)
+  return segments.length === 0 ? SYNC_COPY.serverRootFolder : segments.join('/')
 }
 
 /** The server as the connected page names it: the account on the host ("alice on cloud.example.com"). */

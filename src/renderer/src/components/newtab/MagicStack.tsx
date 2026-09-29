@@ -12,14 +12,30 @@ import {
   FileText,
   FileVideo,
   Globe,
+  Group,
   History,
   Image,
   KeyRound,
+  Lightbulb,
   ListChecks,
   Package,
+  Palette,
   ShieldHalf,
+  Trash2,
   type LucideIcon
 } from 'lucide-react'
+import {
+  educationalTipCardButton,
+  educationalTipCardDescription,
+  educationalTipCardTitle,
+  interactEducationalTipCard,
+  pickEducationalTipCard,
+  sameEducationalTipMemory,
+  showEducationalTipCard,
+  type EducationalTipCardId,
+  type EducationalTipInputs,
+  type EducationalTipMemory
+} from '@shared/educationalTips'
 import {
   activeSafetyHubType,
   dismissSafetyHubCard,
@@ -47,11 +63,13 @@ import { getHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { fileGlyphFor, type FileGlyph } from '@renderer/lib/downloadsView'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { openOverview } from '@renderer/lib/gestures/stage'
 import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { openCustomize } from '@renderer/lib/newtab'
 import { openPage, openSettings } from '@renderer/lib/pages'
-import { browserStore, openOverlay, showLocalMenu } from '@renderer/lib/ui'
+import { browserStore, openClearBrowsingData, openOverlay, showLocalMenu } from '@renderer/lib/ui'
 import { cn, formatBytes, relativeTime } from '@renderer/lib/utils'
 import { RowView, type RowContext } from '../pages/settings/rows'
 import { PhoneSheet } from '../phone/PhoneSheet'
@@ -74,12 +92,13 @@ import {
  * The new tab page's cards (NTP-16; Chrome's Magic Stack, `HomeModulesCoordinator` – the name
  * stays Chrome's, the surface is called Cards to the user): a horizontally paged strip of module
  * cards under the shortcut tiles – the newest recently closed tab, the last download, the newest
- * bookmarks, the Safety check card, the default-browser reminder – each on one card chassis with
- * a title row (the module's glyph, its name, the ⋮) and its content. The content rows act (the
- * file opens, the bookmark opens, the closed tab reopens), so a card carries at most one action
- * its rows cannot do: See all on Downloads and Bookmarks, Set as default on Default browser, the
- * Safety check card's one button (Review, Go to settings, Change passwords – NTP-19), none on
- * Continue where you left off (§9.29). The ⋮ offers Hide This and Customise; the Customise
+ * bookmarks, the Safety check card, the tip card – each on one card chassis with a title row
+ * (the module's glyph, its name, the ⋮) and its content. The content rows act (the file opens,
+ * the bookmark opens, the closed tab reopens), so a card carries at most one action its rows
+ * cannot do: See all on Downloads and Bookmarks, the Safety check card's one button (Review, Go
+ * to settings, Change passwords – NTP-19), the tip card's one button (Try it now, Set as
+ * default, Show me how – NTP-20), none on Continue where you left off (§9.29). The ⋮ offers Hide This and
+ * Customise; the Customise
  * sheet lists the modules with switches. Hidden modules are this device's
  * (`UIState.newTabHiddenModules`, never synced); a stack with no card to show is not drawn at
  * all, as Chrome draws none.
@@ -112,7 +131,8 @@ export function MagicStack({
 }): JSX.Element | null {
   const hidden = state.newTabHiddenModules
   const safetyHub = useSafetyHub(state, hidden.includes('safety-hub'))
-  const sources = useSources(state, safetyHub.source)
+  const tips = useEducationalTips(state, hidden.includes('tips'), tab.id)
+  const sources = useSources(state, safetyHub.source, tips.source)
   // A module hidden from a card's menu is kept as hidden here until the core's list has it, so
   // the card cannot come back between the command and the state; once the list has an id, the
   // id is dropped in the render that sees it (the previous-render pattern, no effect needed).
@@ -231,6 +251,7 @@ export function MagicStack({
               tabId={tab.id}
               onMenu={() => openMenu(card.id)}
               onSafetyHubAct={safetyHub.act}
+              onTipAct={tips.act}
             />
           </li>
         ))}
@@ -297,7 +318,24 @@ const MODULE_GLYPHS: Record<MagicStackModuleId, LucideIcon> = {
   bookmarks: Bookmark,
   // Lucide's `list-checks`, the Privacy and security hub's Safety check card (`privacyHub.ts`).
   'safety-hub': ListChecks,
-  'default-browser': Globe
+  // A tip: Lucide's `lightbulb`, where Chrome's module has no glyph of its own (its cards carry
+  // an illustration each, `educational_tip_module_layout.xml:28-36`).
+  tips: Lightbulb
+}
+
+/**
+ * The tip card's glyph per card, standing where Chrome draws a 72 dp illustration
+ * (`educational_tip_module_layout.xml:28-36`, `dimens.xml:12-14`; `tab_group_promo_logo`,
+ * `quick_delete_promo_logo`, `default_browser_promo_logo`, `ntp_theme_promo_logo`): the theme's
+ * palette, the browser role's globe (the Default browser settings row's), the groups' group,
+ * Quick Delete's bin (the Delete browsing data row's) – all Lucide, all at the accent (§9.29's
+ * tile; §9.17 draws no illustration; the gate decides, `design-gate-requests.md`).
+ */
+const TIP_GLYPHS: Record<EducationalTipCardId, LucideIcon> = {
+  'ntp-theme': Palette,
+  'default-browser': Globe,
+  'tab-groups': Group,
+  'quick-delete': Trash2
 }
 
 /**
@@ -324,12 +362,15 @@ const FILE_GLYPHS: Record<FileGlyph, LucideIcon> = {
   file: File
 }
 
-function useSources(state: UIState, safetyHub: MagicStackSources['safetyHub']): MagicStackSources {
-  const { recentlyClosed, downloads, bookmarks, defaultBrowser } = state
-  const canRequestDefault = state.capabilities.defaultBrowser
+function useSources(
+  state: UIState,
+  safetyHub: MagicStackSources['safetyHub'],
+  tips: MagicStackSources['tips']
+): MagicStackSources {
+  const { recentlyClosed, downloads, bookmarks } = state
   return useMemo(
-    () => ({ recentlyClosed, downloads, bookmarks, defaultBrowser, canRequestDefault, safetyHub }),
-    [recentlyClosed, downloads, bookmarks, defaultBrowser, canRequestDefault, safetyHub]
+    () => ({ recentlyClosed, downloads, bookmarks, safetyHub, tips }),
+    [recentlyClosed, downloads, bookmarks, safetyHub, tips]
   )
 }
 
@@ -449,6 +490,146 @@ function useSafetyHub(
 
   const source = useMemo(() => ({ type, inputs }), [type, inputs])
   return { source, act }
+}
+
+/**
+ * The tip card's impression (NTP-20; Chrome's educational tip module: one ephemeral card of the
+ * segmentation platform's ranking at the stack's last position, one per fetch of the stack,
+ * `ephemeral_home_module_backend.cc:146-166`): once per mount of the stack the machine
+ * (`shared/educationalTips.ts`) picks the card from the memory as published and the signals as
+ * they stand – on the first render, so the first paint has the card – and the memory it leaves
+ * (the card's impression counted, the three-day and the seven-day rests begun; Chrome's
+ * `OnShow`, `default_browser_promo.cc:171-178`) is written back once. The signals are this
+ * device's state as the page already has it: the background kind of the page's own settings,
+ * the browser role as `DefaultBrowserService` refreshed it on start and on foreground (its host
+ * verb is read there, never here – the card adds nothing to the boot path), the folders and the
+ * tabs. The pick names the card for the page; the Cards sheet's switch bringing the module back
+ * is an impression of its own, picked in the render that sees the switch and written in an
+ * effect – and so is another tab's page under the same mounted stack: the chrome draws one new
+ * tab page for whichever blank tab is active (`ContentArea.tsx`), so a new tab opened from a new
+ * tab page keeps the component and changes its tab, where Chrome builds a Magic Stack per page.
+ * The card's button is Chrome's interaction (`OnInteract`, `:180-183`): the card leaves the
+ * ranking for good and the memory is written, while the card stays for the rest of the page as
+ * Chrome's module stays under the sheet it opened – the next page has the next card. A module
+ * hidden on this device is not built at all: no pick, no impression, no write.
+ */
+function useEducationalTips(
+  state: UIState,
+  hidden: boolean,
+  pageId: string
+): {
+  source: MagicStackSources['tips']
+  act: (card: EducationalTipCardId, tabId: string) => void
+} {
+  const customizedBackground = state.settings.newTab.background !== 'space'
+  const canRequestDefault = state.capabilities.defaultBrowser
+  const { isDefault, prompt } = state.defaultBrowser
+  const groups = Object.keys(state.folders).length
+  const tabs = Object.keys(state.tabs).length
+  const inputs = useMemo<EducationalTipInputs>(
+    () => ({
+      customizedBackground,
+      canRequestDefault,
+      isDefault,
+      defaultBrowserPromptUp: prompt !== null,
+      groups,
+      tabs
+    }),
+    [customizedBackground, canRequestDefault, isDefault, prompt, groups, tabs]
+  )
+  const memory = state.newTabEducationalTips
+  // The mount's impression, made on the first render (a hidden module makes none).
+  const [first] = useState<TipImpression>(() =>
+    hidden ? { card: null, memory } : impress(inputs, memory)
+  )
+  // The switch that brought the module back into the stack, or another tab's page under the
+  // same mounted stack (the previous-render pattern): a new impression, picked in the render
+  // that sees the change – and read in that same render, so the stack's own previous-render
+  // check finds the card and marks its arrival (§11.4). One impression when both change at once.
+  const [seenHidden, setSeenHidden] = useState(hidden)
+  const [seenPage, setSeenPage] = useState(pageId)
+  const [reshownState, setReshown] = useState<{ n: number } & TipImpression>({
+    n: 0,
+    card: null,
+    memory
+  })
+  let reshown = reshownState
+  const switched = seenHidden !== hidden
+  const turned = seenPage !== pageId
+  if (switched) setSeenHidden(hidden)
+  if (turned) setSeenPage(pageId)
+  if ((switched || turned) && !hidden) {
+    reshown = { n: reshownState.n + 1, ...impress(inputs, memory) }
+    setReshown(reshown)
+  }
+  const written = useRef({ first: false, reshown: 0 })
+  useEffect(() => {
+    if (written.current.first) return
+    written.current.first = true
+    if (!sameEducationalTipMemory(first.memory, memory))
+      run('newtab.setEducationalTipMemory', { memory: first.memory })
+  }, [first, memory])
+  useEffect(() => {
+    if (reshown.n === 0 || written.current.reshown === reshown.n) return
+    written.current.reshown = reshown.n
+    if (!sameEducationalTipMemory(reshown.memory, memory))
+      run('newtab.setEducationalTipMemory', { memory: reshown.memory })
+  }, [reshown, memory])
+
+  const card = hidden ? null : reshown.n === 0 ? first.card : reshown.card
+  // The memory to retire the card from: the record as written back, else the impression's own.
+  const interactFrom = useCallback(
+    (c: EducationalTipCardId): EducationalTipMemory =>
+      memory.cards[c]?.shownAt != null ? memory : reshown.n === 0 ? first.memory : reshown.memory,
+    [memory, first, reshown]
+  )
+  const act = useCallback(
+    (c: EducationalTipCardId, tabId: string): void => {
+      switch (c) {
+        case 'ntp-theme':
+          // Chrome opens the page's customisation sheet (`ChromeTabbedActivity.java:3519-3531`):
+          // the Customise sheet, where the background lives.
+          openCustomize()
+          break
+        case 'default-browser':
+          // Chrome's "Set default" (§9.29's "Set as default" here) asks the system for the
+          // browser role (`DefaultBrowserPromoUtils.java`): the host's request, from the page.
+          run('defaultBrowser.request', { source: 'newtab' })
+          break
+        case 'tab-groups':
+          // Chrome's "Show me how" opens the Hub's tab switcher with the grouping IPH
+          // (`ChromeTabbedActivity.java:3500-3508`): the overview, where a tab dropped on another
+          // makes a group – no IPH dialog here, so the button reads "Try it now" (the lead's
+          // fold on #695).
+          openOverview(state)
+          break
+        case 'quick-delete':
+          // Chrome's "Show me how" highlights the menu's Delete browsing data (`:3511-3516`);
+          // the phone's menu has no highlight, so the sheet itself opens.
+          void openClearBrowsingData(tabId)
+          break
+      }
+      run('newtab.setEducationalTipMemory', {
+        memory: interactEducationalTipCard(interactFrom(c), c)
+      })
+    },
+    [interactFrom, state]
+  )
+
+  const source = useMemo(() => ({ card, inputs }), [card, inputs])
+  return { source, act }
+}
+
+/** One impression of the tip card: the card picked (null for none) and the memory it leaves. */
+interface TipImpression {
+  card: EducationalTipCardId | null
+  memory: EducationalTipMemory
+}
+
+function impress(inputs: EducationalTipInputs, memory: EducationalTipMemory): TipImpression {
+  const now = Date.now()
+  const card = pickEducationalTipCard(inputs, memory, now)
+  return { card, memory: card ? showEducationalTipCard(memory, card, now) : memory }
 }
 
 /** The same ids in the same order. */
@@ -662,8 +843,8 @@ function cardLabel(card: MagicStackCard): string {
       const text = safetyHubCardTitle(card.type, card.inputs)
       return `${title}: ${summary ? `${text}. ${summary}` : text}`
     }
-    case 'default-browser':
-      return `${title}: set Zenium as your default browser`
+    case 'tips':
+      return `${title}: ${educationalTipCardTitle(card.card)}. ${educationalTipCardDescription(card.card)}`
   }
 }
 
@@ -676,12 +857,14 @@ function CardBody({
   card,
   tabId,
   onMenu,
-  onSafetyHubAct
+  onSafetyHubAct,
+  onTipAct
 }: {
   card: MagicStackCard
   tabId: string
   onMenu: () => void
   onSafetyHubAct: (type: SafetyHubCardType, tabId: string) => void
+  onTipAct: (card: EducationalTipCardId, tabId: string) => void
 }): JSX.Element {
   const module = magicStackModule(card.id)
   const Glyph = MODULE_GLYPHS[card.id]
@@ -703,12 +886,13 @@ function CardBody({
       {card.id === 'downloads' && <DownloadContent item={card.item} />}
       {card.id === 'bookmarks' && <BookmarksContent items={card.items} tabId={tabId} />}
       {card.id === 'safety-hub' && <SafetyHubContent type={card.type} inputs={card.inputs} />}
-      {card.id === 'default-browser' && <DefaultBrowserContent />}
+      {card.id === 'tips' && <TipContent card={card.card} />}
       {/*
         One action a card, and only one its rows do not already do (§9.29): the rows open the
         file, the bookmark, the closed tab, so the row at the foot carries the page the card
-        stands for – or the reminder's primary – and the Continue card, whose row is its whole
-        act, carries none. The foot is pinned: the cards share the tallest one's height.
+        stands for – or the Safety check's and the tip's primary – and the Continue card, whose
+        row is its whole act, carries none. The foot is pinned: the cards share the tallest one's
+        height.
       */}
       {card.id === 'downloads' && (
         <div className="zen-mstack-actions">
@@ -732,10 +916,15 @@ function CardBody({
           </Action>
         </div>
       )}
-      {card.id === 'default-browser' && (
+      {card.id === 'tips' && (
         <div className="zen-mstack-actions">
-          <Action primary onClick={() => run('defaultBrowser.request', { source: 'newtab' })}>
-            Set as default
+          {/* Chrome's one button (`educational_tip_module_layout.xml:107-117`): the primary. */}
+          <Action
+            primary
+            label={`${educationalTipCardButton(card.card)}: ${educationalTipCardTitle(card.card)}`}
+            onClick={() => onTipAct(card.card, tabId)}
+          >
+            {educationalTipCardButton(card.card)}
           </Action>
         </div>
       )}
@@ -889,14 +1078,6 @@ function BookmarkRow({ node, tabId }: { node: BookmarkNode; tabId: string }): JS
   )
 }
 
-function DefaultBrowserContent(): JSX.Element {
-  return (
-    <p className="zen-mstack-text">
-      Open links from other apps in Zenium, with your bookmarks, passwords and tabs along.
-    </p>
-  )
-}
-
 /**
  * The Safety check card's content (NTP-19; Chrome's `safety_hub_magic_stack_view.xml:28-70`): the
  * type's glyph in a rounded tile, the title beside it – two lines at most – and the one-line
@@ -922,6 +1103,34 @@ function SafetyHubContent({
       <span className="zen-mstack-safety-text">
         <span className="zen-mstack-safety-title">{safetyHubCardTitle(type, inputs)}</span>
         {summary && <span className="zen-mstack-safety-summary">{summary}</span>}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * The tip card's content (NTP-20; Chrome's `educational_tip_module_layout.xml:28-95`): where
+ * Chrome draws the card's 72 dp illustration (`dimens.xml:12-14`), the card's glyph in the Safety
+ * check card's tile – the same object at the same 56 on the card's `--v2-fill`, at the accent
+ * (§9.17 draws no illustration; whether the tips get one is the gate's) – and beside it the
+ * title at §9.23's 17/600 on two lines at most (Chrome's never wraps, `:78-86`) over the
+ * description at 15 in the deemphasised ink, in full – the card grows with the sentence (the
+ * design lead's fold on #695; Chrome clamps at two, `:88-95`, against a text column a 72 dp
+ * image leaves wider). The words are Chrome's, spelt as this surface spells
+ * (`shared/educationalTips.ts`).
+ */
+function TipContent({ card }: { card: EducationalTipCardId }): JSX.Element {
+  const Glyph = TIP_GLYPHS[card]
+  return (
+    <div className="zen-mstack-safety zen-mstack-tip" data-card={card}>
+      <span className="zen-mstack-safety-tile" aria-hidden>
+        <Glyph />
+      </span>
+      <span className="zen-mstack-safety-text">
+        <span className="zen-mstack-safety-title">{educationalTipCardTitle(card)}</span>
+        <span className="zen-mstack-safety-summary zen-mstack-tip-summary">
+          {educationalTipCardDescription(card)}
+        </span>
       </span>
     </div>
   )
@@ -954,7 +1163,7 @@ export function MagicStackCustomizeLayer(): JSX.Element | null {
  */
 function MagicStackCustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const hidden = state.newTabHiddenModules
-  const modules = availableModules({ canRequestDefault: state.capabilities.defaultBrowser })
+  const modules = availableModules()
   return (
     <PhoneSheet
       name="newtab-magic-stack-customize"

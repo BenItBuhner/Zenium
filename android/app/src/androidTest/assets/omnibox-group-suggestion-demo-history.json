@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "url": "http://127.0.0.2:18191/reservoir.html",
+      "title": "Reservoir levels this week",
+      "visitCount": 5,
+      "lastVisit": "{{now-3h}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.2:18191/rescue.html",
+      "title": "Rescue dog adoption",
+      "visitCount": 3,
+      "lastVisit": "{{now-8h}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.1:18191/guide.html",
+      "title": "Getting started guide",
+      "visitCount": 4,
+      "lastVisit": "{{now-5h}}",
+      "favicon": null
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Globe, Mail, Phone } from 'lucide-react'
+import { Building2, Check, ChevronLeft, ChevronRight, Globe, Mail, Phone } from 'lucide-react'
 import { applyMenuOrder, isDefaultMenuOrder } from '@shared/menuOrder'
 import type { MenuDescriptor, MenuHeader, MenuItemDescriptor } from '@shared/types'
 import { useMenuAsList } from '@renderer/lib/accessibilityState'
@@ -379,6 +379,17 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
                     {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
                       <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                    )}
+                    {item.mark === 'managed' && (
+                      // Chrome's `ic_domain` on the Managed Browser row (TB-13), in the trailing
+                      // slot the chevron takes on a row with a submenu: the row's label reads
+                      // as every other row's, the mark says whose the setting is.
+                      <Building2
+                        className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                        strokeWidth={1.75}
+                        aria-hidden
+                        data-mark="managed"
+                      />
                     )}
                     {item.submenu && (
                       <ChevronRight
@@ -1139,6 +1150,10 @@ function MenuLevel({
               <span className="zen-v2-menu-hint" aria-hidden>
                 {item.hint}
               </span>
+            )}
+            {item.mark === 'managed' && (
+              // Chrome's `ic_domain` on the Managed Browser row (TB-13), in the trailing slot.
+              <Building2 className="zen-v2-menu-mark" aria-hidden data-mark="managed" />
             )}
             {item.submenu && <ChevronRight className="zen-v2-menu-chevron" aria-hidden />}
           </button>

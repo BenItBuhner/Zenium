@@ -250,6 +250,11 @@ export interface HarnessOptions {
   view?: Partial<TabView>
   /** `false`: the window host has no popup surface (`WindowHost.setPopupSurface` absent); absent, it records one. */
   popupSurface?: boolean
+  /**
+   * The host has an app-restrictions bundle to read (`Platform.managed`, Android) and this is
+   * what its read answers; absent, the host has none and the browser is unmanaged.
+   */
+  managed?: { by: string | null; keys: string[] }
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -264,6 +269,7 @@ export function harness(
   options: HarnessOptions | FormFactor = {}
 ): Harness {
   const opts: HarnessOptions = typeof options === 'string' ? { formFactor: options } : options
+  const managed = opts.managed
   let last: MenuItemTemplate[] = []
   let lastOptions: MenuPopupOptions | null = null
   let count = 0
@@ -430,6 +436,9 @@ export function harness(
       : {}),
     ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
     ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {}),
+    ...(managed
+      ? { managed: { read: () => Promise.resolve({ by: managed.by, keys: [...managed.keys] }) } }
+      : {}),
     ...(opts.speech
       ? {
           speech: stub<SpeechHost>({

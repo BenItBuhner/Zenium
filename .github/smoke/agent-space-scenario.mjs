@@ -350,13 +350,17 @@ export async function scenarioAgentSpace(h) {
       out.port = port
       await restored(s, fixture.first.url, 2)
       let endpoint = null
+      // As the mcp scenario's: the wait gives up at SERVER_UP_MS naming its phase; the step's
+      // guard sits past that so the wait's report, not a bare timeout, is what fails the step.
       await s.step(
         'server-up',
         async () => {
-          endpoint = await waitForEndpoint(profileB, SERVER_UP_MS)
+          endpoint = await waitForEndpoint(profileB, SERVER_UP_MS, {
+            log: (line) => log(`${AGENT_SPACE_SESSION_SCENARIO}: ${line}`)
+          })
           return { url: endpoint.url, port }
         },
-        { fatal: true }
+        { fatal: true, timeoutMs: SERVER_UP_MS + 5_000 }
       )
       let agentTabId = null
       await s.step(

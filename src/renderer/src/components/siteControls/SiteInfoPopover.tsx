@@ -29,7 +29,12 @@ import {
   siteDataOverviewLine,
   type SiteDataChoice
 } from '@renderer/lib/siteDataUi'
-import { dismissSiteInfo, refreshSiteInfo, siteInfoStore } from '@renderer/lib/siteInfo'
+import {
+  dismissSiteInfo,
+  refreshSiteInfo,
+  siteInfoStore,
+  type SiteInfoView
+} from '@renderer/lib/siteInfo'
 import {
   blockingSummary,
   connectionDetail,
@@ -53,6 +58,7 @@ import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { Favicon } from '../sidebar/Favicon'
 import { V2_GLYPH, V2Button } from '../v2/controls'
+import { TrackersPopover } from './TrackersPopover'
 import {
   BarHeader,
   BusyButton,
@@ -1082,20 +1088,23 @@ export function SiteInfoDesktopLayer({ state }: { state: UIState }): JSX.Element
   const tabId = siteInfoStore.use((s) => s.tabId)
   const anchor = siteInfoStore.use((s) => s.anchor)
   const level = siteInfoStore.use((s) => s.level)
+  const view = siteInfoStore.use((s) => s.view)
   const tab = tabId ? state.tabs[tabId] : undefined
   // The popover's subject: the store's tab once it names one, followed while it changes, and kept
   // as last seen while the popover leaves – after the user dismissed it, the tab closed or the
   // store moved on. Settled during render, so the exit never waits on an effect. The level it
-  // opened on is held with them: the store's word is for the mount, and it is read there once.
+  // opened on and the view (the site information or the tracker report, PS-33) are held with
+  // them: the store's word is for the mount, and it is read there once.
   const [held, setHeld] = useState<{
     tab: Tab
     anchor: Rect | null
     level: LevelId
+    view: SiteInfoView
     dismissed: boolean
   } | null>(null)
   let shown = held
   if (tab && held === null) {
-    shown = { tab, anchor, level, dismissed: false }
+    shown = { tab, anchor, level, view, dismissed: false }
     setHeld(shown)
   } else if (tab && held && held.tab.id === tab.id && held.tab !== tab) {
     shown = { ...held, tab }
@@ -1112,6 +1121,18 @@ export function SiteInfoDesktopLayer({ state }: { state: UIState }): JSX.Element
   }, [shownId])
   if (!shown) return null
   const bar = shown.anchor ? (siteChipRects().bar ?? shown.anchor) : null
+  if (shown.view === 'trackers')
+    return (
+      <TrackersPopover
+        key={shown.tab.id}
+        tab={shown.tab}
+        anchor={shown.anchor}
+        bar={bar}
+        closing={closing}
+        onDismiss={onDismiss}
+        onClosed={onClosed}
+      />
+    )
   return (
     <SiteInfoPopover
       key={shown.tab.id}

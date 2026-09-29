@@ -1,0 +1,55 @@
+name: Android managed demo
+
+# Records the app menu's Managed Browser row and the zen://management page on one boot, each
+# under a real finger (see ManagedDemo; TB-13, Chrome for Android's "Managed browser" row under a
+# policy opening chrome://management): the menu with no managed configuration (no row), the seam
+# – the instrumentation package made device owner through the shell and an app-restrictions
+# bundle handed to the app through DevicePolicyManager, the way an EMM does, nothing in the app
+# overridden – then a fresh start whose menu ends on Managed Browser, a real touch on it opening
+# the page in a new tab in front with Chrome's subtitle naming the organisation and the bundle's
+# keys as static rows, the page and the menu in dark, and the bundle cleared and the ownership
+# given back at the end. The driver writes `managed-findings.txt` with an OK or FAIL per claim
+# and fails when any did. Dispatch-only, like the other demos: it takes a few minutes and says
+# nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-managed-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Managed demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ManagedDemo
+        DEMO_DIR=managed-demo
+        DEMO_OUT=artifacts/android-managed-demo
+        DEMO_VIDEO=android-managed-demo.mp4
+      artifact-name: android-managed-demo
+      artifact-path: artifacts/android-managed-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Managed demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ManagedDemo
+        DEMO_DIR=managed-demo
+        DEMO_OUT=artifacts/android-managed-demo
+        DEMO_VIDEO=android-managed-demo.mp4
+      artifact-name: android-managed-demo-second-boot
+      artifact-path: artifacts/android-managed-demo/
