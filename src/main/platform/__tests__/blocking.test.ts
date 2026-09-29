@@ -621,6 +621,33 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
   })
 
+  it('forgets the text a list update left behind once a build has read it, or has no use for it', async () => {
+    const s = source()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0)
+    const stop = matcher.start()
+    s.engine.setRuleSet(textSet('a', '||a.example^'))
+    expect(matcher.pendingSets).toBe(1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.pendingSets).toBe(0)
+
+    // A list update while the master switch has every list off: the build that follows parses
+    // nothing, and drops the text rather than holding it until the switch turns on – the store
+    // has it by then, and the switch on reads it from there.
+    s.engine.setEnabled('a', false)
+    await new Promise((r) => setTimeout(r, 20))
+    s.engine.setRuleSet(textSet('a', '||a.example^\n||a2.example^', false))
+    expect(matcher.pendingSets).toBe(1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.pendingSets).toBe(0)
+    expect(matcher.match(ctx('https://a2.example/'))).toBeNull()
+    s.engine.setEnabled('a', true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.match(ctx('https://a2.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.pendingSets).toBe(0)
+    stop()
+  })
+
   it('compiles a matcher of its own for a partition a text set names and answers that partition from it (PS-49)', () => {
     const cacheDir = join(tempDir(), 'cache')
     const s = source()

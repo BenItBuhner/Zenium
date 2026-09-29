@@ -245,6 +245,16 @@ interface Scope {
   sets: RuleSetSummary[]
 }
 
+/** What one build of every scope read and handed off, for its end to settle. */
+interface Build {
+  /** The unpersisted text the build read, by set id. */
+  used: Map<string, string>
+  /** True once a scope parsed text (on the spot or in the worker) rather than adopting a cache. */
+  parsed: boolean
+  /** The worker compiles out; the build ends when every one is in. */
+  handedOff: Promise<void>[]
+}
+
 /**
  * Matches the enabled `filterText` sets with Ghostery's `FiltersEngine`. The engine is rebuilt
  * (off the current tick) whenever one of those sets changes – compiled in the background worker
@@ -313,6 +323,11 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   /** The partitions with a matcher of their own right now (diagnostics and the tests). */
   get scopedPartitions(): string[] {
     return [...this.scoped.keys()]
+  }
+
+  /** Sets whose unpersisted text waits for a build to read it (diagnostics and the tests). */
+  get pendingSets(): number {
+    return this.pendingText.size
   }
 
   /**
@@ -399,27 +414,14 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     const named = new Set(scopes.map((scope) => scope.partition))
     for (const partition of this.scoped.keys())
       if (!named.has(partition)) this.scoped.delete(partition)
-    // The unpersisted text this build reads; only that is forgotten once it is in, so a set
-    // that changes again while a background build is out keeps its newer text for the next.
-    const used = new Map<string, string>()
-    const handedOff: Promise<void>[] = []
+    const build: Build = { used: new Map(), parsed: false, handedOff: [] }
     try {
-      for (const scope of scopes) {
-        const out = this.buildScope(scope, used)
-        if (out) handedOff.push(out)
-      }
+      for (const scope of scopes) this.buildScope(scope, build)
     } catch (error) {
       console.error('[zenium] filter engine build failed', error)
     } finally {
-      if (handedOff.length === 0) {
-        this.forgetUsed(used)
-        this.finishBuild()
-      } else {
-        void Promise.all(handedOff).finally(() => {
-          this.forgetUsed(used)
-          this.finishBuild()
-        })
-      }
+      if (build.handedOff.length === 0) this.finishBuild(build)
+      else void Promise.all(build.handedOff).finally(() => this.finishBuild(build))
     }
   }
 
@@ -428,9 +430,9 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
    * empty engine is not worth caching, and writing it would evict the lists' serialised form
    * that the next switch on, and the next start, deserialise instead of parsing), the cache
    * when its fingerprint matches, else a parse – on the spot, or handed to the worker, whose
-   * promise is returned so the build waits for it.
+   * promise joins the build's so the build ends once every scope is in.
    */
-  private buildScope(scope: Scope, used: Map<string, string>): Promise<void> | null {
+  private buildScope(scope: Scope, build: Build): void {
     const fingerprint = scope.sets
       .map((s) => `${s.id}:${s.updatedAt ?? 0}:${s.filterCount}`)
       .join('|')
@@ -440,39 +442,42 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
         documents: DocumentFilters.parse([])
       })
       if (scope.partition === null) this.fromCache = false
-      return null
+      return
     }
     const cached = this.readCache(scope.partition, fingerprint)
     if (cached) {
       this.adopt(scope.partition, cached)
       if (scope.partition === null) this.fromCache = true
-      return null
+      return
     }
+    build.parsed = true
     const parts: string[] = []
     for (const summary of scope.sets) {
       const pending = this.pendingText.get(summary.id)
-      if (pending !== undefined) used.set(summary.id, pending)
+      if (pending !== undefined) build.used.set(summary.id, pending)
       const text = pending ?? this.source.store.readFilterText(summary.id)
       if (text) parts.push(text)
     }
     if (this.compile) {
-      return this.compile(parts)
-        .then((output) => {
-          this.compiledInBackground++
-          this.adopt(scope.partition, {
-            engine: FiltersEngine.deserialize(output.engine),
-            documents: DocumentFilters.parse([output.documents])
+      build.handedOff.push(
+        this.compile(parts)
+          .then((output) => {
+            this.compiledInBackground++
+            this.adopt(scope.partition, {
+              engine: FiltersEngine.deserialize(output.engine),
+              documents: DocumentFilters.parse([output.documents])
+            })
+            if (scope.partition === null) this.fromCache = false
+            this.writeCache(scope.partition, fingerprint, output.engine, output.documents)
           })
-          if (scope.partition === null) this.fromCache = false
-          this.writeCache(scope.partition, fingerprint, output.engine, output.documents)
-        })
-        .catch((error: unknown) => console.error('[zenium] filter engine build failed', error))
+          .catch((error: unknown) => console.error('[zenium] filter engine build failed', error))
+      )
+      return
     }
     const { engine, documents } = compileGhosteryEngine(parts)
     this.adopt(scope.partition, { engine, documents })
     if (scope.partition === null) this.fromCache = false
     this.writeCache(scope.partition, fingerprint, engine.serialize(), documents.lines.join('\n'))
-    return null
   }
 
   private adopt(partition: string | null, compiled: Compiled): void {
@@ -485,7 +490,15 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
       if (this.pendingText.get(id) === text) this.pendingText.delete(id)
   }
 
-  private finishBuild(): void {
+  /**
+   * A build that parsed nothing – every scope empty or from the cache – has no use for the
+   * text a list update left behind (the master switch off would otherwise hold every list's
+   * text until it turns on); one that parsed forgets only the text it read, so a set that
+   * changed again while a background build was out keeps its newer text for the next.
+   */
+  private finishBuild(build: Build): void {
+    if (build.parsed) this.forgetUsed(build.used)
+    else this.pendingText.clear()
     this.builds++
     this.building = false
     if (this.dirty) this.scheduleRebuild()
