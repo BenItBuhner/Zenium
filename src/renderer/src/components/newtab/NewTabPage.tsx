@@ -15,8 +15,7 @@ import {
 import type { PhoneBarPosition, Tab, UIState } from '@shared/types'
 import type { PrivateThirdPartyCookieStatus } from '@shared/privacy'
 import { defaultSearchEngineOf } from '@shared/search'
-import { getHost } from '@shared/url'
-import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
+import { MAX_NEW_TAB_SHORTCUTS, newTabSections, openTabFavicons } from '@shared/newTab'
 import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
@@ -505,17 +504,7 @@ function TopSites({
   }, [hiddenKey])
 
   // Open tabs know icons the history may not have yet (a pinned site never visited since).
-  const favicons = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const t of Object.values(state.tabs)) {
-      if (!t.favicon) continue
-      const host = getHost(t.url)
-        .toLowerCase()
-        .replace(/^www\./, '')
-      if (host && !map.has(host)) map.set(host, t.favicon)
-    }
-    return map
-  }, [state.tabs])
+  const favicons = useMemo(() => openTabFavicons(Object.values(state.tabs)), [state.tabs])
 
   // The pins in the order drawn: a drag's draft while one stands, the list's own otherwise (a
   // pin the draft does not know – added meanwhile – follows the ones it does).
@@ -637,7 +626,7 @@ function TopSiteTile({
       }}
     >
       <span className="zen-ntp-tile flex h-14 w-14 items-center justify-center">
-        <TileIcon favicon={site.favicon} url={site.url} label={label} />
+        <TileIcon favicon={site.favicon} url={site.url} label={label} size={24} />
       </span>
       <span className="zen-ntp-caption w-full truncate text-center">{label}</span>
     </button>

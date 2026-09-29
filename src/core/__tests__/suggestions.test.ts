@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   PRIVATE_CONTAINER_ID,
+  type FormFactor,
   type HostCapabilities,
   type Suggestion,
   type TopSite
@@ -69,7 +70,12 @@ function setup(
   net: FakeNet
   state: BrowserState
   /** The new tab page's tile source as the fixture stands in for it (OMN-04). */
-  newTab: { hiddenHosts: string[]; tiles: Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null }
+  newTab: {
+    hiddenHosts: string[]
+    tiles: Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null
+    /** The layout whose page the tiles were last asked for (`pageTiles`' argument). */
+    askedFor: FormFactor | null
+  }
 } {
   const state = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
   state.load()
@@ -84,13 +90,17 @@ function setup(
   const extensions = { omniboxSuggest: async () => null }
   // Nothing on the clipboard: the empty state (nothing typed) is the recent history alone.
   const searchEngines = { peekClipboard: async () => 'none' as const }
-  // The new tab page's tiles (`NewTabService.pageTiles`, the grid as the page lays it): the
-  // fixture's own list when a test sets one, else history's top sites under the page's hidden
-  // hosts – the grid under "most visited" with no shortcut pinned.
+  // The new tab page's tiles (`NewTabService.pageTiles`, the grid as the layout's page lays
+  // it): the fixture's own list when a test sets one, else history's top sites under the page's
+  // hidden hosts – the grid under "most visited" with no shortcut pinned.
   const newTab = {
     hiddenHosts: [] as string[],
     tiles: null as Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null,
-    pageTiles: () => newTab.tiles ?? history.topSites(8, newTab.hiddenHosts)
+    askedFor: null as FormFactor | null,
+    pageTiles: (formFactor: FormFactor) => {
+      newTab.askedFor = formFactor
+      return newTab.tiles ?? history.topSites(8, newTab.hiddenHosts)
+    }
   }
   const browser = {
     state,
@@ -1519,26 +1529,28 @@ describe('SuggestionService: zero-suggest on the touch layouts (OMN-04)', () => 
     ])
   })
 
-  it('caps the tiles at eight and lists them on the tablet layout too', async () => {
-    const { suggestions, history, win } = setup()
+  it("caps the tiles at eight and lists them on the tablet layout too – the served page's list, asked for as the tablet's", async () => {
+    const { suggestions, history, newTab, win } = setup()
     win.formFactor = 'tablet'
     for (let i = 0; i < 12; i += 1)
       history.visit(`https://site${i}.example/`, `Site ${i}`, null, { at: NOW - i })
     const rows = await suggestions.suggest('', null, win)
     expect(rows.filter((r) => r.group === 'Most visited')).toHaveLength(8)
+    expect(newTab.askedFor).toBe('tablet')
   })
 
-  it("the row is the page's list as the page gives it (the Lead's fold on #725): a pinned shortcut is a tile in its place, an untitled one named by its host; no tiles at all while the page has none", async () => {
+  it("the row is the page's list as the page gives it (the Lead's fold on #725): the phone's chrome-drawn page's, asked for as the phone's; a pinned shortcut is a tile in its place, an untitled one named by its host; no tiles at all while the page has none", async () => {
     const { suggestions, history, newTab, win } = setup()
     phone(win)
     for (let i = 0; i < 3; i += 1) history.visit('https://a.example/', 'A', null, { at: NOW - i })
     // The page under "most visited" with a shortcut pinned: the shortcut fronts, the most
-    // visited site follows – the very list `NewTabService.pageTiles` composes.
+    // visited site follows – the very list `NewTabService.pageTiles` composes for the layout.
     newTab.tiles = [
       { url: 'https://mine.example/', title: '', favicon: null },
       { url: 'https://a.example/', title: 'A', favicon: null }
     ]
     const rows = await suggestions.suggest('', null, win)
+    expect(newTab.askedFor).toBe('phone')
     expect(rows.filter((r) => r.group === 'Most visited')).toMatchObject([
       { id: 'tile:https://mine.example/', title: 'mine.example', url: 'https://mine.example/' },
       { id: 'tile:https://a.example/', title: 'A', url: 'https://a.example/' }

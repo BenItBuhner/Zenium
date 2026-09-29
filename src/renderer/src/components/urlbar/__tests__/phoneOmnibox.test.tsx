@@ -1804,6 +1804,35 @@ describe('zero-suggest on the touch layouts (OMN-04)', () => {
     expect(submits()[0]).not.toHaveProperty('learn')
   })
 
+  it('tablet: a keyboard’s Enter or Space on a focused tile picks it – a click with no pointer behind it – while a mouse’s click after its press picks nothing more', async () => {
+    layout('tablet')
+    suggestions = touchAnswers(false)
+    const el = await render(tablet())
+    await listed(el)
+    // The tiles are in the tab order, and the keyboard's activation of a button is a click
+    // with `detail` 0 and no pointer event before it.
+    expect(tileButtons(el).every((b) => b.tabIndex === 0)).toBe(true)
+    await act(async () => {
+      tileButtons(el)[1].dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }))
+      await Promise.resolve()
+    })
+    expect(submits()).toHaveLength(1)
+    expect(submits()[0]).toMatchObject({ input: 'https://en.wikipedia.org/', tabId: 't1' })
+    expect(submits()[0]).not.toHaveProperty('learn')
+    // A mouse's press picks (as above); the click that follows it, `detail` 1, is not a second pick.
+    uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
+    await listed(el)
+    await act(async () => {
+      tileButtons(el)[0].dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 })
+      )
+      tileButtons(el)[0].dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+      await Promise.resolve()
+    })
+    expect(submits()).toHaveLength(2)
+    expect(submits()[1]).toMatchObject({ input: 'https://example.com/', tabId: 't1' })
+  })
+
   it('tablet: removing a remembered search forgets it and deletes the search’s visits on every engine, so it does not come back', async () => {
     layout('tablet')
     suggestions = touchAnswers(false)

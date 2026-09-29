@@ -1,6 +1,7 @@
 import {
   PRIVATE_CONTAINER_ID,
   type Folder,
+  type FormFactor,
   type HistoryEntry,
   type SearchEngine,
   type Suggestion,
@@ -208,6 +209,7 @@ export class SuggestionService {
       if (isPrivate || modeEngine) return []
       const currentTab = currentTabId ? state.model.tabs[currentTabId] : undefined
       return await this.emptyState(wantsHistory, {
+        formFactor: win.formFactor,
         touch: touchLayout(win.formFactor),
         onNewTab: currentTab !== undefined && isEmptyTabUrl(currentTab.url),
         onResultsPage:
@@ -801,6 +803,8 @@ export class SuggestionService {
   private async emptyState(
     wantsHistory: boolean,
     layout: {
+      /** The window's layout class: whose new tab page the tiles are (the phone's is the chrome's own). */
+      formFactor: FormFactor
       touch: boolean
       /** The focused tab is a new tab page: it shows the tiles itself. */
       onNewTab: boolean
@@ -825,13 +829,13 @@ export class SuggestionService {
     }
     if (!wantsHistory) return rows
     // The new tab page's tiles (Chrome's `MostVisitedSitesProvider`, local): the very list the
-    // page shows – its most visited sites or the user's shortcuts, as the page's mode has it, and
-    // none while the page's shortcuts section is off – so not over the page itself, nor over the
-    // default engine's results page (Chrome's `SupportsMostVisitedSites` leaves the NTP and the
-    // SRP out), and on the touch layouts alone.
+    // layout's page shows – its most visited sites or the user's shortcuts, as the page's mode
+    // has it, and none while the page's shortcuts section is off – so not over the page itself,
+    // nor over the default engine's results page (Chrome's `SupportsMostVisitedSites` leaves the
+    // NTP and the SRP out), and on the touch layouts alone.
     const tiles =
       layout.touch && !layout.onNewTab && !layout.onResultsPage
-        ? this.browser.newTab.pageTiles()
+        ? this.browser.newTab.pageTiles(layout.formFactor)
         : []
     const tileUrls = new Set<string>()
     for (const site of tiles) {

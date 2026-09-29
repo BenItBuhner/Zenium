@@ -15,8 +15,9 @@ import { TileIcon } from '../newtab/TileIcon'
  * chrome-drawn page's 56 square with the 24 icon, on the tablet the served document's 64 with
  * the 32, each at the card radius on the window's fill, the site's letter where it has no icon,
  * the site's name at 13 on one line 8 under it), in 64-wide columns 8 apart, dissolving at the
- * edge that has more past it. A tile opens its site as a row's pick would; the field keeps the
- * focus through the press, as it does through a row's.
+ * edge that has more past it. A tile opens its site as a row's pick would – on a tap, a mouse's
+ * press, or a keyboard's Enter or Space on the focused tile; the field keeps the focus through
+ * the press, as it does through a row's.
  *
  * One list item of the suggestions list, presentational: the tiles are buttons in a named group,
  * and the options a screen reader counts are the rows alone.
@@ -84,9 +85,13 @@ function MostVisitedTile({
         } else touch.current = true
       }}
       onClick={(e) => {
-        if (!touch.current) return
-        touch.current = false
-        onPick(e)
+        // The tap the finger's press announced picks; so does a keyboard's Enter or Space on
+        // the focused tile (a tablet's keyboard, a switch) – a click with no pointer behind it,
+        // `detail` 0. A mouse's click follows the press that already picked, and picks nothing.
+        if (touch.current) {
+          touch.current = false
+          onPick(e)
+        } else if (e.detail === 0) onPick(e)
       }}
     >
       <span

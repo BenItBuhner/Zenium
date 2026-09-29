@@ -18,13 +18,13 @@ export function TileIcon({
   favicon,
   url,
   label,
-  size = 24
+  size
 }: {
   favicon: string | null
   url: string
   label: string
-  /** The icon's square: the phone page's 24, the tablet's and the desktop document's 32. */
-  size?: 24 | 32
+  /** The icon's square, the caller's layout's: the phone page's 24, the tablet's and the desktop document's 32. */
+  size: 24 | 32
 }): JSX.Element {
   const [loaded, setLoaded] = useState(false)
   const [broken, setBroken] = useState<string | null>(null)
