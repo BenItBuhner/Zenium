@@ -449,12 +449,14 @@ function connectedGroups(
  * reports it. At other times the row is not drawn (§10.4: a row for a state most users never
  * enter appears when its state does).
  *
- * On a phone the Folder row also copies its path (`RowCopy`; services seed #34, the lead's rule
- * on #694, point 3): a row that both copies and carries an address, so the hold opens the row's
- * address sheet – the whole path – with Copy as its one row (the copy is the line as the row
- * shows it, `folderLine`, the very text the sheet holds). Phone alone: the tablet and the desktop
- * draw no sheet for the hold, so a copy declared there would have no surface (the tablet's is
- * the lead's to place); the root, whose line is a sentence, copies nothing.
+ * On the touch layouts the Folder row also copies its path (`RowCopy`; services seed #34, the
+ * lead's word: "The Folder row carries copy on both touch layouts"): a row that both copies and
+ * carries an address, so the hold opens the row's address sheet – the whole path – with Copy as
+ * its one row on a phone, and raises the held card with Copy as its one footer button on a
+ * tablet (the copy is the line as the row shows it, `folderLine`, the very text either surface
+ * holds). Not on the desktop (`formFactor !== 'desktop'`, the version row's rule, SET-54): "on
+ * the desktop you copy from the folder editor's field"; the root, whose line is a sentence,
+ * copies nothing.
  */
 function serverRows(
   server: Omit<WebDavSyncCredentials, 'password'>,
@@ -503,7 +505,7 @@ function serverRows(
       description: folderLine,
       address: isPath,
       keywords: ['folder', 'directory', 'path'],
-      ...(isPath && formFactor === 'phone'
+      ...(isPath && formFactor !== 'desktop'
         ? { copy: { text: folderLine, confirmation: SYNC_COPY.serverFolderCopied } }
         : {})
     }

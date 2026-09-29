@@ -8448,31 +8448,33 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(row(model, 'sync-disconnect')).toMatchObject({ kind: 'action', label: 'Turn off sync' })
   })
 
-  it('seed #34: on a phone the connected page’s Folder row also copies its path – the line as the row shows it, "Folder copied" as the word – so its hold is the address sheet with Copy as its one row; nowhere else, and never for the top level', () => {
+  it('seed #34: on the touch layouts the connected page’s Folder row also copies its path – the line as the row shows it, "Folder copied" as the word – so its hold is the address sheet with Copy as its one row (a phone) or the held card with Copy as its footer button (a tablet); not on the desktop, and never for the top level', () => {
     const def = PAGE.sections.find((x) => x.id === 'sync')!
     const nested = onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } })
     const on = (formFactor: 'phone' | 'tablet' | 'desktop' | undefined, s = nested): Row =>
       row(buildSection(def, { ...context(syncState(s)).ctx, formFactor }), 'sync-server-folder')
-    const phone = on('phone')
-    if (phone.kind !== 'info') throw new Error('not an info row')
-    // Both at once: the path (its line kept from its end) and the copy of that very line.
-    expect(phone).toMatchObject({
-      label: 'Folder',
-      description: 'Backups/Zenium',
-      address: true,
-      copy: { text: 'Backups/Zenium', confirmation: 'Folder copied' }
-    })
-    expect(phone.copy?.text).toBe(phone.description)
-    expect(phone.copy?.confirmation).toBe(SYNC_COPY.serverFolderCopied)
-    // The tablet and the desktop draw no sheet for the hold: no copy declared with no surface
-    // for it (the tablet's is the lead's to place); a context without a form factor keeps the
-    // desktop's row.
-    for (const formFactor of ['tablet', 'desktop', undefined] as const) {
-      const wide = on(formFactor)
-      if (wide.kind !== 'info') throw new Error('not an info row')
-      expect(wide.address).toBe(true)
-      expect(wide.copy).toBeUndefined()
+    // Both at once on either touch layout (the lead: "The Folder row carries copy on both touch
+    // layouts"): the path (its line kept from its end) and the copy of that very line. A
+    // context without a form factor shows every row as the version row's rule reads it
+    // (`formFactor !== 'desktop'`, SET-54): the copy declared.
+    for (const formFactor of ['phone', 'tablet', undefined] as const) {
+      const touch = on(formFactor)
+      if (touch.kind !== 'info') throw new Error('not an info row')
+      expect(touch).toMatchObject({
+        label: 'Folder',
+        description: 'Backups/Zenium',
+        address: true,
+        copy: { text: 'Backups/Zenium', confirmation: 'Folder copied' }
+      })
+      expect(touch.copy?.text).toBe(touch.description)
+      expect(touch.copy?.confirmation).toBe(SYNC_COPY.serverFolderCopied)
     }
+    // The desktop copies from the folder editor's field (the lead; the version row's rule): the
+    // address, no copy.
+    const wide = on('desktop')
+    if (wide.kind !== 'info') throw new Error('not an info row')
+    expect(wide.address).toBe(true)
+    expect(wide.copy).toBeUndefined()
     // The top level is a sentence, not a path: no address and nothing to copy, the phone's too.
     const root = on(
       'phone',

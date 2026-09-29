@@ -74,8 +74,9 @@ export const SYNC_COPY = {
   serverFolder: 'Folder',
   serverFolderHint: 'Where the zenium-sync folder is kept on the server.',
   serverRootFolder: 'The top level of your files',
-  // The toast's word when the connected page's Folder row is copied from its hold sheet's Copy
-  // row (services seed #34), as "Version copied" is the version row's (SET-54).
+  // The toast's word when the connected page's Folder row is copied from its hold's Copy – the
+  // phone sheet's row, the tablet card's button (services seed #34; the lead: the toast "names
+  // the row") – as "Version copied" is the version row's (SET-54).
   serverFolderCopied: 'Folder copied',
   // Test connection: an action row that reports its result in its description (§9.33: the ink
   // alone, no glyph) and is §9.30's busy row while the server is asked. The sentences are the
