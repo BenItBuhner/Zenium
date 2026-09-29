@@ -8,6 +8,8 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionRecordData,
+  extensionStoreOf,
   frozenRecords,
   fullScope,
   hashData,
@@ -17,9 +19,11 @@ import {
   modData,
   newestByRecord,
   paymentMethodData,
+  pendingExtensionRequests,
   readAddressData,
   readBookmarkData,
   readCredentialData,
+  readExtensionData,
   readFolderAgentMark,
   readModData,
   readPaymentMethodData,
@@ -35,6 +39,7 @@ import {
   wireFavicon,
   withoutDeviceLocalSettings,
   type BookmarkData,
+  type ExtensionSyncSource,
   type MetaMap,
   type OrderData,
   type RecordMeta,
@@ -2637,5 +2642,368 @@ describe('mod records (services pass 15, ID-43)', () => {
     // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
     const naive = diffLocal(on.meta, collectLocal(src, off), 2000)
     expect(naive.records.find((r) => r.id === 'mod_a')?.deleted).toBe(true)
+  })
+})
+
+describe('extension records (services pass 16, ID-44)', () => {
+  const ID_A = 'abcdefghijklmnopabcdefghijklmnop'
+  const ID_B = 'ppppoooonnnnmmmmllllkkkkjjjjiiii'
+  const ID_C = 'cccccccccccccccccccccccccccccccc'
+  const ID_D = 'dddddddddddddddddddddddddddddddd'
+  const ID_E = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  const ext = (
+    id: string,
+    source: ExtensionSyncSource['source'],
+    enabled: boolean,
+    toolbarPinned: boolean,
+    extra: Partial<ExtensionSyncSource> = {}
+  ): ExtensionSyncSource => ({ id, source, enabled, toolbarPinned, ...extra })
+
+  it('collectLocal emits one record per store extension under its id – store, enabled, toolbarPinned – and never one for a crx, zip or unpacked install', () => {
+    const src = {
+      ...sources(),
+      extensions: [
+        ext(ID_A, 'chrome-web-store', true, true),
+        ext(ID_B, 'edge-add-ons', false, false),
+        ext(ID_C, 'crx', true, true),
+        ext(ID_D, 'zip', true, false),
+        ext(ID_E, 'unpacked', true, true)
+      ]
+    }
+    const out = collectLocal(src, defaultScope())
+    expect(out.get(ID_A)).toEqual({
+      type: 'extension',
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: true }
+    })
+    expect(Object.keys(out.get(ID_A)!.data as object)).toEqual([
+      'store',
+      'enabled',
+      'toolbarPinned'
+    ])
+    expect(out.get(ID_B)).toEqual({
+      type: 'extension',
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: false }
+    })
+    for (const id of [ID_C, ID_D, ID_E]) expect(out.has(id)).toBe(false)
+    expect([...out.values()].filter((r) => r.type === 'extension')).toHaveLength(2)
+    // The payload carries nothing else of the extension: no id, no version, no time, no grant.
+    for (const key of [
+      'id',
+      'version',
+      'name',
+      'installedAt',
+      'updatedAt',
+      'allowFileAccess',
+      'allowPrivate',
+      'allowUserScripts',
+      'pinned'
+    ])
+      expect(out.get(ID_A)!.data).not.toHaveProperty(key)
+    expect(extensionStoreOf('chrome-web-store')).toBe('chrome-web-store')
+    expect(extensionStoreOf('edge-add-ons')).toBe('edge-add-ons')
+    expect(extensionStoreOf('crx')).toBeNull()
+    expect(extensionStoreOf('zip')).toBeNull()
+    expect(extensionStoreOf('unpacked')).toBeNull()
+  })
+
+  it('the pin is `toolbarPinned` (registry.ts:35, Chrome’s "Pin to toolbar") and never `pinned` (:30, the update-check skip)', () => {
+    // `ExtensionInfo` carries both; the record reads the toolbar one alone.
+    const info = {
+      ...ext(ID_A, 'chrome-web-store', true, false),
+      pinned: true
+    } as ExtensionSyncSource & {
+      pinned: boolean
+    }
+    const out = collectLocal({ ...sources(), extensions: [info] }, defaultScope())
+    expect(out.get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false
+    })
+    const pinnedToToolbar = { ...ext(ID_A, 'chrome-web-store', true, true), pinned: false }
+    expect(
+      collectLocal({ ...sources(), extensions: [pinnedToToolbar] }, defaultScope()).get(ID_A)!.data
+    ).toEqual({ store: 'chrome-web-store', enabled: true, toolbarPinned: true })
+    // Each switch is part of the hash: the pin or the enabled state flipped is an edit.
+    const base = extensionRecordData(ext(ID_A, 'chrome-web-store', true, true), 'chrome-web-store')
+    expect(hashData(base)).not.toBe(
+      hashData(extensionRecordData(ext(ID_A, 'chrome-web-store', true, false), 'chrome-web-store'))
+    )
+    expect(hashData(base)).not.toBe(
+      hashData(extensionRecordData(ext(ID_A, 'chrome-web-store', false, true), 'chrome-web-store'))
+    )
+  })
+
+  it('a synced landing that waits for the user’s approval here (pendingApproval) is not this device’s state to publish; an id that is no extension id is skipped', () => {
+    const src = {
+      ...sources(),
+      extensions: [
+        ext(ID_A, 'chrome-web-store', false, true, { pendingApproval: true }),
+        ext('not-an-extension-id', 'chrome-web-store', true, true),
+        ext(ID_B, 'edge-add-ons', true, false)
+      ]
+    }
+    const out = collectLocal(src, defaultScope())
+    expect(out.has(ID_A)).toBe(false)
+    expect(out.has('not-an-extension-id')).toBe(false)
+    expect(out.get(ID_B)?.type).toBe('extension')
+    // Approved (the flag gone, the switch on): the record is the peer's bytes again.
+    const approved = { ...src, extensions: [ext(ID_A, 'chrome-web-store', true, true)] }
+    expect(collectLocal(approved, defaultScope()).get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true
+    })
+  })
+
+  it('the Extensions toggle (default on, Chrome’s Extensions type) gates the type both ways; a source or a scope from before the type publishes none', () => {
+    expect(defaultScope().extensions).toBe(true)
+    expect(fullScope().extensions).toBe(true)
+    const src = { ...sources(), extensions: [ext(ID_A, 'chrome-web-store', true, true)] }
+    const off = { ...defaultScope(), extensions: false }
+    expect([...collectLocal(src, off).values()].some((r) => r.type === 'extension')).toBe(false)
+    expect(
+      [...collectLocal(sources(), defaultScope()).values()].some((r) => r.type === 'extension')
+    ).toBe(false)
+    const { extensions: _absent, ...olderScope } = defaultScope()
+    void _absent
+    expect(
+      [...collectLocal(src, olderScope as SyncScope).values()].some((r) => r.type === 'extension')
+    ).toBe(false)
+    const record: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 1,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: true }
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, defaultScope())).toBe(true)
+    expect(inScope(record, olderScope as SyncScope)).toBeFalsy()
+  })
+
+  it('readExtensionData – the apply side’s reader – round-trips the payload byte for byte, ignores an unknown store or garbage, and refuses a bad id', () => {
+    const sent = extensionRecordData(ext(ID_A, 'edge-add-ons', false, true), 'edge-add-ons')
+    const read = readExtensionData(ID_A, sent)!
+    expect(read).toEqual({ store: 'edge-add-ons', enabled: false, toolbarPinned: true })
+    expect(Object.keys(read)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    expect(JSON.stringify(readExtensionData(ID_A, read))).toBe(JSON.stringify(read))
+    expect(hashData(read)).toBe(hashData(sent))
+    // Extra keys a later build might add ride along in the file but land nowhere here.
+    expect(readExtensionData(ID_A, { ...sent, version: '1.2.3', id: ID_B })).toEqual(read)
+    // An unknown store id (a store a later build adds): the record is ignored – null, not a guess.
+    expect(readExtensionData(ID_A, { ...sent, store: 'firefox-add-ons' })).toBeNull()
+    expect(readExtensionData(ID_A, { ...sent, store: 'crx' })).toBeNull()
+    expect(readExtensionData(ID_A, { ...sent, store: 'unpacked' })).toBeNull()
+    expect(readExtensionData(ID_A, { ...sent, store: 7 })).toBeNull()
+    // The switches must be booleans; missing or stringly ones are garbage.
+    expect(
+      readExtensionData(ID_A, { store: 'chrome-web-store', enabled: 'yes', toolbarPinned: true })
+    ).toBeNull()
+    expect(readExtensionData(ID_A, { store: 'chrome-web-store', enabled: true })).toBeNull()
+    expect(readExtensionData(ID_A, { store: 'chrome-web-store', toolbarPinned: false })).toBeNull()
+    expect(readExtensionData(ID_A, null)).toBeNull()
+    expect(readExtensionData(ID_A, 'nonsense')).toBeNull()
+    expect(readExtensionData(ID_A, [sent])).toBeNull()
+    // The record's id is the extension's id at the store: anything else is no install target.
+    expect(readExtensionData('not-an-id', sent)).toBeNull()
+    expect(readExtensionData(ID_A.toUpperCase(), sent)).toBeNull()
+    expect(readExtensionData(ID_A.slice(0, 31), sent)).toBeNull()
+    expect(readExtensionData('qrstuvwxyzqrstuvwxyzqrstuvwxyzqr', sent)).toBeNull()
+  })
+
+  it('diffLocal: first seen at 0; a switch flipped stamps that record at now; a removal is a tombstone at now; the newest write wins whole', () => {
+    const src = {
+      ...sources(),
+      extensions: [
+        ext(ID_A, 'chrome-web-store', true, true),
+        ext(ID_B, 'edge-add-ons', true, false)
+      ]
+    }
+    const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    expect(first.meta[ID_A]).toMatchObject({ type: 'extension', modified: 0 })
+    expect(first.meta[ID_B]).toMatchObject({ type: 'extension', modified: 0 })
+
+    src.extensions = [
+      ext(ID_A, 'chrome-web-store', true, true),
+      ext(ID_B, 'edge-add-ons', false, false)
+    ]
+    const edited = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+    expect(edited.changed).toBe(true)
+    expect(edited.meta[ID_B].modified).toBe(2000)
+    expect(edited.meta[ID_A].modified).toBe(0)
+    expect(edited.records.find((r) => r.id === ID_B)).toEqual({
+      id: ID_B,
+      type: 'extension',
+      modified: 2000,
+      deleted: false,
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: false }
+    })
+
+    // Uninstalled here: the engine names it in `removedExtensions`, and the absence tombstones.
+    src.extensions = [ext(ID_B, 'edge-add-ons', false, false)]
+    const removed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000, {
+      stamp: 4000,
+      frozen: frozenRecords(
+        { ...src, removedExtensions: new Set([ID_A]) },
+        defaultScope(),
+        edited.meta
+      )
+    })
+    expect(removed.changed).toBe(true)
+    expect(removed.meta[ID_A]).toEqual({
+      type: 'extension',
+      hash: '',
+      modified: 4000,
+      deleted: true
+    })
+    expect(removed.records.find((r) => r.id === ID_A)).toEqual({
+      id: ID_A,
+      type: 'extension',
+      modified: 4000,
+      deleted: true,
+      data: null
+    })
+    // Last writer per extension, the whole record; a tie keeps this device's copy.
+    const live: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 3999,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: true }
+    }
+    expect(winningRemote(removed.meta, new Map([[ID_A, live]]))).toEqual([])
+    expect(winningRemote(removed.meta, new Map([[ID_A, { ...live, modified: 4000 }]]))).toEqual([])
+    expect(
+      winningRemote(removed.meta, new Map([[ID_A, { ...live, modified: 4001 }]]))
+    ).toHaveLength(1)
+    expect(metaFromRemote([{ ...live, modified: 4001 }])[ID_A]).toEqual({
+      type: 'extension',
+      hash: hashData(live.data),
+      modified: 4001,
+      deleted: false
+    })
+  })
+
+  it('frozenRecords: an extension entry whose extension this device does not hold is frozen – an install in flight, failed, or landed pending – unless the extension was uninstalled here', () => {
+    // Device B has applied A's record (metaFromRemote) but the install has not landed yet.
+    const remote: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 5000,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    const src = { ...sources(), extensions: [] as ExtensionSyncSource[] }
+    const meta: MetaMap = {
+      ...diffLocal({}, collectLocal(src, defaultScope()), 1000).meta,
+      ...metaFromRemote([remote])
+    }
+    const waiting = diffLocal(meta, collectLocal(src, defaultScope()), 6000, {
+      stamp: 6000,
+      frozen: frozenRecords(src, defaultScope(), meta)
+    })
+    expect(waiting.changed).toBe(false)
+    expect(waiting.meta[ID_A]).toEqual(meta[ID_A])
+    expect(waiting.records.some((r) => r.id === ID_A)).toBe(false)
+    // Landed turned off, waiting for approval: `collectLocal` leaves it out, the entry stays.
+    const pending = {
+      ...src,
+      extensions: [ext(ID_A, 'chrome-web-store', false, false, { pendingApproval: true })]
+    }
+    const held = diffLocal(meta, collectLocal(pending, defaultScope()), 7000, {
+      stamp: 7000,
+      frozen: frozenRecords(pending, defaultScope(), meta)
+    })
+    expect(held.changed).toBe(false)
+    expect(held.meta[ID_A]).toEqual(meta[ID_A])
+    // Approved: the extension stands as the record said, the same bytes – no stamp, no record.
+    const approved = { ...src, extensions: [ext(ID_A, 'chrome-web-store', true, false)] }
+    const same = diffLocal(meta, collectLocal(approved, defaultScope()), 8000, {
+      stamp: 8000,
+      frozen: frozenRecords(approved, defaultScope(), meta)
+    })
+    expect(same.changed).toBe(false)
+    expect(same.meta[ID_A]).toEqual(meta[ID_A])
+    // Uninstalled here (the pending landing removed, or the installed copy): the tombstone.
+    const gone = diffLocal(meta, collectLocal(src, defaultScope()), 9000, {
+      stamp: 9000,
+      frozen: frozenRecords({ ...src, removedExtensions: new Set([ID_A]) }, defaultScope(), meta)
+    })
+    expect(gone.changed).toBe(true)
+    expect(gone.meta[ID_A]).toEqual({ type: 'extension', hash: '', modified: 9000, deleted: true })
+    // Without the rule the absence would be a deletion – and would uninstall the peer's copy.
+    const naive = diffLocal(meta, collectLocal(src, defaultScope()), 6000)
+    expect(naive.records.find((r) => r.id === ID_A)?.deleted).toBe(true)
+    // Turning the type off holds the entries as every toggle does.
+    const on = diffLocal({}, collectLocal(approved, defaultScope()), 1000)
+    const off = { ...defaultScope(), extensions: false }
+    const switched = diffLocal(on.meta, collectLocal(approved, off), 2000, {
+      stamp: 2000,
+      frozen: frozenRecords(approved, off, on.meta)
+    })
+    expect(switched.changed).toBe(false)
+    expect(switched.meta[ID_A]).toEqual(on.meta[ID_A])
+  })
+
+  it('pendingExtensionRequests: a live remote record this device holds as applied but not as installed is handed to the host again every round; a winner, a tombstone, a held id, a closed entry or the type off is not', () => {
+    const live: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 5000,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    const other: SyncRecord = {
+      ...live,
+      id: ID_B,
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true }
+    }
+    const tomb: SyncRecord = {
+      id: ID_C,
+      type: 'extension',
+      modified: 5000,
+      deleted: true,
+      data: null
+    }
+    const mod: SyncRecord = {
+      id: 'mod_a',
+      type: 'mod',
+      modified: 5000,
+      deleted: false,
+      data: { css: 'a {}' }
+    }
+    const local = metaFromRemote([live, other, tomb, mod])
+    const remote = new Map([live, other, tomb, mod].map((r) => [r.id, r] as const))
+    const none = new Map<string, unknown>()
+    // Neither installed: both asked for again.
+    expect(
+      pendingExtensionRequests(local, none, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_A, ID_B])
+    // B installed (held locally): A alone.
+    const heldB = new Map<string, unknown>([[ID_B, {}]])
+    expect(
+      pendingExtensionRequests(local, heldB, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_A])
+    // A among this round's winners: left to them.
+    expect(pendingExtensionRequests(local, heldB, remote, [live], defaultScope())).toEqual([])
+    // An entry this device tombstoned (uninstalled here) is closed; one it never saw is no request yet.
+    const closed = { ...local, [ID_A]: { ...local[ID_A], deleted: true, hash: '' } }
+    expect(
+      pendingExtensionRequests(closed, none, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_B])
+    const { [ID_A]: _unseen, ...never } = local
+    void _unseen
+    expect(
+      pendingExtensionRequests(never, none, remote, [], defaultScope()).map((r) => r.id)
+    ).toEqual([ID_B])
+    // The type off asks for nothing.
+    expect(
+      pendingExtensionRequests(local, none, remote, [], { ...defaultScope(), extensions: false })
+    ).toEqual([])
+    // The newest remote copy is what is handed over (the map holds it; identity kept).
+    expect(pendingExtensionRequests(local, none, remote, [], defaultScope())[0]).toBe(live)
   })
 })

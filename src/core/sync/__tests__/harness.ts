@@ -120,6 +120,8 @@ export function device(
     fetch?: SyncFetch
     /** The host's secret store (the app password's home); absent for a host without one. */
     secrets?: SecretStore
+    /** The host's extensions (a desktop or phone with store installs, ID-44); absent for a host without any. */
+    extensions?: Platform['createExtensions']
   } = {}
 ): Device {
   const transports: HarnessTransport[] = []
@@ -193,6 +195,7 @@ export function device(
     },
     sync: host,
     ...(options.secrets ? { secrets: options.secrets } : {}),
+    ...(options.extensions ? { createExtensions: options.extensions } : {}),
     readabilitySource: () => null,
     ...(webNotifications ? { webNotifications } : {})
   }

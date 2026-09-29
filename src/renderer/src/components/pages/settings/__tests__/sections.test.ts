@@ -7631,10 +7631,17 @@ describe('ID-08’s Sync category on a phone', () => {
       'Reading list',
       'Settings'
     ])
-    // Every key of the engine's scope is a switch here, once.
+    // Every key of the engine's scope is a switch here, once – on a host that has what the key
+    // names: the Extensions row (ID-44) sits behind the `extensions` capability, and this
+    // fixture's phone has none, so the list is every row but that one.
     const keys = SYNC_SCOPES.map((s) => s.key)
     expect([...keys].sort()).toEqual(Object.keys(defaultScope()).sort())
-    expect(scope?.rows.map((r) => r.id)).toEqual(keys.map((k) => `sync-scope:${k}`))
+    expect(SYNC_SCOPES.filter((s) => s.requires).map((s) => [s.key, s.requires])).toEqual([
+      ['extensions', 'extensions']
+    ])
+    expect(scope?.rows.map((r) => r.id)).toEqual(
+      keys.filter((k) => k !== 'extensions').map((k) => `sync-scope:${k}`)
+    )
     const openTabs = row(model, 'sync-scope:openTabs')
     if (openTabs.kind !== 'switch') throw new Error('not a switch')
     expect(openTabs.checked).toBe(false)
@@ -7695,6 +7702,46 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(
       scope?.rows.map((r) => r.id)
     )
+  })
+
+  it('What you sync › Extensions (services pass 16, ID-44): on every host that installs extensions, last, on by default, the lead’s label and hint verbatim; absent where the host has no extensions', () => {
+    // A host with extensions – the desktop, or a phone whose build installs them.
+    const withExtensions = (sync: SyncStatus): UIState =>
+      state({
+        capabilities: { ...ANDROID, sync: true, extensions: true },
+        sync
+      } as Partial<UIState>)
+    for (const status of [syncStatus(), connected()]) {
+      const model = section('sync', withExtensions(status))
+      const scope = model.groups.find((g) => g.id === 'sync-scope')
+      expect(scope?.rows.map((r) => r.id)).toEqual(SYNC_SCOPES.map((s) => `sync-scope:${s.key}`))
+      expect(scope?.rows.map((r) => r.label).slice(-3)).toEqual(['Boosts', 'Mods', 'Extensions'])
+      const extensions = row(model, 'sync-scope:extensions')
+      if (extensions.kind !== 'switch') throw new Error('not a switch')
+      expect(extensions.label).toBe('Extensions')
+      expect(extensions.description).toBe(
+        'Store extensions and whether they are enabled and pinned; unpacked ones stay on this device.'
+      )
+      expect(extensions.checked).toBe(true)
+      expect(defaultScope().extensions).toBe(true)
+      invoke.mockClear()
+      extensions.onChange(false)
+      expect(invoke).toHaveBeenCalledWith('sync.setScope', { extensions: false })
+    }
+    // Off in the engine's scope: the switch shows it off.
+    const off = section(
+      'sync',
+      withExtensions(connected({ scope: { ...defaultScope(), extensions: false } }))
+    )
+    const offRow = row(off, 'sync-scope:extensions')
+    if (offRow.kind !== 'switch') throw new Error('not a switch')
+    expect(offRow.checked).toBe(false)
+    // A host without extensions has no row for the type, before setup and connected alike.
+    for (const status of [syncStatus(), connected()]) {
+      const model = section('sync', syncState(status))
+      expect(allRows(model.groups).map((r) => r.id)).not.toContain('sync-scope:extensions')
+      expect(allRows(model.groups).map((r) => r.label)).not.toContain('Extensions')
+    }
   })
 
   it('connected: the status with Sync now, the folder and device, the other devices newest first with their last-seen time, the toggles, and Turn off sync', async () => {

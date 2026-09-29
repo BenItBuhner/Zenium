@@ -16,8 +16,16 @@ import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { DEFAULT_READER_PREFERENCES } from '../../../shared/reader'
 import { matchKeywordWord } from '../../../shared/search'
 import { Browser } from '../../../core/browser'
+import { NoExtensions } from '../../../core/hostDefaults'
 import { createFolder, createSpace } from '../../../core/model'
-import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../../../core/platform'
+import type {
+  Platform,
+  StoreIO,
+  SyncedExtensionChange,
+  TabView,
+  TabViewHost,
+  WindowHost
+} from '../../../core/platform'
 import { applyRemote } from '../apply'
 import {
   DEVICE_LOCAL_SETTINGS,
@@ -51,8 +59,14 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
   })
 }
 
-/** A browser over an empty profile, or over the files given (`state.json` among them). */
-function browser(files: Record<string, string> = {}): Browser {
+/**
+ * A browser over an empty profile, or over the files given (`state.json` among them); with
+ * `createExtensions`, over a host that has extensions (else `NoExtensions`, the phone's shape).
+ */
+function browser(
+  files: Record<string, string> = {},
+  createExtensions?: Platform['createExtensions']
+): Browser {
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities: stub<HostCapabilities>({ windows: false, updates: false, agents: false }),
@@ -80,7 +94,8 @@ function browser(files: Record<string, string> = {}): Browser {
     downloads: stub(),
     sessions: stub(),
     app: stub(),
-    readabilitySource: () => null
+    readabilitySource: () => null,
+    ...(createExtensions ? { createExtensions } : {})
   }
   const b = new Browser(platform)
   b.state.settings.onboardingDone = true
@@ -1406,5 +1421,138 @@ describe('applyRemote: the Mods (services pass 15, ID-43)', () => {
     expect(b.mods.put({ ...mine })).toBe(false)
     applyRemote(b, [modRecord(mine)])
     expect(JSON.stringify(b.mods.all())).toBe(before)
+  })
+})
+
+/** An extension host that records what the apply hands it – the desktop's shape, without the store. */
+class RecordingExtensions extends NoExtensions {
+  readonly batches: SyncedExtensionChange[][] = []
+
+  applySyncedExtensions(changes: readonly SyncedExtensionChange[]): void {
+    this.batches.push([...changes])
+  }
+}
+
+const EXT_A = 'abcdefghijklmnopabcdefghijklmnop'
+const EXT_B = 'ppppoooonnnnmmmmllllkkkkjjjjiiii'
+const EXT_C = 'cccccccccccccccccccccccccccccccc'
+
+function extensionRecord(
+  id: string,
+  data: Record<string, unknown> | null,
+  modified = 2000
+): SyncRecord {
+  return { id, type: 'extension', data, modified, deleted: data === null }
+}
+
+describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
+  it('hands the host one batch per apply: a live record as its read data with the origin device, a tombstone as data null; ignores an unknown store, garbage and a bad id; nothing for a host without the method', () => {
+    const host = { current: null as RecordingExtensions | null }
+    const b = browser({}, (browser) => (host.current = new RecordingExtensions(browser)))
+    const origins = new Map<string, string>([
+      [EXT_A, 'Work laptop'],
+      [EXT_B, 'Pixel 9']
+    ])
+    applyRemote(
+      b,
+      [
+        extensionRecord(EXT_A, { store: 'chrome-web-store', enabled: true, toolbarPinned: false }),
+        extensionRecord(EXT_B, null, 3000),
+        // A later build's store: ignored – null from the reader, nothing to the host.
+        extensionRecord(EXT_C, { store: 'firefox-add-ons', enabled: true, toolbarPinned: true }),
+        extensionRecord(EXT_C, { store: 'crx', enabled: true, toolbarPinned: true }),
+        extensionRecord(EXT_C, { store: 'chrome-web-store', enabled: 'yes', toolbarPinned: true }),
+        extensionRecord(EXT_C, 'nonsense' as unknown as Record<string, unknown>),
+        extensionRecord('not-an-extension-id', {
+          store: 'chrome-web-store',
+          enabled: true,
+          toolbarPinned: true
+        }),
+        // A later build appended a field: the three known ones land, the rest rides along.
+        extensionRecord(EXT_C, {
+          store: 'edge-add-ons',
+          enabled: false,
+          toolbarPinned: true,
+          version: '2.0'
+        })
+      ],
+      (r) => origins.get(r.id) ?? null
+    )
+    // The live records first, the tombstones after them – the batch's order for every type.
+    expect(host.current!.batches).toEqual([
+      [
+        {
+          id: EXT_A,
+          data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false },
+          from: 'Work laptop'
+        },
+        {
+          id: EXT_C,
+          data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true },
+          from: null
+        },
+        { id: EXT_B, data: null, from: 'Pixel 9' }
+      ]
+    ])
+    // Without an origin callback the device is unknown (null), never a guess.
+    applyRemote(b, [extensionRecord(EXT_B, null, 4000)])
+    expect(host.current!.batches[1]).toEqual([{ id: EXT_B, data: null, from: null }])
+    // A batch with no extension record hands the host nothing.
+    applyRemote(b, [modTombstone('mod_unknown', 3000)])
+    expect(host.current!.batches).toHaveLength(2)
+
+    // The phone's host (no `applySyncedExtensions`) lands none and errs on none.
+    const phone = browser()
+    expect(phone.extensions.applySyncedExtensions).toBeUndefined()
+    expect(() =>
+      applyRemote(phone, [
+        extensionRecord(EXT_A, { store: 'chrome-web-store', enabled: true, toolbarPinned: false })
+      ])
+    ).not.toThrow()
+  })
+
+  it('a batch of extension records alone touches no state: no repair, no commit – the extensions live in the host’s registry', () => {
+    const files: Record<string, string> = {}
+    const b = browser(files, (browser) => new RecordingExtensions(browser))
+    const before = files['state.json']
+    const commits = { count: 0 }
+    const commit = b.state.commit.bind(b.state)
+    b.state.commit = () => {
+      commits.count += 1
+      commit()
+    }
+    applyRemote(b, [
+      extensionRecord(EXT_A, { store: 'chrome-web-store', enabled: true, toolbarPinned: false }),
+      extensionRecord(EXT_B, null, 3000)
+    ])
+    expect(commits.count).toBe(0)
+    expect(files['state.json']).toBe(before)
+    // A Mod in the same batch commits as it did.
+    applyRemote(b, [
+      extensionRecord(EXT_A, { store: 'chrome-web-store', enabled: false, toolbarPinned: false }),
+      modRecord({ id: 'mod_x', name: 'X', source: null, css: '.x {}', enabled: true, updatedAt: 1 })
+    ])
+    expect(commits.count).toBe(1)
+  })
+
+  it('the extension records land after the state’s (the model, the settings, the Mods) within a batch', () => {
+    const order: string[] = []
+    const b = browser({}, (browser) => {
+      const host = new RecordingExtensions(browser)
+      host.applySyncedExtensions = (changes) => {
+        order.push(`extensions:${changes.map((c) => c.id).join(',')}`)
+      }
+      return host
+    })
+    const put = b.mods.put.bind(b.mods)
+    b.mods.put = (mod) => {
+      order.push(`mod:${mod.id}`)
+      return put(mod)
+    }
+    applyRemote(b, [
+      extensionRecord(EXT_A, { store: 'chrome-web-store', enabled: true, toolbarPinned: false }),
+      modRecord({ id: 'mod_y', name: 'Y', source: null, css: '.y {}', enabled: true, updatedAt: 1 })
+    ])
+    expect(order).toEqual(['mod:mod_y', `extensions:${EXT_A}`])
   })
 })

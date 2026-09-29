@@ -386,4 +386,53 @@ describe('migrateRegistry', () => {
       pendingWarnings: ['Read your browsing history']
     })
   })
+
+  it('keeps a synced landing’s `pendingApproval` (ID-44) only as a literal `true` on a record that is off – an approved or enabled one carries none', () => {
+    const migrated = migrateRegistry(
+      {
+        version: 2,
+        extensions: [
+          {
+            id: 'pending',
+            path: '/p',
+            source: 'chrome-web-store',
+            enabled: false,
+            pendingApproval: true
+          },
+          {
+            id: 'enabled',
+            path: '/e',
+            source: 'chrome-web-store',
+            enabled: true,
+            pendingApproval: true
+          },
+          {
+            id: 'stringly',
+            path: '/s',
+            source: 'edge-add-ons',
+            enabled: false,
+            pendingApproval: 'yes'
+          },
+          { id: 'plain', path: '/q', source: 'edge-add-ons', enabled: false }
+        ]
+      },
+      helpers,
+      NOW
+    )
+    expect(migrated.extensions.map((r) => [r.id, r.pendingApproval ?? null])).toEqual([
+      ['pending', true],
+      ['enabled', null],
+      ['stringly', null],
+      ['plain', null]
+    ])
+    expect(migrated.extensions[0]).toMatchObject({ enabled: false, pendingApproval: true })
+    expect(Object.keys(migrated.extensions[3]!)).not.toContain('pendingApproval')
+    // A well-formed record with the flag passes through unchanged.
+    const doc = {
+      version: 2,
+      extensions: [{ ...record(), enabled: false, pendingApproval: true }],
+      lastUpdateCheck: null
+    }
+    expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
+  })
 })
