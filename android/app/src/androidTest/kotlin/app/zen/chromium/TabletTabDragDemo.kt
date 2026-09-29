@@ -136,7 +136,7 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
     // --- 2. the edge auto-scroll -------------------------------------------------------------------
 
     private fun autoscroll() {
-        section("2. AUTO-SCROLL: a plain swipe scrolls the list and lifts nothing; a lifted row held in the 32 px band at either edge has the list scroll under it")
+        section("2. AUTO-SCROLL: a plain swipe scrolls the list and lifts nothing; a lifted row held in the finger's 56 px band (the mouse's is 32) at either edge has the list scroll under it")
         // Extra tabs off camera until the list has room enough under its box for a speed reading
         // (they load gamma.html and wear its title).
         val extra = ArrayList<String>()
@@ -218,8 +218,8 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
     /**
      * The BOTTOM band, the slot drop: Delta lifted from near the head and held 12 px over the
      * list's bottom edge scrolls the list down under it – the speed read on the page's own clock
-     * over the first stretch (the ramp at 12 px in: 14 × 20 / 32 = 8.75 px per 60 Hz frame,
-     * 525 px/s at any refresh rate for a finger) – to its foot, where the finger stands over the
+     * over the first stretch (the ramp at 12 px into the finger's 56 px band: 14 × 44 / 56 = 11 px
+     * per 60 Hz frame, 660 px/s at any refresh rate for a finger) – to its foot, where the finger stands over the
      * last rows: the drop store names a slot, the caret stands in the gap – still; the release
      * lands Delta further down the track.
      */
@@ -236,7 +236,7 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
         val dy = reading.getOrNull(0)?.toDoubleOrNull()
         val dt = reading.getOrNull(1)?.toDoubleOrNull()
         check("held still in the bottom band, the list scrolls down under the lifted row", dy != null && dy > 4, "scrolled $dy px in $dt ms")
-        if (dy != null && dt != null && dt > 0) finding("  the band's speed 12 px in, as the emulator ran it: ${(dy * 1000.0 / dt).roundToInt()} px/s over ${dt.roundToInt()} ms (the ramp's target at 12 px in: 525 px/s – 14 px per 60 Hz frame at the edge, 8.75 at 12 px, scaled to the frame's real length for a finger)")
+        if (dy != null && dt != null && dt > 0) finding("  the band's speed 12 px in, as the emulator ran it: ${(dy * 1000.0 / dt).roundToInt()} px/s over ${dt.roundToInt()} ms (the ramp's target at 12 px into the finger's 56 px band: 660 px/s – 14 px per 60 Hz frame at the edge, 11 at 12 px, scaled to the frame's real length for a finger, a late tick counting for the springs' 64 ms clamp at most)")
         val atFoot = awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop>=s.scrollHeight-s.clientHeight-1})()", true, 6_000)
         finding("  the list at its foot: $atFoot (${scrollerText()})")
         SystemClock.sleep(STEADY_MS)

@@ -1,4 +1,4 @@
-import { SPRING_SNAPPY, SpringAnimation } from './motion/spring'
+import { SPRING_SNAPPY, SPRING_STEP_CLAMP_MS, SpringAnimation } from './motion/spring'
 
 /**
  * Where the caret lies. Between rows of a column (`axis` absent): its left edge and vertical
@@ -79,52 +79,58 @@ export class InsertionCaret {
   }
 }
 
-/** Autoscroll band at a list's near edges, and the fastest scroll per frame (§9.4: 32 px). */
+/**
+ * Autoscroll band at a list's near edges – 32 px under the mouse (§9.4), 56 under a finger
+ * (TABLET-03: the phone grid's `useCardLift` figure, a fingertip being wider than a pointer) –
+ * and the fastest scroll per frame.
+ */
 export const AUTOSCROLL_EDGE = 32
+export const AUTOSCROLL_EDGE_TOUCH = 56
 export const AUTOSCROLL_MAX_STEP = 14
 
 /**
  * How far a list scrolls this frame for a pointer at `x`, `y` over its box: nothing away from
  * the top and bottom edges, up to `AUTOSCROLL_MAX_STEP` px the closer the pointer is to one
- * (negative upwards). The pointer must be within the box's width. A list laid along x
- * (`axis: 'x'`, the strip) reads its left and right edges the same way, the pointer within its
- * height.
+ * (negative upwards), the ramp over `edge` px – the mouse's 32 unless a caller passes the
+ * finger's band. The pointer must be within the box's width. A list laid along x (`axis: 'x'`,
+ * the strip) reads its left and right edges the same way, the pointer within its height.
  */
 export function autoscrollStep(
   box: { left: number; right: number; top: number; bottom: number },
   x: number,
   y: number,
-  axis: 'x' | 'y' = 'y'
+  axis: 'x' | 'y' = 'y',
+  edge = AUTOSCROLL_EDGE
 ): number {
   if (axis === 'x') {
     return autoscrollStep(
       { left: box.top, right: box.bottom, top: box.left, bottom: box.right },
       y,
-      x
+      x,
+      'y',
+      edge
     )
   }
   if (x < box.left || x > box.right) return 0
   let step = 0
-  if (y < box.top + AUTOSCROLL_EDGE) step = -((box.top + AUTOSCROLL_EDGE - y) / AUTOSCROLL_EDGE)
-  else if (y > box.bottom - AUTOSCROLL_EDGE)
-    step = (y - (box.bottom - AUTOSCROLL_EDGE)) / AUTOSCROLL_EDGE
+  if (y < box.top + edge) step = -((box.top + edge - y) / edge)
+  else if (y > box.bottom - edge) step = (y - (box.bottom - edge)) / edge
   if (step === 0) return 0
   return Math.max(-1, Math.min(1, step)) * AUTOSCROLL_MAX_STEP
 }
 
 /**
- * The frame `AUTOSCROLL_MAX_STEP` is counted in – 60 Hz – and the most frames one tick may
- * stand for. A finger's drag (TABLET-03) scales each tick's step by its frame's real length
- * against this one, so the band scrolls at the same speed (840 px/s at the edge) on a 60, 90 or
- * 120 Hz tablet where the per-frame step alone would run 1.5 or 2 × as fast; a tick after a
- * stall (a hidden window, a long frame) counts for two frames at most, never a jump. The mouse's
- * tick keeps the per-frame step.
+ * The frame `AUTOSCROLL_MAX_STEP` is counted in – 60 Hz. A finger's drag (TABLET-03) scales
+ * each tick's step by its frame's real length against this one, so the band scrolls at the same
+ * speed (840 px/s at the edge) on a 60, 90 or 120 Hz tablet where the per-frame step alone would
+ * run 1.5 or 2 × as fast; a tick after a stall (a hidden window, a long frame) counts for
+ * `SPRING_STEP_CLAMP_MS` at most – the 64 ms the springs clamp their own step to, 3.84 frames –
+ * never a jump. The mouse's tick keeps the per-frame step.
  */
 export const AUTOSCROLL_FRAME_MS = 1000 / 60
-export const AUTOSCROLL_MAX_FRAMES = 2
 
 /** How many 60 Hz frames' worth of step an autoscroll tick `elapsedMs` after the last one adds. */
 export function autoscrollFrames(elapsedMs: number): number {
   if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0
-  return Math.min(AUTOSCROLL_MAX_FRAMES, elapsedMs / AUTOSCROLL_FRAME_MS)
+  return Math.min(elapsedMs, SPRING_STEP_CLAMP_MS) / AUTOSCROLL_FRAME_MS
 }

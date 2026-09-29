@@ -12,13 +12,14 @@ import {
 } from '../drag'
 import {
   AUTOSCROLL_EDGE,
+  AUTOSCROLL_EDGE_TOUCH,
   AUTOSCROLL_FRAME_MS,
-  AUTOSCROLL_MAX_FRAMES,
   AUTOSCROLL_MAX_STEP,
   autoscrollFrames,
   autoscrollStep
 } from '../insertionCaret'
 import { SlideMotion } from '../motion/slide'
+import { SPRING_STEP_CLAMP_MS } from '../motion/spring'
 import { browserStore, uiStore } from '../ui'
 
 vi.mock('@renderer/lib/api', () => ({
@@ -31,9 +32,10 @@ vi.mock('@renderer/lib/api', () => ({
  * TABLET-03: the tablet sidebar's tab drag under a finger – the edge auto-scroll, the drop
  * mark, reduced motion – against the mouse's drag, which must not change. The list overflows
  * its scroller here (eight rows of 36 in a 300 px scroller, scrolled 200 down), so the band at
- * either edge has somewhere to scroll to. The auto-scroll's zone is the draft's 32 px (§9.4);
- * its speed is 14 px per 60 Hz frame – the mouse's tick adds that step per frame whatever the
- * frame's length, a finger's tick scales it by the frame's real length, capped at two frames,
+ * either edge has somewhere to scroll to. The auto-scroll's zone is the draft's 32 px (§9.4)
+ * under the mouse and 56 under a finger (the phone grid's figure); its speed is 14 px per 60 Hz
+ * frame – the mouse's tick adds that step per frame whatever the frame's length, a finger's tick
+ * scales it by the frame's real length, capped at the springs' 64 ms step clamp (3.84 frames),
  * so a 120 Hz tablet scrolls at the 60 Hz speed and not twice it. The drop mark is §9.4's caret:
  * 2 px, inset 8 from the list's edges, in the gap the finger names.
  */
@@ -242,12 +244,30 @@ afterEach(() => {
   vi.mocked(cmd).mockClear()
 })
 
-describe('the auto-scroll ramp (§9.4: within 32 px of an edge)', () => {
+describe('the auto-scroll ramp (§9.4: within 32 px of an edge; 56 under a finger)', () => {
   const scrollerBox = { left: 0, right: SIDEBAR_WIDTH, top: SCROLLER_TOP, bottom: SCROLLER_BOTTOM }
 
-  it('is the draft\u2019s zone and the house step', () => {
+  it('is the draft\u2019s zone, the finger\u2019s wider one and the house step', () => {
     expect(AUTOSCROLL_EDGE).toBe(32)
+    expect(AUTOSCROLL_EDGE_TOUCH).toBe(56)
     expect(AUTOSCROLL_MAX_STEP).toBe(14)
+  })
+
+  it('ramps over the finger\u2019s 56 px when asked for that band: 0 at 56 in, half way at 28, the step at the edge', () => {
+    const touch = (y: number): number => autoscrollStep(scrollerBox, 120, y, 'y', AUTOSCROLL_EDGE_TOUCH)
+    expect(touch(SCROLLER_TOP + 150)).toBe(0)
+    expect(touch(SCROLLER_TOP + 60)).toBe(0)
+    expect(touch(SCROLLER_TOP + AUTOSCROLL_EDGE_TOUCH)).toBe(0)
+    expect(touch(SCROLLER_TOP + 40)).toBe(-4)
+    expect(touch(SCROLLER_TOP + AUTOSCROLL_EDGE_TOUCH / 2)).toBe(-7)
+    expect(touch(SCROLLER_TOP)).toBe(-14)
+    expect(touch(SCROLLER_BOTTOM - 60)).toBe(0)
+    expect(touch(SCROLLER_BOTTOM - 40)).toBe(4)
+    expect(touch(SCROLLER_BOTTOM - AUTOSCROLL_EDGE_TOUCH / 2)).toBe(7)
+    expect(touch(SCROLLER_BOTTOM)).toBe(14)
+    // The mouse's band, asked for by default, is still nothing 40 px in.
+    expect(autoscrollStep(scrollerBox, 120, SCROLLER_TOP + 40)).toBe(0)
+    expect(autoscrollStep(scrollerBox, 120, SCROLLER_BOTTOM - 40)).toBe(0)
   })
 
   it('is nothing away from the edges and ramps to the full step at them, upwards negative', () => {
@@ -267,14 +287,18 @@ describe('the auto-scroll ramp (§9.4: within 32 px of an edge)', () => {
     expect(autoscrollStep(scrollerBox, SIDEBAR_WIDTH + 1, SCROLLER_BOTTOM)).toBe(0)
   })
 
-  it('counts a finger\u2019s tick in 60 Hz frames, two at most, none for no time', () => {
+  it('counts a finger\u2019s tick in 60 Hz frames, the springs\u2019 64 ms clamp at most, none for no time', () => {
     expect(AUTOSCROLL_FRAME_MS).toBeCloseTo(1000 / 60, 6)
-    expect(AUTOSCROLL_MAX_FRAMES).toBe(2)
+    expect(SPRING_STEP_CLAMP_MS).toBe(64)
     expect(autoscrollFrames(1000 / 60)).toBeCloseTo(1, 6)
     expect(autoscrollFrames(1000 / 120)).toBeCloseTo(0.5, 6)
     expect(autoscrollFrames(1000 / 90)).toBeCloseTo(2 / 3, 6)
+    expect(autoscrollFrames(30)).toBeCloseTo(1.8, 6)
     expect(autoscrollFrames(1000 / 30)).toBeCloseTo(2, 6)
-    expect(autoscrollFrames(400)).toBe(2)
+    // The one cap: the spring step clamp – 64 ms is 3.84 frames, and no pause counts for more.
+    expect(autoscrollFrames(SPRING_STEP_CLAMP_MS)).toBeCloseTo(3.84, 6)
+    expect(autoscrollFrames(100)).toBeCloseTo(3.84, 6)
+    expect(autoscrollFrames(400)).toBeCloseTo(SPRING_STEP_CLAMP_MS / AUTOSCROLL_FRAME_MS, 6)
     expect(autoscrollFrames(0)).toBe(0)
     expect(autoscrollFrames(-16)).toBe(0)
     expect(autoscrollFrames(Number.NaN)).toBe(0)
@@ -298,22 +322,44 @@ describe('a finger near the list\u2019s edge', () => {
     expect(at120 - layout.scroller.scrollTop).toBeCloseTo(14, 5)
   })
 
-  it('scrolls down at the bottom edge, half way in at half the step', () => {
+  it('scrolls down at the bottom edge, half way into the finger\u2019s 56 px band at half the step', () => {
     const h = lift('c')
-    h.move(120, SCROLLER_BOTTOM - AUTOSCROLL_EDGE / 2, now)
+    h.move(120, SCROLLER_BOTTOM - AUTOSCROLL_EDGE_TOUCH / 2, now)
     frame(1000 / 60)
     const before = layout.scroller.scrollTop
     frame(1000 / 60)
     expect(layout.scroller.scrollTop - before).toBeCloseTo(7, 5)
   })
 
-  it('after a stall counts two frames, not the whole pause', () => {
+  it('scrolls 40 px in – inside the finger\u2019s band, outside the mouse\u2019s – and not 60 px in', () => {
+    const h = lift('c')
+    h.move(120, SCROLLER_TOP + 40, now)
+    frame(1000 / 60)
+    const before = layout.scroller.scrollTop
+    frame(1000 / 60)
+    // 14 × (56 − 40) / 56 = 4 px per 60 Hz frame.
+    expect(before - layout.scroller.scrollTop).toBeCloseTo(4, 5)
+    h.move(120, SCROLLER_TOP + 60, now)
+    frame(1000 / 60)
+    const at60 = layout.scroller.scrollTop
+    for (let i = 0; i < 5; i++) frame(1000 / 60)
+    expect(layout.scroller.scrollTop).toBe(at60)
+  })
+
+  it('after a stall counts the springs\u2019 64 ms clamp (3.84 frames), not two frames and not the whole pause', () => {
     const h = lift('c')
     h.move(120, SCROLLER_TOP, now)
     frame(1000 / 60)
     const before = layout.scroller.scrollTop
     frame(500)
-    expect(before - layout.scroller.scrollTop).toBeCloseTo(28, 5)
+    const clampFrames = SPRING_STEP_CLAMP_MS / AUTOSCROLL_FRAME_MS
+    expect(clampFrames).toBeCloseTo(3.84, 6)
+    expect(before - layout.scroller.scrollTop).toBeCloseTo(14 * clampFrames, 5)
+    expect(before - layout.scroller.scrollTop).toBeCloseTo(53.76, 5)
+    // A 30 ms frame is under the clamp: 1.8 frames' worth, as before the clamp changed.
+    const before30 = layout.scroller.scrollTop
+    frame(30)
+    expect(before30 - layout.scroller.scrollTop).toBeCloseTo(14 * 1.8, 5)
   })
 
   it('away from the edges the list stands still, frame after frame', () => {
@@ -358,6 +404,14 @@ describe('the mouse\u2019s drag, unchanged', () => {
     frame(1)
     expect(layout.scroller.scrollTop).toBe(SCROLLED + 14)
     mouseUp(120, SCROLLER_BOTTOM - AUTOSCROLL_EDGE / 2)
+  })
+
+  it('keeps the 32 px band: 40 px in, where a finger scrolls, the mouse does not', () => {
+    mouseDrag('c', 120, SCROLLER_TOP + 40)
+    expect(uiStore.get().drag?.tabId).toBe('c')
+    for (let i = 0; i < 6; i++) frame(1000 / 60)
+    expect(layout.scroller.scrollTop).toBe(SCROLLED)
+    mouseUp(120, SCROLLER_TOP + 40)
   })
 })
 
