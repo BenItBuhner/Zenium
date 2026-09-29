@@ -1667,8 +1667,17 @@ export class ExtensionApi {
       case 'hide':
         this.writeAction(id, tabIdOf(args[0]), 'enabled', false)
         return undefined
-      case 'isEnabled':
-        return state.enabled
+      case 'isEnabled': {
+        // Chrome takes the tab id itself here (`isEnabled(tabId?: integer)`), and answers the
+        // tab's own `enable` / `disable` over the global value, a `declarativeContent` rule's
+        // showing left out ("actions enabled using only declarativeContent always return
+        // false"): `GetIsVisibleIgnoringDeclarative`. Super Simple Highlighter disables its
+        // action on a page without highlights (round 25); the sweep reads that state here.
+        const asked = tabIdOf(args[0])
+        const record = this.actionRecord(id)
+        const own = asked === undefined ? undefined : record.perTab.get(asked)?.enabled
+        return own ?? record.global.enabled
+      }
       case 'openPopup':
         this.host.openPopup(id, true)
         return undefined
