@@ -56,4 +56,32 @@ class ManagedRestrictionsTest {
         assertTrue(ManagedRestrictions.summarize(mapOf(ManagedRestrictions.ORG_KEY to "  ")).isNull("by"))
         assertTrue(ManagedRestrictions.summarize(mapOf(ManagedRestrictions.ORG_KEY to 7)).isNull("by"))
     }
+
+    @Test
+    fun `the reply is capped as the core caps it - over-long keys dropped, the list and the name cut`() {
+        // The core's numbers (shared/managed.ts): the two sides must agree on one bundle.
+        assertEquals(512, ManagedRestrictions.KEYS_MAX)
+        assertEquals(200, ManagedRestrictions.KEY_MAX)
+        assertEquals(120, ManagedRestrictions.BY_MAX)
+        val long = "K".repeat(ManagedRestrictions.KEY_MAX + 1)
+        val entries = LinkedHashMap<String, Any?>()
+        entries[long] = "x"
+        for (i in 0 until ManagedRestrictions.KEYS_MAX + 5) entries["Key" + i.toString().padStart(4, '0')] = i
+        entries[ManagedRestrictions.ORG_KEY] = "N".repeat(ManagedRestrictions.BY_MAX + 10)
+        val reply = ManagedRestrictions.summarize(entries)
+        val keys = keysOf(reply)
+        assertEquals(ManagedRestrictions.KEYS_MAX, keys.size)
+        assertTrue(long !in keys)
+        // The cut comes after the sort: the first keys of the sorted list, as the core keeps them.
+        assertEquals("EnterpriseCustomLabel", keys[0])
+        assertEquals("Key0000", keys[1])
+        assertEquals(ManagedRestrictions.BY_MAX, reply.getString("by").length)
+        // At the caps exactly, nothing is touched.
+        val edge = "E".repeat(ManagedRestrictions.KEY_MAX)
+        val exact = ManagedRestrictions.summarize(
+            mapOf(edge to 1, ManagedRestrictions.ORG_KEY to "B".repeat(ManagedRestrictions.BY_MAX))
+        )
+        assertEquals(listOf(edge, ManagedRestrictions.ORG_KEY), keysOf(exact))
+        assertEquals("B".repeat(ManagedRestrictions.BY_MAX), exact.getString("by"))
+    }
 }
