@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type {
+  AddressEntry,
   BookmarkNode,
   Boost,
   KeyBinding,
   Mod,
+  PaymentCard,
   ReadingListEntry,
   Settings,
   SyncScope
@@ -13,6 +15,7 @@ import { decryptJson, deriveKey, encryptJson } from '../crypto'
 import {
   DEVICE_LOCAL_SETTINGS,
   SETTINGS_RECORD_ID,
+  addressData,
   collectLocal,
   defaultScope,
   diffLocal,
@@ -22,6 +25,7 @@ import {
   metaFromRemote,
   modData,
   newestByRecord,
+  paymentMethodData,
   readModData,
   settingsKeyTime,
   winningRemote,
@@ -377,6 +381,143 @@ describe('the mod records on a fixed Mod list (services pass 15, ID-43)', () => 
     expect(inScope(live, defaultScope())).toBe(true)
     expect(inScope(gone, defaultScope())).toBe(true)
     expect(inScope(live, fullScope())).toBe(true)
+  })
+})
+
+/**
+ * The `address` and `payment-method` records against the builds before them (services pass 16,
+ * ID-45): their scope keys – `addresses`, `paymentMethods` – are what `readingList` and `mods`
+ * were to the builds before those. The goldens' scope predates both keys, so a device holding
+ * addresses and cards publishes neither type under it and the pinned bytes stand; each key on
+ * its own publishes its type alone; and an older peer drops each type and its tombstones from
+ * every round with no error, as the `future-type` pin says of any type a build does not know.
+ */
+describe('the address and payment-method records against older builds (services pass 16, ID-45)', () => {
+  const address: AddressEntry = {
+    id: 'address_golden',
+    country: 'GB',
+    name: 'Ada Lovelace',
+    organization: '',
+    streetAddress: '12 St James\u2019s Square',
+    locality: 'London',
+    region: '',
+    postalCode: 'SW1Y 4JH',
+    sortingCode: '',
+    phone: '',
+    email: 'ada@example.com',
+    createdAt: 100,
+    updatedAt: 100,
+    lastUsedAt: null
+  }
+  const card: PaymentCard = {
+    id: 'card_golden',
+    number: '4111111111111111',
+    expMonth: 12,
+    expYear: 2031,
+    name: 'Ada Lovelace',
+    nickname: 'Work Visa',
+    createdAt: 100,
+    updatedAt: 100,
+    lastUsedAt: null
+  }
+  const withVault = (): Parameters<typeof collectLocal>[0] => ({
+    ...goldenSources(),
+    credentials: { logins: [], passkeys: [], addresses: [address], cards: [card] }
+  })
+
+  it('keeps both types out of a pre-move scope object and out of the pinned golden payload; each key on publishes its type alone and nothing else changes', () => {
+    expect(goldenFixture.scope).not.toHaveProperty('addresses')
+    expect(goldenFixture.scope).not.toHaveProperty('paymentMethods')
+    expect(defaultScope()).toMatchObject({ addresses: true, paymentMethods: true })
+    const local = collectLocal(withVault(), goldenFixture.scope)
+    expect(
+      [...local.values()].some((r) => r.type === 'address' || r.type === 'payment-method')
+    ).toBe(false)
+    expect(local.size).toBe(Object.keys(goldenFixture.hashes).length)
+    const diff = diffLocal({}, local, goldenFixture.now)
+    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenAsWritten().plaintext)
+
+    // Addresses alone on: the one `address` record, no card.
+    const addresses = collectLocal(withVault(), { ...goldenFixture.scope, addresses: true })
+    expect(addresses.size).toBe(local.size + 1)
+    expect(addresses.get(address.id)).toEqual({ type: 'address', data: addressData(address) })
+    expect(addresses.has(card.id)).toBe(false)
+    addresses.delete(address.id)
+    expect(
+      JSON.stringify({ v: 1, records: diffLocal({}, addresses, goldenFixture.now).records })
+    ).toBe(goldenAsWritten().plaintext)
+
+    // Payment methods alone on: the one `payment-method` record, no address.
+    const cards = collectLocal(withVault(), { ...goldenFixture.scope, paymentMethods: true })
+    expect(cards.size).toBe(local.size + 1)
+    expect(cards.get(card.id)).toEqual({ type: 'payment-method', data: paymentMethodData(card) })
+    expect(cards.has(address.id)).toBe(false)
+    cards.delete(card.id)
+    expect(JSON.stringify({ v: 1, records: diffLocal({}, cards, goldenFixture.now).records })).toBe(
+      goldenAsWritten().plaintext
+    )
+  })
+
+  it('an older peer – a build without the types, or a scope object from before the keys – drops an address or payment-method record and its tombstone from every round, not an error', () => {
+    const records: SyncRecord[] = [
+      {
+        id: address.id,
+        type: 'address',
+        modified: goldenFixture.now + 10,
+        deleted: false,
+        data: addressData(address)
+      },
+      {
+        id: 'address_gone',
+        type: 'address',
+        modified: goldenFixture.now + 10,
+        deleted: true,
+        data: null
+      },
+      {
+        id: card.id,
+        type: 'payment-method',
+        modified: goldenFixture.now + 10,
+        deleted: false,
+        data: paymentMethodData(card)
+      },
+      {
+        id: 'card_gone',
+        type: 'payment-method',
+        modified: goldenFixture.now + 10,
+        deleted: true,
+        data: null
+      }
+    ]
+    // This device's copy of the golden set, at its first diff, on the older build's scope.
+    const local = collectLocal(goldenSources(), goldenFixture.scope)
+    const mine = diffLocal({}, local, goldenFixture.now)
+    // The round as the engine runs it: the live records are winners (this device holds no copy)
+    // and out of the older scope – dropped by the filter, applied nowhere, written to no metadata.
+    const remote = newestByRecord([[...mine.records, ...records]])
+    const winners = winningRemote(mine.meta, remote)
+    expect(winners.map((r) => r.id).sort()).toEqual([address.id, card.id].sort())
+    for (const r of records) expect(inScope(r, goldenFixture.scope), r.id).toBeFalsy()
+    expect(winners.filter((r) => inScope(r, goldenFixture.scope))).toEqual([])
+    expect(metaFromRemote(winners.filter((r) => inScope(r, goldenFixture.scope)))).toEqual({})
+    // A merge declined on that build tombstones nothing for either type: `!inScope` skips them.
+    const declined = [...remote.values()].filter(
+      (r) =>
+        !local.has(r.id) && !r.deleted && r.type !== 'credential' && inScope(r, goldenFixture.scope)
+    )
+    expect(declined).toEqual([])
+    expect(Object.keys(mine.meta)).not.toContain(address.id)
+    expect(Object.keys(mine.meta)).not.toContain(card.id)
+    expect(JSON.stringify({ v: 1, records: mine.records })).toBe(goldenAsWritten().plaintext)
+    // This build, the keys on: each record is in scope under its own key and lands.
+    for (const r of records) {
+      expect(inScope(r, defaultScope()), r.id).toBe(true)
+      expect(inScope(r, fullScope()), r.id).toBe(true)
+    }
+    expect(inScope(records[0]!, { ...defaultScope(), addresses: false })).toBe(false)
+    expect(inScope(records[2]!, { ...defaultScope(), addresses: false })).toBe(true)
+    expect(inScope(records[2]!, { ...defaultScope(), paymentMethods: false })).toBe(false)
+    expect(inScope(records[0]!, { ...defaultScope(), paymentMethods: false })).toBe(true)
   })
 })
 

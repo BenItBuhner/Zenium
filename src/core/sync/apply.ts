@@ -26,11 +26,12 @@ import {
   SHORTCUTS_RECORD_ID,
   SITE_DATA_RECORD_ID,
   applyOrder,
-  readAutofillEntryData,
+  readAddressData,
   readBookmarkData,
   readCredentialData,
   readFolderAgentMark,
   readModData,
+  readPaymentMethodData,
   readReadingListData,
   readSpaceAgentMark,
   wireFavicon,
@@ -57,7 +58,8 @@ const ORDER: Record<SyncRecord['type'], number> = {
   boost: 8,
   mod: 8,
   credential: 9,
-  'autofill-entry': 9,
+  address: 9,
+  'payment-method': 9,
   order: 10
 }
 
@@ -406,26 +408,27 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         }
         break
       }
-      case 'autofill-entry': {
-        // An address or a payment card of the vault (ID-45), under the logins' rules: handed
-        // over only while the vault is open, landed through the store under the other device's
-        // id and timestamps, a tombstone removed for good (the undo window was that device's).
-        // A kind this build does not read never reaches here (`vaultRecordReadable`).
+      case 'address': {
+        // An address of the vault (ID-45), under the logins' rules: handed over only while the
+        // vault is open, landed through the store under the other device's id and timestamps, a
+        // tombstone removed for good (the undo window was that device's). A payload this build
+        // cannot read never reaches here (`vaultRecordReadable`).
         if (r.deleted) {
           browser.passwords.removeSynced(r.id)
           break
         }
-        const data = readAutofillEntryData(r.data)
-        if (!data) break
-        if (data.kind === 'address') {
-          const { kind: _kind, ...address } = data
-          void _kind
-          browser.passwords.applySyncedAddress({ id: r.id, ...address })
-        } else {
-          const { kind: _kind, ...card } = data
-          void _kind
-          browser.passwords.applySyncedCard({ id: r.id, ...card })
+        const data = readAddressData(r.data)
+        if (data) browser.passwords.applySyncedAddress({ id: r.id, ...data })
+        break
+      }
+      case 'payment-method': {
+        // A payment card of the vault, as the address above.
+        if (r.deleted) {
+          browser.passwords.removeSynced(r.id)
+          break
         }
+        const data = readPaymentMethodData(r.data)
+        if (data) browser.passwords.applySyncedCard({ id: r.id, ...data })
         break
       }
       case 'order': {

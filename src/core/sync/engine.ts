@@ -978,11 +978,11 @@ export class SyncEngine implements SyncHost {
         frozen: frozenRecords(sources, scope, this.data.meta)
       })
       // Types turned off are not received either (Chrome's toggles), and the vault's records
-      // wait for the vault to be open: left out of the metadata, they win again next round. A
-      // vault record this build cannot read (a kind from a later build) is left out the same
-      // way, every round: a winner that lands nothing would otherwise be tombstoned at the
-      // re-snapshot below, and the tombstone applied by the peer that made it
-      // (`vaultRecordReadable`).
+      // (logins, addresses, payment cards) wait for the vault to be open: left out of the
+      // metadata, they win again next round. A vault record this build cannot read (a kind of
+      // `credential` from a later build, garbage) is left out the same way, every round: a
+      // winner that lands nothing would otherwise be tombstoned at the re-snapshot below, and
+      // the tombstone applied by the peer that made it (`vaultRecordReadable`).
       const vaultOpen = Boolean(sources.credentials)
       const winners = winningRemote(local.meta, remote).filter(
         (r) =>

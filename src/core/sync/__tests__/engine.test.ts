@@ -10,6 +10,7 @@ import {
   hashData,
   settingsKeyTime,
   type MetaMap,
+  type RecordType,
   type SyncRecord
 } from '../records'
 import {
@@ -2040,14 +2041,15 @@ describe('the Mods across two devices', () => {
 })
 
 /**
- * The vault's addresses and payment cards across two devices (services pass 16, ID-45): the
- * real store on each side, the `autofill-entry` records under the `passwords` scope with the
- * logins' rules, the folder's end-to-end envelope around them.
+ * The vault's addresses and payment cards across two devices (services pass 16, ID-45; the
+ * lead's ruling on #712): the real store on each side, the `address` records under the
+ * `addresses` scope and the `payment-method` records under `paymentMethods`, each key gating
+ * its own type and nothing else, the logins' rules, the folder's end-to-end envelope around them.
  */
 describe('addresses and payment cards across two devices (ID-45)', () => {
   const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
-  const autofillRecords = async (d: Device): Promise<SyncRecord[]> =>
-    (await published(d)).filter((r) => r.type === 'autofill-entry')
+  const vaultRecords = async (d: Device, ...types: RecordType[]): Promise<SyncRecord[]> =>
+    (await published(d)).filter((r) => types.includes(r.type))
   const address = {
     country: 'GB',
     name: 'Ada Lovelace',
@@ -2068,7 +2070,7 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     nickname: 'Work Visa'
   }
 
-  it('replicates both kinds both ways with the ids kept, last writer wins per entry, a deletion lands as a tombstone', async () => {
+  it('replicates both types both ways with the ids kept, last writer wins per entry, a deletion lands as a tombstone', async () => {
     const a = device('Desk (Linux)')
     const b = device('Pixel 9')
     await unlockVault(a)
@@ -2089,27 +2091,31 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
       expect(text).not.toContain('Lovelace')
       expect(text).not.toContain('SW1Y')
     }
-    const aRecords = await autofillRecords(a)
+    const aRecords = await vaultRecords(a, 'address', 'payment-method')
     expect(aRecords.map((r) => r.id).sort()).toEqual([aAddress.id, aCard.id].sort())
     expect(aRecords.find((r) => r.id === aAddress.id)).toEqual({
       id: aAddress.id,
-      type: 'autofill-entry',
+      type: 'address',
       modified: 0,
       deleted: false,
       data: {
-        kind: 'address',
         ...address,
         createdAt: aAddress.createdAt,
         updatedAt: aAddress.updatedAt,
         lastUsedAt: null
       }
     })
-    expect(aRecords.find((r) => r.id === aCard.id)?.data).toEqual({
-      kind: 'card',
-      ...card,
-      createdAt: aCard.createdAt,
-      updatedAt: aCard.updatedAt,
-      lastUsedAt: null
+    expect(aRecords.find((r) => r.id === aCard.id)).toEqual({
+      id: aCard.id,
+      type: 'payment-method',
+      modified: 0,
+      deleted: false,
+      data: {
+        ...card,
+        createdAt: aCard.createdAt,
+        updatedAt: aCard.updatedAt,
+        lastUsedAt: null
+      }
     })
 
     // B joins and merges: the same entries under the same ids, the login beside them.
@@ -2137,7 +2143,8 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     await settle()
     a.browser.passwords.store.removeAddress(aAddress.id)
     await a.engine.syncNow()
-    expect((await autofillRecords(a)).find((r) => r.id === aAddress.id)).toMatchObject({
+    expect((await vaultRecords(a, 'address')).find((r) => r.id === aAddress.id)).toMatchObject({
+      type: 'address',
       deleted: true,
       data: null
     })
@@ -2147,7 +2154,7 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     expect(b.browser.passwords.store.get(login.id)).not.toBeNull()
   }, 30_000)
 
-  it('turning Passwords off stops sending and receiving all three kinds without deleting anything', async () => {
+  it('Addresses off and Payment methods on: the cards keep travelling both ways, the addresses stop without a deletion – and the reverse', async () => {
     const a = device('Desk (Linux)')
     const b = device('Pixel 9')
     await unlockVault(a)
@@ -2165,32 +2172,77 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     expect(b.browser.passwords.store.getAddress(aAddress.id)).not.toBeNull()
     expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
 
-    // A turns the type off: no login, address or card in its file, and no tombstone either.
-    a.engine.setScope({ passwords: false })
+    // A turns Addresses off: no address in its file – and no tombstone either – while the card
+    // and the login stay published; B keeps its copy of the address.
+    a.engine.setScope({ addresses: false })
+    expect(a.engine.status().scope).toMatchObject({ addresses: false, paymentMethods: true })
     await a.engine.syncNow()
-    const aRecords = await published(a)
-    expect(aRecords.some((r) => r.type === 'credential' || r.type === 'autofill-entry')).toBe(false)
+    expect(await vaultRecords(a, 'address')).toEqual([])
+    expect((await vaultRecords(a, 'payment-method')).map((r) => r.id)).toEqual([aCard.id])
+    expect((await vaultRecords(a, 'credential')).map((r) => r.id)).toEqual([login.id])
     await b.engine.syncNow()
-    expect(b.browser.passwords.store.get(login.id)).not.toBeNull()
     expect(b.browser.passwords.store.getAddress(aAddress.id)).not.toBeNull()
-    expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
 
-    // B adds a card meanwhile; A, with the type off, does not receive it.
+    // B adds an address and a card meanwhile: A takes the card and not the address.
+    const bAddress = b.browser.passwords.store.addAddress({ ...address, locality: 'Oxford' })
     const bCard = b.browser.passwords.store.addCard({ ...card, number: '5555555555554444' })
     await b.engine.syncNow()
     await a.engine.syncNow()
-    expect(a.browser.passwords.store.getCard(bCard.id)).toBeNull()
-
-    // Back on: A publishes again and picks up B's card.
-    a.engine.setScope({ passwords: true })
-    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getAddress(bAddress.id)).toBeNull()
     expect(a.browser.passwords.store.getCard(bCard.id)?.number).toBe('5555555555554444')
+
+    // The reverse: Addresses back on, Payment methods off. A publishes and takes the addresses,
+    // its cards stay home without a tombstone, and B's new card does not reach it.
+    a.engine.setScope({ addresses: true, paymentMethods: false })
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getAddress(bAddress.id)?.locality).toBe('Oxford')
     expect(
-      (await autofillRecords(a))
+      (await vaultRecords(a, 'address'))
         .filter((r) => !r.deleted)
         .map((r) => r.id)
         .sort()
-    ).toEqual([aAddress.id, aCard.id, bCard.id].sort())
+    ).toEqual([aAddress.id, bAddress.id].sort())
+    expect(await vaultRecords(a, 'payment-method')).toEqual([])
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
+    expect(b.browser.passwords.store.getCard(bCard.id)).not.toBeNull()
+    const bCard2 = b.browser.passwords.store.addCard({ ...card, number: '378282246310005' })
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getCard(bCard2.id)).toBeNull()
+
+    // Both on again: A publishes both types and picks up the card it missed.
+    a.engine.setScope({ paymentMethods: true })
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getCard(bCard2.id)?.number).toBe('378282246310005')
+    expect(
+      (await vaultRecords(a, 'payment-method'))
+        .filter((r) => !r.deleted)
+        .map((r) => r.id)
+        .sort()
+    ).toEqual([aCard.id, bCard.id, bCard2.id].sort())
+  }, 30_000)
+
+  it('Passwords off gates the logins alone: the addresses and the cards keep travelling', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await unlockVault(a)
+    await unlockVault(b)
+    a.browser.passwords.add({ url: 'https://a.example/', username: 'ada', password: 'pw' })
+    const aAddress = a.browser.passwords.store.addAddress(address)
+    await setup(a)
+    a.engine.setScope({ passwords: false })
+    await a.engine.syncNow()
+    expect(await vaultRecords(a, 'credential')).toEqual([])
+    expect((await vaultRecords(a, 'address')).map((r) => r.id)).toEqual([aAddress.id])
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(b.browser.passwords.store.getAddress(aAddress.id)).toEqual(aAddress)
+    expect(b.browser.passwords.store.list()).toEqual([])
+    const bCard = b.browser.passwords.store.addCard(card)
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getCard(bCard.id)).toEqual(bCard)
   }, 30_000)
 
   it('a locked vault holds the entries instead of tombstoning or applying them', async () => {
@@ -2207,7 +2259,7 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     a.browser.passwords.lock()
     await a.engine.syncNow()
     expect(a.engine.status().lastError).toBeNull()
-    expect(await autofillRecords(a)).toEqual([])
+    expect(await vaultRecords(a, 'address', 'payment-method')).toEqual([])
     await b.engine.syncNow()
     expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
 
@@ -2243,14 +2295,16 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     expect(b.browser.passwords.store.getCard(bCard.id)).not.toBeNull()
   }, 30_000)
 
-  it('a kind from a later build is skipped, round after round, and never tombstoned; the login and the address beside it land', async () => {
+  it('a peer on a later build: a record type this build does not know, a credential kind it does not read and a card it cannot read are skipped round after round and never tombstoned; the login, the address and the card beside them land', async () => {
     const a = device('Desk (Linux)')
     await unlockVault(a)
     a.browser.passwords.add({ url: 'https://a.example/', username: 'ada', password: 'pw' })
     await setup(a)
 
-    // A peer on a later build writes its file: an entry of a kind this build does not know, a
-    // login and an address beside it, under the folder's key.
+    // A peer on a later build writes its file under the folder's key: a type this build does
+    // not know (what `address` and `payment-method` are to every build before this one), a
+    // `credential` of a kind it does not read, a card without a number, and a login, an address
+    // and a card it can land.
     const own = folderFiles('/drive').get(deviceFileName(a.engine.status().deviceId))!
     const salt = (JSON.parse(own) as { envelope: { salt: string } }).envelope.salt
     const key = await folderKey(salt)
@@ -2258,17 +2312,45 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
     const theirs: SyncRecord[] = [
       {
         id: 'iban_1',
-        type: 'autofill-entry',
+        type: 'bank-account' as RecordType,
         modified: later,
         deleted: false,
-        data: { kind: 'iban', iban: 'GB33BUKB20201555555555', nickname: 'Rent' }
+        data: { iban: 'GB33BUKB20201555555555', nickname: 'Rent' }
+      },
+      {
+        id: 'iban_gone',
+        type: 'bank-account' as RecordType,
+        modified: later,
+        deleted: true,
+        data: null
+      },
+      {
+        id: 'totp_1',
+        type: 'credential',
+        modified: later,
+        deleted: false,
+        data: { kind: 'totp', origin: 'https://peer.example', secret: 'JBSWY3DPEHPK3PXP' }
+      },
+      {
+        id: 'card_unreadable',
+        type: 'payment-method',
+        modified: later,
+        deleted: false,
+        data: { nickname: 'A card with no number' }
       },
       {
         id: 'address_peer',
-        type: 'autofill-entry',
+        type: 'address',
         modified: later,
         deleted: false,
-        data: { kind: 'address', ...address, createdAt: 1, updatedAt: 1, lastUsedAt: null }
+        data: { ...address, createdAt: 1, updatedAt: 1, lastUsedAt: null }
+      },
+      {
+        id: 'card_peer',
+        type: 'payment-method',
+        modified: later,
+        deleted: false,
+        data: { ...card, createdAt: 1, updatedAt: 1, lastUsedAt: null }
       },
       {
         id: 'login_peer',
@@ -2304,15 +2386,31 @@ describe('addresses and payment cards across two devices (ID-45)', () => {
       expect(a.engine.status().lastError).toBeNull()
       expect(a.browser.passwords.store.get('login_peer')?.username).toBe('bob')
       expect(a.browser.passwords.store.getAddress('address_peer')?.postalCode).toBe('SW1Y 4JH')
-      // Skipped: nothing in A's file for it – no copy, no tombstone – and nothing in its metadata.
+      expect(a.browser.passwords.store.getCard('card_peer')?.number).toBe('4111111111111111')
+      expect(a.browser.passwords.store.getCard('card_unreadable')).toBeNull()
+      // Skipped: nothing in A's file for them – no copy, no tombstone – and nothing in its
+      // metadata.
       const mine = await published(a)
-      expect(mine.find((r) => r.id === 'iban_1')).toBeUndefined()
+      for (const id of ['iban_1', 'iban_gone', 'totp_1', 'card_unreadable']) {
+        expect(
+          mine.find((r) => r.id === id),
+          id
+        ).toBeUndefined()
+      }
       expect(mine.find((r) => r.id === 'address_peer')).toMatchObject({
+        type: 'address',
+        deleted: false,
+        modified: later
+      })
+      expect(mine.find((r) => r.id === 'card_peer')).toMatchObject({
+        type: 'payment-method',
         deleted: false,
         modified: later
       })
       const meta = (a.engine as unknown as { data: { meta: MetaMap } }).data.meta
-      expect(meta.iban_1).toBeUndefined()
+      for (const id of ['iban_1', 'iban_gone', 'totp_1', 'card_unreadable']) {
+        expect(meta[id], id).toBeUndefined()
+      }
     }
   }, 30_000)
 })

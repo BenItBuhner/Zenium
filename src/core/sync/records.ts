@@ -70,18 +70,26 @@ export type RecordType =
    */
   | 'mod'
   /**
-   * One address or payment card of the credential vault (ID-45; Chrome's "Addresses and more"
-   * and "Payment methods" types), under the vault entry's own id, carrying the vault's fields
-   * behind a `kind` (`AutofillEntryData`); the `passwords` scope's, beside the `credential`
-   * records, held with them while the vault is locked (`isVaultRecordType`). Its own type, not
-   * two more kinds of `credential`, for the peers on the builds before it: a `credential` record
-   * whose kind a build does not read is a WINNER there (`inScope` says yes to the type) that
-   * lands nothing, and the round then tombstones what it never held – a tombstone every newer
-   * peer applies – whereas a type a build does not know falls out at `inScope`, before the
-   * metadata, and is skipped every round (`__tests__/compat.test.ts`). This build gives a vault
-   * record it cannot read the same skip (`vaultRecordReadable`).
+   * One address of the credential vault (`AddressEntry`; ID-45, Chrome's "Addresses and more"
+   * type), under the vault entry's own id, carrying the vault's fields (`AddressData`); the
+   * `addresses` scope's. A vault type like `credential`: published while the vault is open, held
+   * with the logins while it is locked (`isVaultRecordType`). Its own type, not a third kind of
+   * `credential`, for the peers on the builds before it: a `credential` record whose kind a
+   * build does not read is a WINNER there (`inScope` says yes to the type) that lands nothing,
+   * and the round then tombstones what it never held – a tombstone every newer peer applies –
+   * whereas a type a build does not know falls out at `inScope`, before the metadata, and is
+   * skipped every round (`__tests__/compat.test.ts`). One type per scope key, so `inScope`
+   * filters it by its key alone, as every other type. This build gives a vault record it cannot
+   * read the same skip (`vaultRecordReadable`).
    */
-  | 'autofill-entry'
+  | 'address'
+  /**
+   * One payment card of the credential vault (`PaymentCard`; ID-45, Chrome's "Payment methods"
+   * type), under the vault entry's own id, carrying the vault's fields (`PaymentMethodData`) –
+   * the number as the vault keeps it, inside the same envelope as a login's password; the
+   * `paymentMethods` scope's. A vault type, its own for the reason `address` is.
+   */
+  | 'payment-method'
 
 export interface SyncRecord {
   id: string
@@ -612,13 +620,12 @@ export function readCredentialData(data: unknown): CredentialData | null {
 }
 
 /**
- * A postal address of the vault (`AddressEntry`, ID-45): every field the vault keeps, under
- * the entry's id as the record id, so the same address edited on two devices merges
- * last-writer-wins per entry and a deletion travels as the record's tombstone – the logins'
- * rules (`LoginCredentialData`).
+ * A postal address of the vault (`AddressEntry`; the `address` record, ID-45): every field the
+ * vault keeps, under the entry's id as the record id, so the same address edited on two devices
+ * merges last-writer-wins per entry and a deletion travels as the record's tombstone – the
+ * logins' rules (`LoginCredentialData`).
  */
-export interface AddressAutofillData {
-  kind: 'address'
+export interface AddressData {
   country: string
   name: string
   organization: string
@@ -635,12 +642,12 @@ export interface AddressAutofillData {
 }
 
 /**
- * A payment card of the vault (`PaymentCard`): the number as the vault keeps it – the full
- * digits (`CredentialStore.addCard`), no security code (the vault stores none) – under the
- * folder's end-to-end key like a login's password, and nothing the vault does not hold.
+ * A payment card of the vault (`PaymentCard`; the `payment-method` record): the number as the
+ * vault keeps it – the full digits (`CredentialStore.addCard`), no security code (the vault
+ * stores none) – under the folder's end-to-end key like a login's password, and nothing the
+ * vault does not hold.
  */
-export interface CardAutofillData {
-  kind: 'card'
+export interface PaymentMethodData {
   number: string
   expMonth: number
   expYear: number
@@ -651,11 +658,8 @@ export interface CardAutofillData {
   lastUsedAt: number | null
 }
 
-export type AutofillEntryData = AddressAutofillData | CardAutofillData
-
-export function addressAutofillData(a: AddressEntry): AddressAutofillData {
+export function addressData(a: AddressEntry): AddressData {
   return {
-    kind: 'address',
     country: a.country,
     name: a.name,
     organization: a.organization,
@@ -672,9 +676,8 @@ export function addressAutofillData(a: AddressEntry): AddressAutofillData {
   }
 }
 
-export function cardAutofillData(c: PaymentCard): CardAutofillData {
+export function paymentMethodData(c: PaymentCard): PaymentMethodData {
   return {
-    kind: 'card',
     number: c.number,
     expMonth: c.expMonth,
     expYear: c.expYear,
@@ -686,76 +689,89 @@ export function cardAutofillData(c: PaymentCard): CardAutofillData {
   }
 }
 
+function vaultFieldReaders(r: Record<string, unknown>): {
+  str: (key: string) => string
+  num: (key: string, fallback: number) => number
+  nullableNum: (key: string) => number | null
+} {
+  return {
+    str: (key) => (typeof r[key] === 'string' ? (r[key] as string) : ''),
+    num: (key, fallback) =>
+      typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : fallback,
+    nullableNum: (key) =>
+      typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : null
+  }
+}
+
 /**
- * Read an `autofill-entry` record from another device; null for garbage or a kind this build
- * does not know (a later build's), which the round then skips – neither applied nor
- * tombstoned (`vaultRecordReadable`). A card needs a number with a digit in it, as a login
- * needs its password; an address has no one field every country's form requires.
+ * Read an `address` record from another device, repairing a missing field; null for garbage,
+ * which the round then skips – neither applied nor tombstoned (`vaultRecordReadable`). An
+ * address has no one field every country's form requires, so an object is enough.
  */
-export function readAutofillEntryData(data: unknown): AutofillEntryData | null {
-  if (!data || typeof data !== 'object') return null
-  const r = data as Record<string, unknown>
-  const str = (key: string): string => (typeof r[key] === 'string' ? (r[key] as string) : '')
-  const num = (key: string, fallback: number): number =>
-    typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : fallback
-  const nullableNum = (key: string): number | null =>
-    typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : null
-  if (r.kind === 'address') {
-    return {
-      kind: 'address',
-      country: str('country'),
-      name: str('name'),
-      organization: str('organization'),
-      streetAddress: str('streetAddress'),
-      locality: str('locality'),
-      region: str('region'),
-      postalCode: str('postalCode'),
-      sortingCode: str('sortingCode'),
-      phone: str('phone'),
-      email: str('email'),
-      createdAt: num('createdAt', 0),
-      updatedAt: num('updatedAt', 0),
-      lastUsedAt: nullableNum('lastUsedAt')
-    }
+export function readAddressData(data: unknown): AddressData | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const { str, num, nullableNum } = vaultFieldReaders(data as Record<string, unknown>)
+  return {
+    country: str('country'),
+    name: str('name'),
+    organization: str('organization'),
+    streetAddress: str('streetAddress'),
+    locality: str('locality'),
+    region: str('region'),
+    postalCode: str('postalCode'),
+    sortingCode: str('sortingCode'),
+    phone: str('phone'),
+    email: str('email'),
+    createdAt: num('createdAt', 0),
+    updatedAt: num('updatedAt', 0),
+    lastUsedAt: nullableNum('lastUsedAt')
   }
-  if (r.kind === 'card') {
-    if (!/\d/.test(str('number'))) return null
-    return {
-      kind: 'card',
-      number: str('number'),
-      expMonth: num('expMonth', 0),
-      expYear: num('expYear', 0),
-      name: str('name'),
-      nickname: str('nickname'),
-      createdAt: num('createdAt', 0),
-      updatedAt: num('updatedAt', 0),
-      lastUsedAt: nullableNum('lastUsedAt')
-    }
+}
+
+/**
+ * Read a `payment-method` record from another device; null for garbage or a card without a
+ * digit in its number (a card needs its number as a login needs its password), which the round
+ * then skips – neither applied nor tombstoned (`vaultRecordReadable`).
+ */
+export function readPaymentMethodData(data: unknown): PaymentMethodData | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const { str, num, nullableNum } = vaultFieldReaders(data as Record<string, unknown>)
+  if (!/\d/.test(str('number'))) return null
+  return {
+    number: str('number'),
+    expMonth: num('expMonth', 0),
+    expYear: num('expYear', 0),
+    name: str('name'),
+    nickname: str('nickname'),
+    createdAt: num('createdAt', 0),
+    updatedAt: num('updatedAt', 0),
+    lastUsedAt: nullableNum('lastUsedAt')
   }
-  return null
 }
 
 /**
  * The record types the credential vault holds (`CredentialSources`): published only while it is
  * open, held – neither tombstoned nor applied – while it is locked (`frozenRecords`, the round's
  * `vaultOpen`), and outside the first sync's merge question (`SyncEngine.confirmMerge`: Chrome's
- * password sync always merges by entry).
+ * password sync always merges by entry). Each under its own scope key (`inScope`).
  */
 export function isVaultRecordType(type: RecordType): boolean {
-  return type === 'credential' || type === 'autofill-entry'
+  return type === 'credential' || type === 'address' || type === 'payment-method'
 }
 
 /**
  * Whether a vault record another device published is one this build can land: a tombstone, or
- * a payload its reader accepts. One it cannot read – a kind from a later build, or garbage – is
- * left out of the round's winners, so it is neither applied nor written to the metadata, and
- * the next round finds it and skips it again: a record never landed must never be tombstoned
- * (`RecordType`'s note on `autofill-entry`).
+ * a payload its reader accepts. One it cannot read – a kind of `credential` from a later build,
+ * or garbage – is left out of the round's winners, so it is neither applied nor written to the
+ * metadata, and the next round finds it and skips it again: a record never landed must never be
+ * tombstoned (`RecordType`'s note on `address`). A TYPE this build does not know never reaches
+ * here: `inScope` says nothing for it (`__tests__/compat.test.ts`).
  */
 export function vaultRecordReadable(record: SyncRecord): boolean {
   if (record.deleted) return true
   if (record.type === 'credential') return readCredentialData(record.data) !== null
-  if (record.type === 'autofill-entry') return readAutofillEntryData(record.data) !== null
+  if (record.type === 'address') return readAddressData(record.data) !== null
+  if (record.type === 'payment-method') return readPaymentMethodData(record.data) !== null
   return true
 }
 
@@ -772,6 +788,8 @@ export function defaultScope(): SyncScope {
     shortcuts: true,
     boosts: true,
     passwords: true,
+    addresses: true,
+    paymentMethods: true,
     history: true,
     readingList: true,
     mods: true
@@ -792,6 +810,8 @@ export function fullScope(): SyncScope {
     shortcuts: true,
     boosts: true,
     passwords: true,
+    addresses: true,
+    paymentMethods: true,
     history: true,
     readingList: true,
     mods: true
@@ -825,8 +845,11 @@ export function inScope(record: SyncRecord, scope: SyncScope): boolean {
     case 'mod':
       return scope.mods
     case 'credential':
-    case 'autofill-entry':
       return scope.passwords
+    case 'address':
+      return scope.addresses
+    case 'payment-method':
+      return scope.paymentMethods
     case 'tab': {
       if (record.deleted || !record.data || typeof record.data !== 'object')
         return scope.pinnedTabs || scope.essentials || scope.openTabs
@@ -1225,9 +1248,9 @@ export interface CredentialSources {
   logins: Credential[]
   passkeys: PasskeyEntry[]
   /**
-   * The vault's addresses and payment cards (ID-45), one `autofill-entry` record each under the
-   * `passwords` scope; a source without the fields (a caller from before the type) publishes
-   * none.
+   * The vault's addresses and payment cards (ID-45): one `address` record each under the
+   * `addresses` scope, one `payment-method` record each under `paymentMethods`; a source without
+   * the fields (a caller from before the types) publishes none.
    */
   addresses?: AddressEntry[]
   cards?: PaymentCard[]
@@ -1441,11 +1464,15 @@ export function collectLocal(
       }
       out.set(p.id, { type: 'credential', data })
     }
-    for (const a of src.credentials.addresses ?? [])
-      out.set(a.id, { type: 'autofill-entry', data: addressAutofillData(a) })
-    for (const c of src.credentials.cards ?? [])
-      out.set(c.id, { type: 'autofill-entry', data: cardAutofillData(c) })
   }
+  // The vault's addresses and cards, each type under its own key (ID-45), while the vault is
+  // open – a locked vault publishes none of its types (`credentials` null).
+  if (src.credentials && scope.addresses)
+    for (const a of src.credentials.addresses ?? [])
+      out.set(a.id, { type: 'address', data: addressData(a) })
+  if (src.credentials && scope.paymentMethods)
+    for (const c of src.credentials.cards ?? [])
+      out.set(c.id, { type: 'payment-method', data: paymentMethodData(c) })
   return out
 }
 
