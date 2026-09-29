@@ -34,7 +34,9 @@ import {
   customListId,
   emptyBlockingStatus,
   type FilterListStatus,
-  type ListTier
+  type ListTier,
+  type TrackingLevel,
+  type TrackingLevelPrivateMode
 } from '@shared/blocking'
 import {
   DEFAULT_CONTAINERS,
@@ -5417,6 +5419,61 @@ describe('what a row does', () => {
     expect(row(off, 'tracking-enabled').disabled).toBeUndefined()
     // The counter reads the core's state; before the engine is ready it says so instead.
     expect(row(off, 'tracking-blocked').description).toBe('Filter lists are loading')
+  })
+
+  it('PS-49: “Always use Strict in private windows” follows the Level row as its dependent on every layout', () => {
+    const def = PAGE.sections.find((x) => x.id === 'privacy')!
+    const withLevel = (
+      level: TrackingLevel,
+      levelPrivate: TrackingLevelPrivateMode = 'default',
+      enabled = true
+    ): UIState =>
+      state(
+        { blocking: { ...emptyBlockingStatus(), ready: true, enabled } },
+        { blocking: { ...DEFAULT_BLOCKING_SETTINGS, level, levelPrivate } }
+      )
+    // Directly after the Level row in the Tracking prevention group, by name, on the three layouts.
+    for (const formFactor of ['phone', 'tablet', 'desktop'] as const) {
+      const privacy = buildSection(def, { ...context(withLevel('balanced')).ctx, formFactor })
+      const ids = privacy.groups.find((g) => g.id === 'tracking-prevention')!.rows.map((r) => r.id)
+      expect(ids.indexOf('tracking-level-private'), formFactor).toBe(
+        ids.indexOf('tracking-level') + 1
+      )
+      expect(row(privacy, 'tracking-level-private'), formFactor).toMatchObject({
+        kind: 'switch',
+        label: 'Always use Strict in private windows',
+        description: 'Whatever the level above, private windows block at Strict.',
+        checked: false,
+        disabled: false
+      })
+    }
+    // Moot – at .4, still laid out and read – while blocking is off or the level above is already
+    // Strict; live at every other level, Off included (private windows then block at Strict alone).
+    const off = section('privacy', withLevel('balanced', 'strict', false))
+    expect(row(off, 'tracking-level-private')).toMatchObject({ checked: true, disabled: true })
+    const strict = section('privacy', withLevel('strict'))
+    expect(row(strict, 'tracking-level-private')).toMatchObject({ checked: false, disabled: true })
+    for (const level of ['off', 'basic', 'balanced'] as const)
+      expect(
+        row(section('privacy', withLevel(level)), 'tracking-level-private').disabled,
+        level
+      ).toBe(false)
+    // The switch patches `settings.blocking.levelPrivate`, keeping the rest of `blocking`.
+    const c = context(withLevel('balanced'))
+    const live = row(buildSection(def, c.ctx), 'tracking-level-private')
+    if (live.kind !== 'switch') throw new Error('not a switch')
+    live.onChange(true)
+    expect(c.patches).toEqual([
+      { blocking: { ...c.ctx.state.settings.blocking, levelPrivate: 'strict' } }
+    ])
+    const on = context(withLevel('balanced', 'strict'))
+    const onRow = row(buildSection(def, on.ctx), 'tracking-level-private')
+    if (onRow.kind !== 'switch') throw new Error('not a switch')
+    expect(onRow.checked).toBe(true)
+    onRow.onChange(false)
+    expect(on.patches).toEqual([
+      { blocking: { ...on.ctx.state.settings.blocking, levelPrivate: 'default' } }
+    ])
   })
 
   it('Boosts offers the site the tab came from, and leaves for it', () => {

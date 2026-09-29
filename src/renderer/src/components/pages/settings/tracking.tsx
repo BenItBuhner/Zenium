@@ -71,6 +71,19 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
         onChange: (level) => setB({ level })
       }),
       {
+        // The Level row's dependent (§10.4; the cookies block's private-tabs switch is its twin):
+        // moot – at .4, `aria-disabled`, still laid out and read – while blocking is off or the
+        // level above is already Strict; never hidden. The same row on every layout.
+        kind: 'switch',
+        id: 'tracking-level-private',
+        label: 'Always use Strict in private windows',
+        description: 'Whatever the level above, private windows block at Strict.',
+        keywords: ['private windows', 'strict', 'tracking prevention level'],
+        disabled: !status.enabled || b.level === 'strict',
+        checked: b.levelPrivate === 'strict',
+        onChange: (on) => setB({ levelPrivate: on ? 'strict' : 'default' })
+      },
+      {
         kind: 'info',
         id: 'tracking-blocked',
         label: 'Blocked since Zenium started',
