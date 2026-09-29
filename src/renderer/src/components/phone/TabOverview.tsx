@@ -23,7 +23,7 @@ import type {
   UIState
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { NEW_GROUP_NAME } from '@shared/formFactor'
+import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
 import { isEmptyTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -1098,7 +1098,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     try {
       const folderId = await cmd('folder.create', {
         spaceId: space.id,
-        name: NEW_GROUP_NAME,
+        name: TOUCH_GROUP_DEFAULT_NAME,
         icon: DEFAULT_FOLDER_ICON,
         color: nextGroupColor(state, space.id),
         rename

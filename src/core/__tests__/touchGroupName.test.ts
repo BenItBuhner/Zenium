@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { FormFactor } from '../../shared/types'
-import { NEW_FOLDER_NAME, NEW_GROUP_NAME } from '../../shared/formFactor'
+import { NEW_FOLDER_NAME } from '../../shared/formFactor'
+import { TOUCH_GROUP_DEFAULT_NAME } from '../../shared/groupNames'
 import { ANDROID, DESKTOP, deepItem, labels, pageHarness, pageParams } from './menusFixture'
 
 /**
@@ -11,7 +12,8 @@ import { ANDROID, DESKTOP, deepItem, labels, pageHarness, pageParams } from './m
  * the tab menu's "Add Tab to New Folder" and "Move to Folder ▸ New Folder…", the tab strip's
  * empty-space menu's "New Folder", and the selection menu's "New Folder…". The desktop's window
  * names as it always did – the desktop's paths are byte-equivalent by `formFactor === 'desktop'`
- * – and so does a caller with no window.
+ * – and so does a caller with no window. The word itself is pinned once, in
+ * `shared/__tests__/groupNames.test.ts`; these compare against the shared constant.
  */
 describe('the touch hosts’ default group name (§6): "Group" on the phone and the tablet, the desktop’s "New Folder" kept', () => {
   const LINK = 'https://linked.test/'
@@ -35,8 +37,7 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
       const before = folders(h).map((f) => f.id)
       h.menu(pageParams({ linkURL: LINK, linkText: 'Linked' }))
       h.click('Open Link in New Tab in Group')
-      expect(newest(h, before).name).toBe(NEW_GROUP_NAME)
-      expect(newest(h, before).name).toBe('Group')
+      expect(newest(h, before).name).toBe(TOUCH_GROUP_DEFAULT_NAME)
     }
     // The desktop's link menu has no such row: nothing of the desktop's is named by this path.
     const d = on('desktop')
@@ -47,9 +48,9 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
 
   it('the tab menu’s Add Tab to New Folder names the group by the host: "Group" on the phone and the tablet, "New Folder" on the desktop', () => {
     const expected: Record<FormFactor, string> = {
-      phone: 'Group',
-      tablet: 'Group',
-      desktop: 'New Folder'
+      phone: TOUCH_GROUP_DEFAULT_NAME,
+      tablet: TOUCH_GROUP_DEFAULT_NAME,
+      desktop: NEW_FOLDER_NAME
     }
     for (const layout of ['phone', 'tablet', 'desktop'] as const) {
       const h = on(layout)
@@ -67,8 +68,8 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
 
   it('Move to Folder ▸ New Folder… (the space already holding a group) names the second group by the host too', () => {
     for (const [layout, name] of [
-      ['tablet', 'Group'],
-      ['desktop', 'New Folder']
+      ['tablet', TOUCH_GROUP_DEFAULT_NAME],
+      ['desktop', NEW_FOLDER_NAME]
     ] as const) {
       const h = on(layout)
       h.browser.createFolder(h.win.activeSpaceId, 'Research', '📁', h.win, { rename: false })
@@ -82,8 +83,8 @@ describe('the touch hosts’ default group name (§6): "Group" on the phone and 
 
   it('the tab strip’s empty-space menu (New Folder) and the selection menu’s New Folder… name by the host: the tablet’s sidebar makes a "Group", the desktop’s a "New Folder"', () => {
     for (const [layout, name] of [
-      ['tablet', 'Group'],
-      ['desktop', 'New Folder']
+      ['tablet', TOUCH_GROUP_DEFAULT_NAME],
+      ['desktop', NEW_FOLDER_NAME]
     ] as const) {
       const h = on(layout)
       let before = folders(h).map((f) => f.id)

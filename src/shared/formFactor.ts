@@ -1,3 +1,4 @@
+import { TOUCH_GROUP_DEFAULT_NAME } from './groupNames'
 import type { FormFactor } from './types'
 
 /**
@@ -53,18 +54,14 @@ export function touchLayout(formFactor: FormFactor): boolean {
 export const NEW_FOLDER_NAME = 'New Folder'
 
 /**
- * The touch hosts' name for a group made with no name of its own: the phone and the tablet say
- * Group (§6), and a group a touch host makes is named "Group", never "New Folder" – the name
- * the phone overview's drag-to-group gives, the group strip's for a group with no name.
- */
-export const NEW_GROUP_NAME = 'Group'
-
-/**
  * What a group made with no name of its own is called on the host `formFactor` draws – the
- * desktop's "New Folder", the phone's and the tablet's "Group" (§6). A caller with no window to
- * read a form factor from (the menu bar's binding, a command with no window) names as the
- * desktop does, which is what every path named before this helper.
+ * desktop's "New Folder", the phone's and the tablet's `TOUCH_GROUP_DEFAULT_NAME` (§6: a group
+ * a touch host makes is named "Group", never "New Folder"). A caller with no window to read a
+ * form factor from (the menu bar's binding, a command with no window) names as the desktop
+ * does, which is what every path named before this helper.
  */
 export function newFolderName(formFactor: FormFactor | undefined): string {
-  return formFactor !== undefined && touchLayout(formFactor) ? NEW_GROUP_NAME : NEW_FOLDER_NAME
+  return formFactor !== undefined && touchLayout(formFactor)
+    ? TOUCH_GROUP_DEFAULT_NAME
+    : NEW_FOLDER_NAME
 }
