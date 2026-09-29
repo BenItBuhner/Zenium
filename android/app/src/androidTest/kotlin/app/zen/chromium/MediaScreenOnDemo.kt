@@ -571,7 +571,7 @@ class MediaScreenOnDemo : MediaDemoBase("w6-s25c-media-screen-on") {
     private fun wmLockLine(): String? {
         val dump = shell("dumpsys power")
         val uid = app.applicationInfo.uid.toString()
-        return dump.lines().map { it.trim() }.firstOrNull { it.contains("'WindowManager'") && (it.contains("uid=$uid") || it.contains("ws=WorkSource{$uid") || it.contains("WorkSource{$uid")) }
+        return dump.lines().map { it.trim() }.firstOrNull { it.contains("'WindowManager'") && it.substringAfter("ws=", "").contains(uid) }
     }
 
     private fun wmLockHeld(): Boolean = wmLockLine() != null
