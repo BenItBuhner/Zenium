@@ -18,12 +18,14 @@ import { RETENTION_MS } from '../history'
 import type { ZenWindow } from '../window'
 import { defer, type SyncHost, type SyncPlatformHost, type SyncTransport } from '../platform'
 import { fromBase64, toBase64 } from '../credentials/crypto'
+import { isExtensionId } from '../extensions/store'
 import { applyRemote } from './apply'
 import { decryptJson, deriveKey, encryptJson, newSalt } from './crypto'
 import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionRecordData,
   extensionRecordReadable,
   extensionStoreOf,
   frozenRecords,
@@ -37,6 +39,7 @@ import {
   seedSettingsMeta,
   vaultRecordReadable,
   winningRemote,
+  type ExtensionSyncSource,
   type LocalSources,
   type MetaMap,
   type SyncRecord
@@ -128,6 +131,19 @@ interface Persisted {
   openTabsHash: string | null
   /** Ids of the sent tabs this device opened, newest last (`SENDS_REMEMBERED` at most). */
   consumedSends: string[]
+  /**
+   * The store extensions this device holds whose `extension` record a remote copy won while
+   * this host could apply nothing (no `ExtensionHost.applySyncedExtensions` – the phone), by
+   * id: the hash of this device's own copy at the take (ID-44). Such an id is left out of
+   * `sources()` – its entry the winner's, frozen (`frozenRecords`), nothing published under it
+   * – until the copy's hash changes (the user's flip here, which goes out under a fresh stamp
+   * with its clock) or the extension is gone; the round that takes a winner writes the entry,
+   * the read that finds the change drops it. Persisted, since a relaunch's boot seed would
+   * otherwise adopt the stale copy's hash into the winner's entry (`seedMeta`) and the next
+   * round publish it under the winner's stamp. Absent (a `sync.json` from before; a host with
+   * an applier, which never writes it): nothing held.
+   */
+  unappliedExtensions?: Record<string, string>
 }
 
 interface Payload {
@@ -250,6 +266,9 @@ export class SyncEngine implements SyncHost {
     this.data.scope = { ...defaultScope(), ...this.data.scope }
     this.data.history = readHistoryState(this.data.history)
     if (!Array.isArray(this.data.consumedSends)) this.data.consumedSends = []
+    const unapplied = readUnappliedExtensions(this.data.unappliedExtensions)
+    if (unapplied) this.data.unappliedExtensions = unapplied
+    else delete this.data.unappliedExtensions
     // A WebDAV device without its settings (a hand-edited store) is a folder device.
     if (this.data.transport !== 'webdav' || !this.data.webdav) {
       this.data.transport = 'folder'
@@ -493,6 +512,7 @@ export class SyncEngine implements SyncHost {
         pendingMerge: existing.length > 0,
         openTabsHash: null
       }
+      delete this.data.unappliedExtensions
       // The stream starts over in this folder; the sequence number never goes back, so a device
       // that read the old stream (the same folder joined again) does not sit past the new pages.
       this.data.history = { ...initialHistoryState(), seq: this.data.history.seq }
@@ -585,6 +605,7 @@ export class SyncEngine implements SyncHost {
       if (this.data.scope.history) await this.skipRemoteHistory().catch(() => undefined)
     }
     this.data.meta = meta
+    delete this.data.unappliedExtensions
     this.persist()
     await this.syncNow()
   }
@@ -687,6 +708,7 @@ export class SyncEngine implements SyncHost {
       history: { ...initialHistoryState(), seq: this.data.history.seq },
       openTabsHash: null
     }
+    delete this.data.unappliedExtensions
     this.lastError = null
     this.lastErrorKind = null
     this.folderLost = false
@@ -915,7 +937,9 @@ export class SyncEngine implements SyncHost {
     // committed yet is left out of the collected set – its entry stays frozen, so the copy the
     // record found here never travels under the winner's time; the applier's commit is the
     // edit that publishes the applied state – but it still counts as present, since a switch in
-    // flight is no uninstall.
+    // flight is no uninstall. On a host without an applier the same absence holds an extension
+    // whose record a remote copy won and nothing here could apply (`unappliedExtensions`):
+    // present, frozen, off the wire until this device's own registry changes for it.
     const host = this.browser.extensions
     const all = host.syncSources?.() ?? host.list()
     const present = new Set<string>()
@@ -925,8 +949,11 @@ export class SyncEngine implements SyncHost {
       for (const id of this.presentExtensions) if (!present.has(id)) removedExtensions.add(id)
     this.presentExtensions = present
     const inFlight = host.syncedExtensionsInFlight?.()
+    const unapplied = this.unappliedExtensions(all)
     const extensions =
-      inFlight && inFlight.size > 0 ? all.filter((ext) => !inFlight.has(ext.id)) : all
+      (inFlight && inFlight.size > 0) || unapplied.size > 0
+        ? all.filter((ext) => !inFlight?.has(ext.id) && !unapplied.has(ext.id))
+        : all
     return {
       model: state.model,
       settings: state.settings,
@@ -940,6 +967,52 @@ export class SyncEngine implements SyncHost {
       extensions,
       removedExtensions
     }
+  }
+
+  /**
+   * The ids `Persisted.unappliedExtensions` still holds against the registry as read now: one
+   * whose copy hashes as it did at the take stays held, out of the collected set; one whose
+   * copy changed – the user's flip here – or is gone is released, the diff that follows the
+   * edit that publishes it, stamped fresh. Empty on a host with an applier, which holds none.
+   */
+  private unappliedExtensions(all: readonly ExtensionSyncSource[]): Set<string> {
+    const held = this.data.unappliedExtensions
+    if (!held) return new Set()
+    const hashes = new Map<string, string | null>()
+    for (const ext of all) hashes.set(ext.id, extensionSourceHash(ext))
+    const still = new Set<string>()
+    const next: Record<string, string> = {}
+    for (const [id, hash] of Object.entries(held)) {
+      if (hashes.get(id) !== hash) continue
+      still.add(id)
+      next[id] = hash
+    }
+    if (still.size !== Object.keys(held).length) {
+      if (still.size > 0) this.data.unappliedExtensions = next
+      else delete this.data.unappliedExtensions
+      this.persist()
+    }
+    return still
+  }
+
+  /**
+   * The round took `winners` on a host that cannot apply an `extension` record (ID-44): each
+   * extension winner whose extension this device holds is held as unapplied, under its copy's
+   * hash as it stands, before the round's re-snapshot – which then leaves the id out, keeps
+   * the winner's entry (`frozenRecords`) and publishes nothing under it; the copy this device
+   * could not change never travels under the winner's stamp. Released by `sources()` once the
+   * copy changes here or the extension is gone.
+   */
+  private holdUnapplied(winners: readonly SyncRecord[], sources: LocalSources): void {
+    const local = collectLocal(sources, this.data.scope)
+    let held = this.data.unappliedExtensions
+    for (const w of winners) {
+      if (w.type !== 'extension') continue
+      const mine = local.get(w.id)
+      if (!mine) continue
+      held = { ...(held ?? {}), [w.id]: hashData(mine.data) }
+    }
+    if (held) this.data.unappliedExtensions = held
   }
 
   /** Every other device's newest records; a folder that cannot be read throws. */
@@ -1068,6 +1141,11 @@ export class SyncEngine implements SyncHost {
         // set of keys: its entry is this device's with those keys at the peer's times, and the
         // re-snapshot places each key the same way (`diffSettings`).
         const merged: MetaMap = { ...local.meta, ...metaFromRemote(winners, local.meta) }
+        // A host without an applier changed nothing for an extension winner (ID-44): the copy it
+        // holds is held as unapplied before the re-snapshot reads the registry, so the id is
+        // left out – the winner's entry kept, nothing published under it – and not re-published
+        // under the winner's stamp (`holdUnapplied`).
+        if (!this.browser.extensions.applySyncedExtensions) this.holdUnapplied(winners, sources)
         const after = this.sources()
         local = diffLocal(merged, collectLocal(after, scope), now, {
           stamp: null,
@@ -1483,4 +1561,26 @@ export class SyncEngine implements SyncHost {
   flushSync(): void {
     this.store.flushSync()
   }
+}
+
+/** The hash `collectLocal` gives an extension's record here, or null for one it does not publish. */
+function extensionSourceHash(ext: ExtensionSyncSource): string | null {
+  const store = extensionStoreOf(ext.source)
+  return store && !ext.pendingApproval ? hashData(extensionRecordData(ext, store)) : null
+}
+
+/**
+ * `Persisted.unappliedExtensions` as read from `sync.json`: extension ids to hash strings,
+ * anything else dropped; undefined when nothing valid is held, so the key stays absent.
+ */
+function readUnappliedExtensions(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, string> = {}
+  let any = false
+  for (const [id, hash] of Object.entries(value as Record<string, unknown>)) {
+    if (!isExtensionId(id) || typeof hash !== 'string' || !hash) continue
+    out[id] = hash
+    any = true
+  }
+  return any ? out : undefined
 }

@@ -2227,7 +2227,7 @@ export interface Governor {
 /**
  * One `extension` record as the sync engine hands it to the host (ID-44): the extension's id,
  * the record read (`readExtensionData`) with both switch clocks filled in – an absent clock
- * read as the record's `modified` (`syncedExtensionData`) – or null for a tombstone, the
+ * read as 0, older than any written one (`syncedExtensionData`) – or null for a tombstone, the
  * extension removed on `from` – and the device whose file carried the record, as that device
  * names itself (`SyncStatus.devices`' name), null when the engine cannot say.
  */
@@ -2303,7 +2303,9 @@ export interface ExtensionHost {
    * a per-id back-off for a store that will not hand the extension over; the same records again
    * do nothing more (the engine hands the outstanding ones over every round,
    * `pendingExtensionRequests`). Hosts without it (the phone) publish their store installs and
-   * apply nothing.
+   * apply nothing – and the engine never re-publishes, under a winner's stamp, a copy such a
+   * host could not change: an id whose record lost a round there is left out of its file until
+   * the host's own registry changes for it (`SyncEngine.sources`).
    */
   applySyncedExtensions?(changes: readonly SyncedExtensionChange[]): void
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */

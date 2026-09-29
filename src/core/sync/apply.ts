@@ -406,19 +406,15 @@ export function applyRemote(
         // switches or uninstalls it on its own schedule (`ExtensionHost.applySyncedExtensions`,
         // after the loop, once per batch); a record the reader refuses – an id that is no
         // extension id, a store this build does not know – lands nothing, as a type this build
-        // does not know does. A switch without its own clock (a record from a host that keeps
-        // none, or from before the clocks) is read as written at the record's `modified`, the
-        // one clock such a record has (`syncedExtensionData`). A tombstone needs no data; it
-        // names the device it came from.
+        // does not know does. A switch without its own clock (a switch its host never flipped,
+        // or a record from before the clocks) is read as written at 0 – older than any clocked
+        // switch, never the record's `modified` (`syncedExtensionData`). A tombstone needs no
+        // data; it names the device it came from.
         if (r.deleted) extensionChanges.push({ id: r.id, data: null, from: origin(r) })
         else {
           const data = readExtensionData(r.id, r.data)
           if (data)
-            extensionChanges.push({
-              id: r.id,
-              data: syncedExtensionData(data, r.modified),
-              from: origin(r)
-            })
+            extensionChanges.push({ id: r.id, data: syncedExtensionData(data), from: origin(r) })
         }
         break
       }

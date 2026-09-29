@@ -441,12 +441,17 @@ export function readModData(id: string, data: unknown): Mod | null {
  * the winner's clock for it is not older than its own (`ExtensionSyncApplier.applyOne`; ties
  * take the winner's, which then hashes the same on both). One device pinning while another
  * disables converges to pinned AND disabled on both: the second round re-publishes the merged
- * record, whose clocks win the same way on the peer. A record without a clock – from a build
- * before them, or from a host that keeps none (the phone) – reads that switch as written at
- * the record's `modified` (`syncedExtensionData`), the whole-record rule such a peer follows.
- * A removal is the engine's tombstone, from the extension's absence (`diffLocal`, at `now`) –
- * but only when the absence is an uninstall (`frozenRecords`: an install that has not landed,
- * or failed, is no removal).
+ * record, whose clocks win the same way on the peer. A switch without a clock on the wire – a
+ * record from a build before the clocks, or a switch its host never flipped (the phone clocks
+ * the flips made on it alone, `AndroidExtensions.setEnabled` / `setToolbarPinned`; its install
+ * writes none) – reads as written at 0 (`syncedExtensionData`): older than any clocked switch,
+ * so it never beats one, and even with another unclocked switch, where the values' difference
+ * decides (ties take the winner's). A host that cannot apply a record (no
+ * `applySyncedExtensions`, the phone) never re-publishes the copy it could not change under
+ * the winner's stamp: the id is frozen for it until its own registry changes
+ * (`SyncEngine.sources`, `Persisted.unappliedExtensions`). A removal is the engine's tombstone,
+ * from the extension's absence (`diffLocal`, at `now`) – but only when the absence is an
+ * uninstall (`frozenRecords`: an install that has not landed, or failed, is no removal).
  */
 export interface ExtensionRecordData {
   store: StoreId
@@ -458,25 +463,25 @@ export interface ExtensionRecordData {
 }
 
 /**
- * A winner's payload as the host merges it: both clocks present, an absent one read as the
- * record's `modified` – the time the whole record was written, which is the only clock a
- * record without switch clocks has.
+ * A winner's payload as the host merges it: both clocks present, an absent one read as 0 – a
+ * switch no host ever wrote under a clock is older than every switch one did, so it never
+ * beats a clocked switch on the receiving host (`ExtensionSyncApplier.mergeSwitches` takes a
+ * switch only under a clock not older than its own). Never the record's `modified`: that stamp
+ * is the whole record's, and on a copy re-published by a host that changed nothing it would
+ * be a peer's time lent to a stale switch.
  */
 export type SyncedExtensionData = ExtensionRecordData & {
   enabledAt: number
   toolbarPinnedAt: number
 }
 
-export function syncedExtensionData(
-  data: ExtensionRecordData,
-  modified: number
-): SyncedExtensionData {
+export function syncedExtensionData(data: ExtensionRecordData): SyncedExtensionData {
   return {
     store: data.store,
     enabled: data.enabled,
     toolbarPinned: data.toolbarPinned,
-    enabledAt: data.enabledAt ?? modified,
-    toolbarPinnedAt: data.toolbarPinnedAt ?? modified
+    enabledAt: data.enabledAt ?? 0,
+    toolbarPinnedAt: data.toolbarPinnedAt ?? 0
   }
 }
 
@@ -1459,9 +1464,14 @@ export interface LocalSources {
    * is with the host's applier and not committed yet (`ExtensionHost.syncedExtensionsInFlight`)
    * is left out by `SyncEngine.sources` – its metadata entry stays frozen (`frozenRecords`)
    * until the applier's commit publishes the applied state under a fresh stamp, so the copy
-   * the record found here never travels under the winner's time. A source without the field
-   * (a host without extensions; a record set from before the type,
-   * `__tests__/compat.test.ts`'s golden sources) publishes none.
+   * the record found here never travels under the winner's time. On a host WITHOUT an applier
+   * (no `applySyncedExtensions`, the phone) the same holds for an extension whose record lost a
+   * round to a remote winner: nothing here could change it, so it is left out – the winner's
+   * entry frozen, nothing published under the id – until this device's own registry changes
+   * for it (`SyncEngine.sources`, `Persisted.unappliedExtensions`); a user's flip is that
+   * change, and goes out under a fresh stamp with its clock. A source without the field (a
+   * host without extensions; a record set from before the type, `__tests__/compat.test.ts`'s
+   * golden sources) publishes none.
    */
   extensions?: readonly ExtensionSyncSource[]
   /**
@@ -1694,7 +1704,10 @@ export function collectLocal(
  * waiting for the user's approval (`pendingApproval`, which `collectLocal` leaves out) – so an
  * absence in the local set is no removal: tombstoning it would uninstall the extension on the
  * device that has it. The uninstall's tombstone comes from the commit that removed the record,
- * where the engine's previous read of the list still held the id.
+ * where the engine's previous read of the list still held the id. The same absence is how
+ * `SyncEngine.sources` holds a copy this device must not publish under a winner's stamp: an id
+ * in flight with the applier, and – on a host without one – an id whose record a remote copy
+ * won and nothing here could apply (`LocalSources.extensions`).
  */
 export function frozenRecords(
   src: LocalSources,
