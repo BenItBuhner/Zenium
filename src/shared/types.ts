@@ -1267,8 +1267,11 @@ export interface SyncScope {
   shortcuts: boolean
   boosts: boolean
   /**
-   * Saved logins and the passkeys' public records (ID-09), under the same end-to-end key as
-   * everything else; on by default as Chrome's password sync is.
+   * Saved logins and the passkeys' public records (ID-09), and the vault's addresses and
+   * payment cards with them (ID-45, the `autofill-entry` record – Chrome's "Addresses and
+   * more" and "Payment methods" are toggles of their own; here one key covers the vault),
+   * under the same end-to-end key as everything else; on by default as Chrome's password
+   * sync is.
    */
   passwords: boolean
   /**

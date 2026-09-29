@@ -3,6 +3,7 @@ import type { Mod, ReadingListEntry, Settings } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { DEFAULT_READER_PREFERENCES, type ReaderPreferences } from '../../../shared/reader'
 import { READING_LIST_CAP, compareReadAge, isUnread } from '../../../shared/readingList'
+import { encryptJson } from '../crypto'
 import { FOLDER_LOST_MESSAGE } from '../engine'
 import {
   SETTINGS_RECORD_ID,
@@ -11,11 +12,19 @@ import {
   type MetaMap,
   type SyncRecord
 } from '../records'
-import { README_NAME, SYNC_DIR_NAME, isDeviceFileName, parseDeviceFile } from '../transport'
+import {
+  README_NAME,
+  SYNC_DIR_NAME,
+  deviceFileName,
+  isDeviceFileName,
+  parseDeviceFile,
+  serializeDeviceFile
+} from '../transport'
 import {
   type Device,
   device,
   folderFiles,
+  folderKey,
   memoryIo,
   published,
   setup,
@@ -2027,5 +2036,283 @@ describe('the Mods across two devices', () => {
     await a.engine.syncNow()
     expect(ids(a)).toEqual([theirs.id])
     expect((await modRecords(a)).filter((r) => !r.deleted).map((r) => r.id)).toEqual([theirs.id])
+  }, 30_000)
+})
+
+/**
+ * The vault's addresses and payment cards across two devices (services pass 16, ID-45): the
+ * real store on each side, the `autofill-entry` records under the `passwords` scope with the
+ * logins' rules, the folder's end-to-end envelope around them.
+ */
+describe('addresses and payment cards across two devices (ID-45)', () => {
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
+  const autofillRecords = async (d: Device): Promise<SyncRecord[]> =>
+    (await published(d)).filter((r) => r.type === 'autofill-entry')
+  const address = {
+    country: 'GB',
+    name: 'Ada Lovelace',
+    organization: '',
+    streetAddress: '12 St James\u2019s Square',
+    locality: 'London',
+    region: '',
+    postalCode: 'SW1Y 4JH',
+    sortingCode: '',
+    phone: '+44 20 7946 0958',
+    email: 'ada@example.com'
+  }
+  const card = {
+    number: '4111111111111111',
+    expMonth: 12,
+    expYear: 2031,
+    name: 'Ada Lovelace',
+    nickname: 'Work Visa'
+  }
+
+  it('replicates both kinds both ways with the ids kept, last writer wins per entry, a deletion lands as a tombstone', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await unlockVault(a)
+    await unlockVault(b)
+    const login = a.browser.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'first-secret'
+    })
+    const aAddress = a.browser.passwords.store.addAddress(address)
+    const aCard = a.browser.passwords.store.addCard(card)
+    expect(aCard.number).toBe('4111111111111111')
+
+    await setup(a)
+    // Nothing of the entries is readable in the folder: the number, the name, the postcode.
+    for (const text of folderFiles('/drive').values()) {
+      expect(text).not.toContain('4111')
+      expect(text).not.toContain('Lovelace')
+      expect(text).not.toContain('SW1Y')
+    }
+    const aRecords = await autofillRecords(a)
+    expect(aRecords.map((r) => r.id).sort()).toEqual([aAddress.id, aCard.id].sort())
+    expect(aRecords.find((r) => r.id === aAddress.id)).toEqual({
+      id: aAddress.id,
+      type: 'autofill-entry',
+      modified: 0,
+      deleted: false,
+      data: {
+        kind: 'address',
+        ...address,
+        createdAt: aAddress.createdAt,
+        updatedAt: aAddress.updatedAt,
+        lastUsedAt: null
+      }
+    })
+    expect(aRecords.find((r) => r.id === aCard.id)?.data).toEqual({
+      kind: 'card',
+      ...card,
+      createdAt: aCard.createdAt,
+      updatedAt: aCard.updatedAt,
+      lastUsedAt: null
+    })
+
+    // B joins and merges: the same entries under the same ids, the login beside them.
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(b.engine.status().lastError).toBeNull()
+    expect(b.browser.passwords.store.getAddress(aAddress.id)).toEqual(aAddress)
+    expect(b.browser.passwords.store.getCard(aCard.id)).toEqual(aCard)
+    expect(b.browser.passwords.store.get(login.id)?.password).toBe('first-secret')
+    // The phone's list shows the card as its own: masked in the chrome, the number in the vault.
+    expect(b.browser.autofill.listCards().map((c) => [c.id, c.last4, c.network])).toEqual([
+      [aCard.id, '1111', 'visa']
+    ])
+
+    // B edits the card and uses the address later; A takes both under B's timestamps.
+    await settle()
+    const renamed = b.browser.passwords.store.updateCard(aCard.id, { nickname: 'Personal Visa' })!
+    b.browser.passwords.store.markAddressUsed(aAddress.id, renamed.updatedAt)
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getCard(aCard.id)).toEqual(renamed)
+    expect(a.browser.passwords.store.getAddress(aAddress.id)?.lastUsedAt).toBe(renamed.updatedAt)
+
+    // A deletes the address; the tombstone reaches B, the card stays, the login too.
+    await settle()
+    a.browser.passwords.store.removeAddress(aAddress.id)
+    await a.engine.syncNow()
+    expect((await autofillRecords(a)).find((r) => r.id === aAddress.id)).toMatchObject({
+      deleted: true,
+      data: null
+    })
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.getAddress(aAddress.id)).toBeNull()
+    expect(b.browser.passwords.store.getCard(aCard.id)).toEqual(renamed)
+    expect(b.browser.passwords.store.get(login.id)).not.toBeNull()
+  }, 30_000)
+
+  it('turning Passwords off stops sending and receiving all three kinds without deleting anything', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await unlockVault(a)
+    await unlockVault(b)
+    const login = a.browser.passwords.add({
+      url: 'https://a.example/',
+      username: 'ada',
+      password: 'pw'
+    })
+    const aAddress = a.browser.passwords.store.addAddress(address)
+    const aCard = a.browser.passwords.store.addCard(card)
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(b.browser.passwords.store.getAddress(aAddress.id)).not.toBeNull()
+    expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
+
+    // A turns the type off: no login, address or card in its file, and no tombstone either.
+    a.engine.setScope({ passwords: false })
+    await a.engine.syncNow()
+    const aRecords = await published(a)
+    expect(aRecords.some((r) => r.type === 'credential' || r.type === 'autofill-entry')).toBe(false)
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.get(login.id)).not.toBeNull()
+    expect(b.browser.passwords.store.getAddress(aAddress.id)).not.toBeNull()
+    expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
+
+    // B adds a card meanwhile; A, with the type off, does not receive it.
+    const bCard = b.browser.passwords.store.addCard({ ...card, number: '5555555555554444' })
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getCard(bCard.id)).toBeNull()
+
+    // Back on: A publishes again and picks up B's card.
+    a.engine.setScope({ passwords: true })
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getCard(bCard.id)?.number).toBe('5555555555554444')
+    expect(
+      (await autofillRecords(a))
+        .filter((r) => !r.deleted)
+        .map((r) => r.id)
+        .sort()
+    ).toEqual([aAddress.id, aCard.id, bCard.id].sort())
+  }, 30_000)
+
+  it('a locked vault holds the entries instead of tombstoning or applying them', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await unlockVault(a)
+    await unlockVault(b)
+    const aCard = a.browser.passwords.store.addCard(card)
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
+
+    a.browser.passwords.lock()
+    await a.engine.syncNow()
+    expect(a.engine.status().lastError).toBeNull()
+    expect(await autofillRecords(a)).toEqual([])
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
+
+    // B adds an address; A is locked and cannot apply it yet – it lands once the vault opens.
+    const bAddress = b.browser.passwords.store.addAddress(address)
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    expect((await a.browser.passwords.unlock()).status).toBe('ok')
+    expect(a.browser.passwords.store.getAddress(bAddress.id)).toBeNull()
+    await a.engine.syncNow()
+    expect(a.browser.passwords.store.getAddress(bAddress.id)).toEqual(bAddress)
+    expect(a.browser.passwords.store.getCard(aCard.id)).not.toBeNull()
+  }, 30_000)
+
+  it('"keep this device\'s data" never deletes the other device\'s addresses or cards', async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await unlockVault(a)
+    await unlockVault(b)
+    const aAddress = a.browser.passwords.store.addAddress(address)
+    a.browser.bookmarks.create({ title: 'A only', url: 'https://a-only.example/' })
+    await setup(a)
+    const bCard = b.browser.passwords.store.addCard(card)
+    await setup(b)
+    await b.engine.confirmMerge(false)
+    await a.engine.syncNow()
+    expect(a.browser.state.bookmarks.some((n) => n.url === 'https://a-only.example/')).toBe(false)
+    // The vault merges by entry regardless: both entries exist on both devices.
+    expect(a.browser.passwords.store.getAddress(aAddress.id)).not.toBeNull()
+    expect(a.browser.passwords.store.getCard(bCard.id)).not.toBeNull()
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.getAddress(aAddress.id)).not.toBeNull()
+    expect(b.browser.passwords.store.getCard(bCard.id)).not.toBeNull()
+  }, 30_000)
+
+  it('a kind from a later build is skipped, round after round, and never tombstoned; the login and the address beside it land', async () => {
+    const a = device('Desk (Linux)')
+    await unlockVault(a)
+    a.browser.passwords.add({ url: 'https://a.example/', username: 'ada', password: 'pw' })
+    await setup(a)
+
+    // A peer on a later build writes its file: an entry of a kind this build does not know, a
+    // login and an address beside it, under the folder's key.
+    const own = folderFiles('/drive').get(deviceFileName(a.engine.status().deviceId))!
+    const salt = (JSON.parse(own) as { envelope: { salt: string } }).envelope.salt
+    const key = await folderKey(salt)
+    const later = Date.now() + 10
+    const theirs: SyncRecord[] = [
+      {
+        id: 'iban_1',
+        type: 'autofill-entry',
+        modified: later,
+        deleted: false,
+        data: { kind: 'iban', iban: 'GB33BUKB20201555555555', nickname: 'Rent' }
+      },
+      {
+        id: 'address_peer',
+        type: 'autofill-entry',
+        modified: later,
+        deleted: false,
+        data: { kind: 'address', ...address, createdAt: 1, updatedAt: 1, lastUsedAt: null }
+      },
+      {
+        id: 'login_peer',
+        type: 'credential',
+        modified: later,
+        deleted: false,
+        data: {
+          kind: 'login',
+          origin: 'https://peer.example',
+          url: 'https://peer.example/',
+          username: 'bob',
+          password: 'pw2',
+          realm: null,
+          notes: '',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: null
+        }
+      }
+    ]
+    folderFiles('/drive').set(
+      deviceFileName('peer-later-build'),
+      serializeDeviceFile({
+        deviceId: 'peer-later-build',
+        deviceName: 'Phone (a later build)',
+        updatedAt: later,
+        envelope: await encryptJson(key, salt, { v: 1, records: theirs })
+      })
+    )
+
+    for (let round = 0; round < 3; round++) {
+      await a.engine.syncNow()
+      expect(a.engine.status().lastError).toBeNull()
+      expect(a.browser.passwords.store.get('login_peer')?.username).toBe('bob')
+      expect(a.browser.passwords.store.getAddress('address_peer')?.postalCode).toBe('SW1Y 4JH')
+      // Skipped: nothing in A's file for it – no copy, no tombstone – and nothing in its metadata.
+      const mine = await published(a)
+      expect(mine.find((r) => r.id === 'iban_1')).toBeUndefined()
+      expect(mine.find((r) => r.id === 'address_peer')).toMatchObject({
+        deleted: false,
+        modified: later
+      })
+      const meta = (a.engine as unknown as { data: { meta: MetaMap } }).data.meta
+      expect(meta.iban_1).toBeUndefined()
+    }
   }, 30_000)
 })

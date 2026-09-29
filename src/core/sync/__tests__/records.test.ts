@@ -3,16 +3,21 @@ import {
   DEVICE_LOCAL_SETTINGS,
   ORDER_SPACES,
   SETTINGS_RECORD_ID,
+  addressAutofillData,
   applyOrder,
+  cardAutofillData,
   collectLocal,
   defaultScope,
   diffLocal,
   frozenRecords,
+  fullScope,
   hashData,
   inScope,
+  isVaultRecordType,
   metaFromRemote,
   modData,
   newestByRecord,
+  readAutofillEntryData,
   readBookmarkData,
   readCredentialData,
   readFolderAgentMark,
@@ -24,6 +29,7 @@ import {
   settingsKeyGroup,
   settingsKeyTime,
   stableStringify,
+  vaultRecordReadable,
   winningRemote,
   wireFavicon,
   withoutDeviceLocalSettings,
@@ -31,6 +37,7 @@ import {
   type MetaMap,
   type OrderData,
   type RecordMeta,
+  type RecordType,
   type SyncRecord,
   type TabData
 } from '../records'
@@ -50,8 +57,10 @@ import {
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { MAX_MOD_CSS, UNTITLED_MOD } from '../../../shared/mods'
 import type {
+  AddressEntry,
   BookmarkNode,
   Mod,
+  PaymentCard,
   ReadingListEntry,
   SearchEngine,
   Space,
@@ -1667,6 +1676,350 @@ describe('credential records (ID-09)', () => {
     const b = hashData({ password: 'p', origin: 'o', kind: 'login' })
     expect(a).toBe(b)
     expect(a).toMatch(/^[0-9a-f]{40}$/)
+  })
+})
+
+/**
+ * The vault's addresses and payment cards (services pass 16, ID-45): one `autofill-entry`
+ * record per entry under the vault's id, the vault's fields behind `kind`, the `passwords`
+ * scope and the logins' rules – published while the vault is open, held while it is locked,
+ * merged by entry, deleted by tombstone. Its own record type, so a peer on a build before it
+ * drops the records at `inScope` like every additive type (`compat.test.ts`) instead of
+ * tombstoning a `credential` record it could not read; and this build skips a vault record it
+ * cannot read the same way (`vaultRecordReadable`).
+ */
+describe('autofill-entry records (services pass 16, ID-45)', () => {
+  const login = {
+    id: 'login_1',
+    origin: 'https://example.com',
+    url: 'https://example.com/login',
+    username: 'ada',
+    password: 's3cret',
+    realm: null,
+    notes: '',
+    createdAt: 100,
+    updatedAt: 200,
+    lastUsedAt: null,
+    ...emptyLeakFields()
+  }
+  const address: AddressEntry = {
+    id: 'address_1',
+    country: 'GB',
+    name: 'Ada Lovelace',
+    organization: 'Analytical Engines Ltd',
+    streetAddress: '12 St James\u2019s Square\nFlat 3',
+    locality: 'London',
+    region: '',
+    postalCode: 'SW1Y 4JH',
+    sortingCode: '',
+    phone: '+44 20 7946 0958',
+    email: 'ada@example.com',
+    createdAt: 300,
+    updatedAt: 400,
+    lastUsedAt: 450
+  }
+  const card: PaymentCard = {
+    id: 'card_1',
+    number: '4111111111111111',
+    expMonth: 12,
+    expYear: 2031,
+    name: 'Ada Lovelace',
+    nickname: 'Work Visa',
+    createdAt: 500,
+    updatedAt: 600,
+    lastUsedAt: null
+  }
+
+  it('collectLocal emits one record per address and per card, the vault\u2019s fields under the vault\u2019s ids', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [], addresses: [address], cards: [card] }
+    const out = collectLocal(src, defaultScope())
+    expect(out.get('address_1')).toEqual({
+      type: 'autofill-entry',
+      data: {
+        kind: 'address',
+        country: 'GB',
+        name: 'Ada Lovelace',
+        organization: 'Analytical Engines Ltd',
+        streetAddress: '12 St James\u2019s Square\nFlat 3',
+        locality: 'London',
+        region: '',
+        postalCode: 'SW1Y 4JH',
+        sortingCode: '',
+        phone: '+44 20 7946 0958',
+        email: 'ada@example.com',
+        createdAt: 300,
+        updatedAt: 400,
+        lastUsedAt: 450
+      }
+    })
+    // The card's number as the vault keeps it (the full digits): the wire carries exactly what
+    // the vault holds, inside the folder's end-to-end envelope, and no security code exists.
+    expect(out.get('card_1')).toEqual({
+      type: 'autofill-entry',
+      data: {
+        kind: 'card',
+        number: '4111111111111111',
+        expMonth: 12,
+        expYear: 2031,
+        name: 'Ada Lovelace',
+        nickname: 'Work Visa',
+        createdAt: 500,
+        updatedAt: 600,
+        lastUsedAt: null
+      }
+    })
+    expect(Object.keys(out.get('card_1')!.data as object)).not.toContain('cvc')
+    // The wire's key order is the builders': what a device publishes hashes the same everywhere.
+    expect(Object.keys(out.get('address_1')!.data as object)).toEqual(
+      Object.keys(addressAutofillData(address))
+    )
+    expect(Object.keys(out.get('card_1')!.data as object)).toEqual(
+      Object.keys(cardAutofillData(card))
+    )
+    // The login beside them is what it always was.
+    expect(out.get('login_1')).toMatchObject({ type: 'credential', data: { kind: 'login' } })
+  })
+
+  it('the passwords toggle off, a locked vault, or a source from before the fields publish none of the three kinds', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [], addresses: [address], cards: [card] }
+    const off = collectLocal(src, { ...defaultScope(), passwords: false })
+    expect(off.has('login_1')).toBe(false)
+    expect(off.has('address_1')).toBe(false)
+    expect(off.has('card_1')).toBe(false)
+    expect([...off.values()].some((r) => r.type === 'autofill-entry')).toBe(false)
+    src.credentials = null
+    expect(
+      [...collectLocal(src, defaultScope()).values()].some((r) => r.type === 'autofill-entry')
+    ).toBe(false)
+    // A caller handing the shape from before the fields (logins and passkeys alone) publishes
+    // its logins as before and no autofill entry.
+    src.credentials = { logins: [login], passkeys: [] }
+    const old = collectLocal(src, fullScope())
+    expect(old.has('login_1')).toBe(true)
+    expect([...old.values()].some((r) => r.type === 'autofill-entry')).toBe(false)
+  })
+
+  it('inScope gates the type on the passwords toggle both ways, tombstones included', () => {
+    const record: SyncRecord = {
+      id: 'address_1',
+      type: 'autofill-entry',
+      modified: 1,
+      deleted: false,
+      data: addressAutofillData(address)
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, { ...defaultScope(), passwords: false })).toBe(false)
+    expect(
+      inScope({ ...record, deleted: true, data: null }, { ...defaultScope(), passwords: false })
+    ).toBe(false)
+    // A scope object from a build before the key would say nothing for it – the one key covers
+    // the vault, so there is no such object: `passwords` is as old as the credential record.
+    expect(isVaultRecordType('autofill-entry')).toBe(true)
+    expect(isVaultRecordType('credential')).toBe(true)
+    expect(isVaultRecordType('bookmark')).toBe(false)
+  })
+
+  it('readAutofillEntryData round-trips both kinds, repairs missing fields, and is null for garbage or a kind it does not know', () => {
+    expect(readAutofillEntryData(addressAutofillData(address))).toEqual(
+      addressAutofillData(address)
+    )
+    expect(readAutofillEntryData(cardAutofillData(card))).toEqual(cardAutofillData(card))
+    // What lands re-collects to the received bytes (the engine re-snapshots right after
+    // applying and must find nothing to stamp).
+    expect(hashData(readAutofillEntryData(cardAutofillData(card)))).toBe(
+      hashData(cardAutofillData(card))
+    )
+    expect(readAutofillEntryData({ kind: 'address', country: 'FR', name: 'Ada' })).toEqual({
+      kind: 'address',
+      country: 'FR',
+      name: 'Ada',
+      organization: '',
+      streetAddress: '',
+      locality: '',
+      region: '',
+      postalCode: '',
+      sortingCode: '',
+      phone: '',
+      email: '',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    })
+    expect(
+      readAutofillEntryData({ kind: 'card', number: '4111111111111111', expMonth: '12' })
+    ).toEqual({
+      kind: 'card',
+      number: '4111111111111111',
+      expMonth: 0,
+      expYear: 0,
+      name: '',
+      nickname: '',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    })
+    // A card without a digit in its number is no card, as a login without a password is no login.
+    expect(readAutofillEntryData({ kind: 'card', name: 'Ada' })).toBeNull()
+    expect(readAutofillEntryData({ kind: 'card', number: 'none' })).toBeNull()
+    // A kind from a later build (an IBAN, say) reads as null: skipped, never landed as something else.
+    expect(readAutofillEntryData({ kind: 'iban', iban: 'GB33BUKB20201555555555' })).toBeNull()
+    expect(
+      readAutofillEntryData({ kind: 'login', origin: 'https://a.example', password: 'x' })
+    ).toBeNull()
+    expect(readAutofillEntryData(null)).toBeNull()
+    expect(readAutofillEntryData('address')).toBeNull()
+  })
+
+  it('vaultRecordReadable: a tombstone or a payload the reader takes is a winner, a kind the build does not read is not, on either vault type', () => {
+    const live = (type: RecordType, data: unknown): SyncRecord => ({
+      id: 'x',
+      type,
+      modified: 1,
+      deleted: false,
+      data
+    })
+    expect(vaultRecordReadable(live('autofill-entry', addressAutofillData(address)))).toBe(true)
+    expect(vaultRecordReadable(live('autofill-entry', cardAutofillData(card)))).toBe(true)
+    expect(vaultRecordReadable(live('autofill-entry', { kind: 'iban', iban: 'GB33' }))).toBe(false)
+    expect(vaultRecordReadable({ ...live('autofill-entry', null), deleted: true })).toBe(true)
+    expect(
+      vaultRecordReadable(
+        live('credential', { kind: 'login', origin: 'https://a.example', password: 'x' })
+      )
+    ).toBe(true)
+    expect(vaultRecordReadable(live('credential', { kind: 'totp', secret: 'x' }))).toBe(false)
+    expect(vaultRecordReadable({ ...live('credential', null), deleted: true })).toBe(true)
+    // Not a vault type: the reader has nothing to say, the scope filter alone decides.
+    expect(vaultRecordReadable(live('bookmark', { anything: true }))).toBe(true)
+  })
+
+  it('merges by id, last writer wins per entry, deletions travel as tombstones – the logins\u2019 rules', () => {
+    const src = sources()
+    src.credentials = { logins: [], passkeys: [], addresses: [address], cards: [card] }
+    const local = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    expect(local.meta.address_1).toMatchObject({ type: 'autofill-entry', modified: 0 })
+    const remoteNewer: SyncRecord = {
+      id: 'card_1',
+      type: 'autofill-entry',
+      modified: 2000,
+      deleted: false,
+      data: { ...cardAutofillData(card), nickname: 'Personal Visa', updatedAt: 2000 }
+    }
+    const remoteOther: SyncRecord = {
+      id: 'address_2',
+      type: 'autofill-entry',
+      modified: 5,
+      deleted: false,
+      data: { kind: 'address', country: 'DE', locality: 'Berlin' }
+    }
+    const remoteGone: SyncRecord = {
+      id: 'address_3',
+      type: 'autofill-entry',
+      modified: 5,
+      deleted: true,
+      data: null
+    }
+    const winners = winningRemote(
+      local.meta,
+      newestByRecord([[remoteNewer, remoteOther, remoteGone], [{ ...remoteNewer, modified: 1500 }]])
+    )
+    expect(winners.map((r) => r.id).sort()).toEqual(['address_2', 'card_1'])
+    expect((winners.find((r) => r.id === 'card_1')!.data as { nickname: string }).nickname).toBe(
+      'Personal Visa'
+    )
+    // A local edit later than the remote copy wins the tie-break by time, not by device.
+    src.credentials = {
+      logins: [],
+      passkeys: [],
+      addresses: [address],
+      cards: [{ ...card, nickname: 'Mine', updatedAt: 3000 }]
+    }
+    const edited = diffLocal(local.meta, collectLocal(src, defaultScope()), 3000)
+    expect(edited.meta.card_1.modified).toBe(3000)
+    expect(winningRemote(edited.meta, new Map([['card_1', remoteNewer]]))).toEqual([])
+    // Deleting locally produces a tombstone that beats the remote copy.
+    src.credentials = { logins: [], passkeys: [], addresses: [address], cards: [] }
+    const removed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000)
+    expect(removed.records.find((r) => r.id === 'card_1')).toMatchObject({
+      type: 'autofill-entry',
+      deleted: true,
+      modified: 4000
+    })
+    expect(removed.meta.address_1.deleted).toBe(false)
+  })
+
+  it('frozenRecords: toggling passwords off or locking the vault never tombstones an address or a card', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [], addresses: [address], cards: [card] }
+    const on = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const off = { ...defaultScope(), passwords: false }
+    const held = diffLocal(on.meta, collectLocal(src, off), 2000, {
+      stamp: 2000,
+      frozen: frozenRecords(src, off, on.meta)
+    })
+    expect(held.changed).toBe(false)
+    expect(held.meta.address_1).toEqual(on.meta.address_1)
+    expect(held.meta.card_1).toEqual(on.meta.card_1)
+    expect(held.records.some((r) => r.type === 'autofill-entry')).toBe(false)
+    src.credentials = null
+    const locked = diffLocal(on.meta, collectLocal(src, defaultScope()), 3000, {
+      stamp: 3000,
+      frozen: frozenRecords(src, defaultScope(), on.meta)
+    })
+    expect(locked.changed).toBe(false)
+    expect(locked.meta.address_1).toEqual(on.meta.address_1)
+    expect(locked.meta.card_1).toEqual(on.meta.card_1)
+    expect(locked.records.some((r) => r.type === 'autofill-entry')).toBe(false)
+    // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
+    const naive = diffLocal(on.meta, collectLocal(src, defaultScope()), 3000)
+    expect(naive.records.find((r) => r.id === 'card_1')?.deleted).toBe(true)
+  })
+
+  it('the metadata of a peer\u2019s record this build cannot read is never written, so the record is never tombstoned', () => {
+    // The round as the engine runs it (`SyncEngine.run`): the winners against this device's
+    // metadata, the scope filter, then the vault filter. Left out, the record is not applied and
+    // not in the metadata, and the re-snapshot after applying has nothing to tombstone – where
+    // a `credential` kind the build did not read, taken as a winner, was tombstoned by the same
+    // re-snapshot (the reason the entries have a type of their own).
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [], addresses: [], cards: [] }
+    const mine = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const later: SyncRecord = {
+      id: 'iban_1',
+      type: 'autofill-entry',
+      modified: 2000,
+      deleted: false,
+      data: { kind: 'iban', iban: 'GB33BUKB20201555555555' }
+    }
+    const theirs: SyncRecord = {
+      id: 'address_9',
+      type: 'autofill-entry',
+      modified: 2000,
+      deleted: false,
+      data: addressAutofillData({ ...address, id: 'address_9' })
+    }
+    const scope = defaultScope()
+    const winners = winningRemote(mine.meta, newestByRecord([[later, theirs]])).filter(
+      (r) => inScope(r, scope) && vaultRecordReadable(r)
+    )
+    expect(winners.map((r) => r.id)).toEqual(['address_9'])
+    const merged: MetaMap = { ...mine.meta, ...metaFromRemote(winners, mine.meta) }
+    expect(Object.keys(merged)).not.toContain('iban_1')
+    // Landed: the address is in the local set now; the IBAN is not, and was never known.
+    src.credentials.addresses = [{ ...address, id: 'address_9' }]
+    const after = diffLocal(merged, collectLocal(src, scope), 2001, { stamp: null })
+    expect(after.records.find((r) => r.id === 'iban_1')).toBeUndefined()
+    expect(after.records.find((r) => r.id === 'address_9')).toMatchObject({
+      deleted: false,
+      modified: 2000
+    })
+    // The counter-example, kept as the pin of the fault: the same record taken as a winner
+    // without the vault filter is tombstoned at the re-snapshot.
+    const naive: MetaMap = { ...mine.meta, ...metaFromRemote([later, theirs], mine.meta) }
+    const tombstoned = diffLocal(naive, collectLocal(src, scope), 2001, { stamp: null })
+    expect(tombstoned.records.find((r) => r.id === 'iban_1')).toMatchObject({ deleted: true })
   })
 })
 
