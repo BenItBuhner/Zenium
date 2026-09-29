@@ -74,6 +74,7 @@ import {
 } from '../../core/extensions/registry'
 import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '../../core/extensions/store'
 import type { StartupOverride } from '../../core/startup'
+import type { ExtensionSyncSource, SyncedExtensionData } from '../../core/sync/records'
 import {
   NO_PREVIOUS_BEGIN_INSTALL_ERROR,
   USER_CANCELLED_ERROR,
@@ -257,10 +258,16 @@ export class ExtensionService implements ExtensionHost {
     accept: (id) => this.record(id) !== undefined
   })
   private readonly updates = new Map<string, UpdateInfo>()
-  /** Ids with an install or update in flight. */
-  private readonly busy = new Set<string>()
+  /** Ids with an install or update in flight; `whenIdle` waits for one to finish (the synced records do, ID-44). */
+  private readonly busy = new BusyIds()
   /** Loads in flight, by path (see `load`). */
   private readonly loading = new Map<string, Promise<void>>()
+  /**
+   * The startup loads under way (`start`'s and each `attachSession`'s), for `whenAttached`: the
+   * synced records wait for them (ID-44), so a record's switch never lands in the middle of the
+   * loop that loads the enabled extensions into a fresh session.
+   */
+  private readonly attaching = new Set<Promise<void>>()
   /** Approvals the store pages' prompt produced, consumed by `completeInstall`. */
   private readonly approvals = new Map<
     string,
@@ -317,19 +324,21 @@ export class ExtensionService implements ExtensionHost {
     this.prompts = new ChromePrompts(browser)
     this.sync = new ExtensionSyncApplier({
       record: (id) => this.record(id),
-      busy: (id) => this.busy.has(id),
+      whenIdle: (id) => this.busy.whenIdle(id),
+      whenAttached: () => this.whenAttached(),
       download: (id, store) => this.downloadPackage(id, store),
-      install: async (pkg, store, toolbarPinned) => {
+      install: async (pkg, store, data) => {
         const outcome = await this.installPackage(
           pkg,
           { source: store, publisher: pkg.publisher, updateUrl: STORE_UPDATE_URLS[store] },
-          { confirm: false, synced: { toolbarPinned } }
+          { confirm: false, synced: data }
         )
         return outcome.status === 'installed' ? 'installed' : 'in-progress'
       },
       remove: (id) => this.remove(id),
-      setEnabled: (id, enabled) => this.setEnabled(id, enabled),
-      setToolbarPinned: (id, pinned) => this.setToolbarPinned(id, pinned),
+      setEnabled: (id, enabled, at) => this.switchEnabled(id, enabled, at),
+      setToolbarPinned: (id, pinned, at) => this.switchToolbarPinned(id, pinned, at),
+      republish: () => this.browser.state.commitVolatile(),
       toastRemoved: (record, store, from) => this.toastSyncedRemoval(record, store, from),
       error: (message) => console.error(message),
       now: () => Date.now(),
@@ -361,9 +370,34 @@ export class ExtensionService implements ExtensionHost {
 
   async start(): Promise<void> {
     await sweepStagingDirs(this.root).catch(() => [])
-    for (const record of this.registry.extensions) if (record.enabled) await this.load(record)
+    await this.attach(this.loadEnabled())
     this.browser.state.commitVolatile()
     this.scheduleUpdateChecks()
+  }
+
+  /** The enabled extensions, loaded one after the other (the startup's and each new session's loop). */
+  private async loadEnabled(): Promise<void> {
+    for (const record of this.registry.extensions) if (record.enabled) await this.load(record)
+  }
+
+  /** A startup load loop, kept in `attaching` until it is done (`whenAttached`). */
+  private attach(loads: Promise<void>): Promise<void> {
+    const tracked = loads.finally(() => this.attaching.delete(tracked))
+    this.attaching.add(tracked)
+    return tracked
+  }
+
+  /**
+   * Resolves once no startup load loop is under way (`start`, `attachSession`) – at once when
+   * none is. The synced records wait for this before their first apply (ID-44): the first sync
+   * round can come before the sessions' loads are through, and a switch landing in the middle of
+   * a loop would load or unload an extension the loop is about to load.
+   */
+  whenAttached(): Promise<void> {
+    const settle = async (): Promise<void> => {
+      while (this.attaching.size > 0) await Promise.allSettled([...this.attaching])
+    }
+    return settle()
   }
 
   // ---------------------------------------------------------------------------
@@ -633,7 +667,7 @@ export class ExtensionService implements ExtensionHost {
   /** A new container session appeared: hear its workers' console and bring the enabled extensions along. */
   async attachSession(ses: Session): Promise<void> {
     this.console.attachSession(ses)
-    for (const record of this.registry.extensions) if (record.enabled) await this.load(record)
+    await this.attach(this.loadEnabled())
   }
 
   // ---------------------------------------------------------------------------
@@ -668,6 +702,7 @@ export class ExtensionService implements ExtensionHost {
         updatedAt: record.updatedAt,
         pinned: record.pinned,
         toolbarPinned: record.toolbarPinned,
+        ...syncClocks(record),
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
         allowUserScripts: record.allowUserScripts,
@@ -690,6 +725,27 @@ export class ExtensionService implements ExtensionHost {
         errors: this.console.list(record.id)
       }
     })
+  }
+
+  /**
+   * What the sync engine collects (`ExtensionHost.syncSources`, ID-44), from the registry alone:
+   * no manifest is read for it, where `list()` reads one per extension that is not loaded – the
+   * engine reads this at every state broadcast.
+   */
+  syncSources(): ExtensionSyncSource[] {
+    return this.registry.extensions.map((record) => ({
+      id: record.id,
+      source: record.source,
+      enabled: record.enabled,
+      toolbarPinned: record.toolbarPinned,
+      ...(record.pendingApproval ? { pendingApproval: true } : {}),
+      ...syncClocks(record)
+    }))
+  }
+
+  /** The ids whose synced record is with the applier and not committed yet (`ExtensionHost.syncedExtensionsInFlight`). */
+  syncedExtensionsInFlight(): ReadonlySet<string> {
+    return this.sync.inFlight()
   }
 
   /** Chrome's "Clear all" on the extension's errors page. */
@@ -943,13 +999,16 @@ export class ExtensionService implements ExtensionHost {
    * `synced` (ID-44): the package came from another device's `extension` record, not from a
    * hand here – no prompt was shown, so the record lands TURNED OFF with `pendingApproval` set
    * and is not loaded; `setEnabled` shows the install prompt before it ever runs. Pinned to the
-   * toolbar as the record says (no permission in a pin). Only a fresh install lands this way: an
-   * extension that arrived meanwhile on another path is left as it is (`'in-progress'`).
+   * toolbar as the record says (no permission in a pin), the switches' clocks the record's, so
+   * the landing hashes as the record once approved and a later flip anywhere merges against the
+   * right times. Only a fresh install lands this way: an extension that arrived meanwhile on
+   * another path is left as it is (`'in-progress'`). An install made here stamps both clocks
+   * with its own time.
    */
   async installPackage(
     pkg: ExtensionPackage,
     meta: InstallMeta,
-    options: { confirm: boolean; win?: ZenWindow; synced?: { toolbarPinned: boolean } }
+    options: { confirm: boolean; win?: ZenWindow; synced?: SyncedExtensionData }
   ): Promise<InstallOutcome> {
     if (this.busy.has(pkg.id)) return { status: 'in-progress' }
     this.busy.add(pkg.id)
@@ -996,6 +1055,12 @@ export class ExtensionService implements ExtensionHost {
       if (options.synced) {
         record.pendingApproval = true
         record.toolbarPinned = options.synced.toolbarPinned
+        if (options.synced.enabledAt > 0) record.enabledAt = options.synced.enabledAt
+        if (options.synced.toolbarPinnedAt > 0)
+          record.toolbarPinnedAt = options.synced.toolbarPinnedAt
+      } else if (!existing) {
+        record.enabledAt = now
+        record.toolbarPinnedAt = now
       }
       if (existing) this.unload(existing)
       this.replace(record)
@@ -1073,6 +1138,32 @@ export class ExtensionService implements ExtensionHost {
   async setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void> {
     const record = this.record(id)
     if (!record || record.enabled === enabled) return
+    await this.switchEnabled(id, enabled, Date.now(), win)
+  }
+
+  /**
+   * The Enabled switch written under a clock (ID-44): the user's flip at its time
+   * (`setEnabled`), or a synced record's under the record's clock for the switch – the merge
+   * (`ExtensionSyncApplier.applyOne`) calls this only when that clock is not older than the
+   * one here. An equal value under a later clock takes the clock alone – no load or unload, no
+   * registry event – so the two devices' records hash the same afterwards and neither
+   * re-publishes the other's state as its own edit.
+   */
+  private async switchEnabled(
+    id: string,
+    enabled: boolean,
+    at: number,
+    win?: ZenWindow
+  ): Promise<void> {
+    const record = this.record(id)
+    if (!record) return
+    if (record.enabled === enabled) {
+      if (record.enabledAt !== undefined && at <= record.enabledAt) return
+      record.enabledAt = at
+      this.persist()
+      this.browser.state.commitVolatile()
+      return
+    }
     if (enabled && record.pendingApproval) {
       // A synced landing (ID-44): the install prompt an install made here would have shown –
       // the extension's name, its icon, every permission warning of its manifest, the store it
@@ -1104,6 +1195,7 @@ export class ExtensionService implements ExtensionHost {
       record.pendingWarnings = null
     }
     record.enabled = enabled
+    record.enabledAt = at
     if (enabled) await this.load(record)
     else {
       if (this.popup?.id === record.id) this.closePopup()
@@ -1125,7 +1217,17 @@ export class ExtensionService implements ExtensionHost {
   setToolbarPinned(id: string, pinned: boolean): void {
     const record = this.record(id)
     if (!record || record.toolbarPinned === pinned) return
-    record.toolbarPinned = pinned
+    this.switchToolbarPinned(id, pinned, Date.now())
+  }
+
+  /** The toolbar switch written under a clock (ID-44); see `switchEnabled` for the rule. */
+  private switchToolbarPinned(id: string, pinned: boolean, at: number): void {
+    const record = this.record(id)
+    if (!record) return
+    if (record.toolbarPinned === pinned) {
+      if (record.toolbarPinnedAt !== undefined && at <= record.toolbarPinnedAt) return
+    } else record.toolbarPinned = pinned
+    record.toolbarPinnedAt = at
     this.persist()
     this.browser.state.commitVolatile()
   }
@@ -1136,9 +1238,11 @@ export class ExtensionService implements ExtensionHost {
 
   /**
    * The `extension` records the sync engine hands over (`applyRemote`): queued per id behind
-   * the startup hold and applied through this service's own paths – `downloadPackage` and
-   * `installPackage` (`synced`: a landing turned off, waiting for approval), `setEnabled`,
-   * `setToolbarPinned`, `remove` (`ExtensionSyncApplier` says what lands when).
+   * the startup hold, after the startup loads (`whenAttached`) and the id's own busy work
+   * (`busy.whenIdle`), and applied through this service's own paths – `downloadPackage` and
+   * `installPackage` (`synced`: a landing turned off, waiting for approval), `switchEnabled`,
+   * `switchToolbarPinned` under the record's clocks, `remove` (`ExtensionSyncApplier` says
+   * what lands when).
    */
   applySyncedExtensions(changes: readonly SyncedExtensionChange[]): void {
     this.sync.apply(changes)
@@ -1436,6 +1540,8 @@ export class ExtensionService implements ExtensionHost {
       )
       outcome.record.pendingWarnings = added
       outcome.record.enabled = false
+      // The switch's clock (ID-44): this disable is a write of this device's, at its time.
+      outcome.record.enabledAt = Date.now()
       this.unload(outcome.record)
       this.persist()
       this.emit({ type: 'disabled', id: record.id })
@@ -1803,6 +1909,54 @@ export class ExtensionService implements ExtensionHost {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The ids with an install or update in flight, and a wait for one to finish: the synced
+ * records (ID-44) take every path – install, switch, tombstone – only once the id is idle, so a
+ * tombstone that arrives during an update lands after it instead of being undone by the
+ * update's `replace`.
+ */
+class BusyIds {
+  private readonly ids = new Set<string>()
+  private readonly waiters = new Map<string, Array<() => void>>()
+
+  has(id: string): boolean {
+    return this.ids.has(id)
+  }
+
+  add(id: string): void {
+    this.ids.add(id)
+  }
+
+  delete(id: string): void {
+    this.ids.delete(id)
+    const waiting = this.waiters.get(id)
+    if (!waiting) return
+    this.waiters.delete(id)
+    for (const wake of waiting) wake()
+  }
+
+  /** Resolves once `id` is not busy – at once when it is not; after the work in flight when it is. */
+  async whenIdle(id: string): Promise<void> {
+    while (this.ids.has(id)) {
+      await new Promise<void>((resolve) => {
+        const waiting = this.waiters.get(id)
+        if (waiting) waiting.push(resolve)
+        else this.waiters.set(id, [resolve])
+      })
+    }
+  }
+}
+
+/** The switches' clocks as `ExtensionInfo` carries them (ID-44): each only when the record has one. */
+function syncClocks(
+  record: Pick<ExtensionRecord, 'enabledAt' | 'toolbarPinnedAt'>
+): Pick<ExtensionInfo, 'enabledAt' | 'toolbarPinnedAt'> {
+  return {
+    ...(record.enabledAt !== undefined ? { enabledAt: record.enabledAt } : {}),
+    ...(record.toolbarPinnedAt !== undefined ? { toolbarPinnedAt: record.toolbarPinnedAt } : {})
+  }
+}
 
 function storeOf(source: ExtensionSource): StoreId | null {
   return source === 'chrome-web-store' || source === 'edge-add-ons' ? source : null
