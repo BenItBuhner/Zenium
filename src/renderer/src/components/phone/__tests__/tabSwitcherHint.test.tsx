@@ -34,7 +34,9 @@ const {
   IPH_ARM_DELAY_MS,
   iphSessionSpent,
   resetIphSession,
+  showHintBubble,
   spendIphSession,
+  TAB_GROUPS_DRAG_HINT_TEXT,
   TAB_SWITCHER_HINT_ACCESSIBILITY_TEXT,
   TAB_SWITCHER_HINT_TEXT
 } = await import('@renderer/lib/iph')
@@ -430,6 +432,30 @@ describe('the bubble comes down', () => {
 
   it('with the shell, outright', () => {
     up()
+    act(() => root!.unmount())
+    expect(bubble()).toEqual({ bubble: null, leaving: false })
+  })
+
+  it("never the overview's bubble: the drag-to-group teaching stands under the chrome the open overview keeps from calm, through a touch, a card and a resize – its own hook takes it down", () => {
+    const card = {
+      id: 'tabGroupsDragAndDrop',
+      at: 'overview',
+      tabId: 't1',
+      anchor: { x: 21, y: 493, width: 329, height: 439 },
+      text: TAB_GROUPS_DRAG_HINT_TEXT
+    } as const
+    act(() => showHintBubble(card))
+    render(stateOf(), 'bottom', false)
+    expect(bubble()).toEqual({ bubble: card, leaving: false })
+    act(() => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }))
+      window.dispatchEvent(new Event('resize'))
+      dispatchBarScroll('t1', 'start', null)
+      uiStore.set({ toasts: [TOAST] })
+    })
+    render(stateOf({ loading: true, tabId: 't2' }), 'top', false)
+    expect(bubble()).toEqual({ bubble: card, leaving: false })
+    // Its own hook is not the shell's: the shell leaving still takes whatever bubble stands.
     act(() => root!.unmount())
     expect(bubble()).toEqual({ bubble: null, leaving: false })
   })

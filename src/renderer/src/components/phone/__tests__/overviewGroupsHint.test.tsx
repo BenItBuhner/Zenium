@@ -28,6 +28,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { run } = await import('@renderer/lib/api')
 const { useOverviewGroupsHint } = await import('../useOverviewGroupsHint')
+const { useTabSwitcherHint } = await import('../useTabSwitcherHint')
 const { liftStore } = await import('../useCardLift')
 const { OverviewCard } = await import('../OverviewCard')
 const {
@@ -82,6 +83,16 @@ function Hint({
   anchorTabId?: string | null
 }): null {
   useOverviewGroupsHint({ state, overview, anchorTabId, grid: gridRef })
+  return null
+}
+
+/**
+ * The phone shell's arrangement: the Tabs button's hook (`PhoneShell`) and the overview's, on
+ * the one bubble store, the chrome not calm because the overview is open (`PhoneShell`'s `calm`).
+ */
+function Shell({ state, overview }: { state: UIState; overview: OverviewState }): null {
+  useTabSwitcherHint(state, 'bottom', false)
+  useOverviewGroupsHint({ state, overview, anchorTabId: 't1', grid: gridRef })
   return null
 }
 
@@ -209,6 +220,21 @@ describe('the bubble goes up', () => {
     requestOverviewGroupsHint()
     render(stateOf(), OPEN)
     expect(bubble().bubble).not.toBeNull()
+  })
+
+  it("stands beside the Tabs button's hook, mounted as the shell mounts it under a chrome the open overview keeps from calm (the emulator's first run: that hook took any bubble down)", () => {
+    requestOverviewGroupsHint()
+    act(() => root!.render(createElement(Shell, { state: stateOf(), overview: OPEN })))
+    expect(bubble()).toMatchObject({ leaving: false })
+    expect(bubble().bubble).toMatchObject({ id: 'tabGroupsDragAndDrop', tabId: 't1' })
+    wait(HINT_BUBBLE_EXIT_MS * 5)
+    expect(bubble()).toMatchObject({ leaving: false })
+    expect(bubble().bubble).toMatchObject({ id: 'tabGroupsDragAndDrop', tabId: 't1' })
+    // Its own rules still hold there: the first touch takes it down.
+    act(() => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    expect(bubble().leaving).toBe(true)
   })
 
   it('is dropped with an overview that closes before it rests', () => {

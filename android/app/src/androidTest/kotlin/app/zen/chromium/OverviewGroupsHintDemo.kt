@@ -201,14 +201,14 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
             // sides (main.css, `.zen-message-frame`): the clamp is 8 inside THAT box.
             val layer = b.optJSONObject("layer") ?: JSONObject()
             val frameLeft = layer.optDouble("left", 0.0)
-            val frameRight = layer.optDouble("right", b.optDouble("vw"))
+            val frameRight = layer.optDouble("right", b.optDouble("vw", 0.0))
             val aligned = cell != null && (
                 near(b.optDouble("left"), cell.optDouble("left")) || near(b.optDouble("right"), cell.optDouble("right")) ||
                     near(b.optDouble("left"), frameLeft + MESSAGE_INSET) || near(b.optDouble("right"), frameRight - MESSAGE_INSET)
                 )
             val inside = b.optDouble("left") >= frameLeft + MESSAGE_INSET - 0.5 && b.optDouble("right") <= frameRight - MESSAGE_INSET + 0.5 &&
                 b.optDouble("top") >= layer.optDouble("top", 0.0) - 0.5 && b.optDouble("bottom") <= layer.optDouble("bottom", Double.MAX_VALUE) + 0.5
-            expect("§9.20's pose against the card: flush ${side.ifEmpty { "(no side)" }} it at gap 0 (bubble ${b.optDouble("top").roundToInt()}–${b.optDouble("bottom").roundToInt()}, card ${cell?.optDouble("top")?.roundToInt()}–${cell?.optDouble("bottom")?.roundToInt()}), start- or end-aligned with it or clamped $MESSAGE_INSET inside the frame (bubble ${b.optDouble("left").roundToInt()}–${b.optDouble("right").roundToInt()}, card ${cell?.optDouble("left")?.roundToInt()}–${cell?.optDouble("right")?.roundToInt()}, frame ${frameLeft.roundToInt()}–${frameRight.roundToInt()} of ${b.optDouble("vw").roundToInt()}), inside the frame ($inside)", flush && aligned && inside, "bubble-pose")
+            expect("§9.20's pose against the card: flush ${side.ifEmpty { "(no side)" }} it at gap 0 (bubble ${b.px("top")}–${b.px("bottom")}, card ${cell.px("top")}–${cell.px("bottom")}), start- or end-aligned with it or clamped $MESSAGE_INSET inside the frame (bubble ${b.px("left")}–${b.px("right")}, card ${cell.px("left")}–${cell.px("right")}, frame ${frameLeft.roundToInt()}–${frameRight.roundToInt()} of ${b.px("vw")}), inside the frame ($inside)", flush && aligned && inside, "bubble-pose")
             expect("§9.33's dress: 320 wide (${b.optDouble("width")}), the accent fill with the on-accent ink (${b.optString("fill")} on ${b.optString("accent")}; ${b.optString("ink")} on ${b.optString("onAccent")}), no hairline (border ${b.optString("border")}), the body 15/400 (${b.optString("font")})", near(b.optDouble("width"), 320.0) && b.optString("fill") == b.optString("accent") && b.optString("ink") == b.optString("onAccent") && b.optString("border") == "0px" && b.optString("font").startsWith("15px/400"), "bubble-dress")
             expect("the card wears the halo (data-iph-anchor ${b.optBoolean("haloed")}, its ring's animation '${b.optString("halo")}') and names the bubble as its description ('${b.optString("describedBy")}'); the bubble is a status (role '${b.optString("role")}')", b.optBoolean("haloed") && b.optString("halo") == "zen-iph-pulse-card" && b.optString("describedBy") == BUBBLE_ID && b.optString("role") == "status", "bubble-a11y")
             val spent = hintRecord()
@@ -224,7 +224,9 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
 
     private fun theTouch() {
         step("3. A touch anywhere takes the bubble down – the finger on the bubble itself: nothing under it is picked, the overview stays open, the halo and the description go with it") {
-            val box = domBox("document.getElementById('$BUBBLE_ID')") ?: error("the bubble is not there to touch")
+            val box = domBox("document.getElementById('$BUBBLE_ID')")
+            expect("the bubble is there to touch ($box)", box != null, "touch-target")
+            if (box == null) return@step
             val tabsBefore = tabCount()
             finding("  touch at ${box.exactCenterX().roundToInt()},${box.exactCenterY().roundToInt()} on the bubble $box")
             Finger().tap(box.exactCenterX(), box.exactCenterY())
@@ -325,6 +327,12 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
         chromeValue("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
 
     private fun near(a: Double, b: Double, tolerance: Double = 1.5): Boolean = abs(a - b) <= tolerance
+
+    /** A box's figure for a finding line: whole pixels, or a dash where the probe read nothing (no NaN to round). */
+    private fun JSONObject?.px(key: String): String {
+        val v = this?.optDouble(key) ?: Double.NaN
+        return if (v.isNaN()) "–" else v.roundToInt().toString()
+    }
 
     /** The drag-to-group record (`settings.iph.tabGroupsDragAndDrop`). */
     private fun hintRecord(state: JSONObject = coreState()): JSONObject =
