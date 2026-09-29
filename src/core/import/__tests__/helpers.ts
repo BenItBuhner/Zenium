@@ -52,6 +52,146 @@ export function chromiumLoginsSchema(db: DatabaseSync): void {
     date_last_used INTEGER NOT NULL DEFAULT 0, moving_blocked_for BLOB, date_password_modified INTEGER NOT NULL DEFAULT 0);`)
 }
 
+/**
+ * `FieldType`'s values for the fields the fixtures write, read from
+ * `components/autofill/core/browser/field_types.h` on their own so a slip in the reader's table
+ * fails a test rather than agreeing with itself.
+ */
+export const CHROMIUM_FIELD_TYPE = {
+  NAME_FIRST: 3,
+  NAME_MIDDLE: 4,
+  NAME_LAST: 5,
+  NAME_FULL: 7,
+  EMAIL_ADDRESS: 9,
+  PHONE_HOME_WHOLE_NUMBER: 14,
+  ADDRESS_HOME_CITY: 33,
+  ADDRESS_HOME_STATE: 34,
+  ADDRESS_HOME_ZIP: 35,
+  ADDRESS_HOME_COUNTRY: 36,
+  COMPANY_NAME: 60,
+  ADDRESS_HOME_STREET_ADDRESS: 77,
+  ADDRESS_HOME_SORTING_CODE: 79,
+  ADDRESS_HOME_DEPENDENT_LOCALITY: 81
+} as const
+
+export type ChromiumAddressShape = 'unified' | 'split' | 'legacy'
+
+/** One saved address as a `Web Data` fixture writes it: its guid, whose it is, its fields by `FieldType`. */
+export interface ChromiumAddressRow {
+  guid: string
+  /** `AutofillProfile::RecordType`: 0 local, 1 account, 4 the account's name and email. */
+  recordType?: number
+  fields: Partial<Record<keyof typeof CHROMIUM_FIELD_TYPE, string>>
+}
+
+/**
+ * Chrome's `Web Data` address tables in one of their three shapes
+ * (`components/autofill/core/browser/webdata/addresses/address_autofill_table.cc`): `unified`
+ * is `InitAddressesTable` + `InitAddressTypeTokensTable` (schema 134+); `split` the
+ * `MigrateToVersion107AddContactInfoTables` / `…113MigrateLocalAddressProfilesToNewTable` pairs;
+ * `legacy` the `autofill_profiles*` tables of before. The form-history `autofill` table Chrome
+ * always has comes along so a fixture is told apart from an empty database by its address tables.
+ */
+export function chromiumWebDataSchema(db: DatabaseSync, shape: ChromiumAddressShape): void {
+  db.exec(`CREATE TABLE autofill(name VARCHAR, value VARCHAR, value_lower VARCHAR, date_created INTEGER DEFAULT 0,
+    date_last_used INTEGER DEFAULT 0, count INTEGER DEFAULT 1, PRIMARY KEY (name, value));`)
+  if (shape === 'unified') {
+    db.exec(`CREATE TABLE addresses(guid VARCHAR PRIMARY KEY, use_count INTEGER NOT NULL DEFAULT 0,
+      use_date INTEGER NOT NULL DEFAULT 0, date_modified INTEGER NOT NULL DEFAULT 0, language_code VARCHAR,
+      label VARCHAR, initial_creator_id INTEGER DEFAULT 0, record_type INTEGER);
+    CREATE TABLE address_type_tokens(guid VARCHAR, type INTEGER, value VARCHAR,
+      verification_status INTEGER DEFAULT 0, observations BLOB, PRIMARY KEY (guid, type));`)
+  } else if (shape === 'split') {
+    for (const [rows, tokens] of [
+      ['local_addresses', 'local_addresses_type_tokens'],
+      ['contact_info', 'contact_info_type_tokens']
+    ])
+      db.exec(`CREATE TABLE ${rows}(guid VARCHAR PRIMARY KEY, use_count INTEGER NOT NULL DEFAULT 0,
+        use_date INTEGER NOT NULL DEFAULT 0, date_modified INTEGER NOT NULL DEFAULT 0, language_code VARCHAR,
+        label VARCHAR, initial_creator_id INTEGER DEFAULT 0, last_modifier_id INTEGER DEFAULT 0);
+      CREATE TABLE ${tokens}(guid VARCHAR, type INTEGER, value VARCHAR, verification_status INTEGER DEFAULT 0,
+        PRIMARY KEY (guid, type));`)
+  } else {
+    db.exec(`CREATE TABLE autofill_profiles(guid VARCHAR PRIMARY KEY, company_name VARCHAR, street_address VARCHAR,
+      dependent_locality VARCHAR, city VARCHAR, state VARCHAR, zipcode VARCHAR, sorting_code VARCHAR,
+      country_code VARCHAR, use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0,
+      date_modified INTEGER NOT NULL DEFAULT 0, origin VARCHAR DEFAULT '', language_code VARCHAR, label VARCHAR,
+      disallow_settings_visible_updates INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE autofill_profile_names(guid VARCHAR, first_name VARCHAR, middle_name VARCHAR, last_name VARCHAR,
+      full_name VARCHAR, honorific_prefix VARCHAR, first_last_name VARCHAR, conjunction_last_name VARCHAR,
+      second_last_name VARCHAR);
+    CREATE TABLE autofill_profile_emails(guid VARCHAR, email VARCHAR);
+    CREATE TABLE autofill_profile_phones(guid VARCHAR, number VARCHAR);`)
+  }
+}
+
+/** Write `rows` into a `Web Data` of `shape`; the legacy shape holds local addresses only. */
+export function insertChromiumAddresses(
+  db: DatabaseSync,
+  shape: ChromiumAddressShape,
+  rows: ChromiumAddressRow[]
+): void {
+  const field = (row: ChromiumAddressRow, name: keyof typeof CHROMIUM_FIELD_TYPE): string =>
+    row.fields[name] ?? ''
+  if (shape === 'legacy') {
+    const profile = db.prepare(
+      `INSERT INTO autofill_profiles(guid, company_name, street_address, dependent_locality, city, state, zipcode,
+        sorting_code, country_code, date_modified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    const name = db.prepare(
+      'INSERT INTO autofill_profile_names(guid, first_name, middle_name, last_name, full_name) VALUES (?, ?, ?, ?, ?)'
+    )
+    const email = db.prepare('INSERT INTO autofill_profile_emails(guid, email) VALUES (?, ?)')
+    const phone = db.prepare('INSERT INTO autofill_profile_phones(guid, number) VALUES (?, ?)')
+    for (const row of rows) {
+      profile.run(
+        row.guid,
+        field(row, 'COMPANY_NAME'),
+        field(row, 'ADDRESS_HOME_STREET_ADDRESS'),
+        field(row, 'ADDRESS_HOME_DEPENDENT_LOCALITY'),
+        field(row, 'ADDRESS_HOME_CITY'),
+        field(row, 'ADDRESS_HOME_STATE'),
+        field(row, 'ADDRESS_HOME_ZIP'),
+        field(row, 'ADDRESS_HOME_SORTING_CODE'),
+        field(row, 'ADDRESS_HOME_COUNTRY'),
+        1_705_526_400
+      )
+      name.run(
+        row.guid,
+        field(row, 'NAME_FIRST'),
+        field(row, 'NAME_MIDDLE'),
+        field(row, 'NAME_LAST'),
+        field(row, 'NAME_FULL')
+      )
+      email.run(row.guid, field(row, 'EMAIL_ADDRESS'))
+      phone.run(row.guid, field(row, 'PHONE_HOME_WHOLE_NUMBER'))
+    }
+    return
+  }
+  for (const row of rows) {
+    const account = (row.recordType ?? 0) !== 0
+    const [table, tokens] =
+      shape === 'unified'
+        ? ['addresses', 'address_type_tokens']
+        : account
+          ? ['contact_info', 'contact_info_type_tokens']
+          : ['local_addresses', 'local_addresses_type_tokens']
+    if (shape === 'unified')
+      db.prepare(
+        `INSERT INTO ${table}(guid, date_modified, language_code, record_type) VALUES (?, ?, ?, ?)`
+      ).run(row.guid, 1_705_526_400, 'en', row.recordType ?? 0)
+    else
+      db.prepare(`INSERT INTO ${table}(guid, date_modified, language_code) VALUES (?, ?, ?)`).run(
+        row.guid,
+        1_705_526_400,
+        'en'
+      )
+    const token = db.prepare(`INSERT INTO ${tokens}(guid, type, value) VALUES (?, ?, ?)`)
+    for (const [name, value] of Object.entries(row.fields))
+      token.run(row.guid, CHROMIUM_FIELD_TYPE[name as keyof typeof CHROMIUM_FIELD_TYPE], value)
+  }
+}
+
 /** Firefox's `places.sqlite` tables the import reads. */
 export function firefoxPlacesSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE moz_places(id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR,

@@ -2179,7 +2179,8 @@ export interface BookmarkImportResult {
 // Import from other browsers (Chrome's "Import bookmarks and settings", ID-23)
 // ---------------------------------------------------------------------------
 
-export type ImportKind = 'bookmarks' | 'history' | 'passwords'
+/** `addresses` (ID-57): the saved addresses of a Chromium browser's `Web Data`, into the vault. */
+export type ImportKind = 'bookmarks' | 'history' | 'passwords' | 'addresses'
 
 /** `file`: a Netscape bookmarks HTML or a passwords CSV the user picks (every host). */
 export type ImportBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | 'safari' | 'file'

@@ -2,7 +2,12 @@
 // eslint-disable-next-line no-restricted-imports
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, ImportProgress } from '../../../shared/types'
+import type {
+  AddressEntry,
+  AddressInput,
+  HostCapabilities,
+  ImportProgress
+} from '../../../shared/types'
 import { BOOKMARKS_BAR_ID } from '../../../shared/bookmarks'
 import type { Browser } from '../../browser'
 import type { PickedTextFile, StoreIO } from '../../platform'
@@ -25,9 +30,12 @@ import {
   FakeImportHost,
   chromiumHistorySchema,
   chromiumLoginsSchema,
+  chromiumWebDataSchema,
   firefoxPlacesSchema,
+  insertChromiumAddresses,
   mozlz4Encode,
-  sealChromiumPassword
+  sealChromiumPassword,
+  type ChromiumAddressShape
 } from './helpers'
 
 const fixture = (name: string): Buffer =>
@@ -48,7 +56,12 @@ interface Harness {
   bookmarks: BookmarkService
   commits: ReturnType<typeof vi.fn>
   history: { sink: HistoryImportSink | null; written: ImportedVisit[] }
-  vault: { unlocked: boolean; rows: ImportRow[]; unlockAnswer: 'ok' | 'denied' }
+  vault: {
+    unlocked: boolean
+    rows: ImportRow[]
+    addresses: AddressEntry[]
+    unlockAnswer: 'ok' | 'denied'
+  }
   files: PickedTextFile[]
   pickOptions: unknown[]
 }
@@ -76,7 +89,7 @@ function harness(
       }
     }
   }
-  const vault: Harness['vault'] = { unlocked: true, rows: [], unlockAnswer: 'ok' }
+  const vault: Harness['vault'] = { unlocked: true, rows: [], addresses: [], unlockAnswer: 'ok' }
   const files: PickedTextFile[] = []
   const pickOptions: unknown[] = []
   const browser = {
@@ -107,6 +120,18 @@ function harness(
             skipped: 0,
             invalid: 0
           }
+        },
+        listAddresses: () => [...vault.addresses],
+        addAddress: (input: AddressInput, now: number) => {
+          const entry: AddressEntry = {
+            id: `address-${vault.addresses.length + 1}`,
+            ...input,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: null
+          }
+          vault.addresses.push(entry)
+          return entry
         }
       },
       unlock: async () => {
@@ -119,9 +144,37 @@ function harness(
   return { service, host, bookmarks, commits, history, vault, files, pickOptions }
 }
 
+/** The two addresses `seedChrome` gives Chrome's `Web Data`, as the vault takes them. */
+const CHROME_ADDRESSES: AddressInput[] = [
+  {
+    country: 'US',
+    name: 'Bennett Buhner',
+    organization: 'Zenium',
+    streetAddress: '1 Infinite Loop',
+    locality: 'Cupertino',
+    region: 'CA',
+    postalCode: '95014',
+    sortingCode: '',
+    phone: '+1 408-555-0100',
+    email: 'bennett@example.com'
+  },
+  {
+    country: 'GB',
+    name: 'Ada Lovelace',
+    organization: '',
+    streetAddress: '12 St James’s Square',
+    locality: 'London',
+    region: '',
+    postalCode: 'SW1Y 4LB',
+    sortingCode: '',
+    phone: '',
+    email: ''
+  }
+]
+
 async function seedChrome(
   host: FakeImportHost,
-  options: { running?: boolean } = {}
+  options: { running?: boolean; addresses?: ChromiumAddressShape | 'unknown' | false } = {}
 ): Promise<void> {
   host.file(
     `${CHROME}/Local State`,
@@ -168,6 +221,60 @@ async function seedChrome(
     )
     insert.run('https://mail.example.org/', 'b', v11, 'https://mail.example.org/', webkit(T0), 0, 0)
   })
+  if (options.addresses !== false)
+    host.sqlite(`${CHROME_DEFAULT}/Web Data`, (db) => {
+      if (options.addresses === 'unknown') {
+        db.exec(
+          'CREATE TABLE autofill(name VARCHAR, value VARCHAR); CREATE TABLE addresses_v2(guid VARCHAR)'
+        )
+        return
+      }
+      const shape = options.addresses ?? 'unified'
+      chromiumWebDataSchema(db, shape)
+      insertChromiumAddresses(db, shape, [
+        {
+          guid: '0b1c2d3e-0000-4000-8000-000000000001',
+          recordType: 0,
+          fields: {
+            NAME_FULL: 'Bennett Buhner',
+            COMPANY_NAME: 'Zenium',
+            ADDRESS_HOME_STREET_ADDRESS: '1 Infinite Loop',
+            ADDRESS_HOME_CITY: 'Cupertino',
+            ADDRESS_HOME_STATE: 'CA',
+            ADDRESS_HOME_ZIP: '95014',
+            ADDRESS_HOME_COUNTRY: 'US',
+            PHONE_HOME_WHOLE_NUMBER: '+1 408-555-0100',
+            EMAIL_ADDRESS: 'bennett@example.com'
+          }
+        },
+        // The same place again, as a second record with a company added: one address.
+        {
+          guid: '0b1c2d3e-0000-4000-8000-000000000002',
+          recordType: 0,
+          fields: {
+            NAME_FULL: 'bennett buhner',
+            COMPANY_NAME: 'Zenium Ltd',
+            ADDRESS_HOME_STREET_ADDRESS: '1 Infinite Loop',
+            ADDRESS_HOME_CITY: 'Cupertino',
+            ADDRESS_HOME_ZIP: '95014',
+            ADDRESS_HOME_COUNTRY: 'US'
+          }
+        },
+        {
+          guid: '0b1c2d3e-0000-4000-8000-000000000003',
+          recordType: 0,
+          fields: {
+            NAME_FIRST: 'Ada',
+            NAME_LAST: 'Lovelace',
+            ADDRESS_HOME_STREET_ADDRESS: '12 St James’s Square',
+            ADDRESS_HOME_CITY: 'London',
+            ADDRESS_HOME_ZIP: 'SW1Y 4LB',
+            ADDRESS_HOME_COUNTRY: 'GB'
+          }
+        }
+      ])
+    })
+  host.file(`${CHROME_DEFAULT}/Web Data-journal`, 'journal')
   if (options.running) host.symlink(`${CHROME}/SingletonLock`)
 }
 
@@ -267,7 +374,7 @@ describe('ImportService: browser profiles', () => {
     const sources = await h.service.sources()
     expect(sources[0]).toMatchObject({
       browser: 'chrome',
-      kinds: ['bookmarks', 'history', 'passwords'],
+      kinds: ['bookmarks', 'history', 'passwords', 'addresses'],
       running: false
     })
 
@@ -596,7 +703,7 @@ describe('ImportService: browser profiles', () => {
     const h = harness({ historyApi: false })
     await seedChrome(h.host)
     const [source] = await h.service.sources()
-    expect(source.kinds).toEqual(['bookmarks', 'passwords'])
+    expect(source.kinds).toEqual(['bookmarks', 'passwords', 'addresses'])
     const result = (await h.service.run(source.id, ['bookmarks', 'history']))!
     expect(result.kinds).toEqual(['bookmarks'])
     expect(result.results.history).toBeUndefined()
@@ -618,6 +725,111 @@ describe('ImportService: browser profiles', () => {
     const again = (await h.service.run(source.id, ['passwords']))!
     expect(again.results.passwords?.imported).toBe(1)
     expect(h.vault.unlocked).toBe(true)
+  })
+
+  it.each<ChromiumAddressShape>(['unified', 'split', 'legacy'])(
+    'imports Chrome’s saved addresses (%s Web Data) into the vault from a temp copy, one per place, the vault’s own left alone (ID-57)',
+    async (shape) => {
+      const h = harness()
+      await seedChrome(h.host, { addresses: shape })
+      // Ada is in the vault already, typed with other casing and spacing: not imported twice.
+      h.vault.addresses.push({
+        ...CHROME_ADDRESSES[1],
+        name: 'ADA  LOVELACE',
+        id: 'address-ada',
+        createdAt: 1,
+        updatedAt: 1,
+        lastUsedAt: null
+      })
+      const [source] = await h.service.sources()
+      expect(source.kinds).toContain('addresses')
+      const result = (await h.service.run(source.id, ['addresses']))!
+      expect(result.status).toBe('done')
+      expect(result.results.addresses).toEqual({
+        imported: 1,
+        duplicates: 2,
+        unreadable: 0,
+        invalid: 0,
+        error: null
+      })
+      expect(h.vault.addresses.slice(1)).toEqual([
+        {
+          ...CHROME_ADDRESSES[0],
+          id: 'address-2',
+          createdAt: NOW,
+          updatedAt: NOW,
+          lastUsedAt: null
+        }
+      ])
+      // No key is asked for: addresses are stored in the clear.
+      expect(h.host.secretRequests).toEqual([])
+      expect(h.host.copyRequests).toEqual([
+        [
+          `${CHROME_DEFAULT}/Web Data`,
+          `${CHROME_DEFAULT}/Web Data-wal`,
+          `${CHROME_DEFAULT}/Web Data-shm`,
+          `${CHROME_DEFAULT}/Web Data-journal`
+        ]
+      ])
+      expect(h.host.opened.every((p) => p.startsWith('/tmp/zenium-import-'))).toBe(true)
+      expect(h.host.removedDirs).toEqual(h.host.tempDirs)
+    }
+  )
+
+  it('addresses take the passwords’ vault gate: a vault that stays locked fails the kind with the same line, an unlocked one takes them', async () => {
+    const h = harness()
+    await seedChrome(h.host)
+    h.vault.unlocked = false
+    h.vault.unlockAnswer = 'denied'
+    const [source] = await h.service.sources()
+    const result = (await h.service.run(source.id, ['addresses']))!
+    expect(result.status).toBe('done')
+    expect(result.results.addresses?.error).toBe(VAULT_LOCKED_MESSAGE)
+    expect(h.vault.addresses).toEqual([])
+    h.vault.unlockAnswer = 'ok'
+    h.service.dismiss()
+    const again = (await h.service.run(source.id, ['addresses']))!
+    expect(again.results.addresses).toMatchObject({ imported: 2, duplicates: 1, error: null })
+    expect(h.vault.unlocked).toBe(true)
+  })
+
+  it('a Web Data gone since discovery, or in a shape the reader does not know, fails the addresses alone; the other kinds still run', async () => {
+    const h = harness()
+    await seedChrome(h.host, { addresses: 'unknown' })
+    const [source] = await h.service.sources()
+    const result = (await h.service.run(source.id, ['bookmarks', 'addresses']))!
+    expect(result.status).toBe('done')
+    expect(result.error).toBeNull()
+    expect(result.results.bookmarks?.imported).toBe(5)
+    expect(result.results.addresses).toMatchObject({
+      imported: 0,
+      error:
+        "Could not read Google Chrome's Web Data: the addresses are kept in a form this version of Zenium does not know."
+    })
+    expect(h.vault.addresses).toEqual([])
+    expect(h.host.removedDirs).toEqual(h.host.tempDirs)
+
+    // Gone between the run's own discovery and the copy: `withDatabase`'s missing-file line.
+    h.service.dismiss()
+    const copyToTemp = h.host.copyToTemp.bind(h.host)
+    h.host.copyToTemp = async (paths) => {
+      h.host.remove(`${CHROME_DEFAULT}/Web Data`)
+      return copyToTemp(paths)
+    }
+    const gone = (await h.service.run(source.id, ['addresses']))!
+    expect(gone.results.addresses?.error).toBe('Google Chrome has no Web Data in this profile.')
+    // Gone before discovery: the kind is not offered, so there is nothing to run.
+    h.service.dismiss()
+    expect((await h.service.sources())[0].kinds).toEqual(['bookmarks', 'history', 'passwords'])
+    expect(await h.service.run(source.id, ['addresses'])).toBeNull()
+  })
+
+  it('offers no addresses from a profile without a Web Data', async () => {
+    const h = harness()
+    await seedChrome(h.host, { addresses: false })
+    h.host.remove(`${CHROME_DEFAULT}/Web Data-journal`)
+    const [source] = await h.service.sources()
+    expect(source.kinds).toEqual(['bookmarks', 'history', 'passwords'])
   })
 
   it('runs one import at a time and can be cancelled between kinds', async () => {
