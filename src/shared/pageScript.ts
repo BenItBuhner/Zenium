@@ -19,6 +19,7 @@ import { installReaderExtrasWhenReady } from './readerExtras'
 import { fullscreenElementOf, installRotateToFullscreen } from './rotateToFullscreen'
 import { gameMessageOf, type GameWindowMessage } from './game/bridge'
 import type { CaptureStateReport } from './captureState'
+import { APP_BADGE_EVENT, appBadgeOf, sameAppBadge, type AppBadge } from './appBadge'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -50,6 +51,12 @@ export interface PageScriptFlags {
    * toolbar is its selection menu), and reads it as nothing.
    */
   selectionMenu: boolean
+  /**
+   * The page is an installed app's document in the app's own window (MW-51;
+   * `PageFlags.installedApp`): the badge relay forwards `navigator.setAppBadge` /
+   * `clearAppBadge` to the browser while this is on and drops the calls otherwise.
+   */
+  installedApp: boolean
 }
 
 export interface PageScriptMessage {
@@ -91,9 +98,11 @@ export interface PageScriptMessage {
   /** `interstitial`: the button pressed on a Zenium warning page (`zen://error`). */
   action?: InterstitialAction
   /** `webapp`: see `PageMessage` in the core. */
-  webapp?: 'manifest' | 'deferred' | 'prompt'
+  webapp?: 'manifest' | 'deferred' | 'prompt' | 'badge'
   manifestUrl?: string
   manifest?: RawWebAppManifest | null
+  /** `webapp: 'badge'`: the app's badge – a count, a flag, or null for a cleared one. */
+  badge?: AppBadge | null
   /** `notification`: the `Notification` polyfill's request (see `shared/notifications`). */
   notification?: NotificationPageRequest
   /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
@@ -196,6 +205,16 @@ export interface PageScriptTransport {
    */
   installInstallPromptShim?(events: InstallPromptShimEvents): void
   /**
+   * Hosts that draw an installed app's badge (MW-51; the desktop's taskbar overlay and dock
+   * badge): run `shared/appBadge`'s shim in the page's main world, where
+   * `navigator.setAppBadge` / `clearAppBadge` must exist for the page to call them; the script
+   * relays each call posted on `eventName` while the page's flags say it is an installed app's
+   * document. A host that leaves this out shows no badge and defines no API – the spec's
+   * "should not include" for a user agent that never displays one (the phone, as Chrome for
+   * Android).
+   */
+  installAppBadgeShim?(eventName: string): void
+  /**
    * Hosts with a speech engine (`capabilities.readAloud`): the script answers the browser's
    * `readAloud.extract` request with the page's text as blocks and paints its
    * `readAloud.highlight` messages (`readAloudScript.ts`).
@@ -231,14 +250,24 @@ export const DEFAULT_PAGE_FLAGS: PageScriptFlags = {
   linksToSplitPane: false,
   // Nothing runs for the menu until the browser says it is on: the reporter's listeners are
   // installed by the first flags that say so, never before.
-  selectionMenu: false
+  selectionMenu: false,
+  // No page is an installed app's until the browser says so: a badge set before the first flags
+  // waits for them (`installAppBadgeRelay`).
+  installedApp: false
 }
 
 export function installPageScript(transport: PageScriptTransport): void {
   let flags: PageScriptFlags = { ...DEFAULT_PAGE_FLAGS }
+  // One listener on the transport – the phone's bridge holds a single slot – fans the flags out
+  // to every part of the script that follows one.
+  const flagListeners: Array<(flags: PageScriptFlags) => void> = []
   transport.onFlags((next) => {
     flags = next
+    for (const listener of flagListeners) listener(next)
   })
+  const onFlags = (listener: (flags: PageScriptFlags) => void): void => {
+    flagListeners.push(listener)
+  }
 
   const findAnchor = (target: EventTarget | null): HTMLAnchorElement | null => {
     let el = target as Element | null
@@ -270,6 +299,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   installGameRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
+  if (transport.installAppBadgeShim) installAppBadgeRelay(transport, onFlags)
   if (transport.discoverSearchEngines) installOpenSearch(transport)
   if (transport.onReadAloud)
     installReadAloud({
@@ -738,6 +768,72 @@ export function isManifestLink(rel: string): boolean {
     .toLowerCase()
     .split(/\s+/)
     .some((token) => token === 'manifest')
+}
+
+/**
+ * The Badging API's relay (MW-51). The API itself lives in the page's world
+ * (`shared/appBadge`'s shim, installed through the transport): every call lands here as a DOM
+ * event with the badge as JSON, and goes to the browser as a `webapp: 'badge'` message while the
+ * page is an installed app's document in the app's own window (`flags.installedApp`) – the one
+ * place a badge has an icon to land on. Anywhere else the call has resolved in the page already
+ * and ends here, as Chrome's does for a page that is no installed app's. A badge set before the
+ * document's first flags arrive (a page that badges at start-up) waits for them: kept if they say
+ * installed app, dropped if not. The same badge twice over is sent once. The top frame of an
+ * http(s) document only, as the manifest probe.
+ */
+function installAppBadgeRelay(
+  transport: PageScriptTransport,
+  onFlags: (listener: (flags: PageScriptFlags) => void) => void
+): void {
+  try {
+    if (window !== window.top) return
+    if (location.protocol !== 'https:' && location.protocol !== 'http:') return
+  } catch {
+    return
+  }
+  let installedApp = false
+  /** The last badge posted before the flags said whether this is an installed app's page. */
+  let pending: AppBadge | null | undefined
+  /** The last badge sent to the browser for this document (undefined: none yet). */
+  let sent: AppBadge | null | undefined
+  const forward = (badge: AppBadge | null): void => {
+    if (sent !== undefined && sameAppBadge(sent, badge)) return
+    sent = badge
+    transport.send({ type: 'webapp', webapp: 'badge', badge })
+  }
+  document.addEventListener(APP_BADGE_EVENT, (e) => {
+    const detail = (e as CustomEvent<unknown>).detail
+    if (typeof detail !== 'string') return
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(detail)
+    } catch {
+      return
+    }
+    if (!parsed || typeof parsed !== 'object') return
+    const badge = appBadgeOf((parsed as { badge?: unknown }).badge)
+    if (badge === undefined) return
+    if (installedApp) forward(badge)
+    else pending = badge
+  })
+  onFlags((flags) => {
+    if (flags.installedApp === installedApp) return
+    installedApp = flags.installedApp
+    if (installedApp) {
+      if (pending !== undefined) forward(pending)
+    } else {
+      // The page left the app (moved to a plain window, went out of scope in place): what the
+      // browser holds for the app by the time the page is back inside is not known here, so
+      // the next badge goes out afresh.
+      sent = undefined
+    }
+    pending = undefined
+  })
+  try {
+    transport.installAppBadgeShim?.(APP_BADGE_EVENT)
+  } catch {
+    /* the main world refused the script; the page keeps the engine's unanswered pair */
+  }
 }
 
 /**
