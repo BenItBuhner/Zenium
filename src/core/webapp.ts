@@ -22,10 +22,14 @@ import {
   type PinnedWebApp,
   type WebAppInfo
 } from '../shared/webApp'
+import { appBadgeOf, sameAppBadge, type AppBadge } from '../shared/appBadge'
 import type { Browser } from './browser'
 import { getSpace } from './model'
 import type { PageMessage, ShortcutRequest, StoreIO } from './platform'
 import { surfaceMounted, type ZenWindow } from './window'
+
+/** An installed app's badge changed: the new badge, or null for none (`WebAppService.onBadgeChange`). */
+export type AppBadgeListener = (appId: string, badge: AppBadge | null) => void
 
 /** The persisted document: shortcuts on the Home screen and how often each app was visited. */
 interface WebAppsDocument {
@@ -75,6 +79,13 @@ export class WebAppService {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private readonly now: () => number
+  /**
+   * Each installed app's badge (MW-51), by app id – the count or flag its page last set through
+   * `navigator.setAppBadge`, absent while it has none. In memory only, as Chrome keeps its
+   * (`BadgeManager`'s map): a badge does not outlive the run, nor the app's last open window.
+   */
+  private readonly appBadges = new Map<string, AppBadge>()
+  private readonly badgeListeners = new Set<AppBadgeListener>()
 
   constructor(
     private readonly browser: Browser,
@@ -201,7 +212,74 @@ export class WebAppService {
         w.host.close()
       }
     }
+    // The badge goes with the record (Chrome clears an uninstalled app's), ahead of the
+    // windows' own closing, which the host may finish later.
+    this.setBadge(appId, null)
     this.browser.state.commitVolatile()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Badges (MW-51)
+  // ---------------------------------------------------------------------------
+
+  /** The badge an installed app's page last set, or null while it has none. */
+  badgeOf(appId: string): AppBadge | null {
+    return this.appBadges.get(appId) ?? null
+  }
+
+  /** Every installed app with a badge up, by app id. */
+  badges(): ReadonlyMap<string, AppBadge> {
+    return this.appBadges
+  }
+
+  /**
+   * Hosts that draw badges (the desktop's taskbar overlay and dock badge) hear each change: the
+   * app and its new badge, null once it is cleared. Returns the unsubscribe.
+   */
+  onBadgeChange(listener: AppBadgeListener): () => void {
+    this.badgeListeners.add(listener)
+    return () => this.badgeListeners.delete(listener)
+  }
+
+  /**
+   * Set or clear an installed app's badge. The same badge again is nothing; a record that is no
+   * app's (uninstalled meanwhile) takes none.
+   */
+  setBadge(appId: string, badge: AppBadge | null): void {
+    const current = this.badgeOf(appId)
+    if (badge && !this.pinnedById(appId)) return
+    if (sameAppBadge(current, badge)) return
+    if (badge) this.appBadges.set(appId, badge)
+    else this.appBadges.delete(appId)
+    for (const listener of this.badgeListeners) listener(appId, badge)
+  }
+
+  /**
+   * A page's `setAppBadge` / `clearAppBadge` (the page script's `webapp: 'badge'`): it counts
+   * for the app whose window shows the tab, while the tab is inside the app's scope – the page
+   * script sends nothing otherwise (`PageFlags.installedApp`), and the core holds the same line
+   * against a message that arrived late or forged. A malformed badge is dropped.
+   */
+  private onBadge(tabId: string, value: unknown): void {
+    const badge = appBadgeOf(value)
+    if (badge === undefined) return
+    const tab = this.browser.tabs.tab(tabId)
+    const app = this.browser.tabs.windowFor(tabId)?.app
+    if (!tab || !app?.appId || !isWithinScope(tab.url, app.scope)) return
+    this.setBadge(app.appId, badge)
+  }
+
+  /**
+   * A window closed: an app's badge goes with its last window – there is no icon left to show it
+   * on, and the next launch starts clean, as Chrome's app does when its last window closes.
+   */
+  onWindowClosed(win: ZenWindow): void {
+    const appId = win.app?.appId
+    if (!appId || !this.appBadges.has(appId)) return
+    const another = this.browser
+      .allWindows()
+      .some((w) => w !== win && w.app?.appId === appId && !w.isClosing)
+    if (!another) this.setBadge(appId, null)
   }
 
   /** An app window moved or resized: the next launch of the app opens where it stood. */
@@ -262,6 +340,9 @@ export class WebAppService {
         this.openInstall(tabId, win)
         return
       }
+      case 'badge':
+        this.onBadge(tabId, message.badge)
+        return
     }
   }
 

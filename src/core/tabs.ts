@@ -793,6 +793,8 @@ export class TabManager {
     }
     // Another window may mean another `display-mode` (an app window's page moving to a browser window).
     view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
+    // ...and other flags: the owner's glance, whether the page is an installed app's (MW-51).
+    this.sendPageFlags(tabId)
     win.relayout()
     return true
   }
@@ -2029,7 +2031,10 @@ export class TabManager {
       linksToSplitPane,
       // The one predicate the model reads (`SelectionMenuService.available`): the host has the
       // menu and the setting is on. Off, the page runs no selection reporter at all.
-      selectionMenu: this.browser.selectionMenu.available
+      selectionMenu: this.browser.selectionMenu.available,
+      // An installed app's document in the app's own window (MW-51): the page's badge reaches
+      // the core. An `--app=<url>` window without a record (`appId` null) is no installed app.
+      installedApp: Boolean(owner?.app?.appId && isWithinScope(tab.url, owner.app.scope))
     }
     this.splitLinkFlags.set(tabId, linksToSplitPane)
     page?.sendPageFlags(flags)
@@ -5032,6 +5037,7 @@ export class TabManager {
         view.attachTo(others[0].host)
         others[0].relayout()
         view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
+        this.sendPageFlags(tabId)
       } else {
         if (tab) this.rememberNavigation(tabId, view)
         this.destroyView(tabId)

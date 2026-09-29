@@ -5,6 +5,7 @@ import type { PageHostMessage, ShortcutRequest, StoreIO } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
 import { MIN_VISIT_GAP_MS } from '../../shared/webApp'
+import type { AppBadge } from '../../shared/appBadge'
 
 const DOCUMENT_URL = 'https://app.example/'
 const MANIFEST_URL = 'https://app.example/manifest.webmanifest'
@@ -513,5 +514,168 @@ describe('WebAppService', () => {
       action: 'result',
       outcome: 'dismissed'
     })
+  })
+})
+
+/*
+ * The Badging API's core (MW-51): one badge per installed app, from the page script's
+ * `webapp: 'badge'` message of a page in the app's own window and inside its scope; the hosts
+ * hear each change; the badge is in memory alone and goes with the app's last window and with
+ * the record.
+ */
+describe('WebAppService badges (MW-51)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const count = (value: number): AppBadge => ({ kind: 'count', value })
+  const FLAG: AppBadge = { kind: 'flag' }
+
+  interface Badged extends Harness {
+    appWin: ZenWindow
+    changes: Array<[string, AppBadge | null]>
+    post: (badge: unknown) => void
+  }
+
+  /** The tab shows in `win` from here on (`tabs.windowFor`). */
+  function showIn(h: Harness, win: ZenWindow): void {
+    ;(h.browser.tabs as unknown as { windowFor: () => ZenWindow }).windowFor = () => win
+  }
+
+  /** An installed app with its window open on the desktop; the tab shows in that window. */
+  async function installed(): Promise<Badged> {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[0].id)
+    const appWin = h.appWindows[0].win
+    showIn(h, appWin)
+    h.tab.url = 'https://app.example/inbox'
+    const changes: Array<[string, AppBadge | null]> = []
+    h.service.onBadgeChange((appId, badge) => changes.push([appId, badge]))
+    return {
+      ...h,
+      appWin,
+      changes,
+      post: (badge) => h.service.handleMessage(h.tab.id, { type: 'webapp', webapp: 'badge', badge })
+    }
+  }
+
+  it('keeps the badge an installed app’s page sets and tells the hosts each change once', async () => {
+    const h = await installed()
+    expect(h.service.badgeOf(MANIFEST_ID)).toBeNull()
+    h.post(count(4))
+    expect(h.service.badgeOf(MANIFEST_ID)).toEqual(count(4))
+    expect([...h.service.badges()]).toEqual([[MANIFEST_ID, count(4)]])
+    // The same badge again is nothing; a change is one call.
+    h.post(count(4))
+    h.post(FLAG)
+    h.post(FLAG)
+    h.post(null)
+    h.post(null)
+    expect(h.changes).toEqual([
+      [MANIFEST_ID, count(4)],
+      [MANIFEST_ID, FLAG],
+      [MANIFEST_ID, null]
+    ])
+    expect(h.service.badges().size).toBe(0)
+    // The badge is the hosts' to draw, not the snapshot's: no commit, no event, and the
+    // records' document does not carry it (`installed()` lists the records as before).
+    const commits = h.browser.state.commitVolatile as unknown as { mockClear: () => void }
+    commits.mockClear()
+    h.post(count(9))
+    expect(h.browser.state.commitVolatile).not.toHaveBeenCalled()
+    expect(h.events.filter((e) => e.name.startsWith('webapp.badge'))).toEqual([])
+    expect(h.service.installed()[0]).not.toHaveProperty('badge')
+  })
+
+  it('takes no badge from a page that is no installed app’s, out of scope, or malformed', async () => {
+    const h = await installed()
+    // A browser window's tab: the page script sends none, and the core holds the same line.
+    showIn(h, h.win)
+    h.post(count(2))
+    expect(h.changes).toEqual([])
+    showIn(h, h.appWin)
+    // The app's window showing a page outside the app's scope.
+    h.tab.url = 'https://elsewhere.example/'
+    h.post(count(2))
+    expect(h.changes).toEqual([])
+    h.tab.url = 'https://app.example/inbox'
+    // Malformed badges are dropped, never guessed at.
+    for (const bad of [
+      { kind: 'count', value: -1 },
+      { kind: 'count', value: 0 },
+      { kind: 'count', value: 1.5 },
+      { kind: 'count', value: '3' },
+      { kind: 'dot' },
+      3,
+      'flag',
+      undefined
+    ])
+      h.post(bad)
+    expect(h.changes).toEqual([])
+    // A message for a tab the core does not know.
+    h.service.handleMessage('t9', { type: 'webapp', webapp: 'badge', badge: count(1) })
+    expect(h.changes).toEqual([])
+    // An `--app=<url>` window that is no installed app's (`appId` null).
+    const anonymous = { ...h.appWin, app: { ...h.appWin.app!, appId: null } } as ZenWindow
+    showIn(h, anonymous)
+    h.post(count(2))
+    expect(h.changes).toEqual([])
+    // ...and the app's own window takes it.
+    showIn(h, h.appWin)
+    h.post(count(2))
+    expect(h.changes).toEqual([[MANIFEST_ID, count(2)]])
+  })
+
+  it('clears the badge with the app’s last window, not while another window of the app stands', async () => {
+    const h = await installed()
+    h.post(count(3))
+    // A second window of the app (`launch` brings an open one forward, so the first is
+    // "closing" for the moment of the launch, as the windows test does).
+    const first = h.appWindows[0].win as unknown as { isClosing: boolean }
+    first.isClosing = true
+    h.service.launch(MANIFEST_ID, h.win)
+    first.isClosing = false
+    expect(h.appWindows).toHaveLength(2)
+    const windows = h.browser.allWindows()
+    const close = (win: ZenWindow): void => {
+      // The browser drops the window from its list before the services hear of the close.
+      windows.splice(windows.indexOf(win), 1)
+      h.service.onWindowClosed(win)
+    }
+    close(h.appWindows[0].win)
+    expect(h.service.badgeOf(MANIFEST_ID)).toEqual(count(3))
+    close(h.appWindows[1].win)
+    expect(h.service.badgeOf(MANIFEST_ID)).toBeNull()
+    expect(h.changes).toEqual([
+      [MANIFEST_ID, count(3)],
+      [MANIFEST_ID, null]
+    ])
+    // A browser window closing says nothing; a second close of an app without a badge neither.
+    close(h.win)
+    h.service.onWindowClosed(h.appWindows[1].win)
+    expect(h.changes).toHaveLength(2)
+  })
+
+  it('clears the badge with the record on uninstall, and takes none for an app that is not installed', async () => {
+    const h = await installed()
+    h.post(FLAG)
+    await h.service.uninstall(MANIFEST_ID)
+    expect(h.service.badgeOf(MANIFEST_ID)).toBeNull()
+    expect(h.changes).toEqual([
+      [MANIFEST_ID, FLAG],
+      [MANIFEST_ID, null]
+    ])
+    // Its page is still up in the closing window: no badge for a record that is gone.
+    h.post(count(1))
+    h.service.setBadge('https://other.example/', count(1))
+    expect(h.changes).toHaveLength(2)
+    expect(h.service.badges().size).toBe(0)
+    // Unsubscribed hosts hear nothing more.
+    const off = h.service.onBadgeChange(() => {
+      throw new Error('should not be called')
+    })
+    off()
+    h.service.setBadge(MANIFEST_ID, null)
   })
 })
