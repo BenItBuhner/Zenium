@@ -4,6 +4,7 @@ import { ArrowRight, ArrowUpLeft, Camera, Globe, Link, Mic, Pencil, Share2, X } 
 import type {
   ClipboardContent,
   Events,
+  Folder,
   PhoneBarLayout,
   PhoneBarPosition,
   Rect,
@@ -12,6 +13,7 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
+import { FOLDER_COLOR_NAMES } from '@shared/defaults'
 import { BAR_BUTTON, BAR_GAP, BAR_PADDING } from '@shared/phoneBar'
 import {
   SEARCH_SCOPES,
@@ -33,6 +35,8 @@ import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { regularMembers } from '@renderer/lib/groupRows'
+import { DEFAULT_GROUP_COLOR } from '@renderer/lib/groups'
 import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
@@ -57,6 +61,7 @@ import {
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { GroupGlyph } from '../GroupGlyph'
 import { barLayout } from '../phone/barItems'
 import { useLongPress } from '../phone/useLongPress'
 import { V2_GLYPH } from '../v2/controls'
@@ -771,6 +776,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         case 'tab':
           if (item.targetId) run('tab.activate', { tabId: item.targetId })
           break
+        case 'folder':
+          // "Open tab group" (OMN-15): the group unfolded and its first tab shown, or a saved
+          // group's pages back – the Tab groups pane's Open (`folder.open`).
+          if (item.targetId) run('folder.open', { folderId: item.targetId })
+          break
         case 'space':
           if (item.targetId) run('space.activate', { spaceId: item.targetId })
           break
@@ -1332,6 +1342,16 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // heuristic row – and the search suggestions under it read bare; every other kind keeps its
   // trailing text (a page's host, an answer's expression, an engine row's "Search <engine>").
   const firstSearch = results.findIndex((r) => r.kind === 'search')
+  // A tab group's row (OMN-15) draws its group's glyph – the group as the chrome has it now, so
+  // a recolour or a save lands on the row – and names it by the host's noun (v2 draft: "Folder"
+  // on the desktop, "Group" on the touch hosts, the tablet among them).
+  const groupNoun: GroupNoun = formFactor === 'desktop' ? 'folder' : 'tab group'
+  const groupOf = (item: Suggestion): SuggestionGroup | undefined => {
+    const folder = item.kind === 'folder' && item.targetId ? state.folders[item.targetId] : null
+    if (!folder) return undefined
+    const live = Object.values(state.tabs).filter((t) => t.folderId === folder.id)
+    return { folder, saved: regularMembers(live).length === 0 && Boolean(folder.savedTabs?.length) }
+  }
 
   // The rows that stay: a leaving row (OMN-17) is drawn as a ghost out of the flow and takes no
   // part in where the headings fall or which is outermost.
@@ -1354,6 +1374,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           sheet={sheet}
           typed={sheet ? undefined : typedQuery}
           bare={!sheet && item.kind === 'search' && i !== firstSearch}
+          group={groupOf(item)}
+          groupNoun={groupNoun}
           onPick={(e) => {
             if (item.kind === 'clipboard') void pickClip()
             else
@@ -1999,6 +2021,31 @@ function PageHeader({
   )
 }
 
+/** What a tab group is called on the host: the desktop's "folder", the touch hosts' "tab group". */
+type GroupNoun = 'tab group' | 'folder'
+
+/** A tab group row's group (OMN-15), as the chrome has it: the folder, and whether it is saved. */
+interface SuggestionGroup {
+  folder: Folder
+  saved: boolean
+}
+
+/**
+ * What a tab group's row says to assistive technology (OMN-15): Chrome for Android's
+ * `IDS_ACCESSIBILITY_TAB_GROUP_SUGGESTION_DESCRIPTION` – "Open <title> tab group, color <name>,
+ * with sites <urls>." – in the host's noun and Zenium's spelling, the colour the glyph shows (a
+ * group without one is drawn grey, `DEFAULT_GROUP_COLOR`), the sites the row lists.
+ */
+function groupRowLabel(
+  item: Suggestion,
+  group: SuggestionGroup | undefined,
+  noun: GroupNoun
+): string {
+  const colour = FOLDER_COLOR_NAMES[group?.folder.color ?? DEFAULT_GROUP_COLOR]
+  const sites = item.subtitle ? `, with sites ${item.subtitle}` : ''
+  return `Open ${item.title} ${noun}, colour ${colour}${sites}.`
+}
+
 function SuggestionRow({
   id,
   item,
@@ -2016,7 +2063,9 @@ function SuggestionRow({
   onLongPress,
   ghost,
   typed = '',
-  bare = false
+  bare = false,
+  group,
+  groupNoun = 'folder'
 }: {
   id: string
   item: Suggestion
@@ -2025,6 +2074,14 @@ function SuggestionRow({
   /** A row of the phone sheet: touch height (44); the desktop list's rows are §6's one line at 50. */
   sheet: boolean
   onPick: (e: React.MouseEvent) => void
+  /**
+   * A tab group row's group (OMN-15), for its glyph – the one group glyph (`GroupGlyph`, §9.37)
+   * in the favicon slot, the saved ring for a saved group – and its colour's name; unset while
+   * the row outlives its group, when the kind's folder glyph stands in.
+   */
+  group?: SuggestionGroup
+  /** The host's word for a tab group, in the row's hint and its accessible name. */
+  groupNoun?: GroupNoun
   /**
    * The phone row's hold (OMN-17): on a removable row it asks to remove the suggestion; a right
    * click counts as the hold, for a mouse. The tap that ends a hold picks nothing.
@@ -2125,19 +2182,28 @@ function SuggestionRow({
   // 69%, §10.4's one exception; a kind's glyph (the clock, the star, the magnifier) says what
   // the row is and is no stand-in.
   const standIn = !favicon && !page && item.kind === 'url'
-  const icon = favicon ? (
-    <img
-      src={favicon}
-      alt=""
-      className="h-4 w-4 rounded-[3px]"
-      referrerPolicy="no-referrer"
-      onError={() => setFaviconBroken(true)}
-    />
-  ) : sheet ? (
-    <Icon className="h-4 w-4 shrink-0 opacity-60" />
-  ) : (
-    <Icon className={V2_GLYPH} aria-hidden />
-  )
+  // A tab group's row (OMN-15) wears its group's glyph – the 10 dot, the saved ring, the
+  // folder's own icon – as every other mark of a group does (§9.37), not the kind's glyph.
+  const isGroup = item.kind === 'folder'
+  const icon =
+    isGroup && group ? (
+      <GroupGlyph folder={group.folder} saved={group.saved} />
+    ) : favicon ? (
+      <img
+        src={favicon}
+        alt=""
+        className="h-4 w-4 rounded-[3px]"
+        referrerPolicy="no-referrer"
+        onError={() => setFaviconBroken(true)}
+      />
+    ) : sheet ? (
+      <Icon className="h-4 w-4 shrink-0 opacity-60" />
+    ) : (
+      <Icon className={V2_GLYPH} aria-hidden />
+    )
+  // The group row's accessible name is Chrome's sentence (`groupRowLabel`); every other row
+  // reads as its text.
+  const label = isGroup ? groupRowLabel(item, group, groupNoun) : undefined
   if (sheet) {
     // The row is the option (what a tap picks) and, after it, its control: Show or the Refine
     // arrow. ARIA makes an option's children presentational, so a button inside one is not in the
@@ -2161,6 +2227,7 @@ function SuggestionRow({
           id={id}
           role="option"
           aria-selected={selected}
+          aria-label={label}
           className="flex min-w-0 flex-1 cursor-default items-center gap-3 self-stretch pl-2.5"
           {...optionProps}
         >
@@ -2177,7 +2244,7 @@ function SuggestionRow({
           >
             {clip ? item.title : onRefine ? '' : item.subtitle}
           </span>
-          {item.kind === 'tab' && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}
+          {(item.kind === 'tab' || isGroup) && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}
         </div>
         {onReveal && (
           <button
@@ -2235,6 +2302,7 @@ function SuggestionRow({
         id={id}
         role="option"
         aria-selected={selected}
+        aria-label={label}
         className="zen-omnibox-row-body flex min-w-0 flex-1 items-center"
       >
         <span
@@ -2260,6 +2328,14 @@ function SuggestionRow({
         {item.kind === 'tab' && (
           <span className="zen-omnibox-row-hint">
             Switch to tab
+            <ArrowRight aria-hidden />
+          </span>
+        )}
+        {isGroup && (
+          // Chrome's "Open tab group" (OMN-15) where the tab row says "Switch to tab", in the
+          // host's noun.
+          <span className="zen-omnibox-row-hint">
+            Open {groupNoun}
             <ArrowRight aria-hidden />
           </span>
         )}
