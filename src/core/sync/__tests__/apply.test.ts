@@ -6,6 +6,11 @@ import type {
   ReadingListEntry
 } from '../../../shared/types'
 import { DEFAULT_SETTINGS } from '../../../shared/defaults'
+import {
+  DEFAULT_BLOCKING_SETTINGS,
+  effectiveLevel,
+  sanitizeBlockingSettings
+} from '../../../shared/blocking'
 import { MAX_MOD_CSS, UNTITLED_MOD } from '../../../shared/mods'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { DEFAULT_READER_PREFERENCES } from '../../../shared/reader'
@@ -742,6 +747,57 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
     expect(data.startup).toEqual({ mode: 'pages', pages: MINE })
     expect(data).not.toHaveProperty('restoreSession')
     expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([])
+  })
+})
+
+describe('applyRemote: the settings record and Tracking prevention\u2019s "Always use Strict in private windows" (services pass 16, PS-49)', () => {
+  const localSettings = (b: Browser): Parameters<typeof collectLocal>[0] => ({
+    model: b.state.model,
+    settings: b.state.settings,
+    shortcutOverrides: {},
+    bookmarks: [],
+    boosts: []
+  })
+
+  it('the settings record this device sends carries blocking whole, levelPrivate with it: the key is not device-local', () => {
+    const b = browser()
+    b.state.settings.blocking = { ...DEFAULT_BLOCKING_SETTINGS, levelPrivate: 'strict' }
+    expect(DEVICE_LOCAL_SETTINGS).not.toContain('blocking')
+    expect(withoutDeviceLocalSettings(b.state.settings).blocking).toEqual(b.state.settings.blocking)
+    const data = collectLocal(localSettings(b), defaultScope()).get(SETTINGS_RECORD_ID)
+      ?.data as Record<string, unknown>
+    expect(data.blocking).toEqual({ ...DEFAULT_BLOCKING_SETTINGS, levelPrivate: 'strict' })
+    // The default rides along too: a peer that reads the key finds it in every record.
+    b.state.settings.blocking = { ...DEFAULT_BLOCKING_SETTINGS }
+    const again = collectLocal(localSettings(b), defaultScope()).get(SETTINGS_RECORD_ID)
+      ?.data as Record<string, unknown>
+    expect((again.blocking as Record<string, unknown>).levelPrivate).toBe('default')
+  })
+
+  it("a peer's switch lands with its blocking; a record from a build before the switch lacks the key, which every reader takes as the default", () => {
+    const b = browser()
+    applyRemote(b, [
+      settingsRecord({ blocking: { ...DEFAULT_BLOCKING_SETTINGS, levelPrivate: 'strict' } })
+    ])
+    expect(b.state.settings.blocking.levelPrivate).toBe('strict')
+    expect(effectiveLevel(b.state.settings.blocking, true)).toBe('strict')
+    expect(effectiveLevel(b.state.settings.blocking, false)).toBe('balanced')
+    // An older peer's record: `blocking` without the key. The record lands as the peer sent it
+    // (`blocking` is taken whole, like the settings' other objects); the private override reads
+    // as unset – `effectiveLevel` gives the level above – and the sanitiser the profile's load
+    // and the next local edit go through fills in 'default'.
+    const older: Record<string, unknown> = { ...DEFAULT_BLOCKING_SETTINGS }
+    delete older.levelPrivate
+    applyRemote(b, [settingsRecord({ blocking: older })])
+    expect(effectiveLevel(b.state.settings.blocking, true)).toBe('balanced')
+    expect(sanitizeBlockingSettings(b.state.settings.blocking)).toEqual({
+      ...DEFAULT_BLOCKING_SETTINGS,
+      levelPrivate: 'default'
+    })
+    // Junk in the key reads as the default as well.
+    expect(
+      sanitizeBlockingSettings({ ...older, levelPrivate: 'always' as never }).levelPrivate
+    ).toBe('default')
   })
 })
 
