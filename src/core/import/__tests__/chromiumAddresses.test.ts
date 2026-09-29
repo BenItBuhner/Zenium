@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AddressInput } from '../../../shared/types'
+import { clipAddress } from '../../credentials/store'
 import {
   ChromiumAddressesError,
   addressKey,
@@ -205,6 +206,28 @@ describe('dedupeAddresses', () => {
       })
     ).toBe(addressKey(HOME_ADDRESS))
     expect(addressKey({ ...HOME_ADDRESS, postalCode: '95015' })).not.toBe(addressKey(HOME_ADDRESS))
+  })
+
+  it('keys an address as the vault would keep it – a three-letter country or an over-long street dedupes against its clipped twin', () => {
+    // The vault clips on add (`clipAddress`: the country to two upper-case letters, the fields to
+    // its length); its entries are the clipped form. An import of the same address unclipped
+    // must still meet them.
+    const long = '1 Infinite Loop, Suite 4, '.repeat(400)
+    const unclipped: AddressInput = { ...HOME_ADDRESS, country: 'usa', streetAddress: long }
+    const twin = clipAddress(unclipped)
+    expect(twin.country).toBe('US')
+    expect(twin.streetAddress.length).toBeLessThan(long.length)
+    expect(twin).not.toEqual(unclipped)
+
+    expect(addressKey({ ...HOME_ADDRESS, country: 'usa' })).toBe(addressKey(HOME_ADDRESS))
+    expect(addressKey({ ...HOME_ADDRESS, country: 'ca' })).not.toBe(addressKey(HOME_ADDRESS))
+    expect(addressKey(unclipped)).toBe(addressKey(twin))
+    expect(dedupeAddresses([twin], [unclipped])).toEqual({ addresses: [], duplicates: 1 })
+    // Two that would land the same once clipped are one import; the one kept goes on unclipped
+    // – the store clips it on add.
+    expect(
+      dedupeAddresses([], [unclipped, { ...unclipped, streetAddress: `${long}Annex` }])
+    ).toEqual({ addresses: [unclipped], duplicates: 1 })
   })
 
   it('leaves out what the vault holds and what came earlier in the same import, counting both', () => {

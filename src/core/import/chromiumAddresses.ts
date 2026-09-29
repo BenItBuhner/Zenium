@@ -1,4 +1,5 @@
 import type { AddressInput } from '../../shared/types'
+import { clipAddress } from '../credentials/store'
 import type { ImportDatabase } from '../platform'
 
 /**
@@ -238,14 +239,18 @@ function legacyAddresses(db: ImportDatabase): AddressInput[] {
 // ---------------------------------------------------------------------------
 
 /**
- * The key two addresses are the same by: name, street address, postal code and country, each
- * trimmed, case-folded and with its runs of white space collapsed. The rest of the fields may
- * differ between two records of one address (a phone added, a company left off) and still name
- * the same place for the same person.
+ * The key two addresses are the same by: name, street address, postal code and country, each as
+ * the vault would keep it (`clipAddress`: the country its two upper-case letters, the rest
+ * trimmed and cut to the vault's field length), then case-folded with its runs of white space
+ * collapsed. The rest of the fields may differ between two records of one address (a phone
+ * added, a company left off) and still name the same place for the same person. The vault's
+ * entries are already clipped, so an entry that would land clipped has to be keyed clipped to
+ * meet its twin there; the address itself is handed on unclipped – the store clips on add.
  */
 export function addressKey(address: AddressInput): string {
+  const clipped = clipAddress(address)
   const fold = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, ' ')
-  return [address.name, address.streetAddress, address.postalCode, address.country]
+  return [clipped.name, clipped.streetAddress, clipped.postalCode, clipped.country]
     .map(fold)
     .join('\n')
 }
