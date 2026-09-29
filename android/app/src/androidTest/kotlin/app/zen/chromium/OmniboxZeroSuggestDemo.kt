@@ -22,8 +22,8 @@ import kotlin.math.roundToInt
 
 /**
  * OMN-04, zero-suggest on focus (W6-S25-d), under a REAL finger, for the
- * `android-omnibox-zero-suggest-demo` workflow – five scenes, each with its claim read off the
- * chrome's DOM or the core's state, never off the still alone:
+ * `android-omnibox-zero-suggest-demo` workflow – six stills over five scenes, each with its claim
+ * read off the chrome's DOM or the core's state, never off the still alone:
  *
  *  1. The empty field over a web page offers, before anything is typed: the NEW TAB PAGE'S
  *     TILES as a row first (Chrome's `MostVisitedSitesProvider` carousel; the page's own list –
@@ -39,7 +39,11 @@ import kotlin.math.roundToInt
  *     `kInteractionFocus` zero-prefix suggest). Typing one letter takes the tiles away: the
  *     typed branch is as it was.
  *  2. A REAL touch on the first recent search runs the search: the engine's results page for the
- *     terms is the active tab (the server saw the request), the field closed.
+ *     terms is the active tab (the server saw the request), the field closed. Then, over that
+ *     page – the DEFAULT ENGINE'S RESULTS PAGE – the empty field offers the recent searches and
+ *     the recently visited pages (the tiles' sites among them, no tile standing for them) and
+ *     NO tiles (Chrome's `SupportsMostVisitedSites` leaves the SRP out; the Design Lead's Q3 on
+ *     #725).
  *  3. A REAL touch on a tile opens its site.
  *  4. The new tab page's field offers the recent searches and no tiles – the page has them
  *     (Chrome's `SupportsMostVisitedSites` leaves the NTP out). The phone's page is the chrome's
@@ -225,6 +229,38 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
             val active = activeCoreTab()
             finding("  the touch ${if (took) "took" else "did NOT take"}; field closed $closed; active tab at '${active?.optString("url")}' titled '${active?.optString("title")}' (loaded $landed); the engine's results page requested $served ${verdict(took && closed && landed && served)}")
             if (!took || !closed || !landed || !served) failures += "the touch on the recent search did not run the search (took $took, closed $closed, landed $landed, served $served)"
+        }
+
+        // 2b. The empty field over the DEFAULT ENGINE'S RESULTS PAGE – where scene 2's touch left
+        // the tab (navigated there when it did not) – offers the recent searches and the recently
+        // visited pages and NO tiles (the Design Lead's Q3 on #725; Chrome's
+        // `SupportsMostVisitedSites` leaves the SRP out as it leaves the NTP out): the core's
+        // `onResultsPage`, the engine model's results-URL test on the tab's address.
+        step("OMN-04 the empty field over the default engine's results page offers the recent searches and pages, no tiles") {
+            if (!showPage(FIRST_SEARCH_URL)) error("the engine's results page is not the active tab")
+            if (!openField()) error("the pill's tap opened no field")
+            awaitIme(shown = true, timeoutMs = 4_000)
+            val listed = awaitChrome(
+                "document.querySelectorAll('$SEARCH_ROWS').length>=2&&document.querySelectorAll('$HISTORY_ROWS').length>=1&&!document.querySelector('$ROWS_LEAVING')",
+                15_000
+            ).also { SystemClock.sleep(800) }
+            keyboardAway("the still")
+            steadyShot("06-results-page-no-tiles")
+            val card = readCard()
+            val noTiles = card.tiles.isEmpty() && !card.tilesFirst
+            val searches = card.rows.filter { it.kind == "search" }.map { it.title }
+            val terms = searches == listOf(FIRST_TERMS, SECOND_TERMS)
+            // The recently visited pages: the recent history, none a search's results page. With
+            // no tile standing for them, the tiles' own sites are listed here too (the core dedupes
+            // a page against the tile row alone) – so not scene 1's three, but the recent pages.
+            val visited = card.rows.filter { it.kind == "history" }
+            val pages = visited.isNotEmpty() && visited.none { it.subtitle.contains(SEARCH_PATH) }
+            val ordered = card.rows.indexOfFirst { it.kind == "history" } > card.rows.indexOfLast { it.kind == "search" }
+            finding("  field reads '${fieldValue()}' over '${activeCoreTab()?.optString("url")}'; rows from the field outward: ${card.rows.joinToString(" | ") { "${it.kind} '${it.title}'" }}; headings ${card.headings}")
+            finding("  over the default engine's results page: tiles ${card.tiles.size} (Chrome's SRP classification – none) $noTiles; recent searches ${searches.map { "'$it'" }} $terms; recently visited ${visited.map { "'${it.title}'" }} – the recent pages, none a search's results page (the tiles' sites among them, no tile standing for them) $pages; after the searches $ordered ${verdict(listed && noTiles && terms && pages && ordered)}")
+            if (!listed || !noTiles || !terms || !pages || !ordered) failures += "the results page's list is not the searches and pages without tiles (tiles ${card.tiles.size}, searches $searches, visited ${visited.map { it.title }})"
+            closeField()
+            settle(6_000)
         }
 
         // 3. The touch on a tile.
@@ -522,7 +558,10 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
     }
 
     /** The seeded demo page (`tab_home`) as the active tab at its own address, the field closed – navigated back when a scene left it on another page. */
-    private fun showHomePage(): Boolean {
+    private fun showHomePage(): Boolean = showPage(HOME_URL)
+
+    /** The seeded tab (`tab_home`) as the active tab at `url`, the field closed – navigated there when it stands elsewhere. */
+    private fun showPage(url: String): Boolean {
         settle(8_000)
         closeField()
         settle(8_000)
@@ -530,11 +569,11 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
             coreInvoke("tab.activate", "{\"tabId\":${JSONObject.quote(HOME_TAB_ID)}}")
             SystemClock.sleep(800)
         }
-        if (activeCoreTab()?.optString("url") != HOME_URL) {
-            coreInvoke("tab.navigate", "{\"tabId\":${JSONObject.quote(HOME_TAB_ID)},\"input\":${JSONObject.quote(HOME_URL)}}")
+        if (activeCoreTab()?.optString("url") != url) {
+            coreInvoke("tab.navigate", "{\"tabId\":${JSONObject.quote(HOME_TAB_ID)},\"input\":${JSONObject.quote(url)}}")
             SystemClock.sleep(1_200)
         }
-        val there = awaitPageUrl(HOME_URL, 10_000)
+        val there = awaitPageUrl(url, 10_000)
         SystemClock.sleep(600)
         ensureForeground()
         return there
