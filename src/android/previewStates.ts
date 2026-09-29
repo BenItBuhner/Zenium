@@ -4107,6 +4107,12 @@ function applyShareChooser(shared: PreviewShareTargetKind, tabId: string, spec: 
   }
   install(0, () =>
     install(1, () => {
+      // The installs' "Added … to Home screen" toasts go before the share arrives: the still is
+      // the chooser's, not theirs.
+      for (const t of uiStore.get().toasts) {
+        dismissToast(t.id)
+        forgetToast(t.id)
+      }
       const intent = {
         kind: 'send',
         ...(shared === 'link' ? PREVIEW_SHARED_LINK : PREVIEW_SHARED_TEXT)
