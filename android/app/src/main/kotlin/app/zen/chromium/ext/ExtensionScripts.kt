@@ -2,6 +2,8 @@ package app.zen.chromium.ext
 
 import org.json.JSONObject
 import java.io.File
+import java.io.Reader
+import java.nio.CharBuffer
 
 /**
  * Assembles the scripts the extension layer injects (pure string work, unit-tested):
@@ -514,7 +516,8 @@ object ExtensionScripts {
         argsJson: String?,
         prefix: String?,
         named: Boolean,
-        scoped: Boolean = false
+        scoped: Boolean = false,
+        mirror: Boolean = true
     ): String {
         val head = execHead(token, extensionId, kind, payload, scoped)
         val body = execBody(code, funcSource, argsJson)
@@ -524,7 +527,10 @@ object ExtensionScripts {
         // are in it, so the tail's room is a bound, not a measure (TopLevelDeclarations.MIRROR_ROOM).
         // A script's completion value (the last file's last expression statement, see [exec]) is
         // written into the completion parameter in place, which shifts the text after it once.
-        val mirrored = funcSource == null && (code != null || files.isNotEmpty())
+        // A module of the content script's graph run as a block (`mirror` false, the exec of kind
+        // `chunk`) keeps its top level to itself, as a module's is its own in Chrome, and has no
+        // completion value to answer.
+        val mirrored = mirror && funcSource == null && (code != null || files.isNotEmpty())
         val capacity = (prefix?.length ?: -1) + 1 + GUARD_HEAD.length + head.length + body.length +
             files.sumOf { it.length().toInt() + FILE_JOIN.length } + tail.length + GUARD_TAIL.length +
             (if (named) SOURCE_URL_TAIL.length else 0) +
@@ -675,24 +681,91 @@ object ExtensionScripts {
     const val PLAIN_QUERY = "zenium-plain"
 
     /**
-     * What a module graph's request for a webpack chunk ([isWebpackChunk]) is served as on a
-     * WebView without isolated worlds: a module that hands the chunk to the bootstrap, which asks
-     * the host for the file and runs it as a block of the content script's `with` scope
-     * (`__zenExtChunk`, `extensionModuleChrome.ts`; `chunkScript` over the bridge; the exec of
-     * kind `chunk`), and waits for that (a top-level `await`, so the `import()` resolves once the
-     * chunk registered). A webpack chunk is one `push` expression with no exports, so a block of
-     * the scope runs it as its module would have, and there its bare identifiers resolve as the
-     * content script's own do: Mote's runtime chunk wrote `HowlerGlobal` through webpack's
-     * `r.g` (the scope proxy) while its sidebar chunk, a module on the real global, read the bare
-     * name and found nothing (compat round 11, row 13). Where the bootstrap cannot run it (no
-     * scope for the extension in the document, a subframe, no brackets installed at all) the
-     * chunk is imported again as itself, under [PLAIN_QUERY].
+     * What a module graph's request for a webpack chunk ([isWebpackChunk]), or for a module
+     * whose text is script-shaped ([isScriptShapedModule]), is served as on a WebView without
+     * isolated worlds: a module that hands the file to the bootstrap, which asks the host for it
+     * and runs it as a block of the content script's `with` scope (`__zenExtChunk`,
+     * `extensionModuleChrome.ts`; `chunkScript` over the bridge; the exec of kind `chunk`), and
+     * waits for that (a top-level `await`, so the `import()` resolves once the block ran). A
+     * webpack chunk is one `push` expression with no exports, and a script-shaped module
+     * declares no import or export either, so a block of the scope runs it as its module would
+     * have, and there its bare identifiers resolve as the content script's own do: Mote's
+     * runtime chunk wrote `HowlerGlobal` through webpack's `r.g` (the scope proxy) while its
+     * sidebar chunk, a module on the real global, read the bare name and found nothing (compat
+     * round 11, row 13); Web Highlights' `content.js` wrote `self.QrCreator` and read `QrCreator`
+     * bare (compat round 25). Where the bootstrap cannot run it (no scope for the extension in
+     * the document, a subframe, no brackets installed at all, a `<script type=module>` element
+     * of the page's own asking for the file – `extensionChunkRelay.ts`), or the host cannot (a
+     * text that is not a block after all, its SyntaxError), the file is imported again as
+     * itself, under [PLAIN_QUERY].
      */
     fun chunkStub(extensionId: String, url: String): String {
         val id = JSONObject.quote(extensionId)
         val plain = JSONObject.quote(url + (if (url.contains('?')) "&" else "?") + "$PLAIN_QUERY=1")
         return "if(!(globalThis.__zenExtChunk&&await globalThis.__zenExtChunk($id,${JSONObject.quote(url)})))await import($plain);\n"
     }
+
+    /**
+     * Module syntax a served file may carry: a static `import` declaration (`import x from`,
+     * `import {`, `import *`, `import "…"` – a dynamic `import(` is a script's too),
+     * `import.meta`, or an `export` declaration (`export {`, `export *`, `export default` and
+     * the declared forms). Read in the safe direction: a match inside a string or a comment
+     * costs the file only the scope (it is served bracketed on the real global, as every module
+     * was before [isScriptShapedModule]); a miss costs a wasted evaluate, since a block with an
+     * `import` or an `export` in it is a SyntaxError `evaluateJavascript` answers with a bare
+     * null, and the stub imports the file plain (`Extensions.chunkScript`). The same expression
+     * is `MODULE_SYNTAX` in `extensionModuleChrome.ts`.
+     */
+    private val MODULE_SYNTAX = Regex(
+        """(?<![\w$.])(?:import(?:\s+[\w$]|\s*[*{"'])|import\s*\.\s*meta(?![\w$])|export(?:\s+(?:default|const|let|var|function|class|async|enum)(?![\w$])|\s*[{*]))"""
+    )
+
+    /** Whether a text carries module syntax ([MODULE_SYNTAX]). */
+    fun hasModuleSyntax(text: CharSequence): Boolean = MODULE_SYNTAX.containsMatchIn(text)
+
+    /** How many characters of a served file [isScriptShapedModule] reads at a time. */
+    const val MODULE_SYNTAX_WINDOW = 64 * 1024
+
+    /** The overlap between two windows: a declaration across the border is still seen whole. */
+    const val MODULE_SYNTAX_OVERLAP = 64
+
+    /** A served module file longer than this keeps the bracketed path; the scan and the exec are bounded by it. */
+    const val SCRIPT_SHAPED_LIMIT = 8L * 1024 * 1024
+
+    /**
+     * Whether a served module's text is script-shaped: no `import` or `export` declaration and
+     * no `import.meta` anywhere in it ([MODULE_SYNTAX]), so it runs as a block of the content
+     * script's scope as it would have as a module of the world – and there a bare read finds a
+     * name the script set through `self`, `window` or `globalThis`. A page's module graph on a
+     * WebView without isolated worlds is served the stub for such a file ([chunkStub]), as it
+     * is for a webpack chunk: Web Highlights' `content.js`, `import()`ed by its loader, wrote
+     * `self.QrCreator = …` and read `QrCreator` bare in the same module – the write went to the
+     * scope's store while the module, on the real global, read nothing (compat round 25, R25-1);
+     * Web Scrobbler's connectors read the `Connector` its `main.js` set the same way. The text
+     * is read in windows of [MODULE_SYNTAX_WINDOW] characters overlapping by
+     * [MODULE_SYNTAX_OVERLAP], never whole; an empty file is script-shaped.
+     */
+    fun isScriptShapedModule(reader: Reader): Boolean {
+        val buffer = CharArray(MODULE_SYNTAX_WINDOW)
+        var kept = 0
+        while (true) {
+            var filled = kept
+            while (filled < buffer.size) {
+                val n = reader.read(buffer, filled, buffer.size - filled)
+                if (n < 0) break
+                filled += n
+            }
+            if (filled > kept && hasModuleSyntax(CharBuffer.wrap(buffer, 0, filled))) return false
+            if (filled < buffer.size) return true
+            kept = MODULE_SYNTAX_OVERLAP
+            System.arraycopy(buffer, filled - kept, buffer, 0, kept)
+        }
+    }
+
+    /** [isScriptShapedModule] over a file's UTF-8 text: false for a file over [SCRIPT_SHAPED_LIMIT] or one that cannot be read. */
+    fun isScriptShapedModule(file: File): Boolean =
+        file.length() <= SCRIPT_SHAPED_LIMIT &&
+            runCatching { file.bufferedReader(Charsets.UTF_8).use { isScriptShapedModule(it) } }.getOrDefault(false)
 
     /** `Content-Type` for a file inside the extension directory, by extension. */
     fun mimeType(path: String): String {

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   MODULE_SCAN_HEAD,
   declaresChrome,
+  hasModuleSyntax,
   installModuleChrome,
+  isScriptShapedModule,
   isWebpackChunk,
   moduleOpen,
   wrapModuleText
@@ -362,5 +364,47 @@ describe('a chrome for the module graph on a one-realm WebView', () => {
     const bare: Record<string, unknown> = { ran: false }
     new Function('globalThis', wrapModuleText('globalThis.ran = true;', LT))(bare)
     expect(bare.ran).toBe(true)
+  })
+
+  it('tells a script-shaped module – no import or export declaration, no import.meta – from one of the module graph (Web Highlights, Web Scrobbler)', () => {
+    // Web Highlights' `content.js` (its UMD head, the QR module's write through `self` and the
+    // bare read that followed) and Web Scrobbler's esbuild connector: script-shaped.
+    const webHighlights =
+      '/*! For license information please see content.js.LICENSE.txt */\n!function(e,t){if("object"==typeof exports&&"object"==typeof module)module.exports=t();else{var i=t();for(var n in i)("object"==typeof exports?exports:e)[n]=i[n]}}(self,()=>(()=>{let ir=null;class nr{}self.QrCreator=nr;const or=QrCreator;return {or}})());'
+    const connector =
+      '"use strict";\n(() => {\n  // src/connectors/youtube.ts\n  Connector.playerSelector = ["#content", "#player"];\n  Connector.getArtistTrack = () => importFromTitle();\n})();\n'
+    expect(isScriptShapedModule(webHighlights)).toBe(true)
+    expect(isScriptShapedModule(connector)).toBe(true)
+    expect(isScriptShapedModule('')).toBe(true)
+    // A dynamic `import()`, an `exports` object, a property named `import` or `export`: a script's.
+    for (const text of [
+      'const m = await import("./x.js"); m.run();',
+      'if (typeof exports === "object") exports.a = 1; module.exports = a;',
+      'const api = { import: 1, export: 2 }; api.import + api.export; obj.export(); x.import.meta;',
+      'importFromTitle(); exportedNames(); reimport(); const important = 1;'
+    ])
+      expect(isScriptShapedModule(text), text).toBe(true)
+    // A static `import` in every spelling, `import.meta`, an `export` in every declared form: the module graph's.
+    for (const text of [
+      'import x from "./x.js"; x();',
+      "import{a as b}from'./a.js';b();",
+      'import * as ns from "./ns.js";',
+      'import "./side-effect.js";',
+      'import\n  { a }\n  from "./a.js"',
+      'const u = new URL("w.js", import.meta.url);',
+      'const dir = import . meta.url;',
+      'const x = 1; export { x };',
+      'const x=1;export{x as default};',
+      'export default function () {}',
+      'export const a = 1;',
+      'export let b; export var c; export class D {} export async function e() {} export function* f() {}',
+      'export * from "./all.js";',
+      '(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);\nexport{};'
+    ])
+      expect(isScriptShapedModule(text), text).toBe(false)
+    // A string spelling module syntax reads as the module graph's: the safe direction (the file
+    // keeps the bracketed path it had), never the other.
+    expect(hasModuleSyntax('throw new Error("Cannot import " + name)')).toBe(true)
+    expect(hasModuleSyntax('const snippet = "export default x";')).toBe(true)
   })
 })

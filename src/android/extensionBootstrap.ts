@@ -921,12 +921,22 @@ declare const __zenExtBoot: Boot
   }
   const scopes = new Map<string, Scope>()
 
-  // A webpack chunk of a content script's module graph under the `with` fallback runs as a block
-  // of the content script's scope, asked of the host by the stub the chunk was served as
-  // (`extensionChunkRelay.ts`): in a top frame only (`evaluateJavascript` takes no frame), and
-  // only where this copy made the extension's content scope, which is where the graph started.
+  // A webpack chunk, or a script-shaped module, of a content script's module graph under the
+  // `with` fallback runs as a block of the content script's scope, asked of the host by the stub
+  // the file was served as (`extensionChunkRelay.ts`): in a top frame only (`evaluateJavascript`
+  // takes no frame), only where this copy made the extension's content scope, which is where
+  // the graph started, and not for a `<script type="module">` element in the document asking
+  // for the file – that module is the page's own, run in the main world in Chrome.
   chunkRelay = createChunkRelay({
     canRun: (extId) => frame.isTopFrame && scopes.has(`${extId}/with/content`),
+    isModuleElement: (url) => {
+      const scripts = document.scripts
+      for (let i = 0; i < scripts.length; i++) {
+        const script = scripts[i]
+        if (script.type === 'module' && script.src === url) return true
+      }
+      return false
+    },
     request: (id, extId, url) =>
       post(
         primordials.stringify({
