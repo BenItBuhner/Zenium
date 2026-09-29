@@ -15,6 +15,7 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 import type { ManagedStatus } from './managed'
 import type { UpdateDotRecord } from '../core/updateDot'
 import type { SafetyHubCardMemories } from './safetyHubCard'
+import type { EducationalTipMemory } from './educationalTips'
 import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
@@ -3003,6 +3004,13 @@ export interface NewTabDeviceState {
    * `safety_hub.menu_notifications` pref, per device as that is.
    */
   safetyHubCard: SafetyHubCardMemories
+  /**
+   * The tip card's memory (NTP-20; `shared/educationalTips.ts`): per card, its impressions, when
+   * it was last shown and whether its button was tapped; when any tip was last shown; when
+   * browsing data was last deleted on this device (the Quick Delete tip's signal) – Chrome's
+   * `educational_tip_module_*` prefs and the histograms its rules read, per device as those are.
+   */
+  educationalTips: EducationalTipMemory
 }
 
 /**
@@ -3010,11 +3018,11 @@ export interface NewTabDeviceState {
  * through under its tiles. `continue` is the recently closed tab (Chrome's local tab
  * resumption), `downloads` the last completed download, `bookmarks` the newest bookmark,
  * `safety-hub` the Safety check card (NTP-19: revoked permissions, Safe Browsing off, compromised
- * passwords – one at a time), `default-browser` the "Set Zenium as your default browser" promo
- * (DEF-04).
+ * passwords – one at a time), `tips` the tip card (NTP-20: Chrome's educational tip module – the
+ * theme, the default browser (DEF-04's promo, W6-4's `default-browser` module folded in), tab
+ * groups, Quick Delete – one at a time).
  */
-export type MagicStackModuleId =
-  'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'default-browser'
+export type MagicStackModuleId = 'continue' | 'downloads' | 'bookmarks' | 'safety-hub' | 'tips'
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
 export interface NewTabPageShortcut extends NewTabShortcut {
@@ -4852,6 +4860,8 @@ export interface UIState {
   newTabHiddenModules: MagicStackModuleId[]
   /** The Safety check card's memory on this device (NTP-19; `NewTabDeviceState.safetyHubCard`). */
   newTabSafetyHubCard: SafetyHubCardMemories
+  /** The tip card's memory on this device (NTP-20; `NewTabDeviceState.educationalTips`). */
+  newTabEducationalTips: EducationalTipMemory
   /**
    * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
    * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
@@ -6207,6 +6217,12 @@ export interface Commands {
    * back whole; the core sanitises and keeps it with the device's other new-tab sets.
    */
   'newtab.setSafetyHubCardMemory': { args: { memories: SafetyHubCardMemories }; result: void }
+  /**
+   * The tip card's memory after an impression or a tap on its button (NTP-20): the renderer runs
+   * the machine (`shared/educationalTips.ts`) over the published state and writes the record
+   * back whole; the core sanitises and keeps it with the device's other new-tab sets.
+   */
+  'newtab.setEducationalTipMemory': { args: { memory: EducationalTipMemory }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }

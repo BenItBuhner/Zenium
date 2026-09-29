@@ -1,6 +1,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { Rect, UIState } from '@shared/types'
+import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { stageStore } from '@renderer/lib/gestures/stage'
@@ -13,6 +14,7 @@ import { searchChoiceCovers } from '@renderer/lib/searchChoice'
 import { activeTab } from '@renderer/lib/selectors'
 import { type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { BookmarksBar } from '../bookmarks/BookmarksBar'
 import { ContentArea } from '../content/ContentArea'
 import { ChromeDropLayer, DragLayer } from '../DragLayer'
 import { MessageLayer } from '../messages/MessageLayer'
@@ -94,6 +96,14 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   // The window surfaces are on the private theme (blending to it): a private tab is in view, or
   // the overview shows the private pane (§9.29; MOT-14).
   const privateSurface = usePrivateSurface(state)
+  // The bookmarks bar (NTP-34; Chrome 152's tablet bar, `BookmarkBarCoordinator` under the
+  // toolbar): the desktop's strip and its panels at the head of the content column, where the
+  // desktop seats it beside the sidebar, shown by the same setting – Always, on the new tab
+  // page alone (the served page's URL), Never – and the same Ctrl+Shift+B, in the coarse
+  // pointer's sizes (main.css's tablet rules). It reads the bookmark tree the sidebar's pages
+  // already hold, so the boot loads nothing more. A page's fullscreen takes the chrome whole
+  // (the early return below), the bar with it.
+  const showBookmarksBar = bookmarksBarVisible(state.settings.bookmarksBar, tab?.url ?? null)
 
   // The reader entry's offer (PUI-14) is the phone's strip on this shell's message frame: the
   // tablet has no toolbar entry of its own for it either (lib/readerEntryMessage.ts).
@@ -190,6 +200,19 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
             paddingRight: side === 'left' ? 'var(--zen-padding)' : 0
           }}
         >
+          {/* The bar at the head of the content column, beside the sidebar – the desktop's seat
+              (App.tsx) and Chrome's: the page's chrome, over the page it opens into. Above the
+              content box, not in it, so its height is the column's to lay out and the box's
+              messages and dialogs sit below it. Its own chrome mark (`contents`, no box of its
+              own, as the content area's below): a fourth piece beside the sidebar column, the
+              content area and the message frame, inert while a sheet or a frame dialog stands
+              (`holdChromeInert`) – which the bar's root is as a window surface too
+              (`data-surface="window"`); the shell names the hold on its pieces itself. */}
+          {showBookmarksBar && (
+            <div data-shell-chrome className="contents">
+              <BookmarksBar state={state} tab={tab} />
+            </div>
+          )}
           <div className="relative min-h-0 flex-1">
             {/* No box of its own (`contents`): the chrome mark for the content area, which a
                 dialog on the host covers (`holdFrameInert`) and a sheet holds with the chrome. */}
