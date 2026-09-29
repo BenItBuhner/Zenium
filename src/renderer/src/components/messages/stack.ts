@@ -81,8 +81,10 @@ export interface LayerBox {
  * columns is always that slide, so it reads as centred over the row. Down: flush under the card
  * at gap 0, no arrow, no offset; flipped above it (flush over its top) when the room below is
  * short and the room above is more (the rule's vertical order); otherwise kept below and slid up
- * to fit. Either way the bubble never leaves the card it is about: a card whose bottom the layer
- * clips is the hook's to scroll into view before it asks.
+ * to fit. Either way the bubble never leaves the card it is about – and the card is one the grid
+ * holds in view: the hook scrolls nothing, it chooses among the cards whose cells are more than
+ * half inside the scroller's box (`useOverviewGroupsHint`'s `cellInView`) and asks for none
+ * otherwise, so a clipped or off-layer card is never the pose's to fit.
  */
 export function hintBubbleOnCard(
   card: LayerBox,

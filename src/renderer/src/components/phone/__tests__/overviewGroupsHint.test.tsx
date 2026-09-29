@@ -474,6 +474,37 @@ describe('the card it stands on – the loose page card in view nearest the acti
     expect(bubble().bubble).toMatchObject({ tabId: 'c', anchor: cellAt(0, 1) })
   })
 
+  it('points off the layer from no branch: the active card’s own fallback goes through the in-view rule as the others do – off the view, or cut with less than half in, nothing goes up', () => {
+    // p active and a page's, the only candidate left in the grid, scrolled off below the view.
+    standGrid({ a: cellAt(0, -2), p: cellAt(1, 4), c: cellAt(0, 5) })
+    requestOverviewGroupsHint()
+    const cards = [card('a'), card('p'), card('c')]
+    render(stateOf(), OPEN, overviewHintCandidates(cards, 'p'))
+    expect(bubble().bubble).toBeNull()
+    expect(iphSessionSpent()).toBe(false)
+    expect(updates()).toHaveLength(0)
+    // Cut at the view's foot with less than half in (105 of 213): still nothing.
+    reopen({ a: cellAt(0, -2), p: { x: 196, y: 795, width: 160, height: 213 }, c: cellAt(0, 5) })
+    render(stateOf(), OPEN, overviewHintCandidates(cards, 'p'))
+    expect(bubble().bubble).toBeNull()
+    expect(updates()).toHaveLength(0)
+    // With more than half in (120 of 213), the same card stands – the one threshold throughout.
+    reopen({ a: cellAt(0, -2), p: { x: 196, y: 780, width: 160, height: 213 }, c: cellAt(0, 5) })
+    render(stateOf(), OPEN, overviewHintCandidates(cards, 'p'))
+    expect(bubble().bubble).toMatchObject({ tabId: 'p', anchor: { x: 196, y: 780 } })
+    // No active card among the loose ones (a grouped tab active): the pages from the first,
+    // the first off the layer passed over for the next in view; every one off, nothing.
+    reopen({ a: cellAt(0, -1), b: cellAt(1, 0), c: cellAt(0, 1) })
+    const fromFirst = overviewHintCandidates([card('a'), card('b'), card('c')], 'g1')
+    render(stateOf(), OPEN, fromFirst)
+    expect(bubble().bubble).toMatchObject({ tabId: 'b', anchor: cellAt(1, 0) })
+    reopen({ a: cellAt(0, -2), b: cellAt(1, -2), c: cellAt(0, 4) })
+    render(stateOf(), OPEN, fromFirst)
+    expect(bubble().bubble).toBeNull()
+    // Two bubbles stood in all (p, then b): two writes, none for the three that did not.
+    expect(updates()).toHaveLength(2)
+  })
+
   it('never the new tab page’s card: with no page card in view, nothing goes up and nothing is written – the request dropped, not kept', () => {
     // The tip's page alone in view, the pages scrolled off above it.
     standGrid({ a: cellAt(0, -1), b: cellAt(1, -1), n: cellAt(0, 0) })
