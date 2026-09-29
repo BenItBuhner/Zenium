@@ -1855,48 +1855,37 @@ class Extensions(private val host: Host) {
     }
 
     /**
-     * A content script under the `with` fallback fetched a file of its extension
-     * (`https://<id>.ext.zenium.invalid/locales/en.json`) and the page's Content-Security-Policy
-     * refused the request (`connect-src`): in Chrome a content script's fetch of its extension's
-     * web-accessible resource is beyond the page's policy (the isolated world's own applies), and
-     * on a WebView with worlds the world's request goes through the same way. The bootstrap
-     * reports the refused fetch (`extensionFetchRelay.ts`); the file, when it is web-accessible,
-     * is read here and answered over the bridge, which no page policy governs, with its type;
-     * otherwise the reason, and the content script keeps the page's refusal.
+     * A content script asked for a file of its own extension
+     * (`https://<id>.ext.zenium.invalid/locales/en.json`, or Chrome's spelling of it) through
+     * its `fetch` or `XMLHttpRequest`: in Chrome the isolated world's request carries the
+     * extension's origin and the page's Content-Security-Policy (`connect-src`) never sees it,
+     * where a WebView's world runs under the document's policy and the `with` fallback's
+     * request is the page's outright. So the content scripts' `fetch` and `XMLHttpRequest` ask
+     * here first, over the bridge, which no page policy governs (`extensionFetchRelay.ts`,
+     * `extensionXhrRelay.ts`); the file service ([ExtensionFileAnswer]) answers the
+     * web-accessible file's bytes and type, or the reason, and then the request goes the page's
+     * way, the served origin's answer under the page's policy as before.
      */
     private fun extensionFetch(proxy: JavaScriptReplyProxy, ep: String, message: JSONObject) {
         val id = message.opt("id")
         val url = message.str("url")
         val extId = endpoints[ep]?.extensionId ?: message.str("ext")
-        fun reply(body: ByteArray?, mime: String?, error: String?) {
+        fun reply(answer: ExtensionFileAnswer.Answer) {
             val text = json(
-                "t" to "extFetchDone", "ep" to ep, "id" to id, "ok" to (error == null), "error" to error, "mime" to mime,
-                "body" to body?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
+                "t" to "extFetchDone", "ep" to ep, "id" to id, "ok" to answer.ok, "error" to answer.error, "mime" to answer.mime,
+                "body" to answer.body?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
             ).toString()
             main.post {
                 if (debug) recordReply(ep, text)
                 runCatching { proxy.postMessage(text) }
             }
         }
-        val uri = Uri.parse(url)
         val ext = served[extId]
-        val path = (uri.path ?: "/").trimStart('/')
+        val path = ExtensionFileAnswer.ownPath(url, extId)
         when {
-            ext == null -> reply(null, null, "the extension is not attached")
-            uri.scheme != "https" || uri.host != "$extId$ORIGIN_SUFFIX" -> reply(null, null, "$url is not on the extension's origin")
-            !ext.webAccessible.any { it.matches(path) } -> reply(null, null, "$path is not a web-accessible resource")
-            else -> io.execute {
-                val bytes = fileIn(ext.dir, path)?.takeIf { it.isFile }?.let { f -> runCatching { f.readBytes() }.getOrNull() }
-                val mime = ExtensionScripts.mimeType(path)
-                when {
-                    bytes == null -> reply(null, null, "$path was not found")
-                    bytes.size > MAX_RELAYED_FILE_BYTES -> reply(null, null, "$path is ${bytes.size} bytes, more than the bridge carries ($MAX_RELAYED_FILE_BYTES)")
-                    // A stylesheet relayed over the bridge is the one the origin would have served: localized.
-                    mime == "text/css" && ext.cssMessages.isNotEmpty() ->
-                        reply(ExtensionFiles.localizeCss(String(bytes, Charsets.UTF_8), ext.cssMessages).toByteArray(), mime, null)
-                    else -> reply(bytes, mime, null)
-                }
-            }
+            ext == null -> reply(ExtensionFileAnswer.refused("the extension is not attached"))
+            path == null -> reply(ExtensionFileAnswer.refused("$url is not on the extension's origin"))
+            else -> io.execute { reply(ExtensionFileAnswer.answer(ext.dir, path, ext.webAccessible, ext.cssMessages)) }
         }
     }
 
@@ -2366,13 +2355,7 @@ class Extensions(private val host: Host) {
     }
 
     /** `path` resolved inside `dir`, or null when it escapes it (`..`, symlinks). */
-    private fun fileIn(dir: File, path: String): File? {
-        val file = File(dir, path.trimStart('/'))
-        val canonical = runCatching { file.canonicalPath }.getOrNull() ?: return null
-        val root = runCatching { dir.canonicalPath }.getOrNull() ?: return null
-        if (!canonical.startsWith(root + File.separator)) return null
-        return file
-    }
+    private fun fileIn(dir: File, path: String): File? = ExtensionFileAnswer.fileIn(dir, path)
 
     fun servedFor(id: String): Served? = served[id]
 
@@ -2698,8 +2681,6 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
-        /** The largest extension file answered to a content script over the bridge (`extensionFetch`): base64 over `postMessage` has a price. */
-        const val MAX_RELAYED_FILE_BYTES = 16 * 1024 * 1024
         /**
          * The document a tab shows while its extension page is held (or is being failed): empty,
          * in the page's colour scheme, so it reads as a page still loading, not as a page.
