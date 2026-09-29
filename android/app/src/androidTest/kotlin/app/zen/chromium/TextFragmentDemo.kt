@@ -2,6 +2,8 @@ package app.zen.chromium
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
@@ -31,15 +33,19 @@ import java.util.concurrent.TimeUnit
  *    Highlight API the page script paints through – recorded, so the run's header tells what
  *    the page script had to do;
  *  - a top-level load of the article with `#:~:text=lantern` lands on the passage: the word is
- *    inside the viewport, the page has scrolled, the passage is painted (the script's highlight
- *    registered under `zen-text-fragment`, or the engine's own where it acts), and the directive
- *    is out of the URL the page sees and out of the tab's URL (the pill shows the page's own);
- *  - an in-page fragment change to a text directive does nothing (the spec's full-navigation
- *    rule, Chrome's behaviour), recorded;
- *  - a REAL long press (injected touch) on the word selects it, a real touch on the toolbar's
- *    overflow lists `Copy link to highlight` behind it, and a real touch on that puts the link on
- *    the clipboard: the article's URL with `#:~:text=lantern`; the toolbar goes; below Android 13
- *    the chrome says `Link copied` (Android 13 shows its own chip);
+ *    inside the viewport, the page has scrolled, and the passage is painted – read off the
+ *    still's pixels under the word (the engine's `::target-text` wash, or the script's `Mark`
+ *    colours where the engine leaves text fragments alone, against the article's grey-scale
+ *    colours); the directive is out of the URL the page sees, and out of the tab's URL where the
+ *    page script did the following (the engine's own keeps it in the address, as Chrome does);
+ *  - an in-page fragment change to a text directive: recorded (the spec has it followed on a
+ *    navigation alone; this WebView follows it in place too);
+ *  - a REAL long press (injected touch) on the word selects it; `Copy link to highlight` is the
+ *    last of Zenium's rows – in the bar when it has room, else at the head of the overflow a real
+ *    touch on the toolbar's overflow button opens (a real drag reveals a row under the list's
+ *    fold) – and a real touch on it puts the link on the clipboard: the article's URL with
+ *    `#:~:text=lantern`; the toolbar goes; below Android 13 the chrome says `Link copied`
+ *    (Android 13 shows its own chip);
  *  - opening the copied link as another app would (an ACTION_VIEW intent) opens it in a new tab
  *    that lands on the passage, highlighted;
  *  - a word the article uses twice (`harbour`, its second occurrence selected) gets a link with
@@ -120,8 +126,7 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
         navigate("$ARTICLE#:~:text=lantern")
         awaitFollowed("#word")
         SystemClock.sleep(1_200)
-        shot("01-followed-light")
-        checkLanded("#word", "the word 'lantern'")
+        checkLanded("#word", "the word 'lantern'", still = "01-followed-light")
         val pageUrl = jsonString(tabJs("location.href"))
         val tabUrl = activeCoreTab()?.optString("url").orEmpty()
         val native = tabJs("'fragmentDirective' in document") == "true"
@@ -144,24 +149,69 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
         tabJs("(function(){history.replaceState(null,'',location.pathname);return true})()")
     }
 
-    /** The passage's element is inside the viewport, the page has scrolled, and the passage is painted. */
-    private fun checkLanded(selector: String, what: String) {
+    /**
+     * The passage's element is inside the viewport, the page has scrolled, and the passage is
+     * painted – judged on the pixels: the frame saved as the still `still` is sampled under the
+     * passage's element, and the share of its pixels with a tint (colour channels more than 16 of
+     * 255 apart) is the highlight's mark on screen. The engine's `::target-text` wash and the
+     * script's `Mark` colours are tints; the article's own colours are 7 apart at most
+     * (`#15141a` on `#fbfbfe`; dark, `#fbfbfe` on `#1c1b22`), and the glyphs' anti-aliasing is
+     * grey. A fifth of the word tinted is the bar (the wash fills the box around the glyphs).
+     */
+    private fun checkLanded(selector: String, what: String, still: String) {
         val box = viewportBox(selector)
         val scrollY = tabJs("window.scrollY").toDoubleOrNull() ?: 0.0
         val innerHeight = tabJs("window.innerHeight").toDoubleOrNull() ?: 0.0
         val native = tabJs("'fragmentDirective' in document") == "true"
         val painted = tabJs("!!(window.CSS&&CSS.highlights&&CSS.highlights.has('zen-text-fragment'))") == "true"
         val selected = jsonString(tabJs("String(getSelection())"))
+        val frame = screenshot()
+        val tint = if (frame != null && box != null) tintShare(frame, box) else null
+        if (frame != null) shot(still, frame) else shot(still)
         finding("  scrollY $scrollY, viewport height $innerHeight, $what at ${box?.let { "${it.getDouble(1).toInt()}..${it.getDouble(3).toInt()}" } ?: "UNKNOWN"} of the viewport")
         check("the page scrolled down to the passage", scrollY > 0)
         check("$what is inside the viewport", box != null && box.getDouble(1) >= 0 && box.getDouble(3) <= innerHeight)
         val how = when {
-            painted -> "the script's highlight is registered (::highlight(zen-text-fragment), the ::target-text colours)"
-            native -> "the engine's own ::target-text (not readable from script)"
-            selected.isNotEmpty() -> "the passage is selected ('$selected'; no Highlight API)"
-            else -> "NOT PAINTED"
+            painted -> "the script's highlight (::highlight(zen-text-fragment), the ::target-text colours)"
+            native -> "the engine's own ::target-text"
+            selected.isNotEmpty() -> "the passage selected ('$selected'; no Highlight API)"
+            else -> "nothing the script knows of"
         }
-        check("the passage is highlighted: $how", painted || native || selected.isNotEmpty())
+        finding("  the pixels under $what: ${tint?.let { "%.2f tinted".format(it) } ?: "NOT MEASURED"} – $how")
+        check("the passage is highlighted on screen (a fifth of $what's pixels tinted at least)", tint != null && tint >= 0.2)
+    }
+
+    /** A frame of the screen (three asks, as the harness's still takes it), or null. */
+    private fun screenshot(): Bitmap? {
+        repeat(3) { attempt ->
+            ui.takeScreenshot()?.let { return it }
+            Log.w(tag, "takeScreenshot returned null (attempt ${attempt + 1} of 3)")
+            SystemClock.sleep(400)
+        }
+        return null
+    }
+
+    /**
+     * The share of the pixels inside `box` (a viewport rectangle in CSS px, put on screen through
+     * the shown view's origin and the density) whose colour channels are more than 16 of 255
+     * apart – a tint against grey-scale text and background; null when the box is off the frame.
+     */
+    private fun tintShare(frame: Bitmap, box: JSONArray): Double? {
+        val origin = onMain { shownTabView()?.let { v -> IntArray(2).also(v::getLocationOnScreen) } } ?: return null
+        val left = (origin[0] + box.getDouble(0) * density).toInt().coerceIn(0, frame.width)
+        val top = (origin[1] + box.getDouble(1) * density).toInt().coerceIn(0, frame.height)
+        val right = (origin[0] + box.getDouble(2) * density).toInt().coerceIn(0, frame.width)
+        val bottom = (origin[1] + box.getDouble(3) * density).toInt().coerceIn(0, frame.height)
+        if (right <= left || bottom <= top) return null
+        var tinted = 0
+        for (y in top until bottom) for (x in left until right) {
+            val c = frame.getPixel(x, y)
+            val r = Color.red(c)
+            val g = Color.green(c)
+            val b = Color.blue(c)
+            if (maxOf(r, g, b) - minOf(r, g, b) > 16) tinted++
+        }
+        return tinted.toDouble() / ((right - left) * (bottom - top))
     }
 
     /** The first element `selector` names, relative to the viewport: `[left, top, right, bottom]` in CSS px, or null. */
@@ -200,29 +250,102 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
         finding("  injected long press on 'lantern': selection '$selected' ${verdict(selected == "lantern")}")
         finding("  toolbar (content descriptions, left to right): ${items.describe()}")
         check("the system's Copy is there", items.orEmpty().any { it.label == "Copy" })
-        val listed = openOverflow(items.orEmpty(), still = "02-overflow-light")
-        finding("  behind the overflow: ${listed?.joinToString(" | ") ?: "no list"}")
-        check("Copy link to highlight is listed behind the overflow", listed?.contains(TITLE) == true)
-        val point = findInWindows { it == TITLE }?.let { touchTapPoint(it) }
-        finding("  real touch on $TITLE ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}" } ?: "NOT POSSIBLE (item missing or off screen)"}")
-        check("the toolbar is gone after the touch", awaitToolbarGone())
+        val point = touchCopyLink(items.orEmpty(), scheme = "light")
+        check("the toolbar is gone after the touch", point != null && awaitToolbarGone())
         val clip = awaitClipboard()
         finding("  clipboard: ${clip ?: "EMPTY"}")
         check("the clipboard holds the link to the highlight", clip == "$ARTICLE#:~:text=lantern")
         toastCheck()
         SystemClock.sleep(600)
         shot("03-copied-light")
+        if (clip == null) {
+            check("the copied link opens on the passage (nothing was copied)", false)
+            clearSelection()
+            return
+        }
         // The link as another app hands it over: a new tab that lands on the passage.
         val known = tabIds()
-        openLink(clip ?: "$ARTICLE#:~:text=lantern")
+        openLink(clip)
         val opened = awaitNewTab(known)
         finding("  opened the link: ${opened?.let { "tab ${it.optString("id")} '${it.optString("url")}'" } ?: "NO NEW TAB"}")
         check("the link opens in a new tab", opened != null)
         awaitFollowed("#word")
         SystemClock.sleep(1_200)
-        shot("04-opened-link-light")
-        checkLanded("#word", "the word 'lantern'")
+        checkLanded("#word", "the word 'lantern'", still = "04-opened-link-light")
         closeExtraTabs(known)
+    }
+
+    /**
+     * A real touch on Copy link to highlight wherever the toolbar put it – in the bar, or behind
+     * the overflow (a real touch on the overflow button; a real drag when the row is under the
+     * list's fold) – with a still of the toolbar as it shows the row (`02-toolbar-<scheme>` or
+     * `02-overflow-<scheme>`); where the finger landed, or null when the row was not to be found.
+     */
+    private fun touchCopyLink(items: List<ToolbarItem>, scheme: String?): PointF? {
+        val inBar = items.find { it.label == TITLE }
+        if (inBar != null) {
+            finding("  $TITLE stands in the bar")
+            if (scheme != null) shot("02-toolbar-$scheme")
+            val point = touchTapPoint(inBar.node)
+            finding("  real touch on $TITLE in the bar ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}" } ?: "NOT POSSIBLE"}")
+            return point
+        }
+        val listed = openOverflow(items, still = scheme?.let { "02-overflow-$it" })
+        finding("  behind the overflow: ${listed?.joinToString(" | ") ?: "no list"}")
+        check("$TITLE is listed behind the overflow", listed?.contains(TITLE) == true)
+        val point = touchRowInOverflow(TITLE)
+        finding("  real touch on $TITLE behind the overflow ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}" } ?: "NOT POSSIBLE (row missing or under the fold)"}")
+        if (point == null) findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) }
+        return point
+    }
+
+    /**
+     * A real touch on the row `label` of the open overflow. When the row is not on screen, or the
+     * harness refuses the touch because the row lies under the list's fold, a real finger drags
+     * the list up from its lowest visible row to its highest and the touch is tried again (at
+     * most three drags). Where the finger landed, or null.
+     */
+    private fun touchRowInOverflow(label: String): PointF? {
+        repeat(4) { attempt ->
+            findInWindows { it == label }?.let { node -> touchTapPoint(node)?.let { return it } }
+            if (attempt == 3) return null
+            val rows = overflowRowBounds() ?: return null
+            val x = rows.first().exactCenterX()
+            val from = rows.maxOf { it.bottom } - 8f
+            val to = rows.minOf { it.top } + 8f
+            if (from - to < 40f) return null
+            Log.i(tag, "dragging the overflow list up at $x from $from to $to for '$label'")
+            Finger().apply {
+                down(x, from)
+                moveBy(0f, to - from, 400)
+                hold(150)
+                up()
+            }
+            SystemClock.sleep(700)
+        }
+        return null
+    }
+
+    /** The bounds of the overflow's visible rows (the close arrow left out), or null when no list is open. */
+    private fun overflowRowBounds(): List<Rect>? {
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            val rows = ArrayList<Rect>()
+            var close = false
+            val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+            var visited = 0
+            while (queue.isNotEmpty() && visited < 3_000) {
+                val node = queue.removeFirst()
+                visited++
+                val label = node.contentDescription?.toString()?.trim().takeUnless { it.isNullOrEmpty() }
+                    ?: node.text?.toString()?.trim().orEmpty()
+                if (label == "Close overflow") close = true
+                else if (label.isNotEmpty() && node.isVisibleToUser) rows += Rect().also { node.getBoundsInScreen(it) }
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+            if (close && rows.isNotEmpty()) return rows
+        }
+        return null
     }
 
     /**
@@ -240,22 +363,25 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
         val items = longPress("#dup2") { list -> list.any { it.label == "Copy" } }
         val selected = jsonString(tabJs("String(getSelection())"))
         finding("  injected long press on the second 'harbour': selection '$selected' ${verdict(selected == "harbour")}")
-        val point = touchInOverflow(items.orEmpty(), TITLE)
-        finding("  real touch on $TITLE behind the overflow ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}" } ?: "NOT POSSIBLE"}")
-        awaitToolbarGone()
+        val point = touchCopyLink(items.orEmpty(), scheme = null)
+        check("the toolbar is gone after the touch", point != null && awaitToolbarGone())
         val clip = awaitClipboard()
         finding("  clipboard: ${clip ?: "EMPTY"}")
         val directive = clip?.substringAfter("#:~:", "").orEmpty()
         check("the link is to the article", clip?.startsWith("$ARTICLE#:~:text=") == true)
         check("the directive carries context (a prefix or a suffix)", directive.contains("-,") || directive.contains(",-"))
+        if (clip == null) {
+            check("the link with context opens on the second 'harbour' (nothing was copied)", false)
+            clearSelection()
+            return
+        }
         val known = tabIds()
-        openLink(clip ?: "$ARTICLE#:~:text=harbour")
+        openLink(clip)
         val opened = awaitNewTab(known)
         check("the link opens in a new tab", opened != null)
         awaitFollowed("#dup2")
         SystemClock.sleep(1_200)
-        shot("05-context-link-light")
-        checkLanded("#dup2", "the second 'harbour'")
+        checkLanded("#dup2", "the second 'harbour'", still = "05-context-link-light")
         val first = viewportBox("#dup1")
         val innerHeight = tabJs("window.innerHeight").toDoubleOrNull() ?: 0.0
         check("the first 'harbour' is out of view", first != null && (first.getDouble(3) < 0 || first.getDouble(1) > innerHeight))
@@ -285,11 +411,17 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
         navigate("$ARTICLE#:~:text=lantern")
         awaitFollowed("#word")
         SystemClock.sleep(1_200)
-        shot("01-followed-dark")
-        checkLanded("#word", "the word 'lantern' (dark)")
-        val items = longPress("#word") { list -> list.any { it.label == "Copy" } }
-        val listed = openOverflow(items.orEmpty(), still = "02-overflow-dark")
-        check("dark: Copy link to highlight is listed behind the overflow", listed?.contains(TITLE) == true)
+        checkLanded("#word", "the word 'lantern' (dark)", still = "01-followed-dark")
+        val items = longPress("#word") { list -> list.any { it.label == "Copy" } }.orEmpty()
+        if (items.any { it.label == TITLE }) {
+            shot("02-toolbar-dark")
+            finding("  dark: $TITLE stands in the bar")
+        } else {
+            val listed = openOverflow(items, still = "02-overflow-dark")
+            check("dark: $TITLE is listed behind the overflow", listed?.contains(TITLE) == true)
+            findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) }
+            SystemClock.sleep(500)
+        }
         clearSelection()
         SystemClock.sleep(800)
         shell("cmd uimode night no")
@@ -383,10 +515,10 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
 
     /**
      * A real touch on the toolbar's overflow button; the labels of the list behind it, top to
-     * bottom (a still of it under `still`), or null when the list never showed. The list is left
-     * open for the touch that follows.
+     * bottom (a still of it under `still`, when one is asked), or null when the list never
+     * showed. The list is left open for the touch that follows.
      */
-    private fun openOverflow(items: List<ToolbarItem>, still: String): List<String>? {
+    private fun openOverflow(items: List<ToolbarItem>, still: String?): List<String>? {
         val more = items.find { it.label == "More options" } ?: run {
             finding("  the toolbar has no overflow button")
             return null
@@ -400,26 +532,8 @@ class TextFragmentDemo : DemoHarness("text-fragment-demo-state.json", "text-frag
         }
         SystemClock.sleep(700)
         listed = overflowLabels()?.takeIf { it.isNotEmpty() } ?: listed
-        shot(still)
+        if (still != null) shot(still)
         return listed
-    }
-
-    /** The overflow opened and a real touch on `label` in it; where the finger landed, or null (the list closed again then). */
-    private fun touchInOverflow(items: List<ToolbarItem>, label: String): PointF? {
-        val more = items.find { it.label == "More options" } ?: return null
-        touchTapPoint(more.node) ?: return null
-        val deadline = SystemClock.uptimeMillis() + 5_000
-        while (SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(300)
-            if (overflowLabels() != null) break
-        }
-        SystemClock.sleep(500)
-        val node = findInWindows { it == label } ?: run {
-            finding("  '$label' is not behind the overflow: ${overflowLabels()?.joinToString(" | ") ?: "no list"}")
-            findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) }
-            return null
-        }
-        return touchTapPoint(node)
     }
 
     /** The labels in the toolbar window while its overflow list is open (told by the close arrow), the arrow left out. */
