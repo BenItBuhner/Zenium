@@ -219,6 +219,6 @@ describe('the stylesheet', () => {
     expect(rule('.zen-message')).toContain('pointer-events: auto')
     expect(rule('.zen-hint-bubble')).not.toContain('pointer-events')
     expect(rule('.zen-hint-bubble[data-leaving]')).not.toContain('pointer-events')
-    expect(rule('.zen-hint-bubble[data-at=\'overview\']')).not.toContain('pointer-events')
+    expect(rule(".zen-hint-bubble[data-at='overview']")).not.toContain('pointer-events')
   })
 })
