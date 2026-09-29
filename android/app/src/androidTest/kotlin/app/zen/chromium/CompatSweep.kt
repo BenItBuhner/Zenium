@@ -36,7 +36,10 @@ import app.zen.chromium.ext.SweepHeapSteps
 import app.zen.chromium.ext.SweepInsertProbe
 import app.zen.chromium.ext.SweepOrder
 import app.zen.chromium.ext.SweepOrderProbe
+import app.zen.chromium.ext.SweepPopupClose
+import app.zen.chromium.ext.SweepPopupLabels
 import app.zen.chromium.ext.SweepScreenGuard
+import app.zen.chromium.ext.SweepServedRecord
 import app.zen.chromium.ext.SweepSwitchGrade
 import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
@@ -901,10 +904,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // round 16's engine-line row (Adobe Photoshop's worker) is this column going PARTIAL -> P
         // with the name listed here.
         detail.put("polyfills", runCatching { json(tabEval(view, POLYFILLS_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) })
+        // The realm's isolation (compat round 24, R24-2): Chrome exposes `SharedArrayBuffer` in
+        // every extension context; a WebView page gets it from cross-origin isolation alone, and
+        // WebView disables COOP outright (`aw_field_trials.cc`, `kCrossOriginOpenerPolicy` off:
+        // "COOP is not supported on WebView yet"), so the header pair the round served was inert
+        // on both WebViews and was taken back. Read on every run: the day a WebView honours COOP
+        // this column says so (Paperpile's worker reads `SharedArrayBuffer.prototype` at its start).
+        val isolation = runCatching { json(tabEval(view, ISOLATION_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) }
+        detail.put("isolation", isolation)
         stage(
             entry, "background",
             if (uncaught.isEmpty()) "P" else "PARTIAL",
             "$kind up after ${upMs / 1000.0} s" +
+                (if (kind == "service_worker") "; crossOriginIsolated ${isolation.opt("crossOriginIsolated") ?: isolation.optString("error", "?")}, SharedArrayBuffer ${isolation.optString("sharedArrayBuffer", "?")}" else "") +
                 (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(3).joinToString(" | ") { it.take(200) }}" else "") +
                 (if (errors.isNotEmpty()) "; console.error x${errors.size}: ${errors.first().take(160)}" else ""),
             detail
@@ -970,11 +982,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var openedFirst: Pair<String, String>? = null
         var openedAt = 0L
         var view: ExtensionWebView? = null
+        var viewSeenAt = 0L
         val sheetDeadline = SystemClock.uptimeMillis() + POPUP_TIMEOUT_MS
         while (SystemClock.uptimeMillis() < sheetDeadline) {
             val v = popupView()
             if (v != null && (v.context == "popup" || (runtimePopup == null && v.context == "sidePanel")) && rendered(v)) {
                 view = v
+                viewSeenAt = SystemClock.uptimeMillis()
                 break
             }
             if (openedFirst == null) {
@@ -987,9 +1001,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             }
             SystemClock.sleep(400)
         }
-        SystemClock.sleep(1_800)
+        // The settle before the read, watched for the popup's own close: a popup document that
+        // does its work and calls `window.close()` at once (Bitget Wallet's popup.html for a
+        // wallet with no vault opens its onboarding in a tab and closes) leaves the sheet loop a
+        // rendered view and the read nothing – round 23 §7 graded the row P at "0x0 css px in a
+        // 0x0 dp sheet, 0 elements", right about the surface and blind about the close. The
+        // moment the view went is kept for the stage's word ([SweepPopupClose]).
+        var closedAfterMs: Long? = null
+        val settleUntil = SystemClock.uptimeMillis() + 1_800
+        while (SystemClock.uptimeMillis() < settleUntil) {
+            if (view != null && closedAfterMs == null && popupView() !== view) closedAfterMs = SystemClock.uptimeMillis() - viewSeenAt
+            SystemClock.sleep(150)
+        }
         snap("$slug-popup")
         val live = popupView()
+        if (view != null && closedAfterMs == null && live !== view) closedAfterMs = SystemClock.uptimeMillis() - viewSeenAt
         val detail = JSONObject().put("declared", declared ?: JSONObject.NULL).put("runtimePopup", runtimePopup ?: JSONObject.NULL)
         view?.let { detail.put("surface", it.context) }
         openedFirst?.let { detail.put("openedFirstSeen", it.second) }
@@ -1001,7 +1027,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             detail.put("flow", json(tabEval(live, FLOW_REPORT)))
         }
         when {
-            view != null -> {
+            view != null && closedAfterMs == null -> {
                 val dom = detail.optJSONObject("dom") ?: JSONObject()
                 val uncaught = (live?.let(::consoleOf) ?: emptyList()).filter(::isUncaught)
                 val sheet = detail.optJSONObject("sheet") ?: JSONObject()
@@ -1034,7 +1060,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
                 raised?.let { detail.put("raisedTab", it) }
                 val answered = if (opened.isNotEmpty()) opened else listOfNotNull(raised)
-                if (runtimePopup == null && answered.isNotEmpty()) {
+                if (view != null) {
+                    // The popup came up and closed itself before the read: the tabs after it are
+                    // its answer ([SweepPopupClose]), the URL an opened tab was first seen on
+                    // leading (the click's own destination, before the site's redirect) for the
+                    // core stage's account gate to read. A tab the popup sent to a page of its
+                    // own goes back to the fixture, as the sent-tab branch below does.
+                    val closedMs = closedAfterMs ?: 0L
+                    detail.put("closedItselfAfterMs", closedMs)
+                    val first = openedFirst?.second?.takeIf { it.isNotEmpty() }
+                    val openedUrls = (listOfNotNull(first) + opened).distinct()
+                    val raisedOnly = raised?.takeIf { it !in opened && it !in sent.values }
+                    val current = opened + sent.values + listOfNotNull(raisedOnly)
+                    if (current.isNotEmpty()) {
+                        entry.put("popupOpened", JSONArray((openedUrls + sent.values + listOfNotNull(raisedOnly)).distinct()))
+                        if (row.account) openedPage(row, current[0])?.let { entry.put("popupOpenedPage", it) }
+                    }
+                    val word = SweepPopupClose.word(closedMs, openedUrls, sent.values.map { extensionPath(it) }, raisedOnly)
+                    stage(entry, "popup", word.verdict, word.note, detail)
+                    if (fixtureTab in sent.keys) {
+                        coreCall("tab.navigate", JSONObject().put("tabId", fixtureTab).put("input", "$BASE/page-a.html").toString())
+                        SystemClock.sleep(1_200)
+                    }
+                } else if (runtimePopup == null && answered.isNotEmpty()) {
                     entry.put("popupOpened", JSONArray(answered))
                     // The page the click showed, read while its tab is still there (the stage's
                     // closeExtraTabs takes it): an account row's core grade (popupLogin) is its
@@ -2845,11 +2893,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
         if (!found.optBoolean("pass")) {
             extra.put("errors", targetErrors(view))
-            // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading joins the grade's word.
+            // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading
+            // joins the grade's word, and its `pass` is the row's where the probe's read is the
+            // truer one (the served-resource record where the page's timeline is blind).
             onMiss?.let { extra.put("probe", it(view, row, factor)) }
         }
-        val probeWord = extra.optJSONObject("probe")?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
-        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
+        val probe = extra.optJSONObject("probe")
+        val probeWord = probe?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
+        val pass = found.optBoolean("pass") || probe?.optBoolean("pass") == true
+        Grade(if (pass) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
     }
 
     /**
@@ -2873,10 +2925,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * load there –, the world's `getURL` spelling, the world, the loader). On a WebView without isolated worlds the page's
      * insert stands for both realms. The file runs in the page once per insert that loads – its
      * effects are for its listed hosts alone, none on the fixture.
+     *
+     * Compat round 24: the runtime's served-resource record (`Extensions.servedMatching`,
+     * ServedRecord) is read FIRST, before the probe's own inserts add their lines, for the
+     * extension's own insertion of `userscript.js` – the read the timeline cannot give, and
+     * Chrome's cannot either (Blink precludes a resource fetched from an isolated world from the
+     * page's Resource Timing, and a `chrome-extension://` response is not HTTP); a served line is
+     * the row's pass (`pass` on the probe, read by [domMarker]), a refused line is ours, no line an
+     * insertion that never reached the intercept ([SweepServedRecord.reading]).
      */
     private fun adguardExtraProbe(view: WebView, row: Row, factor: Double): JSONObject {
         val probe = JSONObject()
         val origin = "https://${row.id}${Extensions.ORIGIN_SUFFIX}/userscript.js"
+        var record: List<String> = emptyList()
+        instrumentation.runOnMainSync { record = host.extensions.servedMatching("userscript.js") }
+        val ownLines = SweepServedRecord.ownLines(record, row.id, "userscript.js")
+        val served = SweepServedRecord.reading(ownLines, "userscript.js")
+        probe.put("served", JSONArray(ownLines.takeLast(6))).put("recordLines", record.size).put("pass", served.pass)
         var worldRan = false
         if (worlds) {
             val world = worldEval(view, row.id, ADGUARD_EXTRA_WORLD_INSERT.replace("%ORIGIN%", JSONObject.quote(origin)))?.let { json(it) }
@@ -2904,7 +2969,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             pageEntry = entries.optJSONObject("zenpage") != null,
             recoveryLines = recovery.size
         )
-        probe.put("reading", SweepInsertProbe.reading(legs))
+        probe.put("reading", "${served.word}; the inserts: ${SweepInsertProbe.reading(legs)}")
         return probe
     }
 
@@ -2925,10 +2990,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return tab to view
     }
 
-    /** The row's popup opened over the tab on screen, rendered, or null. */
-    private fun openPopup(row: Row, factor: Double): ExtensionWebView? {
+    /**
+     * The row's popup opened over the tab on screen, rendered, or null; with `orSeen`, a popup
+     * whose document reads empty to a script but whose sheet shows labelled content (its UI in a
+     * closed shadow root – Black Menu's on WebView 156) is rendered too, as the popup stage reads it.
+     */
+    private fun openPopup(row: Row, factor: Double, orSeen: Boolean = false): ExtensionWebView? {
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        return poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        return poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && (rendered(it) || orSeen && shownDespiteEmptyDom(seenInView(it))) } }
     }
 
     /** A probe that lands its answer on `window.<slot>` with `done: true`, from an extension page, read within `timeoutMs`. */
@@ -4203,17 +4272,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * of the driver's to `https://<apiHost><apiProbePath>` from the popup's document with their
      * outcomes, and the proxy record read again after them (`apiProbe`, `proxiedAfterProbe`):
      * the popup's own logic told from the intercept's reach.
+     *
+     * With `ownLabels` (compat round 24, Black Menu for Google on WebView 156: its popup keeps
+     * its UI in a closed shadow root there, so its document reads empty to a script and `expr`
+     * finds nothing) a popup the sheet shows despite its empty document is opened as rendered,
+     * and when `expr` has no pass the sheet's accessibility labels carrying the row's own words –
+     * three or more, of a tree that shows content ([shownDespiteEmptyDom]) – are the pass, as the
+     * popup stage and [accountGate] read such a popup.
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null, ownLabels: Regex? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
-        val popup = openPopup(row, factor)
+        val popup = openPopup(row, factor, orSeen = ownLabels != null)
         var found = JSONObject()
         if (popup != null) {
             found = pollExpr(popup, expr, scaled(settleMs, factor))
             found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (!found.optBoolean("pass") && ownLabels != null) {
+                val seen = seenInView(popup)
+                val own = SweepPopupLabels.own(labelsOf(seen), ownLabels)
+                extra.put("seen", seen).put("ownLabels", JSONArray(own))
+                if (SweepPopupLabels.pass(own, shownDespiteEmptyDom(seen))) {
+                    val scriptRead = JSONObject(found.toString()).apply { remove("console"); remove("text"); remove("pass") }.toString()
+                    found.put("pass", true).put("byAccessibility", SweepPopupLabels.word(seen.optInt("nodes"), own, scriptRead))
+                }
+            }
         }
         extra.put("popup", found)
         val answers = if (apiHost == null) emptyList() else proxied(apiHost).filter { it.startsWith("${row.id} ") }
@@ -4247,7 +4332,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             else -> "; $apiHost answered ${statuses.joinToString("/")} through the host's proxy${if (statuses.size < answers.size) " (and ${answers.size - statuses.size} request(s) not carried: ${answers.filter { proxyStatus(it) == null }.takeLast(2).joinToString("; ") { it.substringAfter(' ').take(120) }})" else ""}"
         }
         when {
-            found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
+            found.optBoolean("pass") -> Grade("P", "$label: popup ${found.optString("byAccessibility").takeIf { it.isNotEmpty() } ?: found.toString().take(240)}", extra)
             refused -> Grade("n/m", "$label: popup renders and answers with $gate's ${if (challenged) "CAPTCHA" else "refusal"} (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
             apiRefused -> Grade("n/m", "$label: popup renders and $gate refused every request the runtime carried for it (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(90) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
             apiUnreachable -> Grade("n/m", "$label: popup renders and the runner's network could not reach $gate for any request the runtime carried (${answers.takeLast(3).joinToString("; ") { it.substringAfter(' ').take(120) }}), the popup showing nothing for it; the core needs $gate (not measurable here)", extra)
@@ -7974,6 +8059,107 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("jiidiaalihmmhddjgbnbgdfflelocpak", "Bitget Wallet - Crypto, Web3 | Bitcoin & USDT", "bitget-wallet", core = domMarker("Bitget Wallet's provider injected into the page world", "wallet.html?bitget", BITGET_PROVIDER, settleMs = 30_000)),
         Row("onablhclbgaihanifkenpggjkkgdpnkk", "Wallsflow New Tab: Live Wallpapers, Widgets & Focus Music", "wallsflow-new-tab", core = newTabOverride("Wallsflow New Tab")),
         Row("bomfdkbfpdhijjbeoicnfhjbdhncfhig", "Paperpile Extension", "paperpile", core = accountGate("Paperpile", Regex("paperpile\\.com", RegexOption.IGNORE_CASE), injects = "#pp-extension-root, #pp-react-root", gate = "a Paperpile account (its click mounts its in-page popup in a closed shadow root, `#pp-extension-root`, which signs in at app.paperpile.com)")),
+        // --- compat round 24 (ranks 601-630 by installs; `.github/scripts/ext-compat/next30-round21.json`) ---
+        // Each core rule read off the unpacked bundle: Add to Babylist Button's click injects its
+        // content script (`scripting.executeScript`), which mounts a full-screen iframe of its own
+        // UI over the page (`iframe[title="Add To Babylist Extension"]`) whose sign-in is
+        // babylist.com; PWA Install Block is one `document_start` content script and nothing else
+        // (no `storage` permission, so its `chrome.storage.managed.get('escape')` throws inside
+        // its own `try`): a MutationObserver on the document that removes the first
+        // `link[rel=manifest]` it finds and disconnects – the `pwa.html` fixture's link gone is
+        // the pass; Speed Dial, Live Start Page and GNTD replace the new-tab page
+        // (`chrome_url_overrides.newtab`: `pages/newtab.html`, `pages/newtab/newtab.html`,
+        // `newtab.html`); ZIP Extractor's click runs `tabs.create({url: runtime.getURL('open.html')})`,
+        // whose `#formView` (`#urlInput`, `#openButton` "Open in ZIP Extractor") its script shows;
+        // Martian's content script inserts its web-accessible `inpage.js`, which defines
+        // `window.martian` and dispatches `martian_wallet_injected`; Privacy Extension For
+        // WhatsApp Web's content-script loader (`web.whatsapp.com`, `document_end`) imports its
+        // chunk, which mounts `#crx-root-Y5rD2uBG` beside the chat list's filters – signed out
+        // the page is the QR code; Story Saver's content scripts (instagram.com, facebook.com; no
+        // web-accessible resource) put `.violet_toolkit_dl_btn` download buttons on the feed's
+        // posts and stories; Webpage Screenshot's click runs `jquery.js`, `content.js` and
+        // `intab.js` in the tab (`scripting.executeScript`), which prepend a shadow host to the
+        // body with its fixed bar (`#ws_all_buttons`: `#ws_entire`, `#start_visible`,
+        // `#start_desktop`, `#edit_content`, `#ws_close`); AdBlock Max blocks with its
+        // `declarativeNetRequest` rulesets (uBlock filters, EasyList, EasyPrivacy and Peter
+        // Lowe's list enabled); Browser Lock's popup (`screen.html#/ppup`) is two buttons – lock
+        // the browser, open the settings – and its lock needs a password set in its settings
+        // (`security.browser_password.password`, else `lockNotActive`); Note Board's worker opens
+        // with a `self.localStorage` shim, `let window = {}`, `screen = {}` and a `const document`
+        // stub (the runtime's worker rescue and self proxy carry them) and its click, with no
+        // `openExt` stored, runs `windows.create({url: runtime.getURL("popup.html"), type: "popup",
+        // state: "maximized"})` – the board (`#Postits`, `#botonPost`, `#nombreTablon`);
+        // Wikiwand's static ruleset redirects `^https://([a-z-]+)\.wikipedia\.org/wiki/([^?#]+)`
+        // to `https://www.wikiwand.com/\1/\2` (main frame, `www.wikipedia.org` excluded, an
+        // `allow` above it for `?oldformat`); RoEarn's six content-script groups run on
+        // www.roblox.com – its `document_start` injector marks the page with
+        // `#__roearn_extension_url__` and adds its web-accessible scripts, `#nav-roearn` goes in
+        // the signed-in sidebar; Desktopify's content script (instagram.com, every frame) adds
+        // `a.inb-photo-el` open-in-new-tab links on the feed's images every second; MightyText's
+        // popup signs in with its Google account; ProWritingAid's popup is its sign-up / log-in
+        // (`<pwa-browser-action-root>`); Video Downloader - MPMux's worker watches
+        // `webRequest.onBeforeSendHeaders` and `onResponseStarted` (media, xmlhttprequest,
+        // object, other) for m3u8 playlists and media of 300 KB or more, keeps them per tab in
+        // `storage.local` and its popup lists them (`#list .item`; "No resource file found!"
+        // while empty); Open SEO Stats' popup shows, at its free level, its SEO Stats tab (the
+        // `#frame_seostats` iframe, whose table's first `th` names the tab's host from
+        // `sessionStorage.host`) and asks user.openadmintools.com for the host's figures – its
+        // Page Info and Links tabs are blurred behind its paid level (`lock_blur`,
+        // `GetUserLevel()`) and its first launch raises its Google sign-in
+        // (`#btn_google_login`); Talk & Comment's content script
+        // mounts `#tac-extension-root` and its recorder signs in at talkandcomment.com; Web
+        // Highlights' click sends `browserActionClicked` to its content script
+        // (`content-loader.js` imports `content.js` on idle), which toggles its
+        // `<webhighlights-sidebar>`; Astar VPN's popup connects through
+        // `proxy.settings.set({value: {mode: "pac_script"}})` after its "Accept"; YouTube DJ's
+        // popup switch (`#bsw`) asks `tabCapture.getMediaStreamId({targetTabId})` for the tab's
+        // audio; EverSync's popup, signed out, says "To Synchronize your data you have to login
+        // in your EverSync account" with Login and Register; Black Menu's popup
+        // (`/views/popup.html`, `scripts/main.js`) draws its list of Google services as
+        // `.bm-ele-navlist__item[role=menuitem]` entries; Workona's worker sets its popup at its
+        // start (`action.setPopup({popup: "popup.html"})`, the manifest declaring none), an
+        // iframe of `https://workona.com/ext/popup`, its service's sign-in; FC27 Enhancer's
+        // content script runs on EA's Ultimate Team web app, which signs in first; Custom
+        // Progress Bar's content script (youtube.com, `document_idle`) builds CSS from the
+        // `current` style its install seeded (the Starter collection's first) and appends
+        // `<style data-custom-progressbar="true">` to the page; Telegram Video Downloader's
+        // content script (`web.telegram.org`, `document_end`) appends its web-accessible
+        // `content-script-inject.js` to the page and puts download buttons on the chat's media
+        // bubbles – signed out the page is the QR code and the phone-number form.
+        Row("jcmljanephecacpljcpiogonhhadfpda", "Add to Babylist Button", "add-to-babylist", core = accountGate("Add to Babylist Button", Regex("babylist\\.com", RegexOption.IGNORE_CASE), injects = "iframe[title=\"Add To Babylist Extension\"]", gate = "a Babylist account (its click injects its content script, which mounts a full-screen iframe of its own UI over the page whose sign-in is babylist.com)")),
+        Row("ieadfjdkjpnoafofpolljfnejbgppgad", "PWA Install Block", "pwa-install-block", core = domMarker("PWA Install Block's removal of the page's manifest link", "pwa.html?pwablock", PWA_BLOCK_MARKER, settleMs = 25_000)),
+        Row("ejbjamhkdedinncaeiackcdehpccoejm", "Speed Dial", "speed-dial", core = newTabOverride("Speed Dial")),
+        Row("mmfcakoljjhncfphlflcedhgogfhpbcd", "ZIP Extractor", "zip-extractor", core = actionPage("ZIP Extractor", Regex("open\\.html"), ZIP_EXTRACTOR_PAGE, listOf("page-a.html?zipextractor"))),
+        Row("efbglgofoippbgcjepnhiblaibcnclgk", "Martian Aptos & Sui Wallet Extension", "martian-wallet", core = domMarker("Martian's provider injected into the page world", "wallet.html?martian", MARTIAN_PROVIDER, settleMs = 30_000)),
+        Row("mbcghjiodcjankhkllfohcgnckhdbkmi", "Privacy Extension For WhatsApp Web - WABULK", "privacy-extension-whatsapp", core = attachedGate("Privacy Extension For WhatsApp Web", "https://web.whatsapp.com/", "a linked WhatsApp Web session (its blurs and lock act on the chat list; signed out the page is the QR code)")),
+        Row("mafcolokinicfdmlidhaebadidhdehpk", "Story Saver", "story-saver", core = attachedGate("Story Saver", "https://www.instagram.com/", "an Instagram session (its download buttons, `.violet_toolkit_dl_btn`, go on the feed's posts and stories)")),
+        Row("akgpcdalpfphjmfifkmfbpdmgdmeeaeo", "Webpage Screenshot - Entire page screenshot!", "webpage-screenshot", core = actionMarker("Webpage Screenshot", "page-a.html?wpscreenshot", WPS_MENU, settleMs = 25_000)),
+        Row("nldijlfmoepgjkjhmdiiainkjgmpdnmj", "Browser Lock | Lock Your Browser", "browser-lock", core = popupMarker("Browser Lock", BROWSER_LOCK_POPUP, settleMs = 25_000)),
+        Row("emffkefkbkpkgpdeeooapgaicgmcbolj", "Wikiwand - Wikipedia Modernized", "wikiwand", core = dnrRedirects("Wikiwand", "https://en.wikipedia.org/wiki/Tea", Regex("^https://www\\.wikiwand\\.com/en/Tea"), "the static ruleset's regexFilter ^https://([a-z-]+)\\.wikipedia\\.org/wiki/([^?#]+) with regexSubstitution https://www.wikiwand.com/\\1/\\2")),
+        Row("nlhjgcligpbnjphflfdbmabbmjidnmek", "Desktopify", "desktopify", core = attachedGate("Desktopify", "https://www.instagram.com/", "an Instagram session (its open-in-new-tab links go on the feed's images)")),
+        Row("dkfhfaphfkopdgpbfkebjfcblcafcmpi", "MightyText - SMS from PC & Text from Computer", "mightytext", account = true, core = popupLogin("MightyText")),
+        Row("mbflpfaamifmmmkdjkcmpofpccfmlmap", "Video Downloader - MPMux", "video-downloader-mpmux", core = mediaPopup("Video Downloader - MPMux", "hls.html?mpmux", "/stream\\.m3u8|\\.m3u8|hls/i", probe = true, listener = "webRequest.onBeforeSendHeaders and onResponseStarted (media, xmlhttprequest, object, other; responseHeaders)")),
+        Row("hbdkkfheckcdppiaiabobmennhijkknn", "Open SEO Stats(Formerly: PageRank Status)", "open-seo-stats", core = popupMarker("Open SEO Stats", OPEN_SEO_POPUP, page = "page-a.html?openseo", settleMs = 25_000, gate = "an Open SEO Stats account and its plan (its first launch opens its Google sign-in over the popup; its Page Info and Links tabs are blurred behind its paid level; the SEO Stats tab asks user.openadmintools.com for the tab's host)", apiHost = "user.openadmintools.com")),
+        Row("djnhkfljnimcpelfndpcjcgngmefaobl", "Talk & Comment: Voice Notes & Audio Feedback", "talk-and-comment", core = accountGate("Talk & Comment", Regex("talkandcomment\\.com", RegexOption.IGNORE_CASE), injects = "#tac-extension-root, #tac-ExtensionRoot", gate = "a Talk & Comment account and the microphone (its recorder uploads the voice note to its service)")),
+        Row("hldjnlbobkdkghfidgoecgmklcemanhm", "Web Highlights: PDF & Web Highlighter + Notes & AI Summary", "web-highlights", core = actionMarker("Web Highlights", "article.html?webhighlights", WEB_HIGHLIGHTS_SIDEBAR, settleMs = 35_000)),
+        Row("jajilbjjinjmgcibalaakngmkilboobh", "Astar VPN - Free and fast VPN for everyone", "astar-vpn", core = vpn("Astar VPN", pac = true, consent = true)),
+        Row("iphblfpnippelmibidfaejanmnhcjdee", "GNTD: Glass New Tab Dashboard", "gntd", core = newTabOverride("GNTD")),
+        Row("defekohaofmambflfpfoojkmfdpcbgko", "YouTube DJ effects / EQ / Volume Booster / Bass Booster", "youtube-dj", core = captureLimit("YouTube DJ", "/\\bon\\b|\\boff\\b|volume|bass|\\beq\\b/i")),
+        Row("iohcojnlgnfbmjfjfkbhahhmppcggdog", "EverSync - Sync bookmarks, backup favorites", "eversync", account = true, core = popupLogin("EverSync")),
+        // Black Menu's popup keeps its UI in a closed shadow root on WebView 156 (its document read
+        // empty to a script where 113 read 434 elements; round 24's BEFORE): the sheet's labels –
+        // the top bar's services and the navigation list's rows – are its read there.
+        Row("eignhdfgaldabilaaegmdfbajngjmoke", "Black Menu for Google™", "black-menu-for-google", core = popupMarker("Black Menu for Google", BLACK_MENU_POPUP, settleMs = 30_000, ownLabels = Regex("^(Pages|Apps|Settings|Search|Gemini|Maps|Translate|News|YouTube|Gmail|Calendar|Drive|Keep|Home|Saved|Advanced search|Advanced image search|Your data in Search)$"))),
+        Row("ailcmbgekjpnablpdkmaaccecekgdhlh", "Tab Manager by Workona", "workona", account = true, core = popupLogin("Tab Manager by Workona")),
+        Row("boffdonfioidojlcpmfnkngipappmcoh", "FC27 Enhancer | SBC Solver, Trader & Keyboard Shortcuts", "fc27-enhancer", core = attachedGate("FC27 Enhancer", "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/", "an EA account (the web app signs in before its enhancer has a page to act on)")),
+        Row("nbkomboflhdlliegkaiepilnfmophgfg", "Custom Progress Bar for YouTube™", "custom-progress-bar", core = { row, entry -> youtube(row, entry, CUSTOM_PROGRESS_BAR_STYLE, "Custom Progress Bar's style on a watch page", desktopSite = true, settleMs = 30_000) }),
+        Row("ioiepomamdncfjkigofklhciigbonnlk", "Telegram Video Downloader - TG Downloader", "telegram-video-downloader", core = attachedGate("Telegram Video Downloader", "https://web.telegram.org/k/", "a Telegram session (its download buttons go on the chat's media bubbles; signed out the page is the QR code and the phone-number form)")),
+        // The five largest bundles last (Live Start Page 37.1 MB, ProWritingAid 30.0, Note Board 16.5, AdBlock Max 14.9, RoEarn 6.8), as rounds 19 to 23 ordered their own.
+        Row("ocggccaacacpienfcgmgcihoombokbbj", "Live Start Page - Living Wallpapers", "live-start-page", core = newTabOverride("Live Start Page")),
+        Row("npnbdojkgkbcdfdjlfdmplppdphlhhcf", "ProWritingAid: Grammar Checker & Paraphrasing Tool", "prowritingaid", account = true, core = popupLogin("ProWritingAid")),
+        Row("goficmpcgcnombioohjcgdhbaloknabb", "Note Board - Sticky Notes App", "note-board", core = actionPage("Note Board", Regex("popup\\.html"), NOTE_BOARD_PAGE, listOf("page-a.html?noteboard"))),
+        Row("ggdpplfehdighdpleoegjefnpefgpgfh", "AdBlock Max - ad blocker", "adblock-max", core = ::adBlocker),
+        Row("fooenmopnfaejehogdbmegaleanpdcea", "RoEarn: Custom Avatar Creator & Cashback", "roearn", core = attachedGate("RoEarn", "https://www.roblox.com/", "a Roblox account (its `#nav-roearn` sidebar entry, cashback and avatar tools go on the signed-in pages; signed out its injector still marks the page with `#__roearn_extension_url__`)")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -8008,6 +8194,41 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 24 (ranks 601-630 by installs) --------------------------
+
+    /**
+     * A main-frame redirect of one live site to another by a static `declarativeNetRequest`
+     * ruleset (Wikiwand: `regexFilter "^https://([a-z-]+)\.wikipedia\.org/wiki/([^?#]+)"` with
+     * `regexSubstitution "https://www.wikiwand.com/\1/\2"`, `www.wikipedia.org` excluded, an
+     * `allow` of higher priority for `?oldformat`): a tab opened on [url] whose address lands on
+     * [landsOn] is the pass – the redirect applied at the intercept before the request went out,
+     * as MEGA's to its bundled client ([megaClient]) –, the rulesets the worker has enabled
+     * (`DNR_RULESETS_PROBE`) read beside it. Chrome redirects a main-frame request at its start,
+     * so the site's own reachability is no part of the measure: the tab still on the site after
+     * the wait is `F`, the rule not applied, an error page for the site named in the reason.
+     */
+    private fun dnrRedirects(label: String, url: String, landsOn: Regex, rule: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        backgroundView(row.id)?.let { bg -> extra.put("rulesets", probe(bg, DNR_RULESETS_PROBE, "__zenRulesets", scaled(8_000, factor))) }
+        val tab = createTab(url)
+        val started = SystemClock.uptimeMillis()
+        val landed = poll(scaled(30_000, factor), 700) { tabUrls()[tab]?.takeIf { landsOn.containsMatchIn(it) } }
+        val now = tabUrls()[tab] ?: ""
+        val view = runCatching { waitForView(tab) }.getOrNull()
+        val state = view?.let { v -> runCatching { json(tabEval(v, PAGE_OR_ERROR)) }.getOrNull() } ?: JSONObject()
+        extra.put("url", now.take(160)).put("waitedMs", SystemClock.uptimeMillis() - started).put("page", state)
+        view?.let { extra.put("console", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-dnr-redirect")
+        val rulesets = extra.optJSONObject("rulesets")?.let { r -> "enabled ${r.opt("enabled") ?: "?"}${r.optString("err").takeIf { it.isNotEmpty() && it != "null" }?.let { ", error $it" } ?: ""}" } ?: "no background view"
+        val errored = state.optBoolean("errorPage") || now.startsWith("zen://error")
+        when {
+            landed != null -> Grade("P", "$label: $url was sent to ${now.take(90)} by $rule at the intercept (rulesets $rulesets)", extra)
+            else -> Grade("F", "$label: the tab stayed on ${now.take(90)} for ${(SystemClock.uptimeMillis() - started) / 1000} s${if (errored) " (an error page: ${state.optString("code").ifEmpty { state.optString("text").take(60) }})" else ""} – $rule did not apply to the main-frame request (rulesets $rulesets)", extra)
+        }
+    }
 
     // --- the core checks of compat round 23 (ranks 571-600 by installs) --------------------------
 
@@ -13854,6 +14075,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val POLYFILLS_REPORT =
             "JSON.stringify({installed:(window.__zenExtStats&&window.__zenExtStats.polyfills)||null,withResolvers:typeof Promise.withResolvers})"
+        /** The background realm's cross-origin isolation and whether `SharedArrayBuffer` is a constructor there. */
+        private const val ISOLATION_REPORT =
+            "JSON.stringify({crossOriginIsolated:self.crossOriginIsolated===true,sharedArrayBuffer:typeof SharedArrayBuffer})"
         /** A document's size and content, shadow roots included. */
         private const val DOM_REPORT =
             "(function(){var r=document.body?document.body.getBoundingClientRect():{width:0,height:0};var deep=function(root){var n=0;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){n++;if(all[i].shadowRoot)n+=deep(all[i].shadowRoot)}return n};" +
@@ -15561,6 +15785,112 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
 
+        // --- the expressions of compat round 24 (ranks 601-630) ---------------------------------
+
+        /**
+         * PWA Install Block's removal of the page's manifest link: the fixture (`pwa.html`) links
+         * `/pwa.webmanifest` in its source, so the link's absence is the removal (nothing else
+         * strips a manifest link); its `document_start` content script's observer removes the
+         * first `link[rel=manifest]` at its callback and disconnects. The head script's
+         * `window.__pwa.hadManifest` is the ordering's witness (true when it ran before the
+         * observer's microtask, the usual order; false when the parser yielded first), not the
+         * measure; the paragraph the fixture appends 2 s in is read beside it (a mutation after
+         * the observer's work).
+         */
+        private const val PWA_BLOCK_MARKER =
+            "(function(){var link=document.querySelector('link[rel=\"manifest\"]');var p=window.__pwa||{};" +
+                "return JSON.stringify({pass:!link,present:!!link,hadManifest:p.hadManifest===true,late:p.late===true,links:document.querySelectorAll('link').length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,60)})})()"
+
+        /** ZIP Extractor's `open.html` (the tab its click opens): its `#formView` drawn (`hidden` until its script's `showView('formView')`) with the `#urlInput` address field and the `#openButton`; the `#statusRegion` text beside them (its `permissionView` is the fallback after a site refuses a download). */
+        private const val ZIP_EXTRACTOR_PAGE =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}var b=document.getElementById('openButton');var s=document.getElementById('statusRegion');" +
+                "return JSON.stringify({pass:shown('#formView')&&!!document.getElementById('urlInput')&&!!b,form:shown('#formView'),permission:shown('#permissionView'),urlInput:!!document.getElementById('urlInput'),openButton:b?(b.textContent||b.value||'').replace(/\\s+/g,' ').trim().slice(0,40):null,status:s?(s.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Martian's provider in the page world: `window.martian` (the provider class instance its
+         * page script sets, `connect` on it – the only global it adds); the Wallet Standard
+         * registration the fixture recorded read beside it.
+         */
+        private const val MARTIAN_PROVIDER =
+            "(function(){var m=window.martian||null;" +
+                "return JSON.stringify({pass:!!m&&typeof m.connect==='function',martian:typeof m,connect:typeof (m&&m.connect),connected:!!(m&&m._isConnected),keys:m?Object.keys(m).slice(0,8):[],standard:window.__wallet?window.__wallet.standard:null})})()"
+
+        /**
+         * Webpage Screenshot's menu over the page after the click: the bar its content script
+         * mounts in an open shadow root on a `div` host appended to the body – `#ws_all_buttons`
+         * with its buttons (`#ws_entire` the entire page, `#start_visible` the visible part,
+         * `#start_desktop`, `#edit_content`, `#ws_close`). The light DOM is searched when no
+         * body child carries the bar in a shadow root.
+         */
+        private const val WPS_MENU =
+            "(function(){var ids=['ws_entire','start_visible','start_desktop','edit_content','ws_close'];var root=null,host=null;var kids=document.body?document.body.children:[];for(var i=0;i<kids.length;i++){var sr=kids[i].shadowRoot;if(sr&&(sr.querySelector('#ws_all_buttons')||sr.querySelector('#ws_entire')||sr.querySelector('#start_visible'))){root=sr;host=kids[i];break}}if(!root&&document.querySelector('#ws_all_buttons'))root=document;var all=root?root.querySelector('#ws_all_buttons'):null;var found=root?ids.filter(function(i){return !!root.querySelector('#'+i)}):[];" +
+                "return JSON.stringify({pass:!!all&&found.length>=2,host:host?host.tagName.toLowerCase()+(host.id?'#'+host.id:''):null,shadow:!!(root&&root!==document),bar:!!all,buttons:found.join(' '),text:all?(all.textContent||'').replace(/\\s+/g,' ').trim().slice(0,100):null})})()"
+
+        /**
+         * Browser Lock's popup (`screen.html#/ppup`): its `/ppup` route drawn – its two buttons
+         * (lock the browser, open the settings; the en locale mixes languages, so their count
+         * and the route are the measure, the labels read beside them).
+         */
+        private const val BROWSER_LOCK_POPUP =
+            "(function(){var labels=[].slice.call(document.querySelectorAll('button, [role=button], a.btn')).map(function(b){return (b.innerText||b.textContent||'').replace(/\\s+/g,' ').trim()}).filter(function(t){return t.length>0});" +
+                "return JSON.stringify({pass:labels.length>=2&&/\\/ppup/.test(location.hash),labels:labels.slice(0,4),hash:location.hash,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Open SEO Stats' popup (`popup.html`): the SEO Stats tab its free level shows –
+         * `#frame_seostats` (`frame-seostats.html`, the extension's own origin) with its
+         * `.report_container` whose first `th` names the tab's host ("PagesIndexed: <host>",
+         * `sessionStorage.host` the popup's read of the active tab); the Google sign-in button
+         * its first launch raises and its `GetUserLevel()` read beside them.
+         */
+        private const val OPEN_SEO_POPUP =
+            "(function(){var f=document.getElementById('frame_seostats');var d=null;try{d=f?f.contentDocument:null}catch(e){}var rc=d?d.querySelector('.report_container'):null;var th=d?(d.querySelector('.report_container th')||d.querySelector('th')):null;var head=th?(th.textContent||'').replace(/\\s+/g,' ').trim():'';var host='';try{host=sessionStorage.getItem('host')||''}catch(e){}var url='';try{url=sessionStorage.getItem('url')||''}catch(e){}var level=null;try{level=typeof GetUserLevel==='function'?GetUserLevel():null}catch(e){level='err'}" +
+                "return JSON.stringify({pass:!!rc&&host.length>0&&head.indexOf(host)>=0,frame:!!f,doc:!!d,report:!!rc,head:head.slice(0,80),host:host.slice(0,60),url:url.slice(0,80),login:!!document.getElementById('btn_google_login'),level:level,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Web Highlights' sidebar mounted in the page after the click: its custom elements
+         * (`webhighlights-sidebar`, `webhighlights-app-view`, `webhighlights-toggle-button`)
+         * found through open shadow roots (four levels, three thousand nodes a root); the
+         * sidebar's width read beside them. The elements are defined in the content script's
+         * world, so `customElements.get` in the page world stays empty (`defined`). What the
+         * click did mount is read beside the verdict (round 24's BEFORE found none of the three
+         * on either lane with the module loaded and the click answered on 156): every tag of
+         * theirs (`webhighlights-*`, `theirs`), the body's own children (`body`), the open
+         * shadow hosts met (`hosts`) and the nodes walked (`nodes`).
+         */
+        private const val WEB_HIGHLIGHTS_SIDEBAR =
+            "(function(){var names=['webhighlights-sidebar','webhighlights-app-view','webhighlights-toggle-button'];var found={};var theirs={};var width=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if(tag==='webhighlights-sidebar'&&width===null)width=Math.round(n.getBoundingClientRect().width)}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));" +
+                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']),found:Object.keys(found),width:width,defined:typeof customElements!=='undefined'&&!!customElements.get('webhighlights-sidebar'),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
+
+        /**
+         * Black Menu's popup: its navigation list drawn – `.bm-ele-navlist__item` entries (its
+         * `bm-navitem` template's `role=menuitem` rows for Google's services), five or more,
+         * found through open shadow roots; its app root and sign-in button read beside them.
+         */
+        private const val BLACK_MENU_POPUP =
+            "(function(){var items=0;var labels=[];function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<4000;i++){var n=nodes[i];if(n.classList&&n.classList.contains('bm-ele-navlist__item')){items++;if(labels.length<6){var t=(n.getAttribute('aria-label')||n.getAttribute('title')||n.textContent||'').replace(/\\s+/g,' ').trim();if(t)labels.push(t.slice(0,30))}}if(n.shadowRoot)scan(n.shadowRoot,depth+1)}}scan(document,0);" +
+                "return JSON.stringify({pass:items>=5,items:items,labels:labels,app:!!document.querySelector('.bm-ele-app, .bm-app, .cjmd-container'),signIn:!!document.querySelector('.bm-ele-signinbutton'),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Custom Progress Bar's style on a watch page: the `<style data-custom-progressbar>` its
+         * content script appends (the stored `current` bar – the Starter "Pepperoni Pizza"
+         * seeded at install, `is_enable` true), its CSS naming `.ytp-play-progress`; the
+         * player's progress element with its computed background and the 3 s
+         * `data-custom-progressbar-bottom` style read beside them.
+         */
+        private const val CUSTOM_PROGRESS_BAR_STYLE =
+            "(function(){var s=document.querySelector('style[data-custom-progressbar]');var css=s?(s.textContent||''):'';var p=document.querySelector('.ytp-play-progress');var bg=null;try{bg=p?getComputedStyle(p).backgroundImage.slice(0,80):null}catch(e){}" +
+                "return JSON.stringify({pass:!!s&&/ytp-play-progress/.test(css),style:!!s,cssLength:css.length,progress:!!p,background:bg,bottom:!!document.querySelector('style[data-custom-progressbar-bottom]'),player:!!document.querySelector('#movie_player, .html5-video-player')})})()"
+
+        /**
+         * Note Board's `popup.html` (the tab its click opens; a page of its own, not a popup):
+         * its board (`#Postits`, the notes' container its script creates) drawn with its add
+         * button (`#botonPost`), its bottom panel (`#panelBotDiv`) or its board name
+         * (`#nombreTablon`); the notes' count read beside them.
+         */
+        private const val NOTE_BOARD_PAGE =
+            "(function(){function shown(s){var e=document.querySelector(s);if(!e)return false;var r=e.getBoundingClientRect();return r.width>0&&r.height>0}var board=document.getElementById('Postits');var name=document.getElementById('nombreTablon');" +
+                "return JSON.stringify({pass:!!board&&(shown('#botonPost')||shown('#panelBotDiv')||shown('#nombreTablon')),board:!!board,notes:board?board.children.length:0,addButton:shown('#botonPost'),panel:shown('#panelBotDiv'),boardName:name?((name.value||name.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40)):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
         // --- the expressions of compat round 23 (ranks 571-600) ---------------------------------
 
         /** Page Assist's Web UI (`options.html`, the tab its click opens by default) or its side panel (`sidepanel.html`): its chat composer (a textarea or a contenteditable) or its form drawn, with the page's text ("Select a model" over a local Ollama the phone has not). */
@@ -15618,6 +15948,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * itself – Chrome serves a web-accessible resource to a page with `Access-Control-Allow-
          * Origin: *` – reading the userscript header (`==UserScript==`) in the body. The
          * userscript's own effects are for its listed hosts alone, none on the fixture.
+         *
+         * The timeline read stands on the one-realm WebView alone, and by a divergence: Chrome's
+         * page timeline never holds this load (Blink precludes a resource fetched from an isolated
+         * world – the world running when the element was inserted – and a `chrome-extension://`
+         * response is not HTTP), and a WebView with isolated worlds is blind to it by the same
+         * code; there the row's read is the runtime's served-resource record, off
+         * [adguardExtraProbe] (compat round 24).
          */
         private const val ADGUARD_EXTRA_SCRIPT =
             "(function(){var rs=performance.getEntriesByType('resource').filter(function(e){return /userscript\\.js/.test(e.name)});if(!window.__agx&&rs.length){window.__agx={pending:true};fetch(rs[0].name).then(function(r){return r.text().then(function(t){window.__agx={ok:r.ok,status:r.status,bytes:t.length,userscript:/==UserScript==/.test(t)}})}).catch(function(e){window.__agx={error:String(e)}})}var a=window.__agx||null;" +

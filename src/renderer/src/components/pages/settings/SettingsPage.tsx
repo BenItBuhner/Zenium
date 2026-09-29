@@ -29,6 +29,7 @@ import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { TWO_PANE_MIN_WIDTH } from '../PageFrame'
 import { AddLanguagePage } from './AddLanguagePage'
+import { AddressReveal } from './AddressReveal'
 import { DesktopSettings } from './desktop'
 import { DrillInBackContext } from './drillIn'
 import { useFontsDraft } from './fontsDraft'
@@ -281,6 +282,7 @@ function PhoneSettings({
   land: (section: string, groupId: string) => void
 }): JSX.Element {
   const sheets = useSheetStack()
+  const root = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   // Ctrl+F / "Find in Page" on the Settings tab is "Find in Settings" (Firefox, Chrome): the
   // landing's field takes the focus – from inside a section the landing comes up first, as a
@@ -392,6 +394,7 @@ function PhoneSettings({
 
   return (
     <div
+      ref={root}
       className="zen-settings-phone"
       data-section={sectionId ?? 'landing'}
       data-page={subpageId ?? undefined}
@@ -442,6 +445,9 @@ function PhoneSettings({
         ctx={rowCtx}
         closeTop={sheets.closeTop}
       />
+      {/* §9.2's reveal of a shortened path or address: the hover card on a mouse or under the
+          keyboard, the row's hold sheet on touch (this layout draws sheets, whatever the host). */}
+      <AddressReveal root={root} hold={sheets.ctx.open} />
     </div>
   )
 }

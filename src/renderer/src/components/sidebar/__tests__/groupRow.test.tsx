@@ -724,17 +724,18 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     const record = vi.spyOn(SlideMotion.prototype, 'record')
     panel(grouped(), [folder()], 'desktop')
     expect(record).not.toHaveBeenCalled()
-    // The folding commit records nothing itself: the panel's FLIP measures there, the block
-    // set to its whole. Each frame after moves the layout under the rows below with no commit
-    // between – and re-records where they are, so the commit after finds them there rather
-    // than a block's height away.
+    // The fold records nothing at its commit: the panel's FLIP measures there, the block set to
+    // its whole – the one read before it is the panel's own (`SlideSnapshot`, before every
+    // commit that flips; MOT-33). Each frame after moves the layout under the rows below with
+    // no commit between – and re-records where they are, so the commit after finds them there
+    // rather than a block's height away.
     panel(grouped(), [folder({ collapsed: true })], 'desktop')
-    expect(record).not.toHaveBeenCalled()
+    expect(record).toHaveBeenCalledTimes(1)
     act(() => {
       frame()
       frame()
     })
-    expect(record).toHaveBeenCalledTimes(2)
+    expect(record).toHaveBeenCalledTimes(3)
     // The spring rests on a frame while the kept rows are still in the DOM. Were the layout to
     // hold the height there, the frame before their removal commits would paint the block
     // whole: the shell stands at the header's height, clipped, until that commit lets go.
@@ -760,10 +761,11 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     // A commit at rest records nothing more.
     panel(grouped(), [folder({ collapsed: true })], 'desktop')
     expect(record).toHaveBeenCalledTimes(foldFrames)
-    // Resting open, the layout holds the whole in that very frame: nothing to hold for.
+    // Resting open, the layout holds the whole in that very frame: nothing to hold for. The
+    // unfolding commit's one read is the panel's, before it.
     record.mockClear()
     panel(grouped(), [folder()], 'desktop')
-    expect(record).not.toHaveBeenCalled()
+    expect(record).toHaveBeenCalledTimes(1)
     let open: { height: string; folding: boolean; rows: string[] } | null = null
     act(() => {
       for (let i = 0; i < 600 && frames.size; i++) {

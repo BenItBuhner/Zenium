@@ -12,7 +12,9 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
  *     `auxclick`, `contextmenu`) are swallowed, so a second anchor's first press only closes
  *     the open popover and its second press opens the new one, and the open anchor's own press
  *     closes its popover without reopening it. Nothing beneath a popover ever receives the press
- *     that dismissed it.
+ *     that dismissed it. The press's `click` counts whenever it comes: with the release for a
+ *     mouse, a task or more later for a touch or a pen, whose click is the browser's tap gesture
+ *     (see `TAP_CLICK_CEILING_MS`).
  *   - A scroll anywhere outside the popovers – a wheel turned over the frame or a bar, a chrome
  *     list scrolling – and a window resize close them. A Ctrl+wheel is a zoom, not a scroll,
  *     and leaves them be.
@@ -204,23 +206,79 @@ export function insideTopPopover(node: Node): boolean {
 let installed = false
 /** The press that dismissed a popover is being swallowed through to its `click`. */
 let swallowing = false
+/**
+ * A touch or a pen has been released and the press's `click` is still to come: the swallow waits
+ * for it (bounded by `TAP_CLICK_CEILING_MS`) instead of ending on the release's timer.
+ */
+let tapClickPending = false
 let swallowTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * How long after a touch or pen release the swallow waits for the press's `click` before giving
+ * it up as not coming. A mouse's click is dispatched in the same task as its `pointerup`, so a
+ * 0 ms timer armed at the release outlives it; a tap's click is the browser's gesture, dispatched
+ * from its gesture detector in a later task – Electron 44 (Chromium 152) measured for W8-F20:
+ * 0.3–1.2 ms after `pointerup` on an idle main thread, and after a 0 ms timer armed at
+ * `pointerup` in 39 of 40 taps; with the main thread busy (the popover's close re-rendering) it
+ * lands as soon as the thread frees, input ahead of a due timer. Nothing in Chromium's detector
+ * holds a tap's click longer than the double-tap window it waits out where a double tap could
+ * zoom (300 ms on Android, the platform's `ViewConfiguration`), and the chrome root's
+ * `touch-action: manipulation` closes that window anyway – the tap is confirmed at once. The
+ * ceiling is for a release that owes no click and sent no `pointercancel` – a finger that moved
+ * past the slop where nothing scrolls, a long press the platform turned into its own gesture –
+ * so a swallow never stays armed for a click that is not coming: a second, over three of those
+ * windows with room for a slow device (Android's tablet run saw the » chip's panel back 1.75 s
+ * after the tap on the emulator, its open animation included, and its local guard used the
+ * same second). Nothing legitimate is lost inside it: the next `pointerdown` ends the swallow
+ * first, and a keyboard's click passes through it.
+ */
+export const TAP_CLICK_CEILING_MS = 1000
 
 function endSwallow(): void {
   swallowing = false
+  tapClickPending = false
   if (swallowTimer !== null) clearTimeout(swallowTimer)
   swallowTimer = null
 }
 
 function endSwallowSoon(): void {
   if (swallowTimer !== null) clearTimeout(swallowTimer)
-  // The `click` (or `auxclick`, `contextmenu`) of a press is dispatched with its release, before
-  // any timer: whatever the release did not produce is not coming.
+  // A mouse's `click` (or `auxclick`, `contextmenu`) is dispatched with its release, before any
+  // timer: whatever the release did not produce is not coming. A cancelled pointer of any kind
+  // produces no click either.
   swallowTimer = setTimeout(() => {
     endSwallow()
     syncListeners()
   }, 0)
 }
+
+/**
+ * A touch or a pen released: its `click` is the tap gesture's, a task or more away. Keep
+ * swallowing until it has been swallowed, or until `TAP_CLICK_CEILING_MS` says it is not coming.
+ */
+function awaitTapClick(): void {
+  if (swallowTimer !== null) clearTimeout(swallowTimer)
+  tapClickPending = true
+  swallowTimer = setTimeout(() => {
+    endSwallow()
+    syncListeners()
+  }, TAP_CLICK_CEILING_MS)
+}
+
+const pointerTypeOf = (e: Event): string => (e as Partial<PointerEvent>).pointerType ?? ''
+/** A touch or a pen: the pointers whose click is the tap gesture's, not the release's. */
+const isTapPointer = (e: Event): boolean => {
+  const type = pointerTypeOf(e)
+  return type === 'touch' || type === 'pen'
+}
+const CLICKS = new Set(['click', 'auxclick', 'contextmenu'])
+/**
+ * Whether a click has a pointer behind it. Chromium's click is a `PointerEvent` naming its
+ * pointer; a keyboard's (Enter or Space on the focused control) or a script's `click()` has
+ * `pointerType` '' and `detail` 0 – nobody's remainder.
+ */
+const fromPointer = (e: Event): boolean =>
+  pointerTypeOf(e) !== '' || (e instanceof MouseEvent && e.detail > 0)
 
 function onPointerDown(e: PointerEvent): void {
   // A new press: whatever the last consumed press did not produce is over.
@@ -263,9 +321,28 @@ function onPointerDown(e: PointerEvent): void {
 /** The rest of a consumed press: none of it reaches what lies under the popover it dismissed. */
 function onSwallowed(e: Event): void {
   if (!swallowing) return
+  const click = CLICKS.has(e.type)
+  // While the swallow waits for a tap's click, a click that is no pointer's – Enter or Space on
+  // a focused control, a script's `click()` – is not the press's remainder: it passes, and the
+  // wait goes on.
+  if (tapClickPending && click && !fromPointer(e)) return
   e.preventDefault()
   e.stopPropagation()
-  if (e.type === 'pointerup' || e.type === 'pointercancel') endSwallowSoon()
+  if (tapClickPending) {
+    // Waiting for the tap's click: only that click ends the wait (the next `pointerdown` and the
+    // ceiling aside) – another pointer's release or cancel is not this press's. Swallowed, the
+    // press is over, and the listeners come off unless a popover is open behind them.
+    if (click) {
+      endSwallow()
+      syncListeners()
+    }
+    return
+  }
+  // A mouse's click came with this release (or is not coming); a touch's or a pen's is still on
+  // its way from the gesture detector. No click follows a cancelled pointer of any kind – a
+  // finger that scrolled, a press the platform took.
+  if (e.type === 'pointerup' && isTapPointer(e)) awaitTapClick()
+  else if (e.type === 'pointerup' || e.type === 'pointercancel') endSwallowSoon()
 }
 
 function onScroll(e: Event): void {

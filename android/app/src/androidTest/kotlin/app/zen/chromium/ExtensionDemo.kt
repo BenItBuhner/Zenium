@@ -1984,7 +1984,7 @@ class ExtensionDemo {
         val list = JSONArray()
         instrumentation.runOnMainSync {
             for (unit in host.extensions.scriptUnits())
-                list.put(JSONObject().put("origins", JSONArray(unit.origins.toList())).put("chars", unit.script.length).put("world", unit.world))
+                list.put(JSONObject().put("origins", JSONArray(unit.origins.toList())).put("chars", unit.chars).put("stored", unit.stored).put("world", unit.world))
         }
         return list
     }

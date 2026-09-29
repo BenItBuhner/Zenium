@@ -603,4 +603,228 @@ class UnitCompilerTest {
         assertEquals(listOf("*"), compiled[0].origins)
         assertNull(compiled[0].world)
     }
+
+    // --- The unit store (compat round 24, R24-1) ---
+
+    /** A unit of `chars` inline characters under `key` (its estimate is the text plus the fixed room, over `STORE_LINE` from a few thousand). */
+    private fun inlineUnit(key: String, chars: Int, config: String = "{}", css: Boolean = false): org.json.JSONObject =
+        org.json.JSONObject().put("key", key).put("origins", JSONArray(listOf("https://example.com"))).put("world", org.json.JSONObject.NULL)
+            .put("config", config)
+            .put("groups", JSONArray().put(org.json.JSONObject().put("ext", id).put("index", 0).put("js", JSONArray(listOf(UnitCompiler.INLINE_CODE + "var big = '" + "✓x".repeat(chars / 2) + "';"))).put("isolation", "with")))
+            .put("css", if (css) JSONArray().put(org.json.JSONObject().put("ext", id).put("path", "style.css")) else JSONArray())
+
+    private fun storeRoot(): java.io.File = java.nio.file.Files.createTempDirectory("ext-units-test").toFile()
+
+    /** The compiler's own directories under the root (`<owner>-<n>`). */
+    private fun dirsOf(root: java.io.File, owner: String): List<java.io.File> = root.listFiles().orEmpty().filter { it.isDirectory && it.name.startsWith("$owner-") }.sortedBy { it.name }
+
+    @Test
+    fun `a unit of the store's size is written to a file as it is assembled and holds no script - its text read back is the sized assembly's - and a smaller unit is held as before`() {
+        val root = storeRoot()
+        try {
+            val compiler = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val plan = JSONArray().put(inlineUnit("big", 40_000, css = true)).put(inlineUnit("small", 10, css = true))
+            val compiled = compiler.compile(id, "1.0.0", plan, true, read, size)
+            assertEquals(2, compiled.size)
+            val (big, small) = compiled
+            // The big unit: a file of the compiler's own directory, no string of it, its count exact.
+            assertTrue(big.file != null && big.file!!.isFile)
+            assertEquals("", big.script)
+            assertTrue(big.chars > 40_000)
+            // The count is the text's but for the quoting bound on the CSS key's one `/` (Android's `quote` escapes it, the public one's does not).
+            assertTrue("presized ${big.presized} for ${big.chars}", big.presized >= big.chars && big.presized - big.chars <= 1)
+            assertFalse(big.grown)
+            assertEquals(1, dirsOf(root, "t").size)
+            assertEquals(dirsOf(root, "t")[0], big.file!!.parentFile)
+            // What comes back is what a compiler without a store assembles for the same plan.
+            val held = UnitCompiler { "/*boot*/" }.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000, css = true)), true, read, size)[0]
+            assertEquals(held.script, big.text())
+            assertEquals(held.script.length, big.chars)
+            assertTrue(big.text()!!.contains("✓x✓x"))
+            assertTrue(big.text()!!.contains("body{color:red}"))
+            // The small unit: held, its text its script.
+            assertNull(small.file)
+            assertTrue(small.script.isNotEmpty())
+            assertEquals(small.script, small.text())
+            assertEquals(small.script.length, small.chars)
+            // The instrumentation counts the stored unit apart and in no heap figure.
+            val memory = compiler.memoryOf(id)
+            assertEquals(2, memory.getInt("units"))
+            assertEquals(1, memory.getInt("storedUnits"))
+            assertEquals(big.chars.toLong(), memory.getLong("storedChars"))
+            assertEquals(small.script.length.toLong(), memory.getLong("unitChars"))
+            assertEquals(1, memory.getInt("wideUnits"))
+            // Without a store the same line keeps every unit in memory.
+            val inMemory = UnitCompiler(fileUnitChars = STORE_LINE) { "/*boot*/" }.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)), true, read, size)[0]
+            assertNull(inMemory.file)
+            assertTrue(inMemory.script.length > 40_000)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a stored unit keeps its file through a cached re-plan, gets a new one when its inputs change, and loses it when the plan drops it, the extension is forgotten or the compiler closes`() {
+        val root = storeRoot()
+        try {
+            val compiler = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val first = compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)), true, read, size)[0]
+            val file = first.file!!
+            assertTrue(file.isFile)
+            // The same plan: cached, the same file, still there.
+            val again = compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)), true, read, size)[0]
+            assertTrue(again.cached)
+            assertEquals(file, again.file)
+            assertEquals(first.chars, again.chars)
+            assertTrue(file.isFile)
+            assertEquals(first.text(), again.text())
+            // The config changed: the old file goes, a new one is written.
+            val changed = compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000, config = """{"k":2}""")), true, read, size)[0]
+            assertFalse(changed.cached)
+            assertNotEquals(file, changed.file)
+            assertFalse(file.exists())
+            assertTrue(changed.file!!.isFile)
+            assertTrue(changed.text()!!.contains(""""k":2"""))
+            // The plan without it: its file goes with it.
+            compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("other", 40_000)), true, read, size)
+            assertFalse(changed.file!!.exists())
+            assertEquals(1, compiler.unitsOf(id).size)
+            val other = compiler.unitsOf(id)[0].file!!
+            assertTrue(other.isFile)
+            // A new version starts from nothing: the old version's files go (a unit of the new
+            // version with the same key and inputs would be written to the same name again).
+            val v2 = compiler.compile(id, "2.0.0", JSONArray().put(inlineUnit("renamed", 40_000)), true, read, size)[0]
+            assertFalse(other.exists())
+            assertTrue(v2.file!!.isFile)
+            assertNotEquals(other, v2.file)
+            // Forgotten: the file goes.
+            compiler.forget(id)
+            assertFalse(v2.file!!.exists())
+            // Closed: every file and the compiler's directory go, the stored ones counted.
+            val last = compiler.compile(id, "2.0.0", JSONArray().put(inlineUnit("big", 40_000)).put(inlineUnit("small", 10)), true, read, size)
+            val dir = last[0].file!!.parentFile!!
+            assertTrue(dir.isDirectory)
+            val released = compiler.close()
+            assertEquals(2, released.units)
+            assertEquals(1, released.storedUnits)
+            assertEquals(last.sumOf { it.chars.toLong() }, released.unitChars)
+            assertFalse(last[0].file!!.exists())
+            assertFalse(dir.exists())
+            assertTrue(root.isDirectory)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `at its first compile the compiler sweeps another owner's directories from the store - a process that died with its units - and leaves this owner's and the root's files`() {
+        val root = storeRoot()
+        try {
+            val dead = java.io.File(root, "p123-1").also { it.mkdirs(); java.io.File(it, "old.js").writeText("x") }
+            val sibling = java.io.File(root, "t-77").also { it.mkdirs(); java.io.File(it, "live.js").writeText("y") }
+            val stray = java.io.File(root, "note.txt").also { it.writeText("z") }
+            val compiler = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            // Nothing is touched at construction (the main thread builds the runtime).
+            assertTrue(dead.isDirectory)
+            compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("small", 10)), true, read, size)
+            assertFalse(dead.exists())
+            assertTrue(java.io.File(sibling, "live.js").isFile)
+            assertTrue(stray.isFile)
+            compiler.close()
+            assertTrue(java.io.File(sibling, "live.js").isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a stored unit whose file is gone answers no text, a held unit still its own, and a refused unit none`() {
+        val root = storeRoot()
+        try {
+            val compiler = UnitCompiler(budgetChars = 100_000, store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val plan = JSONArray().put(inlineUnit("big", 40_000)).put(inlineUnit("small", 10)).put(inlineUnit("huge", 200_000))
+            val (big, small, huge) = compiler.compile(id, "1.0.0", plan, true, read, size)
+            assertTrue(big.file!!.delete())
+            assertNull(big.text())
+            val gone = big.read()
+            assertTrue(gone is UnitCompiler.Read.Gone)
+            assertEquals(big.file, (gone as UnitCompiler.Read.Gone).file)
+            assertEquals(small.script, small.text())
+            assertTrue(huge.refused != null)
+            assertNull(huge.text())
+            assertTrue(huge.read() === UnitCompiler.Read.Refused)
+            assertNull(huge.file)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a stored unit's read says whether it came from the disk or the soft hold - the hold is counted apart, can be dropped, and outlives the file until it is`() {
+        val root = storeRoot()
+        try {
+            val compiler = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val (big, small) = compiler.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)).put(inlineUnit("small", 10)), true, read, size)
+            // Nothing is held before the first read: the compile wrote the file and kept no string.
+            assertFalse(big.softHeld)
+            assertEquals(0, compiler.memoryOf(id).getInt("softHeldUnits"))
+            // The first read decodes the file and holds the text softly; the next takes the hold.
+            val first = big.read() as UnitCompiler.Read.Text
+            assertTrue(first.fromDisk)
+            assertTrue(big.softHeld)
+            val memory = compiler.memoryOf(id)
+            assertEquals(1, memory.getInt("storedUnits"))
+            assertEquals(1, memory.getInt("softHeldUnits"))
+            assertEquals(big.chars.toLong(), memory.getLong("softHeldChars"))
+            val second = big.read() as UnitCompiler.Read.Text
+            assertFalse(second.fromDisk)
+            assertTrue(first.text === second.text)
+            // A held unit's read is its own string, never from the disk and never soft-held.
+            val held = small.read() as UnitCompiler.Read.Text
+            assertFalse(held.fromDisk)
+            assertTrue(small.script === held.text)
+            assertFalse(small.softHeld)
+            assertEquals(1, compiler.memoryOf(id).getInt("softHeldUnits"))
+            // The hold dropped (what the collector does under pressure): the next read is from the disk again.
+            big.dropSoftText()
+            assertFalse(big.softHeld)
+            assertTrue((big.read() as UnitCompiler.Read.Text).fromDisk)
+            assertEquals(first.text, big.text())
+            // The soft-held text answers after the file is gone (the same text); the dropped hold does not.
+            assertTrue(big.file!!.delete())
+            assertTrue(big.read() is UnitCompiler.Read.Text)
+            big.dropSoftText()
+            assertTrue(big.read() is UnitCompiler.Read.Gone)
+            assertNull(big.text())
+            assertEquals(0, compiler.memoryOf(id).getInt("softHeldUnits"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `two compilers of one owner keep their own directories, the way two runtimes of one process do`() {
+        val root = storeRoot()
+        try {
+            val a = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val b = UnitCompiler(store = root, owner = "t", fileUnitChars = STORE_LINE) { "/*boot*/" }
+            val ua = a.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)), true, read, size)[0]
+            val ub = b.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)), true, read, size)[0]
+            assertNotEquals(ua.file!!.parentFile, ub.file!!.parentFile)
+            assertEquals(2, dirsOf(root, "t").size)
+            a.close()
+            assertFalse(ua.file!!.exists())
+            assertTrue(ub.file!!.isFile)
+            assertEquals(UnitCompiler { "/*boot*/" }.compile(id, "1.0.0", JSONArray().put(inlineUnit("big", 40_000)), true, read, size)[0].script, ub.text())
+            b.close()
+            assertEquals(0, dirsOf(root, "t").size)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private companion object {
+        /** A store line the inline units straddle: a 40 000 character unit goes to the store, a unit of a few dozen (its estimate a few thousand with the fixed room) is held. */
+        const val STORE_LINE = 20_000
+    }
 }

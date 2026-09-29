@@ -5539,10 +5539,12 @@ function shortcutsSection({ state }: SectionContext): RowGroup[] {
 
 /**
  * Which browser the OS hands web links to, and the request to make it Zenium: a status row
- * while the OS is asked, the ✓ once Zenium holds the role, the Make default button otherwise –
- * on Windows with the note that it opens Windows Settings, where the user presses Set default.
- * `state.defaultBrowser` is what the core's DefaultBrowserService refreshes at start, on window
- * focus and when the OS answers.
+ * while the OS is asked, the ✓ once Zenium holds the role, the Set as default button otherwise
+ * (§9.29's one name for the act, the strip's and the prompt's word; Chrome's row says Make
+ * default, kept as a search alias) – on Windows with the note that it opens Windows Settings,
+ * where the user presses Set default (Windows' own button, its label kept). `state.defaultBrowser`
+ * is what the core's DefaultBrowserService refreshes at start, on window focus and when the OS
+ * answers.
  */
 function defaultBrowserSection({ state }: SectionContext): RowGroup[] {
   const isDefault = state.defaultBrowser.isDefault
@@ -5568,10 +5570,10 @@ function defaultBrowserSection({ state }: SectionContext): RowGroup[] {
             label: 'Zenium is not your default browser',
             description:
               state.platform === 'win32'
-                ? 'Make default opens Windows Settings, where you press Set default.'
+                ? 'Set as default opens Windows Settings, where you press Set default.'
                 : 'Open links from other apps in Zenium.',
-            keywords: ['default browser', 'links', 'make default'],
-            button: 'Make default',
+            keywords: ['default browser', 'links', 'set as default', 'make default'],
+            button: 'Set as default',
             onPress: () => void requestDefaultBrowser('settings')
           }
         : {

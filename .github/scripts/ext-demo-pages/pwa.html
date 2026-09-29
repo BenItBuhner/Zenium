@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Installable Page</title>
+    <link rel="manifest" href="/pwa.webmanifest" />
+    <script>
+      // The page's own word that it carried a manifest link, read as the parser left it. A
+      // document_start observer's callback runs at the microtask checkpoint after this script
+      // (earlier only when the parser yielded first), so the flag witnesses the ordering; the
+      // link's absence, from a source that carries it, is the removal itself.
+      window.__pwa = { hadManifest: !!document.querySelector('link[rel="manifest"]'), late: false }
+    </script>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Installable Page</h1>
+    <p>This page links a web app manifest, so a browser may offer to install it.</p>
+    <script>
+      // A late mutation, as a page's own banners and lazy content make: an observer attached
+      // after the head was parsed still gets a childList record to act on.
+      setTimeout(function () {
+        var p = document.createElement('p')
+        p.id = 'late'
+        p.textContent = 'Loaded.'
+        document.body.appendChild(p)
+        window.__pwa.late = true
+      }, 2000)
+    </script>
+  </body>
+</html>

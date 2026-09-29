@@ -66,17 +66,17 @@ export function describeDefaultBrowserRequest(platform: Platform): string {
 }
 
 /**
- * "Make default" on the strip: the prompt goes up first and says what the OS will do; its own
- * "Make default" runs the request (`requestDefaultBrowser`) and takes the strip down.
+ * "Set as default" on the strip: the prompt goes up first and says what the OS will do; its own
+ * "Set as default" runs the request (`requestDefaultBrowser`) and takes the strip down.
  */
 export function askDefaultBrowser(source: DefaultBrowserRequestSource): void {
   uiStore.set({ defaultBrowserAsk: source })
 }
 
 /**
- * "Make default" from the prompt or the Settings section: the core asks the OS and re-reads the
- * role; the status row repaints on its own. `false` is a refusal on the spot (nothing registered,
- * the system tool failed), the one case the user needs a word about.
+ * "Set as default" from the prompt, or the Settings row's button: the core asks the OS and
+ * re-reads the role; the status row repaints on its own. `false` is a refusal on the spot
+ * (nothing registered, the system tool failed), the one case the user needs a word about.
  */
 export async function requestDefaultBrowser(source: DefaultBrowserRequestSource): Promise<void> {
   const result = await cmd('defaultBrowser.request', { source }).catch(() => false)

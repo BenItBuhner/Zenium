@@ -103,7 +103,7 @@ import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
 import { ConnectivityService } from './connectivity'
-import { ManagedService } from './managed'
+import { MANAGED_MENU_WAIT_MS, ManagedService } from './managed'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
 import { BackgroundWork } from './background/work'
@@ -3709,8 +3709,13 @@ export class Browser {
             mediaHubFolded: Boolean(mediaHubFolded)
           })
         // The first build reads the host's app-restrictions bundle (the "Managed Browser" row,
-        // TB-13) and no later one does; hosts without a bundle never wait.
-        return this.managed.known() ? show() : this.managed.ensure().then(show)
+        // TB-13) and no later one does; hosts without a bundle never wait. The one wait is
+        // bounded: a host that has not answered within MANAGED_MENU_WAIT_MS shows the menu
+        // unmanaged, no later build waits, and the answer, kept when it lands, is on the next
+        // opening.
+        return this.managed.waits()
+          ? this.managed.ensureWithin(MANAGED_MENU_WAIT_MS).then(show)
+          : show()
       },
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),

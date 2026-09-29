@@ -143,6 +143,11 @@ function RowDialog({
       return <ItemDialog row={row as ItemRow} under={under} ctx={ctx} close={close} />
     case 'detail':
       return <ItemDialog row={row as DetailRow} under={under} ctx={ctx} close={close} />
+    case 'address':
+      // The desktop draws no address dialog: a shortened path's reveal there is the §9.31 hover
+      // card (`AddressReveal`), and the hold sheet is the sheet chassis's (`sheets.tsx`). A
+      // request that reaches this stack does not fit (below) and has closed itself.
+      return null
   }
 }
 
@@ -160,6 +165,8 @@ function fits(request: SheetRequest, row: SettingsRow): boolean {
       return row.kind === 'item'
     case 'detail':
       return row.kind === 'detail'
+    case 'address':
+      return false
   }
 }
 

@@ -74,12 +74,35 @@ export interface EventSpec {
    * for the events with a blocking variant). The shim validates registrations against the list.
    */
   extraInfoSpec?: readonly string[]
+  /**
+   * A declarative event (`declarativeContent.onPageChanged`): its `addRules(rules)`,
+   * `removeRules(ids)` and `getRules(ids)` route to the host as `<namespace>.addRules(<event>,
+   * rules)` and the like, where every other event's rule members answer inertly (Chrome defines
+   * them on every `chrome.Event`; only declarative events have a registry behind them).
+   */
+  declarative?: true
+}
+
+/** One schema-made constructor (`NamespaceSpec.classes`): its `instanceType` word and the properties its type allows. */
+export interface ClassSpec {
+  type: string
+  properties: readonly string[]
 }
 
 export interface NamespaceSpec {
   methods: Record<string, MethodSpec>
   events: Record<string, EventSpec>
   constants?: Record<string, number | string | Record<string, string>>
+  /**
+   * Constructors the namespace defines (`declarativeContent.PageStateMatcher`,
+   * `declarativeContent.ShowAction`): name → the `instanceType` word Chrome's schema-made
+   * constructors stamp on the object and the properties the type's schema allows.
+   * `new chrome.<namespace>.<Name>(details)` copies `details`' own properties onto the
+   * instance, sets `instanceType` over them and refuses a property the schema does not name
+   * (`TypeError: Invalid invocation: Unexpected property: '<name>'.`, the binding's words) –
+   * what Chrome's give, and what crosses to the host inside a rule.
+   */
+  classes?: Readonly<Record<string, ClassSpec>>
   /** Only exists in this manifest version (`action` is MV3, `browserAction` MV2). */
   manifestVersion?: 2 | 3
   /**
@@ -503,6 +526,46 @@ export const API_SPEC: ApiSpec = {
         OVERWRITE: 'overwrite'
       }
     }
+  },
+  // `chrome.declarativeContent`: one declarative event whose rules the host keeps and evaluates
+  // against every tab's page (`core/extensions/api/declarativeContent.ts`), and the constructors
+  // a rule is written with (`new PageStateMatcher({ pageUrl })`, `new ShowAction()`). Electron
+  // has none of it; the engine made no namespace. Story Saver disables its action at install and
+  // shows it by a rule on its three sites; its worker threw at `chrome.declarativeContent.
+  // onPageChanged` before the namespace existed (Android compat round 24).
+  declarativeContent: {
+    methods: {},
+    events: { onPageChanged: { declarative: true } },
+    // `ShowPageAction` (deprecated for `ShowAction` in Chrome 97) constructs the `ShowAction`
+    // word: Chrome's renderer maps both names to it, and its action factory knows no other
+    // (`declarative_content_hooks_delegate.cc`, `declarative_content_action.cc`).
+    classes: {
+      PageStateMatcher: {
+        type: 'declarativeContent.PageStateMatcher',
+        properties: ['instanceType', 'pageUrl', 'css', 'isBookmarked']
+      },
+      ShowAction: { type: 'declarativeContent.ShowAction', properties: ['instanceType'] },
+      ShowPageAction: { type: 'declarativeContent.ShowAction', properties: ['instanceType'] },
+      SetIcon: { type: 'declarativeContent.SetIcon', properties: ['instanceType', 'imageData'] },
+      RequestContentScript: {
+        type: 'declarativeContent.RequestContentScript',
+        properties: ['instanceType', 'css', 'js', 'allFrames', 'matchAboutBlank']
+      }
+    },
+    constants: {
+      PageStateMatcherInstanceType: {
+        DECLARATIVE_CONTENT_PAGE_STATE_MATCHER: 'declarativeContent.PageStateMatcher'
+      },
+      ShowActionInstanceType: { DECLARATIVE_CONTENT_SHOW_ACTION: 'declarativeContent.ShowAction' },
+      ShowPageActionInstanceType: {
+        DECLARATIVE_CONTENT_SHOW_PAGE_ACTION: 'declarativeContent.ShowPageAction'
+      },
+      SetIconInstanceType: { DECLARATIVE_CONTENT_SET_ICON: 'declarativeContent.SetIcon' },
+      RequestContentScriptInstanceType: {
+        DECLARATIVE_CONTENT_REQUEST_CONTENT_SCRIPT: 'declarativeContent.RequestContentScript'
+      }
+    },
+    permissions: ['declarativeContent']
   },
   // The engine's own binding is inert without Chrome's rules service (and the blocking engine's
   // hook disables the native path anyway), so every member is replaced by the host's, backed by

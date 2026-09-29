@@ -10,8 +10,8 @@ import { viewportStore } from '@renderer/lib/formFactor'
 
 /*
  * The desktop's default-browser surfaces on v2 (styling pass 5): the strip under the toolbar –
- * a window surface with no glyph, Not now then the primary Make default (§9.11, §9.29) – and
- * the prompt its Make default raises before the OS hand-off (`AskDialog` in
+ * a window surface with no glyph, Not now then the primary Set as default (§9.11, §9.29) – and
+ * the prompt its Set as default raises before the OS hand-off (`AskDialog` in
  * DefaultBrowserPrompt.tsx): the §9.23 composition on the frame's dialog host with the app icon
  * at 48 over the title block, one sentence per OS, focus on the primary, Escape closing it and
  * giving focus back to the strip's button, the primary running the request and taking the
@@ -110,7 +110,7 @@ afterEach(() => {
 })
 
 describe('the default-browser strip', () => {
-  it('is a window surface with the sentence, no glyph, and Not now before the primary Make default', () => {
+  it('is a window surface with the sentence, no glyph, and Not now before the primary Set as default (§9.29: the one name for the act)', () => {
     render(view(state('linux')))
     const strip = container.querySelector<HTMLElement>('.zen-frame-strip')!
     expect(strip.getAttribute('data-surface')).toBe('window')
@@ -119,14 +119,14 @@ describe('the default-browser strip', () => {
     expect(strip.querySelector('.zen-frame-strip-text')!.textContent).toBe(
       'Make Zenium your default browser'
     )
-    const [notNow, makeDefault] = buttons(strip)
+    const [notNow, setDefault] = buttons(strip)
     expect(buttons(strip)).toHaveLength(2)
     expect(notNow.textContent).toBe('Not now')
     expect(notNow.classList.contains('zen-v2-button')).toBe(true)
     expect(notNow.hasAttribute('data-primary')).toBe(false)
-    expect(makeDefault.textContent).toBe('Make default')
-    expect(makeDefault.classList.contains('zen-v2-button')).toBe(true)
-    expect(makeDefault.hasAttribute('data-primary')).toBe(true)
+    expect(setDefault.textContent).toBe('Set as default')
+    expect(setDefault.classList.contains('zen-v2-button')).toBe(true)
+    expect(setDefault.hasAttribute('data-primary')).toBe(true)
   })
 
   it('remembers Not now for this feature release and asks nothing of the OS', () => {
@@ -139,7 +139,7 @@ describe('the default-browser strip', () => {
     expect(uiStore.get().defaultBrowserAsk).toBeNull()
   })
 
-  it('raises the prompt on Make default instead of handing off blind', () => {
+  it('raises the prompt on Set as default instead of handing off blind', () => {
     render(view(state('linux')))
     click(buttons(container.querySelector('.zen-frame-strip')!)[1])
     expect(uiStore.get().defaultBrowserAsk).toBe('banner')
@@ -181,12 +181,13 @@ describe('the desktop prompt', () => {
     )
     expect(d.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
     expect(d.getAttribute('aria-describedby')).toBe(description.id)
-    const [notNow, makeDefault] = buttons(d)
+    const [notNow, setDefault] = buttons(d)
     expect(buttons(d)).toHaveLength(2)
     expect(notNow.textContent).toBe('Not now')
-    expect(makeDefault.textContent).toBe('Make default')
-    expect(makeDefault.hasAttribute('data-primary')).toBe(true)
-    expect(document.activeElement).toBe(makeDefault)
+    // The strip's word again (§9.29): one flow, one name for the act.
+    expect(setDefault.textContent).toBe('Set as default')
+    expect(setDefault.hasAttribute('data-primary')).toBe(true)
+    expect(document.activeElement).toBe(setDefault)
     // Up over the page's picture: the host hides the view meanwhile.
     expect(uiStore.get().defaultBrowserPrompt).toBe(true)
   })
@@ -239,7 +240,7 @@ describe('the desktop prompt', () => {
     expect(container.querySelector('.zen-frame-strip')).not.toBeNull()
   })
 
-  it('runs the request from the strip and takes the strip down for this release on Make default', async () => {
+  it('runs the request from the strip and takes the strip down for this release on Set as default', async () => {
     render(view(state('linux')))
     click(buttons(container.querySelector('.zen-frame-strip')!)[1])
     await settle()

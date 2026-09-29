@@ -9,6 +9,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ADOPT_RACE,
+  BrowserProcess,
   DEFAULTS,
   ENDPOINT_PHASE_SAID,
   FIXTURE,
@@ -1749,5 +1750,196 @@ describe('main', () => {
     } finally {
       stderr.mockRestore()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The ways out of main() after a launch (W8-H5): a browser the script started is quit on every
+// one of them – the wait for the server that throws included – unless --keep asks otherwise
+// ---------------------------------------------------------------------------------------------
+
+/** A browser process for main()'s seam: launch() and quit() are recorded, nothing is spawned. */
+class FakeBrowser {
+  constructor(options) {
+    this.options = options
+    this.launched = false
+    this.pid = null
+    this.events = []
+  }
+
+  launch() {
+    this.events.push('launch')
+    this.pid = 4242
+    this.launched = true
+  }
+
+  async quit() {
+    this.events.push('quit')
+    this.pid = null
+  }
+}
+
+const EXE = '/opt/zenium/zenium'
+const DEADLINE_ERROR =
+  'no MCP server answered within 90000 ms: agent.json says the server is not running – the bind failed: 127.0.0.1:22148 (EADDRINUSE): Port 22148 is already in use – pick another port in Settings → AI Agents'
+
+describe('main: the browser it launched, on the ways out', () => {
+  const dirs = []
+  const profile = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-soak-profile-'))
+    dirs.push(dir)
+    return dir
+  }
+  let stderr
+  afterEach(() => {
+    stderr?.mockRestore()
+    stderr = null
+    for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
+  })
+  const trail = () => stderr.mock.calls.map((c) => String(c[0])).join('')
+
+  it('quits the browser it launched when the wait for the server throws, and the wait’s error is the one that comes out', async () => {
+    // No agent.json on the profile: nothing answers, --exe names the build, so main() launches.
+    const dir = profile()
+    const out = profile()
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const sigint = process.listenerCount('SIGINT')
+    const sigterm = process.listenerCount('SIGTERM')
+    let browser = null
+    let duringWait = null
+    const deps = {
+      browserProcess: (options) => (browser = new FakeBrowser(options)),
+      waitForEndpoint: async (userDataDir, timeoutMs, opts) => {
+        duringWait = {
+          userDataDir,
+          timeoutMs,
+          log: typeof opts?.log,
+          events: [...browser.events],
+          handlers: [
+            process.listenerCount('SIGINT') - sigint,
+            process.listenerCount('SIGTERM') - sigterm
+          ]
+        }
+        throw new Error(DEADLINE_ERROR)
+      }
+    }
+    await expect(main(['--user-data-dir', dir, '--exe', EXE, '--out', out], deps)).rejects.toThrow(
+      DEADLINE_ERROR
+    )
+    expect(browser.options).toMatchObject({ exe: EXE, userDataDir: dir, extraArgs: [] })
+    // Launched before the wait, with the interrupt handlers already armed; quit after it threw.
+    expect(duringWait).toEqual({
+      userDataDir: dir,
+      timeoutMs: 90_000,
+      log: 'function',
+      events: ['launch'],
+      handlers: [1, 1]
+    })
+    expect(browser.events).toEqual(['launch', 'quit'])
+    expect(process.listenerCount('SIGINT')).toBe(sigint)
+    expect(process.listenerCount('SIGTERM')).toBe(sigterm)
+    // The run never got to the server: no `server at` line, no soak.json.
+    expect(trail()).not.toContain('server at')
+    expect(fs.existsSync(path.join(out, 'soak.json'))).toBe(false)
+  })
+
+  it('--keep leaves the launched browser running when the wait throws – the flag reads the same on every way out', async () => {
+    const dir = profile()
+    const out = profile()
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const sigint = process.listenerCount('SIGINT')
+    let browser = null
+    const deps = {
+      browserProcess: (options) => (browser = new FakeBrowser(options)),
+      waitForEndpoint: async () => {
+        throw new Error(DEADLINE_ERROR)
+      }
+    }
+    await expect(
+      main(['--user-data-dir', dir, '--exe', EXE, '--keep', '--out', out], deps)
+    ).rejects.toThrow(DEADLINE_ERROR)
+    expect(browser.events).toEqual(['launch'])
+    expect(browser.launched).toBe(true)
+    expect(process.listenerCount('SIGINT')).toBe(sigint)
+  })
+
+  it('a launch that never spawned (a wrong --exe) is nothing to quit: the wait’s error comes out, not quit()’s', async () => {
+    // The real BrowserProcess on a path that does not exist: spawn fails with ENOENT, the child has
+    // no pid. Before W8-H5 the process counted as launched, and a quit() in the finally would have
+    // thrown `no browser process to quit` over the wait's deadline error.
+    const dir = profile()
+    const out = profile()
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const deps = {
+      waitForEndpoint: async () => {
+        // Let the spawn's error event land first, as it does over a 90 s wait.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        throw new Error(DEADLINE_ERROR)
+      }
+    }
+    await expect(
+      main(['--user-data-dir', dir, '--exe', path.join(dir, 'no-such-zenium'), '--out', out], deps)
+    ).rejects.toThrow(DEADLINE_ERROR)
+    expect(trail()).toContain(`could not start ${path.join(dir, 'no-such-zenium')}`)
+    expect(trail()).not.toContain('quitting the browser')
+  })
+
+  it('the bound path launches nothing: --url/--token, and a profile whose server answers even with --exe', async () => {
+    fake = await new FakeZenium().start()
+    const out = profile()
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const browsers = []
+      const wait = vi.fn(async () => {
+        throw new Error('the wait must not run on the bound path')
+      })
+      const deps = {
+        browserProcess: (options) => {
+          const b = new FakeBrowser(options)
+          browsers.push(b)
+          return b
+        },
+        waitForEndpoint: wait
+      }
+      const size = ['--sessions=1', '--rounds=1', '--out', out]
+      expect(await main(['--url', fake.url, '--token', TOKEN, ...size], deps)).toBe(0)
+
+      // --user-data-dir with agent.json naming the running server (the attach path): probed,
+      // found, nothing launched – --exe stays unused.
+      const dir = profile()
+      fs.mkdirSync(path.join(dir, 'zen'))
+      fs.writeFileSync(
+        path.join(dir, 'zen', 'agent.json'),
+        JSON.stringify({ token: TOKEN, running: true, url: fake.url })
+      )
+      expect(await main(['--user-data-dir', dir, '--exe', EXE, ...size], deps)).toBe(0)
+
+      expect(browsers).toHaveLength(2)
+      expect(browsers.map((b) => b.events)).toEqual([[], []])
+      expect(wait).not.toHaveBeenCalled()
+      expect(trail()).toContain(`server at ${fake.url}`)
+      expect(trail()).not.toContain('quitting the browser')
+      const summary = JSON.parse(fs.readFileSync(path.join(out, 'soak.json'), 'utf8'))
+      expect(summary.ok).toBe(true)
+      expect(summary.counts.sessions).toBe(1)
+    } finally {
+      stdout.mockRestore()
+    }
+  })
+})
+
+describe('BrowserProcess', () => {
+  it('a spawn that fails is not a launch: launched false, no pid, the failure in the trail', async () => {
+    const lines = []
+    const exe = path.join(os.tmpdir(), 'mcp-soak-no-such-zenium')
+    const b = new BrowserProcess({ exe, userDataDir: os.tmpdir(), log: (l) => lines.push(l) })
+    b.launch()
+    expect(b.launched).toBe(false)
+    expect(b.pid).toBeNull()
+    expect(lines[0]).toBe(`launching ${exe} --user-data-dir=${os.tmpdir()}`)
+    await vi.waitFor(() =>
+      expect(lines.some((l) => l.startsWith(`could not start ${exe}`))).toBe(true)
+    )
   })
 })
