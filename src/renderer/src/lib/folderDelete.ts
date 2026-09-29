@@ -11,20 +11,27 @@ import { browserStore, openFolderDeleteConfirm, uiStore } from './ui'
  * once, there being nothing to lose.
  */
 
+/** The host's word for the sidebar's tab group (v2 §6): the desktop says folder, the touch hosts group. */
+export type FolderNoun = 'folder' | 'group'
+
 /**
- * The prompt's words (the phone's group sheet's, in the desktop's vocabulary): the question with
- * the folder's name, and one line on what the deletion takes – an open folder's tabs close with
- * it, each to Recently Closed; a saved folder's pages are forgotten, with no way back.
+ * The prompt's words (the phone's group sheet's, in the host's vocabulary): the question with
+ * the folder's name – or, for one with no name, the host's noun (the desktop's "Delete folder?",
+ * the touch layouts' "Delete this group?", the phone sheet's own words; v2 §6 lets neither host
+ * borrow the other's word) – and one line on what the deletion takes – an open folder's tabs
+ * close with it, each to Recently Closed; a saved folder's pages are forgotten, with no way back.
  */
 export function folderDeleteWords(
   name: string,
   count: number,
-  saved: boolean
+  saved: boolean,
+  noun: FolderNoun = 'folder'
 ): { title: string; detail: string } {
   const one = count === 1
   const unit = saved ? `${count} saved page${one ? '' : 's'}` : `${count} tab${one ? '' : 's'}`
+  const nameless = noun === 'group' ? 'this group' : 'folder'
   return {
-    title: `Delete ${name.trim() || 'folder'}?`,
+    title: `Delete ${name.trim() || nameless}?`,
     detail: saved
       ? `Its ${unit} ${one ? 'is' : 'are'} forgotten with it. There is no undo.`
       : `Its ${unit} close${one ? 's' : ''} with it; Recently Closed keeps ${one ? 'its page' : 'their pages'}.`

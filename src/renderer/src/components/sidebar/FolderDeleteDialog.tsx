@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { folderDeleteWords } from '@renderer/lib/folderDelete'
+import { isTouchLayout, useViewport } from '@renderer/lib/formFactor'
 import { closeFolderDeleteConfirm, type UiState } from '@renderer/lib/ui'
 import { ConfirmDialog } from '../dialogs/ConfirmDialog'
 
@@ -14,7 +15,9 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog'
  * no primary (§6) – at §9.20's 320 over the active page's picture, centred in the content frame
  * under the frame's scrim (§9.5), through TabDialogs' `FrameDialogHost`. Deleting an open folder
  * closes its tabs with it (each to Recently Closed); deleting a saved folder forgets the pages
- * it kept, which nothing brings back.
+ * it kept, which nothing brings back. The tablet's group menu (TAB-16's tablet half) lands here
+ * too, and the words follow the host (v2 §6): a nameless group's question says "folder" on the
+ * desktop and "this group" – the phone sheet's – on the touch layouts.
  *
  * The keyboard is the primitive's (§9.22 as the #340 verdict reads it, amended on #392): the
  * prompt preselects no verb and holds its container, Tab enters at Cancel, Shift+Tab at Delete;
@@ -67,7 +70,9 @@ function FolderDeletePrompt({
   saved: boolean
   keyboard: boolean
 }): JSX.Element {
-  const words = folderDeleteWords(name, count, saved)
+  // The host's noun for a group with no name (v2 §6): the touch layouts never say "folder".
+  const noun = isTouchLayout(useViewport().formFactor) ? 'group' : 'folder'
+  const words = folderDeleteWords(name, count, saved, noun)
   /** How the prompt was answered, for the return: only a keyboard's Cancel goes to the header. */
   const answer = useRef<'cancel' | 'delete' | null>(null)
   const cancel = (): void => {
