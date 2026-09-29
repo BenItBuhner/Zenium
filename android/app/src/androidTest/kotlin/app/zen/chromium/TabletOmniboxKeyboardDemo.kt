@@ -389,8 +389,9 @@ class TabletOmniboxKeyboardDemo : DemoHarness("tablet-omnibox-keyboard-demo-stat
             SystemClock.sleep(800)
         }
         if (!awaitPageUrl(NEW_TAB_URL, 3_000)) {
+            val was = activeUrl()
             val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote(NEW_TAB_URL)},\"active\":true}").trim().trim('"')
-            finding("  the new tab $newTab is at ${activeUrl()} (the pick's page): a fresh new tab ${id.ifEmpty { "(no id came back)" }}")
+            finding("  the new tab $newTab is at $was (the pick's page): a fresh new tab ${id.ifEmpty { "(no id came back)" }}")
             if (id.isNotEmpty()) newTab = id
             SystemClock.sleep(800)
             if (!awaitPageUrl(NEW_TAB_URL, 10_000)) return false

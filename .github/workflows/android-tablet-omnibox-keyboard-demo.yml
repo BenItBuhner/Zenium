@@ -22,9 +22,6 @@ name: Android tablet omnibox keyboard demo
 # private mode demo runs (the Google APIs tablet shard is at its headroom line).
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-tablet-omnibox-keyboard-9271
 
 permissions:
   contents: read
