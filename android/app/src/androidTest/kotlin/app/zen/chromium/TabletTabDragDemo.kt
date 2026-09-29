@@ -21,12 +21,15 @@ import kotlin.math.roundToInt
  *     the drop store names `tab:tab_delta:after`, the caret stands in the row-tall gap that opens
  *     where Delta stood as Delta slides up a pitch – still; the release puts Gamma after Delta in
  *     the core's track – still.
- *  2. AUTO-SCROLL (light): extra tabs off camera until the list overflows; a plain swipe on the
- *     list scrolls it and lifts nothing (the hold never fires under a moving finger); a hold on a
- *     row near the foot lifts it and the finger, carried into the 32 px band under the list's top
- *     edge and held still there, has the list scroll up under it (`scrollTop` falls; the speed
- *     read for the findings) – still; the release lands the row where the caret was: its place in
- *     the track moved up. The extra tabs are closed again.
+ *  2. AUTO-SCROLL (light): extra tabs off camera until the list has room under its box; a plain
+ *     swipe on the list scrolls it and lifts nothing (the hold never fires under a moving finger).
+ *     The TOP band, as today: a row near the foot lifted and held 12 px under the list's top edge
+ *     has the list scroll up under it to its top, where the seeded list's first item – the
+ *     Research header – comes under the finger: an into-target, the caret down, the release joins
+ *     the group. The BOTTOM band, the slot drop: Delta lifted from near the head and held 12 px
+ *     over the bottom edge has the list scroll down under it (the speed read on the page's clock
+ *     for the findings) to its foot, where the drop store names a slot and the caret stands in the
+ *     gap – still; the release lands Delta further down the track. The extra tabs are closed again.
  *  3. GROUPS (as today): Gamma dragged onto the Research header is an into-target (the header's
  *     `data-drop-into`, the ghost thinned) and joins the group on release; dragged from the fold
  *     to Delta's lower half it leaves the group again.
@@ -133,10 +136,12 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
     // --- 2. the edge auto-scroll -------------------------------------------------------------------
 
     private fun autoscroll() {
-        section("2. AUTO-SCROLL: a plain swipe scrolls the list and lifts nothing; a lifted row held in the top band has the list scroll under it")
+        section("2. AUTO-SCROLL: a plain swipe scrolls the list and lifts nothing; a lifted row held in the 32 px band at either edge has the list scroll under it")
+        // Extra tabs off camera until the list has room enough under its box for a speed reading
+        // (they load gamma.html and wear its title).
         val extra = ArrayList<String>()
         var n = 0
-        while (n < MAX_EXTRA && !overflows()) {
+        while (n < MAX_EXTRA && scrollRoom() < ROOM_MIN) {
             n++
             val id = "tab_fill_$n"
             coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/gamma.html")},\"active\":false,\"id\":${JSONObject.quote(id)}}")
@@ -163,50 +168,89 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
             check("the swipe scrolls the list", awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop>1})()", true, 3_000), scrollerText())
             check("a plain drag lifts no row: no ghost, no lifted row, during or after", !liftedMidSwipe && !inDom(GHOST) && !inDom("$ROWS[data-lifted]"), "mid-swipe $liftedMidSwipe, ghost ${inDom(GHOST)}")
             SystemClock.sleep(900)
-            val s0 = scrollTop()
-            // A row near the foot of the box, whole, to lift.
-            val ids = rowIds()
-            val id = ids.lastOrNull { rid ->
-                rid != activeTabId() && domRect(row(rid))?.let { it.bottom <= list.bottom - 8 && it.top >= list.top + 8 } == true
-            }
-            if (id == null) {
-                check("a row is in view to lift near the foot", false, "rows ${ids.size}")
-            } else {
-                val orderBefore = trackOrder().map { it.first }
-                val held = lift(id)
-                if (held != null) {
-                    SystemClock.sleep(300)
-                    // Into the band: 12 px under the list's top edge, x kept over the list.
-                    val start = domRect(row(id))
-                    val x = (start?.left ?: list.left) + list.width() / 2
-                    carry(held, x, list.top + 12f, 500)
-                    val t0 = SystemClock.uptimeMillis()
-                    val moving = awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop<${s0 - 4}})()", true, 3_000)
-                    val s1 = scrollTop()
-                    val t1 = SystemClock.uptimeMillis()
-                    check("held still in the top band, the list scrolls up under the lifted row", moving && s1 < s0, "scrollTop $s0 -> $s1 in ${t1 - t0} ms")
-                    still("autoscroll-light")
-                    SystemClock.sleep(250)
-                    val s2 = scrollTop()
-                    val t2 = SystemClock.uptimeMillis()
-                    if (s2 < s1) finding("  the band's speed at 12 px in, as the emulator ran it: ${((s1 - s2) * 1000.0 / (t2 - t1)).roundToInt()} px/s (the ramp's target at 12 px: ${(14.0 * 20 / 32 * 60).roundToInt()} px/s at 60 Hz)")
-                    else finding("  the list reached its top (scrollTop $s2) before a second reading")
-                    check("the caret stands in the list while the finger holds the band", awaitJs("(function(){var c=document.querySelector(${JSONObject.quote(CARET)});return !!c&&c.style.opacity==='1'})()", true, 2_000), "caret ${jsText("(function(){var c=document.querySelector(${JSONObject.quote(CARET)});return c?c.style.opacity+' '+c.style.transform:''})()")}")
-                    held.finger.up()
-                    val movedUp = awaitCore(6_000) { state ->
-                        val order = trackOrder(state).map { it.first }
-                        order.indexOf(id) in 0 until orderBefore.indexOf(id)
-                    }
-                    check("the release lands the row further up the track, where the caret was", movedUp, "index ${orderBefore.indexOf(id)} -> ${trackOrder().map { it.first }.indexOf(id)}")
-                    check("the ghost goes and the row is back in the list", awaitDomGone(GHOST, 3_000) && awaitDomGone("${row(id)}[data-lifted]", 3_000), "")
-                }
-            }
+            autoscrollTop(list)
+            autoscrollBottom(list)
         }
         SystemClock.sleep(400)
         coreInvoke("tab.closeMany", "{\"tabIds\":[${extra.joinToString(",") { JSONObject.quote(it) }}]}")
         check("the extra tabs close off camera", awaitCore(12_000) { state -> extra.none { tabExists(it, state) } } && awaitUntil(6_000) { extra.none { inDom(row(it)) } }, "left ${extra.filter { inDom(row(it)) }}")
         awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop<1})()", true, 4_000)
         SystemClock.sleep(800)
+        finding("  after the act: ${describeSpace()}")
+    }
+
+    /**
+     * The TOP band, as today: a row near the foot lifted and held 12 px under the list's top edge
+     * scrolls the list up to its top – where the seeded list's first item is the Research header,
+     * so the finger comes to stand over an into-target: the caret stands down and the release
+     * joins the group (the first run's reading; the slot drop is the bottom band's, below).
+     */
+    private fun autoscrollTop(list: RectF) {
+        val s0 = scrollTop()
+        val ids = rowIds()
+        val id = ids.lastOrNull { rid ->
+            rid != activeTabId() && domRect(row(rid))?.let { it.bottom <= list.bottom - 8 && it.top >= list.top + 8 } == true
+        }
+        if (id == null) {
+            check("a row is in view to lift near the foot", false, "rows ${ids.size}")
+            return
+        }
+        val held = lift(id) ?: return
+        SystemClock.sleep(300)
+        val start = domRect(row(id))
+        val x = (start?.left ?: list.left) + list.width() / 2
+        carry(held, x, list.top + 12f, 500)
+        val t0 = SystemClock.uptimeMillis()
+        val moving = awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop<${s0 - 4}})()", true, 3_000)
+        val atTop = awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop<1})()", true, 5_000)
+        val t1 = SystemClock.uptimeMillis()
+        check("held still in the top band, the list scrolls up under the lifted row to its top", moving && atTop, "scrollTop $s0 -> ${scrollTop()} in ${t1 - t0} ms")
+        SystemClock.sleep(STEADY_MS)
+        val key = dropKey()
+        val caretShown = jsText("(function(){var c=document.querySelector(${JSONObject.quote(CARET)});return c?c.style.opacity:''})()") == "1"
+        check("at the top the finger stands over the Research header: the drop store names the group and the caret stands down (the into-target, as today)", key == "folder:$FOLDER" && !caretShown && inDom("$GROUP_ROW[data-drop-into]"), "key $key, caret shown $caretShown, header into ${inDom("$GROUP_ROW[data-drop-into]")}")
+        held.finger.up()
+        check("the release over the header joins the row to Research (as today)", awaitCore(6_000) { state -> folderOf(id, state) == FOLDER }, "folder ${folderOf(id)}")
+        check("the ghost goes and the row is back in the list", awaitDomGone(GHOST, 3_000) && awaitDomGone("${row(id)}[data-lifted]", 3_000), "")
+        SystemClock.sleep(600)
+    }
+
+    /**
+     * The BOTTOM band, the slot drop: Delta lifted from near the head and held 12 px over the
+     * list's bottom edge scrolls the list down under it – the speed read on the page's own clock
+     * over the first stretch (the ramp at 12 px in: 14 × 20 / 32 = 8.75 px per 60 Hz frame,
+     * 525 px/s at any refresh rate for a finger) – to its foot, where the finger stands over the
+     * last rows: the drop store names a slot, the caret stands in the gap – still; the release
+     * lands Delta further down the track.
+     */
+    private fun autoscrollBottom(list: RectF) {
+        val orderBefore = trackOrder().map { it.first }
+        val held = lift(DELTA) ?: return
+        SystemClock.sleep(300)
+        val start = domRect(row(DELTA))
+        val x = (start?.left ?: list.left) + list.width() / 2
+        carry(held, x, list.bottom - 12f, 500, settle = false)
+        jsText("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});window.__zenW6S25a={t:performance.now(),s:s?s.scrollTop:0};return 'marked'})()")
+        SystemClock.sleep(220)
+        val reading = jsText("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});var a=window.__zenW6S25a||{t:0,s:0};return s?(s.scrollTop-a.s)+'|'+(performance.now()-a.t):''})()").split('|')
+        val dy = reading.getOrNull(0)?.toDoubleOrNull()
+        val dt = reading.getOrNull(1)?.toDoubleOrNull()
+        check("held still in the bottom band, the list scrolls down under the lifted row", dy != null && dy > 4, "scrolled $dy px in $dt ms")
+        if (dy != null && dt != null && dt > 0) finding("  the band's speed 12 px in, as the emulator ran it: ${(dy * 1000.0 / dt).roundToInt()} px/s over ${dt.roundToInt()} ms (the ramp's target at 12 px in: 525 px/s – 14 px per 60 Hz frame at the edge, 8.75 at 12 px, scaled to the frame's real length for a finger)")
+        val atFoot = awaitJs("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollTop>=s.scrollHeight-s.clientHeight-1})()", true, 6_000)
+        finding("  the list at its foot: $atFoot (${scrollerText()})")
+        SystemClock.sleep(STEADY_MS)
+        val key = dropKey()
+        val caret = jsText("(function(){var c=document.querySelector(${JSONObject.quote(CARET)});return c?c.style.opacity+' '+c.style.transform:''})()")
+        check("at the foot the finger stands over the last rows: the drop store names a slot and the caret stands in the list", key.startsWith("tab:") && caret.startsWith("1 "), "key $key, caret $caret")
+        still("autoscroll-light")
+        held.finger.up()
+        val movedDown = awaitCore(6_000) { state ->
+            val order = trackOrder(state).map { it.first }
+            order.indexOf(DELTA) > orderBefore.indexOf(DELTA)
+        }
+        check("the release lands Delta further down the track, where the caret was", movedDown, "index ${orderBefore.indexOf(DELTA)} -> ${trackOrder().map { it.first }.indexOf(DELTA)}")
+        check("the ghost goes and the row is back in the list", awaitDomGone(GHOST, 3_000) && awaitDomGone("${row(DELTA)}[data-lifted]", 3_000), "")
     }
 
     // --- 3. groups -------------------------------------------------------------------------------------
@@ -301,14 +345,18 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
         return Held(f, target.x, target.y)
     }
 
-    /** Carry the held finger from where it is to the CSS point `x`, `y` over `durationMs`. */
-    private fun carry(held: Held, x: Float, y: Float, durationMs: Long = 400) {
+    /**
+     * Carry the held finger from where it is to the CSS point `x`, `y` over `durationMs`, then
+     * let the chrome settle – unless `settle` is off, for a reading taken while the list still
+     * moves under the finger.
+     */
+    private fun carry(held: Held, x: Float, y: Float, durationMs: Long = 400, settle: Boolean = true) {
         val to = screen(RectF(x, y, x, y)) ?: return
         finding("  carry to ${to.left},${to.top} (css ${x.roundToInt()},${y.roundToInt()})")
         held.finger.moveBy(to.left - held.x, to.top - held.y, durationMs)
         held.x = to.left.toFloat()
         held.y = to.top.toFloat()
-        SystemClock.sleep(STEADY_MS)
+        if (settle) SystemClock.sleep(STEADY_MS)
     }
 
     private fun readLift(tabId: String) {
@@ -367,6 +415,10 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
     private fun overflows(): Boolean =
         jsBoolean("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return !!s&&s.scrollHeight-s.clientHeight>1})()")
 
+    /** How far the list can scroll: its content past its box, in px (0 when it fits). */
+    private fun scrollRoom(): Double =
+        jsNumber("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return s?Math.max(0,s.scrollHeight-s.clientHeight):0})()")
+
     private fun scrollerText(): String =
         jsText("(function(){var s=document.querySelector(${JSONObject.quote(SCROLLER)});return s?'scrollTop '+s.scrollTop+', scrollHeight '+s.scrollHeight+', clientHeight '+s.clientHeight:'no scroller'})()")
 
@@ -383,7 +435,9 @@ class TabletTabDragDemo : GroupsDemoBase("tablet-tab-drag", "tablet-tab-drag-dem
     companion object {
         /** The rows' pitch: the 44 row and the list's 2 px gap. */
         private const val PITCH = 46.0
+        /** The extra tabs the auto-scroll act may open, and the room under the box they must buy. */
         private const val MAX_EXTRA = 18
+        private const val ROOM_MIN = 280.0
         private const val CHROME_ROOT = "[data-testid=\"chrome-root\"]"
         private const val SIDEBAR = ".zen-tablet-sidebar"
         private const val ADDRESS_PILL = ".zen-tablet-toolbar [data-address-pill]"
