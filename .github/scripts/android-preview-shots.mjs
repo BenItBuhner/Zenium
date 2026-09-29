@@ -72,7 +72,7 @@
 //                      `&hold=<selector>@<n>` (the script's key too) holds the page's animation
 //                      frames, taps the first element the selector matches and steps exactly
 //                      n frames of 16 ms before the still – a motion recorded at its nth frame
-//                      (the bookmark star's pop at its top on the third, MOT-20); everything
+//                      (the bookmark star's fill half-way on its fifth, MOT-20); everything
 //                      on the frame loop holds with it, so the still is the frame as the page
 //                      would have drawn it; the frames run on to rest before the next state.
 //                      The label defaults to the state with punctuation turned into dashes.
