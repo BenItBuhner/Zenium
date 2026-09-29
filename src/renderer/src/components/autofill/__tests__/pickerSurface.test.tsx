@@ -19,6 +19,11 @@ import { browserStore } from '@renderer/lib/ui'
  * land (§11's paint handshake: the core's word back and this document's frame at the size, or
  * the ceiling). The panel keeps its box through the room: pinned to the surface's size at rest
  * from the core's word, centred in a widened surface.
+ *
+ * And the lock's meaning for the readers a tooltip never reaches (W8-F19): a visually hidden
+ * "Asks for the vault passphrase" inside the lock span – the renderer's `sr-only` – ends a
+ * locked row's accessible name, one constant with the tooltip; an unlocked row's name is its
+ * text alone.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -39,7 +44,8 @@ const {
   TOOLTIP_ID,
   TOOLTIP_ROOM_CEILING_MS,
   tooltip,
-  tooltipRoomStore
+  tooltipRoomStore,
+  tooltipTargetOf
 } = await import('@renderer/lib/tooltip')
 
 /** A report's arguments (`autofill.surfaceSize`'s), as the core reads them. */
@@ -520,5 +526,47 @@ describe('the picker’s tooltips in the popup surface’s document (§9.31, W8-
     expect(rule).toMatch(/margin-inline:\s*auto/)
     // No inline width on the panel: the stylesheet's, until the core's word pins it.
     expect(popover()!.getAttribute('style') ?? '').not.toMatch(/width/)
+  })
+})
+
+describe('the lock’s meaning for a keyboard and a screen reader (W8-F19)', () => {
+  const LOCK_MEANING = 'Asks for the vault passphrase'
+  /** The row's accessible name, near enough: its label, or – the rows carry none – the text it shows. */
+  const nameOf = (el: HTMLElement): string =>
+    (el.getAttribute('aria-label') ?? el.textContent ?? '').trim()
+
+  it('ends a locked row’s accessible name with the lock’s sentence – visually hidden text inside the lock span, the glyph hidden from the tree – and leaves an unlocked row’s name its text alone', () => {
+    const [locked, unlocked, lockedLast] = rows()
+    expect(rows()).toHaveLength(3)
+    // Name from content: no label on the option, so what the tree reads is what the row holds.
+    for (const row of rows()) expect(row.hasAttribute('aria-label')).toBe(false)
+    expect(nameOf(locked).startsWith('ada@example.com')).toBe(true)
+    expect(nameOf(locked).endsWith(LOCK_MEANING)).toBe(true)
+    expect(nameOf(lockedLast).startsWith('linus@example.com')).toBe(true)
+    expect(nameOf(lockedLast).endsWith(LOCK_MEANING)).toBe(true)
+    expect(nameOf(unlocked)).toBe('grace@example.com')
+    expect(unlocked.querySelector('.zen-v2-af-row-lock')).toBeNull()
+    expect(unlocked.querySelector('.sr-only')).toBeNull()
+    // The sentence is the lock's own: an `sr-only` span inside the carrier, in the tree (not
+    // `aria-hidden`), beside the decorative glyph, which stays out of it.
+    const lock = locked.querySelector<HTMLElement>('.zen-v2-af-row-lock')!
+    const hidden = lock.querySelector<HTMLElement>('.sr-only')!
+    expect(hidden).not.toBeNull()
+    expect(hidden.parentElement).toBe(lock)
+    expect(hidden.textContent).toBe(LOCK_MEANING)
+    expect(hidden.hasAttribute('aria-hidden')).toBe(false)
+    expect(lock.querySelector('svg')!.getAttribute('aria-hidden')).toBe('true')
+    // The visible text is untouched: the title span holds the title alone.
+    expect(locked.querySelector('.zen-v2-af-row-text')!.textContent).toBe('ada@example.com')
+  })
+
+  it('says the same words to a mouse and to the tree: the hidden text is the tooltip’s string – one constant, two readers', () => {
+    expect(locks()).toHaveLength(2)
+    for (const lock of locks()) {
+      const hidden = lock.querySelector<HTMLElement>('.sr-only')!
+      expect(hidden.textContent).toBe(lock.getAttribute(TOOLTIP_ATTR))
+      // The tooltip host still finds the carrier from the hidden text, as from the glyph.
+      expect(tooltipTargetOf(hidden)).toBe(lock)
+    }
   })
 })

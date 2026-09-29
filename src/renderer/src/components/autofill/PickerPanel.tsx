@@ -19,6 +19,13 @@ const GROUP_LABEL: Record<FormGroup, string> = {
   card: 'Saved cards'
 }
 
+/**
+ * What the lock on a row says (W8-F19, §9.31): one string for its two readers – the chrome's
+ * tooltip for a mouse, and the visually hidden text that puts it in the row's accessible name
+ * for a keyboard and a screen reader – so the two cannot drift apart.
+ */
+const LOCK_MEANING = 'Asks for the vault passphrase'
+
 /** The picker is asking for the vault passphrase before it fills `itemId`. */
 interface Asking {
   itemId: string
@@ -255,11 +262,11 @@ function Row({
         {item.subtitle && <span className="zen-v2-af-row-desc">{item.subtitle}</span>}
       </span>
       {item.needsPassphrase && (
-        <span
-          className="zen-v2-af-row-trailing zen-v2-af-row-lock"
-          data-tooltip="Asks for the vault passphrase"
-        >
+        // The glyph is decorative; the hidden sentence after it ends the row's name, so a
+        // locked row reads "…, Asks for the vault passphrase" and an unlocked row as before.
+        <span className="zen-v2-af-row-trailing zen-v2-af-row-lock" data-tooltip={LOCK_MEANING}>
           <Lock aria-hidden />
+          <span className="sr-only">{LOCK_MEANING}</span>
         </span>
       )}
     </button>
