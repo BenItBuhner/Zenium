@@ -1468,27 +1468,48 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
           enabled: true,
           toolbarPinned: true
         }),
-        // A later build appended a field: the three known ones land, the rest rides along.
-        extensionRecord(EXT_C, {
-          store: 'edge-add-ons',
-          enabled: false,
-          toolbarPinned: true,
-          version: '2.0'
-        })
+        // A later build appended a field: the known ones land, the rest rides along. This one
+        // carries the switches' clocks (round 2): each travels as it is.
+        extensionRecord(
+          EXT_C,
+          {
+            store: 'edge-add-ons',
+            enabled: false,
+            toolbarPinned: true,
+            enabledAt: 1500,
+            toolbarPinnedAt: 1200,
+            version: '2.0'
+          },
+          2500
+        )
       ],
       (r) => origins.get(r.id) ?? null
     )
     // The live records first, the tombstones after them – the batch's order for every type.
+    // A record without a switch's clock (an older build's, the phone's) is read at the
+    // record's `modified` for it (`syncedExtensionData`).
     expect(host.current!.batches).toEqual([
       [
         {
           id: EXT_A,
-          data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false },
+          data: {
+            store: 'chrome-web-store',
+            enabled: true,
+            toolbarPinned: false,
+            enabledAt: 2000,
+            toolbarPinnedAt: 2000
+          },
           from: 'Work laptop'
         },
         {
           id: EXT_C,
-          data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true },
+          data: {
+            store: 'edge-add-ons',
+            enabled: false,
+            toolbarPinned: true,
+            enabledAt: 1500,
+            toolbarPinnedAt: 1200
+          },
           from: null
         },
         { id: EXT_B, data: null, from: 'Pixel 9' }

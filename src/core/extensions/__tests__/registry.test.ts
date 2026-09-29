@@ -435,4 +435,71 @@ describe('migrateRegistry', () => {
     }
     expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
   })
+
+  it('keeps a switch’s clock (`enabledAt`, `toolbarPinnedAt`, ID-44 round 2) as a finite positive number and drops anything else; a record from before the clocks carries none', () => {
+    const migrated = migrateRegistry(
+      {
+        version: 2,
+        extensions: [
+          {
+            id: 'clocked',
+            path: '/c',
+            source: 'chrome-web-store',
+            enabled: true,
+            enabledAt: 1500,
+            toolbarPinnedAt: 1200
+          },
+          {
+            id: 'half',
+            path: '/h',
+            source: 'chrome-web-store',
+            enabled: false,
+            enabledAt: 1500
+          },
+          {
+            id: 'damaged',
+            path: '/d',
+            source: 'edge-add-ons',
+            enabled: true,
+            enabledAt: '1500',
+            toolbarPinnedAt: Number.NaN
+          },
+          {
+            id: 'zeroed',
+            path: '/z',
+            source: 'edge-add-ons',
+            enabled: true,
+            enabledAt: 0,
+            toolbarPinnedAt: -1
+          },
+          { id: 'before', path: '/b', source: 'edge-add-ons', enabled: true }
+        ]
+      },
+      helpers,
+      NOW
+    )
+    const clocks = (r: (typeof migrated.extensions)[number]): unknown[] => [
+      r.id,
+      'enabledAt' in r ? r.enabledAt : 'absent',
+      'toolbarPinnedAt' in r ? r.toolbarPinnedAt : 'absent'
+    ]
+    expect(migrated.extensions.map(clocks)).toEqual([
+      ['clocked', 1500, 1200],
+      ['half', 1500, 'absent'],
+      ['damaged', 'absent', 'absent'],
+      ['zeroed', 'absent', 'absent'],
+      ['before', 'absent', 'absent']
+    ])
+    // A well-formed record with the clocks passes through unchanged.
+    const doc = {
+      version: 2,
+      extensions: [{ ...record(), enabledAt: 1500, toolbarPinnedAt: 1200 }],
+      lastUpdateCheck: null
+    }
+    expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
+    // `newRecord` (the shared builder; the phone's installs) sets none: the desktop stamps at
+    // its install (`ExtensionService.installPackage`), the phone keeps no clock.
+    expect(record()).not.toHaveProperty('enabledAt')
+    expect(record()).not.toHaveProperty('toolbarPinnedAt')
+  })
 })

@@ -9,6 +9,7 @@ import {
   defaultScope,
   diffLocal,
   extensionRecordData,
+  extensionRecordReadable,
   extensionStoreOf,
   frozenRecords,
   fullScope,
@@ -34,6 +35,7 @@ import {
   settingsKeyGroup,
   settingsKeyTime,
   stableStringify,
+  syncedExtensionData,
   vaultRecordReadable,
   winningRemote,
   wireFavicon,
@@ -3005,5 +3007,169 @@ describe('extension records (services pass 16, ID-44)', () => {
     ).toEqual([])
     // The newest remote copy is what is handed over (the map holds it; identity kept).
     expect(pendingExtensionRequests(local, none, remote, [], defaultScope())[0]).toBe(live)
+    // A record this build cannot read (the engine rule of #712) is never a request, whatever
+    // its entry says – it never had one.
+    const foreign: SyncRecord = {
+      ...live,
+      id: ID_D,
+      data: { store: 'firefox-add-ons', enabled: true, toolbarPinned: false }
+    }
+    const withForeign = { ...local, ...metaFromRemote([foreign]) }
+    const remoteWithForeign = new Map([...remote, [ID_D, foreign]])
+    expect(
+      pendingExtensionRequests(withForeign, none, remoteWithForeign, [], defaultScope()).map(
+        (r) => r.id
+      )
+    ).toEqual([ID_A, ID_B])
+  })
+
+  it('the switches’ clocks (round 2): `enabledAt` and `toolbarPinnedAt` travel when the source holds them, after the three fields, and never otherwise – a source without them writes the bytes of before, hash and all; the reader takes finite positive clocks alone; each clock is part of the hash', () => {
+    const before = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true),
+      'chrome-web-store'
+    )
+    expect(Object.keys(before)).toEqual(['store', 'enabled', 'toolbarPinned'])
+    const stamped = extensionRecordData(
+      ext(ID_A, 'chrome-web-store', true, true, { enabledAt: 1500, toolbarPinnedAt: 1200 }),
+      'chrome-web-store'
+    )
+    expect(stamped).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200
+    })
+    expect(Object.keys(stamped)).toEqual([
+      'store',
+      'enabled',
+      'toolbarPinned',
+      'enabledAt',
+      'toolbarPinnedAt'
+    ])
+    // One clock alone travels alone; a clock of 0 (none kept) does not travel.
+    expect(
+      extensionRecordData(
+        ext(ID_A, 'chrome-web-store', true, true, { enabledAt: 1500 }),
+        'chrome-web-store'
+      )
+    ).toEqual({ store: 'chrome-web-store', enabled: true, toolbarPinned: true, enabledAt: 1500 })
+    expect(
+      extensionRecordData(
+        ext(ID_A, 'chrome-web-store', true, true, { enabledAt: 0, toolbarPinnedAt: 0 }),
+        'chrome-web-store'
+      )
+    ).toEqual(before)
+    // A clock is part of the hash: a later clock under the same value is an edit (the clock
+    // adopted from a peer's record makes this device's copy the peer's bytes).
+    expect(hashData(stamped)).not.toBe(hashData(before))
+    expect(hashData(stamped)).not.toBe(hashData({ ...stamped, enabledAt: 1501 }))
+    // The reader round-trips the clocks and drops what is no clock.
+    expect(readExtensionData(ID_A, stamped)).toEqual(stamped)
+    expect(hashData(readExtensionData(ID_A, stamped))).toBe(hashData(stamped))
+    expect(readExtensionData(ID_A, before)).toEqual(before)
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, '1500', null, true]) {
+      expect(readExtensionData(ID_A, { ...before, enabledAt: bad, toolbarPinnedAt: bad })).toEqual(
+        before
+      )
+    }
+    expect(readExtensionData(ID_A, { ...before, toolbarPinnedAt: 7 })).toEqual({
+      ...before,
+      toolbarPinnedAt: 7
+    })
+    // `collectLocal` writes the clocks the source holds and no other field beside them.
+    const out = collectLocal(
+      {
+        ...sources(),
+        extensions: [
+          ext(ID_A, 'chrome-web-store', false, true, { enabledAt: 1500, toolbarPinnedAt: 1200 })
+        ]
+      },
+      defaultScope()
+    )
+    expect(out.get(ID_A)!.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200
+    })
+  })
+
+  it('syncedExtensionData: what the apply hands the host – each switch with its clock, an absent one read as the record’s `modified` (a record from before the clocks, or the phone’s, is judged whole at its time)', () => {
+    const data = readExtensionData(ID_A, {
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true
+    })!
+    expect(syncedExtensionData(data, 4000)).toEqual({
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 4000,
+      toolbarPinnedAt: 4000
+    })
+    expect(syncedExtensionData({ ...data, enabledAt: 1500 }, 4000)).toEqual({
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 4000
+    })
+    expect(syncedExtensionData({ ...data, enabledAt: 1500, toolbarPinnedAt: 1200 }, 4000)).toEqual({
+      store: 'edge-add-ons',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: 1500,
+      toolbarPinnedAt: 1200
+    })
+    // A record first seen (`modified` 0) without clocks: 0 for each, as old as any.
+    expect(syncedExtensionData(data, 0)).toMatchObject({ enabledAt: 0, toolbarPinnedAt: 0 })
+  })
+
+  it('extensionRecordReadable (the engine rule of #712): a live record the reader takes or a tombstone under an extension id is a winner; an unknown store, a switch that is no boolean, garbage or a tombstone under no extension id is not – and every other type is', () => {
+    const record: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 1,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    expect(extensionRecordReadable(record)).toBe(true)
+    expect(
+      extensionRecordReadable({ ...record, data: { ...(record.data as object), enabledAt: 1500 } })
+    ).toBe(true)
+    expect(extensionRecordReadable({ ...record, deleted: true, data: null })).toBe(true)
+    expect(
+      extensionRecordReadable({
+        ...record,
+        data: { store: 'firefox-add-ons', enabled: true, toolbarPinned: false }
+      })
+    ).toBe(false)
+    expect(
+      extensionRecordReadable({
+        ...record,
+        data: { store: 'chrome-web-store', enabled: 'yes', toolbarPinned: false }
+      })
+    ).toBe(false)
+    expect(extensionRecordReadable({ ...record, data: 'nonsense' })).toBe(false)
+    expect(extensionRecordReadable({ ...record, data: null })).toBe(false)
+    expect(extensionRecordReadable({ ...record, id: 'not-an-extension-id' })).toBe(false)
+    expect(
+      extensionRecordReadable({ ...record, id: 'not-an-extension-id', deleted: true, data: null })
+    ).toBe(false)
+    // Every other type passes untouched – the rule is the extension record's.
+    expect(
+      extensionRecordReadable({ id: 'mod_a', type: 'mod', modified: 1, deleted: false, data: 7 })
+    ).toBe(true)
+    expect(
+      extensionRecordReadable({
+        id: 'not-an-extension-id',
+        type: 'bookmark',
+        modified: 1,
+        deleted: true,
+        data: null
+      })
+    ).toBe(true)
   })
 })
