@@ -433,13 +433,17 @@ export class Browser {
   private readonly sharedImages = new Map<string, string>()
   /**
    * The share whose chooser is up (MW-63): one at a time – a newer share takes it over – with
-   * the direct route its house row runs and the fields an installed app's target would take.
+   * the direct route its house row runs, the fields an installed app's target would take, and
+   * the chooser as the chrome draws it (`UIState.shareChooser` of its window's snapshot: a
+   * share that cold-starts the app lands before the chrome has subscribed to any event, so the
+   * chooser is state, drawn whenever the chrome comes up, not an event it could miss).
    */
   private shareChooser: {
     requestId: string
     route: SharedRoute
     intent: SharedIntent
     win: ZenWindow
+    chooser: ShareChooser
   } | null = null
   /**
    * The fresh tab a window is to announce once its chrome is up (`revealFreshTab`: the new tab
@@ -703,6 +707,7 @@ export class Browser {
       closingTabIds: this.tabs.closingTabIds(),
       screenCaptureRequests: this.screenCapture.list(),
       shareRequests: this.shares.listFor(win),
+      shareChooser: this.shareChooserFor(win),
       crashRestore: this.session.crashRestoreOffer(),
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
@@ -2740,21 +2745,22 @@ export class Browser {
    * opens in a tab, text is a search with the user's engine, an image opens as a page of its own
    * – directly, unless an installed web app declares a share target that takes the link or the
    * text (MW-63): then the chooser offers the direct route and those apps, and the share waits
-   * on the pick. Chrome for Android registers installed apps' targets with the system share
-   * sheet as WebAPKs; a browser cannot, so the in-app chooser is the route. An image is never
-   * offered to an app yet (no file share is served) and keeps its page.
+   * on the pick. The chooser rides the window's snapshot (`UIState.shareChooser`), so a share
+   * that starts the app cold – in before the chrome has drawn, let alone subscribed – finds its
+   * chooser up as soon as the chrome is. Chrome for Android registers installed apps' targets
+   * with the system share sheet as WebAPKs; a browser cannot, so the in-app chooser is the
+   * route. An image is never offered to an app yet (no file share is served) and keeps its page.
    */
   openSharedIntent(intent: SharedIntent, win: ZenWindow = this.ensureWindow()): void {
     const route = routeSharedIntent(intent)
-    // A share arriving while a chooser stands takes it over: the earlier share goes nowhere.
-    const standing = this.shareChooser
-    this.shareChooser = null
+    // A share arriving while a chooser stands takes it over: the earlier share goes nowhere,
+    // and its chooser leaves the snapshot – replaced by the newer share's, or by nothing when
+    // that one goes directly.
     if (route.kind === 'url' || route.kind === 'search') {
       const kind = route.kind === 'url' ? 'url' : 'text'
       const apps = this.webApps.shareTargetsFor(kind)
       if (apps.length) {
         const requestId = newId('share')
-        this.shareChooser = { requestId, route, intent, win }
         const chooser: ShareChooser = {
           requestId,
           kind,
@@ -2772,14 +2778,27 @@ export class Browser {
           text: route.kind === 'search' ? chooserTitleForText(route.query) : null,
           apps
         }
-        this.emit('share.chooser', chooser, win)
+        this.setShareChooser({ requestId, route, intent, win, chooser })
         win.host.show()
         win.host.focus()
         return
       }
     }
-    if (standing) this.emit('share.chooserHide', { requestId: standing.requestId }, standing.win)
+    this.setShareChooser(null)
     this.routeShared(route, win)
+  }
+
+  /** The chooser `win`'s snapshot carries: the standing share's when it is this window's. */
+  private shareChooserFor(win: ZenWindow): ShareChooser | null {
+    const standing = this.shareChooser
+    return standing && standing.win.id === win.id ? standing.chooser : null
+  }
+
+  /** Puts a chooser up or takes the standing one down; either way the windows' snapshots follow. */
+  private setShareChooser(standing: Browser['shareChooser']): void {
+    if (this.shareChooser === standing) return
+    this.shareChooser = standing
+    this.state.commitVolatile()
   }
 
   /**
@@ -2790,7 +2809,7 @@ export class Browser {
   pickShareChooser(requestId: string, appId: string | null): void {
     const standing = this.shareChooser
     if (!standing || standing.requestId !== requestId) return
-    this.shareChooser = null
+    this.setShareChooser(null)
     if (appId === null) {
       this.routeShared(standing.route, standing.win)
       return
@@ -2802,7 +2821,7 @@ export class Browser {
 
   /** The chooser was dismissed: the share goes nowhere (no fallback route). */
   cancelShareChooser(requestId: string): void {
-    if (this.shareChooser?.requestId === requestId) this.shareChooser = null
+    if (this.shareChooser?.requestId === requestId) this.setShareChooser(null)
   }
 
   /** The direct routes: a tab for a link, the user's engine for text, a page for an image. */

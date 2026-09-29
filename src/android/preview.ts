@@ -7,6 +7,7 @@ import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { PDF_VIEWER_ASSETS, pdfViewerAssetUrl, pdfViewerDocumentUrl } from '@shared/pdfPage'
 import { pdfReportOf, pdfReportTokenOf } from '@shared/pdfViewerProtocol'
 import { GAME_RUNTIME_ATTRIBUTE } from '@shared/game/page'
+import type { SharedIntent } from '@shared/shareTarget'
 import { PREVIEW_GAME_SCENE_KEY } from './previewSpec'
 import {
   blocksFromHtml,
@@ -199,6 +200,21 @@ export const PREVIEW_SHARE_APPS: readonly PreviewManifest[] = [
     }
   }
 ]
+
+/**
+ * What another app shares into the chooser's states (`shareTarget=link|text`), as the host's
+ * `intent` event carries it: a link with a subject, or a note's text. Both `PREVIEW_SHARE_APPS`
+ * take either, so the chooser lists both under Apps.
+ */
+export const PREVIEW_SHARED_LINK: SharedIntent = {
+  kind: 'send',
+  subject: 'The quiet art of the long walk',
+  text: 'Worth a read: https://example.com/journal/long-walk'
+}
+export const PREVIEW_SHARED_TEXT: SharedIntent = {
+  kind: 'send',
+  text: 'Pick up oat milk, a box of matches and the parcel from the post office on the way back'
+}
 
 /**
  * Post a manifest for `tabId` as its page script would: the demo app's (`true`), the one given,

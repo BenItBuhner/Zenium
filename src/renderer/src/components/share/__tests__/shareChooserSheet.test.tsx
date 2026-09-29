@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ShareChooser } from '@shared/shareTarget'
+import type { UIState } from '@shared/types'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { uiStore } from '@renderer/lib/ui'
+import { browserStore, uiStore } from '@renderer/lib/ui'
 import { ShareChooserLayer } from '../ShareChooserSheet'
 
 /*
@@ -14,6 +15,10 @@ import { ShareChooserLayer } from '../ShareChooserSheet'
  * per installed app declaring a target, its icon at 20 and its name, no verb. The pick and the
  * dismissal each answer the core once. Rendered for real in happy-dom, judged on the markup;
  * the phone sheet is given a layout to stand in, as the external-protocol sheet's suite does.
+ *
+ * The layer draws from the browser state (`UIState.shareChooser`), the way a share that
+ * cold-starts the app needs: the snapshot carries the chooser before the chrome has mounted,
+ * and the chrome draws it on mounting. The suite seeds the state first and mounts after.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -74,6 +79,28 @@ let root: Root | null = null
 let mount: HTMLElement | null = null
 let invoked: Array<{ channel: string; args: unknown }> = []
 
+/** The window's snapshot as the core hands it, one page open, the chooser it carries (or none). */
+function snapshot(shareChooser: ShareChooser | null): UIState {
+  return {
+    platform: 'android',
+    tabs: { t1: { id: 't1', zoom: 1, url: 'https://example.com/', title: 'Example' } },
+    spaces: [{ id: 's1', activeTabId: 't1', tabIds: ['t1'] }],
+    activeSpaceId: 's1',
+    essentialTabIds: [],
+    folders: {},
+    settings: {},
+    capabilities: {},
+    autofill: { prompts: [], picker: null },
+    shareChooser,
+    window: { kind: 'normal', fullscreen: false }
+  } as unknown as UIState
+}
+
+/** The core's state as the chrome receives it: a chooser standing, or the field cleared. */
+function carry(shareChooser: ShareChooser | null): void {
+  act(() => browserStore.set({ state: snapshot(shareChooser) }))
+}
+
 function render(el: ReactElement): void {
   mount = document.createElement('div')
   document.body.appendChild(mount)
@@ -81,7 +108,7 @@ function render(el: ReactElement): void {
   act(() => root!.render(el))
 }
 
-/** Let the wait for the page's cover resolve (at once with no page) and the sheet come up. */
+/** Let the page's capture (the stub answers at once) land under the sheet. */
 async function settle(): Promise<void> {
   await act(async () => {
     await Promise.resolve()
@@ -91,7 +118,7 @@ async function settle(): Promise<void> {
 const rows = (): HTMLButtonElement[] =>
   Array.from(document.querySelectorAll('button.zen-sheet-item'))
 const label = (row: Element): string => row.querySelector('.flex-1')?.textContent ?? ''
-/** The chooser's own answers to the core (the focus's return to the page rides along). */
+/** The chooser's own answers to the core (the capture and the focus's return ride along). */
 const answers = (): Array<{ channel: string; args: unknown }> =>
   invoked.filter((i) => i.channel.startsWith('share.'))
 
@@ -109,11 +136,12 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  act(() => uiStore.set({ shareChooser: null }))
   act(() => root?.unmount())
   root = null
   mount?.remove()
   mount = null
+  browserStore.set({ state: null })
+  uiStore.set({ snapshot: null, snapshotTabId: null })
   viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'desktop' })
 })
 
@@ -130,9 +158,10 @@ describe('the phone sheet', () => {
     takeLayoutBack()
   })
 
-  it("opens a shared link on the link menu's header, the house row first, then the apps under Apps – icon and name, no verb", async () => {
+  it("mounts over a snapshot already carrying a shared link – the cold start's shape – and draws it: the link menu's header, the house row first, then the apps under Apps – icon and name, no verb", async () => {
+    // The state first, the chrome after: the share was in before anything could listen for it.
+    carry(LINK)
     render(<ShareChooserLayer />)
-    act(() => uiStore.set({ shareChooser: LINK }))
     await settle()
 
     // The header is the shared thing: the §9.31 link header, its title naming the sheet.
@@ -176,11 +205,15 @@ describe('the phone sheet', () => {
     expect(tile?.textContent).toBe('N')
     expect(notes.textContent).toBe('NNotes')
     expect(notes.querySelector('.flex-1')?.textContent).toBe('Notes')
+
+    // The page's picture was asked for under the sheet, for the window's active tab.
+    expect(invoked.map((i) => i.channel)).toContain('overlay.snapshot')
+    expect(invoked.find((i) => i.channel === 'overlay.snapshot')?.args).toEqual({ tabId: 't1' })
   })
 
   it('opens shared text on the read-only header with Search as the house row', async () => {
     render(<ShareChooserLayer />)
-    act(() => uiStore.set({ shareChooser: TEXT }))
+    carry(TEXT)
     await settle()
 
     const header = document.querySelector('.zen-menu-link-header')
@@ -193,10 +226,10 @@ describe('the phone sheet', () => {
 })
 
 describe('the tablet and mouse dialog', () => {
-  it('is a centred dialog named by the header, with the same rows, answering the core on a pick', async () => {
+  it('is a centred dialog named by the header, with the same rows, answering the core on a pick – once, and standing until the snapshot clears it', async () => {
     viewportStore.set({ ...viewportStore.get(), coarse: true, formFactor: 'tablet' })
+    carry(LINK)
     render(<ShareChooserLayer />)
-    act(() => uiStore.set({ shareChooser: LINK }))
     await settle()
 
     const dialog = document.querySelector('[role="dialog"]')
@@ -214,12 +247,21 @@ describe('the tablet and mouse dialog', () => {
         args: { requestId: 'share-1', appId: 'https://app.example/' }
       }
     ])
-    expect(uiStore.get().shareChooser).toBeNull()
+    // A second word from the same sheet is not a second answer.
+    act(() => rows()[0].click())
+    expect(answers()).toHaveLength(1)
+    // The chooser is the core's to take down: the dialog stands until the field is cleared,
+    // then goes, handing the focus back to the page.
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(invoked.map((i) => i.channel)).not.toContain('focus.content')
+    carry(null)
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(invoked.map((i) => i.channel)).toContain('focus.content')
   })
 
   it('the house row picks no app; the scrim dismisses, which drops the share', async () => {
     render(<ShareChooserLayer />)
-    act(() => uiStore.set({ shareChooser: TEXT }))
+    carry(TEXT)
     await settle()
     act(() => rows()[0].click())
     expect(answers()).toEqual([
@@ -227,10 +269,25 @@ describe('the tablet and mouse dialog', () => {
     ])
 
     invoked = []
-    act(() => uiStore.set({ shareChooser: LINK }))
+    // A newer share's chooser in the field replaces the one answered: it draws in its place.
+    carry(LINK)
     await settle()
+    expect(rows().map(label)).toEqual(['Open in a new tab', 'Sketch', 'Notes'])
     act(() => document.querySelector<HTMLElement>('.zen-sheet-scrim')!.click())
     expect(answers()).toEqual([{ channel: 'share.chooserCancel', args: { requestId: 'share-1' } }])
-    expect(uiStore.get().shareChooser).toBeNull()
+  })
+
+  it('an answer names the chooser the snapshot carries; one for a chooser it no longer does is nothing', async () => {
+    carry(LINK)
+    render(<ShareChooserLayer />)
+    await settle()
+    // The core replaced the chooser under the sheet (a newer share) before the pick landed.
+    carry(TEXT)
+    await settle()
+    expect(rows().map(label)).toEqual(['Search', 'Notes'])
+    act(() => rows()[0].click())
+    expect(answers()).toEqual([
+      { channel: 'share.chooserPick', args: { requestId: 'share-2', appId: null } }
+    ])
   })
 })

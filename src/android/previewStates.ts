@@ -119,6 +119,8 @@ import {
   PREVIEW_SLOW_LOAD_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_SHARE_APPS,
+  PREVIEW_SHARED_LINK,
+  PREVIEW_SHARED_TEXT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
   previewQrScript,
@@ -4080,21 +4082,14 @@ function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string)
   }
 }
 
-/** The link and the text another app shares into the chooser's states (MW-63). */
-const PREVIEW_SHARED_LINK = {
-  subject: 'The quiet art of the long walk',
-  text: 'Worth a read: https://example.com/journal/long-walk'
-}
-const PREVIEW_SHARED_TEXT = {
-  text: 'Pick up oat milk, a box of matches and the parcel from the post office on the way back'
-}
-
 /**
  * The share chooser (MW-63): the two apps declaring share targets are installed from the tab
  * the way the pinned state's app is (the stand-in host pins after 700 ms; the core records each
  * once the pin lands), then another app's share – a link with a subject, or a note's text –
  * arrives as the host's `intent` event and the chooser goes up for it. The state is reached
- * once the chooser stands in the UI store.
+ * once the chooser stands in the browser state (`UIState.shareChooser`, which the layer draws
+ * from). What the host cannot show is the phone's cold start – the intent in before the chrome
+ * has mounted – which the field is for; the core's suite pins that shape.
  */
 function applyShareChooser(shared: PreviewShareTargetKind, tabId: string, spec: string): void {
   const installed = (state: UIState): number => state.webApps.length
@@ -4113,13 +4108,13 @@ function applyShareChooser(shared: PreviewShareTargetKind, tabId: string, spec: 
         dismissToast(t.id)
         forgetToast(t.id)
       }
-      const intent = {
-        kind: 'send',
-        ...(shared === 'link' ? PREVIEW_SHARED_LINK : PREVIEW_SHARED_TEXT)
-      }
+      const intent = shared === 'link' ? PREVIEW_SHARED_LINK : PREVIEW_SHARED_TEXT
       const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
       host.hostEvent('intent', JSON.stringify(intent))
-      whenStore(() => uiStore.get().shareChooser !== null, spec)
+      whenState(
+        (state) => state.shareChooser !== null,
+        () => done(spec)
+      )
     })
   )
 }

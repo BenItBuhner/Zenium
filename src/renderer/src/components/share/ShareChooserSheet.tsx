@@ -1,12 +1,19 @@
 import type { JSX } from 'react'
-import { useId, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { Plus, Search } from 'lucide-react'
 import type { ShareChooser, ShareChooserApp, ShareKind } from '@shared/shareTarget'
 import { useEscapeUnlessLeaving } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
-import { answerShareChooser, uiStore } from '@renderer/lib/ui'
+import { activeTab } from '@renderer/lib/selectors'
+import {
+  answerShareChooser,
+  browserStore,
+  captureActiveTab,
+  invalidateSnapshot,
+  returnFocusToPage
+} from '@renderer/lib/ui'
 import { LinkHeader } from '../menus/MenuSheet'
 import { AppIcon } from '../phone/InstallSheet'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -22,11 +29,17 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * mouse get the chooser as a centred dialog, as the external-protocol chooser does. Mounted once,
  * above whichever shell is up.
  *
- * The sheet's leave outlives its request (`SheetPresence`, v2 draft §11.1): a newer share that
- * goes its own way takes the chooser down (`share.chooserHide`), the store's `null` a leave.
+ * The chooser is drawn from the browser state (`UIState.shareChooser`), not from an event: a
+ * share that cold-starts Zenium reaches the core before the chrome has mounted, let alone
+ * subscribed, and its chooser must be up the moment the chrome is – which the snapshot gives,
+ * as it gives the page dialogs. The core puts it there and clears it on the pick, the dismissal,
+ * or a newer share (which replaces it, or clears it when that share goes directly).
+ *
+ * The sheet's leave outlives its request (`SheetPresence`, v2 draft §11.1): the field's `null`
+ * is a leave; a newer share's chooser (keyed by its id) rises above the one on its way out.
  */
 export function ShareChooserLayer(): JSX.Element | null {
-  const chooser = uiStore.use((s) => s.shareChooser)
+  const chooser = browserStore.use((s) => s.state?.shareChooser ?? null)
   const viewport = useViewport()
   const sheet = viewport.coarse && viewport.formFactor !== 'tablet'
   return (
@@ -50,6 +63,33 @@ const APPS_HEADING = 'Apps'
 // ---------------------------------------------------------------------------
 // Shared content
 // ---------------------------------------------------------------------------
+
+/**
+ * The page's view hides under the sheet; its picture stands in while the chooser is up, as it
+ * does under a page dialog (`PageDialog.tsx`). The picture and the focus go back to the page
+ * once the sheet is down – the core has cleared the chooser by then (or a newer one stands, and
+ * keeps them).
+ */
+function useChooserCover(chooser: ShareChooser): void {
+  useEffect(() => {
+    const state = browserStore.get().state
+    void captureActiveTab(state ? (activeTab(state)?.id ?? null) : null)
+    return () => {
+      invalidateSnapshot()
+      returnFocusToPage()
+    }
+  }, [chooser.requestId])
+}
+
+/** One answer per share, whatever the sheet says after it (its landing after a pick is no cancel). */
+function useAnswer(chooser: ShareChooser): (appId: string | null | 'cancel') => void {
+  const answered = useRef(false)
+  return (appId) => {
+    if (answered.current) return
+    answered.current = true
+    answerShareChooser(chooser.requestId, appId)
+  }
+}
 
 /** The header names the sheet (`aria-labelledby`): the link's title, or the text itself. */
 function Header({ chooser, titleId }: { chooser: ShareChooser; titleId: string }): JSX.Element {
@@ -130,8 +170,8 @@ function AppRow({ app, onPick }: { app: ShareChooserApp; onPick: () => void }): 
 function ChooserSheet({ chooser }: { chooser: ShareChooser }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
-  const answer = (appId: string | null | 'cancel'): void =>
-    answerShareChooser(chooser.requestId, appId)
+  const answer = useAnswer(chooser)
+  useChooserCover(chooser)
 
   // The system back gesture pulls the sheet down like a drag; commit or the back button slides it
   // away, which drops the share (`onDismissed`).
@@ -164,8 +204,8 @@ function ChooserSheet({ chooser }: { chooser: ShareChooser }): JSX.Element {
 
 function ChooserDialog({ chooser }: { chooser: ShareChooser }): JSX.Element {
   const titleId = useId()
-  const answer = (appId: string | null | 'cancel'): void =>
-    answerShareChooser(chooser.requestId, appId)
+  const answer = useAnswer(chooser)
+  useChooserCover(chooser)
   useBackSurface({ name: 'share-chooser', onCommit: () => answer('cancel') })
   useEscapeUnlessLeaving(() => answer('cancel'))
   return (

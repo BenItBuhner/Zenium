@@ -5068,6 +5068,15 @@ export interface UIState {
   screenCaptureRequests: ScreenCaptureRequest[]
   /** Shares waiting on this window's share sheet, oldest first. */
   shareRequests: ShareRequest[]
+  /**
+   * The share another app sent that waits on this window's chooser (MW-63): an installed web
+   * app declares a target for it, so the chrome draws the chooser and answers with
+   * `share.chooserPick` or `share.chooserCancel`. Part of the snapshot, not an event: a share
+   * that cold-starts the app reaches the core before the chrome has subscribed to anything, and
+   * the chooser must still be up once the chrome draws. One at a time – a newer share takes it
+   * over – and null while none waits (always null on hosts without a share intake).
+   */
+  shareChooser: ShareChooser | null
   /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
   crashRestore: CrashRestoreOffer | null
   /** In-page autofill: save prompts, the account / address / card picker, entry counts. */
@@ -5450,8 +5459,8 @@ export interface Commands {
    */
   'share.panelAction': { args: SharePanelAction; result: void }
   /**
-   * The share chooser's pick (MW-63; after a `share.chooser` event): the installed app the
-   * share goes to, or null for the house route – a new tab for a link, a search for text.
+   * The share chooser's pick (MW-63; the chooser is `UIState.shareChooser`): the installed app
+   * the share goes to, or null for the house route – a new tab for a link, a search for text.
    */
   'share.chooserPick': { args: { requestId: string; appId: string | null }; result: void }
   /** The share chooser was dismissed: the share goes nowhere. */
@@ -7587,13 +7596,6 @@ export interface Events {
    * chrome draws it and answers with `share.panelAction`.
    */
   'share.panel': SharePanelRequest
-  /**
-   * Another app shared into Zenium and an installed web app declares a target for it (MW-63):
-   * the chrome draws the chooser and answers with `share.chooserPick` or `share.chooserCancel`.
-   */
-  'share.chooser': ShareChooser
-  /** The chooser's share was overtaken (a newer share arrived): take the sheet down. */
-  'share.chooserHide': { requestId: string }
   /**
    * A message in the chrome's toast slot; `action`, when the core sends one, is the toast's
    * trailing action and the command the chrome runs when it is picked (the action clock,

@@ -41,7 +41,6 @@ import {
 import {
   cancelExternalProtocol,
   closeMenu,
-  hideShareChooser,
   closeUrlbar,
   openBookmarkChrome,
   openClearBrowsingData,
@@ -65,7 +64,6 @@ import {
   pushToast,
   showExternalProtocol,
   showMenu,
-  showShareChooser,
   showScreenshotCard,
   showZoomBubble,
   uiStore
@@ -494,8 +492,6 @@ export function useMainEvents(): void {
         (request) => void showExternalProtocol(request, currentActiveTabId())
       ),
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
-      onEvent('share.chooser', (chooser) => void showShareChooser(chooser, currentActiveTabId())),
-      onEvent('share.chooserHide', ({ requestId }) => hideShareChooser(requestId)),
       onEvent('voice.event', (event) => voiceEvent(event)),
       onEvent('qr.event', (event) => qrEvent(event)),
       onEvent('qr.code', (request) => void showQrCode(request)),

@@ -16,8 +16,13 @@ import type {
 /*
  * Web Share Target on Android (MW-63): a share another app sends goes straight to a tab or a
  * search unless an installed web app declares a `share_target` that takes it – then the core
- * raises the chooser (`share.chooser`), the house route first and the apps under "Apps", and
- * routes on the pick: the house row as before, an app's row as its target's launch.
+ * puts the chooser up, the house route first and the apps under "Apps", and routes on the pick:
+ * the house row as before, an app's row as its target's launch.
+ *
+ * The chooser is part of the window's snapshot (`UIState.shareChooser`), not an event: a share
+ * that cold-starts the app reaches the core before the chrome has mounted or subscribed to
+ * anything, so it must be in the state the chrome draws from whenever that is. The suite reads
+ * it there – nothing here listens for anything.
  */
 
 const LINK = 'https://news.example/story?id=7'
@@ -86,7 +91,10 @@ function fixture(apps: PinnedWebApp[]): {
   browser: Browser
   views: Recorded[]
   sent: Array<{ name: string; payload: unknown }>
-  choosers: () => ShareChooser[]
+  /** The chooser the window's snapshot carries now, null while none does. */
+  standing: () => ShareChooser | null
+  /** The chooser standing now, which the test expects there. */
+  chooser: () => ShareChooser
 } {
   const views: Recorded[] = []
   const sent: Array<{ name: string; payload: unknown }> = []
@@ -154,14 +162,31 @@ function fixture(apps: PinnedWebApp[]): {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  const standing = (): ShareChooser | null =>
+    browser.state.snapshot(browser.focusedWindow()).shareChooser
   return {
     browser,
     views,
     sent,
-    choosers: () =>
-      sent.filter((e) => e.name === 'share.chooser').map((e) => e.payload as ShareChooser)
+    standing,
+    chooser: () => {
+      const chooser = standing()
+      if (!chooser) throw new Error('no chooser stands')
+      return chooser
+    }
   }
 }
+
+/** The answer a window's chrome gives from its sheet. */
+function pick(f: ReturnType<typeof fixture>, requestId: string, appId: string | null): void {
+  f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', { requestId, appId })
+}
+function cancel(f: ReturnType<typeof fixture>, requestId: string): void {
+  f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserCancel', { requestId })
+}
+
+/** The coalesced state broadcast the core sends the window (`state.commitVolatile`) goes out on a later tick. */
+const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 /** Every document loaded into any view, in order. */
 const loads = (f: ReturnType<typeof fixture>): string[] => f.views.flatMap((v) => v.loads)
@@ -175,13 +200,13 @@ describe('a share with no installed app taking it (the routes as they were)', ()
     const search = loads(f).find((u) => u.includes('how'))
     expect(search).toBeDefined()
     expect(decodeURIComponent(search!)).toContain('how do springs work')
-    expect(f.choosers()).toEqual([])
+    expect(f.standing()).toBeNull()
   })
 
   it('does not offer a link to an app whose target takes text alone', () => {
     const f = fixture([pinned('https://notes.example/', 'Notes', target({ text: 'body' }))])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
-    expect(f.choosers()).toEqual([])
+    expect(f.standing()).toBeNull()
     expect(loads(f)).toContain(LINK)
   })
 })
@@ -199,7 +224,7 @@ describe('the chooser (MW-63)', () => {
     f.browser.openSharedIntent({ kind: 'send', text: LINK, subject: 'A story' })
     // Nothing opened yet: the share waits on the pick.
     expect(loads(f)).not.toContain(LINK)
-    const [chooser] = f.choosers()
+    const chooser = f.chooser()
     expect(chooser).toMatchObject({
       kind: 'url',
       link: { url: LINK, title: 'A story', thumbnail: null, scheme: null },
@@ -213,13 +238,13 @@ describe('the chooser (MW-63)', () => {
   it("titles a link without a subject by its host, as the link menu's header does", () => {
     const f = fixture([sketch])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
-    expect(f.choosers()[0].link?.title).toBe('news.example')
+    expect(f.chooser().link?.title).toBe('news.example')
   })
 
   it('offers shared text to the apps that take text, the search as the house route', () => {
     const f = fixture([sketch, notes])
     f.browser.openSharedIntent({ kind: 'send', text: 'first line\nsecond line' })
-    const [chooser] = f.choosers()
+    const chooser = f.chooser()
     expect(chooser.kind).toBe('text')
     expect(chooser.link).toBeNull()
     expect(chooser.text).toBe('first line')
@@ -231,30 +256,18 @@ describe('the chooser (MW-63)', () => {
   it("the house row takes the direct route: a tab for the link, the user's engine for text", () => {
     const f = fixture([sketch])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
-    const [chooser] = f.choosers()
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', {
-      requestId: chooser.requestId,
-      appId: null
-    })
+    pick(f, f.chooser().requestId, null)
     expect(loads(f)).toContain(LINK)
 
     f.browser.openSharedIntent({ kind: 'send', text: 'cats' })
-    const [, second] = f.choosers()
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', {
-      requestId: second.requestId,
-      appId: null
-    })
+    pick(f, f.chooser().requestId, null)
     expect(loads(f).some((u) => u.includes('cats'))).toBe(true)
   })
 
   it("an app's row launches its GET target with the share under the app's own field names", () => {
     const f = fixture([sketch])
     f.browser.openSharedIntent({ kind: 'send', text: `Read this ${LINK}`, subject: 'A story' })
-    const [chooser] = f.choosers()
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', {
-      requestId: chooser.requestId,
-      appId: 'https://app.example/'
-    })
+    pick(f, f.chooser().requestId, 'https://app.example/')
     const launched = loads(f).find((u) => u.startsWith('https://app.example/share?'))
     expect(launched).toBeDefined()
     const u = new URL(launched!)
@@ -273,11 +286,7 @@ describe('the chooser (MW-63)', () => {
     )
     const f = fixture([poster])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
-    const [chooser] = f.choosers()
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', {
-      requestId: chooser.requestId,
-      appId: 'https://post.example/'
-    })
+    pick(f, f.chooser().requestId, 'https://post.example/')
     const posts = f.views.flatMap((v) => v.posts)
     expect(posts).toEqual([
       {
@@ -314,40 +323,85 @@ describe('the chooser (MW-63)', () => {
   it('a dismissal drops the share; a pick of a chooser no longer standing is nothing', () => {
     const f = fixture([sketch])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
-    const [chooser] = f.choosers()
+    const { requestId } = f.chooser()
     const before = loads(f).length
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserCancel', {
-      requestId: chooser.requestId
-    })
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', {
-      requestId: chooser.requestId,
-      appId: null
-    })
+    cancel(f, requestId)
+    pick(f, requestId, null)
     expect(loads(f).length).toBe(before)
     expect(loads(f)).not.toContain(LINK)
   })
+})
 
-  it('a newer share takes a standing chooser over; one that goes directly takes it down', () => {
+describe('the chooser in the snapshot state (a cold start has no listener yet)', () => {
+  const sketch = pinned(
+    'https://app.example/',
+    'Sketch',
+    target({ title: 'subject', text: 'body', url: 'link' })
+  )
+  const notes = pinned('https://notes.example/', 'Notes', target({ text: 'note' }), null)
+
+  it('a chooser opened with nothing listening is in the next snapshot, and stays there until it is answered', async () => {
+    const f = fixture([sketch])
+    // The share lands the way a cold start's does: before any chrome exists to hear an event.
+    // Nothing was sent to the window that names the chooser – there is no such event.
+    f.browser.openSharedIntent({ kind: 'send', text: LINK, subject: 'A story' })
+    expect(f.sent.map((e) => e.name)).not.toContain('share.chooser')
+    const chooser = f.standing()
+    expect(chooser).toMatchObject({ kind: 'url', link: { url: LINK, title: 'A story' } })
+    // The state the window is handed – `app.getState`'s answer at mount, the broadcast the
+    // commit sends – carries it, and keeps carrying it across later snapshots.
+    await tick()
+    const broadcast = f.sent.filter((e) => e.name === 'state').at(-1)
+    expect(broadcast).toBeDefined()
+    expect((broadcast!.payload as { shareChooser: ShareChooser | null }).shareChooser).toEqual(
+      chooser
+    )
+    expect(f.standing()).toEqual(chooser)
+  })
+
+  it('the pick clears the field (the house route runs); the cancel clears it (nothing runs)', () => {
+    const f = fixture([sketch])
+    f.browser.openSharedIntent({ kind: 'send', text: LINK })
+    pick(f, f.chooser().requestId, null)
+    expect(f.standing()).toBeNull()
+    expect(loads(f)).toContain(LINK)
+
+    f.browser.openSharedIntent({ kind: 'send', text: 'https://other.example/' })
+    const before = loads(f).length
+    cancel(f, f.chooser().requestId)
+    expect(f.standing()).toBeNull()
+    expect(loads(f).length).toBe(before)
+
+    // An app's pick clears it too, the launch in its place.
+    f.browser.openSharedIntent({ kind: 'send', text: LINK })
+    pick(f, f.chooser().requestId, 'https://app.example/')
+    expect(f.standing()).toBeNull()
+    expect(loads(f).at(-1)).toMatch(/^https:\/\/app\.example\/share\?/)
+  })
+
+  it('a newer share replaces the standing chooser in the state; one going directly clears it', () => {
     const f = fixture([sketch, notes])
     f.browser.openSharedIntent({ kind: 'send', text: LINK })
-    const [first] = f.choosers()
-    // A second link: a new chooser stands; the first's pick is void.
+    const first = f.chooser()
+    // A second link: the newer share's chooser stands in the field; the first's pick is void.
     f.browser.openSharedIntent({ kind: 'send', text: 'https://other.example/' })
-    const [, second] = f.choosers()
+    const second = f.chooser()
     expect(second.requestId).not.toBe(first.requestId)
-    f.browser.handleCommand(f.browser.focusedWindow(), 'share.chooserPick', {
-      requestId: first.requestId,
-      appId: null
-    })
+    expect(second.link?.url).toBe('https://other.example/')
+    pick(f, first.requestId, null)
+    expect(f.standing()).toEqual(second)
     expect(loads(f)).not.toContain(LINK)
-    // An image share has no app for it: it goes its own way and the chooser is taken down.
+    // An image share has no app for it: it goes its own way and the field is cleared – no
+    // event says so, the snapshot does.
     f.browser.openSharedIntent({
       kind: 'send',
       mimeType: 'image/png',
       imageDataUrl: 'data:image/png;base64,AA=='
     })
-    expect(f.sent.filter((e) => e.name === 'share.chooserHide').map((e) => e.payload)).toEqual([
-      { requestId: second.requestId }
-    ])
+    expect(f.standing()).toBeNull()
+    expect(f.sent.map((e) => e.name)).not.toContain('share.chooserHide')
+    // The overtaken share's pick, arriving late, is nothing.
+    pick(f, second.requestId, null)
+    expect(loads(f)).not.toContain('https://other.example/')
   })
 })
