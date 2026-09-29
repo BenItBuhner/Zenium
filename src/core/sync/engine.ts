@@ -28,9 +28,11 @@ import {
   hashData,
   inScope,
   isSettingsRecord,
+  isVaultRecordType,
   metaFromRemote,
   newestByRecord,
   seedSettingsMeta,
+  vaultRecordReadable,
   winningRemote,
   type LocalSources,
   type MetaMap,
@@ -284,7 +286,7 @@ export class SyncEngine implements SyncHost {
     const meta = this.data.meta
     let changed = false
     for (const [id, { type, data }] of collectLocal(sources, this.data.scope)) {
-      if (credentialsOnly && type !== 'credential') continue
+      if (credentialsOnly && !isVaultRecordType(type)) continue
       const prev = meta[id]
       if (!prev || prev.deleted) continue
       if (isSettingsRecord(id, type)) {
@@ -562,7 +564,7 @@ export class SyncEngine implements SyncHost {
         meta[id] = { type, hash: '', modified: now, deleted: false }
       for (const [id, r] of remote) {
         if (local.has(id) || r.deleted) continue
-        if (r.type === 'credential' || !inScope(r, this.data.scope)) continue
+        if (isVaultRecordType(r.type) || !inScope(r, this.data.scope)) continue
         meta[id] = { type: r.type, hash: '', modified: now, deleted: true }
       }
       if (this.data.scope.history) await this.skipRemoteHistory().catch(() => undefined)
@@ -975,11 +977,16 @@ export class SyncEngine implements SyncHost {
         stamp: null,
         frozen: frozenRecords(sources, scope, this.data.meta)
       })
-      // Types turned off are not received either (Chrome's toggles), and credential records
-      // wait for the vault to be open: left out of the metadata, they win again next round.
+      // Types turned off are not received either (Chrome's toggles), and the vault's records
+      // (logins, addresses, payment cards) wait for the vault to be open: left out of the
+      // metadata, they win again next round. A vault record this build cannot read (a kind of
+      // `credential` from a later build, garbage) is left out the same way, every round: a
+      // winner that lands nothing would otherwise be tombstoned at the re-snapshot below, and
+      // the tombstone applied by the peer that made it (`vaultRecordReadable`).
       const vaultOpen = Boolean(sources.credentials)
       const winners = winningRemote(local.meta, remote).filter(
-        (r) => inScope(r, scope) && (r.type !== 'credential' || vaultOpen)
+        (r) =>
+          inScope(r, scope) && (!isVaultRecordType(r.type) || (vaultOpen && vaultRecordReadable(r)))
       )
       if (winners.length) {
         this.applying = true
