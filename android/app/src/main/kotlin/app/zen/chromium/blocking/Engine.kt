@@ -2,7 +2,10 @@ package app.zen.chromium.blocking
 
 /**
  * An immutable, fully compiled view of the rule sets: the enabled sets' structured rules in
- * priority order plus one text engine over the enabled filter lists. `decide` follows the
+ * priority order plus one text engine over the enabled filter lists – and, for a partition
+ * whose enabled lists differ from everyone else's (a set scoped to it or standing aside from
+ * it, `textPartitions` in `engine.ts`: the private partition when "Always use Strict in
+ * private windows" is on), that partition's own text engine ([textByPartition]). `decide` follows the
  * declarativeNetRequest resolution of the TypeScript engine (`src/core/blocking/engine.ts`):
  * highest effective priority wins, allow beats block within a priority, a full tie goes to the
  * rule met first in the sets' and their rules' order (so two equal redirects name the target the
@@ -25,7 +28,16 @@ package app.zen.chromium.blocking
  * under its host's suffixes and its URL's tokens, plus the few with nothing to index them by),
  * so an extension's tens of thousands of rules cost a request microseconds, not a scan.
  */
-class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine?) {
+class EngineSnapshot(
+    sets: Collection<RuleSetInfo>,
+    private val text: TextEngine?,
+    /**
+     * A partition's own text engine, keyed by partition, where the enabled lists there are not
+     * the general ones (`textSetsFor(partition)` in `engine.ts`); a key present with a null
+     * engine is a partition no list applies to. A partition without a key reads [text].
+     */
+    private val textByPartition: Map<String, TextEngine?> = emptyMap()
+) {
     private val ordered: List<RuleSetInfo> = sets
         .filter { it.enabled && it.rules.isNotEmpty() }
         .sortedWith(compareByDescending<RuleSetInfo> { it.priority }.thenBy { it.id })
@@ -33,8 +45,18 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
     /** Every set the snapshot was built from, enabled or not. */
     val setCount: Int = sets.size
 
-    /** Network filters in the text engine. */
+    /** Network filters in the general text engine. */
     val filterCount: Int get() = text?.filterCount ?: 0
+
+    /** Partitions with a text engine of their own, in the order the sets named them (diagnostics and tests). */
+    val textPartitions: Set<String> get() = textByPartition.keys
+
+    /** Network filters in the text engine `partition`'s requests are matched against ([textFor]). */
+    fun filterCount(partition: String?): Int = textFor(partition)?.filterCount ?: 0
+
+    /** The text engine a request of `partition` is matched against: the partition's own, else the general one. */
+    private fun textFor(partition: String?): TextEngine? =
+        if (partition != null && textByPartition.containsKey(partition)) textByPartition[partition] else text
 
     /** Structured rules across the enabled sets. */
     val ruleCount: Int = ordered.sumOf { it.rules.size }
@@ -119,9 +141,10 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
         return composeHeaderEdits(applicable, late?.decision ?: allow)
     }
 
-    /** The filter lists' word, against the structured rules' best candidate so far. */
+    /** The filter lists' word – the engine of the request's partition ([textFor]) – against the structured rules' best candidate so far. */
     private fun resolveText(structured: Candidate?, req: Request): Candidate? {
         var best = structured
+        val text = textFor(req.partition)
         if (text != null) {
             val current = best
             val allowedAbove = current != null && current.decision.action == Decision.Action.ALLOW && current.effective >= TEXT_EFFECTIVE
