@@ -13,8 +13,8 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
  * the group's live members. Rendered for real in happy-dom through `TabletShell` – its
  * `MessageLayer` seating the toast slot in the frame dialog host's seat (`useFrameToastSeat`),
  * the children that carry none of it stubbed: the toast that follows the core's filing is the
- * frame seat's one card, "<Name> tab group closed and saved" with Undo on the close toast's clock
- * (the phone's, `TOAST_ACTION_DURATION` – lib/closeUndo.ts sets no other), drawn once in the
+ * frame seat's one card, "<Name> tab group closed and saved" with Undo on §9.33's Undo clock
+ * (`TOAST_UNDO_MS`, the close family's one clock in lib/closeUndo.ts), drawn once in the
  * document (not in the sidebar's well, not in the message frame's banner stack); Undo restores
  * the entries newest first through `session.restoreClosed` – the core putting each back into the
  * group, whose record the saved group kept – and activates the user's tab. A group still wearing
@@ -88,6 +88,7 @@ vi.mock('@renderer/components/TabDialogs', async () => {
 
 const { useMainEvents } = await import('@renderer/hooks/useMainEvents')
 const { TOAST_ACTION_DURATION, browserStore, uiStore } = await import('@renderer/lib/ui')
+const { TOAST_UNDO_MS } = await import('@shared/toastCard')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
 const { TabletShell } = await import('../TabletShell')
@@ -290,7 +291,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + TOAST_ACTION_DURATION + 1000)
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + TOAST_UNDO_MS + 1000)
   })
   act(() => root?.unmount())
   root = null
@@ -330,7 +331,9 @@ describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)'
     expect(toast.message).toBe('Research tab group closed and saved')
     expect(toast.action?.label).toBe('Undo')
     expect(toast.seat).toBe('frame')
-    expect(toast.duration).toBe(TOAST_ACTION_DURATION)
+    // §9.33's Undo clock by the shared constant, not the action default by omission.
+    expect(toast.duration).toBe(TOAST_UNDO_MS)
+    expect(TOAST_UNDO_MS).toBeGreaterThan(TOAST_ACTION_DURATION)
     // Drawn once, in the frame seat's slot: not in the sidebar's well, not in the message frame.
     expect(layerSlot()).not.toBeNull()
     expect(card()?.textContent).toContain('Research tab group closed and saved')
@@ -365,8 +368,11 @@ describe('the tablet’s Close Group toast in the frame seat (TAB-16, option C)'
     file(entry(tab('alpha'), NOW), entry(tab('beta'), NOW))
     await flush()
     expect(card()).not.toBeNull()
-    act(() => vi.advanceTimersByTime(TOAST_ACTION_DURATION - 1))
+    // Past the plain action toast's clock it still stands: the Undo clock is the longer one.
+    act(() => vi.advanceTimersByTime(TOAST_ACTION_DURATION))
     expect(uiStore.get().toasts).toHaveLength(1)
+    expect(uiStore.get().toasts[0]?.leaving).toBeUndefined()
+    act(() => vi.advanceTimersByTime(TOAST_UNDO_MS - TOAST_ACTION_DURATION - 1))
     expect(uiStore.get().toasts[0]?.leaving).toBeUndefined()
     act(() => vi.advanceTimersByTime(1))
     expect(uiStore.get().toasts[0]?.leaving).toBe(true)

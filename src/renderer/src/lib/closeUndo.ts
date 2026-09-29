@@ -9,6 +9,7 @@ import type {
   Tab
 } from '@shared/types'
 import { isDefaultGroupName } from '@shared/groupNames'
+import { TOAST_UNDO_MS } from '@shared/toastCard'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { isEmptyTabUrl } from '@shared/url'
 import { cmd, onEvent } from './api'
@@ -310,11 +311,16 @@ export function createCloseUndo({
   }
 }
 
-/** The app's undo, over the chrome's bridge to the core and the message cards. */
+/**
+ * The app's undo, over the chrome's bridge to the core and the message cards. Its toast offers
+ * Undo, so it stands §9.33's Undo clock (`TOAST_UNDO_MS`, 8 s) – the one shared constant, never
+ * the action default by omission – for the whole close family: "Closed <title>", "N tabs closed",
+ * "<Name> tab group closed and saved".
+ */
 export const closeUndo: CloseUndo = createCloseUndo({
   invoke: cmd,
   on: onEvent,
-  toast: (message, action) => pushToast(message, 'info', { action }),
+  toast: (message, action) => pushToast(message, 'info', { action, duration: TOAST_UNDO_MS }),
   now: () => Date.now(),
   activeTabId: () => {
     const state = browserStore.get().state

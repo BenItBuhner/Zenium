@@ -104,6 +104,7 @@ const {
   leavesClosedEntry
 } = await import('../closeUndo')
 const { TOAST_ACTION_DURATION, claimMessageCards, pickToastAction, uiStore } = await import('../ui')
+const { TOAST_UNDO_MS } = await import('@shared/toastCard')
 const { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME, isDefaultGroupName } =
   await import('@shared/groupNames')
 
@@ -210,7 +211,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + TOAST_ACTION_DURATION + 1000)
+  await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + TOAST_UNDO_MS + 1000)
   uiStore.set({ toasts: [] })
   vi.useRealTimers()
 })
@@ -662,15 +663,18 @@ describe('the toast on the cards', () => {
     release = null
   })
 
-  it('runs on the action clock, the newer replaces the older, and its Undo restores through the core', async () => {
+  it('runs on §9.33’s Undo clock (TOAST_UNDO_MS, not the action default), the newer replaces the older, and its Undo restores through the core', async () => {
     const a = tab('a', { title: 'Zenium docs' })
     const b = tab('b', { title: 'Release notes' })
     closeWithUndo({ tabs: [a], settings: UNLOAD, activeTabId: 'a', close: () => undefined })
     core.file(entry(a, Date.now()))
     await flush()
     expect(live().map((t) => [t.message, t.kind, t.duration, t.action?.label])).toEqual([
-      ['Closed Zenium docs', 'info', TOAST_ACTION_DURATION, 'Undo']
+      ['Closed Zenium docs', 'info', TOAST_UNDO_MS, 'Undo']
     ])
+    // The Undo clock is the shared constant, above the plain action toast's default: a pin that
+    // fails if the toast falls back to the default by omission.
+    expect(TOAST_UNDO_MS).toBeGreaterThan(TOAST_ACTION_DURATION)
     // A second close: one toast at a time on the cards, the newer sends the older off.
     closeWithUndo({ tabs: [b], settings: UNLOAD, activeTabId: 'b', close: () => undefined })
     core.file(entry(b, Date.now()))
@@ -694,7 +698,10 @@ describe('the toast on the cards', () => {
     core.file(entry(c, Date.now()))
     await flush()
     expect(live()).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(TOAST_ACTION_DURATION - 1)
+    // Still standing past the plain action toast's clock: the Undo clock is the longer one.
+    await vi.advanceTimersByTimeAsync(TOAST_ACTION_DURATION)
+    expect(live()).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(TOAST_UNDO_MS - TOAST_ACTION_DURATION - 1)
     expect(live()).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(live()).toHaveLength(0)
