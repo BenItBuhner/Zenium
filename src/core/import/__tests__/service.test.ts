@@ -221,17 +221,17 @@ async function seedChrome(
     )
     insert.run('https://mail.example.org/', 'b', v11, 'https://mail.example.org/', webkit(T0), 0, 0)
   })
-  if (options.addresses !== false)
+  const addresses = options.addresses ?? 'unified'
+  if (addresses !== false)
     host.sqlite(`${CHROME_DEFAULT}/Web Data`, (db) => {
-      if (options.addresses === 'unknown') {
+      if (addresses === 'unknown') {
         db.exec(
           'CREATE TABLE autofill(name VARCHAR, value VARCHAR); CREATE TABLE addresses_v2(guid VARCHAR)'
         )
         return
       }
-      const shape = options.addresses ?? 'unified'
-      chromiumWebDataSchema(db, shape)
-      insertChromiumAddresses(db, shape, [
+      chromiumWebDataSchema(db, addresses)
+      insertChromiumAddresses(db, addresses, [
         {
           guid: '0b1c2d3e-0000-4000-8000-000000000001',
           recordType: 0,
