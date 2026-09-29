@@ -226,6 +226,6 @@ describe('generating', () => {
   it('keeps CJK characters as words of their own', () => {
     const text = '今日は良い天気です。\n今日は雨です。\n'
     expect(findTerm(text, '良い', 0)).toEqual([3, 5])
-    expect(generateDirective({ text, segments: [], truncated: false }, 3, 5)).toEqual({ textStart: '良い' })
+    expect(generateDirective({ text, segments: [] }, 3, 5)).toEqual({ textStart: '良い' })
   })
 })

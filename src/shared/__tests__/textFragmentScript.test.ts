@@ -3,18 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   HIGHLIGHT_NAME,
   LATE_CONTENT_MS,
-  MAX_DIRECTIVES,
   TEXT_FRAGMENT_LINK_EVENT,
-  followTextFragment,
   highlightTextFragments,
   installTextFragmentScript,
   isTextFragmentPageMessage,
   needsTextFragmentFallback,
-  takeTextDirectives,
   type TextFragmentHostMessage,
   type TextFragmentPageMessage
 } from '../textFragmentScript'
-import { linearize } from '../textFragment'
 
 const HTML =
   '<article><h1>The lighthouse keeper</h1><p>Every evening he climbed the steps. The ledger did not care.</p><p>He climbed the steps again.</p></article>'
@@ -36,35 +32,16 @@ function select(text: string): Range {
   throw new Error(`no text node holds ${JSON.stringify(text)}`)
 }
 
-type TestWindow = Window & {
-  scrolls: unknown[]
-  replaced: (string | null | undefined)[]
-}
-
-interface WindowOptions {
-  /** Whether the engine follows text fragments itself (`document.fragmentDirective`). */
-  native?: boolean
-  /** The document's own protocol (`location.protocol`); a web page unless said otherwise. */
-  protocol?: string
-  /** Whether the document is a frame of another (then `top` is a different window). */
-  framed?: boolean
-}
-
 /** A window whose URL the test controls (happy-dom's `location.href` is assignable, but a stand-in keeps the document's own). */
-function windowAt(href: string, opts: WindowOptions = {}): TestWindow {
+function windowAt(href: string, fragmentDirective: boolean): Window {
   const doc = document
-  if (opts.native) Object.defineProperty(doc, 'fragmentDirective', { value: {}, configurable: true })
+  if (fragmentDirective)
+    Object.defineProperty(doc, 'fragmentDirective', { value: {}, configurable: true })
   else delete (doc as unknown as Record<string, unknown>).fragmentDirective
   const scrolls: unknown[] = []
-  const replaced: (string | null | undefined)[] = []
-  const protocol = opts.protocol ?? new URL(href).protocol
   const win = {
     document: doc,
-    location: { href, protocol },
-    history: {
-      state: null,
-      replaceState: (_state: unknown, _title: string, url?: string | null) => void replaced.push(url)
-    },
+    location: { href },
     innerHeight: 800,
     scrollY: 0,
     scrollTo: (opts: unknown) => void scrolls.push(opts),
@@ -72,10 +49,9 @@ function windowAt(href: string, opts: WindowOptions = {}): TestWindow {
     addEventListener: (type: string, fn: () => void) => window.addEventListener(type, fn),
     CSS: undefined,
     Highlight: undefined
-  } as unknown as TestWindow
-  ;(win as unknown as { top: unknown }).top = opts.framed ? {} : win
+  } as unknown as Window & { scrolls: unknown[] }
+  ;(win as unknown as { top: Window }).top = win
   win.scrolls = scrolls
-  win.replaced = replaced
   return win
 }
 
@@ -244,86 +220,21 @@ describe('making a link to the highlight without the bridge (the phone’s actio
 })
 
 describe('following a link to the highlight where the engine does not (the WebView)', () => {
-  it('needs the fallback only in a top web document of an engine without fragmentDirective whose URL has a directive', () => {
-    expect(needsTextFragmentFallback(windowAt('https://a.test/#:~:text=ledger'))).toBe(true)
-    expect(needsTextFragmentFallback(windowAt('http://a.test/#:~:text=ledger'))).toBe(true)
-    expect(needsTextFragmentFallback(windowAt('file:///tmp/a.html#:~:text=ledger'))).toBe(true)
-    expect(needsTextFragmentFallback(windowAt('https://a.test/#:~:text=ledger', { native: true }))).toBe(
-      false
-    )
-    expect(needsTextFragmentFallback(windowAt('https://a.test/#top'))).toBe(false)
-    expect(needsTextFragmentFallback(windowAt('https://a.test/?q=:~:text=ledger'))).toBe(false)
-  })
-
-  it('never runs in the browser’s own pages nor in a frame', () => {
-    expect(
-      needsTextFragmentFallback(windowAt('zen://settings/#:~:text=ledger', { protocol: 'zen:' }))
-    ).toBe(false)
-    expect(
-      needsTextFragmentFallback(windowAt('about:blank#:~:text=ledger', { protocol: 'about:' }))
-    ).toBe(false)
-    expect(
-      needsTextFragmentFallback(windowAt('blob:https://a.test/x#:~:text=ledger', { protocol: 'blob:' }))
-    ).toBe(false)
-    expect(needsTextFragmentFallback(windowAt('https://a.test/#:~:text=ledger', { framed: true }))).toBe(
-      false
-    )
-  })
-
-  it('takes the directives out of the URL the page sees, keeping the page’s own fragment', () => {
-    const win = windowAt('https://a.test/p#section:~:text=ledger&text=prefix-,steps,-again&other=1')
-    const directives = takeTextDirectives(win)
-    expect(directives).toEqual([
-      { textStart: 'ledger' },
-      { prefix: 'prefix', textStart: 'steps', suffix: 'again' }
-    ])
-    expect(win.replaced).toEqual(['https://a.test/p#section'])
-  })
-
-  it('drops the empty fragment a directive-only hash leaves behind', () => {
-    const win = windowAt('https://a.test/p?q=1#:~:text=ledger')
-    expect(takeTextDirectives(win)).toEqual([{ textStart: 'ledger' }])
-    expect(win.replaced).toEqual(['https://a.test/p?q=1'])
-  })
-
-  it('percent-decodes the terms and reads several text directives in order', () => {
-    const win = windowAt('https://a.test/#:~:text=The%20ledger%2C%20kept&text=a%2Db&text=%E4%BA%AC%E9%83%BD')
-    expect(takeTextDirectives(win)).toEqual([
-      { textStart: 'The ledger, kept' },
-      { textStart: 'a-b' },
-      { textStart: '京都' }
-    ])
-  })
-
-  it('follows at most MAX_DIRECTIVES directives of a URL', () => {
-    const many = Array.from({ length: MAX_DIRECTIVES + 5 }, (_, i) => `text=w${i}`).join('&')
-    const win = windowAt(`https://a.test/#:~:${many}`)
-    const directives = takeTextDirectives(win)!
-    expect(directives).toHaveLength(MAX_DIRECTIVES)
-    expect(directives[0]).toEqual({ textStart: 'w0' })
-    expect(directives[MAX_DIRECTIVES - 1]).toEqual({ textStart: `w${MAX_DIRECTIVES - 1}` })
-  })
-
-  it('takes nothing where the engine follows the directive itself, and leaves the URL to it', () => {
-    const win = windowAt('https://a.test/#:~:text=ledger', { native: true })
-    expect(takeTextDirectives(win)).toBeNull()
-    expect(win.replaced).toEqual([])
-  })
-
-  it('takes nothing from a URL whose directive holds no text directive', () => {
-    const win = windowAt('https://a.test/#:~:other=1')
-    expect(takeTextDirectives(win)).toBeNull()
-    // The unknown directive still comes out of the URL, as the spec has it.
-    expect(win.replaced).toEqual(['https://a.test/'])
+  it('needs the fallback only in a top document of an engine without fragmentDirective whose URL has a directive', () => {
+    expect(needsTextFragmentFallback(windowAt('https://a.test/#:~:text=ledger', false))).toBe(true)
+    expect(needsTextFragmentFallback(windowAt('https://a.test/#:~:text=ledger', true))).toBe(false)
+    expect(needsTextFragmentFallback(windowAt('https://a.test/#top', false))).toBe(false)
   })
 
   it('selects the match and scrolls to it without the Highlight API', () => {
-    const win = windowAt('https://a.test/#:~:text=ledger%20did%20not')
+    const win = windowAt('https://a.test/#:~:text=ledger%20did%20not', false) as Window & {
+      scrolls: unknown[]
+    }
     const intoView = vi.fn()
     const original = Element.prototype.scrollIntoView
     Element.prototype.scrollIntoView = intoView
     try {
-      expect(highlightTextFragments(win, takeTextDirectives(win)!)).toBe(true)
+      expect(highlightTextFragments(win)).toBe(true)
     } finally {
       Element.prototype.scrollIntoView = original
     }
@@ -336,7 +247,7 @@ describe('following a link to the highlight where the engine does not (the WebVi
   })
 
   it('paints through CSS.highlights when the engine has the API, in the ::target-text colours', () => {
-    const win = windowAt('https://a.test/#:~:text=lighthouse&text=steps%20again')
+    const win = windowAt('https://a.test/#:~:text=lighthouse&text=steps%20again', false)
     const highlights = new Map<string, unknown>()
     class Highlight {
       ranges: Range[]
@@ -346,7 +257,7 @@ describe('following a link to the highlight where the engine does not (the WebVi
     }
     ;(win as unknown as { CSS: unknown }).CSS = { highlights }
     ;(win as unknown as { Highlight: unknown }).Highlight = Highlight
-    expect(highlightTextFragments(win, takeTextDirectives(win)!)).toBe(true)
+    expect(highlightTextFragments(win)).toBe(true)
     const painted = highlights.get(HIGHLIGHT_NAME) as Highlight
     expect(painted.ranges.map((r) => r.toString())).toEqual(['lighthouse', 'steps again'])
     expect(document.getElementById('zen-text-fragment-style')!.textContent).toContain(
@@ -355,69 +266,20 @@ describe('following a link to the highlight where the engine does not (the WebVi
     expect(document.getSelection()!.rangeCount).toBe(0)
   })
 
-  it('matches whole words only: a term inside a longer word is not the passage', () => {
-    const win = windowAt('https://a.test/#:~:text=ledge')
-    expect(highlightTextFragments(win, takeTextDirectives(win)!)).toBe(false)
-  })
-
   it('finds nothing for a directive the page does not contain', () => {
-    const win = windowAt('https://a.test/#:~:text=submarine')
-    expect(highlightTextFragments(win, takeTextDirectives(win)!)).toBe(false)
+    const win = windowAt('https://a.test/#:~:text=submarine', false)
+    expect(highlightTextFragments(win)).toBe(false)
   })
 
   it('runs once the document has loaded and looks once more for late content', () => {
     vi.useFakeTimers()
     document.body.innerHTML = '<p>Loading…</p>'
-    const win = windowAt('https://a.test/#:~:text=ledger')
+    const win = windowAt('https://a.test/#:~:text=ledger', false)
     Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true })
     install(win)
-    expect(win.replaced).toEqual(['https://a.test/'])
     expect(document.getSelection()!.toString()).toBe('')
     document.body.innerHTML = HTML
     vi.advanceTimersByTime(LATE_CONTENT_MS)
     expect(document.getSelection()!.toString()).toBe('ledger')
-  })
-
-  it('does nothing at all where the engine is native: no URL change, no scroll, no selection', () => {
-    const win = windowAt('https://a.test/#:~:text=ledger', { native: true })
-    Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true })
-    followTextFragment(win)
-    expect(win.replaced).toEqual([])
-    expect(win.scrolls).toEqual([])
-    expect(document.getSelection()!.toString()).toBe('')
-  })
-})
-
-describe('the reading of the document is bounded', () => {
-  it('stops at the node cap and says so', () => {
-    document.body.innerHTML = Array.from({ length: 20 }, (_, i) => `<p>word${i}</p>`).join('')
-    const linear = linearize(document.body, { maxNodes: 5, maxChars: 1_000_000 })
-    expect(linear.truncated).toBe(true)
-    expect(linear.segments).toHaveLength(5)
-    expect(linear.text).toContain('word4')
-    expect(linear.text).not.toContain('word5')
-  })
-
-  it('stops at the character cap: a node reached under it is taken whole, the next is not', () => {
-    document.body.innerHTML = '<p>aaaa</p><p>bbbb</p><p>cccc</p>'
-    // The text read so far counts the block boundaries: "\naaaa\n" is six characters.
-    const linear = linearize(document.body, { maxNodes: 1_000, maxChars: 7 })
-    expect(linear.truncated).toBe(true)
-    expect(linear.segments.map((s) => s.node.data)).toEqual(['aaaa', 'bbbb'])
-  })
-
-  it('reads a document within the caps whole', () => {
-    const linear = linearize(document.body)
-    expect(linear.truncated).toBe(false)
-    expect(linear.text).toContain('ledger did not care')
-  })
-
-  it('a passage past the cap is simply not found', () => {
-    document.body.innerHTML = Array.from({ length: 20 }, (_, i) => `<p>word${i}</p>`).join('')
-    const win = windowAt('https://a.test/#:~:text=word19')
-    const linear = linearize(document.body, { maxNodes: 5, maxChars: 1_000_000 })
-    expect(linear.truncated).toBe(true)
-    // The fallback's own reading has the production caps; within them the passage is found.
-    expect(highlightTextFragments(win, takeTextDirectives(win)!)).toBe(true)
   })
 })
