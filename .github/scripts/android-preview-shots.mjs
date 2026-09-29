@@ -69,6 +69,12 @@
 //                      `&focus=<selector>;<selector>` (the script's key too) gives the first
 //                      element the list matches the focus as a keyboard would, for a record
 //                      of its focus ring (§1: `:focus-visible`, not the finger's bare focus).
+//                      `&hold=<selector>@<n>` (the script's key too) holds the page's animation
+//                      frames, taps the first element the selector matches and steps exactly
+//                      n frames of 16 ms before the still – a motion recorded at its nth frame
+//                      (the bookmark star's pop at its top on the third, MOT-20); everything
+//                      on the frame loop holds with it, so the still is the frame as the page
+//                      would have drawn it; the frames run on to rest before the next state.
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee
@@ -663,6 +669,67 @@ async function inner(opts) {
   }
   const motionOff = () => cdp('Emulation.setEmulatedMedia', { features: [] })
 
+  // `hold=<selector>@<n>` in a state (the script's key, as `pressed` is; `;` between the
+  // selector's alternatives, the first match takes the tap): the page's animation frames are
+  // held – `requestAnimationFrame` queues its callbacks, `performance.now` stands still – the
+  // element is tapped, the tap's answer (a command's state push, a render) is given its turn on
+  // the task queue, and exactly n frames of 16 ms are run before the still, so a motion is
+  // recorded at its nth frame as the spring would have drawn it (the vitest motion model's
+  // frame, on the real page). Everything on the frame loop holds with it – a sheet's leave,
+  // a toast's rise – the still is the whole frame. Returns the release, which lets the held
+  // frames run on to rest, or null when the state names nothing.
+  const hold = async (state) => {
+    const value = new URLSearchParams(state).get('hold')
+    if (!value) return null
+    const at = value.lastIndexOf('@')
+    const frames = Number(value.slice(at + 1))
+    if (at < 1 || !Number.isInteger(frames) || frames < 0)
+      throw new Error(`hold: ${value} is not <selector>@<frames>`)
+    const list = JSON.stringify(value.slice(0, at).split(';').join(','))
+    const found = await js(`Boolean(document.querySelector(${list}))`)
+    if (!found) throw new Error(`hold: nothing matches ${value.slice(0, at)}`)
+    await js(`(() => {
+      const raf = window.requestAnimationFrame.bind(window)
+      const caf = window.cancelAnimationFrame.bind(window)
+      const perf = performance.now.bind(performance)
+      let now = perf()
+      const queue = new Map()
+      let seq = 0
+      window.requestAnimationFrame = (cb) => {
+        queue.set(++seq, cb)
+        return seq
+      }
+      window.cancelAnimationFrame = (id) => {
+        queue.delete(id)
+      }
+      performance.now = () => now
+      window.__zenShotHold = {
+        run(count) {
+          for (let i = 0; i < count; i++) {
+            now += 16
+            const pending = [...queue.values()]
+            queue.clear()
+            for (const cb of pending) cb(now)
+          }
+        },
+        release() {
+          window.requestAnimationFrame = raf
+          window.cancelAnimationFrame = caf
+          performance.now = perf
+          const pending = [...queue.values()]
+          queue.clear()
+          for (const cb of pending) raf(cb)
+          delete window.__zenShotHold
+        }
+      }
+    })()`)
+    await js(`document.querySelector(${list}).click()`)
+    await sleep(400)
+    await js(`window.__zenShotHold.run(${frames})`)
+    await sleep(100)
+    return () => js(`window.__zenShotHold?.release()`)
+  }
+
   // `--audit`: the accessibility tree of the state, as TalkBack walks it. Chromium's tree
   // (`Accessibility.getFullAXTree`) is what the WebView hands the platform, node for node; its
   // order is the traversal order, its names are the accessible names TalkBack speaks, and each
@@ -886,6 +953,7 @@ async function inner(opts) {
       const file = path.join(opts.out, `${opts.prefix}${label}-${scheme}.png`)
       let release = null
       let blur = null
+      let unhold = null
       try {
         await pointerModality()
         await motion(state)
@@ -899,6 +967,7 @@ async function inner(opts) {
         await sleep(opts.settle)
         blur = await focus(state)
         release = await press(state)
+        unhold = await hold(state)
         const png = (await wc.capturePage()).toPNG()
         fs.writeFileSync(file, png)
         console.log(`shot ${file} (${png.readUInt32BE(16)}x${png.readUInt32BE(20)})`)
@@ -908,6 +977,7 @@ async function inner(opts) {
         failures++
         console.error(`failed ${label} ${scheme}: ${e.message}`)
       } finally {
+        await unhold?.().catch((e) => console.warn(`hold: ${e.message}`))
         await release?.().catch((e) => console.warn(`release: ${e.message}`))
         await blur?.().catch((e) => console.warn(`focus: ${e.message}`))
         await motionOff().catch((e) => console.warn(`motion: ${e.message}`))
