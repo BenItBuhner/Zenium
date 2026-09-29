@@ -1,0 +1,105 @@
+name: Android tablet omnibox keyboard demo
+
+# Records W6-L1 – the TABLET'S OMNIBOX POPUP STOPPING ABOVE THE KEYBOARD (the popup hung from the
+# toolbar's address pill is bounded by the visible viewport, the shell's box less the host's
+# bottom inset, as Chrome's tablet dropdown is measured at most the window less the keyboard) –
+# on a hardware-accelerated emulator of the pixel_tablet profile laid out at 1280 x 800 dp at one
+# px per dp, and uploads the video, the stills and the driver's findings. The scenes, once in each
+# colour scheme, every touch a finger's: a new tab's zero-suggest of twelve rows with the keyboard
+# up – the popup's box ending 8 CSS px above the keyboard's edge, its computed max-height the
+# window less its top, the margin and the inset, the list scrolling inside with the last row
+# below the fold, the popup's top and width still the pill's; real swipes bringing the twelfth
+# row into reach and a real touch on it picking it; one back putting the keyboard away with the
+# field surviving and the popup at its natural height; a typed query's ten rows bounded the same
+# way. The driver judges every step from the chrome's DOM, the window's insets and the core's
+# state and fails the run when a claim does not hold; see TabletOmniboxKeyboardDemo.kt.
+# Dispatch-only, like the tablet layout demo (#273's recipe: a push of this file on its branch
+# registers the workflow and is the run while the PR is open; the branch-scoped push trigger goes
+# from the final head). The build, the emulator and its caches live in android-emulator-demo.yml;
+# this file picks the driver, the profile, the display and the engine. The nightly sweep runs the
+# driver on its tablet-webview shard (.github/nightly-drivers/tablet-omnibox-keyboard.json), whose
+# engine this mirrors: the AOSP image with the Chromium snapshot WebView swapped in, as the tablet
+# private mode demo runs (the Google APIs tablet shard is at its headroom line).
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-tablet-omnibox-keyboard-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-omnibox-keyboard-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Tablet omnibox keyboard demo (light, then dark)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the popup under the pill is the tablet layout's (a 600 dp+ short side).
+      profile: pixel_tablet
+      api-level: '34'
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletOmniboxKeyboardDemo
+        DEMO_DIR=tablet-omnibox-keyboard-demo
+        DEMO_OUT=artifacts/android-tablet-omnibox-keyboard-demo
+        DEMO_VIDEO=android-tablet-omnibox-keyboard-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code (the tablet private mode demo's recipe).
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-tablet-omnibox-keyboard-demo
+      artifact-path: artifacts/android-tablet-omnibox-keyboard-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Tablet omnibox keyboard demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletOmniboxKeyboardDemo
+        DEMO_DIR=tablet-omnibox-keyboard-demo
+        DEMO_OUT=artifacts/android-tablet-omnibox-keyboard-demo
+        DEMO_VIDEO=android-tablet-omnibox-keyboard-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-tablet-omnibox-keyboard-demo-second-boot
+      artifact-path: artifacts/android-tablet-omnibox-keyboard-demo/
