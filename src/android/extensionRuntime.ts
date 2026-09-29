@@ -42,6 +42,7 @@ import {
   type Alarm
 } from '@core/extensions/api/alarms'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { PersistedRule } from '@core/extensions/api/declarativeContent'
 import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
 import type { ScopedValues } from '@core/extensions/api/privacy'
 import type { ProxyConfig } from '@core/extensions/api/proxy'
@@ -528,6 +529,8 @@ interface RuntimeData {
   listeners: Record<string, string[]>
   /** id → the `chrome.contextMenus` tree of a lazy-background extension (Chrome's `MenuManager` storage). */
   contextMenus: Record<string, PersistedMenuItem[]>
+  /** id → the `chrome.declarativeContent.onPageChanged` rules it added (Chrome's `ExtensionPrefs`; dropped at uninstall alone). */
+  declarativeRules: Record<string, PersistedRule[]>
   /** id → `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`. */
   sidePanelOnActionClick: Record<string, boolean>
   /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
@@ -705,6 +708,7 @@ function emptyData(): RuntimeData {
     alarms: {},
     listeners: {},
     contextMenus: {},
+    declarativeRules: {},
     sidePanelOnActionClick: {},
     proxy: {},
     fontSettings: {},
@@ -726,6 +730,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.alarms = saved.alarms ?? {}
   data.listeners = saved.listeners ?? {}
   data.contextMenus = saved.contextMenus ?? {}
+  data.declarativeRules = saved.declarativeRules ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
   data.fontSettings = saved.fontSettings ?? {}
@@ -1241,6 +1246,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.alarms[id]
     delete this.data.listeners[id]
     delete this.data.contextMenus[id]
+    delete this.data.declarativeRules[id]
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
     delete this.data.fontSettings[id]
@@ -1667,6 +1673,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   setContextMenuItems(id: string, items: PersistedMenuItem[]): void {
     if (items.length === 0) delete this.data.contextMenus[id]
     else this.data.contextMenus[id] = items
+    this.save()
+  }
+
+  declarativeRules(id: string): unknown {
+    return this.data.declarativeRules[id] ?? []
+  }
+
+  setDeclarativeRules(id: string, rules: PersistedRule[]): void {
+    if (rules.length === 0) delete this.data.declarativeRules[id]
+    else this.data.declarativeRules[id] = rules
     this.save()
   }
 
@@ -2602,7 +2618,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * A decision of the Kotlin engine (`ext.request`): one an extension's rule took goes into that
    * extension's matched-rule log, action count and `onRuleMatchedDebug`; while an extension
    * listens for `webRequest`, every decision is reported and becomes the observational events
-   * (`onBeforeRequest`, `onErrorOccurred` for a blocked request).
+   * (`onBeforeRequest`, `onErrorOccurred` for a blocked request; `onBeforeRedirect` of the
+   * document's hop a main-frame follow-up is stamped with, [documentRedirected]).
    */
   onRequest(event: ExtRequestEvent): void {
     const tabId = event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID
@@ -2628,6 +2645,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const tab = event.tabId ?? null
     const type = resourceTypeNamed(event.type)
     const now = this.now()
+    // A document's server redirect reaches the runtime only as its follow-up, stamped with the
+    // URL before it: the hop is told first, as `onBeforeRedirect` of the tab's open main-frame
+    // request at that URL, and the follow-up then continues under the hop's id.
+    if (this.observingResponses && event.mainFrame && typeof event.redirectedFrom === 'string')
+      this.documentRedirected(tab, tabId, event.redirectedFrom, event.url, now)
     // While the response stage is observed the request is remembered for it (the observer's
     // pairing, its initiator), and a redirect target continues under the hop's id (§7.3: WebView
     // followed the redirect itself and the target came through the intercept as a new request).
@@ -2659,6 +2681,50 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         error: 'net::ERR_BLOCKED_BY_CLIENT',
         fromCache: false
       })
+  }
+
+  /**
+   * `webRequest.onBeforeRedirect` of a document's server redirect, made of the pair the engine
+   * reports (`ExtRequestEvent.redirectedFrom`, services' #670): WebView follows a navigation's
+   * redirect itself and never tells its status, so the hop reaches the runtime only as the
+   * target's main-frame request stamped with the URL before it. The hop's request is the tab's
+   * LATEST open main-frame request in the ledger, and only when its URL is the stamped one – a
+   * newer navigation in flight, or a request the ledger never noted (the observation switched on
+   * after it), makes no pair and no event, and the target is reported as a plain load. The event
+   * carries that request's id, URL, method and initiator, the target as `redirectUrl`,
+   * `fromCache` false, and `statusCode: 302` / `statusLine: 'HTTP/1.1 302 Found'` – the STATED
+   * divergence: a 301, 303, 307 or 308 reads 302 on the phone. No `responseHeaders`: the phone
+   * has none of a document's, so a listener asking for them gets the event without. The ledger
+   * then marks the target so its `onBeforeRequest` continues under the hop's id, as Chrome keeps
+   * one `requestId` across a chain, and the hop's own entry ends – the chain lives on in the
+   * target's, which the next hop of the chain pairs with in turn.
+   */
+  private documentRedirected(
+    tab: string | null,
+    chromeTabId: number,
+    redirectedFrom: string,
+    targetUrl: string,
+    now: number
+  ): void {
+    const from = this.ledger.openMainFrame(tab, redirectedFrom, now)
+    if (!from) return
+    const details: RequestDetails = {
+      requestId: from.requestId,
+      url: from.url,
+      method: from.method,
+      ...OUTERMOST_FRAME,
+      tabId: chromeTabId,
+      type: 'main_frame',
+      timeStamp: now,
+      statusCode: 302,
+      statusLine: 'HTTP/1.1 302 Found',
+      redirectUrl: targetUrl,
+      fromCache: false
+    }
+    if (from.initiator) details.initiator = from.initiator
+    this.emitRequest(tab, 'onBeforeRedirect', details)
+    this.ledger.redirected(tab, from.requestId, targetUrl, now)
+    this.ledger.ended(from.ownId)
   }
 
   /**

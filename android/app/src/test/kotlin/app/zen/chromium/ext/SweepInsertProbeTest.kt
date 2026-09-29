@@ -55,7 +55,7 @@ class SweepInsertProbeTest {
             recoveryLines = 0
         )
         assertEquals(
-            "the same insertion loads from the world and the page now, and the world's load leaves no timeline entry where the page's leaves one: the row's timeline read is blind to a world load on this lane – the extension's own document_start insertion is unread, not shown missing (a read of the served-resource record, not the page's timeline, is the row's next shape)",
+            "the same insertion loads from the world and the page now, and the world's load leaves no timeline entry where the page's leaves one: the row's timeline read is blind to a world load on this lane – the extension's own document_start insertion is unread, not shown missing (Chrome's timeline is blind to it by the same rule; the served-resource record is the row's read)",
             SweepInsertProbe.reading(after)
         )
         // One of the world's loads leaving an entry is the timing reading again: a world load

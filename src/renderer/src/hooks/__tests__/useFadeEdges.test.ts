@@ -70,4 +70,28 @@ describe('attachFadeEdges', () => {
     scrollTo(600)
     expect(fades(el)).toEqual(['0px', '0px'])
   })
+
+  it('a list that fits has no fade; the end fade comes on as rows overflow the box and goes as they leave', async () => {
+    // The tab list's edges (MOT-33): 44 rows at a 46 pitch in a 300 box – six fit, the seventh
+    // overflows. The rows' arrival and departure are DOM mutations, which schedule the measure.
+    const el = document.createElement('div')
+    let rows = 6
+    Object.defineProperty(el, 'clientHeight', { get: () => 300 })
+    Object.defineProperty(el, 'scrollHeight', { get: () => Math.max(300, rows * 46 - 2) })
+    Object.defineProperty(el, 'scrollTop', { get: () => 0, set: () => undefined })
+    attachFadeEdges(el, 'y', 24, 'both')
+    const settle = async (): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      for (const cb of raf.splice(0)) cb()
+    }
+    expect(fades(el)).toEqual(['0px', '0px'])
+    rows = 7
+    el.append(document.createElement('div'))
+    await settle()
+    expect(fades(el)).toEqual(['0px', '24px'])
+    rows = 6
+    el.firstChild?.remove()
+    await settle()
+    expect(fades(el)).toEqual(['0px', '0px'])
+  })
 })
