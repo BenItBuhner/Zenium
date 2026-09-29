@@ -3,6 +3,9 @@
     <!-- The menu group of Zenium's items in a page's text-selection action mode (SelectionToolbar.kt):
          a group of the app's own, so the WebView's rebuilds of its groups leave it alone. -->
     <item name="zen_selection_group" type="id" />
+    <!-- Copy link to highlight in that group (TextFragmentLink.kt): its own id, apart from the
+         core's items' small indexes, so a touch on it is told from theirs. -->
+    <item name="zen_selection_copy_link" type="id" />
     <!-- The menu group of Zenium's Paste and go item in the omnibox field's action mode
          (FieldToolbar.kt), a group of the app's own for the same reason. -->
     <item name="zen_field_group" type="id" />
