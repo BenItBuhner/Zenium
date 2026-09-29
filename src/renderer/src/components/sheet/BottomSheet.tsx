@@ -76,6 +76,13 @@ interface Props {
   onDismissed: () => void
   /** Non-scrolling content under the handle (a title row); part of the grip. */
   header?: ReactNode
+  /**
+   * Non-scrolling content under the header and above the body, part of the grip too: the §9.12
+   * field a list pins under its header (`PhoneSearchField`, the phone panels' seat – in the 16
+   * gutter, 8 to the list). It stands at every detent, drags the sheet as the header does, and
+   * the grip's §9.7 hairline draws under it once the body has scrolled.
+   */
+  pinned?: ReactNode
   /** The scrolling body. */
   children: ReactNode
   /**
@@ -250,6 +257,7 @@ export function BottomSheet({
   ref,
   onDismissed,
   header,
+  pinned,
   children,
   footer,
   contentKey,
@@ -1033,6 +1041,7 @@ export function BottomSheet({
         data-locked="true"
         data-surface="page"
         data-body={body === 'list' ? 'list' : undefined}
+        data-pinned={pinned ? '' : undefined}
       >
         <div ref={gripRef} data-sheet-grip className="zen-sheet-grip shrink-0">
           <button
@@ -1044,6 +1053,7 @@ export function BottomSheet({
             <span className="zen-sheet-handle" />
           </button>
           {header && <div className="zen-sheet-header">{header}</div>}
+          {pinned}
         </div>
         <div ref={bodyRef} className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto">
           <SheetRestContext.Provider value={rest}>

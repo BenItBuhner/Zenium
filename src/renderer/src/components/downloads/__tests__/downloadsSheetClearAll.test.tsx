@@ -13,6 +13,11 @@ import { downloadItem } from '@shared/__tests__/downloadFixtures'
  * surfaces), the prompt stacked over the sheet in the frame's host; Cancel and Escape are the
  * prompt's and leave the list and the sheet as they were; the verb clears once the prompt has
  * gone, and the sheet stays up over the emptied list.
+ *
+ * And the sheet's search (HB-38, the second describe): the page's field on the sheet, pinned
+ * under its header in the chassis's grip, with the page's placeholder and the page's predicate
+ * (`filterDownloads`: the name, the file name, the source address), the page's no-match sentence
+ * in the sheet's empty state, no focus on open, the Clear all row stepping aside under a query.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -243,5 +248,109 @@ describe('the Downloads sheet’s Clear all', () => {
     await until(() => calls('download.removeCompleted').length === 1)
     await until(() => prompt() === null)
     expect(downloadsSheet()).toBe(sheet)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The search (HB-38)
+// ---------------------------------------------------------------------------
+
+/** A fourth record whose only match is its source host: nothing of "example.org" is in a name. */
+const photo: DownloadItem = downloadItem({
+  id: 'photo',
+  filename: 'IMG_0421.jpg',
+  url: 'https://pictures.example.org/IMG_0421.jpg',
+  totalBytes: 3_100_000,
+  receivedBytes: 3_100_000,
+  startedAt: NOW - 30_000,
+  completedAt: NOW - 25_000,
+  endedAt: NOW - 25_000
+})
+const SEARCHED: DownloadItem[] = [photo, done, running, failed]
+
+/** The sheet's search field: the page's placeholder names it (A11Y-01). */
+const field = (sheet: ParentNode): HTMLInputElement =>
+  sheet.querySelector<HTMLInputElement>('input[placeholder="Search downloads"]')!
+/** The names the sheet's rows read, in order. */
+const names = (sheet: ParentNode): string[] =>
+  [...sheet.querySelectorAll<HTMLElement>('.zen-downloads-row .zen-downloads-name-text')].map(
+    (el) => text(el)
+  )
+/** Type into a controlled field: the native setter, then the input event React listens for. */
+async function type(input: HTMLInputElement, value: string): Promise<void> {
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  await act(async () => {
+    set.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+describe('the Downloads sheet’s search (HB-38)', () => {
+  it('is the page’s field, pinned under the header in the grip with the page’s placeholder, and takes no focus as the sheet opens', async () => {
+    await mountSheet(state(SEARCHED))
+    const sheet = downloadsSheet()!
+    const input = field(sheet)
+    expect(input).not.toBeNull()
+    // The phone panels' §9.12 field – the History panel's – with its search keyboard.
+    expect(input.type).toBe('search')
+    expect(input.getAttribute('enterkeyhint')).toBe('search')
+    expect(input.closest('.zen-phone-field')).not.toBeNull()
+    // Its seat: the non-scrolling grip, under the 48 header, above the scrolling body.
+    const grip = input.closest('[data-sheet-grip]')!
+    expect(grip).not.toBeNull()
+    expect(input.closest('.zen-sheet-scroll')).toBeNull()
+    const header = grip.querySelector('.zen-sheet-header')!
+    expect(header.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(header.contains(input)).toBe(false)
+    expect(text(header.querySelector('.zen-sheet-title'))).toBe('Downloads')
+    // The chassis marks a sheet with a pinned field: the §9.17 sentence stands 48 under it.
+    expect(sheet.hasAttribute('data-pinned')).toBe(true)
+    // The whole list, newest first, with its Clear all row; nothing typed yet.
+    expect(names(sheet)).toEqual(['IMG_0421.jpg', 'report.pdf', 'video.mp4', 'archive.zip'])
+    expect(sheet.querySelector('[data-testid="downloads-clear-all"]')).not.toBeNull()
+    // §9.22: the chassis lands on the first row, never on the field (the keyboard would rise).
+    expect(document.activeElement).not.toBe(input)
+    expect(sheet.querySelector('.zen-sheet-scroll')!.contains(document.activeElement)).toBe(true)
+    // No clear until there is something to clear.
+    expect(sheet.querySelector('[aria-label="Clear search"]')).toBeNull()
+  })
+
+  it('filters by the page’s predicate – a name, a source host – shows the page’s no-match sentence for nothing, and clearing restores the list', async () => {
+    await mountSheet(state(SEARCHED))
+    const sheet = downloadsSheet()!
+    const input = field(sheet)
+
+    // A name match; the Clear all row steps aside while a search is typed (as History's Delete
+    // history row does), and the page's search is debounced – the rows follow once it settles.
+    await type(input, 'REPORT')
+    await until(() => names(sheet).length === 1)
+    expect(names(sheet)).toEqual(['report.pdf'])
+    expect(sheet.querySelector('[data-testid="downloads-clear-all"]')).toBeNull()
+    expect(sheet.querySelector('.zen-sheet-empty')).toBeNull()
+
+    // A host match: "example.org" is in no name, only in the picture's source address.
+    await type(input, 'example.org')
+    await until(() => names(sheet)[0] === 'IMG_0421.jpg')
+    expect(names(sheet)).toEqual(['IMG_0421.jpg'])
+
+    // No match: the sheet's empty state with the page's sentence, the query quoted.
+    await type(input, 'nothing here')
+    await until(() => sheet.querySelector('.zen-sheet-empty') !== null)
+    expect(names(sheet)).toEqual([])
+    expect(text(sheet.querySelector('.zen-sheet-empty'))).toBe('No downloads match “nothing here”')
+    expect(sheet.querySelector('[data-testid="downloads-clear-all"]')).toBeNull()
+
+    // The field's clear: the whole list is back, the Clear all row with it, and the field is
+    // the focus (the primitive's own clear returns it there).
+    const clear = sheet.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')!
+    expect(clear).not.toBeNull()
+    await act(async () => clear.click())
+    expect(input.value).toBe('')
+    await until(() => names(sheet).length === 4)
+    expect(names(sheet)).toEqual(['IMG_0421.jpg', 'report.pdf', 'video.mp4', 'archive.zip'])
+    expect(sheet.querySelector('.zen-sheet-empty')).toBeNull()
+    expect(sheet.querySelector('[data-testid="downloads-clear-all"]')).not.toBeNull()
+    expect(sheet.querySelector('[aria-label="Clear search"]')).toBeNull()
+    expect(document.activeElement).toBe(input)
   })
 })

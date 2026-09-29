@@ -37,6 +37,7 @@ import {
   dangerSummary,
   decisionLabels,
   fileGlyphFor,
+  filterDownloads,
   hasClearable,
   insecureSummary,
   isDeletedRow,
@@ -47,6 +48,8 @@ import {
 import { openSettings } from '@renderer/lib/pages'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, closeOverlay } from '@renderer/lib/ui'
+import { usePageSearch } from '../pages/usePageSearch'
+import { PhoneSearchField } from '../phone/PhoneList'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { ClearAllConfirm } from './ClearAllConfirm'
 
@@ -71,6 +74,12 @@ const AGE_TICK_MS = 30_000
 const COUNTDOWN_TICK_MS = 1000
 
 /**
+ * The sheet has no address to follow a search with: `zen://downloads` is no tab on a phone (the
+ * page's `usePageSearch` pushes its query into the tab's URL; here there is nothing to push to).
+ */
+const NO_ADDRESS = (): void => undefined
+
+/**
  * The Android downloads surface: Chrome's download list in the phone sheet chassis (v2 §6,
  * §9.16, §9.24–§9.25). Newest first, on the shared `.zen-v2-row` (§9.34) as §9.2 two-line
  * rows: a running row shows its progress and time left with Pause and Cancel, a paused or
@@ -89,6 +98,19 @@ const COUNTDOWN_TICK_MS = 1000
  * same prompt as the page's – `ClearAllConfirm`), since this sheet is what `zen://downloads`
  * opens as on a phone. As the sheet opens, the finished files are checked for still being on
  * disk, so a row whose file went since reads Deleted (the desktop page does the same).
+ *
+ * The page's search, on the sheet (HB-38; Chrome for Android's Downloads has one): the §9.12
+ * field the phone's list panels pin under their header (`PhoneSearchField`, the History panel's
+ * seat and form – the 16 gutter, 8 to the list, §9.7's hairline under it once the list has
+ * scrolled), here in the chassis's slot under the 48 header (`pinned`), so it stands at every
+ * detent while the rows scroll under it. The page's hook and predicate (`usePageSearch`,
+ * `filterDownloads`: the name, the file name and the source address, case-insensitively), so the
+ * two hosts agree on what a query matches; the page's words – "Search downloads", and `No
+ * downloads match “<text>”` in the sheet's empty state (§9.17) when nothing does. The field
+ * takes no focus as the sheet opens (the chassis lands on the first row, §9.22: the keyboard
+ * would come up with the sheet – the History panel's rule), the query is the sheet's own state
+ * and goes with it when the sheet closes (as the panel's does), and while a search is typed the
+ * Clear all row steps aside, as the panel's Delete history row does under a search.
  *
  * The overlay host renders it inside the shell's content column, which is chrome that goes
  * inert under a sheet (`holdChromeInert`, lib/portals.tsx), so the sheet must not mount there:
@@ -113,6 +135,11 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   const handoff = useRef(false)
   /** How many rows the Clear all prompt that is up would take off the list; null while none is. */
   const [clearing, setClearing] = useState<number | null>(null)
+  // The page's search: what is typed settles into `text` after the hook's debounce and the
+  // page's predicate picks the rows. Nothing is pushed – the sheet has no address (`NO_ADDRESS`).
+  const { query, setQuery, text } = usePageSearch({ urlQuery: '', push: NO_ADDRESS })
+  const shown = filterDownloads(items, text)
+  const searching = text !== ''
 
   // The system back gesture pulls the sheet down with the finger; the back button, a hardware
   // Escape and a scrim tap slide it away.
@@ -154,7 +181,10 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   const clearable = hasClearable(items)
   // Rows coming and going (or growing a Keep / Delete row, or the Clear list row appearing)
   // re-measure the detents; a progress tick does not, since a re-measure also scrolls the list
-  // back to its top.
+  // back to its top. A search does not either: the key is the whole list's, so the sheet keeps
+  // the box it measured for it and the rows a query leaves draw inside that box – the field
+  // under the finger never moves while the user types, and the sheet does not shrink onto a
+  // no-match sentence (§9.17: top-anchored, the sheet does not grow – or shrink – to place it).
   const contentKey =
     (items.map((item) => `${item.id}${awaitsDecision(item) ? '!' : ''}`).join(',') || 'empty') +
     (clearable ? '+clear' : '')
@@ -194,15 +224,18 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
           </button>
         </>
       }
+      pinned={<PhoneSearchField value={query} onChange={setQuery} placeholder="Search downloads" />}
     >
       {items.length === 0 ? (
         <p className="zen-sheet-empty">Files you download will appear here</p>
+      ) : shown.length === 0 ? (
+        <p className="zen-sheet-empty">{`No downloads match “${text}”`}</p>
       ) : (
         <ul className="pb-2">
-          {items.map((item) => (
+          {shown.map((item) => (
             <DownloadRow key={item.id} item={item} now={now} />
           ))}
-          {clearable && (
+          {clearable && !searching && (
             <>
               <li aria-hidden className="zen-sheet-sep" />
               <li>
