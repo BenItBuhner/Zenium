@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { PHONE_MAX_WIDTH, classifyViewport } from '../formFactor'
+import {
+  NEW_FOLDER_NAME,
+  NEW_GROUP_NAME,
+  PHONE_MAX_WIDTH,
+  classifyViewport,
+  newFolderName,
+  touchLayout
+} from '../formFactor'
+import type { FormFactor } from '../types'
 
 const finger = { coarse: true, hover: false }
 const mouse = { coarse: false, hover: true }
@@ -39,5 +47,23 @@ describe('classifyViewport', () => {
     expect(classifyViewport({ width: 412, height: 420, ...finger })).toBe('phone')
     // Foldable unfolded: both sides are tablet-sized.
     expect(classifyViewport({ width: 673, height: 841, ...finger })).toBe('tablet')
+  })
+})
+
+describe('newFolderName – what a group made with no name of its own is called (§6)', () => {
+  it('is the desktop’s "New Folder" on the desktop and the touch hosts’ "Group" on the phone and the tablet', () => {
+    expect(NEW_FOLDER_NAME).toBe('New Folder')
+    expect(NEW_GROUP_NAME).toBe('Group')
+    expect(newFolderName('desktop')).toBe('New Folder')
+    expect(newFolderName('phone')).toBe('Group')
+    expect(newFolderName('tablet')).toBe('Group')
+    // The touch name follows `touchLayout`, so a layout a finger drives is never named "New
+    // Folder" – §6's "never".
+    for (const layout of ['phone', 'tablet', 'desktop'] as const satisfies readonly FormFactor[])
+      expect(newFolderName(layout) === NEW_GROUP_NAME).toBe(touchLayout(layout))
+  })
+
+  it('names as the desktop does when there is no form factor to read – a caller with no window', () => {
+    expect(newFolderName(undefined)).toBe('New Folder')
   })
 })

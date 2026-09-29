@@ -23,6 +23,7 @@ import type {
   UIState
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { NEW_GROUP_NAME } from '@shared/formFactor'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
 import { isEmptyTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -177,8 +178,6 @@ import { SEGMENT_LINE_CLASS, usePaneSwipe } from './usePaneSwipe'
 import { useOverviewHandle } from './usePillGestures'
 import { useSearchReach } from './useSearchReach'
 
-/** Name a group gets when a gesture makes it; the header renames it in a tap. */
-const NEW_GROUP_NAME = 'Group'
 /** Cell key of the New Tab card: the last cell of the grid, in the glide with the rest. */
 export const NEW_TAB_CELL = 'new-tab'
 /** How long a dropped card waits for the browser to confirm its new place before it lands anyway. */

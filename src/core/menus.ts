@@ -32,7 +32,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
 import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
-import { touchLayout } from '../shared/formFactor'
+import { newFolderName, touchLayout } from '../shared/formFactor'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -916,14 +916,15 @@ export class Menus {
   /**
    * The group Chrome for Android's "Open in new tab in group" makes around a tab in none: a new
    * folder of the tab's space with the tab moved in, named and coloured as the tab menu's "Add
-   * Tab to New Folder" names its own, with no editor opened – the row is the gesture, and the
-   * group's header is where its name is changed. The link's tab then joins behind the opener.
-   * Resolves to the folder's id.
+   * Tab to New Folder" names its own – the host's noun, "Group" here since the row is a touch
+   * host's alone (§6: a group a touch host makes is named "Group", never "New Folder") – with
+   * no editor opened – the row is the gesture, and the group's header is where its name is
+   * changed. The link's tab then joins behind the opener. Resolves to the folder's id.
    */
   private groupAround(tab: Tab, win: ZenWindow): string {
     const folder = this.browser.createFolder(
       tab.spaceId ?? win.activeSpaceId,
-      'New Folder',
+      newFolderName(win.formFactor),
       '📁',
       win,
       { rename: false }
@@ -2772,7 +2773,12 @@ export class Menus {
                   {
                     label: 'New Folder…',
                     click: () => {
-                      const folder = this.browser.createFolder(space.id, 'New Folder', '📁', win)
+                      const folder = this.browser.createFolder(
+                        space.id,
+                        newFolderName(win.formFactor),
+                        '📁',
+                        win
+                      )
                       for (const t of nonEssential)
                         if (!t.pinned) tabs.moveToFolder(t.id, folder.id)
                     }
@@ -2897,7 +2903,8 @@ export class Menus {
           : [
               {
                 label: 'New Folder',
-                click: () => this.browser.createFolder(space.id, 'New Folder', '📁', win)
+                click: () =>
+                  this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
               },
               {
                 label: 'New Live Folder…',

@@ -552,10 +552,12 @@ describe('the link menu’s group item (TAB-15)', () => {
     const made = Object.keys(m.folders).filter((id) => !before.includes(id))
     expect(made).toHaveLength(1)
     const folder = m.folders[made[0]]
-    // Named and coloured as the tab menu's Add Tab to New Folder names its own, open, and
-    // with no editor over it: the row is the gesture.
+    // Named "Group" – the touch hosts' name for a group made with no name of its own (§6: a
+    // group a touch host makes is named "Group", never "New Folder"), as the tab menu's Add
+    // Tab to New Folder names its own on this host – coloured as that row colours its own,
+    // open, and with no editor over it: the row is the gesture.
     expect(folder).toMatchObject({
-      name: 'New Folder',
+      name: 'Group',
       icon: '📁',
       spaceId: h.win.activeSpaceId,
       collapsed: false
