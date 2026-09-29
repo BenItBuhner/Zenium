@@ -204,17 +204,18 @@ describe('installClipboardReadShim', () => {
       await expect(pending).resolves.toBe('words')
     })
 
-    it('decodes whatever size the host hands – the cap is the host’s (2048 px, 8 MiB), the page side has none', async () => {
+    it('decodes a payload at the host’s cap (8 MiB of PNG; 2048 px is the host’s too) – the page side has no cap of its own', async () => {
       const host = install()
-      // A megabyte of bytes with every value in it, so the round trip proves the decode whole.
-      const big = new Uint8Array(1024 * 1024)
+      // The most the host ever hands (`ClipboardPeek.MAX_IMAGE_BYTES`), every byte value in it,
+      // so the round trip proves the decode whole at the cap: 8 MiB of bytes, ~10.7 MB of base64.
+      const big = new Uint8Array(8 * 1024 * 1024)
       for (let i = 0; i < big.length; i++) big[i] = (i * 7 + 3) & 0xff
-      let binary = ''
-      for (let i = 0; i < big.length; i += 0x8000) {
-        binary += String.fromCharCode(...big.subarray(i, i + 0x8000))
-      }
       const pending = clipboard().read()
-      host.answer({ id: host.sent[0].id, text: '', image: { png: btoa(binary) } })
+      host.answer({
+        id: host.sent[0].id,
+        text: '',
+        image: { png: Buffer.from(big).toString('base64') }
+      })
       const items = await pending
       expect(items[0].types).toEqual(['image/png'])
       const blob = await items[0].getType('image/png')
