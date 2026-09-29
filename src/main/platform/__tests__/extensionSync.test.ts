@@ -9,6 +9,7 @@ import {
   SYNC_INSTALL_BACKOFF_MIN_MS,
   approvalPrompt,
   awaitsApproval,
+  flipClock,
   syncInstallBackoffMs,
   syncedRemovalToast,
   type ExtensionSyncHost,
@@ -632,7 +633,7 @@ describe('ExtensionSyncApplier – the switch-by-switch merge under each switch�
     expect(host.registry.get(ID_B)).toMatchObject({ enabled: false, enabledAt: T0 })
   })
 
-  it('a record without clocks (an older build’s, or the phone’s) is read at the engine’s fallback, the record’s `modified`; here 0 – as old as any – so it ties with an unstamped registry record and loses to a stamped one', async () => {
+  it('a record without clocks (an older build’s; a switch the phone never flipped) is read at the engine’s fallback, 0 – as old as any – so it ties with an unstamped registry record and loses to a stamped one, whatever `modified` it travelled under', async () => {
     const host = new FakeHost()
     host.registry.set(ID_A, record(ID_A, 'chrome-web-store', { enabled: true }))
     host.registry.set(ID_B, record(ID_B, 'chrome-web-store', { enabled: true, enabledAt: T0 }))
@@ -881,5 +882,84 @@ describe('the helpers', () => {
       warnings: ['Read and change all your data on all websites'],
       source: 'chrome-web-store'
     })
+  })
+
+  it('flipClock: the user’s flip is clocked when the approval COMPLETES, not at the click – a peer’s flip landing while the prompt stands open is the older write; a declined prompt writes nothing; a synced record’s flip keeps the record’s clock', async () => {
+    // The click at t = 1000; the prompt stands open while a peer's disable lands at 3000 and
+    // the clock runs on to 5000; the user confirms: the enable is written at 5000 – later than
+    // the peer's write – never at the click's 1000, which the peer's flip would beat.
+    const clock = { now: 1000 }
+    const clickAt = clock.now
+    let confirm!: (ok: boolean) => void
+    const prompt = new Promise<boolean>((resolve) => {
+      confirm = resolve
+    })
+    const pending = flipClock(
+      null,
+      () => prompt,
+      () => clock.now
+    )
+    const peerAt = 3000
+    clock.now = peerAt
+    clock.now = 5000
+    confirm(true)
+    const written = await pending
+    expect(written).toBe(5000)
+    expect(written).toBeGreaterThan(peerAt)
+    expect(clickAt).toBeLessThan(peerAt)
+
+    // Declined: null – the switch is not written, no clock either.
+    expect(
+      await flipClock(
+        null,
+        async () => false,
+        () => 7000
+      )
+    ).toBeNull()
+
+    // No prompt to raise (a disable; an enable with nothing pending): the time of the flip.
+    expect(
+      await flipClock(
+        null,
+        async () => true,
+        () => 8000
+      )
+    ).toBe(8000)
+
+    // A synced record's flip (`ExtensionSyncApplier.mergeSwitches` → `setEnabled(id, on, at)`):
+    // the record's clock, whatever the device's time – and null when its prompt is declined.
+    expect(
+      await flipClock(
+        4200,
+        async () => true,
+        () => 9000
+      )
+    ).toBe(4200)
+    expect(
+      await flipClock(
+        4200,
+        async () => false,
+        () => 9000
+      )
+    ).toBeNull()
+
+    // The clock is read once, after the prompt: never before.
+    const reads: number[] = []
+    const now = (): number => {
+      reads.push(clock.now)
+      return clock.now
+    }
+    clock.now = 100
+    const late = flipClock(
+      null,
+      async () => {
+        expect(reads).toEqual([])
+        clock.now = 200
+        return true
+      },
+      now
+    )
+    expect(await late).toBe(200)
+    expect(reads).toEqual([200])
   })
 })

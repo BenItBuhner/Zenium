@@ -811,6 +811,92 @@ describe('AndroidExtensions: managing installs', () => {
     expect(h.registry().extensions[0].enabled).toBe(true)
   })
 
+  it('clocks the switches it flips (ID-44): the install writes no clock; a flip of Enabled writes `enabledAt` at the flip’s time and projects it through `list()`, a no-op flip leaves it; the toolbar switch the same, on its own clock; a switch never flipped here carries none', async () => {
+    const h = await installed()
+    // Installed: neither clock – a switch the phone never flipped has no clock on the wire, so
+    // it never beats a desktop's clocked switch.
+    expect(h.registry().extensions[0]).not.toHaveProperty('enabledAt')
+    expect(h.registry().extensions[0]).not.toHaveProperty('toolbarPinnedAt')
+    expect(h.ext.list()[0]).not.toHaveProperty('enabledAt')
+    expect(h.ext.list()[0]).not.toHaveProperty('toolbarPinnedAt')
+
+    // The disable at t1: its clock, and the registry's copy is what `list()` projects.
+    h.clock.now = 1_700_000_100_000
+    await h.ext.setEnabled(ID, false)
+    expect(h.registry().extensions[0].enabledAt).toBe(1_700_000_100_000)
+    expect(h.ext.list()[0].enabledAt).toBe(1_700_000_100_000)
+    expect(h.ext.list()[0]).not.toHaveProperty('toolbarPinnedAt')
+    // A flip to the value it has is no flip: the clock stands.
+    h.clock.now = 1_700_000_150_000
+    await h.ext.setEnabled(ID, false)
+    expect(h.ext.list()[0].enabledAt).toBe(1_700_000_100_000)
+    // The enable at t2 moves it.
+    h.clock.now = 1_700_000_200_000
+    await h.ext.setEnabled(ID, true)
+    expect(h.ext.list()[0].enabledAt).toBe(1_700_000_200_000)
+
+    // The toolbar switch keeps its own clock; a no-op pin leaves it; the Enabled clock stands.
+    h.clock.now = 1_700_000_300_000
+    h.ext.setToolbarPinned(ID, true)
+    expect(h.registry().extensions[0].toolbarPinnedAt).toBe(1_700_000_300_000)
+    expect(h.ext.list()[0]).toMatchObject({
+      toolbarPinned: true,
+      toolbarPinnedAt: 1_700_000_300_000,
+      enabledAt: 1_700_000_200_000
+    })
+    h.clock.now = 1_700_000_350_000
+    h.ext.setToolbarPinned(ID, true)
+    expect(h.ext.list()[0].toolbarPinnedAt).toBe(1_700_000_300_000)
+    h.ext.setToolbarPinned('not-installed', true)
+    expect(h.ext.list()[0].toolbarPinnedAt).toBe(1_700_000_300_000)
+
+    // The clocks are the registry's: a relaunch on the same file reads them back.
+    h.ext.flushSync()
+    const next = harness({ registry: h.files.get('extensions.json')! })
+    expect(next.ext.list()[0]).toMatchObject({
+      enabledAt: 1_700_000_200_000,
+      toolbarPinnedAt: 1_700_000_300_000
+    })
+  })
+
+  it('the clock of an enable that prompts (an update’s permissions waiting) is the confirm’s time, not the tap’s (ID-44): a peer’s flip landing while the sheet stands open is the older write', async () => {
+    const h = await installed()
+    h.clock.now = 1_700_000_100_000
+    await h.ext.setEnabled(ID, false)
+    // An update left permission warnings pending: the enable asks first.
+    h.ext.record(ID)!.pendingWarnings = ['Read your browsing history']
+    let answer!: (ok: boolean) => void
+    h.ext.confirmInstall = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve
+      })
+    h.clock.now = 1_700_000_200_000
+    const enabling = h.ext.setEnabled(ID, true)
+    await tick()
+    // The sheet stands open; the clock runs on (a peer's write would land at 1_700_000_250_000
+    // meanwhile); the user confirms at 1_700_000_300_000.
+    expect(h.ext.record(ID)!.enabled).toBe(false)
+    expect(h.ext.record(ID)!.enabledAt).toBe(1_700_000_100_000)
+    h.clock.now = 1_700_000_300_000
+    answer(true)
+    await enabling
+    expect(h.ext.record(ID)).toMatchObject({
+      enabled: true,
+      enabledAt: 1_700_000_300_000,
+      pendingWarnings: null
+    })
+    expect(h.runtime.events.at(-1)).toBe(`attach ${ID} 1.0.0`)
+
+    // Declined: off, the clock as it was.
+    h.clock.now = 1_700_000_400_000
+    await h.ext.setEnabled(ID, false)
+    h.ext.record(ID)!.pendingWarnings = ['Read your browsing history']
+    h.ext.confirmInstall = async () => false
+    h.clock.now = 1_700_000_500_000
+    await h.ext.setEnabled(ID, true)
+    expect(h.ext.record(ID)).toMatchObject({ enabled: false, enabledAt: 1_700_000_400_000 })
+  })
+
   it('removes the files, the record and the runtime instance', async () => {
     const h = await installed()
     await h.ext.remove(ID)

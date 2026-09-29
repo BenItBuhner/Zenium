@@ -1486,8 +1486,8 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
       (r) => origins.get(r.id) ?? null
     )
     // The live records first, the tombstones after them – the batch's order for every type.
-    // A record without a switch's clock (an older build's, the phone's) is read at the
-    // record's `modified` for it (`syncedExtensionData`).
+    // A record without a switch's clock (an older build's; a switch the phone never flipped) is
+    // read at 0 for it – never at the record's `modified`, 2000 here (`syncedExtensionData`).
     expect(host.current!.batches).toEqual([
       [
         {
@@ -1496,8 +1496,8 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
             store: 'chrome-web-store',
             enabled: true,
             toolbarPinned: false,
-            enabledAt: 2000,
-            toolbarPinnedAt: 2000
+            enabledAt: 0,
+            toolbarPinnedAt: 0
           },
           from: 'Work laptop'
         },

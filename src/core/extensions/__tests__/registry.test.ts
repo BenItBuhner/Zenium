@@ -498,7 +498,7 @@ describe('migrateRegistry', () => {
     }
     expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
     // `newRecord` (the shared builder; the phone's installs) sets none: the desktop stamps at
-    // its install (`ExtensionService.installPackage`), the phone keeps no clock.
+    // its install (`ExtensionService.installPackage`), the phone at its flips alone.
     expect(record()).not.toHaveProperty('enabledAt')
     expect(record()).not.toHaveProperty('toolbarPinnedAt')
   })

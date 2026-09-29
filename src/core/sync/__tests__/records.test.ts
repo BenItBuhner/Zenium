@@ -3096,35 +3096,38 @@ describe('extension records (services pass 16, ID-44)', () => {
     })
   })
 
-  it('syncedExtensionData: what the apply hands the host – each switch with its clock, an absent one read as the record’s `modified` (a record from before the clocks, or the phone’s, is judged whole at its time)', () => {
+  it('syncedExtensionData: what the apply hands the host – each switch with its clock, an absent one read as 0 (older than any clocked switch: a switch its host never flipped, or a record from before the clocks, never beats a clocked one – never the record’s `modified`)', () => {
     const data = readExtensionData(ID_A, {
       store: 'edge-add-ons',
       enabled: false,
       toolbarPinned: true
     })!
-    expect(syncedExtensionData(data, 4000)).toEqual({
+    expect(syncedExtensionData(data)).toEqual({
       store: 'edge-add-ons',
       enabled: false,
       toolbarPinned: true,
-      enabledAt: 4000,
-      toolbarPinnedAt: 4000
+      enabledAt: 0,
+      toolbarPinnedAt: 0
     })
-    expect(syncedExtensionData({ ...data, enabledAt: 1500 }, 4000)).toEqual({
+    // One clock carried, the other not: the carried one travels, the absent one is 0 – the
+    // phone's shape after a flip of one switch.
+    expect(syncedExtensionData({ ...data, enabledAt: 1500 })).toEqual({
       store: 'edge-add-ons',
       enabled: false,
       toolbarPinned: true,
       enabledAt: 1500,
-      toolbarPinnedAt: 4000
+      toolbarPinnedAt: 0
     })
-    expect(syncedExtensionData({ ...data, enabledAt: 1500, toolbarPinnedAt: 1200 }, 4000)).toEqual({
+    expect(syncedExtensionData({ ...data, enabledAt: 1500, toolbarPinnedAt: 1200 })).toEqual({
       store: 'edge-add-ons',
       enabled: false,
       toolbarPinned: true,
       enabledAt: 1500,
       toolbarPinnedAt: 1200
     })
-    // A record first seen (`modified` 0) without clocks: 0 for each, as old as any.
-    expect(syncedExtensionData(data, 0)).toMatchObject({ enabledAt: 0, toolbarPinnedAt: 0 })
+    // The function has no eye on the record's stamp: the same bytes read the same whatever
+    // `modified` the record travelled under.
+    expect(syncedExtensionData.length).toBe(1)
   })
 
   it('extensionRecordReadable (the engine rule of #712): a live record the reader takes or a tombstone under an extension id is a winner; an unknown store, a switch that is no boolean, garbage or a tombstone under no extension id is not – and every other type is', () => {

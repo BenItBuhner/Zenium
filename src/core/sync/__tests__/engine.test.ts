@@ -39,6 +39,7 @@ import {
   folderKey,
   memoryIo,
   published,
+  publishedAll,
   setup,
   teardown,
   unlockVault
@@ -2486,8 +2487,9 @@ function extensionInfo(
 
 /**
  * A host with store installs that publishes them and lands none – the phone's shape (Android's
- * `AndroidExtensions` installs from the stores, keeps no clock for a switch, and has no
- * `applySyncedExtensions` and no `syncSources`: the engine reads its `list()`).
+ * `AndroidExtensions` installs from the stores, clocks the switches it flips and none other –
+ * its install writes no clock – and has no `applySyncedExtensions` and no `syncSources`: the
+ * engine reads its `list()`).
  */
 class PublishingExtensions extends NoExtensions {
   readonly installed = new Map<string, ExtensionInfo>()
@@ -2512,10 +2514,12 @@ class PublishingExtensions extends NoExtensions {
 
   /**
    * A change of the record: the user's flip of a switch is stamped with the device's time – its
-   * clock for that switch – unless the patch carries the clock (a synced record's); the phone's
-   * shape stamps nothing (`stamps` false).
+   * clock for that switch (`AndroidExtensions.setEnabled` / `setToolbarPinned` on the phone,
+   * `ExtensionService.switchEnabled` / `setToolbarPinned` on the desktop) – unless the patch
+   * carries the clock (a synced record's) or the test says otherwise (`stamps` false: a build
+   * from before the clocks).
    */
-  set(id: string, patch: Partial<ExtensionInfo>, stamps = false): void {
+  set(id: string, patch: Partial<ExtensionInfo>, stamps = true): void {
     const have = this.installed.get(id)
     if (!have) return
     const next = { ...have, ...patch }
@@ -3301,6 +3305,28 @@ describe('the extensions across devices – the verifier’s round', () => {
     const off = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
     expect(off.data).toMatchObject({ enabled: false })
 
+    // The claim, read where it can be read: every device file in the folder, DECRYPTED, at
+    // each checkpoint that follows (the folder holds the current files – a device's round
+    // overwrites its file – so "ever" is the sum of the checkpoints, not one look at the end).
+    // No copy of the extension on the wire may say "on" under the desktop's stamp, and the
+    // laptop publishes nothing for it while its applier holds the record.
+    const wire = async (): Promise<Map<string, SyncRecord | undefined>> => {
+      const files = await publishedAll()
+      expect(files.size).toBe(3)
+      const copies = new Map<string, SyncRecord | undefined>()
+      for (const [deviceId, records] of files) {
+        const copy = records.find((r) => r.id === EXT_A)
+        if (copy && !copy.deleted && copy.modified === off.modified) {
+          expect(copy.data, `${deviceId}: the stale copy under the desktop's stamp`).toEqual(
+            off.data
+          )
+        }
+        copies.set(deviceId, copy)
+      }
+      return copies
+    }
+    const laptop = b.engine.status().deviceId
+
     // The laptop's round takes the record and hands it to its applier, which holds it (the
     // startup hold, the attach, the id's busy work – the desktop's applier acts later). The
     // laptop's own file, written at the end of that round, carries NOTHING for the extension:
@@ -3312,9 +3338,9 @@ describe('the extensions across devices – the verifier’s round', () => {
     )
     expect(B.installed.get(EXT_A)!.enabled).toBe(true)
     expect(B.syncedExtensionsInFlight().has(EXT_A)).toBe(true)
-    expect((await extensionRecords(b)).find((r) => r.id === EXT_A)).toBeUndefined()
+    expect((await wire()).get(laptop)).toBeUndefined()
     await settle()
-    expect((await extensionRecords(b)).find((r) => r.id === EXT_A)).toBeUndefined()
+    expect((await wire()).get(laptop)).toBeUndefined()
 
     // A third device reads the folder meanwhile: the desktop's record is the only copy, and
     // that is what it lands. Nothing on the wire ever said "on" under the desktop's stamp.
@@ -3325,6 +3351,7 @@ describe('the extensions across devices – the verifier’s round', () => {
     expect(C.log().filter((line) => line.endsWith('from Work laptop'))).toEqual([])
     await settle()
     expect(C.installed.get(EXT_A)!.enabled).toBe(false)
+    expect((await wire()).get(laptop)).toBeUndefined()
 
     // The laptop's applier commits: the extension stands as the record says – the same bytes –
     // and the laptop's next round publishes the record under the desktop's stamp, as adopted.
@@ -3336,9 +3363,13 @@ describe('the extensions across devices – the verifier’s round', () => {
     })
     expect(B.syncedExtensionsInFlight().size).toBe(0)
     await b.engine.syncNow()
-    expect((await extensionRecords(b)).find((r) => r.id === EXT_A)).toEqual(off)
-    // And across every file the folder ever held for the extension, none carried the stale copy.
-    for (const text of folderFiles('/drive').values()) expect(text).not.toContain(EXT_A)
+    expect((await wire()).get(laptop)).toEqual(off)
+    // A round of the third device's, and every copy on the wire is the desktop's record, byte
+    // for byte – the same stamp, the same clocks.
+    await c.engine.syncNow()
+    const copies = await wire()
+    expect(copies.size).toBe(3)
+    for (const copy of copies.values()) expect(copy).toEqual(off)
   }, 30_000)
 
   it('D4 (b) – an uninstall is a tombstone in the metadata at its commit, persisted before any push: quit before the push, relaunch, and the tombstone travels; nothing comes back', async () => {
@@ -3523,5 +3554,290 @@ describe('the extensions across devices – the verifier’s round', () => {
       expect(folderFiles('/drive').has(deviceFileName('peer-later-build'))).toBe(true)
     }
     expect(A.ids()).toEqual([EXT_A])
+  }, 30_000)
+
+  it('R9 – a phone (no applier) beside two desktops: a desktop’s flip never reverts across three rounds; the phone’s clock-less copy never travels under the winner’s stamp – its file carries nothing for the id while it holds a record it could not apply, through a relaunch; a phone flip of Enabled (its clock) beats an older desktop switch and loses to a newer one; a phone that never touched the toolbar pin never overrides a desktop’s', async () => {
+    // The phone first: its file is the first the folder lists, so on a tie of `modified` its
+    // copy would be the one `newestByRecord` keeps – the order the defect needed.
+    const p = device('Pixel 9', { extensions: phoneExtensions })
+    const a = device('Desk (Linux)', { extensions: inFlightExtensions })
+    const b = device('Work laptop', { extensions: inFlightExtensions })
+    const P = hostOf<PublishingExtensions>(p)
+    const A = hostOf<InFlightExtensions>(a)
+    const B = hostOf<InFlightExtensions>(b)
+    // Installed from the store on all three: the phone's install writes no clock, the desktops'
+    // stamp both switches at T0.
+    const T0 = Date.now() - 60_000
+    P.add(EXT_A, 'chrome-web-store', { enabled: true })
+    A.add(EXT_A, 'chrome-web-store', { enabled: true, enabledAt: T0, toolbarPinnedAt: T0 })
+    B.add(EXT_A, 'chrome-web-store', { enabled: true, enabledAt: T0, toolbarPinnedAt: T0 })
+    const phoneId = p.engine.status().deviceId
+    /** The phone's copy of the record on the wire, decrypted – undefined when its file carries none. */
+    const phoneCopy = async (): Promise<SyncRecord | undefined> =>
+      (await publishedAll()).get(phoneId)?.find((r) => r.id === EXT_A)
+    const switches = (
+      host: PublishingExtensions
+    ): Pick<ExtensionInfo, 'enabled' | 'enabledAt' | 'toolbarPinned' | 'toolbarPinnedAt'> => {
+      const e = host.installed.get(EXT_A)!
+      return {
+        enabled: e.enabled,
+        enabledAt: e.enabledAt,
+        toolbarPinned: e.toolbarPinned,
+        toolbarPinnedAt: e.toolbarPinnedAt
+      }
+    }
+    /**
+     * Every copy of the record on the wire carries `record`'s switches, live, and the phone's
+     * file carries none. The stamps may differ: a desktop that merged the same switches on its
+     * own stamps them at its own commit.
+     */
+    const wireIs = async (record: SyncRecord, note: string): Promise<void> => {
+      for (const [deviceId, records] of await publishedAll()) {
+        const copy = records.find((r) => r.id === EXT_A)
+        if (deviceId === phoneId) expect(copy, `${note}: the phone's file`).toBeUndefined()
+        else if (copy) {
+          expect(copy.deleted, `${note}: ${deviceId}`).toBe(false)
+          expect(copy.data, `${note}: ${deviceId}`).toEqual(record.data)
+        }
+      }
+    }
+
+    // The phone's record goes out first, clock-less, at 0. The desktop's merge takes it, lands
+    // nothing from it (its clocks read as 0, older than the install's) and re-publishes its own
+    // copy under a fresh stamp; the laptop holds the same bytes and adopts the record as it is.
+    await setup(p)
+    expect((await phoneCopy())?.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false
+    })
+    await setup(a)
+    await a.engine.confirmMerge(true)
+    await settle()
+    expect(A.republished).toEqual([EXT_A])
+    await a.engine.syncNow()
+    const first = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    expect(first.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false,
+      enabledAt: T0,
+      toolbarPinnedAt: T0
+    })
+    expect(first.modified).toBeGreaterThan(0)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await settle()
+    await b.engine.syncNow()
+    // The same bytes on the laptop: the desktop's record is no winner there (`winningRemote`
+    // skips an equal hash), and the merge's entry stands until a copy differs.
+    expect((await extensionRecords(b)).find((r) => r.id === EXT_A)!.data).toEqual(first.data)
+    expect(B.applied).toEqual([])
+    // The phone takes the desktop's record and can apply nothing: its file drops the id rather
+    // than carrying its own copy under the desktop's stamp; its copy stands as the user left it.
+    await p.engine.syncNow()
+    expect(p.engine.status().lastError).toBeNull()
+    expect(await phoneCopy()).toBeUndefined()
+    expect(P.installed.get(EXT_A)).toMatchObject({ enabled: true })
+    expect(P.installed.get(EXT_A)).not.toHaveProperty('enabledAt')
+
+    // THE DEFECT'S ROUND. The desktop turns the extension off at t2: its record goes out under
+    // t2 with the disable's clock. Three rounds follow, the phone reading before the laptop
+    // each time: the phone's file never carries its copy – still on, clock-less – under the
+    // desktop's stamp (the copy a tie would have handed the laptop, whose re-publish would then
+    // have turned the desktop back on); the laptop takes the disable; the desktop's flip stands.
+    await settle()
+    A.set(EXT_A, { enabled: false })
+    await settle()
+    await a.engine.syncNow()
+    const off = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    const t2 = A.installed.get(EXT_A)!.enabledAt!
+    expect(t2).toBeGreaterThan(T0)
+    expect(off.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: false,
+      toolbarPinned: false,
+      enabledAt: t2,
+      toolbarPinnedAt: T0
+    })
+    for (let round = 0; round < 3; round += 1) {
+      await p.engine.syncNow()
+      expect(await phoneCopy(), `round ${round}: the phone's file`).toBeUndefined()
+      await b.engine.syncNow()
+      await settle()
+      await a.engine.syncNow()
+      await settle()
+      expect(switches(A), `round ${round}: the desktop`).toEqual({
+        enabled: false,
+        enabledAt: t2,
+        toolbarPinned: false,
+        toolbarPinnedAt: T0
+      })
+      expect(switches(B), `round ${round}: the laptop`).toEqual({
+        enabled: false,
+        enabledAt: t2,
+        toolbarPinned: false,
+        toolbarPinnedAt: T0
+      })
+      await wireIs(off, `round ${round}`)
+    }
+    expect(A.republished).toEqual([EXT_A])
+    expect(B.republished).toEqual([])
+    expect(P.installed.get(EXT_A)).toMatchObject({ enabled: true })
+
+    // The desktop pins the extension to its toolbar at t3; the laptop takes the pin; the phone
+    // never touches it (no clock for it, ever).
+    await settle()
+    A.set(EXT_A, { toolbarPinned: true })
+    await settle()
+    const t3 = A.installed.get(EXT_A)!.toolbarPinnedAt!
+    expect(t3).toBeGreaterThan(t2)
+    await a.engine.syncNow()
+    const pinned = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    await b.engine.syncNow()
+    await settle()
+    expect(switches(B)).toEqual({
+      enabled: false,
+      enabledAt: t2,
+      toolbarPinned: true,
+      toolbarPinnedAt: t3
+    })
+    await p.engine.syncNow()
+    await wireIs(pinned, 'after the pin')
+
+    // THE PHONE'S FLIP BEATS AN OLDER DESKTOP SWITCH. Its user turns the extension off and on
+    // again at t4 (> t3): the phone clocks the flip, and its record goes out under a fresh stamp
+    // – `enabledAt: t4`, NO clock for the pin. The flip is the later write of Enabled: both
+    // desktops take it at the phone's clock. Neither gives up its pin: the phone's record has
+    // no clock for the pin, which reads as 0 – older than t3.
+    await settle()
+    P.set(EXT_A, { enabled: false })
+    await settle()
+    P.set(EXT_A, { enabled: true })
+    await settle()
+    const t4 = P.installed.get(EXT_A)!.enabledAt!
+    expect(t4).toBeGreaterThan(t3)
+    expect(P.installed.get(EXT_A)).not.toHaveProperty('toolbarPinnedAt')
+    await p.engine.syncNow()
+    const flipped = (await phoneCopy())!
+    expect(flipped.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: false,
+      enabledAt: t4
+    })
+    expect(flipped.modified).toBeGreaterThan(pinned.modified)
+    await a.engine.syncNow()
+    expect(A.log().at(-1)).toBe(`${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Pixel 9`)
+    await settle()
+    expect(switches(A)).toEqual({
+      enabled: true,
+      enabledAt: t4,
+      toolbarPinned: true,
+      toolbarPinnedAt: t3
+    })
+    await b.engine.syncNow()
+    await settle()
+    expect(switches(B)).toEqual({
+      enabled: true,
+      enabledAt: t4,
+      toolbarPinned: true,
+      toolbarPinnedAt: t3
+    })
+    // The desktop's commit publishes the merged record afresh; the phone takes it and, applying
+    // nothing, leaves the wire again.
+    await a.engine.syncNow()
+    const merged = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    expect(merged.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: true,
+      toolbarPinned: true,
+      enabledAt: t4,
+      toolbarPinnedAt: t3
+    })
+    expect(merged.modified).toBeGreaterThan(flipped.modified)
+    await b.engine.syncNow()
+    await p.engine.syncNow()
+    await wireIs(merged, 'after the phone’s flip landed')
+    expect(P.installed.get(EXT_A)).toMatchObject({ enabled: true, toolbarPinned: false })
+
+    // THE PHONE'S FLIP LOSES TO A NEWER DESKTOP SWITCH. Its user turns the extension off and on
+    // again at t5 without a round between; the desktop turns it off at t6 > t5. The desktop's
+    // write is the later one: its record wins on the laptop and on the phone, the phone's wins
+    // nowhere – both desktops stand off at t6 – and the phone's copy leaves the wire once it
+    // reads the desktop's record.
+    await settle()
+    P.set(EXT_A, { enabled: false })
+    await settle()
+    P.set(EXT_A, { enabled: true })
+    await settle()
+    const t5 = P.installed.get(EXT_A)!.enabledAt!
+    A.set(EXT_A, { enabled: false })
+    await settle()
+    const t6 = A.installed.get(EXT_A)!.enabledAt!
+    expect(t6).toBeGreaterThan(t5)
+    await p.engine.syncNow()
+    expect((await phoneCopy())!.data).toMatchObject({ enabled: true, enabledAt: t5 })
+    await a.engine.syncNow()
+    await settle()
+    expect(switches(A)).toEqual({
+      enabled: false,
+      enabledAt: t6,
+      toolbarPinned: true,
+      toolbarPinnedAt: t3
+    })
+    const later = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    expect(later.data).toMatchObject({ enabled: false, enabledAt: t6 })
+    await b.engine.syncNow()
+    await settle()
+    expect(switches(B)).toEqual({
+      enabled: false,
+      enabledAt: t6,
+      toolbarPinned: true,
+      toolbarPinnedAt: t3
+    })
+    expect(B.log().at(-1)).toBe(
+      `${EXT_A.slice(0, 4)} chrome-web-store off pinned from Desk (Linux)`
+    )
+    await p.engine.syncNow()
+    await b.engine.syncNow()
+    await wireIs(later, 'after the desktop’s later flip')
+    expect(P.installed.get(EXT_A)).toMatchObject({ enabled: true, enabledAt: t5 })
+
+    // THE HOLD SURVIVES A RELAUNCH. The phone quits and comes back on its files, its registry as
+    // it left it: the boot seed adopts nothing for the id, its first round publishes nothing
+    // under it – the desktop's record is the only copy – and the user's next flip here is the
+    // change that publishes, under a fresh stamp with its clock.
+    const files = close(p)
+    expect(
+      (JSON.parse(files['sync.json']!) as { unappliedExtensions?: Record<string, string> })
+        .unappliedExtensions
+    ).toHaveProperty(EXT_A)
+    const io = memoryIo()
+    Object.assign(io.files, files)
+    const kept = P.installed.get(EXT_A)!
+    const again = device('Pixel 9', {
+      io,
+      extensions: (browser) => {
+        const host = new PublishingExtensions(browser)
+        host.installed.set(EXT_A, kept)
+        return host
+      }
+    })
+    const AGAIN = hostOf<PublishingExtensions>(again)
+    expect(again.engine.status().deviceId).toBe(phoneId)
+    await again.engine.syncNow()
+    expect(again.engine.status().lastError).toBeNull()
+    await wireIs(later, 'after the relaunch')
+    await settle()
+    AGAIN.set(EXT_A, { enabled: false })
+    await settle()
+    const t7 = AGAIN.installed.get(EXT_A)!.enabledAt!
+    expect(t7).toBeGreaterThan(t6)
+    await again.engine.syncNow()
+    expect((await phoneCopy())!).toMatchObject({
+      data: { store: 'chrome-web-store', enabled: false, toolbarPinned: false, enabledAt: t7 }
+    })
+    expect((await phoneCopy())!.modified).toBeGreaterThan(later.modified)
   }, 30_000)
 })
