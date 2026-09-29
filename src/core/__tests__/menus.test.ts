@@ -689,6 +689,36 @@ describe('the app menu', () => {
       }
     })
 
+    it("gates the row in the menu's own build, not only in the command's wait: a build made while the status is unread shows none, one made after a read that found keys ends on it, and an empty bundle shows none on the tablet either", async () => {
+      const h = harness(ANDROID, {
+        formFactor: 'phone',
+        managed: { by: null, keys: ['URLBlocklist'] }
+      })
+      const host = slowHost(h)
+      void h.browser.managed.ensure()
+      expect(h.browser.managed.status()).toBeNull()
+      // `showAppMenu` directly, as no command's wait precedes it: `managedRow`'s own gate holds.
+      h.browser.menus.showAppMenu(h.win, { keyboard: false })
+      expect(h.popups()).toBe(1)
+      expect(h.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+      expect(h.shown().at(-1)).toMatchObject({ label: 'Change Menu', key: 'menu.change' })
+      host.answer({ by: null, keys: ['URLBlocklist'] })
+      await h.browser.managed.ensure()
+      h.browser.menus.showAppMenu(h.win, { keyboard: false })
+      expect(h.shown().slice(-2)).toStrictEqual([{ type: 'separator' }, managedRow])
+      expect(h.shown().filter((i) => i.key === 'menu.managed')).toHaveLength(1)
+      // Read and empty: known, unmanaged, no row – the tablet's tail is Help as before.
+      const empty = harness(ANDROID, {
+        formFactor: 'tablet',
+        managed: { by: 'Nobody', keys: [] }
+      })
+      await empty.browser.managed.ensure()
+      expect(empty.browser.managed.known()).toBe(true)
+      expect(empty.browser.managed.managed()).toBe(false)
+      empty.browser.menus.showAppMenu(empty.win, { keyboard: false })
+      expect(empty.shown().some((i) => i.key === 'menu.managed')).toBe(false)
+      expect(empty.shown().at(-1)?.label).toBe('Help')
+    })
   })
 
   describe("Chrome's Tab groups submenu (shortcuts-menus-111)", () => {
