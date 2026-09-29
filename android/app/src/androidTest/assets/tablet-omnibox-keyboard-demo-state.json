@@ -1,0 +1,88 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browsing",
+      "icon": "\ud83c\udf10",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
+          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": ["tab_home", "tab_new"],
+      "activeTabId": "tab_home",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_home",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18193/",
+      "title": "Tablet omnibox keyboard demo",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_new",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "zen://newtab",
+      "title": "New Tab",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "gestureHintDone": true,
+    "colorScheme": "light",
+    "sidebarExpanded": true,
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    },
+    "searchEngineId": "custom:notes",
+    "searchEngines": [
+      {
+        "id": "custom:notes",
+        "name": "Notes",
+        "searchUrl": "http://127.0.0.1:18193/search?q=%s",
+        "suggestUrl": "http://127.0.0.1:18193/suggest?q=%s",
+        "keyword": "@notes",
+        "glyph": "N",
+        "source": "custom"
+      }
+    ]
+  },
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_home"
+      },
+      "compact": false
+    }
+  ]
+}

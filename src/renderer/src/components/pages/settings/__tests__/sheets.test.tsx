@@ -26,6 +26,13 @@ import { SheetStack } from '../sheets'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+// The core's bridge, spied: the address sheet's Copy row (seed #34) asks it for the copy.
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
+Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+/** The copies the core was asked for since the last clear. */
+const copies = (): unknown[][] =>
+  invoke.mock.calls.filter(([name]) => name === 'clipboard.writeText')
+
 /** A hand-cranked animation frame: `run(n)` advances the clock 16 ms a frame and runs the callbacks. */
 class Frames {
   now = 0
@@ -196,6 +203,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
+  invoke.mockClear()
   frames.install()
   viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
   sizes = ['clientHeight', 'offsetHeight'].map((name) => [
@@ -869,5 +877,108 @@ describe('a form’s close closes its sheet however the form binds it', () => {
       rest()
     }).not.toThrow()
     expect(closeTop).toHaveBeenCalledTimes(1)
+  })
+})
+
+/*
+ * The address hold sheet's one Copy row (`AddressSheet`, sheets.tsx; services seed #34 – the
+ * lead's rule on #694, point 3: "when a row both copies on hold and carries an address, the hold
+ * opens the sheet and the copy becomes its one Copy row"): the request carries the copy as a
+ * snapshot of the hold, the sheet draws #694's title block and then exactly one row under it,
+ * the shared action row labelled Copy, and pressing it closes the sheet first and copies once
+ * the sheet has gone – `ActionRow.closesSheet`, §9.31's link-menu precedent – through the core's
+ * clipboard path with the copy's text and its word, the same call the row's own hold makes
+ * (SET-54), whose toast says the word over the page the sheet has left. A request without a
+ * copy stays #694's sheet: no rows (addressReveal.test.tsx).
+ */
+describe('the address hold sheet’s Copy row (seed #34)', () => {
+  const PATH = 'Nextcloud/Documents/Work/Projects/2026/Zenium/Backups/Settings'
+  const copy = { text: PATH, confirmation: 'Folder copied' }
+  const sheetEl = (): HTMLElement => mount!.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')!
+
+  function stack(closeTop: () => void, withCopy = true): void {
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[
+            {
+              kind: 'address',
+              rowId: 'sync-server-folder',
+              label: 'Folder',
+              text: PATH,
+              ...(withCopy ? { copy } : {})
+            }
+          ]}
+          groups={[]}
+          ctx={{ open: () => undefined }}
+          closeTop={closeTop}
+        />
+      </FrameDialogHost>
+    )
+  }
+
+  it('draws the title block, then exactly one row – the action row Copy – and nothing else; the sheet itself holds the focus', async () => {
+    stack(() => undefined)
+    await settle()
+    rest()
+    const sheet = sheetEl()
+    expect(sheet.classList.contains('zen-settings-sheet-address')).toBe(true)
+    expect(sheet.classList.contains('zen-settings-sheet-address-copy')).toBe(true)
+    const block = sheet.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block.querySelector('h2')?.textContent).toBe('Folder')
+    expect(block.querySelector('p')?.textContent).toBe(PATH)
+    expect(sheet.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
+    expect(sheet.getAttribute('aria-describedby')).toBe(block.querySelector('p')!.id)
+    // The one row: the shared pressable action row, whole-row target, no popup and no glyph –
+    // Copy stays on the page – in the sheet's row list under the block, with no heading.
+    const rows = [...sheet.querySelectorAll<HTMLElement>('.zen-settings-row')]
+    expect(rows).toHaveLength(1)
+    const row = rows[0]
+    expect(row.tagName).toBe('BUTTON')
+    expect(row.textContent).toBe('Copy')
+    expect(row.getAttribute('data-row')).toBe('sync-server-folder:copy')
+    expect(row.classList.contains('zen-settings-row-pressable')).toBe(true)
+    expect(row.hasAttribute('aria-haspopup')).toBe(false)
+    expect(row.querySelector('svg')).toBeNull()
+    expect(row.closest('.zen-settings-sheet-rows')).not.toBeNull()
+    expect(sheet.querySelector('.zen-settings-heading')).toBeNull()
+    expect(sheet.querySelector('.zen-settings-sheet-footer')).toBeNull()
+    expect(sheet.querySelector('[title]')).toBeNull()
+    expect(block.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The hold asked for the value: the sheet holds the focus (the prompt's rule, as #694), Copy
+    // one Tab away and no default key on it.
+    expect(document.activeElement).toBe(sheet)
+    expect(sheet.getAttribute('tabindex')).toBe('-1')
+    expect(copies()).toEqual([])
+  })
+
+  it('a tap on Copy closes the sheet first and copies once, with the text and its word, after the sheet has gone', async () => {
+    const closeTop = vi.fn()
+    stack(closeTop)
+    await settle()
+    rest()
+    const row = sheetEl().querySelector<HTMLElement>('[data-row="sync-server-folder:copy"]')!
+    // The finger reaches the row itself, not the scrim under the sheet.
+    expect(tap(row)).toBe(row)
+    // The sheet is on its way out and nothing has been copied yet: the copy runs on the landing.
+    expect(copies()).toEqual([])
+    expect(closeTop).not.toHaveBeenCalled()
+    rest()
+    expect(closeTop).toHaveBeenCalledTimes(1)
+    expect(copies()).toEqual([
+      ['clipboard.writeText', { text: PATH, confirmation: 'Folder copied' }]
+    ])
+  })
+
+  it('a request without a copy is #694’s sheet: the block and no row', async () => {
+    stack(() => undefined, false)
+    await settle()
+    rest()
+    const sheet = sheetEl()
+    expect(sheet.classList.contains('zen-settings-sheet-address')).toBe(true)
+    expect(sheet.classList.contains('zen-settings-sheet-address-copy')).toBe(false)
+    expect(sheet.querySelector('.zen-settings-row')).toBeNull()
+    expect(sheet.querySelector('.zen-settings-sheet-rows')).toBeNull()
+    expect(sheet.querySelector('.zen-settings-sheet-body')?.textContent).toBe('')
   })
 })
