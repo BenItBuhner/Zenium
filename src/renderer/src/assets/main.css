@@ -3723,7 +3723,12 @@
    * up over 200 ms as alpha 0 → 1 with 10 px of travel out of the bar's band
    * (`textbubble_in.xml`; `--zen-hint-from` turns it round under a top-docked bar), out on a
    * 200 ms fade (`textbubble_out.xml`); under reduced motion both are the 120 ms fade §11.3
-   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down.
+   * keeps, declared below `!important`. No clock: the first touch anywhere takes it down and
+   * passes through to what it touched (§9.33) – and a finger on the bubble touched the bubble:
+   * it stays the touch's target through its fade (`.zen-message`'s `pointer-events: auto`,
+   * kept under `[data-leaving]`), so the tap that took it down does not land on what the
+   * bubble stood over – in the overview, a card, which a tap picks (Chrome's popup consumes a
+   * touch on itself; a touch outside it is the control's, `AnchoredPopupWindow.onTouch`).
    */
   .zen-hint-bubble {
     --zen-message-text-inset: 0;
@@ -3747,7 +3752,6 @@
   }
   .zen-hint-bubble[data-leaving] {
     animation: zen-fade-out 200ms linear forwards;
-    pointer-events: none;
   }
   /*
    * The bubble on a tab card in the overview (the drag-to-group teaching, `useOverviewGroupsHint`;

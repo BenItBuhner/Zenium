@@ -174,6 +174,7 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
             expect("one filled button '$TIP_BUTTON' named '$TIP_BUTTON: $TIP_TITLE' (${face.optInt("buttons")} button(s): '${face.optString("button")}' / '${face.optString("buttonLabel")}', primary ${face.optBoolean("primary")})", face.optInt("buttons") == 1 && face.optString("button") == TIP_BUTTON && face.optString("buttonLabel") == "$TIP_BUTTON: $TIP_TITLE" && face.optBoolean("primary"), "tip-button")
             expect("the record is unseen before the finger: ${hintRecord()}", !hintRecord().optBoolean("shown"), "record-unseen")
             still("tip-tab-groups-light")
+            darkStill("tip-tab-groups-dark")
         }
     }
 
@@ -246,6 +247,7 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
 
     private fun theDrag() {
         step("4. The gesture it teaches: a card held and dragged onto its neighbour – the merge ring on the target, and on release the two are a group, the dropped card right behind its target") {
+            ensureOverviewOpen("the gesture")
             val pair = neighbours() ?: error("no two loose cards side by side in view")
             val (source, target) = pair
             val from = domBox("document.querySelector('.zen-overview-grid [data-cell=\"$source\"]')") ?: error("no cell for $source")
@@ -276,6 +278,7 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
             expect("the group is $target, $source: the dropped card right behind the card it was dropped on (v2 §11.4; $order)", order == listOf(target, source), "drag-order")
             expect("the record stays spent, not written again by the drag: ${hintRecord(state)}", hintRecord(state).optBoolean("shown"), "record-stays")
             still("group-made-light")
+            darkStill("group-made-dark")
         }
     }
 
@@ -283,6 +286,7 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
 
     private fun onceAndForAll() {
         step("5. Once and for all: the overview closed and opened again by the bar's Tabs button shows no bubble") {
+            ensureOverviewOpen("the close")
             back()
             val closed = awaitChrome("!document.querySelector('.zen-overview')", 8_000)
             SystemClock.sleep(1_200)
@@ -325,6 +329,21 @@ class OverviewGroupsHintDemo : DemoHarness("overview-groups-hint-demo-state.json
     /** The overview is on screen and has finished growing in (its root at scale 1). */
     private fun overviewOpen(): Boolean =
         chromeValue("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
+
+    /**
+     * A step that needs the overview standing finds it so, or opens it with a finger on the bar's
+     * Tabs button and says so – a step before it that left the overview closed is that step's
+     * failure, recorded there, not this one's.
+     */
+    private fun ensureOverviewOpen(forWhat: String) {
+        if (overviewOpen()) return
+        finding("  the overview is not standing for $forWhat: the Tabs button opens it (${describeActive()})")
+        val tabs = tabsButton() ?: error("no Tabs button on the bar")
+        Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
+        val open = awaitTrue(8_000) { overviewOpen() }
+        SystemClock.sleep(1_500)
+        if (!open) error("the Tabs button did not open the overview for $forWhat")
+    }
 
     private fun near(a: Double, b: Double, tolerance: Double = 1.5): Boolean = abs(a - b) <= tolerance
 

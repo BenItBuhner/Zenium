@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -201,5 +203,22 @@ describe('the layer', () => {
     expect(coverBandStore.get()).toEqual({ top: 0, bottom: 0 })
     act(() => dismissHintBubble())
     expect(coverBandStore.get()).toEqual({ top: 0, bottom: 0 })
+  })
+})
+
+describe('the stylesheet', () => {
+  const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+  const rule = (selector: string): string => {
+    const at = css.indexOf(`\n  ${selector} {`)
+    expect(at, selector).toBeGreaterThan(0)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  it("keeps the bubble the touch's target through its fade: a tap on the bubble takes it down and lands on nothing under it (the emulator's second run: the card beneath was picked)", () => {
+    // The layer is inert and the card opts back in; the fade turns that off nowhere.
+    expect(rule('.zen-message')).toContain('pointer-events: auto')
+    expect(rule('.zen-hint-bubble')).not.toContain('pointer-events')
+    expect(rule('.zen-hint-bubble[data-leaving]')).not.toContain('pointer-events')
+    expect(rule('.zen-hint-bubble[data-at=\'overview\']')).not.toContain('pointer-events')
   })
 })
