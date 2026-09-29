@@ -61,8 +61,12 @@ interface Props {
    * link in it, Delete on a row does nothing. The menus lose their editing rows in the core.
    */
   readOnly?: boolean
-  /** `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back. */
-  onClose: (opts?: { focusAnchor: boolean }) => void
+  /**
+   * `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back.
+   * `pressed`: a press on the chip itself closed it (the layer's light dismiss, reason `anchor`),
+   * so the bar knows the press's own `click` is still to come and is not a second one.
+   */
+  onClose: (opts?: { focusAnchor: boolean; pressed?: boolean }) => void
   /**
    * Left or Right at the root level (bookmarks-19): the bar hands the panel to the neighbour
    * chip, as a menu bar's arrows walk its menus. Without it Left closes the panel, as Backspace.
@@ -206,7 +210,8 @@ export function BarMenu({
   // leaves the focus be.
   useLightDismiss(
     groupRef,
-    (reason: DismissReason) => onClose({ focusAnchor: reason === 'anchor' }),
+    (reason: DismissReason) =>
+      onClose({ focusAnchor: reason === 'anchor', pressed: reason === 'anchor' }),
     { anchor: anchorEl }
   )
 

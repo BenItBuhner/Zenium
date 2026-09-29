@@ -1,0 +1,296 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_browse",
+  "spaces": [
+    {
+      "id": "space_browse",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [96, 110, 235],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [214, 92, 160],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": ["tab_home", "tab_web", "tab_tablets"],
+      "activeTabId": "tab_home",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_home",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18169/",
+      "title": "Bookmarks bar demo",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_web",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18169/web.html",
+      "title": "World Wide Web",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_tablets",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18169/tablets.html",
+      "title": "Tablet computer",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "sidebarExpanded": true,
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    },
+    "pageControls": {
+      "desktopSite": "off",
+      "desktopSites": {},
+      "darkenSites": false,
+      "darkenSiteExceptions": {},
+      "zoom": 1,
+      "zoomIncludesOsFontSize": true,
+      "siteZooms": {},
+      "forceZoom": false
+    }
+  },
+  "shortcutOverrides": {},
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_browse",
+      "selection": {
+        "space_browse": "tab_home"
+      },
+      "compact": false
+    }
+  ],
+  "bookmarkTree": {
+    "nodes": [
+      {
+        "id": "bm_docs",
+        "parentId": "1",
+        "index": 0,
+        "type": "url",
+        "title": "Documentation",
+        "url": "http://127.0.0.1:18169/docs.html",
+        "dateAdded": 1700000000000
+      },
+      {
+        "id": "bm_work",
+        "parentId": "1",
+        "index": 1,
+        "type": "folder",
+        "title": "Work",
+        "dateAdded": 1700000060000
+      },
+      {
+        "id": "bm_news",
+        "parentId": "1",
+        "index": 2,
+        "type": "url",
+        "title": "Morning news",
+        "url": "http://127.0.0.1:18169/news.html",
+        "dateAdded": 1700000120000
+      },
+      {
+        "id": "bm_web",
+        "parentId": "1",
+        "index": 3,
+        "type": "url",
+        "title": "World Wide Web",
+        "url": "http://127.0.0.1:18169/web.html",
+        "dateAdded": 1700000180000
+      },
+      {
+        "id": "bm_reading",
+        "parentId": "1",
+        "index": 4,
+        "type": "folder",
+        "title": "Reading",
+        "dateAdded": 1700000240000
+      },
+      {
+        "id": "bm_tablets",
+        "parentId": "1",
+        "index": 5,
+        "type": "url",
+        "title": "Tablet computer",
+        "url": "http://127.0.0.1:18169/tablets.html",
+        "dateAdded": 1700000300000
+      },
+      {
+        "id": "bm_zenium",
+        "parentId": "1",
+        "index": 6,
+        "type": "url",
+        "title": "Zenium",
+        "url": "http://127.0.0.1:18169/zenium.html",
+        "dateAdded": 1700000360000
+      },
+      {
+        "id": "bm_coffee",
+        "parentId": "1",
+        "index": 7,
+        "type": "url",
+        "title": "Coffee",
+        "url": "http://127.0.0.1:18169/coffee.html",
+        "dateAdded": 1700000420000
+      },
+      {
+        "id": "bm_design",
+        "parentId": "1",
+        "index": 8,
+        "type": "url",
+        "title": "Design language",
+        "url": "http://127.0.0.1:18169/design.html",
+        "dateAdded": 1700000480000
+      },
+      {
+        "id": "bm_release",
+        "parentId": "1",
+        "index": 9,
+        "type": "url",
+        "title": "Release notes",
+        "url": "http://127.0.0.1:18169/release.html",
+        "dateAdded": 1700000540000
+      },
+      {
+        "id": "bm_standards",
+        "parentId": "1",
+        "index": 10,
+        "type": "url",
+        "title": "Web standards",
+        "url": "http://127.0.0.1:18169/standards.html",
+        "dateAdded": 1700000600000
+      },
+      {
+        "id": "bm_mail",
+        "parentId": "1",
+        "index": 11,
+        "type": "url",
+        "title": "Mail",
+        "url": "http://127.0.0.1:18169/mail.html",
+        "dateAdded": 1700000660000
+      },
+      {
+        "id": "bm_calendar",
+        "parentId": "1",
+        "index": 12,
+        "type": "url",
+        "title": "Calendar",
+        "url": "http://127.0.0.1:18169/calendar.html",
+        "dateAdded": 1700000720000
+      },
+      {
+        "id": "bm_weather",
+        "parentId": "1",
+        "index": 13,
+        "type": "url",
+        "title": "Weather",
+        "url": "http://127.0.0.1:18169/weather.html",
+        "dateAdded": 1700000780000
+      },
+      {
+        "id": "bm_maps",
+        "parentId": "1",
+        "index": 14,
+        "type": "url",
+        "title": "Maps",
+        "url": "http://127.0.0.1:18169/maps.html",
+        "dateAdded": 1700000840000
+      },
+      {
+        "id": "bm_music",
+        "parentId": "1",
+        "index": 15,
+        "type": "url",
+        "title": "Music",
+        "url": "http://127.0.0.1:18169/music.html",
+        "dateAdded": 1700000900000
+      },
+      {
+        "id": "bm_board",
+        "parentId": "bm_work",
+        "index": 0,
+        "type": "url",
+        "title": "Board",
+        "url": "http://127.0.0.1:18169/board.html",
+        "dateAdded": 1700000960000
+      },
+      {
+        "id": "bm_tracker",
+        "parentId": "bm_work",
+        "index": 1,
+        "type": "url",
+        "title": "Tracker",
+        "url": "http://127.0.0.1:18169/tracker.html",
+        "dateAdded": 1700001020000
+      },
+      {
+        "id": "bm_wiki",
+        "parentId": "bm_work",
+        "index": 2,
+        "type": "url",
+        "title": "Team wiki",
+        "url": "http://127.0.0.1:18169/wiki.html",
+        "dateAdded": 1700001080000
+      },
+      {
+        "id": "bm_rfc",
+        "parentId": "bm_reading",
+        "index": 0,
+        "type": "url",
+        "title": "RFC 2324: HTCPCP/1.0",
+        "url": "http://127.0.0.1:18169/rfc2324.html",
+        "dateAdded": 1700001140000
+      },
+      {
+        "id": "bm_tea",
+        "parentId": "bm_reading",
+        "index": 1,
+        "type": "url",
+        "title": "RFC 7168: HTCPCP-TEA",
+        "url": "http://127.0.0.1:18169/tea.html",
+        "dateAdded": 1700001200000
+      }
+    ]
+  }
+}

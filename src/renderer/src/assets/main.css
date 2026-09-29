@@ -9878,17 +9878,55 @@
  * The toolbar row: §9.3's tablet icon button (40 × 40, 20 glyph, radius 8) in flow at a 4 px
  * gap – a 44 pitch, no overlap; the overlap is the phone band's compromise for the pill's room,
  * and a tablet has the room. The row stands 8 from the edge, so the leading sidebar toggle's
- * box (8 → 48) centres on 28, the rail's axis: the column reads toggle, space, tabs.
+ * box (8 → 48) centres on 28, the rail's axis: the column reads toggle, space, tabs. The
+ * bookmarks bar's » is the same button (it has no rule of its own on the desktop either – the
+ * `barChrome` pin), so the bar's toolbar button takes the tablet's box with the row's.
  */
 :root[data-form-factor='tablet'] .zen-tablet-toolbar [data-zen-nav-row] {
   gap: 4px;
 }
-:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button {
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button,
+:root[data-form-factor='tablet'] .zen-bm-bar .zen-toolbar-button {
   width: var(--v2-icon-button);
   height: var(--v2-icon-button);
   border-radius: 8px;
 }
-:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button > svg {
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button > svg,
+:root[data-form-factor='tablet'] .zen-bm-bar .zen-toolbar-button > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+}
+/*
+ * The bookmarks bar under the toolbar row (NTP-34; Chrome 152's tablet bar, `bookmark_bar.xml`:
+ * a 42 row of 32 buttons with 16 icons at an 8 inset): the desktop's strip (`.zen-bm-bar`, 32
+ * tall with 28 chips) at the coarse pointer's sizes – the chips on §9.3's 40 control, the 4
+ * under them the desktop's bar keeps, so the row is 44; the chips' inset 12 with the pill's,
+ * radius 8 with the row's buttons, the label at the pill's 14; the icon stays 16, the size of
+ * the favicons on the sidebar's rows beside it and of Chrome's; the » is the row's 40 button
+ * with the 20 glyph (the toolbar-button rule above). The strip heads the content column beside
+ * the sidebar (the desktop's seat, `App.tsx`) at Chrome's 8 inset from the column's edge. The
+ * folder and overflow panels are the tablet's 332 menus already (the `.zen-v2-menu` rule
+ * below): their favicons take the menu's glyph slot (`--v2-icon`), which the rows' folder
+ * glyphs already have.
+ */
+:root[data-form-factor='tablet'] .zen-bm-bar {
+  height: 44px;
+  padding: 0 8px 4px;
+}
+:root[data-form-factor='tablet'] .zen-bm-strip {
+  height: var(--v2-control);
+}
+:root[data-form-factor='tablet'] .zen-bm-chip {
+  height: var(--v2-control);
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-bm-chip[data-icon-only='true'] {
+  padding: 0 12px;
+}
+:root[data-form-factor='tablet'] .zen-bm-panel-icon {
   width: var(--v2-icon);
   height: var(--v2-icon);
 }
@@ -11729,6 +11767,17 @@
 }
 .zen-v2-menu-hint + .zen-v2-menu-chevron {
   margin-left: 0;
+}
+/* A row's trailing mark (the Managed Browser row's building, TB-13): the chevron's seat and ink. */
+.zen-v2-menu-mark {
+  margin-left: auto;
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-menu-hint + .zen-v2-menu-mark {
+  margin-left: 0;
+}
+.zen-v2-menu-item:disabled .zen-v2-menu-mark {
+  color: inherit;
 }
 /*
  * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill while the

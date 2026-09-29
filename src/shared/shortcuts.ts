@@ -1159,13 +1159,15 @@ const DEFS: Def[] = [
     ...both({ key: 'b', mods: ACCEL })
   },
   {
-    // The bookmarks bar is the desktop layout's chrome (§9.36); the phone and the tablet have
-    // none to show, so their listings leave the row out.
+    // The bookmarks bar is the sidebar layouts' chrome – the desktop's (§9.36) and, under its
+    // toolbar row, the tablet's (NTP-34; Chrome 152's tablet bar lists Ctrl+Shift+B in its
+    // helper, `KeyboardShortcuts.TOGGLE_BOOKMARK_BAR`); the phone has none to show, so its
+    // listing leaves the row out.
     id: 'viewBookmarksToolbarKb',
     action: 'bookmark.toggleBar',
     group: 'historyAndBookmarks',
     label: 'Show / Hide Bookmarks Bar',
-    layouts: ['desktop'],
+    layouts: ['desktop', 'tablet'],
     ...both({ key: 'b', mods: ACCEL_SHIFT })
   },
   {

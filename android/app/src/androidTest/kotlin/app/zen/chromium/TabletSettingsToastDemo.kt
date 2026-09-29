@@ -35,9 +35,11 @@ import kotlin.math.roundToInt
  * `data-dialog="item:safety-check:permissions"`), and the host holds the chrome and the frame
  * inert under its scrim (`holdChromeInert` / `holdFrameInert`, lib/portals.tsx). Allow again
  * regrants a site at once and raises Chrome's "Permissions allowed again for <host>" toast with
- * Undo on §9.33's 8 s Undo clock, the dialog standing for the sites left; Got it (with
- * `closesSheet` on the tablet, #668) leaves the dialog first and then acknowledges the list with
- * its own bulk toast. The seeded profile ([seedMore]) holds one granted site and two revoked
+ * Undo on §9.33's 8 s Undo clock, the dialog standing for the sites left; Got it acknowledges
+ * the list with its own bulk toast, the dialog standing on with the granted list under the
+ * lifted toast (services' seed 30 dropped #668's `closesSheet` gate for the tablet and the
+ * desktop once this lift landed: the toast's Undo stays in reach above the dialog, so the sheet
+ * stays on every host). The seeded profile ([seedMore]) holds one granted site and two revoked
  * ones, and the Safety check is run through the core before the dialog opens, so the block has
  * something to show.
  *
@@ -67,10 +69,13 @@ import kotlin.math.roundToInt
  *     about 8 s after it was raised, not 8 s after the dialog closed; the still `orphan`. (The
  *     scrim, not Got it: the cards hold one live toast, and Got it's own toast would send the
  *     marked one off – the displacement is the cards' rule, not the lift's.)
- *  7. Got it, as the brief names it: on the tablet it leaves the dialog FIRST (#668's
- *     `closesSheet` gate) and its "Review complete" toast lands on the page frame – the frame's
- *     un-lifted seat, one `role="status"`, in reach – and its Undo restores the block. Once
- *     services drop the gate for the tablet, this step becomes a second lifted case.
+ *  7. Got it, the second lifted case: the dialog STAYS STANDING (services' seed 30 dropped
+ *     #668's `closesSheet` gate for the tablet and the desktop once this lift landed) and its
+ *     "Review complete" toast rises in the host's seat over the dialog – the same seat as step
+ *     2's, `seat: 'frame'`, one `role="status"`, its Undo under no `inert`, the card 8 px inside
+ *     the frame's bottom edge and clear of the dialog box – the removed-permissions block
+ *     cleared in place under the granted list, which stands on; a finger on the lifted Undo puts
+ *     the block back under the standing dialog; the still `got-it`.
  *
  * Same handshake as the other demos, under `files/tablet-settings-toast-demo/`; stills land
  * there as `tablet-settings-toast-<theme>-<step>.png`, the claims as `findings.txt`.
@@ -179,7 +184,7 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         undoByCtrlZ()
         undoByFinger()
         orphan()
-        gotItLands()
+        gotItLifts()
     }
 
     // --- 1. the review as a dialog -------------------------------------------------------------
@@ -400,44 +405,60 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         SystemClock.sleep(800)
     }
 
-    // --- 7. Got it, as the brief names it ------------------------------------------------------
+    // --- 7. Got it, the second lifted case ------------------------------------------------------
 
     /**
-     * Got it on the tablet leaves the dialog first (#668's `closesSheet` gate, settingsRows.tsx)
-     * and acknowledges the block after, so its "Review complete" toast is raised with no dialog
-     * standing: the page frame's, in the frame's un-lifted seat. The step records that the toast
-     * lands there in reach and that its Undo restores the block – and names the gate, so the
-     * step is read as the lifted case once services drop it.
+     * Got it acknowledges the block with the dialog STANDING – services' seed 30 dropped #668's
+     * `closesSheet` gate for the tablet and the desktop once this lift landed (settingsRows.tsx:
+     * the row carries no `closesSheet` on any host) – so its "Review complete" toast is raised
+     * while the dialog stands and takes the same seat as Allow again's (step 2): `seat: 'frame'`
+     * in the ui store (`toastSeatNow`, `frameDialogsOpen > 0`), the card in the host's lifted
+     * seat over the dialogs' slot, one `role="status"`, its Undo under no `inert`, 8 px inside
+     * the frame's bottom edge and clear of the dialog box. The check runs again after the act,
+     * so the removed-permissions block leaves the dialog in place and the granted list stands
+     * alone under the toast (Chrome's Safety Hub collapses its module and leaves the page). A
+     * finger on the lifted Undo puts the block back under the standing dialog.
      */
-    private fun gotItLands() {
-        finding("\n7. Got it: the dialog leaves first on the tablet (#668), its toast lands on the page frame")
+    private fun gotItLifts() {
+        finding("\n7. Got it: the dialog stays standing on the tablet, its toast lifts above it (the gate #668 set is gone – services seed 30)")
         check("the review opens again", openReview(), "dialogs ${jsText("[...document.querySelectorAll('[data-dialog]')].map(function(d){return d.dataset.dialog})")}")
         SystemClock.sleep(600)
         if (domRect(GOT_IT) == null) {
             check("Got it is on the dialog", false, "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row]')].map(function(r){return r.dataset.row})")}")
             return
         }
+        check("the granted list is on the dialog to stand for once the block is acknowledged", domRect(GRANTED_ROW) != null, "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row]')].map(function(r){return r.dataset.row})")}")
         val before = revokedOrigins()
         watchToasts()
         val pressedAt = SystemClock.uptimeMillis()
         check("a finger on Got it", tapDom("$GOT_IT button"), "")
-        val left = awaitDomGone(DIALOG, 6_000)
-        finding("  Got it: the dialog ${if (left) "left after ${SystemClock.uptimeMillis() - pressedAt} ms" else "still stands"} – #668's closesSheet gate holds it ${if (left) "closed first on the tablet" else "open"}")
-        check("Got it's toast is raised", awaitToastSeen("Review complete for ${before.size} site${if (before.size == 1) "" else "s"}", 5_000), "toasts ${toastsText()}; block before ${before}")
-        check("the core's revoked list is acknowledged (empty)", awaitTrue(3_000) { revokedOrigins().isEmpty() }, "revoked ${revokedOrigins()}")
-        check("the seat is down once the dialog has gone", awaitTrue(4_000) { !jsBoolean("!!document.querySelector('$SEAT[data-lifted]')") }, "seat ${seatText()}")
+        val lifted = awaitDom(LIFTED_CARD, 5_000)
+        check("Got it's toast's card stands in the host's seat, lifted over the dialogs' slot", lifted, "seat ${seatText()} after ${SystemClock.uptimeMillis() - pressedAt} ms")
+        check("the toast reads the review complete", awaitToastSeen("Review complete for ${before.size} site${if (before.size == 1) "" else "s"}", 5_000), "toasts ${toastsText()}; block before ${before}")
+        val stands = domRect(DIALOG) != null && !jsBoolean("!!document.querySelector('$DIALOG[data-leaving]')")
+        finding("  Got it: the dialog ${if (stands) "stands" else "left"} after the press (${SystemClock.uptimeMillis() - pressedAt} ms) – no closesSheet on the tablet since services' seed 30; the toast ${if (lifted) "lifted in the host's seat" else "did not lift"}")
+        check("the dialog still stands under the lifted toast", stands, "dialogs ${jsText("[...document.querySelectorAll('[data-dialog]')].map(function(d){return d.dataset.dialog+(d.hasAttribute('data-leaving')?' leaving':'')})")}")
+        check("the ui store seats the toast on the frame", jsBoolean("window.__zenStores.ui.get().toasts.some(function(t){return t.seat==='frame'&&!t.leaving})"), "toasts ${toastsText()}")
         check(
-            "the toast's card stands on the page frame, one role=status, its Undo under no inert",
-            jsBoolean("(function(){var cs=document.querySelectorAll('$LIVE_CARD');if(cs.length!==1)return false;var c=cs[0];var u=c.querySelector('$UNDO');return c.getAttribute('role')==='status'&&!!u&&!u.closest('[inert]')&&!u.closest('[aria-hidden=\"true\"]')})()"),
-            "seat ${seatText()}; undo ${jsText("(function(){var u=document.querySelector('$LIVE_CARD $UNDO');return u?(u.closest('[inert]')?'under inert':'in reach'):'none'})()")}"
+            "the card is one role=status and its Undo is under no inert",
+            jsBoolean("(function(){var c=document.querySelectorAll('$LIFTED_CARD');if(c.length!==1)return false;var card=c[0];var u=card.querySelector('$UNDO');return card.getAttribute('role')==='status'&&!!u&&!u.closest('[inert]')&&!u.closest('[aria-hidden=\"true\"]')})()"),
+            "cards ${jsText("document.querySelectorAll('$LIFTED_CARD').length")}, undo ${jsText("(function(){var u=document.querySelector('$LIFTED_CARD $UNDO');return u?(u.closest('[inert]')?'under inert':'in reach'):'none'})()")}"
         )
-        geometry("got-it", card = LIVE_CARD, dialogUp = false)
+        check("the core's revoked list is acknowledged (empty)", awaitTrue(3_000) { revokedOrigins().isEmpty() }, "revoked ${revokedOrigins()}")
+        check(
+            "the removed-permissions block has left the standing dialog and the granted list stands alone under the toast",
+            awaitTrue(4_000) { jsBoolean("(function(){var d=document.querySelector('$DIALOG');if(!d)return false;return d.querySelectorAll('[data-row^=\"safety-check:permissions:revoked:\"]').length===0&&!!document.querySelector('$GRANTED_ROW')})()") },
+            "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row]')].map(function(r){return r.dataset.row})")}"
+        )
+        geometry("got-it")
         awaitChromePaint()
         shot("got-it")
         val undoAt = SystemClock.uptimeMillis()
-        check("a finger on the toast's Undo", tapDom("$LIVE_CARD $UNDO"), "")
+        check("a finger on the lifted Undo", tapDom("$LIFTED_CARD $UNDO"), "")
         check("the Undo restores the block on the core", awaitTrue(4_000) { revokedOrigins().containsAll(before) && before.isNotEmpty() }, "revoked ${revokedOrigins()} after ${SystemClock.uptimeMillis() - undoAt} ms")
-        check("the toast is gone from the seat", awaitDomGone(LIVE_CARD, 4_000), "seat ${seatText()}")
+        check("the block is back under the standing dialog", awaitTrue(6_000) { before.isNotEmpty() && before.all { domRect(revokedRow(it)) != null } }, "rows ${jsText("[...document.querySelectorAll('$DIALOG [data-row^=\"safety-check:permissions:revoked:\"]')].map(function(r){return r.dataset.row})")}")
+        check("the toast is gone from the seat and the seat is down", awaitDomGone(LIVE_CARD, 4_000) && awaitTrue(3_000) { !jsBoolean("!!document.querySelector('$SEAT[data-lifted]')") }, "seat ${seatText()}")
+        check("the dialog still stands", domRect(DIALOG) != null, "")
         SystemClock.sleep(800)
         finding("end: toasts ${toastsText()}, revoked ${revokedOrigins()}, dialogs open ${jsText("window.__zenStores.ui.get().frameDialogsOpen")}")
     }
@@ -680,6 +701,8 @@ class TabletSettingsToastDemo : DemoHarness("tablet-settings-toast-demo-state.js
         private const val REVIEW_ROW = "[data-row=\"safety-check:permissions\"]"
         private const val DIALOG = "[data-dialog=\"item:safety-check:permissions\"]"
         private const val GOT_IT = "$DIALOG [data-row=\"safety-check:permissions:revoked:acknowledge\"]"
+        /** The seeded granted site's row in the review's "Sites with permissions you granted" list – what the dialog stands for once the block is acknowledged. */
+        private const val GRANTED_ROW = "$DIALOG [data-row=\"safety-check:permissions:$GRANTED_ORIGIN\"]"
         private const val UNDO = ".zen-message-button"
         private const val LIFTED_CARD = "$SEAT[data-lifted] .zen-message-toast:not([data-leaving])"
         private const val LIVE_CARD = "$SEAT .zen-message-toast:not([data-leaving])"
