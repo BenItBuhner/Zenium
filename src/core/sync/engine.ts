@@ -24,6 +24,7 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionRecordReadable,
   extensionStoreOf,
   frozenRecords,
   hashData,
@@ -908,14 +909,24 @@ export class SyncEngine implements SyncHost {
     const state = this.browser.state
     // The store extensions installed here, and the ones gone since the previous read (ID-44):
     // an uninstall is the one absence `diffLocal` may tombstone (`frozenRecords`), and it is
-    // seen at the commit that removed the record – the previous read still held the id.
-    const extensions = this.browser.extensions.list()
+    // seen at the commit that removed the record – the previous read still held the id. Read
+    // from the registry's projection (`syncSources`, no manifest read; `list()` on a host
+    // without one). An extension whose winning record is with the host's applier and not
+    // committed yet is left out of the collected set – its entry stays frozen, so the copy the
+    // record found here never travels under the winner's time; the applier's commit is the
+    // edit that publishes the applied state – but it still counts as present, since a switch in
+    // flight is no uninstall.
+    const host = this.browser.extensions
+    const all = host.syncSources?.() ?? host.list()
     const present = new Set<string>()
-    for (const ext of extensions) if (extensionStoreOf(ext.source)) present.add(ext.id)
+    for (const ext of all) if (extensionStoreOf(ext.source)) present.add(ext.id)
     const removedExtensions = new Set<string>()
     if (this.presentExtensions)
       for (const id of this.presentExtensions) if (!present.has(id)) removedExtensions.add(id)
     this.presentExtensions = present
+    const inFlight = host.syncedExtensionsInFlight?.()
+    const extensions =
+      inFlight && inFlight.size > 0 ? all.filter((ext) => !inFlight.has(ext.id)) : all
     return {
       model: state.model,
       settings: state.settings,
@@ -1020,11 +1031,16 @@ export class SyncEngine implements SyncHost {
       // metadata, they win again next round. A vault record this build cannot read (a kind of
       // `credential` from a later build, garbage) is left out the same way, every round: a
       // winner that lands nothing would otherwise be tombstoned at the re-snapshot below, and
-      // the tombstone applied by the peer that made it (`vaultRecordReadable`).
+      // the tombstone applied by the peer that made it (`vaultRecordReadable`). An `extension`
+      // record this build cannot read (a store a later build knows) follows the same rule
+      // (`extensionRecordReadable`): never applied, never in the metadata, never tombstoned –
+      // found and skipped again each round.
       const vaultOpen = Boolean(sources.credentials)
       const winners = winningRemote(local.meta, remote).filter(
         (r) =>
-          inScope(r, scope) && (!isVaultRecordType(r.type) || (vaultOpen && vaultRecordReadable(r)))
+          inScope(r, scope) &&
+          (!isVaultRecordType(r.type) || (vaultOpen && vaultRecordReadable(r))) &&
+          extensionRecordReadable(r)
       )
       // The extension records this device took but whose install has not landed (ID-44): handed
       // to the host again, every round, beside the winners – its own back-off decides whether it

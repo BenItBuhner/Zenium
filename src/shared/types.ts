@@ -1083,6 +1083,14 @@ export interface ExtensionInfo {
   pinned: boolean
   /** Shown as a toolbar button; other extensions live in the puzzle-piece panel. */
   toolbarPinned: boolean
+  /**
+   * When `enabled` and `toolbarPinned` were last written on this device (ms), each switch's own
+   * clock for the sync merge (ID-44: a peer's record lands a switch only when its clock for that
+   * switch is the later one). Absent on a record from before the clocks and on a host that
+   * keeps none (the phone): such a switch reads as written at the record's own time.
+   */
+  enabledAt?: number
+  toolbarPinnedAt?: number
   /** Chrome's "Allow access to file URLs"; off by default. */
   allowFileAccess: boolean
   /**
