@@ -49,9 +49,10 @@ export function promptCopy(
  * (`ExtensionInfo.pendingApproval`; services pass 16, ID-44): the card's sub-line and the
  * details page's caption, in the warn tone – the extension is off, and its switch opens the
  * install prompt (`promptCopy`'s `install` kind: `Add "<name>"?`, the permission warnings, Add
- * extension). The lead's words; DRAFT until the lead approves them.
+ * extension). The lead's words as ruled (round 4): a SPACED EN DASH (U+2013) between the two
+ * halves, never an em dash.
  */
-export const SYNCED_PENDING_LINE = 'Synced from another device — needs your permission'
+export const SYNCED_PENDING_LINE = 'Synced from another device – needs your permission'
 
 /** The one line under "It can:" when there is nothing to warn of, per kind. */
 export function noWarningsLine(kind: ExtensionPromptRequest['kind']): string {

@@ -175,10 +175,11 @@ const SYNC_SCOPE_ENCRYPTED_HINT = 'Encrypted with your sync passphrase.'
 
 /**
  * The data types in the page's own order: Chrome's types first – Bookmarks, History, Open tabs,
- * Passwords, Addresses, Payment methods, Reading list, Settings; Chrome's "Manage what you sync"
- * seats Reading list directly after Bookmarks, ours sits after the vault's three, as the lead
- * seated it – then Zenium's own: Spaces, folders, pinned tabs, Essentials, containers,
- * shortcuts, Boosts, Mods, Extensions. Every key of `SyncScope` is here once (the engine's
+ * Passwords, Addresses, Payment methods, Reading list, Settings, Extensions; Chrome's "Manage
+ * what you sync" seats Reading list directly after Bookmarks, ours sits after the vault's three,
+ * as the lead seated it, and Extensions closes Chrome's list, after Settings and before Spaces
+ * (the lead's seat, round 4) – then Zenium's own: Spaces, folders, pinned tabs, Essentials,
+ * containers, shortcuts, Boosts, Mods. Every key of `SyncScope` is here once (the engine's
  * toggles are the page's). A row with `requires` shows on the hosts with that capability alone
  * (`scopeGroup`): the Extensions row where extensions install.
  */
@@ -207,6 +208,19 @@ export const SYNC_SCOPES: ReadonlyArray<{
   // restatement – "Reading list" stands on its name as Bookmarks and History do (the lead's rule).
   { key: 'readingList', label: 'Reading list' },
   { key: 'settings', label: 'Settings' },
+  // The Extensions row (services pass 16, ID-44, the `extension` record): Chrome's type of the
+  // same name, seated where the lead seated it – after Settings, before Spaces: the last of
+  // Chrome's types, ahead of Zenium's own. The lead's words verbatim, label and hint – the hint
+  // carries the two facts the name cannot: what of an extension travels, and which extensions
+  // stay. Drawn on every host that installs extensions (`requires`): the desktop and the phone
+  // both install from the stores; a host without the capability has no row and nothing to
+  // publish.
+  {
+    key: 'extensions',
+    label: EXTENSIONS_SCOPE_LABEL,
+    hint: EXTENSIONS_SCOPE_HINT,
+    requires: 'extensions'
+  },
   { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order.' },
   { key: 'folders', label: 'Folders' },
   { key: 'pinnedTabs', label: 'Pinned tabs' },
@@ -220,19 +234,7 @@ export const SYNC_SCOPES: ReadonlyArray<{
   // settings travel with Settings and each space's theme with Spaces – so the row says what it
   // moves. No hint, as with Boosts (the lead's rule: a hint never restates the name). DRAFT
   // until the lead approves the label.
-  { key: 'mods', label: 'Mods' },
-  // The Extensions row (services pass 16, ID-44, the `extension` record): Chrome's type of the
-  // same name, seated after Chrome's list among Zenium's own because the row is about what
-  // Settings › Extensions holds. The lead's words verbatim, label and hint – the hint carries
-  // the two facts the name cannot: what of an extension travels, and which extensions stay.
-  // Drawn on every host that installs extensions (`requires`): the desktop and the phone both
-  // install from the stores; a host without the capability has no row and nothing to publish.
-  {
-    key: 'extensions',
-    label: EXTENSIONS_SCOPE_LABEL,
-    hint: EXTENSIONS_SCOPE_HINT,
-    requires: 'extensions'
-  }
+  { key: 'mods', label: 'Mods' }
 ]
 
 /**

@@ -7,7 +7,7 @@ import type { ExtensionInfo, UIState } from '@shared/types'
 /*
  * A synced landing on the Extensions page (services pass 16, ID-44): an extension another
  * device's record installed here arrives turned off with `pendingApproval`, and the page says
- * so under the card's version line – "Synced from another device — needs your permission" –
+ * so under the card's version line – "Synced from another device – needs your permission" –
  * and again as the caption of its own details page. Its switch is the ordinary one: turning it
  * on runs `extension.setEnabled`, and the desktop answers with the install prompt (the
  * permission warnings) before anything is enabled – nothing is granted from the page.
@@ -115,8 +115,11 @@ const pendingLine = (h: HTMLElement): HTMLElement | null =>
   h.querySelector<HTMLElement>('[data-pending-approval]')
 
 describe('the synced landing’s line on the list card', () => {
-  it('reads "Synced from another device — needs your permission" under the version line, in the warn tone, on the pending card alone', () => {
-    expect(SYNCED_PENDING_LINE).toBe('Synced from another device — needs your permission')
+  it('reads "Synced from another device – needs your permission" (a spaced en dash, the lead’s ruling) under the version line, in the warn tone, on the pending card alone', () => {
+    expect(SYNCED_PENDING_LINE).toBe('Synced from another device – needs your permission')
+    // U+2013 with a space each side; the em dash of the draft is gone.
+    expect(SYNCED_PENDING_LINE).toContain(' \u2013 ')
+    expect(SYNCED_PENDING_LINE).not.toContain('\u2014')
     const h = page([pending(), ext({ id: OTHER, name: 'Quiet' })])
     const cards = [...h.querySelectorAll<HTMLElement>('.zen-ext-card')]
     expect(cards).toHaveLength(2)

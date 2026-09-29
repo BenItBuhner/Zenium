@@ -5805,14 +5805,17 @@ describe('the Extensions category', () => {
     })
     const model = section('extensions', extState([pending, ext({})]))
     const item = row(model, `extension:${pending.id}`)
+    // The lead's words as ruled (round 4): a spaced en dash, U+2013, between the two halves.
     expect(item).toMatchObject({
-      description: 'Synced from another device — needs your permission',
+      description: 'Synced from another device – needs your permission',
       tone: 'warn'
     })
+    expect(item.description).toContain(' \u2013 ')
+    expect(item.description).not.toContain('\u2014')
     const enabled = row(model, `extension:${pending.id}:enabled`)
     if (enabled.kind !== 'switch') throw new Error('not a switch')
     expect(enabled.checked).toBe(false)
-    expect(enabled.description).toBe('Synced from another device — needs your permission')
+    expect(enabled.description).toBe('Synced from another device – needs your permission')
     // The switch runs the same command as ever: the host's `setEnabled` opens the prompt.
     enabled.onChange(true)
     expect(invoke).toHaveBeenCalledWith('extension.setEnabled', { id: pending.id, enabled: true })
@@ -7748,7 +7751,7 @@ describe('ID-08’s Sync category on a phone', () => {
     )
   })
 
-  it('What you sync › Extensions (services pass 16, ID-44): on every host that installs extensions, last, on by default, the lead’s label and hint verbatim; absent where the host has no extensions', () => {
+  it('What you sync › Extensions (services pass 16, ID-44): on every host that installs extensions, after Settings and before Spaces (the lead’s seat), on by default, the lead’s label and hint verbatim; absent where the host has no extensions', () => {
     // A host with extensions – the desktop, or a phone whose build installs them.
     const withExtensions = (sync: SyncStatus): UIState =>
       state({
@@ -7759,7 +7762,13 @@ describe('ID-08’s Sync category on a phone', () => {
       const model = section('sync', withExtensions(status))
       const scope = model.groups.find((g) => g.id === 'sync-scope')
       expect(scope?.rows.map((r) => r.id)).toEqual(SYNC_SCOPES.map((s) => `sync-scope:${s.key}`))
-      expect(scope?.rows.map((r) => r.label).slice(-3)).toEqual(['Boosts', 'Mods', 'Extensions'])
+      // The seat (the lead's ruling, round 4): the last of Chrome's types – right after
+      // Settings, right before Spaces – not among Zenium's own after Mods, which stay last.
+      const labels = scope?.rows.map((r) => r.label) ?? []
+      expect(labels.slice(7, 10)).toEqual(['Settings', 'Extensions', 'Spaces'])
+      expect(labels.slice(-2)).toEqual(['Boosts', 'Mods'])
+      expect(labels.indexOf('Extensions')).toBe(labels.indexOf('Settings') + 1)
+      expect(labels.indexOf('Spaces')).toBe(labels.indexOf('Extensions') + 1)
       const extensions = row(model, 'sync-scope:extensions')
       if (extensions.kind !== 'switch') throw new Error('not a switch')
       expect(extensions.label).toBe('Extensions')
