@@ -21,6 +21,7 @@ const {
   dismissHintBubble,
   forgetHintBubble,
   HINT_BUBBLE_EXIT_MS,
+  hintBubbleEdge,
   hintBubbleStore,
   hintBubbleUp,
   IPH_ARM_DELAY_MS,
@@ -245,6 +246,6 @@ describe('the bubble on screen', () => {
     expect(hintBubbleStore.get()).toEqual({ bubble: null, leaving: false })
     showHintBubble({ ...BUBBLE, edge: 'top' })
     vi.advanceTimersByTime(HINT_BUBBLE_EXIT_MS)
-    expect(hintBubbleStore.get().bubble?.edge).toBe('top')
+    expect(hintBubbleEdge(hintBubbleStore.get().bubble)).toBe('top')
   })
 })

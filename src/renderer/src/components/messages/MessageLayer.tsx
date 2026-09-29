@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
-import { hintBubbleStore } from '@renderer/lib/iph'
+import { hintBubbleEdge, hintBubbleStore } from '@renderer/lib/iph'
 import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
 import { HintBubbleCard } from './HintBubbleCard'
@@ -82,10 +82,12 @@ export function MessageLayer({ toastSeat = null }: Props = {}): JSX.Element | nu
   const liveToast = toasts.find((t) => !t.leaving) ?? cards.find((c) => !c.leaving)
   const cover = coverFor(liveStack, liveToast ? (heights[liveToast.id] ?? 0) : 0)
   // The bubble's strip on the bar's edge – the card flush against the band at gap 0, the inset
-  // over it – kept through its fade (its box is still over the page).
-  const hintCover = hint.bubble ? hintCoverFor(hintHeight) : 0
-  const top = Math.max(cover.top, hint.bubble?.edge === 'top' ? hintCover : 0)
-  const bottom = Math.max(cover.bottom, hint.bubble?.edge === 'bottom' ? hintCover : 0)
+  // over it – kept through its fade (its box is still over the page). A bubble on an overview
+  // card sits on no edge and covers no page (the overview stands where the page was).
+  const hintEdge = hintBubbleEdge(hint.bubble)
+  const hintCover = hintEdge ? hintCoverFor(hintHeight) : 0
+  const top = Math.max(cover.top, hintEdge === 'top' ? hintCover : 0)
+  const bottom = Math.max(cover.bottom, hintEdge === 'bottom' ? hintCover : 0)
 
   useEffect(() => {
     const prev = coverBandStore.get()

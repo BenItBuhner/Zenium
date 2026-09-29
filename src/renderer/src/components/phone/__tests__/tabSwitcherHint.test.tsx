@@ -29,6 +29,7 @@ const { TAB_SWITCHER_ANCHOR, useTabSwitcherHint } = await import('../useTabSwitc
 const {
   forgetHintBubble,
   HINT_BUBBLE_EXIT_MS,
+  hintBubbleEdge,
   hintBubbleStore,
   IPH_ARM_DELAY_MS,
   iphSessionSpent,
@@ -287,7 +288,7 @@ describe('the bubble goes up', () => {
   it('sits at the top edge for a top-docked bar', () => {
     render(stateOf(), 'top')
     arm()
-    expect(bubble().bubble?.edge).toBe('top')
+    expect(hintBubbleEdge(bubble().bubble)).toBe('top')
   })
 })
 

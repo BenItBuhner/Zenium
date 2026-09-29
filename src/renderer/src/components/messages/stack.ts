@@ -64,6 +64,57 @@ export function hintBubbleLeft(
   return Math.min(max, Math.max(inset, anchorEnd - width))
 }
 
+/** A box in the layer's own coordinates. */
+export interface LayerBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * Where a bubble stands on a card in the overview (the drag-to-group teaching): §9.20's pose
+ * against the card's box, layer coordinates in and out. Across: start-aligned with the card
+ * (the rule's (1)); a card whose middle is in the layer's trailing half end-aligns, as an anchor
+ * in the trailing half of its bar does; if that crosses the `inset` margin, the other alignment
+ * (2); if neither fits, slid the least distance that does (3) – a 320 bubble on a phone's two
+ * columns is always that slide, so it reads as centred over the row. Down: flush under the card
+ * at gap 0, no arrow, no offset; flipped above it (flush over its top) when the room below is
+ * short and the room above is more (the rule's vertical order); otherwise kept below and slid up
+ * to fit. Either way the bubble never leaves the card it is about: a card whose bottom the layer
+ * clips is the hook's to scroll into view before it asks.
+ */
+export function hintBubbleOnCard(
+  card: LayerBox,
+  size: { width: number; height: number },
+  layer: { width: number; height: number },
+  inset = MESSAGE_INSET
+): { left: number; top: number; side: 'below' | 'above' } {
+  const trailing = card.x + card.width / 2 > layer.width / 2
+  const start = card.x
+  const end = card.x + card.width - size.width
+  const fits = (left: number): boolean => left >= inset && left + size.width <= layer.width - inset
+  const first = trailing ? end : start
+  const second = trailing ? start : end
+  let left: number
+  if (fits(first)) left = first
+  else if (fits(second)) left = second
+  else left = hintBubbleLeft(first + size.width, size.width, layer.width, inset)
+
+  const below = card.y + card.height
+  const roomBelow = layer.height - inset - below
+  const roomAbove = card.y - inset
+  let side: 'below' | 'above' = 'below'
+  let top = below
+  if (size.height > roomBelow && roomAbove > roomBelow) {
+    side = 'above'
+    top = Math.max(inset, card.y - size.height)
+  } else if (size.height > roomBelow) {
+    top = Math.max(inset, layer.height - inset - size.height)
+  }
+  return { left, top, side }
+}
+
 /**
  * The strip the bubble covers on its edge: the card – flush against the bar band's inner edge at
  * gap 0, so its box starts at the edge – and the inset over it on the page's side.

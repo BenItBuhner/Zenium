@@ -1,5 +1,11 @@
-import { iphAvailable } from '@shared/iph'
-import type { PhoneBarItemId, PhoneBarPosition, Rect, Settings } from '@shared/types'
+import { DEFAULT_IPH_BUBBLE_STATE, iphAvailable } from '@shared/iph'
+import type {
+  IphBubbleState,
+  PhoneBarItemId,
+  PhoneBarPosition,
+  Rect,
+  Settings
+} from '@shared/types'
 import { run } from './api'
 import { createStore } from './store'
 
@@ -64,6 +70,19 @@ export function armIph(onArmed: () => void, delayMs = IPH_ARM_DELAY_MS): () => v
 export const TAB_SWITCHER_HINT_TEXT = 'Open tabs to visit different pages at the same time'
 export const TAB_SWITCHER_HINT_ACCESSIBILITY_TEXT =
   'To open tabs and visit different pages at the same time, tap the open tabs button'
+
+/**
+ * The overview's drag-to-group teaching, Chrome's drag-and-drop IPH dialog folded into §9.33's
+ * one sentence: `IDS_IPH_DRAG_AND_DROP_CONTENT` "To group tabs, touch & hold a tab. Then, drag
+ * it onto another tab." under the title `IDS_IPH_DRAG_AND_DROP_TITLE` "Get organized"
+ * (`components/browser_ui/strings/android/browser_ui_strings.grd` l.1432–1437;
+ * `TabGridIphDialogCoordinator.java` l.40–46). The hold stays in the sentence: it is the part of
+ * the gesture a finger does not find on its own – a drag without it scrolls the grid. Chrome has
+ * no accessibility variant of these words (the dialog's are the same under TalkBack), so nor
+ * does the bubble.
+ */
+export const TAB_GROUPS_DRAG_HINT_TEXT =
+  'Touch and hold a tab, then drag it onto another to group them'
 
 // ---------------------------------------------------------------------------
 // One education per session
@@ -172,6 +191,97 @@ export function noteTabSwitcherButtonUsed(
 }
 
 // ---------------------------------------------------------------------------
+// The overview's drag-to-group bubble
+// ---------------------------------------------------------------------------
+
+/**
+ * Chrome 152's drag-to-group teaching in the tab switcher is `IPH_TabGroupsDragAndDrop`
+ * (`feature_constants.cc` l.591–593, DISABLED by default; `feature_configurations.cc`
+ * l.1554–1571: `availability ANY`, once per session, not after a drag has grouped tabs in 360
+ * days – the `used` event `tab_drag_and_drop_to_group`), whose surface there is a message card
+ * with a "Show me" that opens the IPH dialog (`IphMessageService.java`). Out of the box the
+ * dialog is reached one way: the NTP's educational tip card's button
+ * (`TabGroupPromoCoordinator.java` l.35 → `ChromeTabbedActivity.java` l.3500–3508 shows the Hub
+ * and `TabGridIphDialogCoordinator.showIph()`, with no tracker check and no tab count). Zenium's
+ * tips card (#695) opens the overview the same way, and the overview shows this bubble in place
+ * of the dialog – on that path alone, once (`tabGroupsDragAndDrop.shown`, spent as the bubble
+ * goes up). A drag that has grouped tabs does not spend it: Chrome's `used` event gates only the
+ * message card, which is off, and its dialog opens on the tip's tap whatever the tracker holds –
+ * the tip itself is shown only to a profile with no group (#695), which is the gate that matters.
+ * It takes the session's one education as every education here does (the Tabs button's bubble
+ * is not owed in the minutes after it), but is not held back by a spent session: the user asked
+ * for it.
+ */
+
+/** What the overview bubble's rules read of the settings: its own record. */
+export type TabGroupsDragSettings = { iph: Pick<Settings['iph'], 'tabGroupsDragAndDrop'> }
+
+/**
+ * The record off the settings. The core's settings always carry `iph` (`sanitizeIphState` fills
+ * it); the overview is also mounted over states built without it – a test's fixture – and those
+ * read as unseen rather than throw from a grid whose business the bubble is not.
+ */
+export function tabGroupsDragRecord(settings: TabGroupsDragSettings): IphBubbleState {
+  return settings.iph?.tabGroupsDragAndDrop ?? DEFAULT_IPH_BUBBLE_STATE
+}
+
+/**
+ * The tips card's "Try it now" is opening the overview to teach the drag (#695's CTA,
+ * `MagicStack.tsx`): the overview takes the request as it comes to rest (`useOverviewGroupsHint`)
+ * and shows the bubble once, if the record is unspent. An overview that never opens – a request
+ * with no overview, or one closed on its way – drops it (`takeOverviewGroupsHintRequest` is
+ * called either way).
+ */
+let overviewGroupsHintRequested = false
+
+export function requestOverviewGroupsHint(): void {
+  overviewGroupsHintRequested = true
+}
+
+/** Read and clear the request: true once per "Try it now". */
+export function takeOverviewGroupsHintRequest(): boolean {
+  const requested = overviewGroupsHintRequested
+  overviewGroupsHintRequested = false
+  return requested
+}
+
+export interface OverviewGroupsHintInput {
+  settings: TabGroupsDragSettings
+  /** The overview was opened by the tips card's "Try it now" (the request, taken). */
+  fromTip: boolean
+  /** The overview stands open: settled, its cards in their slots (not a settle, a drag or a close). */
+  open: boolean
+  /** A loose tab card stands in the grid to point at (Chrome's dialog needs none; the bubble does). */
+  hasAnchor: boolean
+}
+
+/**
+ * Whether the overview's drag-to-group bubble is due right now: asked for by the tip, the record
+ * unspent, the overview at rest with a card to point at. No availability clock (Chrome's is ANY)
+ * and no session gate (Chrome's tip path has none).
+ */
+export function overviewGroupsHintDue(input: OverviewGroupsHintInput): boolean {
+  if (!input.fromTip) return false
+  if (tabGroupsDragRecord(input.settings).shown) return false
+  return input.open && input.hasAnchor
+}
+
+/**
+ * The bubble went up: spent, once and for all. The stamp is the day it was spent – Chrome's
+ * `availability` for this feature is ANY, so no clock runs ahead of it.
+ */
+export function markTabGroupsDragHintShown(
+  settings: TabGroupsDragSettings,
+  now: number = Date.now()
+): void {
+  const record = tabGroupsDragRecord(settings)
+  if (record.shown) return
+  run('settings.update', {
+    iph: { tabGroupsDragAndDrop: { availableAt: record.availableAt ?? now, shown: true } }
+  })
+}
+
+// ---------------------------------------------------------------------------
 // The bubble on screen
 // ---------------------------------------------------------------------------
 
@@ -182,23 +292,57 @@ export function noteTabSwitcherButtonUsed(
  */
 export const HINT_BUBBLE_ID = 'zen-hint-bubble'
 
-export interface HintBubble {
+interface HintBubbleBase {
   /** Which bubble (its record in `settings.iph`). */
   id: keyof Settings['iph']
-  /** The bar control it is about: the bar pulses it and describes it by the bubble. */
-  anchorItem: PhoneBarItemId
-  /** The control's box, window coordinates, as read when the bubble went up. */
+  /** The anchor's box, window coordinates, as read when the bubble went up. */
   anchor: Rect
-  /**
-   * The bar's edge: the bubble sits flush against the bar band's inner edge on that side, at gap
-   * 0 (§9.20's pose; the same form mirrored under a top-docked bar, the lead's (k)).
-   */
-  edge: PhoneBarPosition
   /**
    * The words: Chrome's text, or its longer accessibility text while an accessibility service
    * explores by touch (`TextBubble.java` l.443–446 picks one or the other as the bubble is made).
    */
   text: string
+}
+
+/** A bubble on a bar control (#641's, the first kind): its literals carry no `at`. */
+export interface BarHintBubble extends HintBubbleBase {
+  at?: 'bar'
+  /** The bar control it is about: the bar pulses it and describes it by the bubble. */
+  anchorItem: PhoneBarItemId
+  /**
+   * The bar's edge: the bubble sits flush against the bar band's inner edge on that side, at gap
+   * 0 (§9.20's pose; the same form mirrored under a top-docked bar, the lead's (k)).
+   */
+  edge: PhoneBarPosition
+}
+
+/**
+ * A bubble on a tab card in the overview (the drag-to-group teaching): §9.20's anchored pose
+ * against the card's box – flush under it at gap 0, start-aligned, flipping above when the room
+ * below runs out (`HintBubbleCard` places it; `messages/stack.ts` has the rule). The card pulses
+ * and carries the bubble as its description while it stands (`OverviewCard`).
+ */
+export interface OverviewHintBubble extends HintBubbleBase {
+  at: 'overview'
+  /** The tab whose card it is about. */
+  tabId: string
+}
+
+export type HintBubble = BarHintBubble | OverviewHintBubble
+
+/** The bar edge a bubble sits on: null for one that is not on the bar. */
+export function hintBubbleEdge(bubble: HintBubble | null): PhoneBarPosition | null {
+  return bubble && bubble.at !== 'overview' ? bubble.edge : null
+}
+
+/** The bar item a bubble is about: null for one that is not on the bar. */
+export function hintBubbleBarItem(bubble: HintBubble | null): PhoneBarItemId | null {
+  return bubble && bubble.at !== 'overview' ? bubble.anchorItem : null
+}
+
+/** The overview card a bubble is about: null for one that is not in the overview. */
+export function hintBubbleTabId(bubble: HintBubble | null): string | null {
+  return bubble && bubble.at === 'overview' ? bubble.tabId : null
 }
 
 export interface HintBubbleState {

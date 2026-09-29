@@ -3739,10 +3739,11 @@ export interface IphState {
   /**
    * Chrome's `IPH_TabGroupsDragAndDrop`: the drag-to-group teaching in the tab overview, shown
    * once when the overview opens from the Zenium tips card's tab-groups tip (TB-19; Chrome's
-   * `TabGridIphDialogCoordinator` opened by `openTabGroupIphDialog`). `availableAt` is the day
-   * the overview first opened on this device (Chrome's `availability` is ANY for this feature, so
-   * it gates nothing); `shown` is spent by the bubble or by a drag that made a group (Chrome's
-   * `used` event `tab_drag_and_drop_to_group`).
+   * `TabGridIphDialogCoordinator` opened by `openTabGroupIphDialog`). `shown` is spent as the
+   * bubble goes up (a drag that groups does not spend it: Chrome's dialog opens on the tip's tap
+   * whatever its tracker holds); `availableAt` is stamped as the record is spent – Chrome's
+   * `availability` is ANY for this feature, so no clock runs ahead of it and the stamp gates
+   * nothing.
    */
   tabGroupsDragAndDrop: IphBubbleState
 }
