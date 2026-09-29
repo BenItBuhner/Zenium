@@ -709,25 +709,45 @@ object ExtensionScripts {
      * Module syntax a served file may carry: a static `import` declaration (`import x from`,
      * `import {`, `import *`, `import "…"` – a dynamic `import(` is a script's too),
      * `import.meta`, or an `export` declaration (`export {`, `export *`, `export default` and
-     * the declared forms). Read in the safe direction: a match inside a string or a comment
-     * costs the file only the scope (it is served bracketed on the real global, as every module
-     * was before [isScriptShapedModule]); a miss costs a wasted evaluate, since a block with an
-     * `import` or an `export` in it is a SyntaxError `evaluateJavascript` answers with a bare
-     * null, and the stub imports the file plain (`Extensions.chunkScript`). The same expression
-     * is `MODULE_SYNTAX` in `extensionModuleChrome.ts`.
+     * the declared forms). A declaration is a statement of the module's top level, so it is
+     * read only in statement position: at the start of the text, or after `;`, `}` or a line
+     * break with nothing but indentation between – what tells it from the word in a string
+     * (Web Highlights' `content.js` carries Polymer's `"import"===o.getAttribute("rel")` and its
+     * blog copy's "how to import all your annotations", twenty-six of them, and the first
+     * spelling of this expression read every one as the module graph's, so R25-1's block never
+     * ran for its own row – compat round 25's `[lane]`). `import.meta` is an expression and is
+     * read anywhere a property read can stand. Still in the safe direction where the position
+     * cannot tell: a line of a template literal that starts with `import x from` costs the file
+     * only the scope (it is served bracketed on the real global, as every module was before
+     * [isScriptShapedModule]); a miss costs a wasted evaluate, since a block with an `import` or
+     * an `export` in it is a SyntaxError `evaluateJavascript` answers with a bare null, and the
+     * stub imports the file plain (`Extensions.chunkScript`). The same expression is
+     * `MODULE_SYNTAX` in `extensionModuleChrome.ts`; the lookbehind is at most
+     * [MODULE_SYNTAX_LOOKBEHIND] characters, which a window's overlap carries.
      */
     private val MODULE_SYNTAX = Regex(
-        """(?<![\w$.])(?:import(?:\s+[\w$]|\s*[*{"'])|import\s*\.\s*meta(?![\w$])|export(?:\s+(?:default|const|let|var|function|class|async|enum)(?![\w$])|\s*[{*]))"""
+        """(?<![^\n\r;} \t][ \t]{0,63})(?:import(?:\s+[\w$]|\s*[*{"'])|export(?:\s+(?:default|const|let|var|function|class|async|enum)(?![\w$])|\s*[{*]))|(?<![\w$.])import\s*\.\s*meta(?![\w$])"""
     )
 
-    /** Whether a text carries module syntax ([MODULE_SYNTAX]). */
-    fun hasModuleSyntax(text: CharSequence): Boolean = MODULE_SYNTAX.containsMatchIn(text)
+    /** The most characters [MODULE_SYNTAX] looks behind a declaration (one non-space and the indentation). */
+    const val MODULE_SYNTAX_LOOKBEHIND = 64
+
+    /**
+     * Whether a text carries module syntax ([MODULE_SYNTAX]) at or after [from]; the characters
+     * before [from] are the lookbehind's context, never a match's start.
+     */
+    fun hasModuleSyntax(text: CharSequence, from: Int = 0): Boolean = MODULE_SYNTAX.find(text, from) != null
 
     /** How many characters of a served file [isScriptShapedModule] reads at a time. */
     const val MODULE_SYNTAX_WINDOW = 64 * 1024
 
-    /** The overlap between two windows: a declaration across the border is still seen whole. */
-    const val MODULE_SYNTAX_OVERLAP = 64
+    /**
+     * The overlap between two windows: a declaration across the border is still seen whole, and
+     * the [MODULE_SYNTAX_LOOKBEHIND] characters before it are in the window with it – the next
+     * window's search starts [MODULE_SYNTAX_LOOKBEHIND] characters in, where the overlap has
+     * the context; a start before that was whole in the window before.
+     */
+    const val MODULE_SYNTAX_OVERLAP = 2 * MODULE_SYNTAX_LOOKBEHIND
 
     /** A served module file longer than this keeps the bracketed path; the scan and the exec are bounded by it. */
     const val SCRIPT_SHAPED_LIMIT = 8L * 1024 * 1024
@@ -755,7 +775,11 @@ object ExtensionScripts {
                 if (n < 0) break
                 filled += n
             }
-            if (filled > kept && hasModuleSyntax(CharBuffer.wrap(buffer, 0, filled))) return false
+            // The first window is searched whole; a later one from the lookbehind's length in,
+            // so every start it judges has its context, and every start before that was whole
+            // in the window before (the overlap is twice the lookbehind).
+            val from = if (kept == 0) 0 else MODULE_SYNTAX_LOOKBEHIND
+            if (filled > kept && hasModuleSyntax(CharBuffer.wrap(buffer, 0, filled), from)) return false
             if (filled < buffer.size) return true
             kept = MODULE_SYNTAX_OVERLAP
             System.arraycopy(buffer, filled - kept, buffer, 0, kept)

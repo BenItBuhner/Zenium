@@ -532,19 +532,29 @@ class ExtensionScriptsTest {
 
     @Test
     fun aScriptShapedModuleIsToldByTheAbsenceOfModuleSyntaxReadInWindowsNeverWhole() {
-        // Web Highlights' content.js (its UMD head and the QR module's write through `self`, read
-        // bare two statements on) and Web Scrobbler's esbuild connector: script-shaped.
-        val webHighlights = "/*! For license information please see content.js.LICENSE.txt */\n!function(e,t){if(\"object\"==typeof exports&&\"object\"==typeof module)module.exports=t();else{var i=t();for(var n in i)(\"object\"==typeof exports?exports:e)[n]=i[n]}}(self,()=>(()=>{class nr{}self.QrCreator=nr;const or=QrCreator;return {or}})());"
+        // Web Highlights' content.js (its UMD head, Polymer's `"import"===rel` test, the QR module's
+        // write through `self` read bare two statements on, its blog copy's "how to import all your
+        // annotations" – the strings compat round 25's `[lane]` found the first spelling reading as
+        // the module graph's) and Web Scrobbler's esbuild connector: script-shaped.
+        val webHighlights = "/*! For license information please see content.js.LICENSE.txt */\n!function(e,t){if(\"object\"==typeof exports&&\"object\"==typeof module)module.exports=t();else{var i=t();for(var n in i)(\"object\"==typeof exports?exports:e)[n]=i[n]}}(self,()=>(()=>{function V(o){if(\"link\"===o.localName&&\"import\"===o.getAttribute(\"rel\"))return o.import}class nr{}self.QrCreator=nr;const or=QrCreator;const posts=[{description:\"Here's a quick guide on how to import all your annotations and notes from Diigo into Web Highlights.\"},{description:\"Learn how to export bookmarks from Chrome. Restore them in any browser or import into Web Highlights.\"}];async function importBackupData(e){if(!e)throw new Error(\"Invalid import backup data\")}return {or,V,posts,importBackupData}})());"
         val connector = "\"use strict\";\n(() => {\n  // src/connectors/youtube.ts\n  Connector.playerSelector = [\"#content\", \"#player\"];\n  Connector.getArtistTrack = () => importFromTitle();\n})();\n"
         assertTrue(ExtensionScripts.isScriptShapedModule(webHighlights.reader()))
         assertTrue(ExtensionScripts.isScriptShapedModule(connector.reader()))
         assertTrue(ExtensionScripts.isScriptShapedModule("".reader()))
-        // A dynamic `import()`, an `exports` object, a property named `import` or `export`: a script's.
+        // A dynamic `import()`, an `exports` object, a property named `import` or `export`, the
+        // word in a string or a comment of a line that begins otherwise: a script's – a
+        // declaration is a statement of the top level, and stands only at the text's start or
+        // after `;`, `}` or a line break and indentation.
         for (text in listOf(
             "const m = await import(\"./x.js\"); m.run();",
             "if (typeof exports === \"object\") exports.a = 1; module.exports = a;",
             "const api = { import: 1, export: 2 }; api.import + api.export; obj.export(); x.import.meta;",
-            "importFromTitle(); exportedNames(); reimport(); const important = 1;"
+            "importFromTitle(); exportedNames(); reimport(); const important = 1;",
+            "throw new Error(\"Cannot import \" + name)",
+            "if (\"link\" === o.localName && \"import\" === o.getAttribute(\"rel\")) return o.import;",
+            "const snippet = \"export default x\"; const s2 = 'export { y }';",
+            "x = 1; // import x from \"./x.js\"\ny = 2; /* export default y */ z = 3;",
+            "const help = \"Use export * from './all.js' or import * as ns from './ns.js'\";"
         )) assertFalse(text, ExtensionScripts.hasModuleSyntax(text))
         // A static `import` in every spelling, `import.meta`, an `export` in every declared form: the module graph's.
         for (text in listOf(
@@ -561,16 +571,31 @@ class ExtensionScriptsTest {
             "export const a = 1;",
             "export let b; export var c; export class D {} export async function e() {} export function* f() {}",
             "export * from \"./all.js\";",
-            "(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);\nexport{};"
+            "(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);\nexport{};",
+            // Statement position without a semicolon: after `}`, after a line break with indentation, after a directive.
+            "function f() {}export { f };",
+            "const a = 1\n    export default a",
+            "\"use strict\";import x from \"./x.js\";",
+            "const t = `\${import.meta.url}`;"
         )) {
             assertTrue(text, ExtensionScripts.hasModuleSyntax(text))
             assertFalse(text, ExtensionScripts.isScriptShapedModule(text.reader()))
         }
-        // A string spelling module syntax reads as the module graph's: the safe direction.
-        assertTrue(ExtensionScripts.hasModuleSyntax("throw new Error(\"Cannot import \" + name)"))
+        // Where the position cannot tell – a line of a template literal that starts as a
+        // declaration would – the text reads as the module graph's: the safe direction.
+        assertTrue(ExtensionScripts.hasModuleSyntax("const snippet = `\nimport x from \"./x.js\";\n`;"))
+        // The search from an index: the characters before it are context, not a start.
+        assertTrue(ExtensionScripts.hasModuleSyntax("a;export{b};", 0))
+        assertFalse(ExtensionScripts.hasModuleSyntax("a;export{b};", 3))
+        // …and they are the lookbehind's context: the word after `to ` is a string's searched from its own index too.
+        assertFalse(ExtensionScripts.hasModuleSyntax("\"how to import all\"", 8))
+        assertTrue(ExtensionScripts.hasModuleSyntax("\"how\";\nimport all from \"./a.js\"", 7))
+        assertEquals(64, ExtensionScripts.MODULE_SYNTAX_LOOKBEHIND)
+        assertEquals(128, ExtensionScripts.MODULE_SYNTAX_OVERLAP)
         // Read in windows: an `export` at the very end of a text longer than one window, one
         // straddling the border between two windows, an `import` deep in the third window – each
-        // found; the same lengths of plain script read whole as script-shaped.
+        // found; the same lengths of plain script read whole as script-shaped, and the word in a
+        // string that straddles the border, or sits just after it, is not a declaration.
         val window = ExtensionScripts.MODULE_SYNTAX_WINDOW
         val filler = "x".repeat(window - 4) + ";\n"
         assertFalse(ExtensionScripts.isScriptShapedModule((filler + "const a=1;\nexport{a};").reader()))
@@ -578,6 +603,9 @@ class ExtensionScriptsTest {
         assertFalse(ExtensionScripts.isScriptShapedModule((filler + filler + "import x from './x.js';" + filler).reader()))
         assertTrue(ExtensionScripts.isScriptShapedModule((filler + filler + "const a = 1;\n" + filler).reader()))
         assertTrue(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 3) + ";exports.a=1;" + filler).reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 8) + "s=\"how to import all\";" + filler).reader()))
+        assertTrue(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 8) + "s=\"how to \" + \"import all your notes\";" + filler).reader()))
+        assertFalse(ExtensionScripts.isScriptShapedModule(("y".repeat(window - 8) + "s=1;\n\n    export default s;" + filler).reader()))
         // Over a file: the same answer, and none for a file over the limit or a missing one.
         val dir = createTempDir("ext-scripts-shaped")
         try {

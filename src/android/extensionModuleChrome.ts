@@ -213,14 +213,26 @@ export function isWebpackChunk(head: string): boolean {
  * Module syntax a served file may carry: a static `import` declaration (`import x from`,
  * `import {`, `import *`, `import "…"` – a dynamic `import(` is a script's too), `import.meta`,
  * or an `export` declaration (`export {`, `export *`, `export default` and the declared forms).
- * Read in the safe direction: a match inside a string or a comment costs the file only the
- * scope (it is served bracketed, as every module was before); a miss costs a wasted evaluate,
- * since a block with an `import` or an `export` in it is a SyntaxError the host answers with the
- * plain import. The same expression is `ExtensionScripts.MODULE_SYNTAX` on the host, which reads
- * the file in windows for it.
+ * A declaration is a statement of the module's top level, so it is read only in statement
+ * position: at the start of the text, or after `;`, `}` or a line break with nothing but
+ * indentation between. That is what tells it from the word in a string: Web Highlights'
+ * `content.js` carries Polymer's `"import"===o.getAttribute("rel")` and its blog copy's
+ * "how to import all your annotations", twenty-six of them, and the first spelling of this
+ * expression (compat round 25's `[lane]`) read every one as the module graph's, so R25-1's block
+ * never ran for its own row. `import.meta` is an expression and is read anywhere a property
+ * read can stand. Still in the safe direction where the position cannot tell: a line of a
+ * template literal that starts with `import x from` costs the file only the scope (it is served
+ * bracketed, as every module was before); a miss costs a wasted evaluate, since a block with an
+ * `import` or an `export` in it is a SyntaxError the host answers with the plain import. The
+ * same expression is `ExtensionScripts.MODULE_SYNTAX` on the host, which reads the file in
+ * windows for it, and its lookbehind is at most `MODULE_SYNTAX_LOOKBEHIND` characters long so a
+ * window's overlap can carry it.
  */
 const MODULE_SYNTAX =
-  /(?<![\w$.])(?:import(?:\s+[\w$]|\s*[*{"'])|import\s*\.\s*meta(?![\w$])|export(?:\s+(?:default|const|let|var|function|class|async|enum)(?![\w$])|\s*[{*]))/
+  /(?<![^\n\r;} \t][ \t]{0,63})(?:import(?:\s+[\w$]|\s*[*{"'])|export(?:\s+(?:default|const|let|var|function|class|async|enum)(?![\w$])|\s*[{*]))|(?<![\w$.])import\s*\.\s*meta(?![\w$])/
+
+/** The most characters `MODULE_SYNTAX` looks behind a declaration (one non-space and the indentation). */
+export const MODULE_SYNTAX_LOOKBEHIND = 64
 
 /** Whether a text carries module syntax (see `MODULE_SYNTAX`). */
 export function hasModuleSyntax(text: string): boolean {
