@@ -3528,8 +3528,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
  * search rows): the row's second line carries the engine's standing – the default, a visited
  * site's, inactive – its shortcut (Chrome's Shortcut column) and the host it searches; its
  * sheet offers Make default (an active engine; the default's is held), Edit – the Add form
- * pre-filled with a Shortcut field, the desktop's – Deactivate or Activate (the desktop's; the
- * default engine stays active), and Remove. Under the desktop's Inactive heading the row does
+ * pre-filled with a Shortcut field, on every layout as Chrome 152's row menu offers it on every
+ * custom engine (SET-10) – Deactivate or Activate (the desktop's; the default engine stays
+ * active), and Remove. Under the desktop's Inactive heading the row does
  * not say "Inactive" again – the heading says it, as Added's rows do not say "Added" (§9.17) –
  * and carries its source instead; on the phone and the tablet, where every engine sits under
  * Added, an inactive engine's row is the one place that says so.
@@ -3567,7 +3568,6 @@ function searchEngineItem(
       id: `search-engine:${e.id}:edit`,
       label: 'Edit',
       description: 'The name, the shortcut and the URL the terms go into.',
-      layouts: ['desktop'],
       button: 'Edit…',
       form: {
         title: 'Edit search engine',
@@ -3576,6 +3576,9 @@ function searchEngineItem(
         // the engine, Save as its verb; the shortcut is checked by the shared keyword rule
         // against the profile's other engines (`engineId` excepts the engine's own word) and
         // goes to the command as the engine's `keyword`, `@` or not – the core normalises it.
+        // On the phone the form is the second sheet over the engine's (§9.24), on the tablet the
+        // second dialog over the engine's, as Add's is over the page on each; the save keeps the
+        // engine's id, so the default stays.
         render: (close) => (
           <SearchEngineForm
             initial={{ name: e.name, url: e.searchUrl, shortcut: e.keyword }}
