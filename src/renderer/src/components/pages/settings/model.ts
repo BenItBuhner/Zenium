@@ -474,9 +474,12 @@ export interface InfoRow extends RowBase {
    * A long-press copies this (the version row); the row is still not a target. On a row that
    * also carries an `address` the hold is the address reveal's (services seed #34; the lead's
    * rule on #694, point 3: "when a row both copies on hold and carries an address, the hold
-   * opens the sheet and the copy becomes its one Copy row"): where the page draws sheets, the
-   * row's hold sheet with this as its one Copy row; the row arms no hold of its own, and where
-   * the page draws dialogs the hold is the card's (the copy has no surface there).
+   * opens the sheet and the copy becomes its one Copy row", and for the tablet "the held card
+   * carries Copy as its single §9.20 footer action"; §9.2): the row arms no hold of its own;
+   * where the page draws sheets, the row's hold sheet with this as its one Copy row; where it
+   * draws dialogs, the held card with this as its one footer button – the mouse's and the
+   * keyboard's card carry none. Offered on the touch layouts only (`formFactor !== 'desktop'`,
+   * the version row's rule): the desktop copies from the folder editor's field.
    */
   copy?: RowCopy
   /** The label is a line of prose (an error message): two lines, then an ellipsis (§9.2). */

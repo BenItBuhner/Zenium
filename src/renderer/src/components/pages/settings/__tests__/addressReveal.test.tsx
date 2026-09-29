@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useRef, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { sheetCopyOf } from '@renderer/lib/addressReveal'
+import { holdCopyOf } from '@renderer/lib/addressReveal'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { HOVER_CARD_DELAY, HOVER_CARD_LEAVE_GRACE } from '@renderer/lib/hoverCard'
 import { FrameDialogHost, POPOVER_WIDTH } from '@renderer/lib/portals'
@@ -496,11 +496,11 @@ describe('the hold on touch where the page draws sheets', () => {
     const both = rowOf(el, 'sync-server-folder')
     // No `data-copies`: that marker means "copies itself on the hold" – the preview host's
     // finder and the Android demo read it so – and this row does not; the copy rides on the
-    // attributes the host reads at the hold (`sheetCopyOf`). The row is still no target (§9.34).
+    // attributes the host reads at the hold (`holdCopyOf`). The row is still no target (§9.34).
     expect(both.hasAttribute('data-copies')).toBe(false)
     expect(both.getAttribute('data-copy-text')).toBe(PATH)
     expect(both.getAttribute('data-copy-confirmation')).toBe('Folder copied')
-    expect(sheetCopyOf(both)).toEqual(copy)
+    expect(holdCopyOf(both)).toEqual(copy)
     expect(both.tagName).toBe('DIV')
     expect(both.hasAttribute('data-static')).toBe(true)
     expect(both.getAttribute('role')).toBeNull()
@@ -739,6 +739,9 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     expect(shown?.style.left).toBe(`${FOLDER_BOX.x}px`)
     expect(shown?.style.top).toBe(`${FOLDER_BOX.y + FOLDER_BOX.height}px`)
     expect(document.querySelector('[title]')).toBeNull()
+    // An address-alone row's held card is #694's: no footer, no button, nothing to press.
+    expect(shown?.querySelector('.zen-address-hover-card-footer')).toBeNull()
+    expect(shown?.querySelector('button')).toBeNull()
     // It stands: no delay ran and no leave takes it – the finger leaving the row is no leave.
     pointer(lineOf(row), 'pointerout', { pointerType: 'touch', relatedTarget: document.body })
     await wait(HOVER_CARD_DELAY + HOVER_CARD_LEAVE_GRACE)
@@ -832,20 +835,105 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     expect(card()).toBeNull()
   })
 
-  it('a row that both copies and carries an address (seed #34), where the page draws dialogs: the hold is the card’s – the card as #694 has it, no Copy on it, nothing copied – the tablet fork the lead settles', async () => {
+  it('a row that both copies and carries an address (seed #34), where the page draws dialogs: the bare hold reveals and copies nothing – the held card with exactly one footer button, Copy – and the button copies once, then takes the card down; a value that fits has the card too', async () => {
     const { copies: both } = tablet()
     // The renderer's rule is one for every layout: the both-row arms no hold of its own and is
-    // no `data-copies` row; the copy is the sheet's, and this page draws no sheet.
+    // no `data-copies` row; the copy rides with the hold to the hold's surface.
     expect(both.hasAttribute('data-copies')).toBe(false)
-    expect(sheetCopyOf(both)).toEqual({ text: PATH, confirmation: 'Folder copied' })
+    expect(holdCopyOf(both)).toEqual({ text: PATH, confirmation: 'Folder copied' })
     expect(await hold(lineOf(both))).toBe(true)
     const shown = card()
     expect(shown).not.toBeNull()
-    expect(shown?.textContent).toBe(PATH)
-    expect(shown?.getAttribute('data-by')).toBe('hold')
-    expect(shown?.querySelector('button')).toBeNull()
-    expect(shown?.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
+    if (!shown) throw new Error('no card')
+    expect(shown.getAttribute('data-by')).toBe('hold')
+    expect(shown.querySelector('.zen-address-hover-card-value')?.textContent).toBe(PATH)
+    expect(shown.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
+    // The bare hold copied nothing (the lead: "the bare hold still reveals and doesn't copy").
     await wait(RELEASE_DELAY_MS + 1)
+    expect(copies()).toEqual([])
+    // §9.20's footer: one action, the chassis's text button, Copy – and nothing else pressable.
+    const footers = shown.querySelectorAll('.zen-address-hover-card-footer')
+    expect(footers).toHaveLength(1)
+    const buttons = Array.from(shown.querySelectorAll('button'))
+    expect(buttons).toHaveLength(1)
+    const button = buttons[0]
+    expect(button.parentElement).toBe(footers[0])
+    expect(button.textContent).toBe('Copy')
+    expect(button.classList.contains('zen-v2-button')).toBe(true)
+    expect(button.getAttribute('type')).toBe('button')
+    expect(button.hasAttribute('tabindex')).toBe(false)
+    expect(shown.textContent).toBe(`${PATH}Copy`)
+    // A tap on the button: the press is a press inside the held card (the #694 exemption keeps
+    // it up), the click is the button's own – not swallowed – and it copies first, with the card
+    // still standing, then takes the card down.
+    let cardUpAtCopy: boolean | null = null
+    invoke.mockImplementationOnce(async () => {
+      cardUpAtCopy = card() !== null
+      return null
+    })
+    pointer(button, 'pointerdown', { pointerType: 'touch' })
+    await wait(0)
+    expect(card()).toBe(shown)
+    pointer(button, 'pointerup', { pointerType: 'touch' })
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    act(() => {
+      button.dispatchEvent(click)
+    })
+    await wait(0)
+    expect(click.defaultPrevented).toBe(false)
+    expect(copies()).toEqual([
+      ['clipboard.writeText', { text: PATH, confirmation: 'Folder copied' }]
+    ])
+    expect(cardUpAtCopy).toBe(true)
+    expect(card()).toBeNull()
+    // Nothing else copied on the way out, and the row is still no `data-copies` row.
+    await wait(RELEASE_DELAY_MS + LONG_PRESS_MS)
+    expect(copies()).toHaveLength(1)
+    expect(both.hasAttribute('data-copies')).toBe(false)
+    // A both-row whose line fits: the hold's surface is the copy's, so the card stands for it
+    // too, with the same one button (the phone sheet's rule; an address-alone row that fits
+    // shows nothing, above).
+    measure(lineOf(both), 40, 280)
+    expect(await hold(lineOf(both))).toBe(true)
+    const again = card()
+    expect(again).not.toBeNull()
+    expect(again?.getAttribute('data-by')).toBe('hold')
+    expect(again?.querySelector('.zen-address-hover-card-value')?.textContent).toBe(PATH)
+    expect(again?.querySelectorAll('button')).toHaveLength(1)
+    expect(again?.querySelector('button')?.textContent).toBe('Copy')
+  })
+
+  it('the mouse’s card and the keyboard’s card for the same both-row (seed #34) carry no footer and no action: only the held card does', async () => {
+    const { copies: both } = tablet()
+    // A mouse resting on the row: the tooltip after the delay, the whole value, and no button.
+    pointer(lineOf(both), 'pointerover', { pointerType: 'mouse', relatedTarget: document.body })
+    await wait(HOVER_CARD_DELAY)
+    const hovered = card()
+    expect(hovered).not.toBeNull()
+    expect(hovered?.getAttribute('data-by')).toBe('pointer')
+    expect(hovered?.textContent).toBe(PATH)
+    expect(hovered?.querySelector('.zen-address-hover-card-footer')).toBeNull()
+    expect(hovered?.querySelector('button')).toBeNull()
+    pointer(lineOf(both), 'pointerout', { pointerType: 'mouse', relatedTarget: document.body })
+    await wait(HOVER_CARD_LEAVE_GRACE)
+    expect(card()).toBeNull()
+    // Keyboard focus landing on the row: the card at once, and no button either.
+    both.setAttribute('data-keyboard-focus', '')
+    act(() => {
+      both.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    })
+    await wait(0)
+    const focused = card()
+    expect(focused).not.toBeNull()
+    expect(focused?.getAttribute('data-by')).toBe('focus')
+    expect(focused?.textContent).toBe(PATH)
+    expect(focused?.querySelector('.zen-address-hover-card-footer')).toBeNull()
+    expect(focused?.querySelector('button')).toBeNull()
+    act(() => {
+      both.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    await wait(HOVER_CARD_LEAVE_GRACE)
+    expect(card()).toBeNull()
     expect(copies()).toEqual([])
   })
 
@@ -1033,6 +1121,10 @@ describe('main.css', () => {
     const held = declarations(css, ".zen-address-hover-card[data-by='hold']")
     expect(held).toContain('pointer-events: auto')
     expect(held).toContain('user-select: none')
+    // The held card's footer for a both-row (seed #34): §9.20's first footer form – the value,
+    // 16, the verb at the end edge, the card's own 16 to the edge – and no hairline.
+    const footer = declarations(css, '.zen-address-hover-card-footer')
+    expect(footer).toBe('display: flex; justify-content: flex-end; margin-top: 16px;')
     expect(declarations(css, '.zen-settings-sheet-address .zen-sheet-title-block p')).toContain(
       'overflow-wrap: anywhere'
     )

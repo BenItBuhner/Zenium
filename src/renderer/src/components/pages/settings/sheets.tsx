@@ -652,7 +652,9 @@ export function ConfirmSheet({
  * copy is made), through the core's clipboard path the row's own hold would have taken
  * (`clipboard.writeText` with the copy's text and its word – `useCopyOnHold`, rows.tsx), whose
  * toast, or Android 13's clipboard chip, says the word over the page. The focus rule stands:
- * the hold asked for the value, and Copy is one Tab away with no default key on it.
+ * the hold asked for the value, and Copy is one Tab away with no default key on it. Where the
+ * page draws dialogs instead – a tablet – the same copy is the held card's one footer button
+ * (`AddressReveal`; the lead: "the phone sheet's Copy row in the tablet's surface", §9.2).
  */
 function AddressSheet({
   rowId,

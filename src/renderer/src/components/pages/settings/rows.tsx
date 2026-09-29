@@ -483,9 +483,10 @@ function useCopyOnHold(copy: RowCopy | undefined): {
  * `user-select: none` already keeps the hold from raising a selection). A row that both copies
  * and carries an `address` (services seed #34; the lead's rule on #694, point 3) arms no hold
  * of its own: the hold is the address reveal's (`AddressReveal`), which opens the row's hold
- * sheet with the copy as its one Copy row where the page draws sheets – one hold, one act – so
- * the row is no `data-copies` row and hands the copy to the host on `data-copy-text` and
- * `data-copy-confirmation` (`sheetCopyOf`, lib/addressReveal.ts) instead.
+ * sheet with the copy as its one Copy row where the page draws sheets and raises the held card
+ * with the copy as its one footer button where it draws dialogs – one hold, one act – so the
+ * row is no `data-copies` row and hands the copy to the host on `data-copy-text` and
+ * `data-copy-confirmation` (`holdCopyOf`, lib/addressReveal.ts) instead.
  */
 function InfoRowView({ row, caption }: { row: InfoRow; caption?: string }): JSX.Element {
   const sheetCopy = row.copy && row.address ? row.copy : undefined

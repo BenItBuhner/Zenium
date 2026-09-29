@@ -12,12 +12,13 @@ import {
   controlUnder,
   elidedAddressOf,
   hideAddressCard,
+  holdCopyOf,
   isElided,
   placeAddressCard,
-  sheetCopyOf,
   type AddressSubject,
-  type SheetCopy
+  type HoldCopy
 } from '@renderer/lib/addressReveal'
+import { run } from '@renderer/lib/api'
 import { bindHoverCardDismissals } from '@renderer/lib/hoverCard'
 import { KEYBOARD_FOCUS_ATTR } from '@renderer/lib/panes'
 import {
@@ -88,15 +89,21 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * A row that copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets
  * neither sheet nor card. A row that both copies and carries an address (services seed #34;
  * the lead's rule on #694, point 3: "the hold opens the sheet and the copy becomes its one Copy
- * row") is no `data-copies` row – it arms no hold of its own (`InfoRowView`, rows.tsx) and hands
- * the copy to this host on `data-copy-text` and `data-copy-confirmation` (`sheetCopyOf`) – so
- * one hold is one act: where the page draws sheets, the hold opens the row's sheet whether or
- * not its line is elided (the sheet is the copy's surface too, §9.31's link-menu precedent),
- * with the whole value in the block and the copy as the one row under it; where it draws
- * dialogs, the hold is the card's, for an elided line only, and the card carries no Copy (no
- * hidden gesture on the card; the tablet's copy is the lead's to place). Either surface draws
- * the value through `breakable`: a spaceless path breaks at its slashes and dots before it
- * breaks inside a name.
+ * row"; on the tablet "the bare hold still reveals and doesn't copy. The held card carries Copy
+ * as its single §9.20 footer action"; §9.2) is no `data-copies` row – it arms no hold of its
+ * own (`InfoRowView`, rows.tsx) and hands the copy to this host on `data-copy-text` and
+ * `data-copy-confirmation` (`holdCopyOf`) – so one hold is one act, and the hold's surface is
+ * the copy's, standing for such a row whether or not its line is elided (a value that fits
+ * still has its Copy): where the page draws sheets, the hold opens the row's sheet with the
+ * whole value in the block and the copy as the one row under it (§9.31's link-menu precedent);
+ * where it draws dialogs, the hold raises the standing card with the copy as its one footer
+ * action – §9.20's first footer form, the value, 16, one right-aligned text button, Copy
+ * (`.zen-address-hover-card-footer`, main.css) – which copies through the core's clipboard path
+ * (`clipboard.writeText`, the row's own hold's), takes the card down and lets the toast say the
+ * word. The mouse's and the keyboard's card carry no footer and no action (the lead's point 2:
+ * no hidden gesture on a card; the hover card is a tooltip). Either surface draws the value
+ * through `breakable`: a spaceless path breaks at its slashes and dots before it breaks inside
+ * a name.
  */
 export function AddressReveal({
   root,
@@ -110,7 +117,7 @@ export function AddressReveal({
    */
   hold?: (request: AddressHoldRequest) => void
 }): JSX.Element | null {
-  const { card, subject, held } = addressRevealStore.use()
+  const { card, subject, held, copy } = addressRevealStore.use()
   const holdRef = useRef(hold)
   useEffect(() => {
     holdRef.current = hold
@@ -153,8 +160,9 @@ export function AddressReveal({
 
     // The hold: one touch at a time, from the down to the click its lift raises. What it holds:
     // the row's address line, and – for a row that both copies and carries an address (seed
-    // #34) – the copy its sheet draws as the one Copy row, read off the row at the down.
-    type Hold = { subject: AddressSubject; copy: SheetCopy | null }
+    // #34) – the copy its surface draws (the sheet's one Copy row, the held card's one footer
+    // button), read off the row at the down.
+    type Hold = { subject: AddressSubject; copy: HoldCopy | null }
     let press: ({ id: number; x: number; y: number } & Hold) | null = null
     let timer: ReturnType<typeof setTimeout> | null = null
     let held = false
@@ -186,7 +194,7 @@ export function AddressReveal({
           ...(copy ? { copy } : {})
         })
       } else {
-        addressHold(subject)
+        addressHold(subject, copy)
       }
     }
     const onDown = (e: PointerEvent): void => {
@@ -198,12 +206,11 @@ export function AddressReveal({
       if (mouse(e) || e.button !== 0 || !e.isPrimary) return
       const subject = addressRowOf(e.target)
       if (!subject) return
-      // A row that both copies and carries an address (seed #34) holds where the page draws
-      // sheets whether or not its line is elided – the sheet is the copy's surface, so a value
-      // that fits still has its Copy row – and the copy rides with the hold. Any other row, and
-      // every row where the page draws dialogs (the card carries no Copy), holds for an elided
-      // line only, as the mouse hovers.
-      const copy = holdRef.current ? sheetCopyOf(subject.row) : null
+      // A row that both copies and carries an address (seed #34) holds whether or not its line
+      // is elided – the hold's surface, the sheet or the held card, is the copy's, so a value
+      // that fits still has its Copy – and the copy rides with the hold. Any other row holds
+      // for an elided line only, as the mouse hovers.
+      const copy = holdCopyOf(subject.row)
       if (!copy && !isElided(subject.span)) return
       // A press on a control inside the row – Location's Change…, a desktop switch's box – is
       // the control's, whichever reveal the hold would make (`controlUnder`; `useLongPress`'s
@@ -303,9 +310,12 @@ export function AddressReveal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // The card's own size decides where it fits; measured once it has rendered its text, at the
-  // height its content wants (a height cap from the last placement is lifted for the reading).
+  // The card's own size decides where it fits; measured once it has rendered its text – and
+  // its footer, where the held card carries one: the footer's height is the card's, so the flip
+  // near the window's bottom reads it too – at the height its content wants (a height cap from
+  // the last placement is lifted for the reading).
   const text = subject?.text ?? ''
+  const footer = held && copy !== null
   useLayoutEffect(() => {
     const el = ref.current
     if (!shown || !el || !card.anchor) {
@@ -317,7 +327,7 @@ export function AddressReveal({
     const size = { width: el.offsetWidth, height: el.offsetHeight }
     el.style.maxHeight = capped
     setBox(placeAddressCard(card.anchor, viewportSize(), size))
-  }, [shown, card.anchor, text])
+  }, [shown, card.anchor, text, footer])
 
   // A popover registering with the chrome layer, or a frame dialog opening: the card goes at
   // once, whether it is up or on its way.
@@ -381,6 +391,28 @@ export function AddressReveal({
       >
         {/* The whole value, breaking at its slashes and dots first (`breakable`), inside a name only when it must. */}
         <span className="zen-address-hover-card-value">{breakable(text)}</span>
+        {footer && copy ? (
+          // The held card's one action for a row that both copies and carries an address (seed
+          // #34; the lead's rule): §9.20's first footer form – the value, 16, the verb, 16 to
+          // the edge, no hairline – holding the chassis's text button, right-aligned. Copy first,
+          // then the card down (the sheet's Copy row leaves its sheet the same way, sheets.tsx);
+          // the toast is the core's, as for the row's own hold (`useCopyOnHold`, rows.tsx). A
+          // plain button: the held card is the finger's, and the tab card has no controls to
+          // take a keyboard rule from.
+          <div className="zen-address-hover-card-footer">
+            <button
+              type="button"
+              className="zen-v2-button"
+              data-action="copy"
+              onClick={() => {
+                run('clipboard.writeText', { text: copy.text, confirmation: copy.confirmation })
+                hideAddressCard()
+              }}
+            >
+              Copy
+            </button>
+          </div>
+        ) : null}
       </div>
     </ChromePortal>
   )
