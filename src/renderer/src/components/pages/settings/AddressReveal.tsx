@@ -12,8 +12,11 @@ import {
   controlUnder,
   elidedAddressOf,
   hideAddressCard,
+  isElided,
   placeAddressCard,
-  type AddressSubject
+  sheetCopyOf,
+  type AddressSubject,
+  type SheetCopy
 } from '@renderer/lib/addressReveal'
 import { bindHoverCardDismissals } from '@renderer/lib/hoverCard'
 import { KEYBOARD_FOCUS_ATTR } from '@renderer/lib/panes'
@@ -83,10 +86,17 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * box) arms no hold, so the control's own tap and slow press stay its own (`controlUnder`),
  * while a row that is itself the control (a pressable row, a picker's option) holds as any row.
  * A row that copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets
- * neither sheet nor card – none carries an address today; the day one does, the copy is the
- * sheet's Copy row (§9.31's link-menu precedent), not a second gesture on the same hold. Either
- * surface draws the value through `breakable`: a spaceless path breaks at its slashes and dots
- * before it breaks inside a name.
+ * neither sheet nor card. A row that both copies and carries an address (services seed #34;
+ * the lead's rule on #694, point 3: "the hold opens the sheet and the copy becomes its one Copy
+ * row") is no `data-copies` row – it arms no hold of its own (`InfoRowView`, rows.tsx) and hands
+ * the copy to this host on `data-copy-text` and `data-copy-confirmation` (`sheetCopyOf`) – so
+ * one hold is one act: where the page draws sheets, the hold opens the row's sheet whether or
+ * not its line is elided (the sheet is the copy's surface too, §9.31's link-menu precedent),
+ * with the whole value in the block and the copy as the one row under it; where it draws
+ * dialogs, the hold is the card's, for an elided line only, and the card carries no Copy (no
+ * hidden gesture on the card; the tablet's copy is the lead's to place). Either surface draws
+ * the value through `breakable`: a spaceless path breaks at its slashes and dots before it
+ * breaks inside a name.
  */
 export function AddressReveal({
   root,
@@ -141,14 +151,17 @@ export function AddressReveal({
       if (prev) addressBlur(prev.row)
     }
 
-    // The hold: one touch at a time, from the down to the click its lift raises.
-    let press: { id: number; x: number; y: number; subject: AddressSubject } | null = null
+    // The hold: one touch at a time, from the down to the click its lift raises. What it holds:
+    // the row's address line, and – for a row that both copies and carries an address (seed
+    // #34) – the copy its sheet draws as the one Copy row, read off the row at the down.
+    type Hold = { subject: AddressSubject; copy: SheetCopy | null }
+    let press: ({ id: number; x: number; y: number } & Hold) | null = null
     let timer: ReturnType<typeof setTimeout> | null = null
     let held = false
     let release: ReturnType<typeof setTimeout> | null = null
     let swallow = false
-    /** The subject a recognised hold fires for once the lift's click has come or been waited out. */
-    let fired: AddressSubject | null = null
+    /** The hold a recognised hold fires for once the lift's click has come or been waited out. */
+    let fired: Hold | null = null
     const clear = (): void => {
       if (timer !== null) clearTimeout(timer)
       timer = null
@@ -159,16 +172,18 @@ export function AddressReveal({
     const fire = (): void => {
       if (release !== null) clearTimeout(release)
       release = null
-      const subject = fired
+      const found = fired
       fired = null
-      if (!subject) return
+      if (!found) return
+      const { subject, copy } = found
       const sheet = holdRef.current
       if (sheet) {
         sheet({
           kind: 'address',
           rowId: subject.row.dataset.row ?? '',
           label: labelOf(subject.row) || subject.text,
-          text: subject.text
+          text: subject.text,
+          ...(copy ? { copy } : {})
         })
       } else {
         addressHold(subject)
@@ -181,8 +196,15 @@ export function AddressReveal({
       clear()
       held = false
       if (mouse(e) || e.button !== 0 || !e.isPrimary) return
-      const subject = elidedAddressOf(e.target)
+      const subject = addressRowOf(e.target)
       if (!subject) return
+      // A row that both copies and carries an address (seed #34) holds where the page draws
+      // sheets whether or not its line is elided – the sheet is the copy's surface, so a value
+      // that fits still has its Copy row – and the copy rides with the hold. Any other row, and
+      // every row where the page draws dialogs (the card carries no Copy), holds for an elided
+      // line only, as the mouse hovers.
+      const copy = holdRef.current ? sheetCopyOf(subject.row) : null
+      if (!copy && !isElided(subject.span)) return
       // A press on a control inside the row – Location's Change…, a desktop switch's box – is
       // the control's, whichever reveal the hold would make (`controlUnder`; `useLongPress`'s
       // rule): no hold arms, and the lift's click reaches the control. A row that is itself
@@ -195,7 +217,7 @@ export function AddressReveal({
         : owned(subject.row)
       if (!inside) return
       if (subject.row.hasAttribute('data-copies')) return
-      press = { id: e.pointerId, x: e.clientX, y: e.clientY, subject }
+      press = { id: e.pointerId, x: e.clientX, y: e.clientY, subject, copy }
       timer = setTimeout(() => {
         timer = null
         held = true
@@ -215,11 +237,11 @@ export function AddressReveal({
     }
     const onUp = (e: PointerEvent): void => {
       if (!press || press.id !== e.pointerId) return
-      const { subject } = press
+      const { subject, copy } = press
       clear()
       if (!held) return
       held = false
-      fired = subject
+      fired = { subject, copy }
       swallow = true
       release = setTimeout(fire, RELEASE_DELAY_MS)
     }
@@ -238,10 +260,10 @@ export function AddressReveal({
       }
       if (!press) return
       e.preventDefault()
-      const { subject } = press
+      const { subject, copy } = press
       clear()
       held = false
-      fired = subject
+      fired = { subject, copy }
       swallow = true
       fire()
     }

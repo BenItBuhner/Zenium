@@ -1,6 +1,7 @@
 import type { JSX, ReactElement, ReactNode, RefObject } from 'react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { breakable } from '@renderer/lib/addressReveal'
+import { run } from '@renderer/lib/api'
 import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../../dialogs/confirmKeyboard'
@@ -12,6 +13,7 @@ import type {
   DetailRow,
   FieldRow,
   ItemRow,
+  RowCopy,
   RowGroup,
   SettingsRow,
   ValueRow
@@ -124,7 +126,9 @@ function RowSheet({
           rowId={request.rowId}
           label={request.label}
           text={request.text}
+          copy={request.copy}
           under={under}
+          ctx={ctx}
           close={close}
         />
       )
@@ -638,31 +642,65 @@ export function ConfirmSheet({
  * under the paragraph (the block's own 16 below comes off; main.css). Focus lands on the sheet
  * itself (`focus: 'dialog'`, the prompt's rule): a reader hears the label and then the whole
  * value, which is what the hold asked for. A swipe, the scrim or back dismisses it.
+ *
+ * For a row that both copies on the hold and carries an address (`copy`; services seed #34, the
+ * lead's rule on #694, point 3: "the hold opens the sheet and the copy becomes its one Copy
+ * row") the same sheet draws one row under the block – the shared action row, Copy, the sheet's
+ * only row (`.zen-settings-sheet-address-copy`, main.css: the block keeps its 16 below, as an
+ * item sheet's does over its rows). Pressing it closes the sheet first and copies once the
+ * sheet has gone (`ActionRow.closesSheet`; §9.31's link-menu precedent: the menu leaves, the
+ * copy is made), through the core's clipboard path the row's own hold would have taken
+ * (`clipboard.writeText` with the copy's text and its word – `useCopyOnHold`, rows.tsx), whose
+ * toast, or Android 13's clipboard chip, says the word over the page. The focus rule stands:
+ * the hold asked for the value, and Copy is one Tab away with no default key on it.
  */
 function AddressSheet({
   rowId,
   label,
   text,
+  copy,
   under,
+  ctx,
   close
 }: {
   rowId: string
   label: string
   text: string
+  copy?: RowCopy
   under: boolean
+  ctx: RowContext
   close(): void
 }): JSX.Element {
+  const name = rowId || 'option'
+  const groups: RowGroup[] | null = copy
+    ? [
+        {
+          id: `address-copy:${name}`,
+          heading: null,
+          rows: [
+            {
+              kind: 'action',
+              id: `${name}:copy`,
+              label: 'Copy',
+              closesSheet: true,
+              onPress: () =>
+                run('clipboard.writeText', { text: copy.text, confirmation: copy.confirmation })
+            }
+          ]
+        }
+      ]
+    : null
   return (
     <SettingsSheet
-      name={`settings-address:${rowId || 'option'}`}
+      name={`settings-address:${name}`}
       title={label}
       description={breakable(text)}
       under={under}
       focus="dialog"
       onClose={close}
-      className="zen-settings-sheet-address"
+      className={cn('zen-settings-sheet-address', groups && 'zen-settings-sheet-address-copy')}
     >
-      {null}
+      {groups ? <GroupList groups={groups} ctx={ctx} className="zen-settings-sheet-rows" /> : null}
     </SettingsSheet>
   )
 }

@@ -87,9 +87,11 @@ export type SheetRequest =
    * services seed #32): a touch held on the row while its line is elided. The request carries
    * what the sheet shows – the row's label as the title, the whole value as the title block's
    * paragraph – since the row held may be a picker sheet's option, which is no row of the model
-   * (`rowId` is then `''`); the sheet is a snapshot of the hold and its own to dismiss.
+   * (`rowId` is then `''`); the sheet is a snapshot of the hold and its own to dismiss. `copy`:
+   * the row also copies on a hold (`RowCopy`; services seed #34, the lead's rule on #694, point
+   * 3), so the sheet draws that copy as its one Copy row – a snapshot too, taken at the hold.
    */
-  | { kind: 'address'; rowId: string; label: string; text: string }
+  | { kind: 'address'; rowId: string; label: string; text: string; copy?: RowCopy }
 
 export interface RowContext {
   open(request: SheetRequest): void
@@ -478,17 +480,25 @@ function useCopyOnHold(copy: RowCopy | undefined): {
  * puts the ink on the sentence, the description keeps its 69%. A row with a `copy` copies it
  * on a long-press; `data-copies` marks it for the readers that need to find such a row – the
  * preview host's `hold:` finder and the tests – and no style hangs on it (the chrome root's
- * `user-select: none` already keeps the hold from raising a selection).
+ * `user-select: none` already keeps the hold from raising a selection). A row that both copies
+ * and carries an `address` (services seed #34; the lead's rule on #694, point 3) arms no hold
+ * of its own: the hold is the address reveal's (`AddressReveal`), which opens the row's hold
+ * sheet with the copy as its one Copy row where the page draws sheets – one hold, one act – so
+ * the row is no `data-copies` row and hands the copy to the host on `data-copy-text` and
+ * `data-copy-confirmation` (`sheetCopyOf`, lib/addressReveal.ts) instead.
  */
 function InfoRowView({ row, caption }: { row: InfoRow; caption?: string }): JSX.Element {
-  const hold = useCopyOnHold(row.copy)
+  const sheetCopy = row.copy && row.address ? row.copy : undefined
+  const hold = useCopyOnHold(sheetCopy ? undefined : row.copy)
   return (
     <div
       ref={row.trailing ? attachLineCount : undefined}
       data-row={row.id}
       data-static=""
       data-tone={row.tone}
-      data-copies={row.copy ? '' : undefined}
+      data-copies={row.copy && !sheetCopy ? '' : undefined}
+      data-copy-text={sheetCopy?.text}
+      data-copy-confirmation={sheetCopy?.confirmation}
       className={cn(
         'zen-settings-row zen-v2-row',
         row.danger && 'zen-settings-row-danger',

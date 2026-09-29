@@ -97,6 +97,31 @@ export function controlUnder(target: EventTarget | null, row: HTMLElement): Elem
 }
 
 /**
+ * The copy a row that both copies on a hold and carries an address hands to its hold sheet
+ * (services seed #34; the lead's rule on #694, point 3: "when a row both copies on hold and
+ * carries an address, the hold opens the sheet and the copy becomes its one Copy row"). Such a
+ * row arms no hold of its own and is no `data-copies` row – that marker means "copies itself on
+ * the hold" to the preview host's `hold:` finder and the Android demo – and carries the copy on
+ * these two attributes instead (`InfoRowView`, rows.tsx), for the host to read at the hold the
+ * way it reads the row's address line: from the DOM, never from the model.
+ */
+export const SHEET_COPY_TEXT_ATTR = 'data-copy-text'
+export const SHEET_COPY_CONFIRMATION_ATTR = 'data-copy-confirmation'
+
+/** What the sheet's Copy row copies (`RowCopy`'s shape): the text, and the toast's word for it. */
+export interface SheetCopy {
+  text: string
+  confirmation: string
+}
+
+/** The copy `row` hands the hold sheet, or null for a row that carries none. */
+export function sheetCopyOf(row: HTMLElement): SheetCopy | null {
+  const text = row.getAttribute(SHEET_COPY_TEXT_ATTR)
+  const confirmation = row.getAttribute(SHEET_COPY_CONFIRMATION_ATTR)
+  return text !== null && confirmation !== null ? { text, confirmation } : null
+}
+
+/**
  * The value with a break opportunity after each of its separators – a `<wbr>` after every `/`
  * and `.` – so a spaceless path or host breaks at its slashes and dots (§9.23: "a host too long
  * for a line breaking at its dots") before `overflow-wrap: anywhere` has to break it inside a

@@ -12334,6 +12334,17 @@
   overflow-wrap: anywhere;
 }
 /*
+ * The same sheet for a row that both copies on the hold and carries an address (services seed
+ * #34; the lead's rule on #694, point 3: "the hold opens the sheet and the copy becomes its one
+ * Copy row"): one action row, Copy, stands under the block, so the block keeps its own 16 below
+ * – the rows follow it as they follow an item sheet's block – and the sheet ends on the row as
+ * any sheet of rows does. The block's rule above is the address sheet's alone; this one is the
+ * Copy row's over it.
+ */
+.zen-settings-sheet-address.zen-settings-sheet-address-copy .zen-sheet-title-block {
+  padding-bottom: 16px;
+}
+/*
  * A description that reports a status (a load error, a retirement notice, the folder-lost
  * sentence): §1 status ink, text only, read off the row's one `data-tone` – the primitive's
  * attribute above – not off the span.

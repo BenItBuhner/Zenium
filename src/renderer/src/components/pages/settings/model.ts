@@ -470,7 +470,14 @@ export interface InfoRow extends RowBase {
   /** A 20 px glyph on the label's line (§9.2): a status glyph in the §1 status ink. */
   leading?: ReactNode
   trailing?: ReactNode
-  /** A long-press copies this (the version row); the row is still not a target. */
+  /**
+   * A long-press copies this (the version row); the row is still not a target. On a row that
+   * also carries an `address` the hold is the address reveal's (services seed #34; the lead's
+   * rule on #694, point 3: "when a row both copies on hold and carries an address, the hold
+   * opens the sheet and the copy becomes its one Copy row"): where the page draws sheets, the
+   * row's hold sheet with this as its one Copy row; the row arms no hold of its own, and where
+   * the page draws dialogs the hold is the card's (the copy has no surface there).
+   */
   copy?: RowCopy
   /** The label is a line of prose (an error message): two lines, then an ellipsis (§9.2). */
   clamp?: boolean
