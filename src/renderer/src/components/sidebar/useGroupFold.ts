@@ -73,6 +73,14 @@ export function useGroupFold(
     setKept(collapsed ? rows : null)
   }
   const drawn = collapsed ? (kept ?? NO_ROWS) : rows
+  // The rows kept through a fold shut, for the rest that lets them go: their departure from the
+  // list is the fold's – they went under the clip – so the list must not shrink each out of its
+  // slot again in the commit that removes them (`SlideMotion.dropNext`, the mirror of the
+  // unfold's `placeNext`).
+  const keptRef = useRef<GroupRows | null>(null)
+  useLayoutEffect(() => {
+    keptRef.current = kept
+  }, [kept])
 
   const fold = useRef<GroupFold | null>(null)
   useLayoutEffect(() => {
@@ -81,7 +89,11 @@ export function useGroupFold(
       header,
       axis,
       () => motion?.record(),
-      () => setKept(null)
+      () => {
+        const gone = keptRef.current
+        if (gone) motion?.dropNext(gone.tabs.map((t) => t.id))
+        setKept(null)
+      }
     )
     fold.current = f
     return () => {

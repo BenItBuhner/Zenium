@@ -12,6 +12,7 @@ import {
 } from '@core/extensions/api/capture'
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { PersistedRule } from '@core/extensions/api/declarativeContent'
 import { parseCssColor, type CssRgba } from '@core/extensions/api/cssColor'
 import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
 import type { ScopedValues } from '@core/extensions/api/privacy'
@@ -77,6 +78,7 @@ import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidBrowsingData, BROWSING_DATA_PERMISSION } from './extensionBrowsingData'
 import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
+import { AndroidDeclarativeContent } from './extensionDeclarativeContent'
 import type { AndroidDeclarativeNetRequest } from './extensionDnr'
 import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { PersistedGrants } from './extensionRuntime'
@@ -173,6 +175,9 @@ export interface ApiHost {
   /** `chrome.contextMenus` items of a lazy-background extension, kept across worker starts and sessions (Chrome's `MenuManager` storage). */
   contextMenuItems(id: string): unknown
   setContextMenuItems(id: string, items: PersistedMenuItem[]): void
+  /** `chrome.declarativeContent.onPageChanged`'s rules, kept across sessions and dropped at uninstall alone (Chrome's `ExtensionPrefs`). */
+  declarativeRules(id: string): unknown
+  setDeclarativeRules(id: string, rules: PersistedRule[]): void
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
   icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
@@ -536,6 +541,8 @@ export class ExtensionApi {
   readonly tabs: TabIds
   readonly contextMenus: AndroidContextMenus
   readonly sidePanel: AndroidSidePanel
+  /** `chrome.declarativeContent`: the rules showing the action per tab (`extensionDeclarativeContent.ts`). */
+  readonly declarativeContent: AndroidDeclarativeContent
   /** `chrome.proxy.settings` over the WebView's proxy override (`extensionProxy.ts`). */
   readonly proxy: AndroidProxy
   /** `chrome.fontSettings` over every tab WebView's `WebSettings` (`extensionFontSettings.ts`). */
@@ -585,6 +592,20 @@ export class ExtensionApi {
       emit: (id, ns, name, args) => host.emit(id, ns, name, args),
       behavior: (id) => host.sidePanelOnActionClick(id),
       setBehavior: (id, on) => host.setSidePanelOnActionClick(id, on)
+    })
+    this.declarativeContent = new AndroidDeclarativeContent({
+      attached: (id) => host.attached(id),
+      pageUrl: (ext, chromeTabId) => {
+        // `tabFor` names the tab as `ext` may see it: a private tab it may not is no page.
+        try {
+          return this.tabs.urlOf(this.tabs.tabFor(ext, chromeTabId))
+        } catch {
+          return null
+        }
+      },
+      persistedRules: (id) => host.declarativeRules(id),
+      persistRules: (id, rules) => host.setDeclarativeRules(id, rules),
+      changed: () => host.browser.state.commitVolatile()
     })
     this.proxy = new AndroidProxy({
       attached: (id) => host.attached(id),
@@ -810,11 +831,21 @@ export class ExtensionApi {
     return record
   }
 
-  /** The state a tab sees: its own overrides over the global values (Chrome's `details.tabId`). */
+  /**
+   * The state a tab sees: its own overrides over the global values (Chrome's `details.tabId`).
+   * Whether the action shows on the tab is `ExtensionAction::GetIsVisible`'s order: the tab's own
+   * `enable` / `disable` first, then a `declarativeContent` rule showing it on the tab's page,
+   * then the global value (Story Saver: `action.disable()` at install, shown by a rule on its sites).
+   */
   actionStateFor(id: string, chromeTabId: number | undefined): ActionState {
     const record = this.actionRecord(id)
     const tab = chromeTabId === undefined ? undefined : record.perTab.get(chromeTabId)
-    return tab ? { ...record.global, ...tab } : record.global
+    const state = tab ? { ...record.global, ...tab } : record.global
+    if (chromeTabId === undefined || state.enabled || tab?.enabled !== undefined) return state
+    const ext = this.host.attached(id)
+    if (ext && this.declarativeContent.showsAction(ext, chromeTabId))
+      return { ...state, enabled: true }
+    return state
   }
 
   private writeAction<K extends keyof ActionState>(
@@ -910,6 +941,10 @@ export class ExtensionApi {
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'sidePanel':
         return this.sidePanel.call(ext, method, args)
+      case 'declarativeContent':
+        // The rules of `onPageChanged`, kept per extension and read where the action's state is
+        // (`extensionDeclarativeContent.ts`); Chrome's error without the permission.
+        return this.declarativeContent.call(ext, method, args)
       case 'webNavigation':
         return this.webNavigationCall(ext, method, args)
       case 'cookies': {

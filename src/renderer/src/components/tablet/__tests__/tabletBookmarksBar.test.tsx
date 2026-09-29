@@ -290,9 +290,12 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 /**
  * A finger's tap as Chromium delivers it: the pointer's enter, down, up and leave in one task,
  * the `click` in a later one – the browser's tap gesture, not the release (a mouse's click is
- * dispatched with its release, inside the press the layer's light dismiss swallows).
+ * dispatched with its release, inside the press the layer's light dismiss swallows). The click
+ * is the pointer's: a `PointerEvent` with `pointerType 'touch'` and `detail 1`, which is how the
+ * layer tells the press's own click from a keyboard's (`pointerType ''`, `detail 0`) while it
+ * waits for it (W8-F20, §9.20).
  */
-async function tap(el: Element): Promise<MouseEvent> {
+async function tap(el: Element): Promise<PointerEvent> {
   const pointer = (type: string, init: PointerEventInit = {}): PointerEvent =>
     new PointerEvent(type, {
       bubbles: true,
@@ -313,8 +316,36 @@ async function tap(el: Element): Promise<MouseEvent> {
   await act(async () => {
     await tick()
   })
-  const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+  const click = pointer('click', { detail: 1 })
   await act(async () => {
+    el.dispatchEvent(click)
+  })
+  await flush()
+  await act(async () => {
+    await tick()
+  })
+  return click
+}
+
+/**
+ * A mouse's press as Chromium delivers it: down, up and the `click` in one task – the click
+ * comes with the release, inside the press the layer's light dismiss swallows.
+ */
+async function mousePress(el: Element): Promise<PointerEvent> {
+  const pointer = (type: string, init: PointerEventInit = {}): PointerEvent =>
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'mouse',
+      pointerId: 1,
+      isPrimary: true,
+      button: 0,
+      ...init
+    })
+  const click = pointer('click', { detail: 1 })
+  await act(async () => {
+    el.dispatchEvent(pointer('pointerdown'))
+    el.dispatchEvent(pointer('pointerup'))
     el.dispatchEvent(click)
   })
   await flush()
@@ -461,12 +492,13 @@ describe('the tablet’s bookmarks bar (NTP-34; Chrome 152’s tablet bar, §9.3
     expect(panels().length).toBe(1)
     expect(more.getAttribute('aria-expanded')).toBe('true')
     // The second tap: its press closes the panel (§9.20, reason `anchor`) and its click, a task
-    // later, is that press's own – the panel stays closed and the chrome flag down.
+    // later, is that press's own – the layer swallows it on the window (W8-F20), so the bar never
+    // sees it: the panel stays closed and the chrome flag down.
     const spent = await tap(more)
     expect(panels()).toEqual([])
     expect(more.getAttribute('aria-expanded')).toBe('false')
     expect(uiStore.get().barMenuOpen).toBe(false)
-    expect(spent.defaultPrevented).toBe(false)
+    expect(spent.defaultPrevented).toBe(true)
     // A third tap is a new press: it reopens.
     await tap(more)
     expect(panels().length).toBe(1)
@@ -490,16 +522,29 @@ describe('the tablet’s bookmarks bar (NTP-34; Chrome 152’s tablet bar, §9.3
     expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
   })
 
-  it('keeps the desktop’s toggle as it was: a press’s late click on the desktop is a second press', async () => {
-    // The desktop's click comes with the release and is swallowed with it; a click that arrives
-    // a task later is a keyboard's or a second press's, and toggles. The tablet's guard above is
-    // not armed on the desktop.
+  it('closes and stays closed on the desktop too: a finger’s tap is the same press on every layout, and a mouse’s press closes as it always did', async () => {
+    // The layer's light dismiss (§9.20) is one module for every host: a touch tap's late click
+    // is the press's own on the desktop with a touch screen as on the tablet – no guard of the
+    // bar's, no layout gate (W8-F20). A mouse's click comes with its release and is swallowed
+    // with it, as before.
     await mountDesktopBar(stateOf({ bookmarksBar: 'always' }))
     const work = chips().find((c) => c.getAttribute('data-bm-id') === 'work')!
     await tap(work)
     expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
+    const spent = await tap(work)
+    expect(panels()).toEqual([])
+    expect(spent.defaultPrevented).toBe(true)
     await tap(work)
     expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
+    // The mouse: its press on the open panel's own chip closes it and the click with the
+    // release is swallowed; the next press reopens.
+    const mouse = await mousePress(work)
+    expect(panels()).toEqual([])
+    expect(mouse.defaultPrevented).toBe(true)
+    await mousePress(work)
+    expect(panels().map((p) => p.getAttribute('aria-label'))).toEqual(['Work'])
+    await mousePress(work)
+    expect(panels()).toEqual([])
   })
 
   it('lifts no link from a chip on the tablet, where the desktop’s chip does', async () => {

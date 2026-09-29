@@ -10,7 +10,8 @@ import { askDefaultBrowser, dismissDefaultBrowserBanner } from '@renderer/lib/de
  * "Not now" stacked the same fill on itself), its hairline at its bottom edge (§9.7), 40 tall
  * around its 32 px buttons (§9.21) with 16 px gutters, the sentence at 15/20 in the full ink, no
  * leading glyph (the row in Settings carries the status; a globe here repeated it). The buttons
- * are the shared v2 button, 8 apart, the primary last (§9.11): "Make default" raises the prompt
+ * are the shared v2 button, 8 apart, the primary last (§9.11): "Set as default" – §9.29's one
+ * name for the act wherever it is asked, the phone's tip card's word too – raises the prompt
  * that says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`); "Not now"
  * takes the strip down for this feature release (`dismissDefaultBrowserBanner`). Under an open
  * overlay the strip keeps its height but is not painted (`ContentArea`'s `data-under-overlay`).
@@ -32,7 +33,7 @@ export function DefaultBrowserBanner({ state }: { state: UIState }): JSX.Element
         data-primary
         onClick={() => askDefaultBrowser('banner')}
       >
-        Make default
+        Set as default
       </button>
     </div>
   )

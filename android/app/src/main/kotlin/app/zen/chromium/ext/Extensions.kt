@@ -117,7 +117,13 @@ class Extensions(private val host: Host) {
         val script = host.activity.assets.open("ext-janitor.js").bufferedReader().readText()
         "(function(){var __zenExtBoot={token:${JSONObject.quote(token)}};\n$script\n})();"
     }
-    private val compiler = UnitCompiler { bootstrap }
+    /**
+     * The units' compiler, with the unit store under the app's files (`ext-units/`, a directory
+     * per runtime named by the process: a unit of [UnitCompiler.FILE_UNIT_CHARS] or more lives
+     * there between installs, not in the heap – compat round 24's R24-1; the store's leavings of
+     * a process that died are swept at the next process's first compile).
+     */
+    private val compiler = UnitCompiler(store = File(host.activity.filesDir, "ext-units"), owner = "p${android.os.Process.myPid()}") { bootstrap }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
 
@@ -130,9 +136,37 @@ class Extensions(private val host: Host) {
 
     /**
      * One document-start script of one extension, injected into frames whose origin matches
-     * `origins`; into the named isolated world when `world` is set.
+     * `origins`; into the named isolated world when `world` is set. Over the compiler's unit
+     * ([UnitCompiler.Compiled]): its [text] is the held string, or – a unit of the store – read
+     * from its file for the install and let go after ([chars] and [stored] say which without a
+     * read).
      */
-    class ScriptUnit(val extensionId: String, val key: String, val origins: Set<String>, val script: String, val world: String?)
+    class ScriptUnit(val extensionId: String, val key: String, val origins: Set<String>, val world: String?, private val compiled: UnitCompiler.Compiled) {
+        /** The script's characters, held or stored. */
+        val chars: Int get() = compiled.chars
+
+        /** Whether the unit lives in the store between installs rather than in the heap. */
+        val stored: Boolean get() = compiled.file != null
+
+        /** The script to hand the WebView, or why there is none: read now for a stored unit ([UnitCompiler.Compiled.read]). */
+        fun read(): UnitCompiler.Read = compiled.read()
+
+        /** [read]'s text, or null for every other answer. */
+        fun text(): String? = compiled.text()
+    }
+
+    /**
+     * One [installExtension] pass: its time in milliseconds (the reads and the handoffs), how
+     * many stored units it read from the disk, how many it took soft-held from the last read,
+     * and how many it could not install – their file gone, or their read out of heap.
+     */
+    class Installed(val ms: Long, val readFromDisk: Int, val softHeld: Int, val gone: Int, val outOfHeap: Int) {
+        val skipped: Int get() = gone + outOfHeap
+
+        companion object {
+            val NONE = Installed(0L, 0, 0, 0, 0)
+        }
+    }
 
     /** What the core configured for one attached extension. */
     class Served(
@@ -229,6 +263,13 @@ class Extensions(private val host: Host) {
     private val frames = FrameOwnership<TabWebView>()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
+    /**
+     * How many reads of a stored unit did not fit the heap over the runtime's life
+     * ([UnitCompiler.Read.OutOfHeap]; main thread) – each one a unit the tabs of a pass were
+     * without, said in an error line at the time and counted in [unitMemory] and the configure
+     * line so the reading is never silent.
+     */
+    private var storeReadsOutOfHeap = 0
     /**
      * Whether an extension listens for `webRequest` right now (`ext.observeRequests`): then every
      * decision of the engine is reported, not only those an extension's rule took.
@@ -346,6 +387,13 @@ class Extensions(private val host: Host) {
     val decisions = ArrayDeque<String>()
     /** While `debug`: the CORS proxy's last outcomes ("<ext> METHOD <status | words> url" – [recordProxy]), for instrumentation. */
     val proxied = ArrayDeque<String>()
+    /**
+     * While `debug`: the intercept's last answers on the extensions' origins and the page alias
+     * (ServedRecord's lines – [recorded]), for instrumentation: the sweep reads whether a content
+     * script's insertion of an extension file was served, which the page's Resource Timing cannot
+     * show (compat round 24, AdGuard Extra's row).
+     */
+    val servedRecord = ArrayDeque<String>()
     /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
      * bridge, so the demo can grade messaging and storage per real extension (`msg` counts as
@@ -749,11 +797,11 @@ class Extensions(private val host: Host) {
                 size = { path -> fileIn(dir, path)?.takeIf { it.isFile }?.length() }
             )
             val unitsNow = compiled.filter { it.refused == null }
-                .map { ScriptUnit(id, it.key, it.origins.toSet(), it.script, it.world?.takeIf { isolatedWorlds }) }
+                .map { ScriptUnit(id, it.key, it.origins.toSet(), it.world?.takeIf { isolatedWorlds }, it) }
             val ms = (System.nanoTime() - started) / 1_000_000
             val stats = json(
                 "units" to JSONArray(compiled.map {
-                    json("key" to it.key, "chars" to it.script.length, "cached" to it.cached, "refused" to it.refused?.chars)
+                    json("key" to it.key, "chars" to it.chars, "cached" to it.cached, "refused" to it.refused?.chars, "stored" to (it.file != null))
                 }),
                 "ms" to ms
             )
@@ -789,7 +837,8 @@ class Extensions(private val host: Host) {
                 this.debug = debug
                 served = served + (id to servedNow)
                 units[id] = unitsNow
-                for (view in host.tabs.all()) installExtension(view, servedNow, unitsNow)
+                // One pass over the tabs: a stored unit is read once for all of them, not once a tab.
+                val install = installExtension(host.tabs.all(), servedNow, unitsNow)
                 configureStats[id] = stats
                 flushNotificationEvents(id)
                 // A tab that asked for one of the extension's pages before this: the empty
@@ -807,13 +856,17 @@ class Extensions(private val host: Host) {
                 // doubling at 10.6 million characters was the allocation that took the app down).
                 val assembled = compiled.filter { it.refused == null }
                 val shapes = assembled.groupingBy { it.shape }.eachCount()
+                val stored = assembled.filter { it.file != null }
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
-                        "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
+                        "${unitsNow.sumOf { it.chars }} chars (${compiled.count { it.cached }} cached, " +
                         "${compiled.count { it.refused != null }} refused) in $ms ms, " +
-                        "builders presized ${assembled.sumOf { it.presized.toLong() }} for ${assembled.sumOf { it.script.length.toLong() }} chars " +
+                        "builders presized ${assembled.sumOf { it.presized.toLong() }} for ${assembled.sumOf { it.chars.toLong() }} chars " +
                         "(${assembled.count { it.grown }} grown), " +
+                        "${stored.size} stored (${stored.sumOf { it.chars.toLong() }} chars), " +
+                        "installed on ${host.tabs.all().size} tab(s) (${install.ms} ms" +
+                        (if (install.skipped > 0) "; ${install.gone} unit(s) gone, ${install.outOfHeap} out of heap – the tabs are without them" else "") + "), " +
                         "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
                         "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}, " +
                         "heap ${(runtime.totalMemory() - runtime.freeMemory()) shr 20}/${runtime.maxMemory() shr 20} MB"
@@ -1008,6 +1061,29 @@ class Extensions(private val host: Host) {
             proxied.addLast("$extensionId ${request.method} $outcome ${request.url}")
         }
         if (!outcome.first().isDigit()) Log.w(TAG, "cors proxy ${extensionId.take(8)} ${request.method} ${request.url}: $outcome")
+    }
+
+    /**
+     * The intercept's answer on an extension's origin or the page alias, recorded while `debug`
+     * (`servedRecord`, ServedRecord.line: the status, the path as spelled, the frame, the side,
+     * the word of a refusal and the Referer; the sweep reads it through [servedMatching]) and
+     * returned as it is. `foreign` is null where the answer came before the side was told.
+     */
+    private fun recorded(id: String, request: WebResourceRequest, foreign: Boolean?, response: WebResourceResponse, why: String? = null): WebResourceResponse {
+        if (!debug) return response
+        val url = request.url
+        val line = ServedRecord.line(
+            id,
+            response.statusCode,
+            (url.path ?: "/").trimStart('/'),
+            url.query,
+            request.isForMainFrame,
+            when (foreign) { null -> null; true -> "foreign"; false -> "own" },
+            why,
+            request.requestHeaders?.get("Referer")
+        )
+        synchronized(servedRecord) { ServedRecord.add(servedRecord, line) }
+        return response
     }
 
     private fun recordCall(ep: String, message: JSONObject, chars: Int) {
@@ -1346,7 +1422,7 @@ class Extensions(private val host: Host) {
         // `chrome.privacy`'s `navigator.doNotTrack`, for the documents this view will load, by its kind of tab.
         if (privacyLayer.holds(view.isPrivateTab)) mine.privacy = addPrivacyScript(view, privacyLayer)
         handlers[view] = mine
-        for ((id, list) in units) served[id]?.let { installExtension(view, it, list) }
+        for ((id, list) in units) served[id]?.let { installExtension(listOf(view), it, list) }
     }
 
     /**
@@ -1411,29 +1487,90 @@ class Extensions(private val host: Host) {
             .getOrNull()
 
     /**
-     * One extension's handlers on one view: the previous ones go, the current units come. A
-     * private tab gets nothing from an extension not allowed there (documents already running
-     * its script keep it, as in Chrome, until they navigate).
+     * One extension's handlers on the given views (every tab at a configure, the new tab at an
+     * attach): the previous ones go, the current units come. A private tab gets nothing from an
+     * extension not allowed there (documents already running its script keep it, as in Chrome,
+     * until they navigate). Unit by unit over the views, not view by view over the units: a
+     * unit of the store ([ScriptUnit.stored]) is read once here for all the views of the pass
+     * and let go as the pass moves on – its string is live for the handoffs of one unit, never
+     * two units' at once – where a held unit's string is the one the compiler keeps, and a
+     * stored unit's text soft-held from its last read is taken as it is ([UnitCompiler.Read]).
+     * A stored unit whose file is gone is skipped with a warning line, one whose read did not
+     * fit the heap with an error line and a count ([storeReadsOutOfHeap], in the runtime's
+     * memory reading and the configure line) – the extension's other units go on either way,
+     * and the line says which unit the tabs are without. Answers the pass ([Installed]: its
+     * time – the reads and the handoffs; the configure line carries it –, its reads and its
+     * skips; an attach's pass with a read in it says so at info level).
      */
-    private fun installExtension(view: WebView, ext: Served, list: List<ScriptUnit>) {
-        val mine = handlers[view] ?: return
-        removeExtension(view, ext.id)
-        if (view.isPrivateTab && !ext.allowPrivate) return
-        val added = ArrayList<ScriptHandler>()
-        // Extension pages opened as tabs (options pages, a changelog the background opens with
-        // `tabs.create`): the page bootstrap on the extension's own origin.
-        runCatching {
-            WebViewCompat.addDocumentStartJavaScript(view, pageScript(ext, "page"), setOf("https://${ext.id}$ORIGIN_SUFFIX"))
-        }.getOrNull()?.let(added::add)
-        for (unit in list) {
-            val handler = runCatching { addUnit(view, unit, unit.origins) }
-                .recoverCatching {
-                    // An origin rule the WebView rejects: fall back to every origin (the bootstrap matches anyway).
-                    addUnit(view, unit, setOf("*"))
-                }.getOrNull() ?: continue
-            added.add(handler)
+    private fun installExtension(views: Collection<WebView>, ext: Served, list: List<ScriptUnit>): Installed {
+        val started = SystemClock.uptimeMillis()
+        val targets = ArrayList<WebView>(views.size)
+        for (view in views) {
+            if (handlers[view] == null) continue
+            removeExtension(view, ext.id)
+            if (view.isPrivateTab && !ext.allowPrivate) continue
+            targets.add(view)
         }
-        mine.byExtension[ext.id] = added
+        if (targets.isEmpty()) return Installed.NONE
+        val added = HashMap<WebView, ArrayList<ScriptHandler>>(targets.size)
+        for (view in targets) {
+            val own = ArrayList<ScriptHandler>(list.size + 1)
+            // Extension pages opened as tabs (options pages, a changelog the background opens with
+            // `tabs.create`): the page bootstrap on the extension's own origin.
+            runCatching {
+                WebViewCompat.addDocumentStartJavaScript(view, pageScript(ext, "page"), setOf("https://${ext.id}$ORIGIN_SUFFIX"))
+            }.getOrNull()?.let(own::add)
+            added[view] = own
+        }
+        var readFromDisk = 0
+        var softHeld = 0
+        var gone = 0
+        var outOfHeap = 0
+        for (unit in list) {
+            val text = when (val got = unit.read()) {
+                is UnitCompiler.Read.Text -> {
+                    if (unit.stored) if (got.fromDisk) readFromDisk++ else softHeld++
+                    got.text
+                }
+                is UnitCompiler.Read.Gone -> {
+                    gone++
+                    Log.w(TAG, "install of ${ext.id.take(8)}: unit ${unit.key} (${unit.chars} chars, stored) has no file at ${got.file.name} (${got.error}) – the tabs of this pass are without it; the extension's other units go on")
+                    continue
+                }
+                is UnitCompiler.Read.OutOfHeap -> {
+                    outOfHeap++
+                    storeReadsOutOfHeap++
+                    val heap = Runtime.getRuntime()
+                    Log.e(
+                        TAG,
+                        "install of ${ext.id.take(8)}: unit ${unit.key} (${got.chars} chars, ${got.bytes} bytes in the store) did not fit the heap " +
+                            "(${(heap.totalMemory() - heap.freeMemory()) shr 20}/${heap.maxMemory() shr 20} MB used/max) – the tabs of this pass are WITHOUT it " +
+                            "(the runtime's $storeReadsOutOfHeap. such read); the extension's other units go on"
+                    )
+                    continue
+                }
+                UnitCompiler.Read.Refused -> continue
+            }
+            for (view in targets) {
+                val handler = runCatching { addUnit(view, unit, text, unit.origins) }
+                    .recoverCatching {
+                        // An origin rule the WebView rejects: fall back to every origin (the bootstrap matches anyway).
+                        addUnit(view, unit, text, setOf("*"))
+                    }.getOrNull() ?: continue
+                added.getValue(view).add(handler)
+            }
+        }
+        for ((view, own) in added) handlers[view]?.byExtension?.set(ext.id, own)
+        val ms = SystemClock.uptimeMillis() - started
+        if ((readFromDisk > 0 || softHeld > 0) && views.size == 1) {
+            Log.i(
+                TAG,
+                "install of ${ext.id.take(8)} on a tab: ${list.size} unit(s), $readFromDisk read from the store, $softHeld soft-held from the last read " +
+                    "(${list.filter { it.stored }.sumOf { it.chars.toLong() }} stored chars) in $ms ms" +
+                    (if (gone + outOfHeap > 0) ", $gone gone, $outOfHeap out of heap" else "")
+            )
+        }
+        return Installed(ms, readFromDisk, softHeld, gone, outOfHeap)
     }
 
     private fun removeExtension(view: WebView, id: String) {
@@ -1443,13 +1580,14 @@ class Extensions(private val host: Host) {
     /**
      * Main world: `addDocumentStartJavaScript`. Isolated world: `addJavaScriptOnEvent(DOCUMENT_START)`
      * in the slot world the extension's world name is mapped to (its bridge listener has been on
-     * the view since construction; the injected object is world-scoped and comes first).
+     * the view since construction; the injected object is world-scoped and comes first). `text`
+     * is the unit's script as [installExtension] read it for the pass.
      */
-    private fun addUnit(view: WebView, unit: ScriptUnit, origins: Set<String>): ScriptHandler {
-        val worldName = unit.world ?: return WebViewCompat.addDocumentStartJavaScript(view, unit.script, origins)
+    private fun addUnit(view: WebView, unit: ScriptUnit, text: String, origins: Set<String>): ScriptHandler {
+        val worldName = unit.world ?: return WebViewCompat.addDocumentStartJavaScript(view, text, origins)
         val slot = worldSlots.slot(worldName) ?: throw IllegalStateException("$worldName has no world slot")
         val world = WebViewCompat.getExecutionWorld(view, worldSlots.worldName(slot))
-        return WebViewCompat.addJavaScriptOnEvent(view, unit.script, WebViewCompat.INJECTION_EVENT_DOCUMENT_START, origins, world)
+        return WebViewCompat.addJavaScriptOnEvent(view, text, WebViewCompat.INJECTION_EVENT_DOCUMENT_START, origins, world)
     }
 
     /**
@@ -1798,9 +1936,13 @@ class Extensions(private val host: Host) {
             // A tab's document on an origin the runtime does not serve: held while the core is
             // about to configure the extension, failed as Chrome fails it otherwise; anything
             // else of an unserved extension (a frame, a resource) is simply not there.
-            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else notFound()
+            // (A tab's document on an unserved origin is HeldPages' matter, not the record's: the
+            // hold's release asks the intercept again, and that answer is recorded.)
+            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else recorded(id, request, null, notFound(), ServedRecord.UNSERVED)
             // Chrome does not load a chrome-extension:// URL in incognito for an extension not allowed there.
-            if (tab?.isPrivateTab == true && !ext.allowPrivate) return if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound()
+            if (tab?.isPrivateTab == true && !ext.allowPrivate) {
+                return recorded(id, request, null, if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound(), ServedRecord.PRIVATE)
+            }
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
             val referer = request.requestHeaders?.get("Referer")
@@ -1820,13 +1962,13 @@ class Extensions(private val host: Host) {
             // document resolves here, ExtensionPageNavigation) gets the web-accessible resources
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
-            if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            if (foreign && !ext.webAccessible.any { it.matches(path) }) return recorded(id, request, true, notFound(), ServedRecord.NOT_WEB_ACCESSIBLE)
             // A web-accessible document going into a frame of the tab's page: its own requests follow.
             if (foreign && tab != null && !request.isForMainFrame && document) frames.framed(tab, id)
             if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 if (request.isForMainFrame) {
                     workerScriptGate.documentServed(id)
-                    return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
+                    return recorded(id, request, foreign, response("text/html", 200, "OK", ext.backgroundHtml.toByteArray()))
                 }
                 // The background document's own path asked for as a sub-resource of itself: the
                 // generated page's own `<script src>` for the worker script once, and after it
@@ -1841,9 +1983,9 @@ class Extensions(private val host: Host) {
                         WorkerScriptGate.Verdict.SERVE -> {}
                         WorkerScriptGate.Verdict.REFUSE -> {
                             Log.w(TAG, "refused the ${id.take(8)} background document's own script as a sub-resource: ${url.encodedPath}${url.encodedQuery?.let { "?${it.take(120)}" } ?: ""} (a <script> the worker script appended through the page's document would run the worker again; the element gets its error event)")
-                            return notFound()
+                            return recorded(id, request, foreign, notFound(), ServedRecord.WORKER_SCRIPT)
                         }
-                        WorkerScriptGate.Verdict.REFUSED_AGAIN -> return notFound()
+                        WorkerScriptGate.Verdict.REFUSED_AGAIN -> return recorded(id, request, foreign, notFound(), ServedRecord.WORKER_SCRIPT)
                     }
                 }
             }
@@ -1868,7 +2010,7 @@ class Extensions(private val host: Host) {
                 isolatedWorlds
             )
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
-            return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+            return recorded(id, request, foreign, serve(ext, path, if (moduleGraph) id else null, chunkStubUrl))
         }
         // A module graph a page's policy refused at the extension's origin, asked for again from
         // the page's own origin (`/.zenium-ext/<id>/<path>`, the bootstrap's retry in
@@ -1883,15 +2025,15 @@ class Extensions(private val host: Host) {
             val alias = ExtensionUrls.pageAlias(url.path ?: "")
             if (alias != null) {
                 val (id, path) = alias
-                val ext = served[id] ?: return notFound()
-                if (tab.isPrivateTab && !ext.allowPrivate) return notFound()
-                if (path.isEmpty() || ExtensionScripts.mimeType(path) == "text/html") return notFound()
-                if (!ext.webAccessible.any { it.matches(path) }) return notFound()
+                val ext = served[id] ?: return recorded(id, request, true, notFound(), ServedRecord.UNSERVED)
+                if (tab.isPrivateTab && !ext.allowPrivate) return recorded(id, request, true, notFound(), ServedRecord.PRIVATE)
+                if (path.isEmpty() || ExtensionScripts.mimeType(path) == "text/html") return recorded(id, request, true, notFound(), ServedRecord.ALIAS_DOCUMENT)
+                if (!ext.webAccessible.any { it.matches(path) }) return recorded(id, request, true, notFound(), ServedRecord.NOT_WEB_ACCESSIBLE)
                 // A same-origin module request carries no `Origin`, so the graph is told by the
                 // WebView alone; only a script is bracketed (a stylesheet or an image goes as it is).
                 val moduleGraph = !isolatedWorlds && ExtensionScripts.isScriptPath(path)
                 val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
-                return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+                return recorded(id, request, true, serve(ext, path, if (moduleGraph) id else null, chunkStubUrl))
             }
         }
         // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
@@ -2249,9 +2391,12 @@ class Extensions(private val host: Host) {
 
     /**
      * The Java heap the runtime holds for one extension's content-script units, for
-     * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts – the one copy the
-     * compiler's cache and the tabs' [ScriptUnit]s share – and the soft-held sources), with the
-     * units installed on the tabs counted, and the extension's configures in flight
+     * instrumentation ([UnitCompiler.memoryOf]: the compiled scripts held in memory – the one
+     * copy the compiler's cache and the tabs' [ScriptUnit]s share –, the units of the store
+     * counted apart with their characters and in no heap figure but for the texts soft-held
+     * from their last read, and the soft-held sources), with the units installed on the tabs
+     * counted, the runtime's count of store reads that did not fit the heap
+     * (`storeReadsOutOfHeap`, [storeReadsOutOfHeap]), and the extension's configures in flight
      * (`pending`, [ConfiguresInFlight]: requested, their post not landed yet). Main thread; does
      * not wait on a compile in flight (`compiling: true` then, the compiler's counts absent). The
      * reading is settled – the units installed are the last configure's, the compiler's cache
@@ -2261,6 +2406,7 @@ class Extensions(private val host: Host) {
      */
     fun unitMemory(id: String): JSONObject =
         compiler.memoryOf(id).put("installed", units[id]?.size ?: 0).put("pending", configuresInFlight.pending(id))
+            .put("storeReadsOutOfHeap", storeReadsOutOfHeap)
 
     /**
      * Let the runtime's share of an extension's heap go while the extension stays attached, for
@@ -2304,6 +2450,9 @@ class Extensions(private val host: Host) {
 
     /** Whether the CORS proxy's log (`proxied`) has an answer for a URL containing `fragment`, as "METHOD status url" lines. */
     fun proxiedMatching(fragment: String): List<String> = synchronized(proxied) { proxied.filter { it.contains(fragment) } }
+
+    /** The served-resource record's lines (`servedRecord`, ServedRecord.line) containing `fragment` – a file's name, an id's start –, oldest first. */
+    fun servedMatching(fragment: String): List<String> = synchronized(servedRecord) { servedRecord.filter { it.contains(fragment) } }
 
     // ---------------------------------------------------------------------------------------------
     // Background pages and popups
@@ -2480,7 +2629,8 @@ class Extensions(private val host: Host) {
         val released = compiler.close()
         configuresInFlight.reset()
         val installedUnits = units.values.sumOf { it.size }
-        val installedChars = units.values.sumOf { list -> list.sumOf { it.script.length.toLong() } }
+        val installedChars = units.values.sumOf { list -> list.sumOf { it.chars.toLong() } }
+        val installedStored = units.values.sumOf { list -> list.count { it.stored } }
         units.clear()
         served = emptyMap()
         configureStats.clear()
@@ -2495,8 +2645,8 @@ class Extensions(private val host: Host) {
         lastDestroyedAt = SystemClock.uptimeMillis()
         Log.i(
             TAG,
-            "destroy: released $installedUnits installed unit(s) of $installedChars chars; compiler " +
-                (if (released.deferred) "releasing in the compile in flight" else "${released.extensions} extension(s), ${released.units} unit(s) of ${released.unitChars} chars, ${released.sources} held source(s)")
+            "destroy: released $installedUnits installed unit(s) of $installedChars chars ($installedStored stored); compiler " +
+                (if (released.deferred) "releasing in the compile in flight" else "${released.extensions} extension(s), ${released.units} unit(s) of ${released.unitChars} chars (${released.storedUnits} stored, the store directory removed), ${released.sources} held source(s)")
         )
     }
 

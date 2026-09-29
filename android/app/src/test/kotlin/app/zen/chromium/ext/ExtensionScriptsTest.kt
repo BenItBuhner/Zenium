@@ -223,6 +223,35 @@ class ExtensionScriptsTest {
     }
 
     @Test
+    fun `the document-start script written through a sink is the sized assembly's text, character for character, in every shape, and its count is the sink's`() {
+        val config = """{"kind":"content","token":"t"}"""
+        val withMode = ExtensionScripts.Group(group.extensionId, 1, group.sources, "with")
+        val css = linkedMapOf("${group.extensionId}/a.css" to "body{color:red}", "${group.extensionId}/b.css" to "p{margin:0}")
+        for (shape in listOf(ExtensionScripts.SHAPE_WHOLE, ExtensionScripts.SHAPE_CARRIER, ExtensionScripts.SHAPE_HOLDER, ExtensionScripts.SHAPE_THIN)) {
+            for (debug in listOf(true, false)) {
+                val assembled = ExtensionScripts.documentStartSized("/*bootstrap*/", config, listOf(group, withMode), css, debug, shape)
+                val sink = StringBuilder()
+                val written = ExtensionScripts.documentStartTo(sink, "/*bootstrap*/", config, listOf(group, withMode), css, debug, shape)
+                assertEquals("$shape debug=$debug", assembled.script, sink.toString())
+                assertEquals(assembled.presized, written.presized)
+                assertEquals(sink.length, written.chars)
+                assertFalse(written.grown)
+            }
+        }
+        // A transient source is appended once, through whichever sink: a second assembly over it throws.
+        val once = ExtensionScripts.Group(group.extensionId, 0, listOf(ExtensionScripts.Source.transient("var t = 1")), "with")
+        val first = StringBuilder()
+        ExtensionScripts.documentStartTo(first, "", "{}", listOf(once), emptyMap(), false)
+        assertTrue(first.contains("var t = 1"))
+        assertTrue(runCatching { ExtensionScripts.documentStartTo(StringBuilder(), "", "{}", listOf(once), emptyMap(), false) }.isFailure)
+        // A relative import is rewritten on the way through the sink as it is through the builder.
+        val edits = RelativeImports.edits("""import("./chunk.js");""", group.extensionId, "dir/cs.js")
+        val rewritten = ExtensionScripts.Group(group.extensionId, 0, listOf(RelativeImports.source("""import("./chunk.js");""", edits, true)), "world")
+        val viaSink = StringBuilder().also { ExtensionScripts.documentStartTo(it, "", "{}", listOf(rewritten), emptyMap(), false) }.toString()
+        assertTrue(viaSink.contains("""import("https://${group.extensionId}.ext.zenium.invalid/dir/chunk.js")"""))
+    }
+
+    @Test
     fun `the quoted CSS is bounded from above for both org json implementations, and the builder with it never grows`() {
         // Every class of character the two `JSONObject.quote`s treat differently or escape: the
         // backslash escapes, `/` (Android's always, the public one's after `<`), the controls, the

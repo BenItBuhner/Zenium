@@ -1860,6 +1860,31 @@
     opacity: 0;
     transition: none;
   }
+  /*
+   * A closed row's picture (MOT-33; v2 §11.4's departure, `SlideMotion.leave`): the row's
+   * element, React's no longer, placed in the scroller's layer in the box it stood in and
+   * clipped shut from its foot on the spring as the rows below glide up into the gap – the
+   * row's entry run backwards. A picture: nothing reaches it, its own 120 ms eases hold off
+   * (the spring writes every frame), and `will-change` names the two properties for the run
+   * alone. Its geometry is inline. The layer is a box of no size at the scroller's content
+   * origin, so the pictures scroll with the rows under the scroller's fades; laid out contained,
+   * so their boxes are ink and not scrollable overflow – the scroller's extent (its fades, the
+   * desktop's gutter) answers to its rows alone while the held box runs down past a picture.
+   */
+  .zen-slide-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    contain: layout;
+    pointer-events: none;
+  }
+  .zen-slide-leaving {
+    pointer-events: none;
+    transition: none;
+    will-change: clip-path, opacity;
+  }
   /* Frozen (sleeping) pages: still loaded, but dimmed and cooled down. */
   .zen-tab[data-frozen='true'] .zen-tab-title {
     opacity: 0.75;
@@ -2254,7 +2279,20 @@
     opacity: 0.9;
     transition:
       transform 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      opacity 120ms var(--zen-ease),
+      box-shadow 120ms var(--zen-ease);
+    /*
+     * The lift (MOT-33): the row rises from its resting form to level 2 – the scale, the
+     * shadow, the 90 % – over the state change's 120 ms as the ghost mounts, rather than
+     * standing lifted from its first frame. A mount, so `@starting-style` carries the start (a
+     * WebView before 117 mounts it lifted, as before); under reduced motion the transition is
+     * gone and the ghost mounts lifted (§11.3).
+     */
+    @starting-style {
+      transform: scale(1);
+      box-shadow: none;
+      opacity: 1;
+    }
   }
   /* Over a drop-into target the row thins out: the target, not the row, shows where it goes. */
   .zen-tab-ghost[data-into] .zen-tab-ghost-row {
@@ -12292,6 +12330,52 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   -webkit-line-clamp: none;
+}
+/*
+ * §9.2's reveal of that line where it is actually shortened (services seed #32; the lead's
+ * ruling on #685 item 4; `AddressReveal`, lib/addressReveal.ts). On a mouse or under the
+ * keyboard: the §9.31 hover card – the tab card's chrome (`.zen-tab-hover-card`: §9.20's panel at
+ * the 320 list width, `--v2-panel` under the hairline and the panel shadow, padding 16, radius
+ * 8, no pointer) hung under the row – carrying the whole value at the body size, 15/400 on the
+ * 20 line as the tab card's title, and broken wherever it must be: a path or an address has no
+ * spaces to break at, and every line of it is the point (no clamp – the row's line is the
+ * clamped one).
+ */
+.zen-address-hover-card-value {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  font-weight: var(--v2-weight-body);
+}
+/*
+ * The same card standing under a touch hold where the page draws dialogs – a tablet (the
+ * lead's look on #694, point 4: "a finger on a tablet is touch"; `addressHold`). It stands
+ * until a press elsewhere, a scroll or a key takes it down, and live rows lie under it, so
+ * unlike the mouse's card (no pointer, above) it takes the pointer – a tap on the card is a tap
+ * on the card, which stays, and reaches no row beneath – and its text is not selectable: the
+ * value's copy is the row's own (`RowCopy`), never a hidden hold on the card.
+ */
+.zen-address-hover-card[data-by='hold'] {
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/*
+ * On touch where the page draws sheets – a phone – the row's hold sheet (`AddressSheet`,
+ * sheets.tsx): §9.23's title block, the row's label over the whole value as its paragraph – the
+ * block's own 15 at 69% – breaking at its slashes and dots first (`breakable`'s `<wbr>`s) and
+ * wrapped anywhere past that, since the chassis's paragraph breaks only at spaces. The sheet
+ * holds nothing under the block, so the block's own 16 below comes off: the empty
+ * `.zen-settings-sheet-body`'s 8 over the chassis's 8 + inset (`SHEET_EDGE_PAD`) is §9.25's 16
+ * to the sheet's bottom edge on their own – the body rule's formula – where the three stacked
+ * to 32 (the independent review of #694, nit 2).
+ */
+.zen-settings-sheet-address .zen-sheet-title-block {
+  padding-bottom: 0;
+}
+.zen-settings-sheet-address .zen-sheet-title-block p {
+  overflow-wrap: anywhere;
 }
 /*
  * A description that reports a status (a load error, a retirement notice, the folder-lost

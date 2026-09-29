@@ -13,6 +13,9 @@ import type { ResourceType } from '@core/blocking/rules'
  *   under the hop's id ([noted] answers it; [chainIdOf] maps the target's own id back for its
  *   response reports). The mark is short-lived ([Options.hopTtlMs]) and consumed by its first
  *   match: two loads of one redirect target inside the window pair the first with the hop.
+ *   A DOCUMENT's redirect has no relayed response at all: WebView follows it and the engine
+ *   stamps the follow-up with the URL before it (`redirectedFrom`), so the hop is made of the
+ *   tab's latest open main-frame request at that URL ([openMainFrame]) and marked the same way.
  * - the FACTS of a request the response stage needs and `ext.response` does not carry: its
  *   `initiator` (Chrome puts it on every event of the request).
  * - the PAGE-SCRIPT OBSERVER's pairing (7.10): a `fetch` / XHR the page made is heard twice –
@@ -136,6 +139,26 @@ export class RequestLedger {
       if (oldest !== undefined) this.hops.delete(oldest)
     }
     this.hops.set(`${tab ?? NO_TAB}|${targetUrl}`, { chainId, at: now })
+  }
+
+  /**
+   * The tab's LATEST open main-frame request, when its URL is `url` – the request a document's
+   * server redirect is made of (the engine stamps the redirect's follow-up with the URL before
+   * it, `ExtRequestEvent.redirectedFrom`; the runtime makes `onBeforeRedirect` of the pair).
+   * Null when the tab's newest main-frame request is another URL (a second navigation in flight
+   * since the hop's request: no pair, no event), or when none is remembered (the tab's first
+   * load, or a request noted before the response stage was observed).
+   */
+  openMainFrame(tab: string | null, url: string, now: number): NotedRequest | null {
+    const list = this.byTab.get(tab ?? NO_TAB)
+    if (!list) return null
+    this.prune(list, now)
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const entry = list[i]
+      if (entry.type !== 'main_frame') continue
+      return entry.url === url ? entry : null
+    }
+    return null
   }
 
   /** The id a response report of the request with `ext.request` id `requestId` runs under. */
