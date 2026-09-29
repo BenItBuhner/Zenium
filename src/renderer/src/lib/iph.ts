@@ -94,8 +94,15 @@ export function resetIphSession(): void {
 // The tab switcher bubble's trigger
 // ---------------------------------------------------------------------------
 
+/**
+ * What the tab switcher bubble's rules read of the settings: the first-run flag and its own
+ * record – the other bubbles' records are none of its business, and a one-bubble patch is what
+ * its writes send (`SettingsPatch`).
+ */
+export type TabSwitcherSettings = { iph: Pick<Settings['iph'], 'tabSwitcher'> }
+
 export interface TabSwitcherHintInput {
-  settings: Pick<Settings, 'onboardingDone' | 'iph'>
+  settings: Pick<Settings, 'onboardingDone'> & TabSwitcherSettings
   /** The clock (ms since the epoch) the availability is read by. */
   now: number
   /** The deferred arm has run: never inside the first seconds after the first paint. */
@@ -137,7 +144,7 @@ export function tabSwitcherHintDue(input: TabSwitcherHintInput): boolean {
  * comparison against the day the feature was first seen); here the phone shell's first arm
  * stamps it, once. A record already stamped or spent is left alone.
  */
-export function stampTabSwitcherHint(settings: Pick<Settings, 'iph'>, now: number): boolean {
+export function stampTabSwitcherHint(settings: TabSwitcherSettings, now: number): boolean {
   const record = settings.iph.tabSwitcher
   if (record.availableAt !== null || record.shown) return false
   run('settings.update', { iph: { tabSwitcher: { availableAt: now, shown: false } } })
@@ -145,7 +152,7 @@ export function stampTabSwitcherHint(settings: Pick<Settings, 'iph'>, now: numbe
 }
 
 /** The bubble went up: spent, once and for all (Chrome's `IPH_TabSwitcherButton` trigger event). */
-export function markTabSwitcherHintShown(settings: Pick<Settings, 'iph'>): void {
+export function markTabSwitcherHintShown(settings: TabSwitcherSettings): void {
   const record = settings.iph.tabSwitcher
   if (record.shown) return
   run('settings.update', { iph: { tabSwitcher: { ...record, shown: true } } })
@@ -158,7 +165,7 @@ export function markTabSwitcherHintShown(settings: Pick<Settings, 'iph'>): void 
  * swipe onto the switcher does not record the button's event.
  */
 export function noteTabSwitcherButtonUsed(
-  settings: Pick<Settings, 'onboardingDone' | 'iph'>
+  settings: Pick<Settings, 'onboardingDone'> & TabSwitcherSettings
 ): void {
   if (!settings.onboardingDone) return
   markTabSwitcherHintShown(settings)
