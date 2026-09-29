@@ -65,8 +65,9 @@ const START_GRACE_MS = 400
  * down for any other reason slides the sheet away.
  *
  * The desktop has no campaign: its strip under the toolbar asks (`DefaultBrowserBanner`), and
- * its "Make default" raises the same composition as a dialog that says what the OS will do
- * before the hand-off (`AskDialog`, `ui.defaultBrowserAsk`).
+ * its "Set as default" raises the same composition as a dialog that says what the OS will do
+ * before the hand-off (`AskDialog`, `ui.defaultBrowserAsk`); the dialog's primary is the same
+ * word – one flow, one name for the act (§9.29).
  */
 export function DefaultBrowserLayer(): JSX.Element | null {
   const ask = uiStore.use((s) => s.defaultBrowserAsk)
@@ -311,18 +312,18 @@ function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
 const SNAPSHOT_WAIT_MS = 250
 
 /**
- * The desktop's prompt, raised by "Make default" on the strip: the §9.23 composition on a
+ * The desktop's prompt, raised by "Set as default" on the strip: the §9.23 composition on a
  * `--v2-dialog` at the form width (§9.20) over the frame's §9.5 scrim – the app icon at 48 at
  * the top of the block, the title, one sentence saying what this OS does once the user says yes
  * (`describeDefaultBrowserRequest`: Windows opens Default apps for the user to finish there,
  * macOS asks itself, Linux registers and asks nothing), then the §9.11 footer, Not now and the
  * primary. Focus lands on the primary; Escape, the scrim and Not now close it and focus goes
- * back to the strip's button (§9.22); "Make default" hands over to the OS (`requestDefaultBrowser`,
- * whose refusal is a toast) and takes the strip down for this release – the request may stay
- * out for as long as the user takes in the system's own UI, so the dialog does not wait for it.
- * Like every frame dialog it goes up over the page's picture (`captureActiveTab`, then
- * `defaultBrowserPrompt` has the host hide the view) and the chassis keeps its panel through
- * the pop exit (#188).
+ * back to the strip's button (§9.22); "Set as default" – the strip's own word, §9.29's one name
+ * for the act – hands over to the OS (`requestDefaultBrowser`, whose refusal is a toast) and
+ * takes the strip down for this release – the request may stay out for as long as the user
+ * takes in the system's own UI, so the dialog does not wait for it. Like every frame dialog it
+ * goes up over the page's picture (`captureActiveTab`, then `defaultBrowserPrompt` has the host
+ * hide the view) and the chassis keeps its panel through the pop exit (#188).
  */
 function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -330,7 +331,7 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
   const tabId = state ? (activeTab(state)?.id ?? null) : null
   // The dialog holds its first paint until the page's picture is in place, then takes focus.
   const [active, setActive] = useState(false)
-  // "Make default" taken: the strip goes with the dialog, so focus goes to the page instead.
+  // "Set as default" taken: the strip goes with the dialog, so focus goes to the page instead.
   const chosen = useRef(false)
   // What had focus when the dialog was asked for – the strip's button – or nothing of the chrome's.
   const [opener] = useState<HTMLElement | null>(() =>
@@ -408,7 +409,7 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
       <div className="flex justify-end gap-2 px-4 pb-4">
         <V2Button onClick={close}>Not now</V2Button>
         <V2Button variant="primary" data-accept onClick={accept}>
-          Make default
+          Set as default
         </V2Button>
       </div>
     </div>

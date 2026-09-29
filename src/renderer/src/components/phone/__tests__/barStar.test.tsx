@@ -13,9 +13,13 @@ import type { PillGestureHandlers } from '../usePillGestures'
  * a stateful glyph on `bookmark.star`, not a toggle. Outlined and named "Bookmark" on a page that
  * is not bookmarked, filled and named "Edit Bookmark" once it is, no `aria-pressed`; a press runs
  * `bookmark.star` (the core saves and opens the edit flow; never `bookmark.toggle`, which would
- * remove the bookmark on the second tap), and the state's flip fills the star on the menu star's
- * own spring – the one `StarGlyph`, the one stylesheet rule – in parallel with what the command
- * opened. Rendered for real in happy-dom with the frame loop cranked by hand.
+ * remove the bookmark on the second tap), and the state's flip fills the star in place on the
+ * menu star's own spring – the one `StarGlyph`, the one stylesheet rule – emptying on the same
+ * spring, never a scale pop (design language v2 §11: a glyph's change of state is not an
+ * arrival; MOT-20's ruling – Chrome 152 itself fills as a cut), in parallel with what the command
+ * opened. Rendered for real in happy-dom with the frame loop cranked by hand, and the fill's
+ * frames PINNED: the spring's own figures at 16 ms, so a change to the spring, its thresholds or
+ * the glyph's paint shows up here as numbers and not as a feel.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -152,6 +156,7 @@ function rerender(el: ReactElement): void {
 
 const star = (): HTMLButtonElement =>
   document.querySelector<HTMLButtonElement>('.zen-phone-bar [data-bar-item="bookmark"]')!
+const starGlyph = (): HTMLElement => star().querySelector<HTMLElement>('.zen-star-glyph')!
 const starFill = (): HTMLElement => star().querySelector<HTMLElement>('.zen-star-glyph-fill')!
 const fillOpacity = (): number => Number(starFill().style.opacity)
 const fillScale = (): number => parseFloat(/scale\(([\d.]+)\)/.exec(starFill().style.transform)![1])
@@ -165,6 +170,76 @@ const frame = (): void => {
 }
 const commands = (): unknown[][] =>
   invoke.mock.calls.filter(([name]) => name.startsWith('bookmark.'))
+
+/**
+ * The fill's frames from the flip to the spring's rest at 16 ms a frame: the fill's opacity and
+ * its scale, frame 0 the state before the first frame runs.
+ */
+function fillFrames(): { opacities: number[]; scales: number[] } {
+  const opacities: number[] = [fillOpacity()]
+  const scales: number[] = [fillScale()]
+  for (let n = 0; n < 60 && frames.scheduled; n++) {
+    frame()
+    opacities.push(fillOpacity())
+    scales.push(fillScale())
+  }
+  return { opacities, scales }
+}
+
+/** The fill's largest step in one 16 ms frame: the spring's own (.121 on `SPRING_FILL`), under a fifth. */
+const FIFTH = 0.2
+/** v1 §7's cap on a fixed-duration transition, 300 ms: the frame the fill has to be as good as done by. */
+const CAP_FRAME = Math.floor(300 / 16)
+
+/**
+ * The house fill, PINNED (MOT-20): one `SPRING_FILL` from `from` to `to`, run to the rest its
+ * thresholds set (`restDelta` .004, `restSpeed` .08 on the unit's scale) – 23 frames at 16 ms,
+ * 368 ms, the spring's own figure and not a five-frame ramp; every frame moves one way; no frame
+ * steps the opacity further than the spring's largest 16 ms step (.121, under the fifth – a
+ * bigger step is the px-scaled thresholds snapping the motion to its end); the landing frame
+ * closes only the threshold's remainder (under a hundredth); and within v1 §7's 300 ms cap
+ * (frame 18) the fill is within two hundredths of its end – the tail past it is the thresholds'
+ * hair, not motion the eye reads. The filled star's scale rides the same value, .6 + .4 · x, so
+ * its steps are two fifths of the opacity's. Reduced motion is the cut (§11.3), tested apart.
+ */
+function expectFill(
+  { opacities, scales }: { opacities: number[]; scales: number[] },
+  from: number,
+  to: number
+): void {
+  const rest = opacities.length - 1
+  expect(opacities[0]).toBe(from)
+  expect(opacities[rest]).toBe(to)
+  expect(opacities.indexOf(to)).toBe(rest)
+  expect(rest).toBe(23)
+  const way = Math.sign(to - from)
+  const steps = opacities.slice(1).map((o, i) => (o - opacities[i]) * way)
+  expect(steps.every((step) => step > 0)).toBe(true)
+  expect(Math.max(...steps)).toBeLessThan(FIFTH)
+  expect(Math.max(...steps)).toBeCloseTo(0.121, 2)
+  expect(steps[steps.length - 1]).toBeLessThan(0.01)
+  expect(Math.abs(opacities[CAP_FRAME] - to)).toBeLessThan(0.02)
+  expect(scales[0]).toBeCloseTo(0.6 + 0.4 * from, 6)
+  expect(scales[rest]).toBeCloseTo(0.6 + 0.4 * to, 6)
+  const scaleSteps = scales.slice(1).map((s, i) => (s - scales[i]) * way)
+  expect(scaleSteps.every((step) => step > 0)).toBe(true)
+  expect(Math.max(...scaleSteps)).toBeLessThan(FIFTH * 0.4)
+}
+
+/** The fill writes the filled star's opacity and transform, nothing else (§11); the glyph itself holds still. */
+function expectOpacityAndTransformOnly(): void {
+  const fillStyle = starFill().getAttribute('style') ?? ''
+  expect(fillStyle).toMatch(/opacity/)
+  expect(fillStyle).toMatch(/transform/)
+  expect(
+    fillStyle
+      .replace(/opacity:[^;]*;?/, '')
+      .replace(/transform:[^;]*;?/, '')
+      .trim()
+  ).toBe('')
+  // No pop: the glyph around the two stars is never scaled – it has no inline style at all.
+  expect(starGlyph().getAttribute('style')).toBeNull()
+}
 
 beforeEach(() => {
   frames.install()
@@ -181,100 +256,150 @@ afterEach(() => {
   frames.now = 0
 })
 
+/**
+ * Mounts the bar and settles the glyph's opening: `StarGlyph` paints its rest state in a layout
+ * effect and books one frame that rests on the spot (the spring started at its destination), so
+ * the star opens at rest where the bookmark is, with no motion of its own – the one frame moves
+ * nothing and asks for no next one.
+ */
+function mountBar(bookmarked: boolean): void {
+  render(bar(stateWith(bookmarked)))
+  const opening = fillOpacity()
+  expect(frames.scheduled).toBe(true)
+  frame()
+  expect(fillOpacity()).toBe(opening)
+  expect(frames.scheduled).toBe(false)
+}
+
 describe('the bar’s Bookmark star', () => {
   it('is outlined and named Bookmark on a page that is not bookmarked, filled and named Edit Bookmark on one that is – a stateful glyph, no aria-pressed', () => {
-    render(bar(stateWith(false)))
+    mountBar(false)
     expect(star()).not.toBeNull()
     expect(star().getAttribute('aria-label')).toBe('Bookmark')
     expect(star().hasAttribute('aria-pressed')).toBe(false)
-    // The menu row's own glyph, at rest where the bookmark is: no fill, the filled star at .6.
-    expect(star().querySelector('.zen-star-glyph')).not.toBeNull()
-    expect(star().querySelector('.zen-star-glyph')!.getAttribute('data-filled')).toBe('false')
+    // The one `StarGlyph`, at rest where the bookmark is: the filled star at nothing and at the
+    // small end of its scale, the glyph around the two stars untouched.
+    expect(starGlyph()).not.toBeNull()
+    expect(starGlyph().getAttribute('data-filled')).toBe('false')
     expect(fillOpacity()).toBe(0)
-    expect(fillScale()).toBeCloseTo(0.6)
+    expect(fillScale()).toBeCloseTo(0.6, 6)
+    expect(starGlyph().getAttribute('style')).toBeNull()
     // The glyph is drawn, not named twice: nothing for a reader inside the button.
     expect(star().textContent).toBe('')
 
     act(() => root!.unmount())
     root = null
     // Opened on a bookmarked page: filled and at rest, with no motion of its own.
-    render(bar(stateWith(true)))
+    mountBar(true)
     expect(star().getAttribute('aria-label')).toBe('Edit Bookmark')
     expect(star().hasAttribute('aria-pressed')).toBe(false)
-    expect(star().querySelector('.zen-star-glyph')!.getAttribute('data-filled')).toBe('true')
+    expect(starGlyph().getAttribute('data-filled')).toBe('true')
     expect(fillOpacity()).toBe(1)
-    expect(fillScale()).toBeCloseTo(1)
+    expect(fillScale()).toBe(1)
   })
 
-  it('a press runs bookmark.star – never the toggle – and the state’s flip fills the star on one spring to the end, as the menu star does', () => {
-    render(bar(stateWith(false)))
+  it('a press runs bookmark.star – never the toggle – and the state’s flip fills the star in place on the one spring, the frames the spring’s own (MOT-20)', () => {
+    mountBar(false)
     click(star())
     expect(commands()).toEqual([['bookmark.star', { tabId: 't1' }]])
     // Nothing moves on the press itself: the fill is the state's, so the star never tells a
     // bookmark the core did not save. The core's push flips the tab and the fill sets off.
     expect(fillOpacity()).toBe(0)
+    expect(fillScale()).toBeCloseTo(0.6, 6)
+    expect(frames.scheduled).toBe(false)
     rerender(bar(stateWith(true)))
     expect(star().getAttribute('aria-label')).toBe('Edit Bookmark')
     expect(star().hasAttribute('aria-pressed')).toBe(false)
-    const seen: number[] = [fillOpacity()]
-    const scales: number[] = [fillScale()]
-    for (let n = 0; n < 40 && frames.scheduled; n++) {
-      frame()
-      seen.push(fillOpacity())
-      scales.push(fillScale())
-    }
-    const rest = seen.indexOf(1)
-    expect(rest).toBeGreaterThan(0)
-    expect(seen.slice(rest).every((o) => o === 1)).toBe(true)
-    // One spring to the end, not a ramp and a cut (the menu row test's own bounds): every frame
-    // climbs, no frame steps more than the spring's largest 16 ms step, the landing frame closes
-    // less than a hundredth, and the motion takes the spring's time, not five frames.
-    const path = seen.slice(0, rest + 1)
-    const steps = path.slice(1).map((o, i) => o - path[i])
-    expect(steps.every((step) => step > 0)).toBe(true)
-    expect(Math.max(...steps)).toBeLessThan(0.2)
-    expect(steps[steps.length - 1]).toBeLessThan(0.01)
-    expect(path.length).toBeGreaterThanOrEqual(15)
-    expect(scales[0]).toBeCloseTo(0.6)
-    expect(scales[rest]).toBeCloseTo(1)
-    for (let i = 1; i <= rest; i++) expect(scales[i]).toBeGreaterThanOrEqual(scales[i - 1])
-    // The fill runs on transform and opacity alone (§11: nothing else per frame).
-    const style = starFill().getAttribute('style') ?? ''
-    expect(
-      style
-        .replace(/opacity:[^;]*;?/, '')
-        .replace(/transform:[^;]*;?/, '')
-        .trim()
-    ).toBe('')
+    expect(frames.scheduled).toBe(true)
+    expectFill(fillFrames(), 0, 1)
+    expectOpacityAndTransformOnly()
+    // At rest the loop is off the books: nothing runs on a star that is not changing.
+    expect(frames.scheduled).toBe(false)
   })
 
-  it('a press on a filled star runs bookmark.star again (the editor) and the star stays filled: no toggle, no removal', () => {
-    render(bar(stateWith(true)))
+  it('the bookmark’s removal empties the star on the same spring, the same frames the other way', () => {
+    mountBar(true)
+    rerender(bar(stateWith(false)))
+    expect(star().getAttribute('aria-label')).toBe('Bookmark')
+    expect(frames.scheduled).toBe(true)
+    expectFill(fillFrames(), 1, 0)
+    expectOpacityAndTransformOnly()
+    expect(frames.scheduled).toBe(false)
+  })
+
+  it('a change of mind mid-fill retargets the same spring from where it is: no jump, one frame of carry, then one way down to nothing', () => {
+    mountBar(false)
+    rerender(bar(stateWith(true)))
+    for (let i = 0; i < 8; i++) frame()
+    const opacityBefore = fillOpacity()
+    const scaleBefore = fillScale()
+    // Eight frames in the fill is three quarters of the way (.748 on `SPRING_FILL`).
+    expect(opacityBefore).toBeGreaterThan(0.7)
+    expect(opacityBefore).toBeLessThan(0.8)
+    // The bookmark is gone again (the editor's Remove) while the star is still filling: the
+    // spring's destination changes, its motion does not – nothing is painted on the retarget.
+    rerender(bar(stateWith(false)))
+    expect(star().getAttribute('aria-label')).toBe('Bookmark')
+    expect(fillOpacity()).toBe(opacityBefore)
+    expect(fillScale()).toBe(scaleBefore)
+    const { opacities, scales } = fillFrames()
+    const rest = opacities.length - 1
+    // The velocity it had carries it on for one frame – by less than two hundredths – and from
+    // there every frame falls, none by more than the spring's largest step, to exactly nothing,
+    // in the spring's own time from the turn (22 frames at 16 ms).
+    expect(opacities[1]).toBeGreaterThan(opacityBefore)
+    expect(opacities[1] - opacityBefore).toBeLessThan(0.02)
+    const fall = opacities.slice(1)
+    const steps = fall.slice(1).map((o, i) => fall[i] - o)
+    expect(steps.every((step) => step > 0)).toBe(true)
+    expect(Math.max(...steps)).toBeLessThan(FIFTH)
+    expect(opacities[rest]).toBe(0)
+    expect(opacities.indexOf(0)).toBe(rest)
+    expect(rest).toBe(22)
+    // The scale rides the same value the whole way: no pop, no second spring.
+    for (let i = 0; i <= rest; i++) expect(scales[i]).toBeCloseTo(0.6 + 0.4 * opacities[i], 6)
+    expect(frames.scheduled).toBe(false)
+  })
+
+  it('a press on a filled star runs bookmark.star again (the editor) and the star stays filled: no toggle, no removal, no motion', () => {
+    mountBar(true)
     expect(fillOpacity()).toBe(1)
     click(star())
+    expect(frames.scheduled).toBe(false)
     frame()
     frame()
     expect(commands()).toEqual([['bookmark.star', { tabId: 't1' }]])
     expect(invoke.mock.calls.some(([name]) => name === 'bookmark.toggle')).toBe(false)
     expect(fillOpacity()).toBe(1)
+    expect(fillScale()).toBe(1)
     expect(star().getAttribute('aria-label')).toBe('Edit Bookmark')
     // The bookmark's removal is the editor's Remove, not a second tap: the tab still bookmarked
-    // after the core's push, the star still filled and still Edit Bookmark.
+    // after the core's push, the star still filled and still Edit Bookmark, and nothing moves.
     rerender(bar(stateWith(true)))
     expect(fillOpacity()).toBe(1)
+    expect(fillScale()).toBe(1)
+    expect(frames.scheduled).toBe(false)
     expect(star().getAttribute('aria-label')).toBe('Edit Bookmark')
   })
 
-  it('under reduced motion the fill jumps to its end (§11.3)', () => {
+  it('under reduced motion the fill is a cut, both ways: the star fills or empties at its end, no frame runs (§11.3)', () => {
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
       value: (query: string) => ({ matches: query.includes('reduce') })
     })
+    // The opening too jumps to its rest: not even the one settling frame.
     render(bar(stateWith(false)))
     expect(fillOpacity()).toBe(0)
+    expect(frames.scheduled).toBe(false)
     rerender(bar(stateWith(true)))
     expect(fillOpacity()).toBe(1)
-    expect(fillScale()).toBeCloseTo(1)
+    expect(fillScale()).toBe(1)
+    expect(frames.scheduled).toBe(false)
+    rerender(bar(stateWith(false)))
+    expect(fillOpacity()).toBe(0)
+    expect(fillScale()).toBeCloseTo(0.6, 6)
+    expect(frames.scheduled).toBe(false)
+    expectOpacityAndTransformOnly()
   })
 
   it('is dimmed with nothing to save on a page that is not a web page, and does nothing pressed there', () => {

@@ -2,7 +2,7 @@
   "id": "selection",
   "order": 67,
   "class": "SelectionDemo",
-  "shard": "phone-d",
+  "shard": "phone-b",
   "mirrors": "android-selection-demo.yml",
   "dir": "selection-demo",
   "estimate": 2.5

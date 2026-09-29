@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SearchEngine, Settings, Tab, UIState } from '@shared/types'
 import { INTERNAL_PAGES } from '@shared/internalPages'
 import {
@@ -24,6 +24,7 @@ import { emptyPrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
 import { emptyUpdateStatus } from '@shared/updates'
 import { FrameDialogHost } from '@renderer/lib/portals'
+import { viewportStore } from '@renderer/lib/formFactor'
 
 /*
  * Search › Added search engines › an engine's Edit (omnibox-09, settings-43) on the chassis's one
@@ -41,6 +42,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { buildSection } = await import('../sections')
 const { DialogStack } = await import('../dialogs')
+const { SheetStack } = await import('../sheets')
 
 type Ctx = Parameters<typeof buildSection>[1]
 type RowGroups = ReturnType<typeof buildSection>['groups']
@@ -126,13 +128,13 @@ function state(): UIState {
   } as unknown as UIState
 }
 
-/** The Search section's groups on the desktop, as the page builds them. */
-function searchGroups(): RowGroups {
+/** The Search section's groups as the page builds them – the desktop's, or the phone's. */
+function searchGroups(formFactor: 'desktop' | 'phone' = 'desktop'): RowGroups {
   const ctx = {
     state: state(),
     tab: SETTINGS_TAB,
-    pointer: true,
-    formFactor: 'desktop',
+    pointer: formFactor === 'desktop',
+    formFactor,
     set: () => undefined,
     navigate: () => undefined,
     openBarEditor: () => undefined
@@ -320,5 +322,190 @@ describe('Search › an engine’s Edit dialog on the chassis’s SearchEngineFo
     act(() => button(form, 'Cancel').click())
     expect(closeTop).toHaveBeenCalledTimes(1)
     expect(invoke).toHaveBeenCalledTimes(1)
+  })
+})
+
+/*
+ * The same Edit on the phone (SET-10; Chrome 152's `SiteSearchDialogCoordinator.showEditDialog`
+ * – the Add dialog's view model pre-filled, Save its verb, the edit in place on the engine's own
+ * key): the row is no longer the desktop's alone, so the form opens as the second sheet over
+ * the engine's sheet (§9.24) on the phone sheet chassis, pre-filled, and Save goes to the same
+ * command with the engine's id – the default flag (`searchEngineId`) is untouched by it.
+ */
+
+/** A hand-cranked animation frame for the sheets' springs: 16 ms a frame. */
+class Frames {
+  now = 0
+  private queue = new Map<number, (now: number) => void>()
+  private seq = 0
+
+  install(): void {
+    vi.stubGlobal('requestAnimationFrame', (cb: (now: number) => void) => {
+      const id = ++this.seq
+      this.queue.set(id, cb)
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      this.queue.delete(id)
+    })
+    vi.stubGlobal('performance', { now: () => this.now })
+  }
+
+  run(n: number): void {
+    for (let i = 0; i < n; i++) {
+      this.now += 16
+      const pending = [...this.queue.values()]
+      this.queue.clear()
+      for (const cb of pending) cb(this.now)
+    }
+  }
+
+  get scheduled(): boolean {
+    return this.queue.size > 0
+  }
+}
+
+describe('Search › an engine’s Edit on the phone: the second sheet over the engine’s (SET-10)', () => {
+  const frames = new Frames()
+  let sizes: Array<[string, PropertyDescriptor | undefined]> = []
+
+  beforeEach(() => {
+    frames.install()
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    sizes = ['clientHeight', 'offsetHeight'].map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+    ])
+    // The layer 800 px tall, a sheet's content 300: sheets with room to stand.
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 300
+    })
+  })
+
+  afterEach(() => {
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
+    vi.unstubAllGlobals()
+    frames.now = 0
+    for (const [name, descriptor] of sizes) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  })
+
+  /** Let the sheets come up and their springs run to rest. */
+  async function land(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    for (let i = 0; i < 200 && frames.scheduled; i++) act(() => frames.run(1))
+    expect(frames.scheduled).toBe(false)
+  }
+
+  function layers(h: HTMLElement): HTMLElement[] {
+    return [...h.querySelectorAll<HTMLElement>('.zen-frame-dialogs-slot > [data-sheet-layer]')]
+  }
+
+  /** Wiki's Edit form sheet over Wiki's sheet, over the real Search groups built for the phone. */
+  async function openEditSheet(closeTop = vi.fn()): Promise<{
+    h: HTMLElement
+    sheet: HTMLElement
+    form: HTMLElement
+    closeTop: ReturnType<typeof vi.fn>
+  }> {
+    const h = render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[
+            { kind: 'item', rowId: `search-engine:${WIKI.id}` },
+            { kind: 'form', rowId: `search-engine:${WIKI.id}:edit` }
+          ]}
+          groups={searchGroups('phone')}
+          ctx={{ open: () => undefined }}
+          closeTop={closeTop}
+        />
+      </FrameDialogHost>
+    )
+    await land()
+    const sheet = layers(h)[1]
+    if (!sheet) throw new Error('no Edit form sheet')
+    const form = sheet.querySelector<HTMLElement>('[data-testid="search-engine-form"]')
+    if (!form) throw new Error('no SearchEngineForm in the sheet')
+    return { h, sheet, form, closeTop }
+  }
+
+  it('the engine’s sheet carries Edit beside Make default and Remove, and the Edit form stands over it as the second sheet, titled and pre-filled as the desktop’s', async () => {
+    const { h, sheet, form } = await openEditSheet()
+    const stack = layers(h)
+    expect(stack).toHaveLength(2)
+    expect(stack.map((l) => l.querySelector('.zen-sheet-title-block h2')?.textContent)).toEqual([
+      'Wiki',
+      'Edit search engine'
+    ])
+    expect(sheet.querySelector('.zen-sheet-title-block p')?.textContent).toBe(
+      'Put %s in the URL where the search terms go.'
+    )
+    // The engine's sheet under: Make default, Edit, Remove – each the phone's pressable row, the
+    // whole row the target (§10.4); the desktop's inline "Edit…" button is not drawn here.
+    const rows = [...stack[0]!.querySelectorAll<HTMLElement>('[data-row]')].map(
+      (r) => r.dataset.row
+    )
+    expect(rows).toEqual([
+      `search-engine:${WIKI.id}:default`,
+      `search-engine:${WIKI.id}:edit`,
+      `search-engine:${WIKI.id}:remove`
+    ])
+    const editRow = stack[0]!.querySelector<HTMLElement>(
+      `[data-row="search-engine:${WIKI.id}:edit"]`
+    )!
+    expect(editRow.textContent).toContain('Edit')
+    expect(editRow.textContent).toContain('The name, the shortcut and the URL the terms go into.')
+    expect(editRow.querySelector('button.zen-v2-button')).toBeNull()
+    const pressable = editRow.matches('[aria-haspopup]')
+      ? editRow
+      : editRow.querySelector<HTMLElement>('[aria-haspopup]')
+    expect(pressable?.getAttribute('aria-haspopup')).toBe('dialog')
+    // The form pre-filled in Chrome's order, Save ready at once.
+    expect([...form.querySelectorAll('input')].map((i) => i.id)).toEqual([
+      'search-engine-name',
+      'search-engine-shortcut',
+      'search-engine-url'
+    ])
+    expect(input(form, 'search-engine-name').value).toBe('Wiki')
+    expect(input(form, 'search-engine-shortcut').value).toBe('@wiki')
+    expect(input(form, 'search-engine-url').value).toBe('https://wiki.example/w?search=%s')
+    expect(button(sheet, 'Save').disabled).toBe(false)
+    expect(alerts(sheet)).toEqual([])
+  })
+
+  it('Save goes to search.updateEngine with the engine’s own id – the edit in place, the default flag not the command’s – and the sheet closes; a clash holds Save as Add’s does', async () => {
+    const { sheet, form, closeTop } = await openEditSheet()
+    type(input(form, 'search-engine-shortcut'), '@mine')
+    expect(button(sheet, 'Save').disabled).toBe(true)
+    blur(input(form, 'search-engine-shortcut'))
+    expect(alerts(sheet)).toEqual(['Mine already answers to @mine'])
+    type(input(form, 'search-engine-name'), ' Wiki mirror ')
+    type(input(form, 'search-engine-shortcut'), 'mg')
+    type(input(form, 'search-engine-url'), ' https://wiki.example/find?q=%s ')
+    expect(button(sheet, 'Save').disabled).toBe(false)
+    act(() => button(sheet, 'Save').click())
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
+      id: WIKI.id,
+      name: 'Wiki mirror',
+      searchUrl: 'https://wiki.example/find?q=%s',
+      keyword: 'mg'
+    })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).not.toHaveBeenCalledWith('search.addEngine', expect.anything())
+    expect(invoke).not.toHaveBeenCalledWith('search.removeEngine', expect.anything())
+    await land()
+    expect(closeTop).toHaveBeenCalledTimes(1)
   })
 })

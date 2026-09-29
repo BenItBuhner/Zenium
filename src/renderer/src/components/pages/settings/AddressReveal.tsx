@@ -12,9 +12,13 @@ import {
   controlUnder,
   elidedAddressOf,
   hideAddressCard,
+  holdCopyOf,
+  isElided,
   placeAddressCard,
-  type AddressSubject
+  type AddressSubject,
+  type HoldCopy
 } from '@renderer/lib/addressReveal'
+import { run } from '@renderer/lib/api'
 import { bindHoverCardDismissals } from '@renderer/lib/hoverCard'
 import { KEYBOARD_FOCUS_ATTR } from '@renderer/lib/panes'
 import {
@@ -58,7 +62,17 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * hover, the focus or the hold, never watched (`elidedAddressOf`). It goes on any press, a
  * wheel, a scroll, a key, the window's blur or resize, a popover or dialog opening, or its row
  * leaving the DOM. No native `title` anywhere (§9.31's one vocabulary): the row's DOM already
- * holds the whole value for a reader (#685), so the card describes nothing twice.
+ * holds the whole value for a reader (#685), so the card describes nothing twice. The card a
+ * hold raises (below) is the one exception to the tooltip: it may carry an action, so it is a
+ * `role="dialog"` named by the row's label (the lead's ruling on #709: "the hold-raised card
+ * takes role="dialog" labelled by the row label ("Folder"), non-modal, dismissal returning
+ * focus per §9.22; the mouse/keyboard card without an action stays role="tooltip"") – the same
+ * element, the same chrome, no `aria-modal` (the page under it stays live, as it is), still
+ * taking no focus on its raise; `aria-label` rather than `aria-labelledby`, since an info row's
+ * label carries no id (`RowText` mints one for a control row's `aria-labelledby` alone) and the
+ * host writes nothing into the page's rows. Focus it does take – Chromium focuses its Copy
+ * button on the tap – goes back where it was when the finger came down (§9.22; the return
+ * effect below).
  *
  * A touch or pen pointer resting on a row shows no card (§9.31: hover is "mouse and keyboard
  * only"); its hold is the reveal on touch (§9.2). Where the page draws sheets (`hold` given –
@@ -83,10 +97,23 @@ export type AddressHoldRequest = Extract<SheetRequest, { kind: 'address' }>
  * box) arms no hold, so the control's own tap and slow press stay its own (`controlUnder`),
  * while a row that is itself the control (a pressable row, a picker's option) holds as any row.
  * A row that copies on the hold (`RowCopy`, SET-54: `data-copies`) keeps its copy and gets
- * neither sheet nor card – none carries an address today; the day one does, the copy is the
- * sheet's Copy row (§9.31's link-menu precedent), not a second gesture on the same hold. Either
- * surface draws the value through `breakable`: a spaceless path breaks at its slashes and dots
- * before it breaks inside a name.
+ * neither sheet nor card. A row that both copies and carries an address (services seed #34;
+ * the lead's rule on #694, point 3: "the hold opens the sheet and the copy becomes its one Copy
+ * row"; on the tablet "the bare hold still reveals and doesn't copy. The held card carries Copy
+ * as its single §9.20 footer action"; §9.2) is no `data-copies` row – it arms no hold of its
+ * own (`InfoRowView`, rows.tsx) and hands the copy to this host on `data-copy-text` and
+ * `data-copy-confirmation` (`holdCopyOf`) – so one hold is one act, and the hold's surface is
+ * the copy's, standing for such a row whether or not its line is elided (a value that fits
+ * still has its Copy): where the page draws sheets, the hold opens the row's sheet with the
+ * whole value in the block and the copy as the one row under it (§9.31's link-menu precedent);
+ * where it draws dialogs, the hold raises the standing card with the copy as its one footer
+ * action – §9.20's first footer form, the value, 16, one right-aligned text button, Copy
+ * (`.zen-address-hover-card-footer`, main.css) – which copies through the core's clipboard path
+ * (`clipboard.writeText`, the row's own hold's), takes the card down and lets the toast say the
+ * word. The mouse's and the keyboard's card carry no footer and no action (the lead's point 2:
+ * no hidden gesture on a card; the hover card is a tooltip). Either surface draws the value
+ * through `breakable`: a spaceless path breaks at its slashes and dots before it breaks inside
+ * a name.
  */
 export function AddressReveal({
   root,
@@ -100,7 +127,7 @@ export function AddressReveal({
    */
   hold?: (request: AddressHoldRequest) => void
 }): JSX.Element | null {
-  const { card, subject, held } = addressRevealStore.use()
+  const { card, subject, held, copy } = addressRevealStore.use()
   const holdRef = useRef(hold)
   useEffect(() => {
     holdRef.current = hold
@@ -110,6 +137,13 @@ export function AddressReveal({
   const shown = subject !== null && card.anchor !== null && owned(subject.row)
   const ref = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState<PopoverBox | null>(null)
+  /**
+   * Where focus goes back to when the held card leaves with the focus inside it (§9.22): the
+   * element that held focus when the finger came down on the row – null for the body, nothing
+   * to return to. Read at the down, not at the raise: the hold's own lift, a click on a static
+   * row, has already cleared the page's focus by the time the card stands.
+   */
+  const returnTo = useRef<HTMLElement | null>(null)
 
   // The document's events, once, for every row now or later in the DOM.
   useEffect(() => {
@@ -141,14 +175,27 @@ export function AddressReveal({
       if (prev) addressBlur(prev.row)
     }
 
-    // The hold: one touch at a time, from the down to the click its lift raises.
-    let press: { id: number; x: number; y: number; subject: AddressSubject } | null = null
+    // The hold: one touch at a time, from the down to the click its lift raises. What it holds:
+    // the row's address line, and – for a row that both copies and carries an address (seed
+    // #34) – the copy its surface draws (the sheet's one Copy row, the held card's one footer
+    // button), read off the row at the down – and what held focus at the down, for the held
+    // card to give focus back to (`returnTo`).
+    type Hold = { subject: AddressSubject; copy: HoldCopy | null; focus: HTMLElement | null }
+    let press: ({ id: number; x: number; y: number } & Hold) | null = null
+    // What holds focus as the finger comes down: the body is nothing to return to, and a focus
+    // inside the standing card (its button pressed and not lifted) hands on that card's own
+    // target – the card is leaving with this press.
+    const focusBefore = (): HTMLElement | null => {
+      const active = document.activeElement
+      if (!(active instanceof HTMLElement) || active === document.body) return null
+      return insideCard(ref.current, active) ? returnTo.current : active
+    }
     let timer: ReturnType<typeof setTimeout> | null = null
     let held = false
     let release: ReturnType<typeof setTimeout> | null = null
     let swallow = false
-    /** The subject a recognised hold fires for once the lift's click has come or been waited out. */
-    let fired: AddressSubject | null = null
+    /** The hold a recognised hold fires for once the lift's click has come or been waited out. */
+    let fired: Hold | null = null
     const clear = (): void => {
       if (timer !== null) clearTimeout(timer)
       timer = null
@@ -159,19 +206,23 @@ export function AddressReveal({
     const fire = (): void => {
       if (release !== null) clearTimeout(release)
       release = null
-      const subject = fired
+      const found = fired
       fired = null
-      if (!subject) return
+      if (!found) return
+      const { subject, copy, focus } = found
       const sheet = holdRef.current
       if (sheet) {
         sheet({
           kind: 'address',
           rowId: subject.row.dataset.row ?? '',
           label: labelOf(subject.row) || subject.text,
-          text: subject.text
+          text: subject.text,
+          ...(copy ? { copy } : {})
         })
       } else {
-        addressHold(subject)
+        // The card's return target is the hold's (the sheet has the sheet stack's own rules).
+        returnTo.current = focus
+        addressHold(subject, copy)
       }
     }
     const onDown = (e: PointerEvent): void => {
@@ -181,8 +232,14 @@ export function AddressReveal({
       clear()
       held = false
       if (mouse(e) || e.button !== 0 || !e.isPrimary) return
-      const subject = elidedAddressOf(e.target)
+      const subject = addressRowOf(e.target)
       if (!subject) return
+      // A row that both copies and carries an address (seed #34) holds whether or not its line
+      // is elided – the hold's surface, the sheet or the held card, is the copy's, so a value
+      // that fits still has its Copy – and the copy rides with the hold. Any other row holds
+      // for an elided line only, as the mouse hovers.
+      const copy = holdCopyOf(subject.row)
+      if (!copy && !isElided(subject.span)) return
       // A press on a control inside the row – Location's Change…, a desktop switch's box – is
       // the control's, whichever reveal the hold would make (`controlUnder`; `useLongPress`'s
       // rule): no hold arms, and the lift's click reaches the control. A row that is itself
@@ -195,7 +252,7 @@ export function AddressReveal({
         : owned(subject.row)
       if (!inside) return
       if (subject.row.hasAttribute('data-copies')) return
-      press = { id: e.pointerId, x: e.clientX, y: e.clientY, subject }
+      press = { id: e.pointerId, x: e.clientX, y: e.clientY, subject, copy, focus: focusBefore() }
       timer = setTimeout(() => {
         timer = null
         held = true
@@ -215,11 +272,11 @@ export function AddressReveal({
     }
     const onUp = (e: PointerEvent): void => {
       if (!press || press.id !== e.pointerId) return
-      const { subject } = press
+      const { subject, copy, focus } = press
       clear()
       if (!held) return
       held = false
-      fired = subject
+      fired = { subject, copy, focus }
       swallow = true
       release = setTimeout(fire, RELEASE_DELAY_MS)
     }
@@ -238,10 +295,10 @@ export function AddressReveal({
       }
       if (!press) return
       e.preventDefault()
-      const { subject } = press
+      const { subject, copy, focus } = press
       clear()
       held = false
-      fired = subject
+      fired = { subject, copy, focus }
       swallow = true
       fire()
     }
@@ -281,9 +338,12 @@ export function AddressReveal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // The card's own size decides where it fits; measured once it has rendered its text, at the
-  // height its content wants (a height cap from the last placement is lifted for the reading).
+  // The card's own size decides where it fits; measured once it has rendered its text – and
+  // its footer, where the held card carries one: the footer's height is the card's, so the flip
+  // near the window's bottom reads it too – at the height its content wants (a height cap from
+  // the last placement is lifted for the reading).
   const text = subject?.text ?? ''
+  const footer = held && copy !== null
   useLayoutEffect(() => {
     const el = ref.current
     if (!shown || !el || !card.anchor) {
@@ -295,7 +355,7 @@ export function AddressReveal({
     const size = { width: el.offsetWidth, height: el.offsetHeight }
     el.style.maxHeight = capped
     setBox(placeAddressCard(card.anchor, viewportSize(), size))
-  }, [shown, card.anchor, text])
+  }, [shown, card.anchor, text, footer])
 
   // A popover registering with the chrome layer, or a frame dialog opening: the card goes at
   // once, whether it is up or on its way.
@@ -336,13 +396,48 @@ export function AddressReveal({
     }
   }, [shown, subject])
 
+  // §9.22 for the held card, a dialog (the lead's ruling on #709): it takes no focus on its
+  // raise, but Chromium focuses its Copy button on the tap, and a focused button removed with
+  // the card would leave the focus dropped on the body. So as the card leaves – on any of its
+  // dismissals: the button's own press, a press outside, a scroll or a wheel, a key, the
+  // window's blur or resize, a surface opening, its row leaving, a second hold – focus inside
+  // it goes back where it was when the finger came down on the row (`returnTo`, the hold's
+  // reading; the static row is no tab stop and is never the target), or off the button to the
+  // body when nothing held it – the usual case on touch, since the hold's own lift cleared the
+  // page's focus – and with no scroll either way. Focus outside the card is not the card's and
+  // is left alone. The return listens to the store: the hide is set before React takes the node
+  // down, while the host's own effect cleanups run after that deletion is committed, too late
+  // to read where focus is. A press outside then lands where it lands – the browser's own focus
+  // for that press follows the return (§9.22: a close by a click outside leaves focus where the
+  // click landed).
+  useEffect(() => {
+    if (!shown || !held || !subject) return
+    return addressRevealStore.subscribe(() => {
+      const next = addressRevealStore.get()
+      if (next.held && next.card.anchor !== null && next.subject?.row === subject.row) return
+      const el = ref.current
+      const active = document.activeElement
+      if (!el || !(active instanceof HTMLElement) || !el.contains(active)) return
+      const target = returnTo.current
+      if (target && target.isConnected) target.focus({ preventScroll: true })
+      else active.blur()
+    })
+  }, [shown, held, subject])
+
   if (!shown) return null
+  // The held card's name (its `role="dialog"`): the row's label, as the hold sheet's title reads
+  // it – "Folder" for the Sync page's Folder row – or the value where a row has none.
+  const label = held && subject ? labelOf(subject.row) || text : undefined
   return (
     <ChromePortal>
       <div
         ref={ref}
         id={ADDRESS_CARD_ID}
-        role="tooltip"
+        // A tooltip for the mouse and the keyboard (§9.31); the held card, which may carry an
+        // action, a non-modal dialog named by its row (the lead's ruling on #709) – no
+        // `aria-modal`, the page under it as live as it is.
+        role={held ? 'dialog' : 'tooltip'}
+        aria-label={label}
         className="zen-tab-hover-card zen-address-hover-card zen-animate-pop"
         // A §9.20 panel (§9.31): a page surface in either layout, as the popovers beside it
         // in the chrome layer declare on their own roots (§9.29's two families).
@@ -359,6 +454,29 @@ export function AddressReveal({
       >
         {/* The whole value, breaking at its slashes and dots first (`breakable`), inside a name only when it must. */}
         <span className="zen-address-hover-card-value">{breakable(text)}</span>
+        {footer && copy ? (
+          // The held card's one action for a row that both copies and carries an address (seed
+          // #34; the lead's rule): §9.20's first footer form – the value, 16, the verb, 16 to
+          // the edge, no hairline – holding the chassis's text button, right-aligned. Copy first,
+          // then the card down (the sheet's Copy row leaves its sheet the same way, sheets.tsx);
+          // the toast is the core's, as for the row's own hold (`useCopyOnHold`, rows.tsx). A
+          // plain button: the held card is the finger's, and the tab card has no controls to
+          // take a keyboard rule from; the focus its tap gives it goes back with the card (the
+          // return effect above, §9.22).
+          <div className="zen-address-hover-card-footer">
+            <button
+              type="button"
+              className="zen-v2-button"
+              data-action="copy"
+              onClick={() => {
+                run('clipboard.writeText', { text: copy.text, confirmation: copy.confirmation })
+                hideAddressCard()
+              }}
+            >
+              Copy
+            </button>
+          </div>
+        ) : null}
       </div>
     </ChromePortal>
   )

@@ -97,8 +97,17 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     /** The header stage of a process without an extension runtime; its jar is the profile's `CookieManager`. */
     private val defaultHeaderStage: HeaderStage by lazy { HeaderStage(ProfileCookieStore) }
 
-    /** Each tab's last main-frame request URL, for the pair a redirect hop makes ([Request.redirectedFrom]). */
+    /** Each tab's pending redirect hop, stamped by its navigation hook and spent by the target's intercept ([Request.redirectedFrom]). */
     private val redirectPairs = RedirectPairs()
+
+    /**
+     * The tab's navigation hook saw WebView send a main-frame navigation on by a server redirect
+     * (`shouldOverrideUrlLoading` with `isRedirect`, UI thread): `from` is the document the hop
+     * left, `to` the URL it was sent on to. Kept for `to`'s main-frame intercept, which stamps
+     * the pair on the record ([RedirectPairs]); WebView issues `to`'s request only after the
+     * hook has answered, so the stamp is in place when the intercept reads it.
+     */
+    fun noteRedirect(tab: BlockingTab, from: String, to: String) = redirectPairs.note(tab, from, to)
 
     /**
      * Whether the response stage of media-element requests is observed (`ext.observeResponses`,
@@ -223,7 +232,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      */
     fun intercept(tab: BlockingTab, request: WebResourceRequest): WebResourceResponse? {
         val url = request.url.toString()
-        val redirectedFrom = redirectPairs.redirectedFrom(tab, url, request.isForMainFrame, request.isRedirect)
+        val redirectedFrom = redirectPairs.redirectedFrom(tab, url, request.isForMainFrame)
         val verdict = evaluate(
             snapshot, listeners, tab, url, request.isForMainFrame,
             request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy, observer, observeResponses, redirectedFrom
@@ -825,28 +834,47 @@ internal object ThreadCpu {
 }
 
 /**
- * The pair a main-frame redirect hop makes ([Request.redirectedFrom]). WebView reports a server
- * redirect of a navigation as a follow-up `WebResourceRequest` with `isRedirect` and never the
- * status, so the hop is told as the pair: each tab's last main-frame request URL is kept here,
- * replaced at every main-frame intercept, and the follow-up is stamped with the one before it.
- * The extension runtime makes `webRequest.onBeforeRedirect` of the pair. Written and read on
- * WebView's intercept threads (there are several), every access under the map's lock; keyed
- * weakly by the tab, so a closed tab's entry goes with it.
+ * The pair a main-frame redirect hop makes ([Request.redirectedFrom]). WebView never tells the
+ * embedder a navigation's 3xx: it follows the redirect itself and marks the hop on the NAVIGATION
+ * path alone – the target comes through `shouldOverrideUrlLoading` with `isRedirect` on the UI
+ * thread, before its request is issued – while the `WebResourceRequest` the intercept is handed
+ * for that same request carries no mark (`isRedirect` is false there on the device, Extensions'
+ * finding on #670: WebView builds the intercept's request without it). So the tab's navigation
+ * hook stamps the pair here ([note]: `from`, the document the hop left; `to`, the URL it was
+ * sent on to) and the target's main-frame intercept spends it ([redirectedFrom]); the extension
+ * runtime makes `webRequest.onBeforeRedirect` of the pair. One pending hop per tab: a chain
+ * A→B→C is stamped A→B, spent by B's intercept, then stamped B→C before C's request goes out.
+ * Written on the UI thread, read on WebView's intercept threads (there are several), every
+ * access under the map's lock; keyed weakly by the tab, so a closed tab's entry goes with it.
  */
 internal class RedirectPairs {
-    private val lastMainFrameUrl = WeakHashMap<BlockingTab, String>()
+    /** A hop stamped and not yet spent: the request for [to] is the one to pair with [from]. */
+    private class Hop(val from: String, val to: String)
+
+    private val pending = WeakHashMap<BlockingTab, Hop>()
 
     /**
-     * A request of `tab` for `url` came in: a main-frame one is remembered as the tab's latest,
-     * and answered with the URL it hopped from – the tab's previous main-frame request – when
-     * WebView marked it a server redirect's follow-up (`isRedirect`). Null for a subresource, a
-     * fresh navigation, or a hop with no request before it (a tab's first). A hop back to the
-     * same URL is still a hop.
+     * WebView is sending `tab`'s navigation on from `from` to `to` by a server redirect: the
+     * pair waits for `to`'s main-frame request. A hop still waiting is replaced – its target's
+     * request never came (the app or an interstitial took the navigation) and the newer hop is
+     * the one in flight. A hop back to the same URL (`from == to`) is still a hop.
      */
-    fun redirectedFrom(tab: BlockingTab, url: String, isMainFrame: Boolean, isRedirect: Boolean): String? {
+    fun note(tab: BlockingTab, from: String, to: String) {
+        synchronized(pending) { pending[tab] = Hop(from, to) }
+    }
+
+    /**
+     * A request of `tab` for `url` came in. A main-frame request for the pending hop's target
+     * spends the hop and is answered with the URL it hopped from; a second main-frame request
+     * for the same URL (a reload) gets null, the hop being spent. A main-frame request for
+     * another URL gets null and drops the hop: the navigation went elsewhere, the target never
+     * came, and a later plain load of it must not read as the hop's. A subresource is never
+     * paired and leaves the hop waiting for the document.
+     */
+    fun redirectedFrom(tab: BlockingTab, url: String, isMainFrame: Boolean): String? {
         if (!isMainFrame) return null
-        val previous = synchronized(lastMainFrameUrl) { lastMainFrameUrl.put(tab, url) }
-        return if (isRedirect) previous else null
+        val hop = synchronized(pending) { pending.remove(tab) } ?: return null
+        return if (hop.to == url) hop.from else null
     }
 }
 

@@ -3528,8 +3528,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
  * search rows): the row's second line carries the engine's standing – the default, a visited
  * site's, inactive – its shortcut (Chrome's Shortcut column) and the host it searches; its
  * sheet offers Make default (an active engine; the default's is held), Edit – the Add form
- * pre-filled with a Shortcut field, the desktop's – Deactivate or Activate (the desktop's; the
- * default engine stays active), and Remove. Under the desktop's Inactive heading the row does
+ * pre-filled with a Shortcut field, on every layout as Chrome 152's row menu offers it on every
+ * custom engine (SET-10) – Deactivate or Activate (the desktop's; the default engine stays
+ * active), and Remove. Under the desktop's Inactive heading the row does
  * not say "Inactive" again – the heading says it, as Added's rows do not say "Added" (§9.17) –
  * and carries its source instead; on the phone and the tablet, where every engine sits under
  * Added, an inactive engine's row is the one place that says so.
@@ -3567,7 +3568,6 @@ function searchEngineItem(
       id: `search-engine:${e.id}:edit`,
       label: 'Edit',
       description: 'The name, the shortcut and the URL the terms go into.',
-      layouts: ['desktop'],
       button: 'Edit…',
       form: {
         title: 'Edit search engine',
@@ -3576,6 +3576,9 @@ function searchEngineItem(
         // the engine, Save as its verb; the shortcut is checked by the shared keyword rule
         // against the profile's other engines (`engineId` excepts the engine's own word) and
         // goes to the command as the engine's `keyword`, `@` or not – the core normalises it.
+        // On the phone the form is the second sheet over the engine's (§9.24), on the tablet the
+        // second dialog over the engine's, as Add's is over the page on each; the save keeps the
+        // engine's id, so the default stays.
         render: (close) => (
           <SearchEngineForm
             initial={{ name: e.name, url: e.searchUrl, shortcut: e.keyword }}
@@ -5536,10 +5539,12 @@ function shortcutsSection({ state }: SectionContext): RowGroup[] {
 
 /**
  * Which browser the OS hands web links to, and the request to make it Zenium: a status row
- * while the OS is asked, the ✓ once Zenium holds the role, the Make default button otherwise –
- * on Windows with the note that it opens Windows Settings, where the user presses Set default.
- * `state.defaultBrowser` is what the core's DefaultBrowserService refreshes at start, on window
- * focus and when the OS answers.
+ * while the OS is asked, the ✓ once Zenium holds the role, the Set as default button otherwise
+ * (§9.29's one name for the act, the strip's and the prompt's word; Chrome's row says Make
+ * default, kept as a search alias) – on Windows with the note that it opens Windows Settings,
+ * where the user presses Set default (Windows' own button, its label kept). `state.defaultBrowser`
+ * is what the core's DefaultBrowserService refreshes at start, on window focus and when the OS
+ * answers.
  */
 function defaultBrowserSection({ state }: SectionContext): RowGroup[] {
   const isDefault = state.defaultBrowser.isDefault
@@ -5565,10 +5570,10 @@ function defaultBrowserSection({ state }: SectionContext): RowGroup[] {
             label: 'Zenium is not your default browser',
             description:
               state.platform === 'win32'
-                ? 'Make default opens Windows Settings, where you press Set default.'
+                ? 'Set as default opens Windows Settings, where you press Set default.'
                 : 'Open links from other apps in Zenium.',
-            keywords: ['default browser', 'links', 'make default'],
-            button: 'Make default',
+            keywords: ['default browser', 'links', 'set as default', 'make default'],
+            button: 'Set as default',
             onPress: () => void requestDefaultBrowser('settings')
           }
         : {

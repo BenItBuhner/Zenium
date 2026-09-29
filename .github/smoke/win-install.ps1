@@ -11,7 +11,7 @@
 #   -Action registration -Exe <zenium.exe> -Out <dir> [-Label <name>] [-Stage <name>]
 #       Reads the registration as it stands for the executable under test and writes
 #       <Out>/<Label>-registration-<Stage>.json: "registered" (whether RegisteredApplications\Zenium
-#       names the Capabilities key – the one value the app's Make default path keys on,
+#       names the Capabilities key – the one value the app's Set as default path keys on,
 #       src/main/platform/defaultBrowser.ts windowsIsRegistered), "registrationProblems" against
 #       <Exe> as after the install, and with them what that path must leave alone (ci-08):
 #       "schemeClasses" – HKCU\Software\Classes\http and https with their shell\open\command, the

@@ -11,9 +11,11 @@
 // Optional legs: the stdio shim (`zenium --mcp`, one process per session; --shim), a dropped
 // client and simulated resurrections (--drop), a restart of the browser with the old session id
 // and a shim process carried across it (--restart). With --exe and no server answering, the
-// script starts the browser itself and quits it at the end. The browser is left as it was found:
-// the groups the sessions orphaned are closed and the user's window, which foreground sessions
-// switch to the Agents space, is switched back to the user's own space.
+// script starts the browser itself and quits it on every way out – a soak run to the end, a leg
+// that threw, a server that never answered the wait (--keep leaves it running in each case). The
+// browser is left as it was found: the groups the sessions orphaned are closed and the user's
+// window, which foreground sessions switch to the Agents space, is switched back to the user's
+// own space.
 //
 // Usage:
 //
@@ -1109,7 +1111,9 @@ export class BrowserProcess {
     })
     this.child = child
     this.pid = child.pid ?? null
-    this.launched = true
+    // A spawn that fails (a wrong --exe path: ENOENT) has no pid: nothing was launched, so there
+    // is nothing for the caller to quit – `quit()` would throw over the caller's own error.
+    this.launched = this.pid !== null
   }
 
   alive() {
@@ -1662,7 +1666,16 @@ function usage(problem) {
   process.stderr.write(text.join('\n') + '\n')
 }
 
-export async function main(argv) {
+/**
+ * The command. `deps` is the unit tests' seam: `browserProcess(options)` makes the browser process
+ * (a {@link BrowserProcess}) and `waitForEndpoint` is the wait after a launch (the real one) – so
+ * the ways out after a launch are proven without an Electron to start.
+ */
+export async function main(argv, deps = {}) {
+  const {
+    browserProcess = (options) => new BrowserProcess(options),
+    waitForEndpoint: waitForServer = waitForEndpoint
+  } = deps
   let opts
   try {
     opts = parseArgs(argv)
@@ -1698,7 +1711,7 @@ export async function main(argv) {
   }
   const verbose = opts.verbose ? log : () => undefined
 
-  const browser = new BrowserProcess({
+  const browser = browserProcess({
     exe: opts.exe,
     userDataDir: opts.userDataDir,
     extraArgs: opts.extraArgs,
@@ -1708,26 +1721,16 @@ export async function main(argv) {
   let endpoint = opts.url && opts.token ? { url: opts.url, token: opts.token } : null
   if (!endpoint) {
     endpoint = await probeEndpoint(opts.userDataDir)
-    if (!endpoint) {
-      if (!opts.exe) {
-        usage(
-          `no MCP server answers for ${opts.userDataDir} – start Zenium on that profile with Settings → AI Agents on, or pass --exe`
-        )
-        return 2
-      }
-      browser.launch()
-      endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
+    if (!endpoint && !opts.exe) {
+      usage(
+        `no MCP server answers for ${opts.userDataDir} – start Zenium on that profile with Settings → AI Agents on, or pass --exe`
+      )
+      return 2
     }
   }
-  secrets.push(endpoint.token)
-  log(`server at ${endpoint.url}`)
-  if (opts.restart && !browser.launched && !opts.pid) {
-    usage(
-      'the browser is already running and this script did not start it: --restart needs --pid <browser pid> to quit it'
-    )
-    return 2
-  }
 
+  // Armed before the launch, so an interrupt during the wait for the server quits a browser this
+  // script started, as one during the soak does.
   const onSignal = () => {
     log('interrupted')
     if (browser.launched) browser.quit(5000).finally(() => process.exit(130))
@@ -1736,16 +1739,34 @@ export async function main(argv) {
   process.once('SIGINT', onSignal)
   process.once('SIGTERM', onSignal)
 
-  const fixture = opts.fixture
-    ? { url: opts.fixture, slowUrl: opts.fixture, custom: true, close: async () => undefined }
-    : await startFixture()
-  const verdict = new Verdict({ secrets })
   const latencies = new Latencies()
-  const ctx = { endpoint, fixture, verdict, latencies, log, verbose, extraArgs: opts.extraArgs }
   const legs = ['http']
+  let verdict = null
+  let fixture = null
   let diagnostics = null
   let diagnosticsAfterRestart = null
   try {
+    // The launch sits inside the try: a wait that throws (the deadline – the bind failure #696
+    // taught it to name) reaches the finally that quits the browser, as a leg that throws does,
+    // and nothing is left running for the next CI step, or a pkill, to find. --keep holds here
+    // too: "leave a launched browser running" says nothing about how the run ended.
+    if (!endpoint) {
+      browser.launch()
+      endpoint = await waitForServer(opts.userDataDir, 90_000, { log })
+    }
+    secrets.push(endpoint.token)
+    log(`server at ${endpoint.url}`)
+    if (opts.restart && !browser.launched && !opts.pid) {
+      usage(
+        'the browser is already running and this script did not start it: --restart needs --pid <browser pid> to quit it'
+      )
+      return 2
+    }
+    fixture = opts.fixture
+      ? { url: opts.fixture, slowUrl: opts.fixture, custom: true, close: async () => undefined }
+      : await startFixture()
+    verdict = new Verdict({ secrets })
+    const ctx = { endpoint, fixture, verdict, latencies, log, verbose, extraArgs: opts.extraArgs }
     await soakMainLeg(ctx, opts)
     if (shimExe && opts.shimSessions > 0) {
       legs.push('stdio')
@@ -1771,7 +1792,7 @@ export async function main(argv) {
       diagnostics = await readDiagnostics(ctx)
       await browser.quit()
       browser.launch()
-      ctx.endpoint = endpoint = await waitForEndpoint(opts.userDataDir, 90_000, { log })
+      ctx.endpoint = endpoint = await waitForServer(opts.userDataDir, 90_000, { log })
       log(`server back at ${endpoint.url}`)
       await restartVerify(ctx, carry)
       await tidy(ctx)
@@ -1783,7 +1804,7 @@ export async function main(argv) {
   } finally {
     process.off('SIGINT', onSignal)
     process.off('SIGTERM', onSignal)
-    await fixture.close()
+    if (fixture) await fixture.close()
     if (browser.launched && !opts.keep) await browser.quit()
   }
 

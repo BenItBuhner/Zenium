@@ -103,7 +103,7 @@ const { familyOptions, fontSizeOptions, previewFamilies } = await import('../fon
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
-const { SYNC_SCOPES, clearSyncSetup, emptySyncSetup, syncSetupStore } =
+const { SYNC_COPY, SYNC_SCOPES, clearSyncSetup, emptySyncSetup, syncSetupStore } =
   await import('@renderer/lib/syncSetup')
 const remoteTabs = await import('@renderer/lib/remoteTabs')
 
@@ -4712,7 +4712,7 @@ describe('what a row does', () => {
       ])
     })
 
-    it('the phone and tablet shells keep every engine under Added with Make default and Remove alone, the Inactive heading and the desktop rows gone', () => {
+    it('the phone and tablet shells keep every engine under Added with Make default, Edit and Remove, the Inactive heading and the desktop’s Activate / Deactivate gone', () => {
       for (const layout of ['phone', 'tablet'] as const) {
         const { model } = searchOn(layout)
         expect(ids(model, 'search-engines')).toEqual([
@@ -4725,11 +4725,15 @@ describe('what a row does', () => {
         expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
           description: 'Inactive · @forum · forum.example'
         })
+        // Edit on every engine of the user's, active or not (SET-10; Chrome 152's row menu
+        // offers Edit on each custom engine, Make default and Delete on those not the default).
         expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+          'search-engine:discovered:forum.example:edit',
           'search-engine:discovered:forum.example:remove'
         ])
         expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
           'search-engine:custom:wiki:default',
+          'search-engine:custom:wiki:edit',
           'search-engine:custom:wiki:remove'
         ])
         // The picker still leaves the deactivated engine out: the flag is the model's, not the
@@ -4737,6 +4741,45 @@ describe('what a row does', () => {
         const picker = row(model, 'search-engine')
         if (picker.kind !== 'value') throw new Error('not a value row')
         expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+      }
+    })
+
+    it('on the phone and the tablet, Edit is the desktop’s row – the chassis’s Add / Edit form pre-filled, Save keeping the engine’s id through search.updateEngine (SET-10)', () => {
+      for (const layout of ['phone', 'tablet'] as const) {
+        invoke.mockClear()
+        const { model } = searchOn(layout)
+        const edit = row(model, 'search-engine:custom:wiki:edit')
+        if (edit.kind !== 'action') throw new Error('not an action')
+        expect(edit).toMatchObject({ label: 'Edit', button: 'Edit…' })
+        expect(edit.layouts).toBeUndefined()
+        expect(edit.form).toMatchObject({
+          title: 'Edit search engine',
+          description: 'Put %s in the URL where the search terms go.'
+        })
+        const form = edit.form!.render(() => {})
+        if (!isValidElement<ComponentProps<typeof SearchEngineForm>>(form))
+          throw new Error('not an element')
+        expect(form.type).toBe(SearchEngineForm)
+        expect(form.props).toMatchObject({
+          initial: { name: 'Wiki', url: wiki.searchUrl, shortcut: '@wiki' },
+          action: 'Save',
+          engineId: wiki.id
+        })
+        expect(form.props.engines).toContain(wiki)
+        form.props.onSubmit({ name: 'Wiki 2', url: wiki.searchUrl, shortcut: '@w' })
+        // The same command as the desktop's, the id the engine's own: the edit is in place, and
+        // the default flag – `searchEngineId` – is not the command's to touch.
+        expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
+          id: wiki.id,
+          name: 'Wiki 2',
+          searchUrl: wiki.searchUrl,
+          keyword: '@w'
+        })
+        // The default engine's Edit is the same row; the inactive engine's, too.
+        expect(row(model, 'search-engine:custom:mine:edit')).toMatchObject({ label: 'Edit' })
+        expect(row(model, 'search-engine:discovered:forum.example:edit')).toMatchObject({
+          label: 'Edit'
+        })
       }
     })
 
@@ -8448,6 +8491,54 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(row(model, 'sync-disconnect')).toMatchObject({ kind: 'action', label: 'Turn off sync' })
   })
 
+  it('seed #34: on the touch layouts the connected page’s Folder row also copies its path – the line as the row shows it, "Folder copied" as the word – so its hold is the address sheet with Copy as its one row (a phone) or the held card with Copy as its footer button (a tablet); not on the desktop, and never for the top level', () => {
+    const def = PAGE.sections.find((x) => x.id === 'sync')!
+    const nested = onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } })
+    const on = (formFactor: 'phone' | 'tablet' | 'desktop' | undefined, s = nested): Row =>
+      row(buildSection(def, { ...context(syncState(s)).ctx, formFactor }), 'sync-server-folder')
+    // Both at once on either touch layout (the lead: "The Folder row carries copy on both touch
+    // layouts"): the path (its line kept from its end) and the copy of that very line. A
+    // context without a form factor shows every row as the version row's rule reads it
+    // (`formFactor !== 'desktop'`, SET-54): the copy declared.
+    for (const formFactor of ['phone', 'tablet', undefined] as const) {
+      const touch = on(formFactor)
+      if (touch.kind !== 'info') throw new Error('not an info row')
+      expect(touch).toMatchObject({
+        label: 'Folder',
+        description: 'Backups/Zenium',
+        address: true,
+        copy: { text: 'Backups/Zenium', confirmation: 'Folder copied' }
+      })
+      expect(touch.copy?.text).toBe(touch.description)
+      expect(touch.copy?.confirmation).toBe(SYNC_COPY.serverFolderCopied)
+    }
+    // The desktop copies from the folder editor's field (the lead; the version row's rule): the
+    // address, no copy.
+    const wide = on('desktop')
+    if (wide.kind !== 'info') throw new Error('not an info row')
+    expect(wide.address).toBe(true)
+    expect(wide.copy).toBeUndefined()
+    // The top level is a sentence, not a path: no address and nothing to copy, the phone's too.
+    const root = on(
+      'phone',
+      onServer({
+        webdav: { ...SERVER, folder: '' },
+        folder: DAV_ROOT,
+        folderName: 'cloud.example.com'
+      })
+    )
+    if (root.kind !== 'info') throw new Error('not an info row')
+    expect(root.address).toBe(false)
+    expect(root.copy).toBeUndefined()
+    // The Server row beside it copies nothing: its line is prose about the account.
+    const server = row(
+      buildSection(def, { ...context(syncState(nested)).ctx, formFactor: 'phone' }),
+      'sync-server'
+    )
+    if (server.kind !== 'info') throw new Error('not an info row')
+    expect(server.copy).toBeUndefined()
+  })
+
   it('ID-32: a sign-in the server has stopped taking is the lone status row over the App password row – the info row in the danger ink with the key glyph trailing, nothing to press; Sync now waits with its status line, not the engine’s sentence – and the masked field’s commit hands the engine the new password as a §9.30 busy commit, an empty one nothing; a secret store that cannot keep it is the field’s refusal in the page’s words', async () => {
     const model = section(
       'sync',
@@ -9490,5 +9581,51 @@ describe('Settings › System: "Open your computer\'s proxy settings" (Chrome\'s
     expect(ids("computer's proxy settings")).toEqual(['proxy-settings'])
     expect(ids('pac')).toContain('proxy-settings')
     expect(searchRows(models, 'proxy')[0]!.caption).toBe('System')
+  })
+})
+
+/*
+ * Settings › Default browser (the desktop OSes' section; Android keeps its row under About): the
+ * action row's button is §9.29's one name for the act – "Set as default", the strip's and the
+ * prompt's word (W8-F21) – and on Windows the hint names that button and then Windows' own
+ * "Set default", the OS's label kept. Chrome's "Make default" stays a search alias, no label.
+ */
+describe('Settings › Default browser: the row’s button says Set as default (§9.29, W8-F21)', () => {
+  const notDefault = (platform: Platform): UIState =>
+    state({
+      platform,
+      capabilities: { ...ANDROID, windows: true, defaultBrowser: true },
+      defaultBrowser: { isDefault: false, prompt: null }
+    })
+
+  it('offers Set as default – the strip’s and the prompt’s word – and asks the host from the settings', () => {
+    const model = section('default-browser', notDefault('linux'))
+    expect(model.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['default-browser', 'Default browser']
+    ])
+    const r = row(model, 'default-browser')
+    if (r.kind !== 'action') throw new Error('not an action row')
+    expect(r.label).toBe('Zenium is not your default browser')
+    expect(r.description).toBe('Open links from other apps in Zenium.')
+    expect(r.button).toBe('Set as default')
+    r.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('defaultBrowser.request', { source: 'settings' })
+  })
+
+  it('on Windows names its own button, then Windows’ Set default – the OS’s word, kept', () => {
+    const r = row(section('default-browser', notDefault('win32')), 'default-browser')
+    expect(r.description).toBe(
+      'Set as default opens Windows Settings, where you press Set default.'
+    )
+  })
+
+  it('is found under Set as default and still under Chrome’s Make default', () => {
+    const model = section('default-browser', notDefault('linux'))
+    for (const query of ['set as default', 'make default']) {
+      expect(
+        searchRows([model], query).map((h) => h.row.id),
+        query
+      ).toContain('default-browser')
+    }
   })
 })

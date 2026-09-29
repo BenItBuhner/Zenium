@@ -2856,10 +2856,15 @@ class TabWebView(
             // A link (or script) is about to take the page elsewhere: the last moment it is whole
             // on screen, and the best one for its back preview.
             if (!request.isRedirect) rememberCurrentPage()
-            // The server sent the navigation under way on from the address it was bound for: the
-            // core keeps the hop and records the chain with the commit (history-23).
-            if (request.isRedirect) currentDocument?.takeIf { it != target }?.let { from ->
-                host.viewEvent(tabId, "redirected", json("from" to from, "to" to target))
+            // The server sent the navigation under way on from the address it was bound for. The
+            // engine is told the pair first – this hook is the one place WebView marks a hop, and
+            // the target's request, whose intercept stamps the pair for the extension runtime's
+            // `onBeforeRedirect`, goes out only after this answer; a hop back to the same address
+            // is a pair too – then the core keeps the hop and records the chain with the commit
+            // (history-23).
+            if (request.isRedirect) currentDocument?.let { from ->
+                host.blocking.noteRedirect(this@TabWebView, from, target)
+                if (from != target) host.viewEvent(tabId, "redirected", json("from" to from, "to" to target))
             }
             return false
         }
