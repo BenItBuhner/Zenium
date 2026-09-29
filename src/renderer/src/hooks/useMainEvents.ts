@@ -68,9 +68,11 @@ import {
   showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
-import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane, regularOf } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { closeWithUndo } from '@renderer/lib/closeUndo'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
+import { tabsOnPane } from '@renderer/lib/privateTabs'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
@@ -89,6 +91,28 @@ import {
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
   return state ? (activeTab(state)?.id ?? null) : null
+}
+
+/**
+ * Close the group's tabs with Undo on the toast (`folder.closeUndoable`, TAB-16): the group's
+ * live members as the phone's overview reads them for its own Close Group (`liveMembersOf`: the
+ * space's regular tabs in the group, a private one none of them), the close the core's
+ * `folder.close` – the group stays, saved with their pages – and the toast the group's words.
+ */
+function closeGroupUndoable(folderId: string): void {
+  const state: UIState | null = browserStore.get().state
+  const folder = state?.folders[folderId]
+  if (!state || !folder) return
+  const space = state.spaces.find((s) => s.id === folder.spaceId)
+  if (!space) return
+  const tabs = tabsOnPane(regularOf(state, space), 'tabs').filter((t) => t.folderId === folderId)
+  closeWithUndo({
+    tabs,
+    settings: state.settings,
+    activeTabId: activeTab(state)?.id ?? null,
+    close: () => run('folder.close', { folderId }),
+    group: folder
+  })
 }
 
 function followsCover(): boolean {
@@ -394,6 +418,12 @@ export function useMainEvents(): void {
         closeUrlbar()
         requestFolderDelete(folderId)
       }),
+      // The touch hosts' group menu's "Close Group (N Tabs)" (the tablet sidebar row's hold;
+      // TAB-16, the Design Lead's option C): the phone's undoable path – the group's live
+      // members close through `folder.close` with one toast, "<Name> tab group closed and
+      // saved", whose Undo brings them back into the group. Inert on the desktop, whose folder
+      // menu never emits it (`showFolderContextMenu` calls the core's `closeFolder` itself).
+      onEvent('folder.closeUndoable', ({ folderId }) => closeGroupUndoable(folderId)),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {

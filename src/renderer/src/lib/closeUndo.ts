@@ -17,7 +17,8 @@ import { browserStore, pushToast, type MessageAction } from './ui'
 /**
  * Undo for closing tabs on the phone (v2 draft §9.33; matrix TAB-05, TAB-07, GN-16): the close
  * goes through at once – the card leaves the grid as it always did – and the toast that follows
- * ("Closed <title>", "N tabs closed") offers to bring the tabs back from the core's own
+ * ("Closed <title>", "N tabs closed"; a group's close reads "<Name> tab group closed and saved",
+ * TAB-16, on the phone and the tablet alike) offers to bring the tabs back from the core's own
  * "Recently closed" store, through `session.restoreClosed`, which puts each tab back into its
  * space, its group and its position with its back/forward stack. Nothing is deferred and no
  * closed-tab state is kept here beyond the entries' ids: the restore is the undo.
@@ -83,6 +84,13 @@ export interface CloseRequest {
   activeTabId: string | null
   /** Issue the close (`tab.close`, `space.closeUnpinned`, …); called at once. */
   close: () => void
+  /**
+   * The group the tabs close as ("Close Group (N Tabs)": the phone's sheet, the tablet's menu
+   * through `folder.closeUndoable`; TAB-16): the toast takes the group's words
+   * ({@link groupClosedMessage}) in place of the tabs' – the group stays, saved with the pages,
+   * and Undo brings the tabs back into it. Left out, the toast counts the tabs.
+   */
+  group?: { name: string }
 }
 
 export interface CloseUndo {
@@ -105,6 +113,8 @@ interface Intent {
   held: boolean
   /** The settle wait, running only while the intent is not held. */
   timer: ReturnType<typeof setTimeout> | null
+  /** The group the tabs closed as, for the toast's words; null for a close of tabs. */
+  group: { name: string } | null
 }
 
 /**
@@ -125,6 +135,15 @@ export function leavesClosedEntry(
 /** The toast's text (§9.33, sentence case): the one tab by name, several by their count. */
 export function closedMessage(entries: readonly ClosedEntrySummary[]): string {
   return entries.length === 1 ? `Closed ${entries[0].title}` : `${entries.length} tabs closed`
+}
+
+/**
+ * The toast's text for a group's close (TAB-16, the Design Lead's option C; the phone and the
+ * tablet alike): the group by its name – a group with no name is "Group" in the name slot (v2
+ * §6's noun on the touch hosts) – closed and saved, its pages kept.
+ */
+export function groupClosedMessage(group: { name: string }): string {
+  return `${group.name.trim() || 'Group'} tab group closed and saved`
 }
 
 /** An undo over `invoke` and `on`; the app uses {@link closeUndo}, tests build their own. */
@@ -240,7 +259,8 @@ export function createCloseUndo({
     intent.timer = null
     unwatch()
     if (intent.entries.length === 0) return
-    toast(closedMessage(intent.entries), { label: 'Undo', onPick: () => void undo(intent) })
+    const message = intent.group ? groupClosedMessage(intent.group) : closedMessage(intent.entries)
+    toast(message, { label: 'Undo', onPick: () => void undo(intent) })
   }
 
   /**
@@ -257,7 +277,7 @@ export function createCloseUndo({
   }
 
   return {
-    close({ tabs, settings, activeTabId: active, close }) {
+    close({ tabs, settings, activeTabId: active, close, group }) {
       const expected = tabs.filter((tab) => leavesClosedEntry(tab, settings)).length
       if (expected === 0) {
         close()
@@ -270,7 +290,8 @@ export function createCloseUndo({
         entries: [],
         focus: active && tabs.some((tab) => tab.id === active) ? active : null,
         held: false,
-        timer: null
+        timer: null,
+        group: group ? { name: group.name } : null
       }
       pending.push(intent)
       watch()

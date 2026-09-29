@@ -95,8 +95,14 @@ vi.stubGlobal('window', {
   }
 })
 
-const { CLOSE_SETTLE_MS, closeWithUndo, closedMessage, createCloseUndo, leavesClosedEntry } =
-  await import('../closeUndo')
+const {
+  CLOSE_SETTLE_MS,
+  closeWithUndo,
+  closedMessage,
+  createCloseUndo,
+  groupClosedMessage,
+  leavesClosedEntry
+} = await import('../closeUndo')
 const { TOAST_ACTION_DURATION, claimMessageCards, pickToastAction, uiStore } = await import('../ui')
 
 // --- fixtures ----------------------------------------------------------------------------------
@@ -162,7 +168,12 @@ async function flush(ticks = 8): Promise<void> {
 
 /** An undo over the fake core; `toast` records the toasts, `active` is the tab the user is on. */
 function harness(active: string | null = null): {
-  close: (tabs: Tab[], activeTabId?: string | null, settings?: typeof UNLOAD) => () => void
+  close: (
+    tabs: Tab[],
+    activeTabId?: string | null,
+    settings?: typeof UNLOAD,
+    group?: { name: string }
+  ) => () => void
   toasts: Array<{ message: string; action: MessageAction }>
   now: { value: number }
   active: { value: string | null }
@@ -183,9 +194,9 @@ function harness(active: string | null = null): {
     toasts,
     now,
     active: current,
-    close: (tabs, activeTabId = active, settings = UNLOAD) => {
+    close: (tabs, activeTabId = active, settings = UNLOAD, group) => {
       const close = vi.fn()
-      undo.close({ tabs, settings, activeTabId, close })
+      undo.close({ tabs, settings, activeTabId, close, group })
       return close
     }
   }
@@ -449,6 +460,57 @@ async function closeAllRun(
   core.closing()
   await flush()
 }
+
+// --- a group ------------------------------------------------------------------------------------
+
+describe('closing a group (TAB-16, the Design Lead’s option C: Undo for Close, on both touch hosts)', () => {
+  it('the toast reads "<Name> tab group closed and saved"; a group with no name is "Group" in the name slot (v2 §6)', () => {
+    expect(groupClosedMessage({ name: 'Research' })).toBe('Research tab group closed and saved')
+    expect(groupClosedMessage({ name: '  Reading ' })).toBe('Reading tab group closed and saved')
+    expect(groupClosedMessage({ name: '' })).toBe('Group tab group closed and saved')
+    expect(groupClosedMessage({ name: '   ' })).toBe('Group tab group closed and saved')
+    // The tab closes' words stand as they were: the one by name, several by their count.
+    expect(closedMessage([entry(tab('a', { title: 'Zenium docs' }), 1)])).toBe('Closed Zenium docs')
+    expect(closedMessage([entry(tab('a'), 1), entry(tab('b'), 2)])).toBe('2 tabs closed')
+  })
+
+  it('a group’s close of several takes the group’s words, not the count; Undo restores newest first, back into the group, and the user lands on their tab', async () => {
+    const h = harness('b')
+    const [a, b] = [tab('a', { folderId: 'g' }), tab('b', { folderId: 'g' })]
+    const close = h.close([a, b], 'b', UNLOAD, { name: 'Research' })
+    // The close is the caller's (`folder.close`), at once; nothing is up until the core files.
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(h.toasts).toEqual([])
+    core.file(entry(a, h.now.value), entry(b, h.now.value))
+    await flush()
+    expect(h.toasts.map((t) => t.message)).toEqual(['Research tab group closed and saved'])
+    expect(h.toasts[0].action.label).toBe('Undo')
+    h.toasts[0].action.onPick()
+    await flush()
+    // The core's restore puts each back where it stood – its group record kept while the group
+    // is saved, so each returns INTO the group (`session.restoreTab`) – newest first.
+    expect(core.of('session.restoreClosed')).toEqual([{ id: 'closed:b' }, { id: 'closed:a' }])
+    expect(core.of('tab.activate')).toEqual([{ tabId: 'b' }])
+  })
+
+  it('a group of one tab still reads the group’s words, not "Closed <title>"; a nameless group says Group', async () => {
+    const h = harness()
+    const a = tab('a', { title: 'Zenium docs', folderId: 'g' })
+    h.close([a], null, UNLOAD, { name: '' })
+    core.file(entry(a, h.now.value))
+    await flush()
+    expect(h.toasts.map((t) => t.message)).toEqual(['Group tab group closed and saved'])
+  })
+
+  it('a group close that files nothing (private members alone) gets no toast, as a tab close does', async () => {
+    const h = harness()
+    const p = tab('p', { containerId: PRIVATE_CONTAINER_ID, folderId: 'g' })
+    const close = h.close([p], null, UNLOAD, { name: 'Research' })
+    expect(close).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    expect(h.toasts).toEqual([])
+  })
+})
 
 describe('closing several one page after the other', () => {
   it('the toast waits for the run, however long, and counts the seven; Undo brings the seven back newest first', async () => {

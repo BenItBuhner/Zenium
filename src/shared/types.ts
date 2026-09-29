@@ -7584,6 +7584,14 @@ export interface Events {
    * `unpack: false` when the user confirms. A folder with nothing in it is deleted without asking.
    */
   'folder.confirmDelete': { folderId: string }
+  /**
+   * Close the group's tabs with Undo on the toast (the touch hosts' group menu's "Close Group (N
+   * Tabs)", TAB-16): the chrome runs `folder.close` through its one close-with-undo
+   * (`lib/closeUndo.ts`) so the toast reads "<Name> tab group closed and saved" and Undo brings
+   * the tabs back into the group, which re-opens. The desktop's folder menu never emits it: its
+   * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
+   */
+  'folder.closeUndoable': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
