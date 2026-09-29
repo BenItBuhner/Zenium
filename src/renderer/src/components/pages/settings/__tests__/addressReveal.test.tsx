@@ -723,12 +723,20 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     return rows
   }
 
-  it('a touch hold on an elided row raises the same card under the row at once – role="tooltip", the whole value, `data-by="hold"` – standing with no leave, and swallows the click the lift raises', async () => {
+  it('a touch hold on an elided row raises the same card under the row at once – a non-modal role="dialog" named by the row’s label, the whole value, `data-by="hold"` – standing with no leave, and swallows the click the lift raises', async () => {
     const { folder: row } = tablet()
     expect(await hold(lineOf(row))).toBe(true)
     const shown = card()
     expect(shown).not.toBeNull()
-    expect(shown?.getAttribute('role')).toBe('tooltip')
+    // The lead's ruling on #709: the hold-raised card is a dialog labelled by the row's label,
+    // non-modal – no `aria-modal` – and takes no focus on its raise; `aria-label`, since an
+    // info row's label has no id for an `aria-labelledby` to name.
+    expect(shown?.getAttribute('role')).toBe('dialog')
+    expect(shown?.getAttribute('aria-label')).toBe('Folder')
+    expect(shown?.hasAttribute('aria-labelledby')).toBe(false)
+    expect(shown?.hasAttribute('aria-modal')).toBe(false)
+    expect(shown?.hasAttribute('tabindex')).toBe(false)
+    expect(document.activeElement).toBe(document.body)
     expect(shown?.textContent).toBe(PATH)
     expect(shown?.getAttribute('data-by')).toBe('hold')
     expect(shown?.classList.contains('zen-tab-hover-card')).toBe(true)
@@ -846,6 +854,10 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     expect(shown).not.toBeNull()
     if (!shown) throw new Error('no card')
     expect(shown.getAttribute('data-by')).toBe('hold')
+    // The card that carries an action is the dialog the lead ruled (#709), named by its row.
+    expect(shown.getAttribute('role')).toBe('dialog')
+    expect(shown.getAttribute('aria-label')).toBe('Folder')
+    expect(shown.hasAttribute('aria-modal')).toBe(false)
     expect(shown.querySelector('.zen-address-hover-card-value')?.textContent).toBe(PATH)
     expect(shown.style.top).toBe(`${OTHER_BOX.y + OTHER_BOX.height}px`)
     // The bare hold copied nothing (the lead: "the bare hold still reveals and doesn't copy").
@@ -903,7 +915,7 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     expect(again?.querySelector('button')?.textContent).toBe('Copy')
   })
 
-  it('the mouse’s card and the keyboard’s card for the same both-row (seed #34) carry no footer and no action: only the held card does', async () => {
+  it('the mouse’s card and the keyboard’s card for the same both-row (seed #34) carry no footer and no action, and stay the role="tooltip" #694 landed: only the held card is the dialog', async () => {
     const { copies: both } = tablet()
     // A mouse resting on the row: the tooltip after the delay, the whole value, and no button.
     pointer(lineOf(both), 'pointerover', { pointerType: 'mouse', relatedTarget: document.body })
@@ -911,6 +923,9 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     const hovered = card()
     expect(hovered).not.toBeNull()
     expect(hovered?.getAttribute('data-by')).toBe('pointer')
+    expect(hovered?.getAttribute('role')).toBe('tooltip')
+    expect(hovered?.hasAttribute('aria-label')).toBe(false)
+    expect(hovered?.hasAttribute('aria-modal')).toBe(false)
     expect(hovered?.textContent).toBe(PATH)
     expect(hovered?.querySelector('.zen-address-hover-card-footer')).toBeNull()
     expect(hovered?.querySelector('button')).toBeNull()
@@ -926,6 +941,9 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     const focused = card()
     expect(focused).not.toBeNull()
     expect(focused?.getAttribute('data-by')).toBe('focus')
+    expect(focused?.getAttribute('role')).toBe('tooltip')
+    expect(focused?.hasAttribute('aria-label')).toBe(false)
+    expect(focused?.hasAttribute('aria-modal')).toBe(false)
     expect(focused?.textContent).toBe(PATH)
     expect(focused?.querySelector('.zen-address-hover-card-footer')).toBeNull()
     expect(focused?.querySelector('button')).toBeNull()
@@ -935,6 +953,112 @@ describe('the standing card under a touch hold where the page draws dialogs (a t
     await wait(HOVER_CARD_LEAVE_GRACE)
     expect(card()).toBeNull()
     expect(copies()).toEqual([])
+  })
+
+  it('the held card, a dialog, gives focus back as it leaves (§9.22; the lead’s ruling on #709): the focus its Copy button takes goes back to what held focus when the finger came down – after the Copy, a press outside or Escape – off the button to the body when nothing did, and focus outside the card is left alone', async () => {
+    const { copies: both } = tablet()
+    // A control elsewhere on the page holding focus as the finger comes down: the Folder row is
+    // a static row with no tab stop, so the return target is whatever held focus before the
+    // hold – here a button standing for the page's Sync now.
+    const before = document.createElement('button')
+    before.textContent = 'Sync now'
+    document.body.appendChild(before)
+    const returned = vi.spyOn(before, 'focus')
+    /** A hold on the both-row with its card up, and its Copy button. */
+    const raise = async (): Promise<{ shown: HTMLElement; button: HTMLButtonElement }> => {
+      expect(await hold(lineOf(both))).toBe(true)
+      const shown = card()
+      if (!shown) throw new Error('no card')
+      const button = shown.querySelector('button')
+      if (!button) throw new Error('no button')
+      return { shown, button }
+    }
+    /** Chromium's tap on the button: the press (inside the card), the focus the press gives it, the lift and the click. */
+    const tap = async (button: HTMLButtonElement): Promise<void> => {
+      pointer(button, 'pointerdown', { pointerType: 'touch' })
+      button.focus()
+      expect(document.activeElement).toBe(button)
+      pointer(button, 'pointerup', { pointerType: 'touch' })
+      act(() => {
+        button.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+        )
+      })
+      await wait(0)
+    }
+    try {
+      before.focus()
+      expect(document.activeElement).toBe(before)
+      // The spy counts the card's returns alone, not the test's own focus above.
+      returned.mockClear()
+      // The raise takes no focus: the dialog has no tab stop of its own, and focus is where it was.
+      const first = await raise()
+      expect(first.shown.getAttribute('role')).toBe('dialog')
+      expect(first.shown.hasAttribute('tabindex')).toBe(false)
+      expect(document.activeElement).toBe(before)
+      // The Copy: the copy, the card down, and focus back on the control that held it – with no
+      // scroll to it – rather than dropped on the body with the button React took down.
+      await tap(first.button)
+      expect(copies()).toHaveLength(1)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(1)
+      expect(returned).toHaveBeenCalledWith({ preventScroll: true })
+      // A press outside with the button focused: the card down and focus back, before the
+      // press's own focus lands wherever it lands (§9.22's close by a click outside).
+      const second = await raise()
+      second.button.focus()
+      expect(document.activeElement).toBe(second.button)
+      pointer(document.body, 'pointerdown', { pointerType: 'touch' })
+      await wait(0)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(2)
+      pointer(document.body, 'pointerup', { pointerType: 'touch' })
+      await wait(RELEASE_DELAY_MS + 1)
+      expect(card()).toBeNull()
+      // Escape with the button focused: the same return.
+      const third = await raise()
+      third.button.focus()
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      await wait(0)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(3)
+      // Focus outside the card is not the card's: a card leaving with the control still focused
+      // moves nothing.
+      const fourth = await raise()
+      expect(document.activeElement).toBe(before)
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      await wait(0)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(before)
+      expect(returned).toHaveBeenCalledTimes(3)
+      expect(fourth.shown.isConnected).toBe(false)
+      // Nothing held focus as the finger came down – the usual case on touch, the hold's own
+      // lift having cleared the page's focus: the Copy's focus goes off the button to the body
+      // by an explicit blur while the button still stands in the card, not by the button's
+      // removal stranding it.
+      before.blur()
+      expect(document.activeElement).toBe(document.body)
+      const fifth = await raise()
+      const blurred = vi.fn<(connected: boolean) => void>()
+      fifth.button.addEventListener('blur', () => blurred(fifth.button.isConnected))
+      await tap(fifth.button)
+      expect(copies()).toHaveLength(2)
+      expect(card()).toBeNull()
+      expect(document.activeElement).toBe(document.body)
+      expect(blurred).toHaveBeenCalledTimes(1)
+      expect(blurred).toHaveBeenCalledWith(true)
+      expect(returned).toHaveBeenCalledTimes(3)
+    } finally {
+      returned.mockRestore()
+      before.remove()
+    }
   })
 
   it('Chromium’s own long press (`contextmenu` from the touch) raises the card at once with the menu suppressed, and a second hold on another row moves it', async () => {
