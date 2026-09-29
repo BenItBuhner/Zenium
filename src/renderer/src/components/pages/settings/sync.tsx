@@ -80,9 +80,9 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  * mapping for the Test row, the Turn on refusal and the line under Sync now); the engine's
  * method names and status codes never do (§9.33).
  */
-export function syncGroups({ state }: SectionContext): RowGroup[] {
+export function syncGroups({ state, formFactor }: SectionContext): RowGroup[] {
   const sync = state.sync
-  return sync.enabled ? connectedGroups(sync, state.tabs) : setupGroups(sync)
+  return sync.enabled ? connectedGroups(sync, state.tabs, formFactor) : setupGroups(sync)
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +310,11 @@ const FOLDER_KEYWORDS = [
 // Connected
 // ---------------------------------------------------------------------------
 
-function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
+function connectedGroups(
+  sync: SyncStatus,
+  held: UIState['tabs'],
+  formFactor: SectionContext['formFactor']
+): RowGroup[] {
   const status: SettingsRow[] = []
   if (sync.folderLost) {
     // The §9.17 / §9.33 message row: the way out as the description and the state's glyph
@@ -391,7 +395,7 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
       heading: server ? SYNC_COPY.whereServer : SYNC_COPY.whereFolder,
       rows: [
         ...(server
-          ? serverRows(server, sync.authRefused)
+          ? serverRows(server, sync.authRefused, formFactor)
           : [
               {
                 kind: 'action',
@@ -444,10 +448,18 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
  * a password the server refuses in its turn leaves the status row standing, since the round
  * reports it. At other times the row is not drawn (§10.4: a row for a state most users never
  * enter appears when its state does).
+ *
+ * On a phone the Folder row also copies its path (`RowCopy`; services seed #34, the lead's rule
+ * on #694, point 3): a row that both copies and carries an address, so the hold opens the row's
+ * address sheet – the whole path – with Copy as its one row (the copy is the line as the row
+ * shows it, `folderLine`, the very text the sheet holds). Phone alone: the tablet and the desktop
+ * draw no sheet for the hold, so a copy declared there would have no surface (the tablet's is
+ * the lead's to place); the root, whose line is a sentence, copies nothing.
  */
 function serverRows(
   server: Omit<WebDavSyncCredentials, 'password'>,
-  authRefused: boolean
+  authRefused: boolean,
+  formFactor: SectionContext['formFactor']
 ): SettingsRow[] {
   const rows: SettingsRow[] = []
   if (authRefused) {
@@ -475,6 +487,7 @@ function serverRows(
   // – unless it is the root, whose line is a sentence. The Server row's line is a phrase about
   // the account ("alice on cloud.example.com"), prose to §9.2.
   const folderLine = webDavFolderLine(server.folder)
+  const isPath = folderLine !== SYNC_COPY.serverRootFolder
   rows.push(
     {
       kind: 'info',
@@ -488,8 +501,11 @@ function serverRows(
       id: 'sync-server-folder',
       label: SYNC_COPY.serverFolder,
       description: folderLine,
-      address: folderLine !== SYNC_COPY.serverRootFolder,
-      keywords: ['folder', 'directory', 'path']
+      address: isPath,
+      keywords: ['folder', 'directory', 'path'],
+      ...(isPath && formFactor === 'phone'
+        ? { copy: { text: folderLine, confirmation: SYNC_COPY.serverFolderCopied } }
+        : {})
     }
   )
   return rows
