@@ -74,7 +74,11 @@ import {
 } from '../../core/extensions/registry'
 import { STORE_UPDATE_URLS, isExtensionId, type StoreId } from '../../core/extensions/store'
 import type { StartupOverride } from '../../core/startup'
-import type { ExtensionSyncSource, SyncedExtensionData } from '../../core/sync/records'
+import {
+  extensionStoreOf,
+  type ExtensionSyncSource,
+  type SyncedExtensionData
+} from '../../core/sync/records'
 import {
   NO_PREVIOUS_BEGIN_INSTALL_ERROR,
   USER_CANCELLED_ERROR,
@@ -118,6 +122,7 @@ import { ExtensionErrorConsole } from './extensionErrors'
 import { popupKey } from './extensionPopupKeys'
 import {
   ExtensionSyncApplier,
+  StartupHoldSlot,
   approvalPrompt,
   flipClock,
   syncedRemovalToast,
@@ -302,10 +307,29 @@ export class ExtensionService implements ExtensionHost {
   /** Reloads due for a grant or a removal of host patterns, by id (`hostGrantsChanged`). */
   private readonly grantReloads = new Map<string, ReturnType<typeof setTimeout>>()
   /**
-   * The extension layer's startup hold (`platform/index.ts` sets it): the records another
-   * device published wait for it (`applySyncedExtensions`, ID-44). Null in a host without one.
+   * The applier's seat for the extension layer's startup hold (ID-44; Desktop's read of #715):
+   * the applier is built below, in the constructor, and `platform/index.ts` hands the hold over
+   * afterwards through `startupHold`'s setter. Until then a round's records QUEUE in the slot –
+   * nothing lands on a device whose hold is not yet known – and run through the hold once it is
+   * seated (at once if open, else when it opens).
    */
-  startupHold: StartupHold | null = null
+  private readonly holdSlot = new StartupHoldSlot()
+  private startupHoldValue: StartupHold | null = null
+  /**
+   * The extension layer's startup hold (`platform/index.ts` sets it): the records another
+   * device published wait for it (`applySyncedExtensions`, ID-44). Null in a host without one –
+   * assigned null, the queued records run and every later round runs at once; never assigned,
+   * they wait.
+   */
+  get startupHold(): StartupHold | null {
+    return this.startupHoldValue
+  }
+
+  set startupHold(hold: StartupHold | null) {
+    this.startupHoldValue = hold
+    this.holdSlot.assign(hold)
+  }
+
   /** The synced records' schedule (ID-44): per-id order, the back-off, the hold. */
   readonly sync: ExtensionSyncApplier
 
@@ -343,8 +367,9 @@ export class ExtensionService implements ExtensionHost {
       toastRemoved: (record, store, from) => this.toastSyncedRemoval(record, store, from),
       error: (message) => console.error(message),
       now: () => Date.now(),
-      // Read at each call: `platform/index.ts` sets the hold after the service is built.
-      hold: { run: (fn) => (this.startupHold ? this.startupHold.run(fn) : fn()) }
+      // The slot, not the hold: `platform/index.ts` seats the hold after the service is built,
+      // and a round that comes before that queues in the slot (`startupHold`'s setter).
+      hold: this.holdSlot
     })
     this.root = join(userDataDir, 'extensions')
     this.store = new JsonStore<ExtensionRegistry>(browser.platform.io, 'extensions.json', 300)
@@ -1118,6 +1143,11 @@ export class ExtensionService implements ExtensionHost {
   async remove(id: string): Promise<void> {
     const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
     if (!record) return
+    // A synced landing removed before its approval is DECLINED here, not uninstalled everywhere
+    // (ID-44; the lead's ruling, round 4): the engine sees the pending record go at this
+    // commit and writes no tombstone (`SyncEngine.sources`), and the applier drops any record
+    // for it handed over before now, so nothing puts the landing back.
+    if (record.pendingApproval && extensionStoreOf(record.source)) this.sync.declined(record.id)
     if (this.popup?.id === record.id) this.closePopup()
     this.unload(record)
     this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
@@ -1257,9 +1287,10 @@ export class ExtensionService implements ExtensionHost {
   }
 
   /**
-   * The removal a peer's tombstone made here (ID-44): what went and which device removed it,
-   * Undo reinstalling from the store – the ordinary `extension.installFromStore`, prompt and
-   * all, as the user asked for it back. DRAFT wording until the lead approves it.
+   * The removal a peer's tombstone made here (ID-44): what went and which device removed it –
+   * "<Name> removed on <device>", "<Name> removed on another device" when the engine could not
+   * name it (the lead's words, round 4) – Undo reinstalling from the store: the ordinary
+   * `extension.installFromStore`, prompt and all, as the user asked for it back.
    */
   private toastSyncedRemoval(
     record: SyncedExtensionRecord,
@@ -1267,7 +1298,7 @@ export class ExtensionService implements ExtensionHost {
     from: string | null
   ): void {
     this.browser.toast(
-      syncedRemovalToast(record.name, from),
+      syncedRemovalToast(record, from),
       'info',
       undefined,
       { label: 'Undo', command: 'extension.installFromStore', args: { ref: record.id, store } },

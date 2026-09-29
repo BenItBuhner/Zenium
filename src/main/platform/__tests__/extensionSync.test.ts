@@ -7,6 +7,7 @@ import {
   ExtensionSyncApplier,
   SYNC_INSTALL_BACKOFF_MAX_MS,
   SYNC_INSTALL_BACKOFF_MIN_MS,
+  StartupHoldSlot,
   approvalPrompt,
   awaitsApproval,
   flipClock,
@@ -615,8 +616,9 @@ describe('ExtensionSyncApplier – the switch-by-switch merge under each switch�
     await applier.settled()
     expect(host.calls).toEqual([`setEnabled ${ID_A.slice(0, 4)} off`])
     expect(switches(host)).toMatchObject({ enabled: false, enabledAt: T1 })
-    // A withheld enable – the landing waits for approval here – is neither taken nor
-    // re-published, whatever its clock: the peer's copy stands until the approval's own write.
+    // A withheld enable – the landing waits for approval here – is neither taken nor, on its
+    // own, re-published, whatever its clock: the peer's copy stands until the approval's own
+    // write. (The record's pin clock ties with this device's here: nothing else diverges.)
     host.registry.set(
       ID_B,
       record(ID_B, 'edge-add-ons', {
@@ -627,10 +629,89 @@ describe('ExtensionSyncApplier – the switch-by-switch merge under each switch�
       })
     )
     host.calls.length = 0
-    applier.apply([live(ID_B, { store: 'edge-add-ons', enabled: true, enabledAt: T1 })])
+    applier.apply([
+      live(ID_B, { store: 'edge-add-ons', enabled: true, enabledAt: T1, toolbarPinnedAt: T0 })
+    ])
     await applier.settled()
     expect(host.calls).toEqual([])
     expect(host.registry.get(ID_B)).toMatchObject({ enabled: false, enabledAt: T0 })
+  })
+
+  it('a withheld enable is no early exit (the verifier’s N2): the pin’s merge stands as made, and a pin clock here later than the record’s still re-publishes – on a landing waiting for approval and on an update’s pending permissions alike', async () => {
+    const host = new FakeHost()
+    // The landing waits for approval here, and the user pinned it meanwhile (T1 + 1): the
+    // record's copy – on, unpinned, its pin clock older – lands nothing (the enable withheld,
+    // the pin kept) and IS re-published, so the peer takes this device's pin.
+    host.registry.set(
+      ID_A,
+      record(ID_A, 'chrome-web-store', {
+        enabled: false,
+        toolbarPinned: true,
+        pendingApproval: true,
+        enabledAt: T0,
+        toolbarPinnedAt: T1 + 1
+      })
+    )
+    const applier = new ExtensionSyncApplier(host)
+    applier.apply([
+      live(ID_A, { enabled: true, toolbarPinned: false, enabledAt: T1, toolbarPinnedAt: T0 })
+    ])
+    await applier.settled()
+    expect(host.calls).toEqual([`republish ${ID_A.slice(0, 4)}`])
+    expect(host.registry.get(ID_A)).toMatchObject({
+      enabled: false,
+      pendingApproval: true,
+      toolbarPinned: true,
+      toolbarPinnedAt: T1 + 1
+    })
+    // The same with an update's new permissions waiting (`pendingWarnings`): the enable is
+    // withheld, the later pin here kept and re-published.
+    host.registry.set(
+      ID_B,
+      record(ID_B, 'edge-add-ons', {
+        enabled: false,
+        toolbarPinned: true,
+        pendingWarnings: ['Read your browsing history'],
+        enabledAt: T0,
+        toolbarPinnedAt: T1 + 1
+      })
+    )
+    host.calls.length = 0
+    applier.apply([
+      live(ID_B, {
+        store: 'edge-add-ons',
+        enabled: true,
+        toolbarPinned: false,
+        enabledAt: T1,
+        toolbarPinnedAt: T0
+      })
+    ])
+    await applier.settled()
+    expect(host.calls).toEqual([`republish ${ID_B.slice(0, 4)}`])
+    expect(host.registry.get(ID_B)).toMatchObject({
+      enabled: false,
+      toolbarPinned: true,
+      toolbarPinnedAt: T1 + 1
+    })
+    // The record's pin newer as well: the pin lands (that commit is the re-publish), the enable
+    // is still withheld, and no `republish` comes beside it.
+    host.calls.length = 0
+    applier.apply([
+      live(ID_B, {
+        store: 'edge-add-ons',
+        enabled: true,
+        toolbarPinned: false,
+        enabledAt: T1,
+        toolbarPinnedAt: T1 + 2
+      })
+    ])
+    await applier.settled()
+    expect(host.calls).toEqual([`setToolbarPinned ${ID_B.slice(0, 4)} off`])
+    expect(host.registry.get(ID_B)).toMatchObject({
+      enabled: false,
+      toolbarPinned: false,
+      toolbarPinnedAt: T1 + 2
+    })
   })
 
   it('a record without clocks (an older build’s; a switch the phone never flipped) is read at the engine’s fallback, 0 – as old as any – so it ties with an unstamped registry record and loses to a stamped one, whatever `modified` it travelled under', async () => {
@@ -679,12 +760,19 @@ describe('ExtensionSyncApplier – a tombstone', () => {
     })
   })
 
-  it('the toast’s words: the extension, then "removed on <device name>" – "another device" when the engine could not name it', () => {
-    expect(syncedRemovalToast('uBlock Origin', 'Pixel 9')).toBe('uBlock Origin removed on Pixel 9')
-    expect(syncedRemovalToast('uBlock Origin', null)).toBe(
-      'uBlock Origin removed on another device'
+  it('the toast’s words (the lead’s ruling, round 4): the extension named in BOTH forms – "<Name> removed on <device>", "<Name> removed on another device" when the engine could not name it; an empty name falls back to the id, never to the bare word "Extension"', () => {
+    const uBlock = { id: ID_A, name: 'uBlock Origin' }
+    expect(syncedRemovalToast(uBlock, 'Pixel 9')).toBe('uBlock Origin removed on Pixel 9')
+    expect(syncedRemovalToast(uBlock, null)).toBe('uBlock Origin removed on another device')
+    // A registry record always carries its manifest's name; were it empty (or blank) all the
+    // same, the id stands in, in both forms, so the line still says which extension went.
+    expect(syncedRemovalToast({ id: ID_B, name: '' }, 'Work laptop')).toBe(
+      `${ID_B} removed on Work laptop`
     )
-    expect(syncedRemovalToast('', 'Work laptop')).toBe('Extension removed on Work laptop')
+    expect(syncedRemovalToast({ id: ID_B, name: '  ' }, null)).toBe(
+      `${ID_B} removed on another device`
+    )
+    expect(syncedRemovalToast({ id: ID_B, name: '' }, null)).not.toContain('Extension removed')
   })
 })
 
@@ -810,6 +898,129 @@ describe('ExtensionSyncApplier – the schedule', () => {
     applier.apply([live(ID_C, { store: 'edge-add-ons', enabled: true, enabledAt: 1 })])
     await applier.settled()
     expect(host.calls.at(-1)).toBe(`setEnabled ${ID_C.slice(0, 4)} on`)
+  })
+
+  it('applies nothing before the extension layer’s startup hold has been HANDED OVER at all (Desktop’s read of #715, `StartupHoldSlot`): the records queue in the slot; a closed hold assigned keeps them waiting and runs them, in order, once it opens; an open hold – or null, a host without one – runs them at the assignment, and every later round at once', async () => {
+    // The desktop's order: the applier is built (the service's constructor), rounds may come,
+    // and `platform/index.ts` seats the hold afterwards. Before the seat: nothing, whatever
+    // `whenAttached` says (the loads are through here).
+    const host = new FakeHost()
+    const slot = new StartupHoldSlot()
+    host.hold = slot
+    host.registry.set(ID_B, record(ID_B, 'chrome-web-store', { enabled: true }))
+    const applier = new ExtensionSyncApplier(host)
+    expect(slot.assigned).toBe(false)
+    applier.apply([live(ID_A)])
+    applier.apply([live(ID_B, { enabled: false })])
+    await tick()
+    await tick()
+    expect(host.calls).toEqual([])
+    expect(host.registry.get(ID_B)!.enabled).toBe(true)
+    expect(applier.inFlight()).toEqual(new Set([ID_A, ID_B]))
+    // A CLOSED hold is seated: still nothing – the queue is the hold's now – until it opens,
+    // then everything in the order the records came.
+    const hold = new StartupHold()
+    let release: () => void = () => undefined
+    hold.until(new Promise<void>((resolve) => (release = resolve)))
+    slot.assign(hold)
+    expect(slot.assigned).toBe(true)
+    await tick()
+    await tick()
+    expect(host.calls).toEqual([])
+    release()
+    await hold.whenOpen()
+    await applier.settled()
+    expect(host.calls).toEqual([
+      `download ${ID_A.slice(0, 4)} chrome-web-store`,
+      `setEnabled ${ID_B.slice(0, 4)} off`,
+      `install ${ID_A.slice(0, 4)} chrome-web-store unpinned`
+    ])
+    // Seated and open from then on: the next round's records run at once.
+    applier.apply([live(ID_B, { enabled: true })])
+    await applier.settled()
+    expect(host.calls.at(-1)).toBe(`setEnabled ${ID_B.slice(0, 4)} on`)
+
+    // An OPEN hold seated: the queue runs at the assignment.
+    const host2 = new FakeHost()
+    const slot2 = new StartupHoldSlot()
+    host2.hold = slot2
+    host2.registry.set(ID_C, record(ID_C, 'edge-add-ons', { enabled: true }))
+    const applier2 = new ExtensionSyncApplier(host2)
+    applier2.apply([live(ID_C, { store: 'edge-add-ons', enabled: false })])
+    await tick()
+    expect(host2.calls).toEqual([])
+    const open = new StartupHold()
+    expect(open.open).toBe(true)
+    slot2.assign(open)
+    await applier2.settled()
+    expect(host2.calls).toEqual([`setEnabled ${ID_C.slice(0, 4)} off`])
+
+    // A host without a hold assigns null: the queue runs then, and later rounds at once.
+    const host3 = new FakeHost()
+    const slot3 = new StartupHoldSlot()
+    host3.hold = slot3
+    host3.registry.set(ID_C, record(ID_C, 'edge-add-ons', { enabled: true }))
+    const applier3 = new ExtensionSyncApplier(host3)
+    applier3.apply([live(ID_C, { store: 'edge-add-ons', enabled: false })])
+    await tick()
+    expect(host3.calls).toEqual([])
+    slot3.assign(null)
+    await applier3.settled()
+    expect(host3.calls).toEqual([`setEnabled ${ID_C.slice(0, 4)} off`])
+    applier3.apply([live(ID_C, { store: 'edge-add-ons', enabled: true, enabledAt: 1 })])
+    await applier3.settled()
+    expect(host3.calls.at(-1)).toBe(`setEnabled ${ID_C.slice(0, 4)} on`)
+  })
+
+  it('a declined landing (the lead’s ruling, round 4): a live record handed over BEFORE the user removed the pending landing – still queued behind the hold – lands nothing, least of all the landing again; a record handed over AFTER the decline (the engine’s re-offer) lands as any', async () => {
+    const host = new FakeHost()
+    const hold = new StartupHold()
+    let release: () => void = () => undefined
+    hold.until(new Promise<void>((resolve) => (release = resolve)))
+    host.hold = hold
+    const applier = new ExtensionSyncApplier(host)
+    // Round 1 hands A's record over while the hold is closed; the landing from an earlier
+    // session stands in the registry, pending. The user removes it (`ExtensionService.remove`
+    // → `declined`) before the queue runs.
+    host.registry.set(
+      ID_A,
+      record(ID_A, 'chrome-web-store', { enabled: false, pendingApproval: true })
+    )
+    applier.apply([live(ID_A), live(ID_B)])
+    host.registry.delete(ID_A)
+    applier.declined(ID_A)
+    release()
+    await hold.whenOpen()
+    await applier.settled()
+    // Nothing for A – no download, no install; B's record, undeclined, landed.
+    expect(host.calls).toEqual([
+      `download ${ID_B.slice(0, 4)} chrome-web-store`,
+      `install ${ID_B.slice(0, 4)} chrome-web-store unpinned`
+    ])
+    expect(host.registry.has(ID_A)).toBe(false)
+    expect(applier.inFlight().size).toBe(0)
+    // Handed over again from before the decline's hand-over? There is no such thing: every
+    // later `apply` is a later hand-over. The engine stops handing the peer's copy over while
+    // the decline stands; when it does hand a record over again (a fresh install on the peer,
+    // stamped after the decline), that record lands.
+    applier.apply([live(ID_A, { toolbarPinned: true })])
+    await applier.settled()
+    expect(host.calls.slice(2)).toEqual([
+      `download ${ID_A.slice(0, 4)} chrome-web-store`,
+      `install ${ID_A.slice(0, 4)} chrome-web-store pinned`
+    ])
+    expect(host.registry.get(ID_A)).toMatchObject({ enabled: false, pendingApproval: true })
+    // Declined once more, with the re-offer's record still waiting behind the id's busy work:
+    // stale the same way – it came before this decline.
+    host.busyIds.add(ID_A)
+    applier.apply([live(ID_A, { toolbarPinned: true })])
+    host.registry.delete(ID_A)
+    applier.declined(ID_A)
+    host.idle(ID_A)
+    await applier.settled()
+    expect(host.calls.slice(4)).toEqual([])
+    expect(host.registry.has(ID_A)).toBe(false)
+    expect(applier.inFlight().size).toBe(0)
   })
 
   it('an id is in flight from the moment its record is handed over – synchronously, through a closed hold, however many records for it wait – until its work is done, and released on its own', async () => {
