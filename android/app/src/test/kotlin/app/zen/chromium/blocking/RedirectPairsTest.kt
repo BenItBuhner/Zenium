@@ -82,6 +82,29 @@ class RedirectPairsTest {
     }
 
     @Test
+    fun `a cancelled hop's pair is replaced by the document's next stamp – the new target is paired, the old one is not`() {
+        // The hook stamped A→B, B's navigation was cancelled before its request, the hook stamped A→C
+        // (Extensions' edge case: "Replace the pair on every noteRedirect").
+        pairs.note(tab, "https://a.example/", "https://b.example/")
+        pairs.note(tab, "https://a.example/", "https://c.example/")
+        assertEquals("https://a.example/", pairs.redirectedFrom(tab, "https://c.example/", isMainFrame = true))
+        // The replaced hop is gone for good: B is a plain load, C's pair was spent once.
+        assertNull(pairs.redirectedFrom(tab, "https://b.example/", isMainFrame = true))
+        assertNull(pairs.redirectedFrom(tab, "https://c.example/", isMainFrame = true))
+    }
+
+    @Test
+    fun `a cancelled hop's pair never attaches to the next navigation, whichever URL it is for`() {
+        // A→B stamped, cancelled, A→C stamped; before C's request the tab navigates to B on its own
+        // (Extensions' edge case: "clear it on a main-frame intercept whose url is not `to`").
+        pairs.note(tab, "https://a.example/", "https://b.example/")
+        pairs.note(tab, "https://a.example/", "https://c.example/")
+        assertNull(pairs.redirectedFrom(tab, "https://b.example/", isMainFrame = true))
+        // That request was not the hop's target, so the pending pair is cleared with it: nothing attaches to C either.
+        assertNull(pairs.redirectedFrom(tab, "https://c.example/", isMainFrame = true))
+    }
+
+    @Test
     fun `tabs keep their own hop`() {
         val second = FakeTab(tabId = "tab-2")
         pairs.note(tab, "https://a.example/", "https://b.example/")
