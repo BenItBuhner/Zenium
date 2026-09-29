@@ -8587,10 +8587,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * or "URL not supported" for an address its `excluded_urls` (`scripts/utils.js`) begins
      * with: `localhost`, `127.0.0.1`, `0.0.0.0`, `192.168.`, `10.` and the browsers' own schemes –
      * so the fixture's `http://10.0.2.2:8765/` is one (round 22's BEFORE read PARTIAL on both
-     * WebViews for it), and its bare public name `http://10.0.2.2.nip.io:8765/` is one as well.
+     * WebViews for it), and its dotted public name `http://10.0.2.2.nip.io:8765/` was one as well.
      * The fixture goes under [LABELLED_NAME_BASE], allowed over plaintext for the row (a unique
      * host HTTPS-only mode would upgrade) and forgotten after; a phone's user browses public
-     * names, and the extension's own list stands as it is. The fixture settles, the action is
+     * names, and the extension's own list stands as it is. Round 24 read the browser's lookalike
+     * check refusing the labelled dotted name (`fixture.10.0.2.2.nip.io` embeds the engaged
+     * fixture address as a run of labels) – the PARTIAL at both ends was its popup's "URL not
+     * supported" for the error page's `zen://` address, not for the fixture's; the dash form
+     * carries no such run. The fixture settles, the action is
      * clicked, the welcome page waited for and accepted from a script, the action clicked again
      * and the popup polled for the button. `P` on the popup's button enabled for the fixture's
      * address; `PARTIAL` when the popup came up saying the address is not supported (its check,
@@ -13829,25 +13833,32 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val LOCALHOST_BASE = "http://localhost:8765"
         /**
          * The same server under a public-looking name that resolves to the emulator's host address
-         * (nip.io's wildcard DNS: `10.0.2.2.nip.io` answers 10.0.2.2), for Chrono Download Manager,
-         * whose sniffer page refuses a private address before it asks its background for anything
-         * ("Cannot scan resources for this page."; its URL test excludes 10/8, 127/8, 172.16/12,
-         * 192.168/16 and 169.254/16 hosts and a bare `localhost` – compat round 15's 113 sniffer
-         * lane). Chrome shows the same over `http://10.0.2.2:8765/`; a phone's user browses public
-         * names. An image whose DNS does not answer the name fails to load the page, and the
-         * reading says so.
+         * (nip.io's wildcard DNS in its dash form: `10-0-2-2.nip.io` answers 10.0.2.2), for Chrono
+         * Download Manager, whose sniffer page refuses a private address before it asks its
+         * background for anything ("Cannot scan resources for this page."; its URL test excludes
+         * 10/8, 127/8, 172.16/12, 192.168/16 and 169.254/16 hosts and a bare `localhost` – compat
+         * round 15's 113 sniffer lane). Chrome shows the same over `http://10.0.2.2:8765/`; a
+         * phone's user browses public names. An image whose DNS does not answer the name fails to
+         * load the page, and the reading says so. The dotted form (`10.0.2.2.nip.io`, rounds 15
+         * to 24) embeds the fixture address as a run of labels, and once the sweep's visits make
+         * `10.0.2.2` a site with engagement the browser's lookalike check refuses the name
+         * (`zen://error?kind=lookalike&target=10.0.2.2&reason=embedding&source=engaged` – round 24
+         * read it on Image Downloader's gallery and Wayback Machine's page, rows late in the
+         * table, while Chrono's earlier rows loaded); the dash form embeds no label run, and its
+         * one label's hyphen-joined start (`10`) is shorter than the embedding rule's minimum.
          */
-        private const val PUBLIC_NAME_BASE = "http://10.0.2.2.nip.io:8765"
+        private const val PUBLIC_NAME_BASE = "http://10-0-2-2.nip.io:8765"
         /**
          * The same server under a public-looking name with a label ahead of the address (nip.io
-         * answers `<label>.<ip>.nip.io` with `<ip>` as it answers `<ip>.nip.io`), for an extension
-         * whose refusal of private addresses is a PREFIX list the bare name begins with as the
-         * address does: Wayback Machine's `excluded_urls` (`scripts/utils.js`) has `10.`, so
-         * `http://10.0.2.2.nip.io:8765/…` is "URL not supported" to its popup as
-         * `http://10.0.2.2:8765/…` is, and this name is not. A unique host to the browser as
-         * [PUBLIC_NAME_BASE] is: allowed over plaintext for the row ([allowPlaintext]).
+         * answers `<label>-<ip-with-dashes>.nip.io` with `<ip>` as it answers the bare form), for
+         * an extension whose refusal of private addresses is a PREFIX list the address begins with:
+         * Wayback Machine's `excluded_urls` (`scripts/utils.js`) has `10.`, so `http://10.0.2.2:8765/…`
+         * is "URL not supported" to its popup (and the dotted `10.0.2.2.nip.io` was as well), and
+         * this name is not. A unique host to the browser as [PUBLIC_NAME_BASE] is: allowed over
+         * plaintext for the row ([allowPlaintext]). Its label (`fixture`) names no site the browser
+         * knows, so the embedding rule's hyphen test passes it.
          */
-        private const val LABELLED_NAME_BASE = "http://fixture.10.0.2.2.nip.io:8765"
+        private const val LABELLED_NAME_BASE = "http://fixture-10-0-2-2.nip.io:8765"
 
         /**
          * The runtime's id for an unsigned zip without a `manifest.key`: SHA-256 of
