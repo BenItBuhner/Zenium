@@ -29,6 +29,18 @@ class TextFragmentLinkTest {
         assertFalse(TextFragmentLink.offers(null))
     }
 
+    @Test
+    fun theActionModesGateWantsAnAnchoredSelectionThePageScriptAWebPageAndNoPdfViewer() {
+        val script = "(function(){})()"
+        assertTrue(TextFragmentLink.offered(anchored = true, pageScript = script, pageUrl = "https://example.test/article", pdf = false))
+        // The PDF viewer: pdf.js's text layer under the document's own http URL – a link into it highlights nothing.
+        assertFalse(TextFragmentLink.offered(anchored = true, pageScript = script, pageUrl = "https://example.test/doc.pdf", pdf = true))
+        // A `zen://` page, a Paste toolbar or a password field's mode, a custom tab without the page script.
+        assertFalse(TextFragmentLink.offered(anchored = true, pageScript = script, pageUrl = "zen://settings/", pdf = false))
+        assertFalse(TextFragmentLink.offered(anchored = false, pageScript = script, pageUrl = "https://example.test/", pdf = false))
+        assertFalse(TextFragmentLink.offered(anchored = true, pageScript = "", pageUrl = "https://example.test/", pdf = false))
+    }
+
     // --- the page's answer ---------------------------------------------------------------------------
 
     @Test
@@ -139,5 +151,10 @@ class TextFragmentLinkTest {
     @Test
     fun theLabelIsChromesInSentenceCase() {
         assertEquals("Copy link to highlight", TextFragmentLink.TITLE)
+    }
+
+    @Test
+    fun theRefusalToastIsTheDesktopsWordsUncontracted() {
+        assertEquals("Could not make a link to this text", TextFragmentLink.NO_LINK_TOAST)
     }
 }

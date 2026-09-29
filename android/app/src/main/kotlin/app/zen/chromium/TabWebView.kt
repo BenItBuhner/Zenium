@@ -1386,8 +1386,9 @@ class TabWebView(
             // fold of a phone's overflow list (the sixth row on a Pixel 6). Not for a `zen://`
             // page or a file, where the link means nothing to whoever gets it; not for a Paste
             // toolbar or a password field; not in a custom tab, which runs no page script to make
-            // the link.
-            val copyLink = plan.anchored && host.pageScript.isNotEmpty() && TextFragmentLink.offers(this@TabWebView.url)
+            // the link; not in the PDF viewer, whose text layer sits under the document's http URL
+            // but whose link would highlight nothing.
+            val copyLink = TextFragmentLink.offered(plan.anchored, host.pageScript, this@TabWebView.url, pdfPage != null)
             if (copyLink) {
                 menu.add(SelectionToolbar.GROUP, R.id.zen_selection_copy_link, plan.order, TextFragmentLink.TITLE).apply {
                     setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
@@ -1430,7 +1431,7 @@ class TabWebView(
                     SecretClipboard.write(context, link, sensitive = false)
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) toast("Link copied")
                 } else {
-                    toast("Couldn't make a link to this text")
+                    toast(TextFragmentLink.NO_LINK_TOAST)
                 }
                 Log.d(SELECTION_TAG, "copy link to highlight in $tabId: ${if (link != null) "copied" else "no link"}")
                 if (!finished) mode.finish()

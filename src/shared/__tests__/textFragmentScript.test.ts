@@ -181,6 +181,10 @@ describe('making a link to the highlight (the core’s generate request)', () =>
 })
 
 describe('making a link to the highlight without the bridge (the phone’s action mode, through the DOM)', () => {
+  it('listens for the event the host dispatches (`TextFragmentLink.EVENT` in Kotlin)', () => {
+    expect(TEXT_FRAGMENT_LINK_EVENT).toBe('zen-text-fragment-link')
+  })
+
   it('writes the selection’s directive into the event’s detail', () => {
     install()
     select('ledger did not care')

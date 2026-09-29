@@ -8,13 +8,14 @@
  * action mode has collapsed the selection by the time the request lands, so the host wraps the
  * work so the one it cleared stands in (`withSelection`, `selectionMemory.ts`).
  *
- * Following one: an engine with text fragments (`document.fragmentDirective` present) scrolls to
- * and highlights the text itself and strips the directive from `location.hash`; one without
- * (Android's WebView leaves the feature off) shows the page's top and the directive stays in the
- * URL. The script then does the engine's part once the document has loaded: the directives'
- * first matches are found (`findTextDirective`), painted through the CSS Custom Highlight API in
- * the `::target-text` colours (or selected, where the API is missing), and the first one is
- * scrolled to the middle of the viewport, as Chrome's `TextFragmentAnchor` does.
+ * Following one: an engine with text fragments (`document.fragmentDirective` present – Chrome,
+ * Electron, and the Android WebView too: 113 on the API 34 lane follows the directive and paints
+ * its own `::target-text`, `TextFragmentDemo`) scrolls to and highlights the text itself and
+ * strips the directive from `location.hash`; an engine without it shows the page's top and the
+ * directive stays in the URL. The script then does the engine's part once the document has
+ * loaded: the directives' first matches are found (`findTextDirective`), painted through the CSS
+ * Custom Highlight API in the `::target-text` colours (or selected, where the API is missing), and
+ * the first one is scrolled to the middle of the viewport, as Chrome's `TextFragmentAnchor` does.
  *
  * The phone's selection toolbar asks for the link without the bridge (`TEXT_FRAGMENT_LINK_EVENT`,
  * a DOM event the host's `evaluateJavascript` dispatches on the document; `TextFragmentLink.kt`):

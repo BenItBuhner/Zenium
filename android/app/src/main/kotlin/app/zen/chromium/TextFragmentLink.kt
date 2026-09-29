@@ -30,6 +30,12 @@ object TextFragmentLink {
     /** The item's label: Chrome's, sentence case as a toolbar item (design language §9.1). */
     const val TITLE = "Copy link to highlight"
 
+    /**
+     * The toast for a selection the page cannot single out: the desktop's own words
+     * (`copyHighlightLink` in `src/core/menus.ts`), uncontracted as the design language has them.
+     */
+    const val NO_LINK_TOAST = "Could not make a link to this text"
+
     /** The fragment directive delimiter (`FRAGMENT_DIRECTIVE` in `textFragment.ts`). */
     const val DELIMITER = ":~:"
 
@@ -58,6 +64,16 @@ object TextFragmentLink {
         val url = pageUrl ?: return false
         return url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
     }
+
+    /**
+     * The action mode's gate for the item: a selection the system's Copy anchors ([anchored] –
+     * not a Paste toolbar or a password field), a WebView that runs the page script ([pageScript]
+     * non-empty – not a custom tab, which has none to make the link), a web page ([offers]), and
+     * not the PDF viewer ([pdf] – pdf.js's text layer sits under the document's own http URL, but
+     * a `#:~:text=` link into a PDF highlights nothing in any viewer; Chrome's has no such item).
+     */
+    fun offered(anchored: Boolean, pageScript: String, pageUrl: String?, pdf: Boolean): Boolean =
+        anchored && pageScript.isNotEmpty() && !pdf && offers(pageUrl)
 
     /**
      * The directive out of `evaluateJavascript`'s answer to [GENERATE_SCRIPT]: the JSON string's
