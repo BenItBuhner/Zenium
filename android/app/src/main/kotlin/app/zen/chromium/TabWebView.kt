@@ -1378,15 +1378,19 @@ class TabWebView(
                     contentDescription = item.title
                 }
             }
-            // Copy link to highlight (PUI-40), behind the toolbar's overflow where Chrome keeps
-            // it, for a text selection in a web page: the link the page script makes for the
-            // passage (`TextFragmentLink`). Not for a `zen://` page or a file, where the link
-            // means nothing to whoever gets it; not for a Paste toolbar or a password field; not
-            // in a custom tab, which runs no page script to make the link.
+            // Copy link to highlight (PUI-40), the last of Zenium's rows, for a text selection in
+            // a web page: the link the page script makes for the passage (`TextFragmentLink`). It
+            // is placed as the core's rows are – in the bar while there is room, else where the
+            // toolbar puts the rows that did not fit, at the head of its overflow – and not as an
+            // overflow-only item, which the toolbar sorts under the system's own rows, under the
+            // fold of a phone's overflow list (the sixth row on a Pixel 6). Not for a `zen://`
+            // page or a file, where the link means nothing to whoever gets it; not for a Paste
+            // toolbar or a password field; not in a custom tab, which runs no page script to make
+            // the link.
             val copyLink = plan.anchored && host.pageScript.isNotEmpty() && TextFragmentLink.offers(this@TabWebView.url)
             if (copyLink) {
                 menu.add(SelectionToolbar.GROUP, R.id.zen_selection_copy_link, plan.order, TextFragmentLink.TITLE).apply {
-                    setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
                     contentDescription = TextFragmentLink.TITLE
                 }
             }

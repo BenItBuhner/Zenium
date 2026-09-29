@@ -4,7 +4,8 @@ import org.json.JSONTokener
 
 /**
  * Copy link to highlight in a page's text-selection action mode (PUI-40; Chrome's item of the
- * same name, behind the toolbar's overflow): the link that scrolls to and highlights the selected
+ * same name, which Chrome offers in its mouse and touchpad dropdown alone – here the last of
+ * Zenium's rows in the touch toolbar): the link that scrolls to and highlights the selected
  * passage, `page#:~:text=[prefix-,]start[,end][,-suffix]`.
  *
  * The directive is the page script's to make – the one generator, `src/shared/textFragment.ts`,
