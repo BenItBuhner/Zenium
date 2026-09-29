@@ -1,0 +1,11 @@
+{
+  "id": "tablet-list-motion",
+  "order": 120,
+  "class": "TabletTabListMotionDemo",
+  "shard": "tablet-webview",
+  "mirrors": "android-tablet-list-motion-demo.yml",
+  "dir": "tablet-list-motion-demo",
+  "timeout": 900,
+  "estimate": 6,
+  "note": "The tablet sidebar's tab list motion (MOT-33): the boot path's rows mounting settled, a new row growing from its end edge and a closed row shrinking out of its slot as the rows below glide and the New Tab row follows (each caught one frame in under a held animation frame, then at the emulator's cadence, traced), the edge fades on overflow and once scrolled, a real hold's lift, the reduced-motion fade where the WebView reflects it, and the dark scheme's frames. The snapshot WebView for the lift's @starting-style rise."
+}

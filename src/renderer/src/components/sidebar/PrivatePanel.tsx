@@ -14,6 +14,7 @@ import { cn } from '@renderer/lib/utils'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
 import { watchGutter } from './listGutter'
 import { ENTER_BATCH, ListMotionContext } from './listMotion'
+import { SlideSnapshot } from './SlideSnapshot'
 import { NewTabButton, StripRowItem } from './SpacePanel'
 import { TabSet } from './TabSet'
 import { useActiveRowInView } from './useActiveRowInView'
@@ -51,7 +52,9 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
 
   // The rows' motion, the space panel's (`SpacePanel`): one per list, keyed by its scroller so
   // lib/drag.ts finds it from a row.
-  const [motion] = useState(() => new SlideMotion('y', { enter: true, batch: ENTER_BATCH }))
+  const [motion] = useState(
+    () => new SlideMotion('y', { enter: true, leave: true, batch: ENTER_BATCH })
+  )
   useEffect(() => () => motion.dispose(), [motion])
   const scrollerEl = useRef<HTMLDivElement | null>(null)
   const scroller = useCallback(
@@ -69,8 +72,14 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
     },
     [fade, motion]
   )
+  // New Private Tab follows the list's layout, the space panel's New Tab row's rule (MOT-33).
+  const newTab = useCallback(
+    (el: HTMLButtonElement | null) => motion.follow('foot:new-tab', el),
+    [motion]
+  )
   const orderKey = tabs.map((t) => t.id).join('|')
   useLayoutEffect(() => {
+    // Read against the list as it stood just before this commit (`SlideSnapshot`).
     motion.flip(uiStore.get().drag?.tabId ?? null, true)
   }, [motion, orderKey])
   // The active row comes into view on activation (BUG-008), the space panel's rule; the pose is
@@ -92,11 +101,14 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
           inert={masked || undefined}
           aria-hidden={masked || undefined}
         >
+          <SlideSnapshot motion={motion} deps={[orderKey]} />
+          {/* The scroller is positioned, the space panel's: a closed row's picture shrinks in a
+              layer of its content (`SlideMotion.leave`). */}
           <div
             ref={scroller}
             data-tab-scroller
             data-active="true"
-            className="flex min-h-0 shrink flex-col overflow-y-auto overflow-x-hidden px-2"
+            className="relative flex min-h-0 shrink flex-col overflow-y-auto overflow-x-hidden px-2"
           >
             {/* One tablist, vertical (a11y-07, a11y-31); New Private Tab is the strip's next
                 control after it. */}
@@ -121,6 +133,7 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
           </div>
           <div className="zen-list-foot flex shrink-0 grow flex-col pb-1" data-strip-foot>
             <NewTabButton
+              ref={newTab}
               compact={compact}
               spaced={tabs.length > 0}
               dropInto={false}
