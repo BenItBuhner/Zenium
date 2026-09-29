@@ -3576,8 +3576,9 @@ function searchEngineItem(
         // the engine, Save as its verb; the shortcut is checked by the shared keyword rule
         // against the profile's other engines (`engineId` excepts the engine's own word) and
         // goes to the command as the engine's `keyword`, `@` or not – the core normalises it.
-        // On the phone and the tablet the form is the second sheet over the engine's (§9.24),
-        // as Add's is over the page; the save keeps the engine's id, so the default stays.
+        // On the phone the form is the second sheet over the engine's (§9.24), on the tablet the
+        // second dialog over the engine's, as Add's is over the page on each; the save keeps the
+        // engine's id, so the default stays.
         render: (close) => (
           <SearchEngineForm
             initial={{ name: e.name, url: e.searchUrl, shortcut: e.keyword }}
