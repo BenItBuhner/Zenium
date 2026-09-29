@@ -663,6 +663,7 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   notifications: 'notifications',
   contextMenus: 'contextMenus',
   webNavigation: 'webNavigation',
+  declarativeContent: 'declarativeContent',
   declarativeNetRequest: 'declarativeNetRequest',
   webRequest: 'webRequest',
   commands: null,

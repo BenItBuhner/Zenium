@@ -1,0 +1,9 @@
+{
+  "name": "Installable Page",
+  "short_name": "Installable",
+  "start_url": "/pwa.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [{ "src": "/photo-1.png", "sizes": "any", "type": "image/png" }]
+}

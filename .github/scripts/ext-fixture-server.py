@@ -61,6 +61,9 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         # `.md` file outside its own README); this interpreter's default map may lack either.
         '.md': 'text/markdown',
         '.markdown': 'text/markdown',
+        # The web app manifest `pwa.html` links (PWA Install Block's content script removes the
+        # link; compat round 24): its own type, as a real origin serves it.
+        '.webmanifest': 'application/manifest+json',
     }
 
     def do_GET(self):

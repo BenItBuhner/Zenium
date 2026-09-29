@@ -9,7 +9,15 @@
  * keeps the preload out (`contextBridge.executeInMainWorld`), and Android's WebView layer can
  * evaluate it verbatim. Everything it needs arrives through its two arguments.
  */
-import type { ApiSpec, EventSpec, MethodSpec, NamespaceSpec, ParamSpec, ParamType } from './spec'
+import type {
+  ApiSpec,
+  ClassSpec,
+  EventSpec,
+  MethodSpec,
+  NamespaceSpec,
+  ParamSpec,
+  ParamType
+} from './spec'
 import type { StorageChanges, StorageItems } from './storage'
 
 export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: string }
@@ -781,6 +789,8 @@ export function installExtensionApi(
       nativeMap?: (args: unknown[]) => unknown[] | null
       /** `EventSpec.filters`: the event takes URL filters; others ignore a second argument. */
       filters?: boolean
+      /** `EventSpec.declarative`: the rule members route to the host under this namespace and event. */
+      declarative?: { namespace: string; event: string }
     }
   ): EventObject {
     const listeners = new Map<Listener, number | null>()
@@ -880,7 +890,8 @@ export function installExtensionApi(
         return results
       }
     }
-    defineRuleMembers(object)
+    if (options.declarative) defineRoutedRuleMembers(object, options.declarative)
+    else defineRuleMembers(object)
     record.object = object
     events.set(fullName, record)
     return object
@@ -897,6 +908,40 @@ export function installExtensionApi(
       const cb = takeCallback(raw)
       if (cb) Reflect.apply(cb, receiver, [])
     })
+  }
+
+  /**
+   * The rule members of a declarative event (`declarativeContent.onPageChanged`), routed to the
+   * host with the event's name first: `addRules(rules, callback)` answers the rules as added
+   * (their ids and priorities filled in), `removeRules(ids?, callback)` nothing,
+   * `getRules(ids?, callback)` the rules asked for – callback or promise, a failure through
+   * `runtime.lastError` or a rejection, as every routed method.
+   */
+  function defineRoutedRuleMembers(
+    object: EventObject,
+    routed: { namespace: string; event: string }
+  ): void {
+    const member = (name: string, params: ParamSpec[]): ((...raw: unknown[]) => unknown) => {
+      const qualified = `${routed.namespace}.${routed.event}.${name}(${params
+        .map((p) => `${p.optional ? 'optional ' : ''}${String(p.type)} ${p.name}`)
+        .join(', ')})`
+      return function (this: unknown, ...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const args = normalizeArgs(qualified, raw, params)
+        return settle(qualified, invoke(routed.namespace, name, [routed.event, ...args]), callback)
+      }
+    }
+    define(object, 'addRules', member('addRules', [{ name: 'rules', type: 'array' }]))
+    define(
+      object,
+      'removeRules',
+      member('removeRules', [{ name: 'ruleIdentifiers', type: 'array', optional: true }])
+    )
+    define(
+      object,
+      'getRules',
+      member('getRules', [{ name: 'ruleIdentifiers', type: 'array', optional: true }])
+    )
   }
 
   function deliver(
@@ -1588,11 +1633,41 @@ export function installExtensionApi(
     const native = safely(() => primary[name])
     const keepNative = eventSpec.keepNative || Boolean(nsSpec.shape)
     if (keepNative && native && typeof native.addListener === 'function') return
-    const object = createEvent(fullName, native, {
+    const eventOptions: Parameters<typeof createEvent>[2] = {
       nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame',
       filters: eventSpec.filters === true
-    })
+    }
+    if (eventSpec.declarative) eventOptions.declarative = { namespace, event: name }
+    const object = createEvent(fullName, native, eventOptions)
     for (const target of targets) define(target, name, object)
+  }
+
+  /**
+   * A constructor of the namespace (`NamespaceSpec.classes`), as Chrome's schema-made ones
+   * behave (`declarative_content_hooks_delegate.cc`): `new chrome.declarativeContent.
+   * PageStateMatcher({ pageUrl })` copies the details' own properties onto the instance, sets
+   * the `instanceType` word over them (a word in the details is talked over) and refuses a
+   * property the type's schema does not name, a second argument or a non-object one with the
+   * binding's `TypeError`s – the instance is what a rule carries to the host. Called without
+   * `new` (Chrome allows it too) the same object comes back plain.
+   */
+  function makeClass(spec: ClassSpec): (details?: unknown) => Record<string, unknown> {
+    const Class = function (this: unknown, ...raw: unknown[]): Record<string, unknown> {
+      if (raw.length > 1) throw new TypeError('Invalid invocation.')
+      const details = raw[0]
+      if (details !== undefined && details !== null && !isObject(details))
+        throw new TypeError('Invalid invocation.')
+      const object: Record<string, unknown> =
+        this instanceof Class ? (this as Record<string, unknown>) : {}
+      if (isObject(details)) Object.assign(object, details)
+      object.instanceType = spec.type
+      for (const key of Object.keys(object)) {
+        if (!spec.properties.includes(key))
+          throw new TypeError(`Invalid invocation: Unexpected property: '${key}'.`)
+      }
+      return object
+    }
+    return Class
   }
 
   function installNamespace(namespace: string, nsSpec: NamespaceSpec): void {
@@ -1624,6 +1699,12 @@ export function installExtensionApi(
     for (const type of nsSpec.contentSettings ?? []) {
       const value = contentSetting(namespace, type)
       for (const target of targets) define(target, type, value)
+    }
+    for (const [name, classSpec] of Object.entries(nsSpec.classes ?? {})) {
+      const fn = makeClass(classSpec)
+      for (const target of targets) {
+        if (typeof safely(() => target[name]) !== 'function') define(target, name, fn)
+      }
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {
