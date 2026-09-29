@@ -2656,10 +2656,11 @@ describe('the section model', () => {
 
     // Got it: the list is acknowledged through the engine, which hands back the records; the
     // bulk toast counts them – on the Undo clock – and its Undo puts them back as they were.
-    // The rule is that the toast's Undo stays in reach, not that the sheet stays: on the desktop
-    // (this build's layout) and the tablet the dialog host holds the frame inert under its scrim,
-    // so Got it leaves the dialog first (`closesSheet`); on the phone the chassis lifts the toast
-    // over the sheet (#651), so the sheet stays with the granted list under it.
+    // The rule is that the toast's Undo stays in reach (the lead's on #668), and the chassis
+    // keeps it there on every host – the phone lifts the toast over the sheet (#651), the tablet
+    // and the desktop lift it over a standing dialog in the frame dialog host's seat (#678) – so
+    // Got it keeps the sheet with the granted list under it on all three layouts: no
+    // `closesSheet` on any host – three pins, one per host, each built for its layout.
     const records = revoked.map((r) => ({ ...r, expiresAt: r.revokedAt + 30 * 86_400_000 }))
     invoke.mockImplementation(async (name) =>
       name === 'permissions.acknowledgeRevoked' ? (records as unknown as null) : null
@@ -2667,28 +2668,30 @@ describe('the section model', () => {
     invoke.mockClear()
     const gotIt = row(privacy, 'safety-check:permissions:revoked:acknowledge')
     if (gotIt.kind !== 'action') throw new Error('not an action')
-    expect(gotIt).toMatchObject({ button: 'Got it', closesSheet: true })
+    expect(gotIt).toMatchObject({ button: 'Got it' })
     const reviewState = state({
       lastSafetyCheck: result,
       permissionRules: rules
     } as Partial<UIState>)
     const privacyDef = PAGE.sections.find((x) => x.id === 'privacy')
     if (!privacyDef) throw new Error('no privacy section')
-    const tabletPrivacy = buildSection(privacyDef, {
-      ...context(reviewState).ctx,
-      formFactor: 'tablet'
-    })
-    const tabletGotIt = row(tabletPrivacy, 'safety-check:permissions:revoked:acknowledge')
-    if (tabletGotIt.kind !== 'action') throw new Error('not an action')
-    expect(tabletGotIt.closesSheet).toBe(true)
-    const phonePrivacy = buildSection(privacyDef, {
-      ...context(reviewState).ctx,
-      formFactor: 'phone'
-    })
-    const phoneGotIt = row(phonePrivacy, 'safety-check:permissions:revoked:acknowledge')
-    if (phoneGotIt.kind !== 'action') throw new Error('not an action')
-    expect(phoneGotIt).toMatchObject({ button: 'Got it' })
-    expect(phoneGotIt.closesSheet).toBeUndefined()
+    const gotItOn = (
+      formFactor: 'desktop' | 'tablet' | 'phone'
+    ): Extract<Row, { kind: 'action' }> => {
+      const built = buildSection(privacyDef, { ...context(reviewState).ctx, formFactor })
+      const hostGotIt = row(built, 'safety-check:permissions:revoked:acknowledge')
+      if (hostGotIt.kind !== 'action') throw new Error(`${formFactor}: not an action`)
+      expect(hostGotIt).toMatchObject({ button: 'Got it' })
+      return hostGotIt
+    }
+    // The desktop: the review is an item dialog in the frame dialog host; the toast lifts over
+    // it in the host's seat (#678), so Got it leaves the dialog standing.
+    expect(gotItOn('desktop').closesSheet).toBeUndefined()
+    // The tablet: the same host and the same seat (#678, `TabletShell`); the dialog stands.
+    expect(gotItOn('tablet').closesSheet).toBeUndefined()
+    // The phone: the sheet stays as since #668 – its messages lift over the sheet (#651).
+    expect(gotItOn('phone').closesSheet).toBeUndefined()
+    expect(gotIt.closesSheet).toBeUndefined()
     expect(gotIt.confirm).toBeUndefined()
     expect(gotIt.destructive).toBeUndefined()
     gotIt.onPress?.()
@@ -2709,6 +2712,41 @@ describe('the section model', () => {
     ])
     uiStore.set({ toasts: [] })
     invoke.mockImplementation(async () => null)
+
+    // The check back after Got it with the list acknowledged: the block is gone from the rebuilt
+    // sheet, which stays as the granted list alone (the row is still the review while a site
+    // holds a permission), the toast above it. With no granted site either the row has nothing
+    // to review and is an info row with no sheet, so the sheet open for it resolves to no item
+    // row and leaves with its act – the stack's orphan rule (`sheets.tsx`, `dialogs.tsx` `fits`)
+    // – while the toast keeps its seat and its clock.
+    const acknowledged: SafetyCheckResult = {
+      ...result,
+      permissions: {
+        ...result.permissions,
+        state: 'safe',
+        summary: '1 site with permissions you granted',
+        revoked: []
+      }
+    }
+    const afterGotIt = section(
+      'privacy',
+      state({ lastSafetyCheck: acknowledged, permissionRules: rules } as Partial<UIState>)
+    )
+    const kept = row(afterGotIt, 'safety-check:permissions')
+    if (kept.kind !== 'item') throw new Error('not an item')
+    expect(kept.sheet.groups.map((g) => g.id)).toEqual(['safety-check:permissions:sites'])
+    expect(findRow(afterGotIt.groups, 'safety-check:permissions:revoked:acknowledge')).toBeNull()
+    const emptied = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...acknowledged,
+          permissions: { ...acknowledged.permissions, grantedSites: 0 }
+        },
+        permissionRules: []
+      } as Partial<UIState>)
+    )
+    expect(row(emptied, 'safety-check:permissions').kind).toBe('info')
 
     // One site: the singular forms.
     const one = section(

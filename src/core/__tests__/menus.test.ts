@@ -1214,13 +1214,13 @@ describe('the app menu', () => {
     // alone (`internalPages.ts`). Chrome's Passwords and Autofill ▸ and Find and Edit ▸ are the
     // desktop's folds (W8-1): the tablet keeps the flat Passwords and Find in Page… rows in the
     // same seats – its menu folds nothing the desktop's does not have to, and its editing is the
-    // touch selection's own.
+    // touch selection's own. Show Bookmarks Bar ▸ stays: the tablet's bar is the desktop's under
+    // its toolbar (NTP-34), on the same three settings.
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
         label !== 'More Tools > Task Manager' &&
-        label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
         label !== 'Save and Share > Screenshot…' &&
         !label.startsWith('Passwords and Autofill >') &&
