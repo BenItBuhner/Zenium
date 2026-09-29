@@ -1704,7 +1704,10 @@ export function collectLocal(
  * waiting for the user's approval (`pendingApproval`, which `collectLocal` leaves out) – so an
  * absence in the local set is no removal: tombstoning it would uninstall the extension on the
  * device that has it. The uninstall's tombstone comes from the commit that removed the record,
- * where the engine's previous read of the list still held the id. The same absence is how
+ * where the engine's previous read of the list still held the id – unless the record removed
+ * was still `pendingApproval`: a synced landing removed before its approval is DECLINED on this
+ * device, not uninstalled everywhere (the lead's ruling, round 4), so `SyncEngine.sources`
+ * leaves it out of `removedExtensions` and the entry stays frozen. The same absence is how
  * `SyncEngine.sources` holds a copy this device must not publish under a winner's stamp: an id
  * in flight with the applier, and – on a host without one – an id whose record a remote copy
  * won and nothing here could apply (`LocalSources.extensions`).
@@ -1737,15 +1740,19 @@ export function frozenRecords(
  * every round, and the host takes what it has not done yet – idempotently, under its own
  * per-id back-off. A record already among the winners is left to them; a tombstone is no
  * request; a type turned off asks for nothing; an entry this device tombstoned (an uninstall
- * here) is closed; and a copy this build cannot read (`extensionRecordReadable`) is no request
- * either – the metadata never took it, and the host could land nothing from it.
+ * here) is closed; a copy this build cannot read (`extensionRecordReadable`) is no request
+ * either – the metadata never took it, and the host could land nothing from it; and a record
+ * the user DECLINED here (`declined`: the landing removed before its approval, at that time –
+ * `Persisted.declinedExtensions`) is closed on this device while the decline stands against it
+ * (`extensionDeclineStands`), a fresh install on the peer after it being the one re-offer.
  */
 export function pendingExtensionRequests(
   local: MetaMap,
   held: ReadonlyMap<string, unknown>,
   remote: ReadonlyMap<string, SyncRecord>,
   winners: readonly SyncRecord[],
-  scope: SyncScope
+  scope: SyncScope,
+  declined: Readonly<Record<string, number>> = {}
 ): SyncRecord[] {
   if (!scope.extensions) return []
   const won = new Set(winners.map((w) => w.id))
@@ -1753,11 +1760,29 @@ export function pendingExtensionRequests(
   for (const r of remote.values()) {
     if (r.type !== 'extension' || r.deleted || won.has(r.id) || held.has(r.id)) continue
     if (!extensionRecordReadable(r)) continue
+    if (extensionDeclineStands(declined[r.id], r)) continue
     const mine = local[r.id]
     if (!mine || mine.deleted) continue
     out.push(r)
   }
   return out
+}
+
+/**
+ * Whether the user's decline of a synced extension on this device stands against `record`
+ * (ID-44; the lead's ruling, round 4): the user removed the landing before approving it, at
+ * `declinedAt` (this device's time), which closes the request HERE alone – no tombstone, the
+ * other devices keep the extension – and the peer's record as it stood then, or any copy not
+ * stamped after the decline, is not offered to this device again. A live record stamped LATER
+ * than the decline – a fresh install of the same id on a peer after it – beats the decline and
+ * is offered once more; a tombstone is no offer and beats nothing. Undefined `declinedAt`: no
+ * decline.
+ */
+export function extensionDeclineStands(
+  declinedAt: number | undefined,
+  record: Pick<SyncRecord, 'modified' | 'deleted'>
+): boolean {
+  return declinedAt !== undefined && !record.deleted && record.modified <= declinedAt
 }
 
 export interface DiffResult {

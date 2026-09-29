@@ -25,6 +25,7 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionDeclineStands,
   extensionRecordData,
   extensionRecordReadable,
   extensionStoreOf,
@@ -144,6 +145,18 @@ interface Persisted {
    * an applier, which never writes it): nothing held.
    */
   unappliedExtensions?: Record<string, string>
+  /**
+   * The synced extensions the user DECLINED on this device (ID-44; the lead's ruling, round 4),
+   * by id: the time the landing – installed by a peer's record, turned off, waiting for the
+   * user's approval – was removed here before being approved. A decline closes the request on
+   * this device alone: no tombstone goes out (the other devices keep the extension), and the
+   * peer's live record is not handed to this device's applier again while the decline stands
+   * against it – any copy not stamped after the decline (`extensionDeclineStands`). A copy
+   * stamped later (a fresh install on a peer after the decline) is offered once more and closes
+   * the entry, as does a tombstone for the id, or an install of it here. Persisted, so a
+   * relaunch does not re-offer what the user declined. Absent when nothing is declined.
+   */
+  declinedExtensions?: Record<string, number>
 }
 
 interface Payload {
@@ -209,10 +222,13 @@ export class SyncEngine implements SyncHost {
   /** The credential records have had the boot seed (`seedMeta`): the vault was open for one. */
   private seededVault = false
   /**
-   * The store extensions installed here at the previous `sources()` read (ID-44), or null before
-   * the first: what an absence is measured against (`LocalSources.removedExtensions`).
+   * The store extensions installed here at the previous `sources()` read (ID-44), each with
+   * whether it was still a landing waiting for the user's approval (`pendingApproval`), or null
+   * before the first: what an absence is measured against – an approved extension gone is an
+   * uninstall (`LocalSources.removedExtensions`), a pending one gone is the user's decline
+   * (`Persisted.declinedExtensions`).
    */
-  private presentExtensions: Set<string> | null = null
+  private presentExtensions: Map<string, boolean> | null = null
   /** The device name behind each record the last `readRemote` read (`originOf`). */
   private remoteOrigins: WeakMap<SyncRecord, string> | null = null
   /** A remote stream is being applied to the history model: its events are not ours to publish. */
@@ -269,6 +285,9 @@ export class SyncEngine implements SyncHost {
     const unapplied = readUnappliedExtensions(this.data.unappliedExtensions)
     if (unapplied) this.data.unappliedExtensions = unapplied
     else delete this.data.unappliedExtensions
+    const declined = readDeclinedExtensions(this.data.declinedExtensions)
+    if (declined) this.data.declinedExtensions = declined
+    else delete this.data.declinedExtensions
     // A WebDAV device without its settings (a hand-edited store) is a folder device.
     if (this.data.transport !== 'webdav' || !this.data.webdav) {
       this.data.transport = 'folder'
@@ -513,6 +532,7 @@ export class SyncEngine implements SyncHost {
         openTabsHash: null
       }
       delete this.data.unappliedExtensions
+      delete this.data.declinedExtensions
       // The stream starts over in this folder; the sequence number never goes back, so a device
       // that read the old stream (the same folder joined again) does not sit past the new pages.
       this.data.history = { ...initialHistoryState(), seq: this.data.history.seq }
@@ -606,6 +626,7 @@ export class SyncEngine implements SyncHost {
     }
     this.data.meta = meta
     delete this.data.unappliedExtensions
+    delete this.data.declinedExtensions
     this.persist()
     await this.syncNow()
   }
@@ -709,6 +730,7 @@ export class SyncEngine implements SyncHost {
       openTabsHash: null
     }
     delete this.data.unappliedExtensions
+    delete this.data.declinedExtensions
     this.lastError = null
     this.lastErrorKind = null
     this.folderLost = false
@@ -927,26 +949,61 @@ export class SyncEngine implements SyncHost {
     this.pushTimer = setTimeout(() => void this.syncNow(), PUSH_DEBOUNCE_MS)
   }
 
-  private sources(): LocalSources {
+  /**
+   * @param meta The metadata an absence is read against (`this.data.meta`, or the round's
+   *   merged map before it is stored): a pending landing gone whose entry is a tombstone was
+   *   removed by that tombstone, not declined by the user.
+   */
+  private sources(meta: MetaMap = this.data.meta): LocalSources {
     const state = this.browser.state
     // The store extensions installed here, and the ones gone since the previous read (ID-44):
     // an uninstall is the one absence `diffLocal` may tombstone (`frozenRecords`), and it is
     // seen at the commit that removed the record – the previous read still held the id. Read
     // from the registry's projection (`syncSources`, no manifest read; `list()` on a host
-    // without one). An extension whose winning record is with the host's applier and not
-    // committed yet is left out of the collected set – its entry stays frozen, so the copy the
-    // record found here never travels under the winner's time; the applier's commit is the
-    // edit that publishes the applied state – but it still counts as present, since a switch in
-    // flight is no uninstall. On a host without an applier the same absence holds an extension
-    // whose record a remote copy won and nothing here could apply (`unappliedExtensions`):
-    // present, frozen, off the wire until this device's own registry changes for it.
+    // without one). A landing still waiting for the user's approval (`pendingApproval`) that is
+    // gone is NOT an uninstall but the user's DECLINE of the synced extension (the lead's
+    // ruling, round 4): it tombstones nothing – the other devices keep the extension; the entry
+    // stays frozen – and is remembered with its time (`Persisted.declinedExtensions`), so the
+    // peer's record is not handed to the applier here again while the decline stands
+    // (`extensionDeclineStands`). An extension whose winning record is with the host's applier
+    // and not committed yet is left out of the collected set – its entry stays frozen, so the
+    // copy the record found here never travels under the winner's time; the applier's commit is
+    // the edit that publishes the applied state – but it still counts as present, since a switch
+    // in flight is no uninstall. On a host without an applier the same absence holds an
+    // extension whose record a remote copy won and nothing here could apply
+    // (`unappliedExtensions`): present, frozen, off the wire until this device's own registry
+    // changes for it.
     const host = this.browser.extensions
     const all = host.syncSources?.() ?? host.list()
-    const present = new Set<string>()
-    for (const ext of all) if (extensionStoreOf(ext.source)) present.add(ext.id)
+    const present = new Map<string, boolean>()
+    for (const ext of all)
+      if (extensionStoreOf(ext.source)) present.set(ext.id, ext.pendingApproval === true)
     const removedExtensions = new Set<string>()
-    if (this.presentExtensions)
-      for (const id of this.presentExtensions) if (!present.has(id)) removedExtensions.add(id)
+    let declined = this.data.declinedExtensions
+    let declinedChanged = false
+    if (this.presentExtensions) {
+      const now = Date.now()
+      for (const [id, wasPending] of this.presentExtensions) {
+        if (present.has(id)) continue
+        if (wasPending && !meta[id]?.deleted) {
+          declined = { ...(declined ?? {}), [id]: now }
+          declinedChanged = true
+        } else removedExtensions.add(id)
+      }
+    }
+    // An install of a declined id here closes the decline: the extension is this device's now.
+    if (declined) {
+      const kept = Object.entries(declined).filter(([id]) => !present.has(id))
+      if (kept.length !== Object.keys(declined).length) {
+        declined = Object.fromEntries(kept)
+        declinedChanged = true
+      }
+    }
+    if (declinedChanged) {
+      if (declined && Object.keys(declined).length > 0) this.data.declinedExtensions = declined
+      else delete this.data.declinedExtensions
+      this.persist()
+    }
     this.presentExtensions = present
     const inFlight = host.syncedExtensionsInFlight?.()
     const unapplied = this.unappliedExtensions(all)
@@ -1013,6 +1070,38 @@ export class SyncEngine implements SyncHost {
       held = { ...(held ?? {}), [w.id]: hashData(mine.data) }
     }
     if (held) this.data.unappliedExtensions = held
+  }
+
+  /**
+   * The winners as they go to the host, less the extension records the user declined here
+   * (ID-44; `Persisted.declinedExtensions`): a live winner not stamped after the decline stands
+   * declined – it stays among the winners for the metadata merge (the entry follows the peer's
+   * copy, so nothing is re-published under this device's name) but is not handed to the
+   * applier; a live winner stamped after it (a fresh install on the peer) or a tombstone for
+   * the id closes the decline and goes through as any winner.
+   */
+  private admitDeclined(winners: readonly SyncRecord[]): SyncRecord[] {
+    const declined = this.data.declinedExtensions
+    if (!declined) return [...winners]
+    const out: SyncRecord[] = []
+    let next: Record<string, number> | null = null
+    for (const w of winners) {
+      const at = w.type === 'extension' ? declined[w.id] : undefined
+      if (at === undefined) {
+        out.push(w)
+        continue
+      }
+      if (extensionDeclineStands(at, w)) continue
+      next ??= { ...declined }
+      delete next[w.id]
+      out.push(w)
+    }
+    if (next) {
+      if (Object.keys(next).length > 0) this.data.declinedExtensions = next
+      else delete this.data.declinedExtensions
+      this.persist()
+    }
+    return out
   }
 
   /** Every other device's newest records; a folder that cannot be read throws. */
@@ -1117,18 +1206,22 @@ export class SyncEngine implements SyncHost {
       )
       // The extension records this device took but whose install has not landed (ID-44): handed
       // to the host again, every round, beside the winners – its own back-off decides whether it
-      // tries the store again. They are already in the metadata: nothing below is theirs.
+      // tries the store again. They are already in the metadata: nothing below is theirs. A
+      // record the user declined here is handed over neither way while the decline stands
+      // (`admitDeclined`, `pendingExtensionRequests`).
       const outstanding = pendingExtensionRequests(
         local.meta,
         collectLocal(sources, scope),
         remote,
         winners,
-        scope
+        scope,
+        this.data.declinedExtensions ?? {}
       )
-      if (winners.length || outstanding.length) {
+      const handed = [...this.admitDeclined(winners), ...outstanding]
+      if (handed.length) {
         this.applying = true
         try {
-          applyRemote(this.browser, [...winners, ...outstanding], (r) => this.originOf(r))
+          applyRemote(this.browser, handed, (r) => this.originOf(r))
         } finally {
           this.applying = false
         }
@@ -1146,7 +1239,9 @@ export class SyncEngine implements SyncHost {
         // left out – the winner's entry kept, nothing published under it – and not re-published
         // under the winner's stamp (`holdUnapplied`).
         if (!this.browser.extensions.applySyncedExtensions) this.holdUnapplied(winners, sources)
-        const after = this.sources()
+        // Read against the merged metadata: a pending landing a winner's tombstone removed (a
+        // host that acts on the hand-over at once) is that tombstone's doing, not a decline.
+        const after = this.sources(merged)
         local = diffLocal(merged, collectLocal(after, scope), now, {
           stamp: null,
           frozen: frozenRecords(after, scope, merged)
@@ -1580,6 +1675,23 @@ function readUnappliedExtensions(value: unknown): Record<string, string> | undef
   for (const [id, hash] of Object.entries(value as Record<string, unknown>)) {
     if (!isExtensionId(id) || typeof hash !== 'string' || !hash) continue
     out[id] = hash
+    any = true
+  }
+  return any ? out : undefined
+}
+
+/**
+ * `Persisted.declinedExtensions` as read from `sync.json`: extension ids to the decline's time
+ * (a finite number above 0), anything else dropped; undefined when nothing valid is held, so
+ * the key stays absent.
+ */
+function readDeclinedExtensions(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, number> = {}
+  let any = false
+  for (const [id, at] of Object.entries(value as Record<string, unknown>)) {
+    if (!isExtensionId(id) || typeof at !== 'number' || !Number.isFinite(at) || at <= 0) continue
+    out[id] = at
     any = true
   }
   return any ? out : undefined

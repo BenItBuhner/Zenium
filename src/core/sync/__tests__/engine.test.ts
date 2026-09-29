@@ -2552,8 +2552,9 @@ class PublishingExtensions extends NoExtensions {
  * present extension is merged SWITCH BY SWITCH, each taken when the record's clock for it is
  * not older than this device's (an equal value under a later clock adopts the clock alone;
  * never an enable while the landing waits for approval, and such a withheld enable is not
- * re-published), nothing taken while this device's clocks are the later ones → the record is
- * re-committed so the engine publishes this device's copy afresh; a record for an absent one
+ * re-published on its own, though a later pin clock here still is – N2), nothing taken while
+ * this device's clocks are the later ones → the record is re-committed so the engine publishes
+ * this device's copy afresh; a record for an absent one
  * starts a download the test lands (`land`) or lets fail (nothing). An install here stamps both
  * clocks with the device's time, as `ExtensionService.installPackage` does; a user's flip
  * (`set`) stamps its switch.
@@ -2615,16 +2616,18 @@ class StoreExtensions extends PublishingExtensions {
     }
     const enabledAt = have.enabledAt ?? 0
     const enabledFromRecord = remote.enabledAt >= enabledAt
-    let withheld = false
-    if (enabledFromRecord && (have.enabled !== remote.enabled || remote.enabledAt > enabledAt)) {
-      if (remote.enabled && have.pendingApproval) withheld = true
-      else {
-        patch.enabled = remote.enabled
-        patch.enabledAt = remote.enabledAt
-      }
+    // An enable withheld while the landing waits for approval is no early exit (N2): a pin
+    // clock here later than the record's still re-publishes; the withheld enable alone does not.
+    if (
+      enabledFromRecord &&
+      (have.enabled !== remote.enabled || remote.enabledAt > enabledAt) &&
+      !(remote.enabled && have.pendingApproval)
+    ) {
+      patch.enabled = remote.enabled
+      patch.enabledAt = remote.enabledAt
     }
     if (Object.keys(patch).length > 0) this.set(have.id, patch, false)
-    else if (!withheld && (!pinFromRecord || !enabledFromRecord)) {
+    else if (!pinFromRecord || !enabledFromRecord) {
       this.republished.push(have.id)
       this.b.state.commitVolatile()
     }
@@ -2781,7 +2784,20 @@ describe('the extensions across two devices', () => {
       enabledAt: A.installed.get(EXT_B)!.enabledAt,
       toolbarPinnedAt: A.installed.get(EXT_B)!.toolbarPinnedAt
     })
-    for (const text of folderFiles('/drive').values()) expect(text).not.toContain(EXT_A)
+    // The wire, decrypted, device by device: the desktop's file alone so far, and the unpacked
+    // one in nobody's – it stays home (the verifier's N1: the claim is made on the records, not
+    // on the ciphertext, which contains no id whatever the engine did).
+    const wire = await publishedAll()
+    expect([...wire.keys()]).toEqual([a.engine.status().deviceId])
+    for (const records of wire.values()) {
+      expect(records.map((r) => r.id)).not.toContain(EXT_U)
+      expect(
+        records
+          .filter((r) => r.type === 'extension')
+          .map((r) => r.id)
+          .sort()
+      ).toEqual([EXT_A, EXT_B].sort())
+    }
 
     // The laptop joins: both records are handed to its host, each naming the desktop; nothing is
     // installed yet (the store's download is the host's, later), and the laptop's own file
@@ -2952,7 +2968,7 @@ describe('the extensions across two devices', () => {
     expect((await extensionRecords(a)).every((r) => r.deleted)).toBe(true)
   }, 30_000)
 
-  it('a download that fails, or a landing removed before approval, tombstones nothing on the peer; the phone publishes its store installs and lands none', async () => {
+  it('a download that fails tombstones nothing on the peer, and a landing removed before approval is a DECLINE (the lead’s ruling, round 4) – no tombstone, the peer keeps the extension, this device is not offered it again; the phone publishes its store installs and lands none', async () => {
     const a = device('Desk (Linux)', { extensions: desktopExtensions })
     const b = device('Work laptop', { extensions: desktopExtensions })
     const c = device('Pixel 9', { extensions: phoneExtensions })
@@ -2992,25 +3008,184 @@ describe('the extensions across two devices', () => {
     expect(B.applied.every((batch) => batch.some((change) => change.id === EXT_A))).toBe(true)
 
     // The laptop's landing is removed before it was approved (the user uninstalls the pending
-    // copy): that is an uninstall, and it travels – the desktop loses the extension. The rule
-    // is the user's action, not the approval.
+    // copy): that is the user's DECLINE of the synced extension on the laptop – the lead's
+    // ruling – not an uninstall everywhere. Nothing goes out for the id: no record (a landing
+    // is not the laptop's state) and no tombstone; the desktop keeps the extension, enabled.
     B.land(EXT_A)
     await settle()
     await b.engine.syncNow()
     expect(await extensionRecords(b)).toEqual([])
+    const bWire = async (): Promise<SyncRecord[]> =>
+      ((await publishedAll()).get(b.engine.status().deviceId) ?? []).filter((r) => r.id === EXT_A)
     B.drop(EXT_A)
     await settle()
     await b.engine.syncNow()
-    expect((await extensionRecords(b)).find((r) => r.id === EXT_A)).toMatchObject({
-      deleted: true
-    })
+    expect(await bWire()).toEqual([])
+    const requestsFor = (host: StoreExtensions, id: string): number =>
+      host.applied.flat().filter((ch) => ch.id === id).length
+    const aRequests = requestsFor(A, EXT_A)
     await a.engine.syncNow()
-    expect(A.ids()).toEqual([])
-    expect(A.log().at(-1)).toBe(`${EXT_A.slice(0, 4)} removed from Work laptop`)
-    // The phone's own copy of a tombstoned record: it holds none of the desktop's, and its store
-    // install stands untouched by the rounds.
+    expect(A.ids()).toEqual([EXT_A])
+    expect(A.installed.get(EXT_A)!.enabled).toBe(true)
+    expect(requestsFor(A, EXT_A)).toBe(aRequests)
+    // The laptop is not offered the desktop's copy again: no further request for the id reaches
+    // its host, round after round (the phone's, never landed, still does), and its wire stays
+    // empty for the id.
+    const bRequests = requestsFor(B, EXT_A)
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await a.engine.syncNow()
+    }
+    expect(requestsFor(B, EXT_A)).toBe(bRequests)
+    expect(B.ids()).toEqual([])
+    expect(await bWire()).toEqual([])
+    // The phone's own copy: it holds none of the desktop's, and its store install stands
+    // untouched by the rounds.
     await c.engine.syncNow()
     expect(C.ids()).toEqual([EXT_P, EXT_U].sort())
+  }, 30_000)
+
+  it('the decline, three devices (the lead’s ruling, round 4): B declines A’s landing → nothing for the id on B’s wire, A keeps it enabled, C still receives it, B is not re-offered next round; A uninstalls and re-installs later → B is offered again, once; an APPROVED extension removed on B tombstones, and A and C uninstall with the toast; the decline survives a relaunch', async () => {
+    const a = device('Desk (Linux)', { extensions: desktopExtensions })
+    const b = device('Work laptop', { extensions: desktopExtensions })
+    const c = device('Studio', { extensions: desktopExtensions })
+    const A = hostOf<StoreExtensions>(a)
+    const B = hostOf<StoreExtensions>(b)
+    const C = hostOf<StoreExtensions>(c)
+    const wireFor = async (d: Device, id: string): Promise<SyncRecord[]> =>
+      ((await publishedAll()).get(d.engine.status().deviceId) ?? []).filter((r) => r.id === id)
+    const declinedOf = (d: Device): Record<string, number> | undefined => {
+      d.engine.flushSync()
+      return (
+        JSON.parse(d.io.files['sync.json']!) as { declinedExtensions?: Record<string, number> }
+      ).declinedExtensions
+    }
+    A.add(EXT_A, 'chrome-web-store', { enabled: true, toolbarPinned: true })
+    A.add(EXT_B, 'edge-add-ons', { enabled: true })
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await setup(c)
+    await c.engine.confirmMerge(true)
+    // Both land on B and on C, off and pending; B approves the second (an approved extension,
+    // for the tombstone below), C approves both.
+    B.land(EXT_A)
+    B.land(EXT_B)
+    C.land(EXT_A)
+    C.land(EXT_B)
+    await settle()
+    B.approve(EXT_B)
+    C.approve(EXT_A)
+    C.approve(EXT_B)
+    await settle()
+    await b.engine.syncNow()
+    await c.engine.syncNow()
+    await a.engine.syncNow()
+    await settle()
+    expect(B.installed.get(EXT_A)).toMatchObject({ enabled: false, pendingApproval: true })
+    expect(B.installed.get(EXT_B)).toMatchObject({ enabled: true })
+    expect(C.ids()).toEqual([EXT_A, EXT_B].sort())
+
+    // B DECLINES A's landing: the pending copy is removed on B. Nothing for the id goes out
+    // from B – the wire, decrypted, carries neither a record nor a tombstone for it – and the
+    // decline is persisted with its time.
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    expect(await wireFor(b, EXT_A)).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: expect.any(Number) as number })
+    const declinedAt = declinedOf(b)![EXT_A]!
+    // A keeps the extension, enabled; C still receives it and keeps it.
+    await a.engine.syncNow()
+    await c.engine.syncNow()
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true })
+    expect(C.installed.get(EXT_A)).toMatchObject({ enabled: true })
+    // B is not re-offered next round, nor the ones after: no request for the id reaches its
+    // host, and the id stays off its wire.
+    const before = B.applied.flat().filter((ch) => ch.id === EXT_A).length
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await a.engine.syncNow()
+      await c.engine.syncNow()
+    }
+    expect(B.applied.flat().filter((ch) => ch.id === EXT_A)).toHaveLength(before)
+    expect(B.ids()).toEqual([EXT_B])
+    expect(await wireFor(b, EXT_A)).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
+
+    // A uninstalls it and installs it again later: a fresh install, stamped after the decline.
+    // The tombstone reaches B (nothing to remove) and C (which uninstalls, with the toast).
+    await settle()
+    A.drop(EXT_A)
+    await settle()
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await c.engine.syncNow()
+    expect(C.ids()).toEqual([EXT_B])
+    expect(C.log().at(-1)).toBe(`${EXT_A.slice(0, 4)} removed from Desk (Linux)`)
+    expect(B.ids()).toEqual([EXT_B])
+    await settle()
+    A.add(EXT_A, 'chrome-web-store', { enabled: true })
+    await settle()
+    await a.engine.syncNow()
+    const fresh = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    expect(fresh.deleted).toBe(false)
+    expect(fresh.modified).toBeGreaterThan(declinedAt)
+    // B is offered it again – once: the request reaches its host, the decline is closed.
+    await b.engine.syncNow()
+    expect(B.log().at(-1)).toBe(
+      `${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Desk (Linux)`
+    )
+    expect(declinedOf(b)).toBeUndefined()
+    await c.engine.syncNow()
+    expect(C.log().at(-1)).toBe(
+      `${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Desk (Linux)`
+    )
+
+    // An APPROVED extension removed on B (the second, approved above) is an uninstall
+    // everywhere, as before: the tombstone travels, A and C take it out and show the toast.
+    await settle()
+    B.drop(EXT_B)
+    await settle()
+    await b.engine.syncNow()
+    expect(await wireFor(b, EXT_B)).toMatchObject([{ deleted: true, data: null }])
+    // (C reads the folder before A re-emits the tombstone it takes, so the origin C names is
+    // the laptop's, not a tie between two copies of one tombstone.)
+    await c.engine.syncNow()
+    await a.engine.syncNow()
+    expect(A.ids()).toEqual([EXT_A])
+    expect(C.ids()).toEqual([])
+    expect(A.log().at(-1)).toBe(`${EXT_B.slice(0, 4)} removed from Work laptop`)
+    // (C's batch: the round's outstanding request for the re-offered first extension, not
+    // landed on C, then the tombstone – `applyRemote` lands a type's live records before its
+    // tombstones.)
+    expect(C.log().at(-1)).toBe(`${EXT_B.slice(0, 4)} removed from Work laptop`)
+    expect(declinedOf(b)).toBeUndefined()
+
+    // B declines the re-offered landing too, and relaunches: the decline is persisted, so the
+    // relaunched laptop is not offered the desktop's copy again either.
+    B.land(EXT_A)
+    await settle()
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    expect(declinedOf(b)).toEqual({ [EXT_A]: expect.any(Number) as number })
+    const files = close(b)
+    const io = memoryIo()
+    Object.assign(io.files, files)
+    const again = device('Work laptop', { io, extensions: desktopExtensions })
+    const AGAIN = hostOf<StoreExtensions>(again)
+    expect(again.engine.status().deviceId).toBe(b.engine.status().deviceId)
+    for (let round = 0; round < 2; round += 1) {
+      await again.engine.syncNow()
+      await a.engine.syncNow()
+    }
+    expect(again.engine.status().lastError).toBeNull()
+    expect(AGAIN.applied.flat().filter((ch) => ch.id === EXT_A)).toEqual([])
+    expect(AGAIN.ids()).toEqual([])
+    expect(await wireFor(again, EXT_A)).toEqual([])
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true })
+    expect(declinedOf(again)).toEqual({ [EXT_A]: expect.any(Number) as number })
   }, 30_000)
 
   it('turning the Extensions off stops sending and receiving them without deleting anything, on either device; a merge declined uninstalls nothing on the peers', async () => {

@@ -8,6 +8,7 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionDeclineStands,
   extensionRecordData,
   extensionRecordReadable,
   extensionStoreOf,
@@ -3020,6 +3021,62 @@ describe('extension records (services pass 16, ID-44)', () => {
       pendingExtensionRequests(withForeign, none, remoteWithForeign, [], defaultScope()).map(
         (r) => r.id
       )
+    ).toEqual([ID_A, ID_B])
+  })
+
+  it('extensionDeclineStands / pendingExtensionRequests’ `declined` (the lead’s ruling, round 4): a record the user declined here is no request while the decline stands – any live copy not stamped after it; a copy stamped later (a fresh install on the peer) beats the decline and is offered once more; a tombstone beats nothing; no decline, no bar', () => {
+    const live: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 5000,
+      deleted: false,
+      data: { store: 'chrome-web-store', enabled: true, toolbarPinned: false }
+    }
+    const tomb: SyncRecord = {
+      id: ID_A,
+      type: 'extension',
+      modified: 9000,
+      deleted: true,
+      data: null
+    }
+    // The rule: the decline stands against a live record stamped at or before it.
+    expect(extensionDeclineStands(undefined, live)).toBe(false)
+    expect(extensionDeclineStands(7000, live)).toBe(true)
+    expect(extensionDeclineStands(5000, live)).toBe(true)
+    expect(extensionDeclineStands(4999, live)).toBe(false)
+    expect(extensionDeclineStands(7000, { ...live, modified: 7001 })).toBe(false)
+    expect(extensionDeclineStands(7000, tomb)).toBe(false)
+    expect(extensionDeclineStands(9000, tomb)).toBe(false)
+    // In the requests: the declined id is closed on this device while the decline stands, and
+    // asked for again once the peer's copy is stamped after it. Another id is untouched.
+    const other: SyncRecord = {
+      ...live,
+      id: ID_B,
+      data: { store: 'edge-add-ons', enabled: false, toolbarPinned: true }
+    }
+    const local = metaFromRemote([live, other])
+    const remote = new Map([live, other].map((r) => [r.id, r] as const))
+    const none = new Map<string, unknown>()
+    expect(
+      pendingExtensionRequests(local, none, remote, [], defaultScope(), { [ID_A]: 7000 }).map(
+        (r) => r.id
+      )
+    ).toEqual([ID_B])
+    expect(
+      pendingExtensionRequests(local, none, remote, [], defaultScope(), { [ID_A]: 4999 }).map(
+        (r) => r.id
+      )
+    ).toEqual([ID_A, ID_B])
+    const fresh: SyncRecord = { ...live, modified: 7001 }
+    const remoteFresh = new Map([fresh, other].map((r) => [r.id, r] as const))
+    expect(
+      pendingExtensionRequests(local, none, remoteFresh, [], defaultScope(), { [ID_A]: 7000 }).map(
+        (r) => r.id
+      )
+    ).toEqual([ID_A, ID_B])
+    // Without the argument, nothing is declined (the callers from before).
+    expect(
+      pendingExtensionRequests(local, none, remote, [], defaultScope()).map((r) => r.id)
     ).toEqual([ID_A, ID_B])
   })
 
