@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefObject } from 'react'
+import type { JSX, ReactElement, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
@@ -64,7 +64,9 @@ const FIRST_CONTROL = 'button:not(:disabled), a[href], [role="button"]:not([aria
  *  - `block`: the start-aligned title block for a prompt (title, one paragraph, actions) – an
  *    optional 20 px glyph on the title's start with no fill box behind it, the description 15
  *    at 69 % on the body line 4 below, 16 to the footer. A phone sheet takes the block only when
- *    it carries a description (§9.23), so the description is the pose's, required; `tone` is for
+ *    it carries a description (§9.23), so the description is the pose's, required – a string, or
+ *    an element that renders one with break opportunities in it (the Settings address hold
+ *    sheet's value through `breakable`, lib/addressReveal.ts); `tone` is for
  *    a description that reports a status (an extension's load error): the §1 status ink,
  *    `data-tone` on the paragraph for the surface's rule. A prompt about Zenium itself – make it
  *    the default browser, install or pin it, relaunch it – carries the app's own icon INSTEAD of
@@ -81,7 +83,7 @@ export type SheetTitle =
   | {
       pose: 'block'
       text: string
-      description: string
+      description: string | ReactElement
       tone?: 'warn' | 'danger'
       /** A 20 px glyph on the title's start; never together with `appIcon`. */
       icon?: ReactNode

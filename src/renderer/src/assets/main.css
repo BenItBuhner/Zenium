@@ -12250,6 +12250,52 @@
   -webkit-line-clamp: none;
 }
 /*
+ * §9.2's reveal of that line where it is actually shortened (services seed #32; the lead's
+ * ruling on #685 item 4; `AddressReveal`, lib/addressReveal.ts). On a mouse or under the
+ * keyboard: the §9.31 hover card – the tab card's chrome (`.zen-tab-hover-card`: §9.20's panel at
+ * the 320 list width, `--v2-panel` under the hairline and the panel shadow, padding 16, radius
+ * 8, no pointer) hung under the row – carrying the whole value at the body size, 15/400 on the
+ * 20 line as the tab card's title, and broken wherever it must be: a path or an address has no
+ * spaces to break at, and every line of it is the point (no clamp – the row's line is the
+ * clamped one).
+ */
+.zen-address-hover-card-value {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  font-weight: var(--v2-weight-body);
+}
+/*
+ * The same card standing under a touch hold where the page draws dialogs – a tablet (the
+ * lead's look on #694, point 4: "a finger on a tablet is touch"; `addressHold`). It stands
+ * until a press elsewhere, a scroll or a key takes it down, and live rows lie under it, so
+ * unlike the mouse's card (no pointer, above) it takes the pointer – a tap on the card is a tap
+ * on the card, which stays, and reaches no row beneath – and its text is not selectable: the
+ * value's copy is the row's own (`RowCopy`), never a hidden hold on the card.
+ */
+.zen-address-hover-card[data-by='hold'] {
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/*
+ * On touch where the page draws sheets – a phone – the row's hold sheet (`AddressSheet`,
+ * sheets.tsx): §9.23's title block, the row's label over the whole value as its paragraph – the
+ * block's own 15 at 69% – breaking at its slashes and dots first (`breakable`'s `<wbr>`s) and
+ * wrapped anywhere past that, since the chassis's paragraph breaks only at spaces. The sheet
+ * holds nothing under the block, so the block's own 16 below comes off: the empty
+ * `.zen-settings-sheet-body`'s 8 over the chassis's 8 + inset (`SHEET_EDGE_PAD`) is §9.25's 16
+ * to the sheet's bottom edge on their own – the body rule's formula – where the three stacked
+ * to 32 (the independent review of #694, nit 2).
+ */
+.zen-settings-sheet-address .zen-sheet-title-block {
+  padding-bottom: 0;
+}
+.zen-settings-sheet-address .zen-sheet-title-block p {
+  overflow-wrap: anywhere;
+}
+/*
  * A description that reports a status (a load error, a retirement notice, the folder-lost
  * sentence): §1 status ink, text only, read off the row's one `data-tone` – the primitive's
  * attribute above – not off the span.

@@ -82,6 +82,14 @@ export type SheetRequest =
   | { kind: 'form'; rowId: string; from?: string }
   | { kind: 'item'; rowId: string }
   | { kind: 'detail'; rowId: string }
+  /**
+   * The hold sheet §9.2 gives a path or an address a row shortened (`RowBase.address`,
+   * services seed #32): a touch held on the row while its line is elided. The request carries
+   * what the sheet shows – the row's label as the title, the whole value as the title block's
+   * paragraph – since the row held may be a picker sheet's option, which is no row of the model
+   * (`rowId` is then `''`); the sheet is a snapshot of the hold and its own to dismiss.
+   */
+  | { kind: 'address'; rowId: string; label: string; text: string }
 
 export interface RowContext {
   open(request: SheetRequest): void
