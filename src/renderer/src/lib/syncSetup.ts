@@ -161,11 +161,18 @@ export const SYNC_COPY = {
 } as const
 
 /**
+ * The one hint of the Addresses and Payment methods rows (services pass 16, ID-45; the lead's
+ * words): the fact the name cannot carry – the protection – as the Passwords hint carries it.
+ */
+const SYNC_SCOPE_ENCRYPTED_HINT = 'Encrypted with your sync passphrase.'
+
+/**
  * The data types in the page's own order: Chrome's types first – Bookmarks, History, Open tabs,
- * Passwords, Reading list, Settings; Chrome's "Manage what you sync" seats Reading list directly
- * after Bookmarks, ours sits beside Passwords, as the lead seated it – then Zenium's own:
- * Spaces, folders, pinned tabs, Essentials, containers, shortcuts, Boosts, Mods. Every key of
- * `SyncScope` is here once (the engine's toggles are the page's).
+ * Passwords, Addresses, Payment methods, Reading list, Settings; Chrome's "Manage what you sync"
+ * seats Reading list directly after Bookmarks, ours sits after the vault's three, as the lead
+ * seated it – then Zenium's own: Spaces, folders, pinned tabs, Essentials, containers,
+ * shortcuts, Boosts, Mods. Every key of `SyncScope` is here once (the engine's toggles are the
+ * page's).
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
   { key: 'bookmarks', label: 'Bookmarks' },
@@ -176,6 +183,12 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
     label: 'Passwords',
     hint: 'Saved passwords and passkey records, encrypted with your sync passphrase.'
   },
+  // The vault's addresses and payment cards (services pass 16, ID-45; the `address` and
+  // `payment-method` records): Chrome's "Addresses and more" and "Payment methods" types, a
+  // toggle each, seated right after Passwords – the vault's three together – as the lead ruled,
+  // with the lead's one hint on both.
+  { key: 'addresses', label: 'Addresses', hint: SYNC_SCOPE_ENCRYPTED_HINT },
+  { key: 'paymentMethods', label: 'Payment methods', hint: SYNC_SCOPE_ENCRYPTED_HINT },
   // The reading list's row (services pass 11, the `reading-list-entry` record). No hint: a hint
   // here carries a fact the name cannot (a behaviour, a protection, a scope), never a
   // restatement – "Reading list" stands on its name as Bookmarks and History do (the lead's rule).

@@ -25,6 +25,7 @@ import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyUpdateStatus } from '@shared/updates'
+import { defaultScope } from '@core/sync/records'
 
 /*
  * The Settings tab where two panes fit (design language v2 §10.5; Zen's about:preferences): the
@@ -724,6 +725,84 @@ describe('below the two-pane width', () => {
     const markup = render(state(ANDROID, 'android'))
     expect(markup).toContain('data-layout="two-pane"')
     expect(markup).toContain('data-testid="settings-page"')
+  })
+})
+
+/*
+ * Sync › What you sync's Addresses and Payment methods rows (services pass 16, ID-45; the lead's
+ * ruling on #712): a switch each, seated right after Passwords, with the one hint on both –
+ * "Encrypted with your sync passphrase." – drawn from the one row list (`SYNC_SCOPES`) on every
+ * chassis: the desktop's two panes, the tablet's two panes, the phone's drill-in.
+ */
+describe('Sync › What you sync: the Addresses and Payment methods rows on every chassis (services pass 16, ID-45)', () => {
+  /** A host that syncs (`ANDROID` has no sync engine; the rows are Sync's). */
+  const SYNCING_ANDROID: HostCapabilities = { ...ANDROID, sync: true }
+  const HINT = 'Encrypted with your sync passphrase.'
+  const syncing = (caps: HostCapabilities, platform: UIState['platform']): UIState => {
+    const s = state(caps, platform, {}, 'zen://settings/sync')
+    s.sync = { ...s.sync, scope: defaultScope() }
+    return s
+  }
+  /** The scope rows in DOM order, each as its id and its text. */
+  const scopeRows = (el: ParentNode): Array<[string, string]> =>
+    Array.from(el.querySelectorAll<HTMLElement>('[data-row^="sync-scope:"]'), (row) => [
+      row.getAttribute('data-row')!,
+      row.textContent ?? ''
+    ])
+  const expectRowsAfterPasswords = (el: ParentNode): void => {
+    const rows = scopeRows(el)
+    const passwords = rows.findIndex(([id]) => id === 'sync-scope:passwords')
+    expect(passwords).toBeGreaterThan(-1)
+    expect(rows.slice(passwords, passwords + 3).map(([id]) => id)).toEqual([
+      'sync-scope:passwords',
+      'sync-scope:addresses',
+      'sync-scope:paymentMethods'
+    ])
+    const [, addresses] = rows[passwords + 1]!
+    const [, paymentMethods] = rows[passwords + 2]!
+    expect(addresses).toContain('Addresses')
+    expect(addresses).toContain(HINT)
+    expect(paymentMethods).toContain('Payment methods')
+    expect(paymentMethods).toContain(HINT)
+    // Each row once, each a switch that is on (the engine's default): the desktop vocabulary's
+    // check row holds its checkbox, the phone's pressable row is the switch itself.
+    for (const id of ['sync-scope:addresses', 'sync-scope:paymentMethods']) {
+      const matches = el.querySelectorAll<HTMLElement>(`[data-row="${id}"]`)
+      expect(matches, id).toHaveLength(1)
+      const row = matches[0]!
+      const checkbox = row.querySelector<HTMLInputElement>('input[type="checkbox"]')
+      if (checkbox) expect(checkbox.checked, id).toBe(true)
+      else {
+        expect(row.getAttribute('role'), id).toBe('switch')
+        expect(row.getAttribute('aria-checked'), id).toBe('true')
+      }
+    }
+  }
+
+  it('the desktop: both rows after Passwords in the content column, the hint on each', () => {
+    viewport(TWO_PANE_MIN_WIDTH)
+    const el = mountPage(syncing(DESKTOP, 'linux'))
+    expect(el.querySelector('[data-layout="two-pane"]')).not.toBeNull()
+    expect(el.querySelector('[data-testid="settings-page"]')?.getAttribute('data-section')).toBe(
+      'sync'
+    )
+    expectRowsAfterPasswords(el)
+    expect(el.textContent).toContain('What you sync')
+  })
+
+  it('the tablet: both rows after Passwords in the two-pane layout on a touch host, the hint on each', () => {
+    viewport(TWO_PANE_MIN_WIDTH, false)
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet' })
+    const el = mountPage(syncing(SYNCING_ANDROID, 'android'))
+    expect(el.querySelector('[data-layout="two-pane"]')).not.toBeNull()
+    expectRowsAfterPasswords(el)
+  })
+
+  it('the phone: both rows after Passwords on the Sync drill-in, the hint on each', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(syncing(SYNCING_ANDROID, 'android'))
+    expect(el.querySelector('[data-layout="phone"]')).not.toBeNull()
+    expectRowsAfterPasswords(el)
   })
 })
 

@@ -1268,9 +1268,29 @@ export interface SyncScope {
   boosts: boolean
   /**
    * Saved logins and the passkeys' public records (ID-09), under the same end-to-end key as
-   * everything else; on by default as Chrome's password sync is.
+   * everything else; on by default as Chrome's password sync is. The vault's addresses and
+   * payment cards have keys of their own below, as Chrome's types do.
    */
   passwords: boolean
+  /**
+   * The vault's saved addresses (`AddressEntry`, one `address` record per entry under the
+   * entry's own id; services pass 16, ID-45 – Chrome's "Addresses and more" type, a toggle of
+   * its own beside Passwords), under the same end-to-end key as the logins; on by default, as
+   * Chrome's is under "Sync everything" and as Passwords is here. While off, the device neither
+   * publishes the type nor takes it in, and its metadata for the type is frozen, as with every
+   * scoped type; while the vault is locked the type is held with the logins. Absent on a
+   * `sync.json` older than the key, where the engine completes it with the default; a scope
+   * object from an older build says nothing for it, so `collectLocal` under one publishes no
+   * address (`__tests__/compat.test.ts`).
+   */
+  addresses: boolean
+  /**
+   * The vault's saved payment cards (`PaymentCard`, one `payment-method` record per entry under
+   * the entry's own id; ID-45 – Chrome's "Payment methods" type): the card as the vault keeps it
+   * (the number's digits, no security code), under the same end-to-end key as a login's
+   * password; on by default as `addresses`, held, frozen and completed the same way.
+   */
+  paymentMethods: boolean
   /**
    * Browsing history (ID-13 / HB-48): the device's visits and deletions as a stream the other
    * devices import into their own history, on by default as Chrome's is. Off, a device neither

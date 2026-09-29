@@ -1,4 +1,5 @@
 import type {
+  AddressEntry,
   BookmarkNode,
   BookmarkNodeType,
   Boost,
@@ -10,6 +11,7 @@ import type {
   KeyBinding,
   Mod,
   PasskeyEntry,
+  PaymentCard,
   ReadingListEntry,
   Settings,
   Space,
@@ -67,6 +69,27 @@ export type RecordType =
    * the record alone (`__tests__/compat.test.ts`).
    */
   | 'mod'
+  /**
+   * One address of the credential vault (`AddressEntry`; ID-45, Chrome's "Addresses and more"
+   * type), under the vault entry's own id, carrying the vault's fields (`AddressData`); the
+   * `addresses` scope's. A vault type like `credential`: published while the vault is open, held
+   * with the logins while it is locked (`isVaultRecordType`). Its own type, not a third kind of
+   * `credential`, for the peers on the builds before it: a `credential` record whose kind a
+   * build does not read is a WINNER there (`inScope` says yes to the type) that lands nothing,
+   * and the round then tombstones what it never held – a tombstone every newer peer applies –
+   * whereas a type a build does not know falls out at `inScope`, before the metadata, and is
+   * skipped every round (`__tests__/compat.test.ts`). One type per scope key, so `inScope`
+   * filters it by its key alone, as every other type. This build gives a vault record it cannot
+   * read the same skip (`vaultRecordReadable`).
+   */
+  | 'address'
+  /**
+   * One payment card of the credential vault (`PaymentCard`; ID-45, Chrome's "Payment methods"
+   * type), under the vault entry's own id, carrying the vault's fields (`PaymentMethodData`) –
+   * the number as the vault keeps it, inside the same envelope as a login's password; the
+   * `paymentMethods` scope's. A vault type, its own for the reason `address` is.
+   */
+  | 'payment-method'
 
 export interface SyncRecord {
   id: string
@@ -596,6 +619,162 @@ export function readCredentialData(data: unknown): CredentialData | null {
   return null
 }
 
+/**
+ * A postal address of the vault (`AddressEntry`; the `address` record, ID-45): every field the
+ * vault keeps, under the entry's id as the record id, so the same address edited on two devices
+ * merges last-writer-wins per entry and a deletion travels as the record's tombstone – the
+ * logins' rules (`LoginCredentialData`).
+ */
+export interface AddressData {
+  country: string
+  name: string
+  organization: string
+  streetAddress: string
+  locality: string
+  region: string
+  postalCode: string
+  sortingCode: string
+  phone: string
+  email: string
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number | null
+}
+
+/**
+ * A payment card of the vault (`PaymentCard`; the `payment-method` record): the number as the
+ * vault keeps it – the full digits (`CredentialStore.addCard`), no security code (the vault
+ * stores none) – under the folder's end-to-end key like a login's password, and nothing the
+ * vault does not hold.
+ */
+export interface PaymentMethodData {
+  number: string
+  expMonth: number
+  expYear: number
+  name: string
+  nickname: string
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number | null
+}
+
+export function addressData(a: AddressEntry): AddressData {
+  return {
+    country: a.country,
+    name: a.name,
+    organization: a.organization,
+    streetAddress: a.streetAddress,
+    locality: a.locality,
+    region: a.region,
+    postalCode: a.postalCode,
+    sortingCode: a.sortingCode,
+    phone: a.phone,
+    email: a.email,
+    createdAt: a.createdAt,
+    updatedAt: a.updatedAt,
+    lastUsedAt: a.lastUsedAt
+  }
+}
+
+export function paymentMethodData(c: PaymentCard): PaymentMethodData {
+  return {
+    number: c.number,
+    expMonth: c.expMonth,
+    expYear: c.expYear,
+    name: c.name,
+    nickname: c.nickname,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    lastUsedAt: c.lastUsedAt
+  }
+}
+
+function vaultFieldReaders(r: Record<string, unknown>): {
+  str: (key: string) => string
+  num: (key: string, fallback: number) => number
+  nullableNum: (key: string) => number | null
+} {
+  return {
+    str: (key) => (typeof r[key] === 'string' ? (r[key] as string) : ''),
+    num: (key, fallback) =>
+      typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : fallback,
+    nullableNum: (key) =>
+      typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : null
+  }
+}
+
+/**
+ * Read an `address` record from another device, repairing a missing field; null for garbage,
+ * which the round then skips – neither applied nor tombstoned (`vaultRecordReadable`). An
+ * address has no one field every country's form requires, so an object is enough.
+ */
+export function readAddressData(data: unknown): AddressData | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const { str, num, nullableNum } = vaultFieldReaders(data as Record<string, unknown>)
+  return {
+    country: str('country'),
+    name: str('name'),
+    organization: str('organization'),
+    streetAddress: str('streetAddress'),
+    locality: str('locality'),
+    region: str('region'),
+    postalCode: str('postalCode'),
+    sortingCode: str('sortingCode'),
+    phone: str('phone'),
+    email: str('email'),
+    createdAt: num('createdAt', 0),
+    updatedAt: num('updatedAt', 0),
+    lastUsedAt: nullableNum('lastUsedAt')
+  }
+}
+
+/**
+ * Read a `payment-method` record from another device; null for garbage or a card without a
+ * digit in its number (a card needs its number as a login needs its password), which the round
+ * then skips – neither applied nor tombstoned (`vaultRecordReadable`).
+ */
+export function readPaymentMethodData(data: unknown): PaymentMethodData | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const { str, num, nullableNum } = vaultFieldReaders(data as Record<string, unknown>)
+  if (!/\d/.test(str('number'))) return null
+  return {
+    number: str('number'),
+    expMonth: num('expMonth', 0),
+    expYear: num('expYear', 0),
+    name: str('name'),
+    nickname: str('nickname'),
+    createdAt: num('createdAt', 0),
+    updatedAt: num('updatedAt', 0),
+    lastUsedAt: nullableNum('lastUsedAt')
+  }
+}
+
+/**
+ * The record types the credential vault holds (`CredentialSources`): published only while it is
+ * open, held – neither tombstoned nor applied – while it is locked (`frozenRecords`, the round's
+ * `vaultOpen`), and outside the first sync's merge question (`SyncEngine.confirmMerge`: Chrome's
+ * password sync always merges by entry). Each under its own scope key (`inScope`).
+ */
+export function isVaultRecordType(type: RecordType): boolean {
+  return type === 'credential' || type === 'address' || type === 'payment-method'
+}
+
+/**
+ * Whether a vault record another device published is one this build can land: a tombstone, or
+ * a payload its reader accepts. One it cannot read – a kind of `credential` from a later build,
+ * or garbage – is left out of the round's winners, so it is neither applied nor written to the
+ * metadata, and the next round finds it and skips it again: a record never landed must never be
+ * tombstoned (`RecordType`'s note on `address`). A TYPE this build does not know never reaches
+ * here: `inScope` says nothing for it (`__tests__/compat.test.ts`).
+ */
+export function vaultRecordReadable(record: SyncRecord): boolean {
+  if (record.deleted) return true
+  if (record.type === 'credential') return readCredentialData(record.data) !== null
+  if (record.type === 'address') return readAddressData(record.data) !== null
+  if (record.type === 'payment-method') return readPaymentMethodData(record.data) !== null
+  return true
+}
+
 export function defaultScope(): SyncScope {
   return {
     spaces: true,
@@ -609,6 +788,8 @@ export function defaultScope(): SyncScope {
     shortcuts: true,
     boosts: true,
     passwords: true,
+    addresses: true,
+    paymentMethods: true,
     history: true,
     readingList: true,
     mods: true
@@ -629,6 +810,8 @@ export function fullScope(): SyncScope {
     shortcuts: true,
     boosts: true,
     passwords: true,
+    addresses: true,
+    paymentMethods: true,
     history: true,
     readingList: true,
     mods: true
@@ -663,6 +846,10 @@ export function inScope(record: SyncRecord, scope: SyncScope): boolean {
       return scope.mods
     case 'credential':
       return scope.passwords
+    case 'address':
+      return scope.addresses
+    case 'payment-method':
+      return scope.paymentMethods
     case 'tab': {
       if (record.deleted || !record.data || typeof record.data !== 'object')
         return scope.pinnedTabs || scope.essentials || scope.openTabs
@@ -1060,6 +1247,13 @@ function settingsMetaFromRemote(r: SyncRecord, mine: RecordMeta | undefined): Re
 export interface CredentialSources {
   logins: Credential[]
   passkeys: PasskeyEntry[]
+  /**
+   * The vault's addresses and payment cards (ID-45): one `address` record each under the
+   * `addresses` scope, one `payment-method` record each under `paymentMethods`; a source without
+   * the fields (a caller from before the types) publishes none.
+   */
+  addresses?: AddressEntry[]
+  cards?: PaymentCard[]
 }
 
 export interface LocalSources {
@@ -1271,6 +1465,14 @@ export function collectLocal(
       out.set(p.id, { type: 'credential', data })
     }
   }
+  // The vault's addresses and cards, each type under its own key (ID-45), while the vault is
+  // open – a locked vault publishes none of its types (`credentials` null).
+  if (src.credentials && scope.addresses)
+    for (const a of src.credentials.addresses ?? [])
+      out.set(a.id, { type: 'address', data: addressData(a) })
+  if (src.credentials && scope.paymentMethods)
+    for (const c of src.credentials.cards ?? [])
+      out.set(c.id, { type: 'payment-method', data: paymentMethodData(c) })
   return out
 }
 
@@ -1291,7 +1493,7 @@ export function frozenRecords(
   for (const id of collectLocal(src, fullScope()).keys()) if (!synced.has(id)) held.add(id)
   const vaultLocked = !src.credentials
   void previous
-  return (id, prev) => held.has(id) || (vaultLocked && prev.type === 'credential')
+  return (id, prev) => held.has(id) || (vaultLocked && isVaultRecordType(prev.type))
 }
 
 export interface DiffResult {

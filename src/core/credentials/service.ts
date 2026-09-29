@@ -1,4 +1,5 @@
 import type {
+  AddressEntry,
   CheckupState,
   CheckupSummary,
   Credential,
@@ -9,6 +10,7 @@ import type {
   ImportResult,
   PasskeyEntry,
   PasswordsStatus,
+  PaymentCard,
   ReauthOutcome
 } from '../../shared/types'
 import { emptyCheckupSummary, sanitizePasswordsDevice } from '../../shared/types'
@@ -482,13 +484,23 @@ export class PasswordService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Every login and passkey record while the vault is open, or null while it is locked: the
-   * engine then neither publishes nor tombstones credential records, and holds the ones it
-   * received until the vault opens (`core/sync/engine.ts`).
+   * Every login, passkey record, address and payment card while the vault is open, or null
+   * while it is locked: the engine then neither publishes nor tombstones the vault's records,
+   * and holds the ones it received until the vault opens (`core/sync/engine.ts`).
    */
-  syncSources(): { logins: Credential[]; passkeys: PasskeyEntry[] } | null {
+  syncSources(): {
+    logins: Credential[]
+    passkeys: PasskeyEntry[]
+    addresses: AddressEntry[]
+    cards: PaymentCard[]
+  } | null {
     if (!this.store.unlocked()) return null
-    return { logins: this.store.list(), passkeys: this.store.listPasskeys() }
+    return {
+      logins: this.store.list(),
+      passkeys: this.store.listPasskeys(),
+      addresses: this.store.listAddresses(),
+      cards: this.store.listCards()
+    }
   }
 
   /** Another device's login won the merge: it replaces this device's copy under the same id. */
@@ -504,9 +516,27 @@ export class PasswordService {
     this.store.applySyncedPasskey(passkey)
   }
 
-  /** A deletion made on another device; the undo window was that device's. */
+  /** Another device's address won the merge (ID-45): the logins' rule, under the same id. */
+  applySyncedAddress(address: AddressEntry): void {
+    this.store.applySyncedAddress(address)
+  }
+
+  /** Another device's payment card won the merge (ID-45): the number as its vault keeps it. */
+  applySyncedCard(card: PaymentCard): void {
+    this.store.applySyncedCard(card)
+  }
+
+  /**
+   * A deletion made on another device, of an entry of any kind (the vault's ids are one
+   * namespace); the undo window was that device's.
+   */
   removeSynced(id: string): void {
-    if (!this.store.removeSynced(id)) this.store.removeSyncedPasskey(id)
+    if (
+      !this.store.removeSynced(id) &&
+      !this.store.removeSyncedPasskey(id) &&
+      !this.store.removeSyncedAddress(id)
+    )
+      this.store.removeSyncedCard(id)
     const pending = this.removed.get(id)
     if (pending) {
       clearTimeout(pending.timer)
