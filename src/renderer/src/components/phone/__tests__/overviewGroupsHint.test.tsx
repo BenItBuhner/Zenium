@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement } from 'react'
+import { act, createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Tab, UIState } from '@shared/types'
@@ -11,8 +11,9 @@ import type { OverviewState } from '@renderer/lib/gestures/stage'
  * `IPH_TabGroupsDragAndDrop` dialog, opened by the tab-groups tip's "Try it now"
  * (`ChromeTabbedActivity.java` l.3500–3508), as a §9.33 bubble on a card of the overview the
  * tip opened. Driven in happy-dom with the grid's view and its cells stood in: the request the
- * tips card leaves, taken as the overview comes to rest and dropped with one that never rests;
- * the bubble up once, on the card, spent as it goes up – once per device, and not gated by the
+ * tips card leaves, the opening overview's from its mount (StrictMode's rehearsal included) and
+ * dropped with one that never rests – closed, or unmounted, on its way; the bubble up once, on
+ * the card, spent as it goes up – once per device, and not gated by the
  * session's one education, since Chrome's tip path runs no tracker – and every way it comes
  * down: a touch anywhere, the first drag, the overview leaving its rest, a resize, the unmount.
  * Which card (the design lead's fold on #701): the loose page card in view nearest the active
@@ -120,6 +121,10 @@ let grid: HTMLDivElement | null = null
 
 const render = (state: UIState, overview: OverviewState, candidates?: readonly string[]): void => {
   act(() => root!.render(createElement(Hint, { state, overview, candidates })))
+}
+/** As a dev build mounts it (`src/android/main.tsx`): under StrictMode, the mount rehearsed. */
+const renderStrict = (state: UIState, overview: OverviewState): void => {
+  act(() => root!.render(createElement(StrictMode, null, createElement(Hint, { state, overview }))))
 }
 const wait = (ms: number): void => {
   act(() => vi.advanceTimersByTime(ms))
@@ -268,6 +273,42 @@ describe('the bubble goes up', () => {
     render(stateOf(), OPEN)
     expect(bubble().bubble).toBeNull()
     expect(updates()).toHaveLength(0)
+  })
+
+  it("is dropped with an overview unmounted before it rests – the URL bar or an overlay dismissing it during the settle (`dismissOverview`: no 'closed' render, `PhoneStage` unmounts it) – so the next Tabs-button opening owes nothing", () => {
+    // The first-line review's probe P9: request → settling → unmount → a fresh mount, open.
+    requestOverviewGroupsHint()
+    render(stateOf(), SETTLING)
+    remount()
+    render(stateOf(), OPEN)
+    expect(bubble().bubble).toBeNull()
+    expect(iphSessionSpent()).toBe(false)
+    expect(updates()).toHaveLength(0)
+    // A request left while the overview already stood – its tap during the leave, the phase
+    // not yet moved on – dies with the overview the same.
+    remount()
+    render(stateOf(), LEAVING)
+    requestOverviewGroupsHint()
+    remount()
+    render(stateOf(), OPEN)
+    expect(bubble().bubble).toBeNull()
+    expect(updates()).toHaveLength(0)
+  })
+
+  it("survives StrictMode's rehearsal of the mount (every dev build: mount, cleanup, mount) – the request is the opening overview's from its first frame, not the dry run's to drop", () => {
+    requestOverviewGroupsHint()
+    renderStrict(stateOf(), SETTLING)
+    expect(bubble().bubble).toBeNull()
+    renderStrict(stateOf(), OPEN)
+    expect(bubble()).toMatchObject({ leaving: false })
+    expect(bubble().bubble).toMatchObject({ id: 'tabGroupsDragAndDrop', tabId: 't1' })
+    expect(updates()).toHaveLength(1)
+    // And the real unmount still takes it down, and with it any request.
+    requestOverviewGroupsHint()
+    act(() => root!.unmount())
+    root = createRoot(host!)
+    expect(bubble()).toEqual({ bubble: null, leaving: false })
+    expect(takeOverviewGroupsHintRequest()).toBe(false)
   })
 
   it("is dropped by an overview resting with no card to point at – a Groups pane, a grid of groups only, the tablet's overview: no candidates", () => {

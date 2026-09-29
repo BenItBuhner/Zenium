@@ -109,9 +109,11 @@ function anchorCell(
  * card, before it in grid order, else after; the active card itself only when no other page
  * card is in view; never the new tab page's card). It goes up once the overview is OPEN (the
  * settle done, the cards in their slots), not while it is heading there: the anchor's box is
- * read once, and read where the card will stay. A request the overview never rests on – closed
- * on its way, or resting with no card to point at – is dropped, not kept for the next opening:
- * Chrome's dialog is the tap's, not owed.
+ * read once, and read where the card will stay. The request is the one opening's – taken as the
+ * overview mounts and held by that instance – and a request the overview never rests on is
+ * dropped, not kept for the next opening: one closed or unmounted on its way (the URL bar or an
+ * overlay dismissing the overview during the settle unmounts it with no `'closed'` render), or
+ * resting with no card to point at. Chrome's dialog is the tap's, not owed.
  *
  * How it goes down (§9.33 – the first touch anywhere takes it down and passes through; Chrome's
  * dialog cancels on a touch outside): a `pointerdown` anywhere, heard in the capture phase and
@@ -130,16 +132,23 @@ export function useOverviewGroupsHint({ state, overview, candidates, grid }: Inp
   // is the list's contents', not the array's.
   const key = candidates.join('\n')
 
-  // The request is taken as the overview comes to rest, and dropped with an overview that goes
-  // before resting (the flag would otherwise wait for an opening the tip did not ask for).
+  // The request is this overview's from its first frame: the tip leaves it as it calls
+  // `openOverview`, and the overview mounts on the opening's first render, so it is taken as the
+  // hook mounts – or, for an overview mounted before the tap (a landing held), on the phase that
+  // follows – and held in the instance, where it dies with the overview (the cleanup below drops
+  // one left later, too): an overview dismissed on its way – the URL bar, an overlay during the
+  // settle (`dismissOverview`, `stage.ts`) – unmounts with no `'closed'` render, and the flag
+  // would otherwise wait for the next Tabs-button opening, which the tip did not ask for. A
+  // `'closed'` render (an overview kept mounted for a landing) drops it the same. Held in a ref
+  // rather than re-read from the flag, so that StrictMode's rehearsal of the mount (every dev
+  // build: mount, cleanup, mount) leaves the request where the first mount put it.
   const fromTip = useRef(false)
   useEffect(() => {
-    if (open) fromTip.current = takeOverviewGroupsHintRequest()
-    else if (overview.phase === 'closed') {
+    if (overview.phase === 'closed') {
       takeOverviewGroupsHintRequest()
       fromTip.current = false
-    }
-  }, [open, overview.phase])
+    } else if (takeOverviewGroupsHintRequest()) fromTip.current = true
+  }, [overview.phase])
 
   // Due → up, once: the layout reads are the anchor's (`anchorCell`), as the bubble goes up.
   useEffect(() => {
@@ -185,9 +194,13 @@ export function useOverviewGroupsHint({ state, overview, candidates, grid }: Inp
     }
   }, [up])
 
-  // The overview unmounting takes its bubble with it (never another's).
+  // The overview unmounting takes its bubble with it (never another's), and the request it was
+  // owed: one still on the flag – left after this overview mounted, before it came to rest – is
+  // not kept for the next opening. (StrictMode's rehearsal runs this at the mount, when the
+  // effect above has taken the request into the ref and no bubble is up: nothing to drop.)
   useEffect(
     () => () => {
+      takeOverviewGroupsHintRequest()
       if (hintBubbleTabId(hintBubbleStore.get().bubble) !== null) forgetHintBubble()
     },
     []
