@@ -1469,7 +1469,8 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
           toolbarPinned: true
         }),
         // A later build appended a field: the known ones land, the rest rides along. This one
-        // carries the switches' clocks (round 2): each travels as it is.
+        // carries the switches' clocks (round 2) and the install's time (round 5): each travels
+        // as it is.
         extensionRecord(
           EXT_C,
           {
@@ -1478,6 +1479,7 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
             toolbarPinned: true,
             enabledAt: 1500,
             toolbarPinnedAt: 1200,
+            installedAt: 1100,
             version: '2.0'
           },
           2500
@@ -1487,7 +1489,8 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
     )
     // The live records first, the tombstones after them – the batch's order for every type.
     // A record without a switch's clock (an older build's; a switch the phone never flipped) is
-    // read at 0 for it – never at the record's `modified`, 2000 here (`syncedExtensionData`).
+    // read at 0 for it – never at the record's `modified`, 2000 here (`syncedExtensionData`);
+    // a record without the install's time (a build before round 5's field) reads 0 for it too.
     expect(host.current!.batches).toEqual([
       [
         {
@@ -1497,7 +1500,8 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
             enabled: true,
             toolbarPinned: false,
             enabledAt: 0,
-            toolbarPinnedAt: 0
+            toolbarPinnedAt: 0,
+            installedAt: 0
           },
           from: 'Work laptop'
         },
@@ -1508,7 +1512,8 @@ describe('applyRemote: the extensions (services pass 16, ID-44)', () => {
             enabled: false,
             toolbarPinned: true,
             enabledAt: 1500,
-            toolbarPinnedAt: 1200
+            toolbarPinnedAt: 1200,
+            installedAt: 1100
           },
           from: null
         },
