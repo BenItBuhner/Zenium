@@ -3,6 +3,7 @@ import { useContext, useRef } from 'react'
 import { Moon, Plus, VenetianMask, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
+import { HINT_BUBBLE_ID } from '@renderer/lib/iph'
 import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
 import { NO_GRID, OverviewWindowContext, useCardFilled } from '@renderer/lib/overviewWindow'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
@@ -65,6 +66,12 @@ interface Props {
    * eager cell is not re-rendered by a fill.
    */
   eager?: boolean
+  /**
+   * The drag-to-group hint bubble stands on this card (TB-19, `useOverviewGroupsHint`): the cell
+   * pulses §9.23's halo under the bubble (`data-iph-anchor`, main.css) and the card names the
+   * bubble as its description while it stands (`aria-describedby`, the lead's (j) on #641).
+   */
+  hinted?: boolean
 }
 
 /**
@@ -94,7 +101,7 @@ interface Props {
  * "checked" or "not checked" with the card's name; no input, no second copy of the state.
  */
 export function OverviewCard(props: Props): JSX.Element {
-  const { tab, eager = false } = props
+  const { tab, eager = false, hinted = false } = props
   const cellRef = useRef<HTMLDivElement>(null)
   const grid = useContext(OverviewWindowContext)
   const filled = useCardFilled(tab.id, eager || grid === NO_GRID, grid)
@@ -105,6 +112,7 @@ export function OverviewCard(props: Props): JSX.Element {
       style={{ aspectRatio: CARD_ASPECT }}
       data-tab-id={tab.id}
       data-cell={tab.id}
+      data-iph-anchor={hinted || undefined}
     >
       {filled ? (
         <CardFace {...props} cellRef={cellRef} />
@@ -132,6 +140,7 @@ function CardFace({
   onSwipeClose,
   lift,
   selection,
+  hinted = false,
   cellRef
 }: Props & { cellRef: RefObject<HTMLDivElement | null> }): JSX.Element {
   const handlers = useCardLift({ tab, ...lift, onSwipeClose: (t) => onSwipeClose?.(t) })
@@ -164,6 +173,7 @@ function CardFace({
         data-selected={(selecting && selection.selected) || undefined}
         style={style}
         aria-label={tabCardLabel(name, position, count, active, tab.discarded === true)}
+        aria-describedby={hinted ? HINT_BUBBLE_ID : undefined}
         onPointerDown={handlers.onPointerDown}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}

@@ -24,6 +24,7 @@ import type {
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
+import { isEmptyTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { announce } from '@renderer/lib/announce'
 import { cmd, run } from '@renderer/lib/api'
@@ -40,6 +41,7 @@ import {
   stageStore,
   type OverviewState
 } from '@renderer/lib/gestures/stage'
+import { hintBubbleStore, hintBubbleTabId } from '@renderer/lib/iph'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
@@ -169,6 +171,7 @@ import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { placeholderPx } from './tabPlaceholder'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
+import { overviewHintCandidates, useOverviewGroupsHint } from './useOverviewGroupsHint'
 import { useFlip } from './useFlip'
 import { SEGMENT_LINE_CLASS, usePaneSwipe } from './usePaneSwipe'
 import { useOverviewHandle } from './usePillGestures'
@@ -475,6 +478,23 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // it as it writes, and a measurement is not a render of the grid (each phase change, each
   // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
   const heroCell = useRef<Rect | null>(null)
+  // The drag-to-group teaching's bubble (TB-19, `useOverviewGroupsHint`): on the Tabs pane of
+  // the phone's overview, on the loose page card in view nearest the active card – the cell
+  // before it in grid order, else the one after; the active card itself only when no other page
+  // card is in view; never the new tab page's card, the one the tip's "Try it now" left (the
+  // design lead's fold on #701). The cards go in grid order, the hook chooses among them as the
+  // bubble goes up; the Private pane groups nothing, the Groups pane has no cards, the tablet
+  // has no tips card. While it stands, its card pulses and carries it as its description
+  // (`OverviewCard`'s `hinted`).
+  const hintCandidates =
+    tablet || pane !== 'tabs'
+      ? []
+      : overviewHintCandidates(
+          loose.map((t) => ({ id: t.id, page: !isEmptyTabUrl(t.url) })),
+          active?.id ?? null
+        )
+  useOverviewGroupsHint({ state, overview, candidates: hintCandidates, grid: scrollRef })
+  const hintedTabId = hintBubbleStore.use((s) => (s.leaving ? null : hintBubbleTabId(s.bubble)))
   const sheet = overviewUiStore.use((s) => s.sheet)
   const setSheet = setOverviewSheet
   /**
@@ -1774,6 +1794,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       // lands on it, the tablet's layer shows it as it comes down (W6-0). So are the cards the
       // mount's guess puts in view (`guessed`, above): the one pass a right guess makes.
       eager={tab.id === heroTabId || guessed.has(tab.id)}
+      hinted={tab.id === hintedTabId}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}

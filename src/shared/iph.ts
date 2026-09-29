@@ -7,7 +7,19 @@ import type { IphBubbleState, IphState } from './types'
  * l.621–623; `feature_configurations.cc` l.1635–1652): "Show after 14 days of Chrome being
  * installed, once every 90 days, unless the user has used the tab switcher button in the last
  * year" – one bubble per session (`session_rate < 1`). The adaptive-button bubbles are off by
- * default there and have no config; this module knows the one bubble Chrome shows.
+ * default there and have no config.
+ *
+ * The second record is the tab switcher's drag-to-group teaching, Chrome's
+ * `IPH_TabGroupsDragAndDrop` (`feature_constants.cc` l.591–593, disabled by default;
+ * `feature_configurations.cc` l.1554–1571: `availability ANY`, once per session, not after a
+ * drag-and-drop grouped tabs in the last 360 days – the `used` event
+ * `tab_drag_and_drop_to_group`, `EventConstants.java` l.278). Out of the box Chrome 152 reaches
+ * the teaching only from the NTP's educational tip card: `TabGroupPromoCoordinator.java` l.35
+ * `openTabGroupIphDialog()` → `ChromeTabbedActivity.java` l.3500–3508 shows the Hub and
+ * `TabGridIphDialogCoordinator.showIph()` unconditionally (no tracker check), a modal reading
+ * "Get organized – To group tabs, touch & hold a tab. Then, drag it onto another tab."
+ * (`components/browser_ui/strings/android/browser_ui_strings.grd` l.1432–1437). Zenium shows it
+ * as a §9.33 hint bubble in the overview instead, once (`shown`), on that same path.
  *
  * Each bubble's record is this device's own (`DEVICE_LOCAL_SETTINGS`): Chrome's feature
  * engagement tracker keeps its events in the profile's own LevelDB
@@ -29,13 +41,21 @@ const DAY_MS = 24 * 60 * 60 * 1000
 export const DEFAULT_IPH_BUBBLE_STATE: IphBubbleState = { availableAt: null, shown: false }
 
 export const DEFAULT_IPH_STATE: IphState = {
-  tabSwitcher: { ...DEFAULT_IPH_BUBBLE_STATE }
+  tabSwitcher: { ...DEFAULT_IPH_BUBBLE_STATE },
+  tabGroupsDragAndDrop: { ...DEFAULT_IPH_BUBBLE_STATE }
 }
 
-/** Persisted state from disk can be anything: coerce it into a valid record. */
+/**
+ * Persisted state from disk can be anything: coerce it into a valid record. A record from a
+ * build before a bubble existed reads that bubble's defaults – unseen, as Chrome's tracker reads
+ * a feature with no events.
+ */
 export function sanitizeIphState(raw: unknown): IphState {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  return { tabSwitcher: sanitizeBubble(r.tabSwitcher) }
+  return {
+    tabSwitcher: sanitizeBubble(r.tabSwitcher),
+    tabGroupsDragAndDrop: sanitizeBubble(r.tabGroupsDragAndDrop)
+  }
 }
 
 function sanitizeBubble(raw: unknown): IphBubbleState {

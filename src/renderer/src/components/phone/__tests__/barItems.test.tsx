@@ -49,7 +49,11 @@ function withRecord(record: UIState['settings']['iph']['tabSwitcher']): UIState 
   const base = state({ mode: 'off', url: '' })
   return {
     ...base,
-    settings: { ...base.settings, onboardingDone: true, iph: { tabSwitcher: record } }
+    settings: {
+      ...base.settings,
+      onboardingDone: true,
+      iph: { ...base.settings.iph, tabSwitcher: record }
+    }
   }
 }
 

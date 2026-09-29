@@ -64,6 +64,7 @@ import { run } from '@renderer/lib/api'
 import { fileGlyphFor, type FileGlyph } from '@renderer/lib/downloadsView'
 import { useFaviconSrc } from '@renderer/lib/favicons'
 import { openOverview } from '@renderer/lib/gestures/stage'
+import { requestOverviewGroupsHint } from '@renderer/lib/iph'
 import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
@@ -600,7 +601,9 @@ function useEducationalTips(
           // Chrome's "Show me how" opens the Hub's tab switcher with the grouping IPH
           // (`ChromeTabbedActivity.java:3500-3508`): the overview, where a tab dropped on another
           // makes a group – no IPH dialog here, so the button reads "Try it now" (the lead's
-          // fold on #695).
+          // fold on #695), and the teaching is the overview's hint bubble, shown once as the
+          // overview comes to rest on this request (TB-19, `useOverviewGroupsHint`).
+          requestOverviewGroupsHint()
           openOverview(state)
           break
         case 'quick-delete':

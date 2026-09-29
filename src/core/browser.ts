@@ -19,6 +19,7 @@ import type {
   Rect,
   SearchEngine,
   Settings,
+  SettingsPatch,
   ShareAction,
   SharePayload,
   Shortcut,
@@ -4510,7 +4511,7 @@ export class Browser {
       this.state.afterBroadcast(() => this.revealFreshTab(active, win))
   }
 
-  updateSettings(patch: Partial<Settings>, win: ZenWindow): void {
+  updateSettings(patch: SettingsPatch, win: ZenWindow): void {
     const s = this.state.settings
     const before = {
       glance: s.glanceEnabled,

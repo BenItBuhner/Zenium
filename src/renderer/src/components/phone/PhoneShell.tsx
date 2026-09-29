@@ -31,7 +31,7 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
-import { HINT_BUBBLE_ID, hintBubbleStore } from '@renderer/lib/iph'
+import { HINT_BUBBLE_ID, hintBubbleBarItem, hintBubbleStore } from '@renderer/lib/iph'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
@@ -320,9 +320,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // The bubble's anchor pulses while the bubble is up (Chrome's `HighlightShape.CIRCLE` on the
   // tab switcher button, `PulseDrawable`; §9.23's halo here): the bar carries the item's id for
   // the stylesheet, and the item names the bubble as its description while it stands.
-  const iphAnchor = hintBubbleStore.use((s) =>
-    s.bubble && !s.leaving ? s.bubble.anchorItem : null
-  )
+  const iphAnchor = hintBubbleStore.use((s) => (s.leaving ? null : hintBubbleBarItem(s.bubble)))
 
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
   // as a preview of the bar at the other edge fades in. Once the new edge is committed the bar

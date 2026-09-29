@@ -19,17 +19,50 @@ describe('the hint bubbles’ records (TB-19)', () => {
   })
 
   it('keeps a valid record and coerces a broken one field by field', () => {
+    const unseen = { availableAt: null, shown: false }
     expect(
       sanitizeIphState({ tabSwitcher: { availableAt: 1_700_000_000_000, shown: true } })
-    ).toEqual({ tabSwitcher: { availableAt: 1_700_000_000_000, shown: true } })
+    ).toEqual({
+      tabSwitcher: { availableAt: 1_700_000_000_000, shown: true },
+      tabGroupsDragAndDrop: unseen
+    })
     expect(
       sanitizeIphState({ tabSwitcher: { availableAt: 1_700_000_000_000.7, shown: 'yes' } })
-    ).toEqual({ tabSwitcher: { availableAt: 1_700_000_000_000, shown: false } })
+    ).toEqual({
+      tabSwitcher: { availableAt: 1_700_000_000_000, shown: false },
+      tabGroupsDragAndDrop: unseen
+    })
     for (const at of [0, -5, NaN, Infinity, '12', null]) {
       expect(sanitizeIphState({ tabSwitcher: { availableAt: at, shown: true } })).toEqual({
-        tabSwitcher: { availableAt: null, shown: true }
+        tabSwitcher: { availableAt: null, shown: true },
+        tabGroupsDragAndDrop: unseen
       })
     }
+  })
+
+  it('the overview’s drag-to-group record (Chrome’s IPH_TabGroupsDragAndDrop) is kept beside the Tabs button’s, each on its own', () => {
+    // A profile written by #641's build has only the Tabs-button record: the new one reads unseen.
+    expect(
+      sanitizeIphState({ tabSwitcher: { availableAt: 1_700_000_000_000, shown: true } })
+        .tabGroupsDragAndDrop
+    ).toEqual({ availableAt: null, shown: false })
+    expect(
+      sanitizeIphState({
+        tabSwitcher: { availableAt: null, shown: false },
+        tabGroupsDragAndDrop: { availableAt: 1_700_000_000_000, shown: true }
+      })
+    ).toEqual({
+      tabSwitcher: { availableAt: null, shown: false },
+      tabGroupsDragAndDrop: { availableAt: 1_700_000_000_000, shown: true }
+    })
+    expect(
+      sanitizeIphState({ tabGroupsDragAndDrop: { availableAt: 'soon', shown: 1 } })
+        .tabGroupsDragAndDrop
+    ).toEqual({ availableAt: null, shown: false })
+    // Spending one record says nothing about the other.
+    const spent = sanitizeIphState({ tabGroupsDragAndDrop: { availableAt: null, shown: true } })
+    expect(spent.tabGroupsDragAndDrop.shown).toBe(true)
+    expect(spent.tabSwitcher.shown).toBe(false)
   })
 
   it('a bubble is available 14 days after its stamp, as Chrome’s `availability >= 14`, never before the stamp', () => {
