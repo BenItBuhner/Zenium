@@ -13,12 +13,6 @@ name: Android selection toolbar demo
 # the Gradle cache live in android-emulator-demo.yml; this file only picks the driver and the
 # demo it runs.
 on:
-  # TEMPORARY (W6-S25-b, PR #724, PUI-40): the budget's ONE recording run of TextFragmentDemo on
-  # this branch – the selection demo's environment lent to the text-fragment driver (its class,
-  # handshake directory and artifact below, for this run alone); removed before READY, the file
-  # main's again byte for byte.
-  push:
-    branches: [cursor/android-text-fragments-9271]
   workflow_dispatch:
 
 permissions:
@@ -36,12 +30,12 @@ jobs:
       script: .github/scripts/android-gesture-demo.sh
       # The shared driver chooses the demo from its environment (see the script's header).
       script-env: |
-        DEMO_CLASS=app.zen.chromium.TextFragmentDemo
-        DEMO_DIR=text-fragment-demo
-        DEMO_OUT=artifacts/android-text-fragment-demo
-        DEMO_VIDEO=android-text-fragment-demo.mp4
-      artifact-name: android-text-fragment-demo
-      artifact-path: artifacts/android-text-fragment-demo/
+        DEMO_CLASS=app.zen.chromium.SelectionDemo
+        DEMO_DIR=selection-demo
+        DEMO_OUT=artifacts/android-selection-demo
+        DEMO_VIDEO=android-selection-demo.mp4
+      artifact-name: android-selection-demo
+      artifact-path: artifacts/android-selection-demo/
 
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
   # never when the driver failed: a run is then spent on the demo rather than on the runner.
@@ -53,9 +47,9 @@ jobs:
     with:
       script: .github/scripts/android-gesture-demo.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.TextFragmentDemo
-        DEMO_DIR=text-fragment-demo
-        DEMO_OUT=artifacts/android-text-fragment-demo
-        DEMO_VIDEO=android-text-fragment-demo.mp4
-      artifact-name: android-text-fragment-demo-second-boot
-      artifact-path: artifacts/android-text-fragment-demo/
+        DEMO_CLASS=app.zen.chromium.SelectionDemo
+        DEMO_DIR=selection-demo
+        DEMO_OUT=artifacts/android-selection-demo
+        DEMO_VIDEO=android-selection-demo.mp4
+      artifact-name: android-selection-demo-second-boot
+      artifact-path: artifacts/android-selection-demo/
