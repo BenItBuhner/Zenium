@@ -1,0 +1,53 @@
+name: Android tablet tab drag demo (TEMPORARY)
+
+# TEMPORARY, W6-S25-a (TABLET-03): a branch-scoped trigger to record TabletTabDragDemo once on the
+# tablet recipe (the pixel_tablet profile at 1280 x 800 dp, as android-tab-groups-demo.yml's
+# tablet act). Removed at the head before review; the driver itself runs in the nightly through
+# .github/nightly-drivers/tablet-tab-drag.json.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-tablet-tab-drag-lift-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-tab-drag-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tablet:
+    name: Tablet tab drag demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletTabDragDemo
+        DEMO_DIR=tablet-tab-drag-demo
+        DEMO_OUT=artifacts/android-tablet-tab-drag-demo
+        DEMO_VIDEO=android-tablet-tab-drag-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-tab-drag-demo
+      artifact-path: artifacts/android-tablet-tab-drag-demo/
+
+  tablet-again:
+    name: Tablet tab drag demo, second boot
+    needs: tablet
+    if: ${{ failure() && needs.tablet.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletTabDragDemo
+        DEMO_DIR=tablet-tab-drag-demo
+        DEMO_OUT=artifacts/android-tablet-tab-drag-demo
+        DEMO_VIDEO=android-tablet-tab-drag-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tablet-tab-drag-demo-second-boot
+      artifact-path: artifacts/android-tablet-tab-drag-demo/
