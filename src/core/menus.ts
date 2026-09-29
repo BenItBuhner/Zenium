@@ -3171,9 +3171,12 @@ export class Menus {
   }
 
   /**
-   * The desktop's "Delete Folder": a folder with tabs or saved pages is deleted only once the
-   * chrome's prompt (`folder.confirmDelete`, a §9.23 dialog) is answered – the answer runs
-   * `folder.delete` – and an empty one goes at once.
+   * The desktop's "Delete Folder" and the touch host's "Delete Group" (`groupMenu`): a folder
+   * with tabs or saved pages is deleted only once the chrome's prompt (`folder.confirmDelete`,
+   * a §9.23 dialog) is answered – the answer runs `folder.delete` – and an empty one goes at
+   * once. Chrome for Android asks before a group is deleted on every form factor
+   * (`ActionConfirmationManager.processDeleteGroupAttempt`); the phone's group sheet asks
+   * through its own `DeleteGroupSheet`, the tablet through this prompt as the desktop does.
    */
   private deleteFolderAsking(folderId: string, win: ZenWindow): void {
     const { model } = this.browser.state
@@ -3190,9 +3193,11 @@ export class Menus {
    * bubble's name and colour folded in, the bubble being the desktop's. Rename Group…, Colour
    * (Chrome's nine as radio items, the group's checked), New Tab in Group, Collapse or Expand
    * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
-   * group stays SAVED with their pages (TAB-16) – and Delete Group. A saved group (its tabs
-   * closed, its pages kept) leads with Open Group (N Tabs) and has nothing to fold, ungroup or
-   * close; Delete Group forgets its pages. Title Case throughout (v2 §9.1). Delete Group alone
+   * group stays SAVED with their pages (TAB-16) – and Delete Group, which asks first when the
+   * group holds anything (`deleteFolderAsking`: the chrome's §9.23 prompt, as the phone's sheet
+   * and the desktop's Delete Folder ask). A saved group (its tabs closed, its pages kept) leads
+   * with Open Group (N Tabs) and has nothing to fold, ungroup or close; Delete Group forgets its
+   * pages, asking first too. Title Case throughout (v2 §9.1). Delete Group alone
    * takes the danger ink (§6: for what destroys the user's own; Close Group destroys nothing
    * the saved group does not keep, and Chrome's "Close group" is plain), as the phone's group
    * sheet writes them. The menu is a folder's and never the app menu's, whose renderer-drawn
@@ -3245,7 +3250,7 @@ export class Menus {
       ...fold,
       { type: 'separator' },
       ...closing,
-      { label: 'Delete Group', danger: true, click: () => browser.deleteFolder(id, false) }
+      { label: 'Delete Group', danger: true, click: () => this.deleteFolderAsking(id, win) }
     ]
   }
 
