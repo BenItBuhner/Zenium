@@ -29,8 +29,10 @@ import type {
   KeyEventInput,
   MenuItemTemplate,
   PageContextParams,
-  PopupFrame
+  PopupFrame,
+  SyncedExtensionChange
 } from '../../core/platform'
+import { TOAST_UNDO_MS } from '../../shared/toastCard'
 import type { ZenWindow } from '../../core/window'
 import {
   checkForUpdates,
@@ -113,6 +115,12 @@ import type { PermissionsApi } from './extensionApi/permissions'
 import type { ApiStore } from './extensionApi/store'
 import { ExtensionErrorConsole } from './extensionErrors'
 import { popupKey } from './extensionPopupKeys'
+import {
+  ExtensionSyncApplier,
+  syncedRemovalToast,
+  type SyncedExtensionRecord
+} from './extensionSync'
+import type { StartupHold } from './startupHold'
 import { extensionPageOpenHandler } from './extensionPopupOpen'
 import { liveWebContents } from './popupContents'
 import type { SessionManager } from './sessions'
@@ -284,6 +292,13 @@ export class ExtensionService implements ExtensionHost {
   private readonly folded = new Map<string, string[]>()
   /** Reloads due for a grant or a removal of host patterns, by id (`hostGrantsChanged`). */
   private readonly grantReloads = new Map<string, ReturnType<typeof setTimeout>>()
+  /**
+   * The extension layer's startup hold (`platform/index.ts` sets it): the records another
+   * device published wait for it (`applySyncedExtensions`, ID-44). Null in a host without one.
+   */
+  startupHold: StartupHold | null = null
+  /** The synced records' schedule (ID-44): per-id order, the back-off, the hold. */
+  readonly sync: ExtensionSyncApplier
 
   /**
    * Shows the install prompt and resolves with the user's decision: the chrome's dialog when a
@@ -299,6 +314,27 @@ export class ExtensionService implements ExtensionHost {
     userDataDir: string
   ) {
     this.prompts = new ChromePrompts(browser)
+    this.sync = new ExtensionSyncApplier({
+      record: (id) => this.record(id),
+      busy: (id) => this.busy.has(id),
+      download: (id, store) => this.downloadPackage(id, store),
+      install: async (pkg, store, toolbarPinned) => {
+        const outcome = await this.installPackage(
+          pkg,
+          { source: store, publisher: pkg.publisher, updateUrl: STORE_UPDATE_URLS[store] },
+          { confirm: false, synced: { toolbarPinned } }
+        )
+        return outcome.status === 'installed' ? 'installed' : 'in-progress'
+      },
+      remove: (id) => this.remove(id),
+      setEnabled: (id, enabled) => this.setEnabled(id, enabled),
+      setToolbarPinned: (id, pinned) => this.setToolbarPinned(id, pinned),
+      toastRemoved: (record, store, from) => this.toastSyncedRemoval(record, store, from),
+      error: (message) => console.error(message),
+      now: () => Date.now(),
+      // Read at each call: `platform/index.ts` sets the hold after the service is built.
+      hold: { run: (fn) => (this.startupHold ? this.startupHold.run(fn) : fn()) }
+    })
     this.root = join(userDataDir, 'extensions')
     this.store = new JsonStore<ExtensionRegistry>(browser.platform.io, 'extensions.json', 300)
     this.registry = migrateRegistry(
@@ -643,6 +679,7 @@ export class ExtensionService implements ExtensionHost {
         warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
         withheld: ext ? withheld : withheldPermissionsOf(manifest),
         pendingWarnings: record.pendingWarnings,
+        ...(record.pendingApproval ? { pendingApproval: true } : {}),
         updateState: update.state,
         availableVersion: update.availableVersion,
         updateError: update.error,
@@ -901,16 +938,23 @@ export class ExtensionService implements ExtensionHost {
    * The one install path: confirm (unless already approved), write the version directory, swap
    * the registry record, load, prune older versions. A failed load of an update rolls back to the
    * version that was running.
+   *
+   * `synced` (ID-44): the package came from another device's `extension` record, not from a
+   * hand here – no prompt was shown, so the record lands TURNED OFF with `pendingApproval` set
+   * and is not loaded; `setEnabled` shows the install prompt before it ever runs. Pinned to the
+   * toolbar as the record says (no permission in a pin). Only a fresh install lands this way: an
+   * extension that arrived meanwhile on another path is left as it is (`'in-progress'`).
    */
   async installPackage(
     pkg: ExtensionPackage,
     meta: InstallMeta,
-    options: { confirm: boolean; win?: ZenWindow }
+    options: { confirm: boolean; win?: ZenWindow; synced?: { toolbarPinned: boolean } }
   ): Promise<InstallOutcome> {
     if (this.busy.has(pkg.id)) return { status: 'in-progress' }
     this.busy.add(pkg.id)
     try {
       const existing = this.record(pkg.id)
+      if (options.synced && existing) return { status: 'in-progress' }
       if (options.confirm) {
         const ok = await this.confirmInstall(
           {
@@ -945,8 +989,13 @@ export class ExtensionService implements ExtensionHost {
             manifest: pkg.manifest,
             now,
             publisher: meta.publisher,
-            updateUrl: meta.updateUrl
+            updateUrl: meta.updateUrl,
+            ...(options.synced ? { enabled: false } : {})
           })
+      if (options.synced) {
+        record.pendingApproval = true
+        record.toolbarPinned = options.synced.toolbarPinned
+      }
       if (existing) this.unload(existing)
       this.replace(record)
       if (record.enabled) await this.load(record)
@@ -1023,6 +1072,24 @@ export class ExtensionService implements ExtensionHost {
   async setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void> {
     const record = this.record(id)
     if (!record || record.enabled === enabled) return
+    if (enabled && record.pendingApproval) {
+      // A synced landing (ID-44): the install prompt an install made here would have shown –
+      // the extension's name, its icon, every permission warning of its manifest, the store it
+      // came from – before it runs for the first time. Declined, it stays off and waiting.
+      const manifest = readManifest(record.path)
+      const ok = await this.confirmInstall(
+        {
+          kind: 'install',
+          name: record.name,
+          icon: this.icon(record.path, record.version, manifest),
+          warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
+          source: record.source
+        },
+        win
+      )
+      if (!ok) return
+      delete record.pendingApproval
+    }
     if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
       const ok = await this.confirmInstall(
         {
@@ -1062,6 +1129,39 @@ export class ExtensionService implements ExtensionHost {
     record.toolbarPinned = pinned
     this.persist()
     this.browser.state.commitVolatile()
+  }
+
+  // ---------------------------------------------------------------------------
+  // The extension records of the other devices (sync, ID-44)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The `extension` records the sync engine hands over (`applyRemote`): queued per id behind
+   * the startup hold and applied through this service's own paths – `downloadPackage` and
+   * `installPackage` (`synced`: a landing turned off, waiting for approval), `setEnabled`,
+   * `setToolbarPinned`, `remove` (`ExtensionSyncApplier` says what lands when).
+   */
+  applySyncedExtensions(changes: readonly SyncedExtensionChange[]): void {
+    this.sync.apply(changes)
+  }
+
+  /**
+   * The removal a peer's tombstone made here (ID-44): what went and which device removed it,
+   * Undo reinstalling from the store – the ordinary `extension.installFromStore`, prompt and
+   * all, as the user asked for it back. DRAFT wording until the lead approves it.
+   */
+  private toastSyncedRemoval(
+    record: SyncedExtensionRecord,
+    store: StoreId,
+    from: string | null
+  ): void {
+    this.browser.toast(
+      syncedRemovalToast(record.name, from),
+      'info',
+      undefined,
+      { label: 'Undo', command: 'extension.installFromStore', args: { ref: record.id, store } },
+      TOAST_UNDO_MS
+    )
   }
 
   /** Chrome applies the file-URL toggle by reloading the extension; so does this. */

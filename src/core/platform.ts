@@ -119,6 +119,7 @@ import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
 import type { BackgroundWorkerHandle } from './background/work'
 import type { RuleSet } from './blocking/rules'
 import type { StartupOverride } from './startup'
+import type { ExtensionRecordData } from './sync/records'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -2223,6 +2224,18 @@ export interface Governor {
   memoryOf?(tabId: string): number | null
 }
 
+/**
+ * One `extension` record as the sync engine hands it to the host (ID-44): the extension's id,
+ * the record read (`readExtensionData`) – or null for a tombstone, the extension removed on
+ * `from` – and the device whose file carried the record, as that device names itself
+ * (`SyncStatus.devices`' name), null when the engine cannot say.
+ */
+export interface SyncedExtensionChange {
+  id: string
+  data: ExtensionRecordData | null
+  from: string | null
+}
+
 /** Browser extensions (Chromium extension API); Electron only. */
 export interface ExtensionHost {
   start(): Promise<void>
@@ -2257,6 +2270,20 @@ export interface ExtensionHost {
    * Hosts without it (the phone) never let an extension set the startup.
    */
   startupPagesOverride?(): StartupOverride | null
+  /**
+   * The `extension` records other devices published, as they win or stand outstanding
+   * (`SyncEngine.run` → `applyRemote`; services pass 16, ID-44): a live record for an extension
+   * this host lacks is installed from its store and lands TURNED OFF, waiting for the user's
+   * approval of its permissions (`ExtensionInfo.pendingApproval`); one for an extension it holds
+   * lands `enabled` and `toolbarPinned` through the ordinary paths – `enabled: true` only once
+   * the user approved the install here; a tombstone uninstalls, with a toast naming the device
+   * the removal came from and Undo. Serialised per id, never during the extension layer's
+   * startup hold, one console line and a per-id back-off for a store that will not hand the
+   * extension over; the same records again do nothing more (the engine hands the outstanding
+   * ones over every round, `pendingExtensionRequests`). Hosts without it (the phone) publish
+   * their store installs and apply nothing.
+   */
+  applySyncedExtensions?(changes: readonly SyncedExtensionChange[]): void
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */

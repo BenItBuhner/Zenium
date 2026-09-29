@@ -44,6 +44,15 @@ export function promptCopy(
   }
 }
 
+/**
+ * The line under an extension sync installed here that the user has not approved yet
+ * (`ExtensionInfo.pendingApproval`; services pass 16, ID-44): the card's sub-line and the
+ * details page's caption, in the warn tone – the extension is off, and its switch opens the
+ * install prompt (`promptCopy`'s `install` kind: `Add "<name>"?`, the permission warnings, Add
+ * extension). The lead's words; DRAFT until the lead approves them.
+ */
+export const SYNCED_PENDING_LINE = 'Synced from another device — needs your permission'
+
 /** The one line under "It can:" when there is nothing to warn of, per kind. */
 export function noWarningsLine(kind: ExtensionPromptRequest['kind']): string {
   return kind === 'permissions' || kind === 'request'

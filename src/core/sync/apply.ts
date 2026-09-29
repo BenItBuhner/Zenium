@@ -18,6 +18,7 @@ import {
   removeTabFromSplit
 } from '../../core/model'
 import type { Browser } from '../../core/browser'
+import type { SyncedExtensionChange } from '../../core/platform'
 import {
   ORDER_CONTAINERS,
   ORDER_ESSENTIALS,
@@ -29,6 +30,7 @@ import {
   readAddressData,
   readBookmarkData,
   readCredentialData,
+  readExtensionData,
   readFolderAgentMark,
   readModData,
   readPaymentMethodData,
@@ -57,11 +59,19 @@ const ORDER: Record<SyncRecord['type'], number> = {
   shortcuts: 7,
   boost: 8,
   mod: 8,
+  extension: 8,
   credential: 9,
   address: 9,
   'payment-method': 9,
   order: 10
 }
+
+/**
+ * Where a remote record came from, for the apply paths that name the device (the extension
+ * removal's toast, ID-44): the engine keeps the device name per record it read
+ * (`SyncEngine.readRemote`); null when it cannot say (a test's bare list, a merged record).
+ */
+export type RecordOrigin = (record: SyncRecord) => string | null
 
 /**
  * Apply records that won the merge to the live browser state. Upserts run before deletes of the
@@ -72,7 +82,11 @@ const ORDER: Record<SyncRecord['type'], number> = {
  * before the new one meets the URL dedupe, or it could lose the URL to the very entry its
  * tombstone takes away.
  */
-export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
+export function applyRemote(
+  browser: Browser,
+  winners: SyncRecord[],
+  origin: RecordOrigin = () => null
+): void {
   const { state, tabs } = browser
   const m = state.model
   const sorted = [...winners].sort(
@@ -80,8 +94,14 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   )
   const readingListLanded: ReadingListEntry[] = []
   const readingListGone: string[] = []
+  const extensionChanges: SyncedExtensionChange[] = []
+  // The extensions land in the host's registry, not in `state`: a batch of them alone leaves
+  // the state as it was and writes nothing (the engine hands the outstanding ones over every
+  // round, `pendingExtensionRequests` – a commit per round would be a write per poll).
+  let stateTouched = false
 
   for (const r of sorted) {
+    if (r.type !== 'extension') stateTouched = true
     switch (r.type) {
       case 'container': {
         if (r.deleted) {
@@ -380,6 +400,19 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         }
         break
       }
+      case 'extension': {
+        // One store extension under its own id (services pass 16, ID-44): the host installs,
+        // switches or uninstalls it on its own schedule (`ExtensionHost.applySyncedExtensions`,
+        // after the loop, once per batch); a record the reader refuses – an id that is no
+        // extension id, a store this build does not know – lands nothing, as a type this build
+        // does not know does. A tombstone needs no data; it names the device it came from.
+        if (r.deleted) extensionChanges.push({ id: r.id, data: null, from: origin(r) })
+        else {
+          const data = readExtensionData(r.id, r.data)
+          if (data) extensionChanges.push({ id: r.id, data, from: origin(r) })
+        }
+        break
+      }
       case 'credential': {
         // The engine hands credential records over only while the vault is open (a locked one
         // holds them for the next sync); the store keeps the other device's id and timestamps.
@@ -473,6 +506,13 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
   if (readingListGone.length) browser.readingList.removeSynced(readingListGone)
   if (readingListLanded.length) browser.readingList.applySynced(readingListLanded)
 
+  // The extensions, once per batch, to the host that applies them – the desktop; a host without
+  // the method (the phone) publishes its store installs and lands none. The work is the host's
+  // and asynchronous (a download from the store); what lands re-collects to the received hash
+  // and the engine holds the entry of what has not landed (`frozenRecords`).
+  if (extensionChanges.length) browser.extensions.applySyncedExtensions?.(extensionChanges)
+
+  if (!stateTouched) return
   state.repair()
   state.commit()
 }

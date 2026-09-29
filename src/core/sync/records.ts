@@ -5,6 +5,7 @@ import type {
   Boost,
   Container,
   Credential,
+  ExtensionInfo,
   Folder,
   FolderAgentMark,
   FolderColor,
@@ -24,6 +25,7 @@ import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { OTHER_BOOKMARKS_ID, isBookmarkRoot } from '../../shared/bookmarks'
 import { sanitizeMod } from '../../shared/mods'
 import { isReadingListUrl, sanitizeReadingEntry } from '../../shared/readingList'
+import { isExtensionId, type StoreId } from '../extensions/store'
 import type { Model } from '../model'
 import type { SiteDataPolicy } from '../../shared/siteData'
 import { sha1Hex } from './sha1'
@@ -90,6 +92,14 @@ export type RecordType =
    * `paymentMethods` scope's. A vault type, its own for the reason `address` is.
    */
   | 'payment-method'
+  /**
+   * One extension installed from a store (Chrome's "Extensions" type; services pass 16, ID-44),
+   * under the extension's own id, carrying the store it came from and whether it is enabled and
+   * pinned to the toolbar (`ExtensionRecordData`); the `extensions` scope's. Additive on the
+   * wire like `site-data`, the reading list and the Mods: a peer on a build without the type
+   * leaves the record alone (`__tests__/compat.test.ts`).
+   */
+  | 'extension'
 
 export interface SyncRecord {
   id: string
@@ -405,6 +415,75 @@ export function modData(mod: Mod): ModData {
  */
 export function readModData(id: string, data: unknown): Mod | null {
   return sanitizeMod(id, data)
+}
+
+/**
+ * One store extension as its record carries it (services pass 16, ID-44; Chrome's
+ * `sync_pb::ExtensionSpecifics` carries the id, the update URL, `enabled`, `incognito_enabled`
+ * and the version – ours carries the three fields another device can act on): the store it was
+ * installed from (`ExtensionRecord.source` when that is a store id – the record's `id` names
+ * the extension there, which is where a receiving device installs it from), whether it is
+ * enabled, and whether it is pinned to the toolbar (`ExtensionRecord.toolbarPinned`, Chrome's
+ * "Pin to toolbar" – never `pinned`, the update-check skip, which is each device's own). The
+ * version travels nowhere: each device takes the store's current one. The per-device grants –
+ * `allowFileAccess`, `allowPrivate`, `allowUserScripts` – travel nowhere either: each is a
+ * permission the user gives THIS device's copy, and Chrome's `incognito_enabled` is the one
+ * such grant it syncs; we sync none. Nor do `installedAt` and `updatedAt`: when the files were
+ * written on a device is that device's fact, and the same state must hash the same on every
+ * device (`winningRemote` skips an equal hash; the round adopts a peer's entry on one). The
+ * conflict clock is the record's `modified` – the engine's stamp at the commit that changed the
+ * extension (`SyncEngine.onLocalChange`) – last writer per extension, the whole record, as
+ * Chrome resolves an `ExtensionSyncData` whole; ties keep the local copy. A removal is the
+ * engine's tombstone, from the extension's absence (`diffLocal`, at `now`) – but only when the
+ * absence is an uninstall (`frozenRecords`: an install that has not landed, or failed, is no
+ * removal).
+ */
+export interface ExtensionRecordData {
+  store: StoreId
+  enabled: boolean
+  toolbarPinned: boolean
+}
+
+/** The stores a record may name; any other `store` is garbage and the record is ignored. */
+const STORE_IDS: ReadonlySet<string> = new Set<StoreId>(['chrome-web-store', 'edge-add-ons'])
+
+/** The store an extension's `source` names, or null for a file or folder install: only a store install syncs. */
+export function extensionStoreOf(source: ExtensionInfo['source']): StoreId | null {
+  return STORE_IDS.has(source) ? (source as StoreId) : null
+}
+
+/**
+ * What `collectLocal` reads of an installed extension (`ExtensionHost.list()`): its id, where
+ * it came from, the two synced switches, and whether it is a synced landing still waiting for
+ * the user's approval here (`ExtensionInfo.pendingApproval`) – such a landing is not this
+ * device's state to publish (`collectLocal` leaves it out; `frozenRecords` holds its entry).
+ */
+export type ExtensionSyncSource = Pick<
+  ExtensionInfo,
+  'id' | 'source' | 'enabled' | 'toolbarPinned' | 'pendingApproval'
+>
+
+/** The record's payload for a store extension: the three fields in the interface's order. */
+export function extensionRecordData(ext: ExtensionSyncSource, store: StoreId): ExtensionRecordData {
+  return { store, enabled: ext.enabled, toolbarPinned: ext.toolbarPinned }
+}
+
+/**
+ * Read an extension record from another device – the apply side's reader, before the host acts
+ * on it (`ExtensionHost.applySyncedExtensions`): the id must be an extension id (32 letters
+ * a–p, `isExtensionId`), the store one this build knows, the two switches booleans. Null for
+ * anything else, and the record is ignored – an unknown store id (a store a later build adds)
+ * lands nothing here, as a type this build does not know does. Idempotent: what it returns,
+ * `extensionRecordData` publishes again as the same bytes, so a device that applied a record
+ * re-collects it to the received hash once the extension stands as the record says.
+ */
+export function readExtensionData(id: string, data: unknown): ExtensionRecordData | null {
+  if (!isExtensionId(id)) return null
+  if (!data || typeof data !== 'object') return null
+  const d = data as Record<string, unknown>
+  if (typeof d.store !== 'string' || !STORE_IDS.has(d.store)) return null
+  if (typeof d.enabled !== 'boolean' || typeof d.toolbarPinned !== 'boolean') return null
+  return { store: d.store as StoreId, enabled: d.enabled, toolbarPinned: d.toolbarPinned }
 }
 
 /**
@@ -792,7 +871,8 @@ export function defaultScope(): SyncScope {
     paymentMethods: true,
     history: true,
     readingList: true,
-    mods: true
+    mods: true,
+    extensions: true
   }
 }
 
@@ -814,7 +894,8 @@ export function fullScope(): SyncScope {
     paymentMethods: true,
     history: true,
     readingList: true,
-    mods: true
+    mods: true,
+    extensions: true
   }
 }
 
@@ -844,6 +925,8 @@ export function inScope(record: SyncRecord, scope: SyncScope): boolean {
       return scope.boosts
     case 'mod':
       return scope.mods
+    case 'extension':
+      return scope.extensions
     case 'credential':
       return scope.passwords
     case 'address':
@@ -1281,6 +1364,25 @@ export interface LocalSources {
    * type, `__tests__/compat.test.ts`'s golden sources) publishes none.
    */
   mods?: readonly Mod[]
+  /**
+   * The installed extensions (`ExtensionHost.list()`), one `extension` record per extension
+   * whose `source` is a store id, under the extension's own id and the `extensions` scope
+   * (services pass 16, ID-44); a `.crx`, `.zip` or unpacked install, and a synced landing not yet
+   * approved here (`pendingApproval`), publish none. A source without the field (a host without
+   * extensions; a record set from before the type, `__tests__/compat.test.ts`'s golden sources)
+   * publishes none.
+   */
+  extensions?: readonly ExtensionSyncSource[]
+  /**
+   * The store extensions that were installed on this device at the engine's previous read of
+   * `extensions` and are gone from it now – uninstalled here (`SyncEngine.sources` keeps the
+   * previous read's ids). `frozenRecords` reads it: an `extension` entry of the metadata whose
+   * extension is absent is FROZEN – its install has not landed or failed, or it waits for the
+   * user's approval – unless the id is here, where the absence is the uninstall it looks like
+   * and `diffLocal` tombstones it. Absent (no previous read; a source from before the type):
+   * nothing was removed.
+   */
+  removedExtensions?: ReadonlySet<string>
 }
 
 /** Snapshot of everything in scope as `{ id → { type, data } }`. */
@@ -1401,6 +1503,17 @@ export function collectLocal(
   if (scope.mods && src.mods) {
     for (const mod of src.mods) out.set(mod.id, { type: 'mod', data: modData(mod) })
   }
+  if (scope.extensions && src.extensions) {
+    // Store installs alone (Chrome syncs no unpacked extension; a `.crx` or `.zip` file names no
+    // store to install from), and never a landing this device has not approved yet: that is the
+    // peer's record, not this device's state – publishing its `enabled: false` would be stamped
+    // an edit and turn the extension off where it was on.
+    for (const ext of src.extensions) {
+      const store = extensionStoreOf(ext.source)
+      if (!store || ext.pendingApproval || !isExtensionId(ext.id)) continue
+      out.set(ext.id, { type: 'extension', data: extensionRecordData(ext, store) })
+    }
+  }
   if (scope.settings) {
     // The record carries the settings as they are and never a key they lack: a key invented here
     // would change every device's record – its hash, so `diffLocal` stamps it `now` at the first
@@ -1482,6 +1595,15 @@ export function collectLocal(
  * sync knew. `diffLocal` keeps their metadata as it was instead of tombstoning them, so turning a
  * type off – or a locked vault – never deletes the other devices' copies (Chrome's toggles only
  * stop syncing a type).
+ *
+ * The extensions (ID-44) add a rule of their own: an `extension` entry whose extension this
+ * device does not publish is frozen too, unless the extension was uninstalled here
+ * (`LocalSources.removedExtensions`). The type is the one whose apply is not instant – a won
+ * record starts a download from the store, which lands later, or fails, or lands turned off
+ * waiting for the user's approval (`pendingApproval`, which `collectLocal` leaves out) – so an
+ * absence in the local set is no removal: tombstoning it would uninstall the extension on the
+ * device that has it. The uninstall's tombstone comes from the commit that removed the record,
+ * where the engine's previous read of the list still held the id.
  */
 export function frozenRecords(
   src: LocalSources,
@@ -1492,8 +1614,44 @@ export function frozenRecords(
   const held = new Set<string>()
   for (const id of collectLocal(src, fullScope()).keys()) if (!synced.has(id)) held.add(id)
   const vaultLocked = !src.credentials
+  const removed = src.removedExtensions
   void previous
-  return (id, prev) => held.has(id) || (vaultLocked && isVaultRecordType(prev.type))
+  // `diffLocal` asks about the entries the local set lacks alone: an extension entry there is
+  // frozen unless its extension was uninstalled here.
+  return (id, prev) =>
+    held.has(id) ||
+    (vaultLocked && isVaultRecordType(prev.type)) ||
+    (prev.type === 'extension' && !(removed?.has(id) ?? false))
+}
+
+/**
+ * The extension records this device holds in its metadata as live but does not hold in its
+ * registry (ID-44): the installs the host has still to land – in flight, failed and waiting out
+ * a back-off, or landed and waiting for the user's approval (`pendingApproval`). `winningRemote`
+ * hands a record over once, when it wins; the metadata then carries it as applied
+ * (`metaFromRemote`), so the round hands the newest remote copy of each such record over AGAIN,
+ * every round, and the host takes what it has not done yet – idempotently, under its own
+ * per-id back-off. A record already among the winners is left to them; a tombstone is no
+ * request; a type turned off asks for nothing; and an entry this device tombstoned (an
+ * uninstall here) is closed.
+ */
+export function pendingExtensionRequests(
+  local: MetaMap,
+  held: ReadonlyMap<string, unknown>,
+  remote: ReadonlyMap<string, SyncRecord>,
+  winners: readonly SyncRecord[],
+  scope: SyncScope
+): SyncRecord[] {
+  if (!scope.extensions) return []
+  const won = new Set(winners.map((w) => w.id))
+  const out: SyncRecord[] = []
+  for (const r of remote.values()) {
+    if (r.type !== 'extension' || r.deleted || won.has(r.id) || held.has(r.id)) continue
+    const mine = local[r.id]
+    if (!mine || mine.deleted) continue
+    out.push(r)
+  }
+  return out
 }
 
 export interface DiffResult {

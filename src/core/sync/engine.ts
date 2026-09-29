@@ -24,6 +24,7 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  extensionStoreOf,
   frozenRecords,
   hashData,
   inScope,
@@ -31,6 +32,7 @@ import {
   isVaultRecordType,
   metaFromRemote,
   newestByRecord,
+  pendingExtensionRequests,
   seedSettingsMeta,
   vaultRecordReadable,
   winningRemote,
@@ -189,6 +191,13 @@ export class SyncEngine implements SyncHost {
   private applying = false
   /** The credential records have had the boot seed (`seedMeta`): the vault was open for one. */
   private seededVault = false
+  /**
+   * The store extensions installed here at the previous `sources()` read (ID-44), or null before
+   * the first: what an absence is measured against (`LocalSources.removedExtensions`).
+   */
+  private presentExtensions: Set<string> | null = null
+  /** The device name behind each record the last `readRemote` read (`originOf`). */
+  private remoteOrigins: WeakMap<SyncRecord, string> | null = null
   /** A remote stream is being applied to the history model: its events are not ours to publish. */
   private applyingHistory = false
   private syncing = false
@@ -564,7 +573,12 @@ export class SyncEngine implements SyncHost {
         meta[id] = { type, hash: '', modified: now, deleted: false }
       for (const [id, r] of remote) {
         if (local.has(id) || r.deleted) continue
-        if (isVaultRecordType(r.type) || !inScope(r, this.data.scope)) continue
+        // The peers' extensions are not tombstoned either (ID-44): "keep this device's data"
+        // is about the data, and the tombstone would UNINSTALL software on every other device;
+        // like a password, an extension the peers hold reaches this device instead – landing
+        // turned off, waiting for the user's approval, nothing granted (`applySyncedExtensions`).
+        if (isVaultRecordType(r.type) || r.type === 'extension' || !inScope(r, this.data.scope))
+          continue
         meta[id] = { type: r.type, hash: '', modified: now, deleted: true }
       }
       if (this.data.scope.history) await this.skipRemoteHistory().catch(() => undefined)
@@ -892,6 +906,16 @@ export class SyncEngine implements SyncHost {
 
   private sources(): LocalSources {
     const state = this.browser.state
+    // The store extensions installed here, and the ones gone since the previous read (ID-44):
+    // an uninstall is the one absence `diffLocal` may tombstone (`frozenRecords`), and it is
+    // seen at the commit that removed the record – the previous read still held the id.
+    const extensions = this.browser.extensions.list()
+    const present = new Set<string>()
+    for (const ext of extensions) if (extensionStoreOf(ext.source)) present.add(ext.id)
+    const removedExtensions = new Set<string>()
+    if (this.presentExtensions)
+      for (const id of this.presentExtensions) if (!present.has(id)) removedExtensions.add(id)
+    this.presentExtensions = present
     return {
       model: state.model,
       settings: state.settings,
@@ -901,7 +925,9 @@ export class SyncEngine implements SyncHost {
       credentials: this.browser.passwords.syncSources(),
       siteData: this.browser.siteData.policy(),
       readingList: state.readingList,
-      mods: this.browser.mods.all()
+      mods: this.browser.mods.all(),
+      extensions,
+      removedExtensions
     }
   }
 
@@ -913,10 +939,16 @@ export class SyncEngine implements SyncHost {
     )
     const lists: SyncRecord[][] = []
     const devices = new Map(this.data.devices.map((d) => [d.id, d]))
+    const origins = new WeakMap<SyncRecord, string>()
     for (const file of files) {
       try {
         const payload = await decryptJson<Payload>(this.key, file.envelope)
-        if (payload?.v === 1 && Array.isArray(payload.records)) lists.push(payload.records)
+        if (payload?.v === 1 && Array.isArray(payload.records)) {
+          lists.push(payload.records)
+          // Which device said it, per record (the extension removal's toast names it, ID-44):
+          // `newestByRecord` keeps the record objects themselves, so the name follows each.
+          for (const r of payload.records) origins.set(r, file.deviceName)
+        }
         devices.set(file.deviceId, {
           id: file.deviceId,
           name: file.deviceName,
@@ -928,7 +960,13 @@ export class SyncEngine implements SyncHost {
       }
     }
     this.data.devices = [...devices.values()].sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 20)
+    this.remoteOrigins = origins
     return newestByRecord(lists)
+  }
+
+  /** The device that published a record the last `readRemote` read, as it names itself. */
+  private originOf(record: SyncRecord): string | null {
+    return this.remoteOrigins?.get(record) ?? null
   }
 
   /** One full round: pull + merge remote changes, then publish our record set. */
@@ -988,13 +1026,25 @@ export class SyncEngine implements SyncHost {
         (r) =>
           inScope(r, scope) && (!isVaultRecordType(r.type) || (vaultOpen && vaultRecordReadable(r)))
       )
-      if (winners.length) {
+      // The extension records this device took but whose install has not landed (ID-44): handed
+      // to the host again, every round, beside the winners – its own back-off decides whether it
+      // tries the store again. They are already in the metadata: nothing below is theirs.
+      const outstanding = pendingExtensionRequests(
+        local.meta,
+        collectLocal(sources, scope),
+        remote,
+        winners,
+        scope
+      )
+      if (winners.length || outstanding.length) {
         this.applying = true
         try {
-          applyRemote(this.browser, winners)
+          applyRemote(this.browser, [...winners, ...outstanding], (r) => this.originOf(r))
         } finally {
           this.applying = false
         }
+      }
+      if (winners.length) {
         // Re-snapshot after applying; remote winners keep their own timestamps. `stamp: null`
         // here too: a winner this device's sanitisers normalise differently from the peer that
         // sent it re-publishes under the PEER's timestamp, so every peer skips it (`<=`) – two

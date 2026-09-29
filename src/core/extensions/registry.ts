@@ -76,6 +76,14 @@ export interface ExtensionRecord {
    */
   pendingWarnings: string[] | null
   /**
+   * Installed by sync from another device's `extension` record (ID-44) and not approved here
+   * yet: the record landed with `enabled: false` and is never loaded until the user accepts the
+   * install prompt – its permission warnings – from the Extensions page's switch, where the host
+   * clears this. Absent (never written) on an extension the user installed on this device, so a
+   * registry from before the field reads as it was persisted.
+   */
+  pendingApproval?: true
+  /**
    * An update downloaded and unpacked but not applied yet (see [StagedUpdate]); absent or null
    * when none waits.
    */
@@ -420,6 +428,9 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
   // Absent in registries from before the field (backfilled from the manifest on load): the key
   // is left out rather than written null, so such a record reads as it was persisted.
   if (r.startupPages !== undefined) record.startupPages = sanitizeStartupPagesField(r.startupPages)
+  // A synced landing still waiting for the user's approval (ID-44) stays one across a restart;
+  // an enabled record cannot be waiting, whatever a hand-edited registry says.
+  if (r.pendingApproval === true && !record.enabled) record.pendingApproval = true
   const staged = sanitizeStaged(r.staged, publisher)
   return staged ? { ...record, staged } : record
 }
