@@ -29,6 +29,7 @@ import type {
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
+import type { ShareChooser } from '@shared/shareTarget'
 import { TOAST_SHOW_MS } from '@shared/toastCard'
 import { isEmptyTabUrl } from '@shared/url'
 import { isZoomed } from '@renderer/components/zoom/bubble'
@@ -575,6 +576,8 @@ export interface UiState {
   siteInfoOpen: boolean
   /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
   externalProtocol: ExternalProtocolRequest | null
+  /** Another app shared into Zenium and an installed app takes it (MW-63): the chooser is up (`components/share/ShareChooserSheet.tsx`). */
+  shareChooser: ShareChooser | null
   /** The host's own share panel (Android below 14, SH-03) is up for a share (`components/share/SharePanelSheet.tsx`). */
   sharePanel: SharePanelRequest | null
   /**
@@ -797,6 +800,7 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     externalProtocol: null,
+    shareChooser: null,
     sharePanel: null,
     shareSeam: null,
     voice: null,
@@ -1355,6 +1359,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.shareChooser &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -1427,6 +1432,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.shareChooser &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -2400,6 +2406,45 @@ export function answerExternalProtocol(requestId: string, allow: boolean, always
   if (!current || current.requestId !== requestId) return
   uiStore.set({ externalProtocol: null })
   run('externalProtocol.respond', { requestId, allow, always })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The share chooser (MW-63): a share another app sent, offered to the installed apps
+// ---------------------------------------------------------------------------
+
+/** The core raised the chooser: the sheet goes up over the page's capture. */
+export async function showShareChooser(
+  chooser: ShareChooser,
+  activeTabId: string | null
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  if (withdrawnRequests.delete(chooser.requestId)) return
+  uiStore.set({ shareChooser: chooser })
+}
+
+/**
+ * The chooser's pick – an installed app's id, or null for the house route – or its dismissal
+ * (`cancel`): one answer per share; the sheet is taken down either way.
+ */
+export function answerShareChooser(requestId: string, appId: string | null | 'cancel'): void {
+  const current = uiStore.get().shareChooser
+  if (!current || current.requestId !== requestId) return
+  uiStore.set({ shareChooser: null })
+  if (appId === 'cancel') run('share.chooserCancel', { requestId })
+  else run('share.chooserPick', { requestId, appId })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/** The core took the chooser over (a newer share arrived and went directly). */
+export function hideShareChooser(requestId: string): void {
+  if (uiStore.get().shareChooser?.requestId !== requestId) {
+    withdrawnRequests.add(requestId)
+    return
+  }
+  uiStore.set({ shareChooser: null })
   invalidateSnapshot()
   returnFocusToPage()
 }

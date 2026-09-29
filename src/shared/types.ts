@@ -36,6 +36,7 @@ import type {
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
+import type { ShareChooser } from './shareTarget'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrCodeRequest, QrEvent, QrStartOutcome } from './qrScan'
@@ -5448,6 +5449,13 @@ export interface Commands {
    * `share.panel` event): where the held share goes. Nothing on hosts without the panel.
    */
   'share.panelAction': { args: SharePanelAction; result: void }
+  /**
+   * The share chooser's pick (MW-63; after a `share.chooser` event): the installed app the
+   * share goes to, or null for the house route – a new tab for a link, a search for text.
+   */
+  'share.chooserPick': { args: { requestId: string; appId: string | null }; result: void }
+  /** The share chooser was dismissed: the share goes nowhere. */
+  'share.chooserCancel': { args: { requestId: string }; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**
@@ -7579,6 +7587,13 @@ export interface Events {
    * chrome draws it and answers with `share.panelAction`.
    */
   'share.panel': SharePanelRequest
+  /**
+   * Another app shared into Zenium and an installed web app declares a target for it (MW-63):
+   * the chrome draws the chooser and answers with `share.chooserPick` or `share.chooserCancel`.
+   */
+  'share.chooser': ShareChooser
+  /** The chooser's share was overtaken (a newer share arrived): take the sheet down. */
+  'share.chooserHide': { requestId: string }
   /**
    * A message in the chrome's toast slot; `action`, when the core sends one, is the toast's
    * trailing action and the command the chrome runs when it is picked (the action clock,
