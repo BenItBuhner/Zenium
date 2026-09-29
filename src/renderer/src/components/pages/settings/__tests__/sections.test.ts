@@ -103,7 +103,7 @@ const { familyOptions, fontSizeOptions, previewFamilies } = await import('../fon
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
-const { SYNC_SCOPES, clearSyncSetup, emptySyncSetup, syncSetupStore } =
+const { SYNC_COPY, SYNC_SCOPES, clearSyncSetup, emptySyncSetup, syncSetupStore } =
   await import('@renderer/lib/syncSetup')
 const remoteTabs = await import('@renderer/lib/remoteTabs')
 
@@ -8446,6 +8446,54 @@ describe('ID-08’s Sync category on a phone', () => {
     // The device name and the way off stand as they do with a folder.
     expect(row(model, 'sync-device-name')).toMatchObject({ kind: 'field', label: 'This device' })
     expect(row(model, 'sync-disconnect')).toMatchObject({ kind: 'action', label: 'Turn off sync' })
+  })
+
+  it('seed #34: on the touch layouts the connected page’s Folder row also copies its path – the line as the row shows it, "Folder copied" as the word – so its hold is the address sheet with Copy as its one row (a phone) or the held card with Copy as its footer button (a tablet); not on the desktop, and never for the top level', () => {
+    const def = PAGE.sections.find((x) => x.id === 'sync')!
+    const nested = onServer({ webdav: { ...SERVER, folder: '/Backups//./Zenium/' } })
+    const on = (formFactor: 'phone' | 'tablet' | 'desktop' | undefined, s = nested): Row =>
+      row(buildSection(def, { ...context(syncState(s)).ctx, formFactor }), 'sync-server-folder')
+    // Both at once on either touch layout (the lead: "The Folder row carries copy on both touch
+    // layouts"): the path (its line kept from its end) and the copy of that very line. A
+    // context without a form factor shows every row as the version row's rule reads it
+    // (`formFactor !== 'desktop'`, SET-54): the copy declared.
+    for (const formFactor of ['phone', 'tablet', undefined] as const) {
+      const touch = on(formFactor)
+      if (touch.kind !== 'info') throw new Error('not an info row')
+      expect(touch).toMatchObject({
+        label: 'Folder',
+        description: 'Backups/Zenium',
+        address: true,
+        copy: { text: 'Backups/Zenium', confirmation: 'Folder copied' }
+      })
+      expect(touch.copy?.text).toBe(touch.description)
+      expect(touch.copy?.confirmation).toBe(SYNC_COPY.serverFolderCopied)
+    }
+    // The desktop copies from the folder editor's field (the lead; the version row's rule): the
+    // address, no copy.
+    const wide = on('desktop')
+    if (wide.kind !== 'info') throw new Error('not an info row')
+    expect(wide.address).toBe(true)
+    expect(wide.copy).toBeUndefined()
+    // The top level is a sentence, not a path: no address and nothing to copy, the phone's too.
+    const root = on(
+      'phone',
+      onServer({
+        webdav: { ...SERVER, folder: '' },
+        folder: DAV_ROOT,
+        folderName: 'cloud.example.com'
+      })
+    )
+    if (root.kind !== 'info') throw new Error('not an info row')
+    expect(root.address).toBe(false)
+    expect(root.copy).toBeUndefined()
+    // The Server row beside it copies nothing: its line is prose about the account.
+    const server = row(
+      buildSection(def, { ...context(syncState(nested)).ctx, formFactor: 'phone' }),
+      'sync-server'
+    )
+    if (server.kind !== 'info') throw new Error('not an info row')
+    expect(server.copy).toBeUndefined()
   })
 
   it('ID-32: a sign-in the server has stopped taking is the lone status row over the App password row – the info row in the danger ink with the key glyph trailing, nothing to press; Sync now waits with its status line, not the engine’s sentence – and the masked field’s commit hands the engine the new password as a §9.30 busy commit, an empty one nothing; a secret store that cannot keep it is the field’s refusal in the page’s words', async () => {
