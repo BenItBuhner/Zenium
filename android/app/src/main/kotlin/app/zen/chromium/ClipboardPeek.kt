@@ -36,7 +36,7 @@ import kotlin.math.roundToInt
  * the image decoded through the content resolver – bounded, PNG-encoded, base64 – for the
  * page's `image/png` representation. Chrome reads an Android clip's image the same way
  * (`ui/android/java/src/org/chromium/ui/base/Clipboard.java`, `getImageUri`: the description's
- * `image/*` type, the first item's `Uri`).
+ * `image/` type, the first item's `Uri`).
  */
 object ClipboardPeek {
     /** A copy older than this is not offered (Chrome's clipboard suggestions age out the same way). */
@@ -153,7 +153,7 @@ object ClipboardPeek {
 
     /**
      * The primary clip's first item, read once: its text (`coerceToText`, as [read] has always
-     * had it) and its image's `Uri` when the clip's description carries an `image/*` type and
+     * had it) and its image's `Uri` when the clip's description carries an `image/` type and
      * the item a `Uri` – Chrome's reading of an Android clip (`Clipboard.java` `getImageUri`);
      * null for a clip without one. The decode is [encodeImage]'s, off the caller's thread.
      */

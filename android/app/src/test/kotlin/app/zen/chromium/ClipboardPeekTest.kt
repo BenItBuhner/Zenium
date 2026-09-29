@@ -106,10 +106,14 @@ class ClipboardPeekTest {
 
     @Test
     fun anImageWithinTheCapIsDecodedWholeAndKeptAtItsSize() {
-        assertEquals(1, ClipboardPeek.sampleSize(1080, 2400, 2048))
+        // A 1080p screenshot's longer edge is 1920, within the cap; 2048 itself is within it.
+        assertEquals(1, ClipboardPeek.sampleSize(1080, 1920, 2048))
         assertEquals(1, ClipboardPeek.sampleSize(2048, 2048, 2048))
-        assertEquals(1080 to 2400, ClipboardPeek.fit(1080, 2400, 2048))
+        assertEquals(1080 to 1920, ClipboardPeek.fit(1080, 1920, 2048))
         assertEquals(2048 to 1536, ClipboardPeek.fit(2048, 1536, 2048))
+        // A taller phone's 1080 × 2400 is over it: sampled at 2, or fitted to 922 × 2048.
+        assertEquals(2, ClipboardPeek.sampleSize(1080, 2400, 2048))
+        assertEquals(922 to 2048, ClipboardPeek.fit(1080, 2400, 2048))
     }
 
     @Test
