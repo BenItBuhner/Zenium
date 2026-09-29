@@ -9,8 +9,9 @@ import org.junit.Test
  * description alone. The content is never part of it. And the same look for the omnibox field's
  * floating toolbar (`pasteAction`): Paste and go, Paste and search, or nothing. And the bounds a
  * clipboard image is decoded within for a page's `navigator.clipboard.read()` (MW-38): the
- * sample size and the fit, pure; the decode and the PNG encode themselves have no JVM seam
- * (`ImageDecoder`, `Bitmap.compress`) and are the device's to check.
+ * sample size and the fit, pure; the PNG byte budget under the bridge's message admission and
+ * the shrink loop that meets it, pure over a fake image; the decode and the PNG encode
+ * themselves have no JVM seam (`ImageDecoder`, `Bitmap.compress`) and are the device's to check.
  */
 class ClipboardPeekTest {
     private val now = 1_000_000_000L
@@ -137,5 +138,106 @@ class ClipboardPeekTest {
         assertEquals(922 to 2048, ClipboardPeek.fit(2160, 4800, 2048))
         assertEquals(2048 to 20, ClipboardPeek.fit(10_000, 100, 2048))
         assertEquals(1 to 2048, ClipboardPeek.fit(1, 100_000, 2048))
+    }
+
+    // --- the PNG's byte budget under the bridge's message admission ----------------------------
+
+    private val mib = 1024L * 1024
+    private val slack = ClipboardPeek.ENVELOPE_SLACK_CHARS
+
+    @Test
+    fun theBudgetIsTheLimitsRoomPastTheEnvelopeAtThreeBytesPerFourCharsCappedOnlyAtTheCeiling() {
+        assertEquals(64L * 1024, slack)
+        assertEquals(16 * 1024, ClipboardPeek.MIN_IMAGE_BYTES)
+        // The admission's floor (2 MiB chars), a 192-MB heap (6 MiB), a 256-MB heap (8 MiB), the ceiling (16 MiB, 512 MB and up).
+        assertEquals(1_523_712, ClipboardPeek.imageBudget(2 * mib, 0)) // ≈ 1.45 MiB
+        assertEquals(4_669_440, ClipboardPeek.imageBudget(6 * mib, 0)) // ≈ 4.45 MiB
+        assertEquals(6_242_304, ClipboardPeek.imageBudget(8 * mib, 0)) // ≈ 5.95 MiB
+        assertEquals(ClipboardPeek.MAX_IMAGE_BYTES, ClipboardPeek.imageBudget(16 * mib, 0)) // 8 MiB: the cap binds here alone
+        // An admission pinned like BridgeAdmissionTest's phone: the same 6 MiB through the class.
+        assertEquals(4_669_440, ClipboardPeek.imageBudget(BridgeAdmission(192L * 1024 * 1024).messageLimitChars, 0))
+    }
+
+    @Test
+    fun theTextTakesItsShareOfTheBudgetAtThreeBytesPerFourOfItsChars() {
+        // A 1 MiB quoted text lowers the 6 MiB budget by 768 KiB.
+        assertEquals(4_669_440 - 786_432, ClipboardPeek.imageBudget(6 * mib, (1 * mib).toInt()))
+        assertEquals(4_669_440 - 3, ClipboardPeek.imageBudget(6 * mib, 4))
+        // The term is the text AS JSON: the quotes and the escapes count, not the raw length.
+        assertEquals(2, ClipboardPeek.textQuotedChars(""))
+        assertEquals(5, ClipboardPeek.textQuotedChars("abc"))
+        assertEquals(12, ClipboardPeek.textQuotedChars("a\"b\\c\nd"))
+    }
+
+    @Test
+    fun theBudgetsBase64BesideTheEnvelopeAndTheTextNeverPassesTheLimit() {
+        val limits = listOf(2 * mib, 6 * mib, 6 * mib + 1, 6 * mib + 2, 6 * mib + 3, 8 * mib, 16 * mib, 87_384L, 100_001L)
+        val texts = listOf(0, 1, 2, 3, 5, 1000, 65_537, (1 * mib).toInt(), (5 * mib).toInt())
+        var checked = 0
+        for (limit in limits) for (text in texts) {
+            val budget = ClipboardPeek.imageBudget(limit, text)
+            if (budget == 0) continue
+            val base64Chars = (budget + 2) / 3 * 4 // ceil(budget / 3) * 4: the encoding's padding included
+            assert(base64Chars + slack + text <= limit) { "budget $budget for limit $limit beside $text chars" }
+            assert(budget <= ClipboardPeek.MAX_IMAGE_BYTES)
+            checked++
+        }
+        assert(checked >= 40) { "$checked budgets checked" }
+    }
+
+    @Test
+    fun underTheFloorOrWithNoRoomLeftNoImageGoes() {
+        // 21 847 chars of room give 5 461 groups of three bytes, 16 383 – one under the floor; 21 848 give 16 386.
+        assertEquals(0, ClipboardPeek.imageBudget(slack + 21_847, 0))
+        assertEquals(16_386, ClipboardPeek.imageBudget(slack + 21_848, 0))
+        // The text leaves nothing, or less than nothing.
+        assertEquals(0, ClipboardPeek.imageBudget(6 * mib, (6 * mib - slack).toInt()))
+        assertEquals(0, ClipboardPeek.imageBudget(6 * mib, (6 * mib).toInt()))
+        assertEquals(0, ClipboardPeek.imageBudget(0L, 0))
+    }
+
+    /** A stand-in for the bitmap in the shrink loop: one byte per pixel when encoded. */
+    private data class Fake(val width: Int, val height: Int)
+
+    private fun shrink(image: Fake, maxBytes: Int, recycled: MutableList<Fake> = mutableListOf()): Pair<ByteArray, Fake> =
+        ClipboardPeek.shrinkToBudget(
+            image,
+            maxBytes,
+            size = { it.width to it.height },
+            encode = { ByteArray(it.width * it.height) },
+            halve = { Fake(maxOf(1, it.width / 2), maxOf(1, it.height / 2)) },
+            recycle = { recycled += it }
+        )
+
+    @Test
+    fun anEncodingWithinTheBudgetGoesAsItIsAndNothingIsRecycled() {
+        val recycled = mutableListOf<Fake>()
+        val image = Fake(100, 100)
+        val (bytes, encoded) = shrink(image, 10_000, recycled)
+        assertEquals(10_000, bytes.size)
+        assert(encoded === image)
+        assertEquals(emptyList<Fake>(), recycled)
+    }
+
+    @Test
+    fun anEncodingOverTheBudgetIsHalvedUntilItFitsAndTheHalvingsLeftBehindAreRecycled() {
+        val recycled = mutableListOf<Fake>()
+        // 100 × 100 = 10 000 over 2 000; 50 × 50 = 2 500 still over; 25 × 25 = 625 fits.
+        val (bytes, encoded) = shrink(Fake(100, 100), 2_000, recycled)
+        assertEquals(625, bytes.size)
+        assertEquals(Fake(25, 25), encoded)
+        // The 50 × 50 alone: the image handed in is the caller's, the 25 × 25 is returned.
+        assertEquals(listOf(Fake(50, 50)), recycled)
+    }
+
+    @Test
+    fun theLoopEndsAtOnePixelWhenNothingFits() {
+        val recycled = mutableListOf<Fake>()
+        val (bytes, encoded) = shrink(Fake(4, 4), 0, recycled)
+        assertEquals(1, bytes.size)
+        assertEquals(Fake(1, 1), encoded)
+        assertEquals(listOf(Fake(2, 2)), recycled)
+        // Neither edge under a pixel on the way down.
+        assertEquals(Fake(1, 1), shrink(Fake(1, 8), 0).second)
     }
 }
