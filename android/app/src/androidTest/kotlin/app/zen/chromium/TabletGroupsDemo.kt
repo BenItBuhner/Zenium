@@ -39,13 +39,13 @@ import kotlin.math.roundToInt
  *     the pick now leaves the keyboard in the chrome, and the harness does the move itself once
  *     the field is up – the field survives it, a touch on it brings the keyboard back, and the
  *     rename completes;
- *  7. Close Group (2 Tabs): the tabs close and the one toast, "Reading tab group closed and
- *     saved" with Undo, stands in the frame's seat (TAB-16, the Design Lead's option C: the
- *     menu's Close Group takes the phone's undoable path, `folder.closeUndoable`; the tab row's
- *     own closes still carry none) – Undo brings the two back into the group, which is open
- *     again; Close Group once more, and the row stays as the SAVED group – the ring in the glyph
- *     slot, the count of the pages it keeps, no chevron – the core keeping the two pages in
- *     order;
+ *  7. Close Group (2 Tabs): the tabs close and the one toast, "Review tab group closed and
+ *     saved" with Undo (the group's name is the one act 6b typed), stands in the frame's seat
+ *     (TAB-16, the Design Lead's option C: the menu's Close Group takes the phone's undoable
+ *     path, `folder.closeUndoable`; the tab row's own closes still carry none) – Undo brings the
+ *     two back into the group, which is open again; Close Group once more, and the row stays as
+ *     the SAVED group – the ring in the glyph slot, the count of the pages it keeps, no chevron –
+ *     the core keeping the two pages in order;
  *  8. a touch on the saved row opens it: the pages come back as the group's tabs, in order, and
  *     the row is the open group's again;
  *  9. Ungroup: the group's record goes, its tabs stay where they were, loose;
@@ -336,8 +336,8 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         // TAB-16 / TAB-13, the Design Lead's option C: Undo for Close, a confirmation for Delete,
         // never both): the one toast in the group's words, with Undo, in the frame's seat. The tab
         // row's own close and the tab menu's Close Tab still carry none.
-        val toast = awaitToast("Reading tab group closed and saved")
-        check("one toast, \"Reading tab group closed and saved\", with Undo", toast == "Reading tab group closed and saved" && inDom("$TOAST .zen-message-button"), "toast '${textOf("$TOAST .zen-message-text")}'")
+        val toast = awaitToast(CLOSED_TOAST)
+        check("one toast, \"$CLOSED_TOAST\", with Undo", toast == CLOSED_TOAST && inDom("$TOAST .zen-message-button"), "toast '${textOf("$TOAST .zen-message-text")}'")
         check("the toast is the frame seat's one card", jsBoolean("document.querySelectorAll('$TOAST').length===1&&!!document.querySelector('$TOAST_SEAT $TOAST')"), "cards ${jsText("document.querySelectorAll('$TOAST').length")}, seated ${inDom("$TOAST_SEAT $TOAST")}")
         check("the core keeps the group SAVED with its two pages in order", awaitCore { savedUrls(it) == listOf(ALPHA_URL, BETA_URL) }, "saved ${savedUrls().map { it.removePrefix(ORIGIN) }}")
         check("the row stays, as the saved group", awaitJs("!!document.querySelector('$GROUP_ROW[data-saved]')", true, 4_000), "saved '${attrOf(GROUP_ROW, "data-saved")}'")
@@ -355,7 +355,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         // Close Group once more, for the saved row act 8 opens; the toast the same, left to its clock.
         openGroupMenu() ?: return
         val closedAgain = touchUntil("Close Group (2 Tabs), again", { menuRow("Close Group (2 Tabs)") }, { !tabExists(alphaId) && !tabExists(betaId) }, waitMs = 8_000)
-        check("Close Group again closes the two, with the same toast", closedAgain && awaitToast("Reading tab group closed and saved") != null, "alpha ${tabExists(alphaId)}, beta ${tabExists(betaId)}, toast '${textOf("$TOAST .zen-message-text")}'")
+        check("Close Group again closes the two, with the same toast", closedAgain && awaitToast(CLOSED_TOAST) != null, "alpha ${tabExists(alphaId)}, beta ${tabExists(betaId)}, toast '${textOf("$TOAST .zen-message-text")}'")
         check("the core keeps the group SAVED with its two pages in order, again", awaitCore { savedUrls(it) == listOf(ALPHA_URL, BETA_URL) }, "saved ${savedUrls().map { it.removePrefix(ORIGIN) }}")
         check("the row stays, as the saved group, again", awaitJs("!!document.querySelector('$GROUP_ROW[data-saved]')", true, 4_000), "saved '${attrOf(GROUP_ROW, "data-saved")}'")
         check("the glyph slot holds the ring", inDom("$GLYPH[data-saved] .zen-group-row-dot") && jsBoolean("(function(){var d=document.querySelector('$GLYPH .zen-group-row-dot');return !!d&&getComputedStyle(d).backgroundColor==='rgba(0, 0, 0, 0)'&&getComputedStyle(d).boxShadow.indexOf('inset')>=0})()"), "dot ${dotColour()}")
@@ -572,6 +572,11 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         private const val MENU = ".zen-v2-menu"
         /** The frame dialog host's seat for the toast's slot (`useFrameToastSeat`, lib/portals.tsx). */
         private const val TOAST_SEAT = ".zen-frame-toast-seat"
+        /**
+         * Close Group's toast in the group's words (`groupClosedMessage`, lib/closeUndo.ts): the
+         * group carries the name act 6b typed after the forced focus move, "Review".
+         */
+        private const val CLOSED_TOAST = "Review tab group closed and saved"
         private const val MENU_ITEM = ".zen-v2-menu-item"
         private const val RADIO = ".zen-v2-menu [role=\"menuitemradio\"]"
         private const val PRIVATE_ROW = "Open Link in Private Tab"
