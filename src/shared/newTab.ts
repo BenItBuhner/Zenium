@@ -20,6 +20,13 @@ import type {
 } from './types'
 import { newId } from './ids'
 import {
+  emptyEducationalTipMemory,
+  noteBrowsingDataCleared as noteBrowsingDataClearedIn,
+  sameEducationalTipMemory,
+  sanitizeEducationalTipMemory,
+  type EducationalTipMemory
+} from './educationalTips'
+import {
   sameSafetyHubCardMemories,
   sanitizeSafetyHubCardMemories,
   type SafetyHubCardMemories
@@ -40,17 +47,29 @@ export const MAX_NEW_TAB_HIDDEN_HOSTS = 500
 
 /**
  * The Magic Stack's modules in the order the stack pages through them (NTP-16): the cards with
- * the user's own content first, the Safety check card after them and the promo last – Chrome's
- * `ModuleType` order (`ModuleDelegate.java:29-49`: SINGLE_TAB, …, SAFETY_HUB, …,
- * DEFAULT_BROWSER_PROMO). The Customise sheet lists them in this order too.
+ * the user's own content first, the Safety check card after them and the tip card last –
+ * Chrome's educational tip cards ask for the end of the stack, whatever else is shown
+ * (`EphemeralHomeModuleRank::kLast`, `ntp_theme_promo.cc:159`, `default_browser_promo.cc:143`,
+ * `tab_group_promo.cc:138`, `quick_delete_promo.cc:156`, placed by
+ * `ephemeral_home_module_backend.cc:146-166`; the Safety Hub module ranks ahead of them,
+ * `ModuleDelegate.java:29-49`). The Customise sheet lists them in this order too.
  */
 export const MAGIC_STACK_MODULE_IDS: readonly MagicStackModuleId[] = [
   'continue',
   'downloads',
   'bookmarks',
   'safety-hub',
-  'default-browser'
+  'tips'
 ]
+
+/**
+ * Module ids earlier builds wrote to the device's hidden set under another name: W6-4's
+ * `default-browser` module is the tip card's default-browser card now (NTP-20), so a device
+ * that hid the reminder has hidden the tips.
+ */
+const LEGACY_MODULE_IDS: Readonly<Record<string, MagicStackModuleId>> = {
+  'default-browser': 'tips'
+}
 
 export function isMagicStackModuleId(value: unknown): value is MagicStackModuleId {
   return typeof value === 'string' && (MAGIC_STACK_MODULE_IDS as readonly string[]).includes(value)
@@ -91,7 +110,13 @@ export const DEFAULT_NEW_TAB_SETTINGS: NewTabSettings = {
 }
 
 export function emptyNewTabDevice(): NewTabDeviceState {
-  return { shortcuts: [], hiddenHosts: [], hiddenModules: [], safetyHubCard: {} }
+  return {
+    shortcuts: [],
+    hiddenHosts: [],
+    hiddenModules: [],
+    safetyHubCard: {},
+    educationalTips: emptyEducationalTipMemory()
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,10 +218,14 @@ export function sanitizeNewTabShortcuts(raw: unknown): NewTabShortcut[] {
   return out
 }
 
-/** The hidden Magic Stack modules from disk: known ids only, once each, in the stack's order. */
+/**
+ * The hidden Magic Stack modules from disk: known ids only (an earlier build's name read as the
+ * module it became), once each, in the stack's order.
+ */
 export function sanitizeHiddenModules(raw: unknown): MagicStackModuleId[] {
   if (!Array.isArray(raw)) return []
-  return MAGIC_STACK_MODULE_IDS.filter((id) => raw.includes(id))
+  const ids = raw.map((id) => (typeof id === 'string' ? (LEGACY_MODULE_IDS[id] ?? id) : id))
+  return MAGIC_STACK_MODULE_IDS.filter((id) => ids.includes(id))
 }
 
 export function sanitizeNewTabDevice(raw: unknown): NewTabDeviceState {
@@ -205,7 +234,8 @@ export function sanitizeNewTabDevice(raw: unknown): NewTabDeviceState {
     shortcuts: sanitizeNewTabShortcuts(r.shortcuts),
     hiddenHosts: sanitizeHiddenHosts(r.hiddenHosts),
     hiddenModules: sanitizeHiddenModules(r.hiddenModules),
-    safetyHubCard: sanitizeSafetyHubCardMemories(r.safetyHubCard)
+    safetyHubCard: sanitizeSafetyHubCardMemories(r.safetyHubCard),
+    educationalTips: sanitizeEducationalTipMemory(r.educationalTips)
   }
 }
 
@@ -232,6 +262,30 @@ export function setSafetyHubCardMemories(
   const next = sanitizeSafetyHubCardMemories(memories)
   if (sameSafetyHubCardMemories(device.safetyHubCard, next)) return device
   return { ...device, safetyHubCard: next }
+}
+
+/**
+ * The tip card's memory replaced whole (NTP-20), as the renderer's machine left it after an
+ * impression or a tap on the card's button; the same record back returns the device it was given.
+ */
+export function setEducationalTipMemory(
+  device: NewTabDeviceState,
+  memory: EducationalTipMemory
+): NewTabDeviceState {
+  const next = sanitizeEducationalTipMemory(memory)
+  if (sameEducationalTipMemory(device.educationalTips, next)) return device
+  return { ...device, educationalTips: next }
+}
+
+/**
+ * Browsing data was deleted on this device at `now` (NTP-20's Quick Delete signal,
+ * `shared/educationalTips.ts`): the tip card's memory takes the time; a time no later than the
+ * one kept returns the device it was given.
+ */
+export function noteBrowsingDataCleared(device: NewTabDeviceState, now: number): NewTabDeviceState {
+  const next = noteBrowsingDataClearedIn(device.educationalTips, now)
+  if (next === device.educationalTips) return device
+  return { ...device, educationalTips: next }
 }
 
 // ---------------------------------------------------------------------------
@@ -571,7 +625,8 @@ export function migrateNewTabDevice(
           shortcuts: sanitizeNewTabShortcuts(sources.newTabShortcuts),
           hiddenHosts: sanitizeHiddenHosts(sources.newTabHiddenHosts),
           hiddenModules: [],
-          safetyHubCard: {}
+          safetyHubCard: {},
+          educationalTips: emptyEducationalTipMemory()
         }
   const phone = readLegacyPhone(sources.newTabPhone)
   if (!phone) return current
@@ -579,7 +634,8 @@ export function migrateNewTabDevice(
     shortcuts: current.shortcuts,
     hiddenHosts: sanitizeHiddenHosts([...current.hiddenHosts, ...phone.hiddenHosts]),
     hiddenModules: current.hiddenModules,
-    safetyHubCard: current.safetyHubCard
+    safetyHubCard: current.safetyHubCard,
+    educationalTips: current.educationalTips
   }
   for (const pin of phone.pinned)
     device = pinShortcut(device, {
