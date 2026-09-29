@@ -120,7 +120,8 @@ describe('applyRemote: the settings record and the new tab page', () => {
       shortcuts: [{ id: expect.any(String), title: 'Mine', url: 'https://mine.example/' }],
       hiddenHosts: [],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: { cards: {}, shownAt: null, browsingDataClearedAt: null }
     })
   })
 

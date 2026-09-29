@@ -472,6 +472,26 @@ describe('clear browsing data', () => {
     expect(f.browser.permissions.defaultFor('notifications')).toBe('deny')
   })
 
+  it('stamps a clearing on the tip card’s device memory (NTP-20: the Quick Delete card rests 30 days from it); a clearing that was denied stamps nothing', async () => {
+    const f = fixture()
+    expect(f.browser.state.newTabDevice.educationalTips.browsingDataClearedAt).toBeNull()
+    const before = Date.now()
+    await f.command<Promise<unknown>>('privacy.clearBrowsingData', {
+      range: 'hour',
+      types: ['cache']
+    })
+    const stamped = f.browser.state.newTabDevice.educationalTips.browsingDataClearedAt
+    expect(stamped).not.toBeNull()
+    expect(stamped!).toBeGreaterThanOrEqual(before)
+    // Passwords on a device without a vault: denied, nothing cleared, the stamp as it was.
+    const result = await f.command<Promise<ReauthOutcome<ClearBrowsingDataResult>>>(
+      'privacy.clearBrowsingData',
+      { range: 'all', types: ['passwords'] }
+    )
+    expect(result.status).toBe('denied')
+    expect(f.browser.state.newTabDevice.educationalTips.browsingDataClearedAt).toBe(stamped)
+  })
+
   it('asks the engine only for what was chosen, and never for the private session', async () => {
     const f = fixture()
     f.command('tab.newPrivate', { url: 'https://secret.example/' })

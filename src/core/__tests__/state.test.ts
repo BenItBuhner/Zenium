@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform } from '../../shared/types'
 import { DEFAULT_SETTINGS } from '../../shared/defaults'
+import { emptyEducationalTipMemory } from '../../shared/educationalTips'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
 import type { StoreIO } from '../platform'
 import { BrowserState, PERSISTED_VERSION, type Persisted } from '../state'
@@ -389,7 +390,8 @@ describe('state.json v5 (new tab page)', () => {
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example'],
       hiddenModules: ['downloads'],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     }
     await s.flush()
     const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
@@ -399,7 +401,8 @@ describe('state.json v5 (new tab page)', () => {
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example'],
       hiddenModules: ['downloads'],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     })
     expect(written.newTabShortcuts).toBeUndefined()
     expect(written.newTabHiddenHosts).toBeUndefined()
@@ -415,7 +418,8 @@ describe('state.json v5 (new tab page)', () => {
       shortcuts: [],
       hiddenHosts: [],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     })
     expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
@@ -426,7 +430,8 @@ describe('state.json v5 (new tab page)', () => {
       shortcuts: [],
       hiddenHosts: [],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     })
     expect(s.settings.newTab.enabled).toBe(true)
   })
@@ -437,7 +442,8 @@ describe('state.json v5 (new tab page)', () => {
       shortcuts: [],
       hiddenHosts: [],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     })
     expect(s.recentlyClosed).toEqual([])
     expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
@@ -468,7 +474,8 @@ describe('state.json v5 (new tab page)', () => {
       ],
       hiddenHosts: ['news.example'],
       hiddenModules: [],
-      safetyHubCard: {}
+      safetyHubCard: {},
+      educationalTips: emptyEducationalTipMemory()
     })
     expect(s.settings.newTab).toEqual({ ...DEFAULT_NEW_TAB_SETTINGS, background: 'solid' })
   })
@@ -612,7 +619,8 @@ describe('state.json v5 (new tab page)', () => {
             shortcuts: [],
             hiddenHosts: ['kept.example'],
             hiddenModules: [],
-            safetyHubCard: {}
+            safetyHubCard: {},
+            educationalTips: emptyEducationalTipMemory()
           }
         })
       )

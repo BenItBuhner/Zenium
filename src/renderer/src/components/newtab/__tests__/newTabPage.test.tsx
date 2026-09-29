@@ -6,6 +6,7 @@ import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { EXTENSION_SETTING_KEYS } from '@shared/extensionSettings'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { emptyEducationalTipMemory } from '@shared/educationalTips'
 import { emptyPasswordsStatus } from '@shared/defaults'
 import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
@@ -77,8 +78,12 @@ const state = {
   searchEngines: DEFAULT_SEARCH_ENGINES,
   newTabShortcuts: [],
   newTabHiddenHosts: [],
-  newTabHiddenModules: [],
+  // The tip module hidden: these are the page's tests, not the stack's, and the theme tip would
+  // otherwise be due on every mount (NTP-20).
+  newTabHiddenModules: ['tips'],
   newTabSafetyHubCard: {},
+  newTabEducationalTips: emptyEducationalTipMemory(),
+  defaultBrowser: { isDefault: null, prompt: null },
   revokedUnusedPermissions: [],
   passwords: emptyPasswordsStatus(),
   recentlyClosed: [],
