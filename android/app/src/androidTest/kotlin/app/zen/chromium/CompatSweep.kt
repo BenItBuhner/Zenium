@@ -4278,13 +4278,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * finds nothing) a popup the sheet shows despite its empty document is opened as rendered,
      * and when `expr` has no pass the sheet's accessibility labels carrying the row's own words –
      * three or more, of a tree that shows content ([shownDespiteEmptyDom]) – are the pass, as the
-     * popup stage and [accountGate] read such a popup.
+     * popup stage and [accountGate] read such a popup. An open that times out records what the
+     * chrome held as its popup view at that moment ([popupAtTimeout]; round 24 §7's Black Menu
+     * on 156: `popup did not render in the core check` at both ends while the popup STEP read 71
+     * accessibility nodes of the same page), and a row with `ownLabels` opens once more – its own
+     * second open, read the same way (`secondOpen`).
      */
     private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null, ownLabels: Regex? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
-        val popup = openPopup(row, factor, orSeen = ownLabels != null)
+        var popup = openPopup(row, factor, orSeen = ownLabels != null)
+        if (popup == null) {
+            extra.put("popupAtTimeout", popupAtTimeout())
+            if (ownLabels != null) {
+                runCatching { coreCall("extension.closePopup", "null") }
+                SystemClock.sleep(scaled(1_500, factor))
+                popup = openPopup(row, factor, orSeen = true)
+                extra.put("secondOpen", if (popup != null) JSONObject().put("rendered", true) else popupAtTimeout())
+            }
+        }
         var found = JSONObject()
         if (popup != null) {
             found = pollExpr(popup, expr, scaled(settleMs, factor))
@@ -12405,6 +12418,28 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return v
     }
 
+    /**
+     * What the chrome held as its popup view when a core check's open timed out (round 24 §7,
+     * Black Menu for Google on WebView 156: `popup did not render in the core check` at both
+     * ends while the popup STEP's read of the same page graded P on 71 accessibility nodes): the
+     * view's context, whether its document read as rendered ([rendered]), its accessibility
+     * tree's node and label counts ([seenInView]), its size on screen ([sheetSize]) and its
+     * address – a popup that never came up told from one whose tree had not populated at the
+     * timeout. `view: none` when the chrome held no popup view at all.
+     */
+    private fun popupAtTimeout(): JSONObject {
+        val view = popupView() ?: return JSONObject().put("view", "none")
+        val seen = runCatching { seenInView(view) }.getOrDefault(JSONObject())
+        return JSONObject()
+            .put("context", view.context)
+            .put("rendered", runCatching { rendered(view) }.getOrDefault(false))
+            .put("nodes", seen.optInt("nodes"))
+            .put("labels", labelsOf(seen).size)
+            .put("shown", shownDespiteEmptyDom(seen))
+            .put("size", runCatching { sheetSize(view) }.getOrDefault(JSONObject()))
+            .put("url", runCatching { tabEval(view, "location.href", 5) }.getOrDefault("").trim('"').take(120))
+    }
+
     /** The row's `identity.launchWebAuthFlow` sheet when one is up, or null. */
     private fun authSheetView(id: String): WebView? {
         var v: WebView? = null
@@ -16123,11 +16158,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * click did mount is read beside the verdict (round 24's BEFORE found none of the three
          * on either lane with the module loaded and the click answered on 156): every tag of
          * theirs (`webhighlights-*`, `theirs`), the body's own children (`body`), the open
-         * shadow hosts met (`hosts`) and the nodes walked (`nodes`).
+         * shadow hosts met (`hosts`) and the nodes walked (`nodes`). Round 24's AFTER on 156
+         * listed five of its elements mounted after the click – `webhighlights-element-registry`,
+         * `webhighlights-popup-toolbox-mobile`, `webhighlights-marker-mobile`,
+         * `webhighlights-sidebar-mobile`, `webhighlights-icon` – the `-mobile` variants the
+         * extension picks from the phone's viewport, so the names take them (round 25's driver
+         * item): the mobile sidebar passes when it is drawn (its box measured, `width`/`height`),
+         * the desktop names as before.
          */
         private const val WEB_HIGHLIGHTS_SIDEBAR =
-            "(function(){var names=['webhighlights-sidebar','webhighlights-app-view','webhighlights-toggle-button'];var found={};var theirs={};var width=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if(tag==='webhighlights-sidebar'&&width===null)width=Math.round(n.getBoundingClientRect().width)}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));" +
-                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']),found:Object.keys(found),width:width,defined:typeof customElements!=='undefined'&&!!customElements.get('webhighlights-sidebar'),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
+            "(function(){var names=['webhighlights-sidebar','webhighlights-sidebar-mobile','webhighlights-app-view','webhighlights-toggle-button','webhighlights-popup-toolbox-mobile','webhighlights-marker-mobile'];var found={};var theirs={};var width=null;var height=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if((tag==='webhighlights-sidebar'||tag==='webhighlights-sidebar-mobile')&&width===null){var r=n.getBoundingClientRect();width=Math.round(r.width);height=Math.round(r.height)}}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));var mobileShown=!!found['webhighlights-sidebar-mobile']&&width>0&&height>0;" +
+                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']||mobileShown),found:Object.keys(found),mobile:!!found['webhighlights-sidebar-mobile'],mobileShown:mobileShown,width:width,height:height,defined:typeof customElements!=='undefined'&&!!(customElements.get('webhighlights-sidebar')||customElements.get('webhighlights-sidebar-mobile')),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
 
         /**
          * Black Menu's popup: its navigation list drawn – `.bm-ele-navlist__item` entries (its
