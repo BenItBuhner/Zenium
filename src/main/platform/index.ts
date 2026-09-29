@@ -78,6 +78,8 @@ import { desktopVersionFacts, readDesktopVersionInput } from './versionFacts'
 import { chromiumLicencesResponder } from './licences'
 import { ElectronDownloads, downloadDir } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
+import { DockBadge } from './dockBadge'
+import { ElectronAppBadges } from './appBadges'
 import { ElectronMenus } from './menus'
 import { ElectronTabViewHost, copyImageFromUrl } from './views'
 import { ElectronWindowFactory, type ElectronWindow } from './window'
@@ -288,8 +290,15 @@ export class ElectronPlatform implements Platform {
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
   readonly speech: ElectronSpeechHost = new ElectronSpeechHost(sharedSpeechEngine())
   readonly newTabBackground: ElectronNewTabBackground
+  /**
+   * The dock badge's (macOS) and launcher count's (Linux) one owner: the downloads' unseen count
+   * and the installed apps' badges (MW-51) share the icon through it.
+   */
+  readonly dockBadge = new DockBadge()
   /** Taskbar progress, dock badge and completion notifications for downloads. */
   downloadsShell: ElectronDownloadsShell | null = null
+  /** Installed apps' badges (MW-51): the taskbar overlay per app window on Windows, the dock elsewhere. */
+  appBadges: ElectronAppBadges | null = null
   browser!: Browser
   private readonly profileDir: string
   /**
@@ -759,7 +768,8 @@ export class ElectronPlatform implements Platform {
     )
     // The JavaScript switch is each view's own (`Emulation.setScriptExecutionDisabled`).
     this.views.contentRules = browser.contentRules
-    this.downloadsShell = new ElectronDownloadsShell(browser)
+    this.downloadsShell = new ElectronDownloadsShell(browser, this.dockBadge)
+    this.appBadges = new ElectronAppBadges(browser, this.dockBadge)
     const chromiumLicences = chromiumLicencesResponder()
     // The run's first documents – the restored pages' and the chrome windows' – wait for the
     // extension layer's first publish (`startupHold.ts`), the one hold for both funnels. It
