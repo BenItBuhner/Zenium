@@ -1,5 +1,11 @@
-import type { BlockedSite, BlockedSiteCategory, Tab } from '@shared/types'
 import {
+  PRIVATE_CONTAINER_ID,
+  type BlockedSite,
+  type BlockedSiteCategory,
+  type Tab
+} from '@shared/types'
+import {
+  effectiveLevel,
   listDefaultFor,
   siteOriginOf,
   type BlockingSettings,
@@ -32,21 +38,30 @@ export function requests(n: number): string {
 export type SiteBlockingState =
   /** The tab shows no web page (a zen:// page, a blank tab). */
   | 'no-site'
-  /** The master switch is off or the level is Off: nothing is blocked anywhere. */
+  /**
+   * The master switch is off, or the level the tab's window evaluates at is Off: nothing is
+   * blocked on this page.
+   */
   | 'off'
   /** The site is excepted: nothing is blocked here. */
   | 'excepted'
   /** The engine blocks on this page. */
   | 'blocking'
 
+/**
+ * The level is the tab's window's ({@link effectiveLevel}): a private tab blocks at Strict under
+ * "Always use Strict in private windows" whatever the level above – at Off included – so its
+ * chip says what the engine does on that page, not what the level row reads.
+ */
 export function siteBlockingState(
   tab: Tab | null,
   status: Pick<BlockingStatus, 'enabled' | 'siteExceptions'>,
-  settings: Pick<BlockingSettings, 'level'>
+  settings: Pick<BlockingSettings, 'level' | 'levelPrivate'>
 ): SiteBlockingState {
   const origin = tab ? siteOriginOf(tab.url) : null
-  if (!origin) return 'no-site'
-  if (!status.enabled || settings.level === 'off') return 'off'
+  if (!tab || !origin) return 'no-site'
+  const level = effectiveLevel(settings, tab.containerId === PRIVATE_CONTAINER_ID)
+  if (!status.enabled || level === 'off') return 'off'
   if (status.siteExceptions.includes(origin)) return 'excepted'
   return 'blocking'
 }

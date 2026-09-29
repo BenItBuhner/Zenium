@@ -192,7 +192,10 @@ export function levelIncludes(level: TrackingLevel, tier: ListTier): boolean {
  * included), every other window's at `level`. The one place the private override is read, so
  * every reader of the level – the list selection, the level-Off switch, the status – agrees.
  */
-export function effectiveLevel(settings: BlockingSettings, isPrivate: boolean): TrackingLevel {
+export function effectiveLevel(
+  settings: Pick<BlockingSettings, 'level' | 'levelPrivate'>,
+  isPrivate: boolean
+): TrackingLevel {
   return isPrivate && settings.levelPrivate === 'strict' ? 'strict' : settings.level
 }
 
