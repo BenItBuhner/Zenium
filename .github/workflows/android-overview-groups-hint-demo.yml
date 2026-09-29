@@ -22,9 +22,6 @@ name: Android overview groups hint demo
 # Dispatch-only, like the other demos: it takes about two minutes. The build, the emulator and
 # the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
-  push:
-    branches:
-      - cursor/android-overview-groups-hint-9271
   workflow_dispatch:
 
 permissions:
