@@ -96,7 +96,9 @@ export function createXhrRelay(win: Win, host: XhrRelayHost): typeof XMLHttpRequ
 
   const parsed = (state: Relayed): Document | null => {
     try {
-      const kind: DOMParserSupportedType = /xml/i.test(mimeOf(state)) ? 'application/xml' : 'text/html'
+      const kind: DOMParserSupportedType = /xml/i.test(mimeOf(state))
+        ? 'application/xml'
+        : 'text/html'
       return new win.DOMParser().parseFromString(textOf(state), kind)
     } catch {
       return null

@@ -118,7 +118,7 @@ describe("createXhrRelay: a content script's XMLHttpRequest of its extension's o
     ])
   })
 
-  it("answers in the responseType asked: json, arraybuffer, blob, document; responseText refuses when it is not text", async () => {
+  it('answers in the responseType asked: json, arraybuffer, blob, document; responseText refuses when it is not text', async () => {
     const { Xhr, answer } = harness()
     const asJson = new Xhr()
     asJson.open('GET', RULES)
@@ -218,7 +218,13 @@ describe("createXhrRelay: a content script's XMLHttpRequest of its extension's o
     xhr.abort()
     expect(xhr.readyState).toBe(0)
     expect(xhr.status).toBe(0)
-    expect(seen).toEqual(['readystatechange@1', 'loadstart@1', 'readystatechange@4', 'abort@4', 'loadend@4'])
+    expect(seen).toEqual([
+      'readystatechange@1',
+      'loadstart@1',
+      'readystatechange@4',
+      'abort@4',
+      'loadend@4'
+    ])
     release(new win.Response('late'))
     await new Promise((r) => setTimeout(r, 0))
     await new Promise((r) => setTimeout(r, 0))
@@ -264,7 +270,9 @@ describe("createXhrRelay: a content script's XMLHttpRequest of its extension's o
   it("leaves another URL, an unattached extension's, and a synchronous request to the native XMLHttpRequest", () => {
     const { Xhr, fetches } = harness()
     const nativeOpen = vi.spyOn(win.XMLHttpRequest.prototype, 'open')
-    const nativeSend = vi.spyOn(win.XMLHttpRequest.prototype, 'send').mockImplementation(() => undefined)
+    const nativeSend = vi
+      .spyOn(win.XMLHttpRequest.prototype, 'send')
+      .mockImplementation(() => undefined)
     try {
       const other = new Xhr()
       other.open('GET', 'https://api.example.com/x')

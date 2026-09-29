@@ -136,11 +136,14 @@ export function createFetchRelay(
         const headers: Record<string, string> = { 'Content-Length': String(bytes.byteLength) }
         if (typeof reply.mime === 'string' && reply.mime) headers['Content-Type'] = reply.mime
         // A HEAD answers the headers alone, as the origin would.
-        response = new win.Response(entry.method === 'HEAD' ? null : (bytes.buffer as ArrayBuffer), {
-          status: 200,
-          statusText: 'OK',
-          headers
-        })
+        response = new win.Response(
+          entry.method === 'HEAD' ? null : (bytes.buffer as ArrayBuffer),
+          {
+            status: 200,
+            statusText: 'OK',
+            headers
+          }
+        )
         // Chrome's `Response.url` is the file's and its `type` "basic" – a same-origin answer;
         // a constructed Response reads '' and "default" otherwise.
         for (const [name, value] of [
