@@ -377,9 +377,7 @@ describe('the "Delete <folder>?" prompt', () => {
     render(<Dialogs />)
     requestFolderDelete('g', false)
     await settle()
-    expect(dialog()!.querySelector('.zen-v2-title-block-title')!.textContent).toBe(
-      'Delete folder?'
-    )
+    expect(dialog()!.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Delete folder?')
     click(buttons(dialog()!)[0])
     await settle()
     expect(dialog()).toBeNull()
