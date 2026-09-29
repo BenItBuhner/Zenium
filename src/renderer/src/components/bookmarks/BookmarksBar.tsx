@@ -156,50 +156,16 @@ export function BookmarksBar({
   }, [hidden, menu])
 
   const menuAnchorId = menu?.anchorId ?? null
-  // A chip lifts its link only on the desktop (bookmarks-15): on the tablet's bar (NTP-34) a
-  // finger's hold is the chip's menu and its drag the page's scroll, as Chrome 152's tablet bar
-  // has no drag either; the pointer reorder along the strip already refuses a finger
-  // (`useBarDrag`), and the `draggable` mark is what would let Blink start a touch drag.
-  const touch = isTouchLayout(useViewport().formFactor)
-  const linkDrags = !touch
-  // The anchor a finger's press just closed (§9.20's light dismiss, reason `anchor`), so the
-  // press's own `click` does not open the panel again. A mouse's click is dispatched with its
-  // release, inside the press the layer swallows; a touch's click is the browser's tap gesture,
-  // a task later, after the swallow has ended – on the tablet it would reach `toggleMenu` with
-  // the panel already closed and reopen it. Armed on the touch layouts alone; cleared by the
-  // click it was armed for, by the next press on the bar (a second tap reopens as it should),
-  // or a second later (a keyboard's click is nobody's remainder).
-  const pressedClosed = useRef<string | null>(null)
-  const pressedClosedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const clearPressedClosed = (): void => {
-    pressedClosed.current = null
-    if (pressedClosedTimer.current !== null) clearTimeout(pressedClosedTimer.current)
-    pressedClosedTimer.current = null
-  }
-  useEffect(
-    () => () => {
-      if (pressedClosedTimer.current !== null) clearTimeout(pressedClosedTimer.current)
-    },
-    []
-  )
   const closeMenu = useCallback(
-    (opts?: { focusAnchor: boolean; pressed?: boolean }): void => {
+    (opts?: { focusAnchor: boolean }): void => {
       if (!holdsChrome.current) return
       holdsChrome.current = null
       setMenu(null)
       // Escape hands focus back to the chip the panel hung from (§9.22); a click leaves it be.
       closeBookmarkChrome({ barMenuOpen: false }, { keepFocus: Boolean(opts?.focusAnchor) })
       if (opts?.focusAnchor && menuAnchorId) chipEls.current.get(menuAnchorId)?.focus()
-      if (opts?.pressed && touch && menuAnchorId) {
-        if (pressedClosedTimer.current !== null) clearTimeout(pressedClosedTimer.current)
-        pressedClosed.current = menuAnchorId
-        pressedClosedTimer.current = setTimeout(() => {
-          pressedClosed.current = null
-          pressedClosedTimer.current = null
-        }, 1000)
-      }
     },
-    [menuAnchorId, touch]
+    [menuAnchorId]
   )
 
   // The chip a panel was last asked for, so a capture that finishes late does not show a stale one.
@@ -260,11 +226,6 @@ export function BookmarksBar({
   useEffect(() => () => closeMenuRef.current(), [])
 
   const toggleMenu = (anchorId: string): void => {
-    // The click of the press that closed this anchor's panel (above): spent, not a second press.
-    if (pressedClosed.current === anchorId) {
-      clearPressedClosed()
-      return
-    }
     if (menu?.anchorId === anchorId) closeMenu()
     else openMenu(anchorId)
   }
@@ -341,6 +302,11 @@ export function BookmarksBar({
   const pressAt = useRef<{ x: number; y: number } | null>(null)
   const lastPointer = useRef<{ x: number; y: number } | null>(null)
   const stopFollowing = useRef<(() => void) | null>(null)
+  // A chip lifts its link only on the desktop (bookmarks-15): on the tablet's bar (NTP-34) a
+  // finger's hold is the chip's menu and its drag the page's scroll, as Chrome 152's tablet bar
+  // has no drag either; the pointer reorder along the strip already refuses a finger
+  // (`useBarDrag`), and the `draggable` mark is what would let Blink start a touch drag.
+  const linkDrags = !isTouchLayout(useViewport().formFactor)
   // The card Chromium snapshots as the drag's image (§9.4's lifted item, the URL pill's link
   // card): drawn off screen for the chip under the press, so it stands when `dragstart` asks,
   // and put away when the press ends without a link drag (a click, the reorder) or when the
@@ -702,9 +668,6 @@ export function BookmarksBar({
       // The bookmarks bar pane of the F6 rotation (lib/panes.ts): F6 and Shift+Alt+B land on the
       // roving chip.
       data-pane="bookmarks"
-      // A new press on the bar: whatever click a consumed press still owed is not this one's.
-      // (The press the layer consumes never reaches here – it is stopped on the window.)
-      onPointerDownCapture={clearPressedClosed}
       onContextMenu={(e) => contextMenu(e, null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
