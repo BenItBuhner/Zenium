@@ -4634,23 +4634,43 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 screenPoint(live, consent)?.let { tap(it.first, it.second) }
                 SystemClock.sleep(scaled(2_000, factor))
             }
-            val live = popupView()?.takeIf { it.context == "popup" }
+            var live = popupView()?.takeIf { it.context == "popup" }
             if (live != null) {
                 extra.put("popupText", json(tabEval(live, DEEP_TEXT)).optString("text").take(240))
-                // The promo sheet's own close control, when one covers the menu: pressed by finger.
-                val cover = json(tabEval(live, SHEET_CLOSE))
+                // The promo sheet's own close control, when one covers the menu (BlockSite's):
+                // pressed by finger – and only when the block control is out of reach, because
+                // [SHEET_CLOSE] takes any small unlabeled `svg` at the top-right for the close,
+                // and a menu with nothing over it has its own icon there: Block Site's settings
+                // gear, whose press opened its settings tab and took the popup with it, so the
+                // block press that followed landed on the chrome's address bar (round 25's
+                // BEFORE, 113).
+                val found = json(tabEval(live, FIND_LABEL.replace("__RE__", control)))
+                val covered = !found.optBoolean("clicked") || json(tabEval(live, CONTROL_COVERED.replace("__RE__", control).replace("__X__", found.optDouble("x", 0.0).toString()).replace("__Y__", found.optDouble("y", 0.0).toString()))).optBoolean("covered", true)
+                val cover = if (!covered) JSONObject().put("clicked", false).put("skipped", "the block control is in reach") else json(tabEval(live, SHEET_CLOSE))
                 steps.put("sheet: ${cover.toString().take(100)}")
                 if (cover.optBoolean("clicked")) {
                     screenPoint(live, cover)?.let { tap(it.first, it.second) }
                     SystemClock.sleep(scaled(1_500, factor))
+                    // The press may have been the menu's own control after all: the popup it
+                    // navigated away from is not the one to press the block in.
+                    live = popupView()?.takeIf { it.context == "popup" }
+                    if (live == null) steps.put("popup: gone after the sheet press (tabs ${tabUrls().values.joinToString(" ").take(160)})")
                 }
-                block = poll(scaled(8_000, factor), 1_000) { json(tabEval(live, FIND_LABEL.replace("__RE__", control))).takeIf { it.optBoolean("clicked") } }
-                    ?: json(tabEval(live, FIND_LABEL.replace("__RE__", control)))
+            }
+            if (live != null) {
+                val popupNow = live
+                block = poll(scaled(8_000, factor), 1_000) { json(tabEval(popupNow, FIND_LABEL.replace("__RE__", control))).takeIf { it.optBoolean("clicked") } }
+                    ?: json(tabEval(popupNow, FIND_LABEL.replace("__RE__", control)))
                 steps.put("block: ${block.toString().take(100)}")
-                if (block.optBoolean("clicked")) {
-                    screenPoint(live, block)?.let { tap(it.first, it.second) }
+                // The finger goes where the popup is now, or nowhere: a popup that closed since
+                // the control was measured has the chrome under the point.
+                if (block.optBoolean("clicked") && popupView()?.takeIf { it.context == "popup" } != null) {
+                    screenPoint(popupNow, block)?.let { tap(it.first, it.second) }
                     SystemClock.sleep(scaled(3_000, factor))
                     popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupAfterBlock", json(tabEval(it, DEEP_TEXT)).optString("text").take(200)) }
+                } else if (block.optBoolean("clicked")) {
+                    block.put("clicked", false).put("pressed", false).put("why", "the popup closed before the press")
+                    steps.put("block: not pressed, the popup closed before the press")
                 }
             }
         }
@@ -8321,14 +8341,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * global popup and creates its selection context menu ("Highlight #1" …, `contexts:
      * ["selection"]`), which makes the highlights (a `scripting.executeScript` `func` that
      * `import()`s `/js/content_script/main.js` and marks the range). The reading: the fixture,
-     * the action click as [actionMarker] clicks it, the chrome's prompt accepted
-     * ([acceptPrompt]), the worker's `permissions.getAll` read ([PERMISSIONS_HELD]), a second
-     * click for the popup now set, its text polled for the fresh page's line ("This page
-     * contains no highlights.", [SSH_POPUP]). The highlight itself has no phone surface: a
-     * `selection` context-menu item never reaches the long-press sheet (`page.contextMenu`
-     * sends an empty `selectionText`) and the selection toolbar carries the chrome's actions
-     * alone – §7 of the round's report – so the grant and the popup are `PARTIAL`; the popup
-     * still asking for its permission, or no grant, `F`.
+     * the action click as [actionMarker] clicks it, the chrome's permission sheet accepted
+     * ([acceptPrompt]: `webNavigation`'s and the site's lines, as Chrome's dialog), the worker's
+     * `permissions.getAll` read ([PERMISSIONS_HELD]), then the action's state as its own API
+     * reads it ([ACTION_STATE_PROBE]): `popup.html` set for every tab, and the action disabled on
+     * the fixture's tab, which its `onCompleted` does for a page without highlights
+     * (`setEnabled(documents.length > 0)`) in Chrome too – so a second click there opens nothing
+     * in Chrome (a disabled action's click falls to the context menu), and the tap is read for
+     * opening nothing. Where the tab has the action enabled, the second click's popup is polled
+     * for the fresh page's line ("This page contains no highlights.", [SSH_POPUP]). The highlight
+     * itself has no phone surface: a `selection` context-menu item never reaches the long-press
+     * sheet (`page.contextMenu` sends an empty `selectionText`) and the selection toolbar carries
+     * the chrome's actions alone – §7 of the round's report – so the grant and the action's
+     * Chrome-shaped state are `PARTIAL`; a popup on the disabled tab, the popup not set, or no
+     * grant, `F`.
      */
     private fun superSimpleHighlighter(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -8344,13 +8370,32 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val held = awakeBackground(row.id, factor)?.let { probe(it, PERMISSIONS_HELD, "__zenPermissions", scaled(8_000, factor)) } ?: JSONObject().put("err", "no background view")
         extra.put("permissions", held)
         val granted = held.optJSONArray("permissions")?.let { arr -> (0 until arr.length()).any { arr.optString(it) == "scripting" } } == true
-        val popup = openPopup(row, factor)
+        // The state the grant left the action in, as the extension's own API reads it: `popup.html`
+        // set for every tab, and the action disabled on the fixture's tab – the page has no
+        // highlights (`setEnabled(documents.length > 0)` in its `onCompleted`), and Chrome's is
+        // disabled there the same way, so Chrome's click opens no popup on that tab (it falls to
+        // the context menu). The second click is due only where the tab has the action enabled;
+        // on a disabled tab the tap is read for what it opens, which must be nothing.
+        val action = backgroundView(row.id)?.let { probe(it, ACTION_STATE_PROBE, "__zenAction", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view")
+        extra.put("action", action)
+        val popupSet = action.optString("popup").endsWith("popup.html")
+        val disabledForTab = !action.isNull("enabledForTab") && !action.optBoolean("enabledForTab", true)
         var found = JSONObject()
-        if (popup != null) {
-            found = pollExpr(popup, SSH_POPUP, scaled(15_000, factor))
-            popupView()?.let { extra.put("popupConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        var popup: ExtensionWebView? = null
+        var onDisabledTab: String? = null
+        if (granted && disabledForTab) {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            SystemClock.sleep(scaled(2_000, factor))
+            onDisabledTab = popupView()?.takeIf { it.context == "popup" }?.let { json(tabEval(it, DEEP_TEXT)).optString("text").take(120).ifEmpty { "a popup view with no text" } }
+            extra.put("popupOnDisabledTab", onDisabledTab ?: "none, as Chrome's click on a disabled action")
         } else {
-            popupView()?.let { extra.put("popupSeen", seenInView(it)) }
+            popup = openPopup(row, factor)
+            if (popup != null) {
+                found = pollExpr(popup, SSH_POPUP, scaled(15_000, factor))
+                popupView()?.let { extra.put("popupConsole", JSONArray(consoleOf(it).takeLast(8))) }
+            } else {
+                popupView()?.let { extra.put("popupSeen", seenInView(it)) }
+            }
         }
         extra.put("popup", found).put("pageStyle", json(tabEval(view, SSH_PAGE_STYLE)))
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
@@ -8358,11 +8403,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-ssh-core")
         runCatching { coreCall("extension.closePopup", "null") }
-        val note = "prompt ${prompt.toString().take(120)}; permissions ${held.toString().take(140)}; popup ${found.toString().take(160)}"
+        val menu = "the highlights come from its selection context menu (`contexts: [\"selection\"]`), which the phone's long-press sheet never offers – `page.contextMenu` sends an empty `selectionText` and the selection toolbar carries the chrome's items alone (§7)"
+        val note = "prompt ${prompt.toString().take(120)}; permissions ${held.toString().take(140)}; action ${action.toString().take(140)}; popup ${found.toString().take(160)}"
         return when {
-            granted && found.optBoolean("pass") -> Grade("PARTIAL", "Super Simple Highlighter: its defaults granted from the click and its popup set and drawn past the permission alert; the highlights come from its selection context menu (`contexts: [\"selection\"]`), which the phone's long-press sheet never offers – `page.contextMenu` sends an empty `selectionText` and the selection toolbar carries the chrome's items alone (§7): $note", extra)
-            granted -> Grade("F", "Super Simple Highlighter: its defaults granted and its popup ${if (popup == null) "did not render" else "still asks for its permission (or reads otherwise)"} within ${scaled(15_000, factor) / 1000} s: $note", extra)
-            else -> Grade("F", "Super Simple Highlighter: its permission request from the click was not granted (${prompt.optString("prompt").ifEmpty { prompt.optString("how", "no answer") }}): $note", extra)
+            !granted -> Grade("F", "Super Simple Highlighter: its permission request from the click was not granted (${prompt.optString("prompt").ifEmpty { prompt.optString("how", "no answer") }}): $note", extra)
+            disabledForTab && popupSet && onDisabledTab == null -> Grade("PARTIAL", "Super Simple Highlighter: its defaults granted from the click through the chrome's permission sheet, `popup.html` set for every tab and its action disabled on the fixture's tab as Chrome's is on a page without highlights (`setEnabled(documents.length > 0)`), so the tap opens nothing there, as Chrome's; $menu: $note", extra)
+            disabledForTab && popupSet -> Grade("F", "Super Simple Highlighter: the tap opened a popup (\"$onDisabledTab\") on a tab the extension disabled its action for, which Chrome's does not: $note", extra)
+            found.optBoolean("pass") -> Grade("PARTIAL", "Super Simple Highlighter: its defaults granted from the click and its popup set and drawn past the permission alert; $menu: $note", extra)
+            else -> Grade("F", "Super Simple Highlighter: its defaults granted and its popup ${if (!popupSet) "not set (`action.getPopup` ${JSONObject.quote(action.optString("popup"))})" else if (popup == null) "did not render" else "still asks for its permission (or reads otherwise)"} within ${scaled(15_000, factor) / 1000} s: $note", extra)
         }
     }
 
@@ -14982,6 +15030,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var hit=cands.sort(function(a,b){var ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return (ra.top-rb.top)||(rb.right-ra.right)})[0]||null;if(!hit)return JSON.stringify({clicked:false,candidates:cands.length});var r=hit.getBoundingClientRect();" +
                 "return JSON.stringify({clicked:true,label:label(hit).replace(/\\s+/g,' ').trim().slice(0,50),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2})})()"
         /**
+         * Whether a control measured at a point (`__X__`, `__Y__` in CSS px) is under something
+         * else: the closest control to what `elementFromPoint` answers there must carry the
+         * control's label (`__RE__`). A sheet over the menu leaves the sheet's own element under
+         * the point; a menu with nothing over it has the control itself.
+         */
+        private const val CONTROL_COVERED =
+            "(function(){var re=__RE__;var e=document.elementFromPoint(__X__,__Y__);var c=e&&e.closest?e.closest('button, a, [role=button], input, label'):null;" +
+                "var t=function(n){return n?(((n.getAttribute&&(n.getAttribute('aria-label')||n.getAttribute('title')||n.getAttribute('value')))||'')+' '+(n.textContent||'')).replace(/\\s+/g,' ').trim().slice(0,80):''};" +
+                "return JSON.stringify({covered:!(c&&re.test(t(c))),under:e?e.tagName+' '+t(e).slice(0,40):null})})()"
+        /**
          * From an extension page: a `fetch` of Gmail's feed (`https://mail.google.com/mail/feed/atom`,
          * a 401 with `WWW-Authenticate: Basic` for a visitor without a session) with the status it
          * resolved to, or the error; a tab-less HTTP auth challenge Chrome gives up at once. Lands
@@ -15211,6 +15269,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** The permissions an extension holds (`permissions.getAll`), landed on `window.__zenPermissions`. */
         private const val PERMISSIONS_HELD =
             "(function(){window.__zenPermissions={done:false};try{chrome.permissions.getAll(function(p){window.__zenPermissions={done:true,origins:(p&&p.origins)||[],permissions:(p&&p.permissions)||[],err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenPermissions={done:true,err:String(e&&e.message||e)}}return 'asked'})()"
+        /**
+         * From a worker: its action's state as the extension's own API reads it – the popup set
+         * for every tab (`action.getPopup({})`), whether the action is enabled on the active tab
+         * (`action.isEnabled(tabId)`: the tab's own `enable` / `disable`) and globally. Lands on
+         * `window.__zenAction`.
+         */
+        private const val ACTION_STATE_PROBE =
+            "(function(){var p=window.__zenAction={done:false,popup:null,tabId:null,enabledForTab:null,enabledGlobal:null,error:null};" +
+                "(async function(){try{p.popup=await chrome.action.getPopup({});var tabs=await chrome.tabs.query({active:true,currentWindow:true});var t=tabs&&tabs[0];p.tabId=t?t.id:null;if(t)p.enabledForTab=await chrome.action.isEnabled(t.id);p.enabledGlobal=await chrome.action.isEnabled()}catch(e){p.error=String(e&&e.message||e)}p.done=true})();" +
+                "setTimeout(function(){if(!p.done){p.error='no answer within 8 s';p.done=true}},8000);return 'asked'})()"
 
         /** Markdown Viewer's rendering of `readme.md`: its `#_html` mount with a heading or text in it (the served `<pre>` hidden). */
         private const val MARKDOWN_RENDERED =
