@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { CLIPBOARD_READ_PERMISSION, ClipboardReadService } from '../clipboardRead'
 import { PermissionService } from '../permissions'
 import type { Browser } from '../browser'
-import type { PageHostMessage, PermissionPromptHost, StoreIO } from '../platform'
-import { PRIVATE_CONTAINER_ID, type PermissionPrompt, type Tab } from '../../shared/types'
+import type { ClipboardHost, PageHostMessage, PermissionPromptHost, StoreIO } from '../platform'
+import {
+  PRIVATE_CONTAINER_ID,
+  type ClipboardReadItems,
+  type PermissionPrompt,
+  type Tab
+} from '../../shared/types'
 import type { ClipboardReadCall } from '../../shared/clipboardRead'
 
 const PAGE = 'https://paste.example/editor'
@@ -22,13 +27,18 @@ interface Harness {
   allow: { value: boolean }
   /** What the host's clipboard holds; a function to script a failing read. */
   clip: { text: string | (() => Promise<string>) }
+  /** How many times the host's `readItems` (text and image) was asked. */
+  itemReads: number
   isPrivate: { value: boolean }
   destroyed: { value: boolean }
   /** Holds the permission decision open until released, like a prompt on screen. */
   hold: { value: Promise<void> | null }
 }
 
-function harness(options: { readText?: false } = {}): Harness {
+/** The host's `readItems` answer, or a function to script a failing one. */
+type ScriptedItems = ClipboardReadItems | (() => Promise<ClipboardReadItems>)
+
+function harness(options: { readText?: false; readItems?: ScriptedItems } = {}): Harness {
   const posted: PageHostMessage[] = []
   const decisions: Harness['decisions'] = []
   const allow = { value: true }
@@ -38,24 +48,32 @@ function harness(options: { readText?: false } = {}): Harness {
   const hold: Harness['hold'] = { value: null }
   const tab = { id: 't1', url: PAGE, title: 'Paste' } as Tab
   const h = {
-    reads: 0
+    reads: 0,
+    itemReads: 0
   }
   const page = {
     isDestroyed: () => destroyed.value,
     postToPage: (m: PageHostMessage) => posted.push(m)
   }
+  const items = options.readItems
+  const clipboard: ClipboardHost = {
+    writeText: () => undefined,
+    writeImageFromUrl: async () => false
+  }
+  if (options.readText !== false) {
+    clipboard.readText = async () => {
+      h.reads++
+      return typeof clip.text === 'string' ? clip.text : clip.text()
+    }
+  }
+  if (items) {
+    clipboard.readItems = async () => {
+      h.itemReads++
+      return typeof items === 'function' ? items() : items
+    }
+  }
   const browser = {
-    platform: {
-      clipboard:
-        options.readText === false
-          ? {}
-          : {
-              readText: async () => {
-                h.reads++
-                return typeof clip.text === 'string' ? clip.text : clip.text()
-              }
-            }
-    },
+    platform: { clipboard },
     tabs: {
       tab: (id: string) => (id === 't1' ? tab : undefined),
       pageView: (id: string) => (id === 't1' ? page : undefined),
@@ -77,6 +95,9 @@ function harness(options: { readText?: false } = {}): Harness {
     decisions,
     get reads() {
       return h.reads
+    },
+    get itemReads() {
+      return h.itemReads
     },
     tab,
     allow,
@@ -183,6 +204,68 @@ describe('ClipboardReadService', () => {
     await flush()
     expect(h.decisions).toEqual([])
     expect(h.posted).toEqual([])
+  })
+
+  /*
+   * The clip's image (MW-38, the phone): a `read()` call takes the host's `readItems` – text and
+   * a bounded PNG in one read – where the host has it; `readText()` never asks for the image.
+   */
+  describe('the clip’s image', () => {
+    const IMAGE = { png: 'iVBORw0KGgo=', width: 8, height: 8 }
+
+    it('posts the host’s text and image back for read(), from one readItems call', async () => {
+      const h = harness({ readItems: { text: 'caption', image: IMAGE } })
+      h.service.handleMessage('t1', call('clip-1', 'items'))
+      await flush()
+      expect(h.itemReads).toBe(1)
+      expect(h.reads).toBe(0)
+      expect(h.posted).toEqual([
+        { type: 'clipboardRead', id: 'clip-1', text: 'caption', image: IMAGE }
+      ])
+    })
+
+    it('posts no image field for a clip without one', async () => {
+      const h = harness({ readItems: { text: 'words alone' } })
+      h.service.handleMessage('t1', call('clip-1', 'items'))
+      await flush()
+      expect(h.posted).toEqual([{ type: 'clipboardRead', id: 'clip-1', text: 'words alone' }])
+      expect('image' in h.posted[0]).toBe(false)
+    })
+
+    it('readText() reads the text alone and never asks for the image', async () => {
+      const h = harness({ readItems: { text: 'caption', image: IMAGE } })
+      h.service.handleMessage('t1', call('clip-1', 'text'))
+      await flush()
+      expect(h.itemReads).toBe(0)
+      expect(h.reads).toBe(1)
+      expect(h.posted).toEqual([{ type: 'clipboardRead', id: 'clip-1', text: 'from the host' }])
+    })
+
+    it('hands the text alone where the host has no readItems, or its read fails', async () => {
+      const none = harness()
+      none.service.handleMessage('t1', call('clip-1', 'items'))
+      await flush()
+      expect(none.reads).toBe(1)
+      expect(none.posted).toEqual([{ type: 'clipboardRead', id: 'clip-1', text: 'from the host' }])
+
+      const failing = harness({ readItems: () => Promise.reject(new Error('no image')) })
+      failing.service.handleMessage('t1', call('clip-2', 'items'))
+      await flush()
+      expect(failing.itemReads).toBe(1)
+      expect(failing.reads).toBe(1)
+      expect(failing.posted).toEqual([
+        { type: 'clipboardRead', id: 'clip-2', text: 'from the host' }
+      ])
+    })
+
+    it('reads nothing for a denied read(), image or not', async () => {
+      const h = harness({ readItems: { text: 'caption', image: IMAGE } })
+      h.allow.value = false
+      h.service.handleMessage('t1', call('clip-1', 'items'))
+      await flush()
+      expect(h.itemReads).toBe(0)
+      expect(h.posted).toEqual([{ type: 'clipboardRead', id: 'clip-1', error: 'denied' }])
+    })
   })
 })
 

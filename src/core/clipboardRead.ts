@@ -3,7 +3,7 @@ import {
   type ClipboardReadCall,
   type ClipboardReadResult
 } from '../shared/clipboardRead'
-import { PRIVATE_CONTAINER_ID } from '../shared/types'
+import { PRIVATE_CONTAINER_ID, type ClipboardReadItems } from '../shared/types'
 import type { Browser } from './browser'
 import type { PermissionRequestDetails } from './permissions'
 
@@ -16,7 +16,8 @@ export const CLIPBOARD_READ_PERMISSION = 'clipboard-read'
  * `clipboard-read` permission is decided by the shared permission service – the prompt, the
  * answer remembered per site, the user's default, the unused-sites sweep, exactly what the
  * desktop's engine request goes through – and, allowed, the host's clipboard text goes back to
- * the page. Refused, the page's promise rejects as Chrome's does.
+ * the page, with the clip's image beside it for a `read()` (`ClipboardHost.readItems`, PNG
+ * base64, bounded by the host). Refused, the page's promise rejects as Chrome's does.
  */
 export class ClipboardReadService {
   constructor(private readonly browser: Browser) {}
@@ -44,7 +45,11 @@ export class ClipboardReadService {
     // A page gone while its prompt was up gets no read at all: the clipboard is not touched
     // (nor Android 12's toast shown) for a document that is no longer there to receive it.
     if (!this.stillThere(tabId, url)) return
-    this.post(tabId, url, { id: call.id, text: await this.readText() })
+    // `read()` takes the clip's image too, where the host reads one; `readText()` the text alone.
+    const items = call.kind === 'items' ? await this.readItems() : { text: await this.readText() }
+    const result: ClipboardReadResult = { id: call.id, text: items.text }
+    if (items.image) result.image = items.image
+    this.post(tabId, url, result)
   }
 
   /** A private tab's answer stays with the private session (Chrome's Incognito rule). */
@@ -67,6 +72,22 @@ export class ClipboardReadService {
       return await read()
     } catch {
       return ''
+    }
+  }
+
+  /**
+   * The clipboard's text and image for a page's `read()`: the host's `readItems` where it has
+   * one (the phone: one read of the clip, its image bounded and PNG-encoded by the host), else
+   * the text alone as `readText` gives it. A failed read hands the text alone ('' at worst), as
+   * `readText` does – never a rejection for a clip the page is allowed to see.
+   */
+  private async readItems(): Promise<ClipboardReadItems> {
+    const read = this.browser.platform.clipboard.readItems
+    if (!read) return { text: await this.readText() }
+    try {
+      return await read()
+    } catch {
+      return { text: await this.readText() }
     }
   }
 

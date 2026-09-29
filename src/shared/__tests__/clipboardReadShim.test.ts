@@ -134,6 +134,95 @@ describe('installClipboardReadShim', () => {
     await expect(empty).resolves.toEqual([])
   })
 
+  /*
+   * The clip's image (MW-38, the phone): the host hands a bounded PNG as base64 beside the text;
+   * `read()` answers as Chrome does for the system clipboard – ONE `ClipboardItem` carrying every
+   * representation (`clipboard_promise.cc` `ResolveRead`), `text/plain` before `image/png`
+   * (`clipboard_android.cc` `ReadAvailableTypes`) – and `readText()` stays the text.
+   */
+  describe('the clip’s image', () => {
+    // Eight bytes: the PNG signature, enough to tell the blob decoded to the host's bytes.
+    const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+    const PNG_BASE64 = btoa(String.fromCharCode(...PNG_BYTES))
+
+    const bytesOf = async (blob: Blob): Promise<number[]> =>
+      Array.from(new Uint8Array(await blob.arrayBuffer()))
+
+    it('read() gives one item with text/plain and image/png, in that order, for a clip carrying both', async () => {
+      const host = install()
+      const pending = clipboard().read()
+      host.answer({ id: host.sent[0].id, text: 'caption', image: { png: PNG_BASE64 } })
+      const items = await pending
+      expect(items).toHaveLength(1)
+      expect(items[0].types).toEqual(['text/plain', 'image/png'])
+      expect(await (await items[0].getType('text/plain')).text()).toBe('caption')
+      const png = await items[0].getType('image/png')
+      expect(png.type).toBe('image/png')
+      expect(await bytesOf(png)).toEqual(PNG_BYTES)
+    })
+
+    it('read() gives one image/png item for an image alone', async () => {
+      const host = install()
+      const pending = clipboard().read()
+      host.answer({
+        id: host.sent[0].id,
+        text: '',
+        image: { png: PNG_BASE64, width: 8, height: 8 }
+      })
+      const items = await pending
+      expect(items).toHaveLength(1)
+      expect(items[0].types).toEqual(['image/png'])
+      expect(await bytesOf(await items[0].getType('image/png'))).toEqual(PNG_BYTES)
+    })
+
+    it('hands the text alone when the image does not decode: malformed base64, or no png string', async () => {
+      const host = install()
+      const malformed = clipboard().read()
+      host.answer({ id: host.sent[0].id, text: 'still here', image: { png: '%%not base64%%' } })
+      const items = await malformed
+      expect(items).toHaveLength(1)
+      expect(items[0].types).toEqual(['text/plain'])
+
+      const shapeless = clipboard().read()
+      host.answer({
+        id: host.sent[1].id,
+        text: 'still here',
+        image: { png: 42 } as unknown as ClipboardReadResult['image']
+      })
+      expect((await shapeless)[0].types).toEqual(['text/plain'])
+
+      // Neither text nor a decodable image: the empty list, as for an empty clipboard.
+      const nothing = clipboard().read()
+      host.answer({ id: host.sent[2].id, text: '', image: { png: '%%not base64%%' } })
+      await expect(nothing).resolves.toEqual([])
+    })
+
+    it('readText() is the text, whatever image came with it', async () => {
+      const host = install()
+      const pending = clipboard().readText()
+      host.answer({ id: host.sent[0].id, text: 'words', image: { png: PNG_BASE64 } })
+      await expect(pending).resolves.toBe('words')
+    })
+
+    it('decodes whatever size the host hands – the cap is the host’s (2048 px, 8 MiB), the page side has none', async () => {
+      const host = install()
+      // A megabyte of bytes with every value in it, so the round trip proves the decode whole.
+      const big = new Uint8Array(1024 * 1024)
+      for (let i = 0; i < big.length; i++) big[i] = (i * 7 + 3) & 0xff
+      let binary = ''
+      for (let i = 0; i < big.length; i += 0x8000) {
+        binary += String.fromCharCode(...big.subarray(i, i + 0x8000))
+      }
+      const pending = clipboard().read()
+      host.answer({ id: host.sent[0].id, text: '', image: { png: btoa(binary) } })
+      const items = await pending
+      expect(items[0].types).toEqual(['image/png'])
+      const blob = await items[0].getType('image/png')
+      expect(blob.size).toBe(big.length)
+      expect(Buffer.compare(Buffer.from(await blob.arrayBuffer()), Buffer.from(big))).toBe(0)
+    })
+  })
+
   it('settles each call by its id, in any order, and ignores answers it did not ask for', async () => {
     const host = install()
     const first = clipboard().readText()
