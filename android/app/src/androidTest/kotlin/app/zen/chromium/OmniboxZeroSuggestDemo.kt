@@ -16,6 +16,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileInputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 /**
@@ -37,7 +39,10 @@ import kotlin.math.roundToInt
  *     terms is the active tab (the server saw the request), the field closed.
  *  3. A REAL touch on a tile opens its site.
  *  4. The new tab page's field offers the recent searches and no tiles – the page has them
- *     (Chrome's `SupportsMostVisitedSites` leaves the NTP out).
+ *     (Chrome's `SupportsMostVisitedSites` leaves the NTP out). The phone's page is the chrome's
+ *     own over `zen://blank`, opened by a finger on the bar's "New tab"; the tablet's is the
+ *     served `zen://newtab` document a `tab.new` opens bare (NTP-35), its field tapped in the
+ *     tab's own view – the hand-off to the pill's omnibox popup in new-tab mode.
  *
  * The list is composed per focus, never at boot: `SuggestionService.emptyState`
  * (core/suggestions.ts) runs from `rows()` when the chrome asks with an empty query; the boot
@@ -239,19 +244,50 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
             if (!took || !closed || !landed) failures += "the touch on the tile did not open its site (took $took, closed $closed, landed $landed)"
         }
 
-        // 4. The new tab page: no tiles, the page has them.
+        // 4. The new tab page: no tiles, the page has them. The two chassis reach their page as
+        // the user does: the phone's is the chrome's own, drawn over the `zen://blank` tab the
+        // bar's "New tab" button opens (App.tsx `useNewTabEvent` → `openNewTabPage`; the host has
+        // no `zen://newtab` on a phone – `capabilities.newTabPage` is `largeScreen`, so `tab.new`
+        // there only toggles the bar); the tablet's is the served `zen://newtab` document a
+        // `tab.new` opens BARE (NTP-35), its field a hand-off to the pill's omnibox popup
+        // (`newTabPageScript.ts`: the coarse pointer's tap sends the page's `search` action, text
+        // ''). Either way the bar opens in new-tab mode bound to the page's tab, and the list is
+        // the zero-suggest one without the tiles (`emptyState`'s `onNewTab`).
         step("OMN-04 the new tab page's field offers the recent searches and no tiles") {
             settle(8_000)
             closeField()
-            coreInvoke("tab.new")
-            val page = awaitChrome("!!document.querySelector('$NTP_FIELD')", 10_000)
-            SystemClock.sleep(1_500)
+            val before = coreTabCount()
+            val phone = formFactor == "phone"
+            val tabId: String
+            val fieldAt: PointF
+            if (phone) {
+                if (!touchTapLabel(NEW_TAB_LABEL)) error("no '$NEW_TAB_LABEL' button on the bar")
+                val page = awaitTrue(10_000) {
+                    activeCoreTab()?.optString("url").orEmpty().removeSuffix("/") == BLANK_URL &&
+                        chromeValue("String(!!document.querySelector('$NTP_FIELD'))") == "true"
+                }
+                SystemClock.sleep(1_200)
+                tabId = activeCoreTab()?.optString("id").orEmpty()
+                finding("  the bar's '$NEW_TAB_LABEL' under a finger: the chrome's page with its field up $page (the active tab $tabId at '${activeCoreTab()?.optString("url")}'; tabs ${coreTabCount()}, were $before)")
+                if (!page) error("the new tab page did not come up")
+                val r = rectOnScreen("document.querySelector('$NTP_FIELD')") ?: error("the page's field has no place on screen")
+                fieldAt = PointF(r.exactCenterX(), r.exactCenterY())
+            } else {
+                coreInvoke("tab.new")
+                val opened = awaitTrue(10_000) { activeCoreTab()?.optString("url").orEmpty().removeSuffix("/") == NEW_TAB_URL }
+                tabId = activeCoreTab()?.optString("id").orEmpty()
+                val page = opened && awaitTrue(15_000) { servedPageReady(tabId) }
+                SystemClock.sleep(1_200)
+                finding("  tab.new: the served page complete $page (the active tab $tabId at '${activeCoreTab()?.optString("url")}'; tabs ${coreTabCount()}, were $before); the bar ${if (urlbarOpen()) "OPEN" else "closed – the page came up bare"}")
+                if (!page) error("the new tab page did not come up")
+                fieldAt = pagePointOnScreen(tabId, SERVED_FIELD) ?: error("the page's field has no place on screen")
+            }
             ensureForeground()
-            finding("  a new tab: the page's field up $page")
-            if (!page) error("the new tab page did not come up")
-            val fieldAt = rectOnScreen("document.querySelector('$NTP_FIELD')") ?: error("the page's field has no place on screen")
-            Finger().tap(fieldAt.exactCenterX(), fieldAt.exactCenterY())
+            finding("  a finger on the page's field at ${fieldAt.x.toInt()},${fieldAt.y.toInt()}")
+            Finger().tap(fieldAt.x, fieldAt.y)
             if (!awaitField(8_000)) error("the tap on the page's field opened no editor")
+            val mode = urlbarMode()
+            val boundTo = urlbarBoundTo()
             awaitIme(shown = true, timeoutMs = 4_000)
             val listed = awaitChrome("document.querySelectorAll('$SEARCH_ROWS').length>=2&&!document.querySelector('$ROWS_LEAVING')", 15_000)
             SystemClock.sleep(800)
@@ -260,8 +296,15 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
             val card = readCard()
             val noTiles = card.tiles.isEmpty()
             val searches = card.rows.filter { it.kind == "search" }.map { it.title } == listOf(FIRST_TERMS, SECOND_TERMS)
-            finding("  over the new tab page: tiles ${card.tiles.size} (the page shows them) $noTiles; recent searches ${card.rows.filter { it.kind == "search" }.map { "'${it.title}'" }} $searches; rows ${card.rows.joinToString(" | ") { "${it.kind} '${it.title}'" }} ${verdict(listed && noTiles && searches)}")
-            if (!listed || !noTiles || !searches) failures += "the new tab page's list is not the recent searches without tiles (tiles ${card.tiles.size}, searches ${card.rows.filter { it.kind == "search" }.map { it.title }})"
+            // The phone's morph opens the bar in edit mode bound to the blank tab (fakeboxMorph.ts
+            // `tapFakebox` → `openUrlbar('edit', reg.tabId)`); the tablet's hand-off in new-tab
+            // mode bound to the served page's tab (`openNewTabPageUrlbar`). Both name the tab the
+            // list is composed for, which is what keeps the tiles off it.
+            val wantMode = if (phone) "edit" else "new-tab"
+            val bound = mode == wantMode && boundTo == tabId
+            finding("  the bar in mode '$mode' (the ${if (phone) "morph's edit" else "hand-off's new-tab"} mode) bound to '$boundTo' (the page's tab $tabId) $bound")
+            finding("  over the new tab page: tiles ${card.tiles.size} (the page shows them) $noTiles; recent searches ${card.rows.filter { it.kind == "search" }.map { "'${it.title}'" }} $searches; rows ${card.rows.joinToString(" | ") { "${it.kind} '${it.title}'" }} ${verdict(listed && noTiles && searches && bound)}")
+            if (!listed || !noTiles || !searches || !bound) failures += "the new tab page's list is not the recent searches without tiles (tiles ${card.tiles.size}, searches ${card.rows.filter { it.kind == "search" }.map { it.title }}, mode '$mode' bound to '$boundTo')"
             closeField()
             settle(6_000)
         }
@@ -509,7 +552,66 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
         return FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }.also { fd.close() }
     }
 
+    private fun coreTabCount(): Int = runCatching { coreState().getJSONObject("tabs").length() }.getOrDefault(-1)
+
+    // --- the served new tab page (the tablet's, `zen://newtab` in the tab's own view) --------------
+
+    /** Evaluate `code` in the tab's own WebView – the page, not the chrome (GroupsDemoBase's way); "" when it never answered. */
+    private fun pageJs(tabId: String, code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        val host = (activity as MainActivity).host
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(tabId)
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return result
+    }
+
+    /** The JSON array `code` evaluates to in the tab's page; null when it never answered or was no array. */
+    private fun pageJson(tabId: String, code: String): JSONArray? {
+        val raw = pageJs(tabId, "JSON.stringify($code)")
+        val text = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: return null
+        return runCatching { JSONArray(text) }.getOrNull()
+    }
+
+    /** The served document complete in the tab's view, by its own word (the tablet new tab driver's read). */
+    private fun servedPageReady(tabId: String): Boolean {
+        val a = pageJson(tabId, "[document.readyState,location.href]") ?: return false
+        return a.optString(0) == "complete" && a.optString(1).removeSuffix("/") == NEW_TAB_URL
+    }
+
+    /** Where the middle of the page element `elementJs` names is on the screen; null while the view is not placed and shown. */
+    private fun pagePointOnScreen(tabId: String, elementJs: String): PointF? {
+        val a = pageJson(
+            tabId,
+            "(function(){var t=$elementJs;if(!t)return null;var r=t.getBoundingClientRect();" +
+                "var d=window.devicePixelRatio;return [(r.left+r.width/2)*d,(r.top+r.height/2)*d]})()"
+        ) ?: return null
+        if (a.length() < 2) return null
+        var origin: IntArray? = null
+        val host = (activity as MainActivity).host
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(tabId)
+            if (view != null && view.isShown) origin = IntArray(2).also(view::getLocationOnScreen)
+        }
+        val o = origin ?: return null
+        return PointF(o[0] + a.getDouble(0).toFloat(), o[1] + a.getDouble(1).toFloat())
+    }
+
     // --- the chrome -------------------------------------------------------------------------------
+
+    private fun urlbarMode(): String = chromeValue("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).mode||''")
+
+    private fun urlbarBoundTo(): String = chromeValue("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).tabId||''")
 
     private fun chromeValue(code: String): String =
         runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
@@ -633,7 +735,14 @@ class OmniboxZeroSuggestDemo : DemoHarness("omnibox-zero-suggest-demo-state.json
         private const val SEARCH_ROWS = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"search\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"search\"]:not([data-leaving])"
         private const val HISTORY_ROWS = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-kind=\"history\"]:not([data-leaving]), #zen-omnibox-results > li[data-kind=\"history\"]:not([data-leaving])"
         private const val ROWS_LEAVING = ".zen-omnibox-sheet [role=\"listbox\"] > li[data-leaving], #zen-omnibox-results > li[data-leaving]"
+        /** The phone's chrome-drawn new tab page (over `zen://blank`): its field's button (NewTabPage.tsx `SearchField`). */
         private const val NTP_FIELD = ".zen-ntp-field-main"
+        /** The tablet's served page (`zen://newtab`, shared/newTabPage.ts): its field's form, tapped in the tab's own view. */
+        private const val SERVED_FIELD = "document.getElementById('zen-search')"
+        /** The phone bar's button that opens the phone's page (shared/phoneBar.ts, `barItems.tsx` 'new-tab'). */
+        private const val NEW_TAB_LABEL = "New tab"
+        private const val BLANK_URL = "zen://blank"
+        private const val NEW_TAB_URL = "zen://newtab"
 
         /**
          * The card as it stands, from the field outward on either chassis: the headings (the
