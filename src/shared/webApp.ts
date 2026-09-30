@@ -161,11 +161,14 @@ export const MANIFEST_FIELDS: Array<keyof RawWebAppManifest> = [
 const MAX_ICONS = 32
 const MAX_SCREENSHOTS = 8
 const MAX_TEXT = 512
-/** `share_target.params.files` entries kept, and `accept` tokens per entry. */
-const MAX_SHARE_FILES = 8
-const MAX_SHARE_ACCEPT = 16
+/**
+ * `share_target.params.files` entries kept, and `accept` tokens per entry. Shared with the page
+ * script's `manifestSubset`, which bounds the target the same way before it crosses the bridge.
+ */
+export const MAX_SHARE_FILES = 8
+export const MAX_SHARE_ACCEPT = 16
 /** A share target's field name (`params.title` …), as Chromium caps a manifest string. */
-const MAX_SHARE_PARAM = 128
+export const MAX_SHARE_PARAM = 128
 const SHARE_ENCTYPES: WebAppShareEnctype[] = [
   'application/x-www-form-urlencoded',
   'multipart/form-data'
