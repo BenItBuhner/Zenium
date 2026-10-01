@@ -504,3 +504,115 @@ describe('AndroidTabView and the per-navigation content rules (the core decides,
     expect(calls[4]).toEqual({ method: 'view.load', args: { tabId: 'tab_3', url: 'about:blank' } })
   })
 })
+
+describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('tells Kotlin to hold or release the page’s prompts for the core (`view.interceptAgentPrompts`)', () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.interceptAgentPrompts(true)
+    view.interceptAgentPrompts(false)
+    expect(calls).toEqual([
+      { method: 'view.interceptAgentPrompts', args: { tabId: 'tab_1', on: true } },
+      { method: 'view.interceptAgentPrompts', args: { tabId: 'tab_1', on: false } }
+    ])
+  })
+
+  it("routes Kotlin's held file chooser to the core's onFileChooser and answers Kotlin with the files, the cancel or the user's chooser", async () => {
+    const { bridge, calls } = fakeBridge()
+    const asked: unknown[] = []
+    let answer: TabViewEvents['onFileChooser'] = async (request) => {
+      asked.push(request)
+      return {
+        kind: 'files',
+        files: [
+          { name: 'a.txt', mimeType: 'text/plain', base64: 'YQ==' },
+          { path: '/sdcard/b.pdf' }
+        ]
+      }
+    }
+    const view = new AndroidTabView('tab_1', bridge)
+    view.events = {
+      onFileChooser: (request) => answer(request)
+    } as unknown as TabViewEvents
+    view.dispatch('fileChooser', {
+      requestId: 'fc_1',
+      multiple: true,
+      accept: ['.txt', 'application/pdf']
+    })
+    await flush()
+    expect(asked).toEqual([
+      { mode: 'multiple', accept: ['.txt', 'application/pdf'], source: 'input' }
+    ])
+    expect(calls).toEqual([
+      {
+        method: 'view.fileChooserAnswer',
+        args: {
+          tabId: 'tab_1',
+          requestId: 'fc_1',
+          kind: 'files',
+          files: [
+            { name: 'a.txt', mimeType: 'text/plain', base64: 'YQ==' },
+            { path: '/sdcard/b.pdf' }
+          ]
+        }
+      }
+    ])
+    answer = async () => ({ kind: 'cancel' })
+    view.dispatch('fileChooser', { requestId: 'fc_2' })
+    await flush()
+    expect(calls[1]).toEqual({
+      method: 'view.fileChooserAnswer',
+      args: { tabId: 'tab_1', requestId: 'fc_2', kind: 'cancel' }
+    })
+    // The core's answer failing leaves the chooser to the user: no callback sits unanswered.
+    answer = async () => {
+      throw new Error('gone')
+    }
+    view.dispatch('fileChooser', { requestId: 'fc_3' })
+    await flush()
+    expect(calls[2]).toEqual({
+      method: 'view.fileChooserAnswer',
+      args: { tabId: 'tab_1', requestId: 'fc_3', kind: 'user' }
+    })
+  })
+
+  it('a core without the event hands the chooser to the user at once; an event without a request id is nothing', async () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.events = {} as TabViewEvents
+    view.dispatch('fileChooser', { requestId: 'fc_1' })
+    view.dispatch('fileChooser', {} as never)
+    await flush()
+    expect(calls).toEqual([
+      {
+        method: 'view.fileChooserAnswer',
+        args: { tabId: 'tab_1', requestId: 'fc_1', kind: 'user' }
+      }
+    ])
+  })
+
+  it('sets the files of a marked input through the page (`setInputFiles`), and rejects with the page’s word', async () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    Object.assign(bridge, {
+      call: async (method: string, args: unknown) => {
+        calls.push({ method, args })
+        return { ok: true }
+      }
+    })
+    await view.setInputFiles('[data-zen-upload="u1"]', [{ name: 'a.txt', base64: 'YQ==' }])
+    expect(calls[0].method).toBe('view.eval')
+    expect((calls[0].args as { code: string }).code).toMatch(/^\(\(\) => \{/)
+    expect((calls[0].args as { code: string }).code).toContain('"[data-zen-upload=\\"u1\\"]"')
+    Object.assign(bridge, { call: async () => ({ error: 'not a file input' }) })
+    await expect(view.setInputFiles('input', [{ name: 'a.txt', base64: 'YQ==' }])).rejects.toThrow(
+      'not a file input'
+    )
+    Object.assign(bridge, { call: async () => null })
+    await expect(view.setInputFiles('input', [{ name: 'a.txt', base64: 'YQ==' }])).rejects.toThrow(
+      'did not answer'
+    )
+  })
+})

@@ -97,6 +97,13 @@ import type { ManagedStatus } from '@shared/managed'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
+import {
+  agentDownloadDestination,
+  clientCertificatesOf,
+  downloadAsksWhere,
+  type ClientCertificateEvent,
+  type DownloadBindDestination
+} from './agentPrompts'
 import { BOOKMARKS_INBOX_FILE, BookmarkInboxDrain } from './bookmarkInbox'
 import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
@@ -251,9 +258,20 @@ export function androidCapabilities({
     // Kotlin's WebChromeClient answers page dialogs itself, so none reaches an agent yet.
     agentDialogs: false,
     // The prompts the core itself raises for the WebView (sign-in, site permissions, opening
-    // another app) go to an agent's tab's agent. The file chooser (WebChromeClient's
-    // onShowFileChooser), client certificates and printing are Kotlin's and stay with it.
-    agentPrompts: ['http-auth', 'permission', 'external-protocol']
+    // another app) go to an agent's tab's agent, and so do the three Kotlin would otherwise
+    // answer with system UI over the page: the file chooser (`onShowFileChooser`), the
+    // KeyChain's client-certificate chooser and the save dialog of a download that asks where
+    // it goes (`agentPrompts.ts`). Not `print`: the WebView ignores `window.print()` (no
+    // WebChromeClient hook exists), so there is nothing to route; the chrome menu's Print is the
+    // user's action and stays. File System Access pickers do not exist in the WebView.
+    agentPrompts: [
+      'file-chooser',
+      'download',
+      'http-auth',
+      'client-certificate',
+      'permission',
+      'external-protocol'
+    ]
   }
 }
 
@@ -702,6 +720,12 @@ export interface HostEventPayloads {
     navigation?: boolean
     /** The response's Content-Disposition type, when it named one. */
     disposition?: 'inline' | 'attachment' | null
+    /**
+     * The menu's Save Link As… / Save Image As… started it (HB-40): Kotlin's save dialog asks
+     * where that one file goes whatever the setting says – or, on an agent's tab, the agent is
+     * asked (`agentPrompts.ts`).
+     */
+    saveAs?: boolean
   }
   'download.progress': {
     token: string
@@ -754,6 +778,13 @@ export interface HostEventPayloads {
   }
   /** A server asked for HTTP credentials; answered with `auth.respond`. */
   'auth.request': { requestId: string; tabId: string; host: string; realm: string; url: string }
+  /**
+   * A server asked an agent's tab for a client certificate (`Security.onClientCertRequest` while
+   * the view intercepts agent prompts); answered with `certificate.respond`: the index of the
+   * certificate to send, null to continue without one, or `user` for a tab that is not an
+   * agent's after all – Kotlin then opens the KeyChain chooser as it does for every other tab.
+   */
+  'certificate.request': ClientCertificateEvent
   'view.adopt': { viewId: string; parentTabId: string | null; active: boolean }
   /** An HTTP request reached the Kotlin MCP socket server; answered with `agent.reply`. */
   'agent.request': { id: number } & AgentHttpRequest
@@ -2195,15 +2226,7 @@ export class AndroidPlatform implements Platform {
           this.bridge.send('download.refuse', { token: p.token })
           return
         }
-        const bind = (): void => {
-          this.downloadTokens.set(p.token, record.id)
-          // Where the file goes: the system save dialog, the folder from Settings, or the default.
-          const settings = resolveDownloadSettings(browser.state.settings)
-          const destination = settings.askWhereToSave
-            ? { mode: 'ask' }
-            : settings.directory
-              ? { mode: 'folder', folder: settings.directory }
-              : { mode: 'default' }
+        const place = (destination: DownloadBindDestination): void => {
           this.bridge.send('download.bind', {
             token: p.token,
             id: record.id,
@@ -2213,6 +2236,43 @@ export class AndroidPlatform implements Platform {
             insecureAccepted: record.insecureAccepted === true
           })
           if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+        }
+        const bind = (): void => {
+          this.downloadTokens.set(p.token, record.id)
+          // Where the file goes: the system save dialog, the folder from Settings, or the default.
+          const settings = resolveDownloadSettings(browser.state.settings)
+          if (!downloadAsksWhere(settings, p.saveAs === true)) {
+            place(
+              settings.directory
+                ? { mode: 'folder', folder: settings.directory }
+                : { mode: 'default' }
+            )
+            return
+          }
+          // The save dialog would open over an agent's tab: the agent names the file instead
+          // (`AgentService.downloadDestination`; null for a user's tab – the dialog it always had).
+          const agent = browser.agents.downloadDestination(p.sourceTabId, {
+            url: p.url,
+            filename: p.filename,
+            mimeType: p.mimeType,
+            totalBytes: p.totalBytes
+          })
+          if (!agent) {
+            place({ mode: 'ask' })
+            return
+          }
+          void agent.then((answer) => {
+            if (browser.downloads.item(record.id) !== record || record.state === 'cancelled') return
+            const destination = agentDownloadDestination(answer, settings.directory)
+            if (destination) {
+              place(destination)
+              return
+            }
+            // The agent cancelled: like a dismissed save dialog, no download and no record.
+            this.downloadTokens.delete(p.token)
+            this.bridge.send('download.refuse', { token: p.token })
+            browser.downloads.remove(record.id)
+          })
         }
         // Held for the automatic-downloads prompt: bound – started – once the core resumes it.
         if (record.state === 'paused') this.heldDownloads.set(record.id, { token: p.token, bind })
@@ -2308,6 +2368,26 @@ export class AndroidPlatform implements Platform {
               password: credentials?.password ?? null
             })
           )
+        return
+      }
+      case 'certificate.request': {
+        const p = payload as HostEventPayloads['certificate.request']
+        const respond = (answer: { index: number | null } | { user: true }): void =>
+          this.bridge.send('certificate.respond', { requestId: p.requestId, ...answer })
+        // Kotlin asks only while the view intercepts an agent's prompts; whether the tab is the
+        // agent's for this request is the core's word, and a user's tab gets the KeyChain chooser.
+        if (!browser.agents.takesPrompt(p.tabId, 'client-certificate')) {
+          respond({ user: true })
+          return
+        }
+        const certificates = clientCertificatesOf(p)
+        if (!certificates.length) browser.agents.refuseClientCertificate(p.tabId, p.host)
+        // The agent's pick goes with this one request: the core routes it without remembering
+        // it, and Kotlin keeps it out of its per-host memory.
+        void browser.security
+          .clientCertificate(p.host, certificates, p.tabId)
+          .then((index) => respond({ index }))
+          .catch(() => respond({ index: null }))
         return
       }
       case 'agent.request':

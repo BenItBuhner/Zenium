@@ -40,6 +40,7 @@ import {
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  AgentUploadFile,
   ScreenshotOptions,
   AgentInputEvent,
   FindResultInfo,
@@ -56,6 +57,12 @@ import { looksLikeStatements } from '@core/agent/util'
 import { isKeepableHostState, NAVIGATION_ENTRIES_MAX, sanitizeSnapshot } from '@core/session'
 import { bridgeTraced, type Bridge } from './bridge'
 import { helperShortcuts } from './shortcutHelper'
+import {
+  fileChooserAnswerWire,
+  fileChooserRequestOf,
+  setInputFilesScript,
+  type FileChooserEvent
+} from './agentPrompts'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
 export interface ViewNavState {
@@ -154,6 +161,12 @@ export interface ViewEventPayloads {
    * extension's rule over the user's, in the tab's own container (`ContentRulesService`).
    */
   resolveRules: { token: number; url: string }
+  /**
+   * The page opened a file chooser while the view intercepts an agent's prompts
+   * (`view.interceptAgentPrompts`): Kotlin holds the `ValueCallback` until the core's answer
+   * comes back as `view.fileChooserAnswer` (`agentPrompts.ts`).
+   */
+  fileChooser: FileChooserEvent
   destroyed: void
 }
 
@@ -434,11 +447,66 @@ export class AndroidTabView implements TabView {
         if (direction === 'in' || direction === 'out') ev.onZoomChanged(direction)
         return
       }
+      case 'fileChooser':
+        this.onFileChooser(payload as FileChooserEvent)
+        return
       case 'destroyed':
         this.destroyed = true
         ev.onDestroyed()
         return
     }
+  }
+
+  /**
+   * A file chooser the page opened while Kotlin intercepts them: the core says whose it is and
+   * answers – the agent's files, its cancel, or `user` for a tab that is not an agent's (any
+   * more), on which Kotlin shows the system's chooser as it does for every other tab. A core
+   * without the event, or one whose answer fails, leaves the chooser to the user as well: the
+   * page must never sit on a `ValueCallback` nobody answers.
+   */
+  private onFileChooser(event: FileChooserEvent): void {
+    if (typeof event?.requestId !== 'string') return
+    const answer = (wire: ReturnType<typeof fileChooserAnswerWire>): void => {
+      this.bridge.send('view.fileChooserAnswer', {
+        tabId: this.tabId,
+        requestId: event.requestId,
+        ...wire
+      })
+    }
+    const ask = this.events.onFileChooser
+    if (!ask) {
+      answer({ kind: 'user' })
+      return
+    }
+    void ask
+      .call(this.events, fileChooserRequestOf(event))
+      .then((result) => answer(fileChooserAnswerWire(result)))
+      .catch(() => answer({ kind: 'user' }))
+  }
+
+  // --- an AI agent's native prompts -----------------------------------------
+
+  /**
+   * An agent works this page: Kotlin holds the page's file choosers (and the view's
+   * client-certificate requests) for the core instead of opening system UI over the page
+   * (`TabWebView.setInterceptAgentPrompts`). The core decides per request whose each one is.
+   */
+  interceptAgentPrompts(on: boolean): void {
+    this.bridge.send('view.interceptAgentPrompts', { tabId: this.tabId, on })
+  }
+
+  /**
+   * Set the files of the marked `<input type=file>` without a chooser (`browser_file_upload`
+   * with a target): the page builds the files from the bytes the agent sent and fires `input`
+   * and `change` (`setInputFilesScript`). Rejects with the page's word when no input matches,
+   * or when the agent named paths, which page script cannot read here.
+   */
+  async setInputFiles(selector: string, files: AgentUploadFile[]): Promise<void> {
+    if (this.destroyed) throw new Error('the page is gone')
+    const result = (await this.executeJavaScript(setInputFilesScript(selector, files))) as
+      { ok?: boolean; error?: string } | null | undefined
+    if (result?.ok === true) return
+    throw new Error(result?.error ?? 'the page did not answer')
   }
 
   /**
