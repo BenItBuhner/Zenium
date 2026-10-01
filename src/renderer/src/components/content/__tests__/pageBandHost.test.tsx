@@ -8,18 +8,19 @@ import type { UiState } from '@renderer/lib/ui'
 import { BLANK_URL } from '@shared/url'
 
 /*
- * The desktop's host for the page-edge band (motion spec §3.2, §3.4; content/PageBandHost.tsx):
+ * The desktop's host for the page-edge band (motion spec §3.2, §3.4, §10; content/PageBandHost.tsx):
  * what it tells the model of the frame – the tab in front and its scene, whether a band may
- * stand on it (not the empty frame, a chrome page – every internal address but the new tab page
- * and the blank page, where a state alone stands – a page shown in another window, a fullscreen;
- * no offers on a private tab), what covers the page (a chrome overlay, a
- * frame dialog, the URL bar, Web capture, the gesture stage: a new band waits, a standing one
- * stays) – how it fills the band's seam: the page's offset to the core per frame
- * (`layout.pageOffset`), the seat for the layout reporter at the lesser of the seat and the
- * destination on a departure and at the height at the rest (`lib/pageBand.ts`), and a cut – no
- * travel – when the frame's page changes; and what the tabs tell the model (a tab closing, a
- * document changing). Its tenants: the default-browser state stands while the OS names another
- * browser; the crash-restore state while the session holds the last run's pages for an answer.
+ * stand on it at all (a tab's page: not the empty frame, a page shown in another window, a
+ * fullscreen), whether offers may (a page of the web alone: not the new tab page, the blank page
+ * or a chrome page – `isBandPageUrl`'s allow-list – and not a private tab; a STATE stands on all
+ * of those), what covers the page (a chrome overlay, a frame dialog, the URL bar, Web capture,
+ * the gesture stage: a new band waits, a standing one stays) – how it fills the band's seam: the
+ * page's offset to the core per frame (`layout.pageOffset`), the seat for the layout reporter at
+ * the lesser of the seat and the destination on a departure and at the height at the rest
+ * (`lib/pageBand.ts`), and a cut – no travel – when the frame's page changes; and what the tabs
+ * tell the model (a tab closing, a document changing). Its tenants: the default-browser state
+ * stands while the OS names another browser; the crash-restore state while the session holds the
+ * last run's pages for an answer.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -32,6 +33,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { PageBandHost } = await import('../PageBandHost')
+const { PageBandLayer } = await import('../PageBandLayer')
 const { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE } = await import('@renderer/lib/motion/band')
 const { framesPending } = await import('@renderer/lib/motion/clock')
 const { bandStore, chooseBand, dismissBandByKey, resetBands, showBand } =
@@ -140,6 +142,25 @@ function render(s: UIState, u: UiState = ui()): void {
   })
 }
 
+/**
+ * The host with the layer a chrome page rides on, as `ContentArea` mounts them on a chrome page
+ * (`InternalPageHost` inside `PageBandLayer`, where the band is hosted; a page of the web has a
+ * view the core moves, and no layer).
+ */
+function renderWithLayer(s: UIState): void {
+  act(() => {
+    root!.render(
+      <>
+        <PageBandHost state={s} ui={ui()} />
+        <PageBandLayer>
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      </>
+    )
+  })
+}
+const layer = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-band-layer]')!
+
 /** Run the clock until it goes idle (the spring rested) or `limit` frames pass. */
 function settle(limit = 200): void {
   let n = 0
@@ -211,8 +232,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
-  it('a page tab in front welcomes a band; the new tab page and the blank page a state alone; the empty frame, a chrome page – every zen:// page, the version page and the game included – a page shown in another window and a fullscreen none – each a scene of its own', () => {
+describe('PageBandHost – what the frame shows (motion spec §3.2, §10)', () => {
+  it('a page tab in front welcomes a band and its offers; the empty frame, a page shown in another window and a fullscreen take none; the blank page, the new tab page and the chrome pages – every zen:// page, the version page and the game included – take a state and withhold offers (the Design Lead’s §10 change) – each a scene of its own', () => {
     render(state())
     expect(model()).toEqual({
       front: 'page',
@@ -221,26 +242,29 @@ describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
       offers: true,
       covered: false
     })
+    // The empty frame is chrome: no tab, no band at all.
     render(state({ front: null }))
-    expect(model()).toMatchObject({ front: null, scene: ':::', ok: false })
-    // The new tab page – `zen://newtab/` once loaded – and the blank page, bare or with the
-    // slash a load adds: a state may stand on them (the Design Lead's ruling on item 8), an
-    // offer may not.
+    expect(model()).toMatchObject({ front: null, scene: ':::', ok: false, offers: false })
+    // The blank page and the new tab page – `zen://newtab/` once loaded, the blank page with
+    // the slash a load adds – are chrome pages: a state stands on them (the strip the band
+    // retired stood on the new tab page), an offer never does.
     render(state({ front: 'blank' }))
     expect(model()).toMatchObject({ front: 'blank', ok: true, offers: false })
     render(state({ front: 'ntp' }))
     expect(model()).toMatchObject({ front: 'ntp', ok: true, offers: false })
     render(state({ front: 'loadedBlank' }))
     expect(model()).toMatchObject({ front: 'loadedBlank', ok: true, offers: false })
-    // Every `zen://` page is a chrome page to the band (the Design Lead's ruling on #740's item
-    // 6): the ones the chrome draws, and the version page and the game – documents the chrome
-    // serves in the frame – alike; the band stands on none of them.
     render(state({ front: 'settings' }))
-    expect(model()).toMatchObject({ front: 'settings', ok: false })
+    expect(model()).toMatchObject({ front: 'settings', ok: true, offers: false })
+    // Every `zen://` page is a chrome page to the band (the Design Lead's ruling on #740): the
+    // version page and the game are documents the chrome serves in the frame, and offers stand
+    // on neither – states do.
     render(state({ front: 'version' }))
-    expect(model()).toMatchObject({ front: 'version', ok: false })
+    expect(model()).toMatchObject({ front: 'version', ok: true, offers: false })
     render(state({ front: 'game' }))
-    expect(model()).toMatchObject({ front: 'game', ok: false })
+    expect(model()).toMatchObject({ front: 'game', ok: true, offers: false })
+    // What stands around the page withholds the band whole: another window showing the page,
+    // the window's fullscreen, a page's.
     render(state({ foreign: ['page'] }))
     expect(model()).toMatchObject({ scene: 'page:::foreign', ok: false })
     render(state({ fullscreen: true }))
@@ -248,7 +272,47 @@ describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
     render(state({ htmlFullscreenTabId: 'page' }))
     expect(model()).toMatchObject({ scene: 'page:page-fullscreen::', ok: false })
     render(state())
-    expect(model()).toMatchObject({ scene: 'page:::', ok: true })
+    expect(model()).toMatchObject({ scene: 'page:::', ok: true, offers: true })
+  })
+
+  it('on the new tab page and on zen://version a state stands and an offer is withheld – the offer waits, and stands when a page of the web is in front (§10)', () => {
+    // A window-wide state and a tab-scoped offer on each chrome page.
+    offline()
+    offer('ntp')
+    offer('version')
+    render(state({ front: 'ntp' }))
+    expect(model()).toMatchObject({ front: 'ntp', ok: true, offers: false })
+    expect(standing()).toBe('connectivity')
+    expect(band()!.querySelector('.zen-band-title')!.textContent).toBe('You are offline')
+    settle()
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+    // The state gone, the offer does not take its place on a chrome page: the band leaves.
+    act(() => dismissBandByKey('connectivity'))
+    expect(standing()).toBeNull()
+    settle()
+    expect(band()).toBeNull()
+    expect(bandSeat()).toBe(0)
+    // The version page the same: the offer about it waits, a state shows.
+    render(state({ front: 'version' }))
+    expect(model()).toMatchObject({ front: 'version', ok: true, offers: false })
+    expect(standing()).toBeNull()
+    offline()
+    expect(standing()).toBe('connectivity')
+    // A page of the web in front: offers may stand – the state still first (§3.2).
+    offer('page')
+    render(state())
+    expect(model()).toMatchObject({ front: 'page', ok: true, offers: true })
+    expect(standing()).toBe('connectivity')
+    act(() => dismissBandByKey('connectivity'))
+    expect(standing()).toBe('install:page')
+    // Back on the new tab page the page's offer is not the frame's, and no offer stands there.
+    render(state({ front: 'ntp' }))
+    expect(standing()).toBeNull()
+    expect(bandStore.get().entries.map((e) => e.key)).toEqual([
+      'install:page',
+      'install:version',
+      'install:ntp'
+    ])
   })
 
   it('a private tab takes states and withholds offers (§3.2)', () => {
@@ -434,6 +498,88 @@ describe('PageBandHost – the seam to the page (motion spec §3.4, §6)', () =>
     expect(band()).not.toBeNull()
     expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
     expect(framesPending()).toBe(0)
+  })
+})
+
+describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, §10)', () => {
+  it('a chrome-drawn page is moved through the page seam: its layer is translated per frame by the very offset the core hears, laid out under the seat at the rest – offset − seat, as the views’ bounds move – and comes home the same way on a leave; at home it is a plain box', () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    expect(model()).toMatchObject({ front: 'settings', ok: true, offers: false })
+    expect(standing()).toBe('connectivity')
+    const el = layer()
+    expect(el.querySelector('[data-testid="chrome-page"]')).not.toBeNull()
+    // Before the first frame: home, no transform, the whole frame.
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+    frames.tick(3)
+    const travelling = offsets()
+    expect(travelling).toHaveLength(3)
+    // Nothing seated while the page travels at full height: the layer's translate is the offset
+    // itself – the one number the core heard this frame – and its box is still the whole frame.
+    expect(bandSeat()).toBe(0)
+    expect(el.style.transform).toBe(`translateY(${travelling.at(-1)}px)`)
+    expect(el.style.top).toBe('')
+    settle()
+    // At the rest the page is laid out under the seat (`top`) and the translate is gone: the
+    // offset against the seat is 0, as the core's shift of the views is.
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+    expect(offsets().at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+    expect(el.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    expect(el.style.transform).toBe('')
+    // A leave: the seat goes to 0 as the travel begins – the box is the whole frame again with
+    // the page still down by the offset, no jump – and the page comes home per frame.
+    run.mockClear()
+    act(() => dismissBandByKey('connectivity'))
+    expect(bandSeat()).toBe(0)
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_TWO_LINE}px)`)
+    frames.tick(2)
+    const leaving = offsets()
+    expect(leaving).toHaveLength(2)
+    expect(leaving[1]).toBeLessThan(leaving[0])
+    expect(el.style.transform).toBe(`translateY(${leaving.at(-1)}px)`)
+    settle()
+    expect(offsets().at(-1)).toBe(0)
+    expect(band()).toBeNull()
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+  })
+
+  it('a cut lands the layer where the band stands at once, no travel; a page of the web is moved by the core alone – the same offsets go to layout.pageOffset with no layer in the frame', () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    settle()
+    const el = layer()
+    expect(el.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    run.mockClear()
+    // The page's fullscreen under the window-wide band: a cut – the band goes and the page is
+    // home at once, the layer with it.
+    renderWithLayer(state({ front: 'settings', htmlFullscreenTabId: 'settings' }))
+    expect(offsets()).toEqual([0])
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe('')
+    expect(framesPending()).toBe(0)
+    // Its exit: the band stands again at once, the page laid out under it, no translate.
+    renderWithLayer(state({ front: 'settings' }))
+    expect(offsets()).toEqual([0, BAND_HEIGHT_TWO_LINE])
+    expect(el.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    expect(el.style.transform).toBe('')
+    expect(framesPending()).toBe(0)
+    // A page of the web in front: `ContentArea` mounts no layer for it – its view is the
+    // core's to move – and the band's travel reaches the core as it did before the layer.
+    act(() => root!.render(null))
+    resetBands()
+    resetPageBand()
+    run.mockClear()
+    offline()
+    render(state())
+    expect(mount!.querySelector('[data-band-layer]')).toBeNull()
+    frames.tick(3)
+    expect(offsets()).toHaveLength(3)
+    settle()
+    expect(offsets().at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
   })
 })
 

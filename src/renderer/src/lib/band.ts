@@ -1,11 +1,12 @@
 /**
  * The page-edge band's model (motion spec §3.2) – which prompt the band shows, and for how long.
  * Host-free: the desktop and Android hosts tell it what the frame shows (`setBandFrame`: which
- * tab is in front, whether a band may stand on it at all – not on the new tab page, not on a
- * chrome page, not in a fullscreen – whether offers may, and whether something stands over the
- * page – a sheet or dialog, the keyboard up over the page's field), the tenants `showBand` their
- * prompts, and `chooseBand` says what stands at the frame's edge. The motion is
- * `lib/motion/band.ts`'s, the drawing `components/band/`'s.
+ * tab is in front, whether a band may stand on it at all – a tab's page, not the empty frame,
+ * not a fullscreen – whether offers may – a page of the web, not the new tab page or a chrome
+ * page, not a private tab – and whether something stands over the page – a sheet or dialog, the
+ * keyboard up over the page's field), the tenants `showBand` their prompts, and `chooseBand`
+ * says what stands at the frame's edge. The motion is `lib/motion/band.ts`'s, the drawing
+ * `components/band/`'s.
  *
  * - One band at a time. A newer offer replaces the standing offer in its scope (the same tab, or
  *   window-wide); the same `key` again replaces its earlier self. States are not replaced: they
@@ -25,7 +26,6 @@
  *   scene is a cut and never a travel of the next page for the last page's prompt.
  */
 import type { LucideIcon } from 'lucide-react'
-import { isEmptyTabUrl } from '@shared/url'
 import { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE, type BandHeight } from './motion/band'
 import { BAND_CLOCK_MS } from './motion/tokens'
 import { createStore } from './store'
@@ -118,9 +118,18 @@ export interface BandFrame {
    * the host says more.
    */
   scene?: string | null
-  /** A band may stand on what is in front at all: false on the new tab page, a chrome page, a fullscreen. */
+  /**
+   * A band may stand on what is in front at all: a tab's page – false on the empty frame, in a
+   * fullscreen, on a page shown in another window (the host's scene rules). The new tab page
+   * and the chrome pages are not withheld here: a state stands on them (§10, the Design Lead's
+   * change on #740); what they withhold is offers (`offers`).
+   */
   ok: boolean
-  /** Offers may stand on it: false on a private tab, whose offers Chrome withholds too (§3.2). */
+  /**
+   * Offers may stand on it: false on a private tab, whose offers Chrome withholds too (§3.2),
+   * and on a chrome page – the new tab page, the blank page, every `zen://`, `about:`,
+   * `chrome://` and `devtools://` page (`isBandPageUrl`, §10): states stand there, offers never.
+   */
   offers?: boolean
   /**
    * Something stands over the page – a sheet, a dialog, the keyboard over the page's field: a
@@ -136,9 +145,9 @@ export interface BandState {
   front: string | null
   /** The frame's scene, as the host reports it (`BandFrame.scene`). */
   scene: string | null
-  /** The host says a band may stand on what is in front. */
+  /** The host says a band may stand on what is in front (a tab's page, not a fullscreen). */
   ok: boolean
-  /** The host says offers may stand on what is in front: false on a private tab (§3.2). */
+  /** The host says offers may stand on what is in front: false on a private tab (§3.2) and on a chrome page (§10). */
   offers: boolean
   /** The host says something stands over the page: a prompt arriving waits, the standing stays. */
   covered: boolean
@@ -161,16 +170,29 @@ const INITIAL: BandState = {
 
 export const bandStore = createStore<BandState>(INITIAL, 'band')
 
+/** The schemes of a PAGE to the band (`isBandPageUrl`): an allow-list, every other scheme is chrome. */
+const BAND_PAGE_SCHEMES: ReadonlySet<string> = new Set([
+  'http',
+  'https',
+  'file',
+  'chrome-extension'
+])
+
 /**
- * Whether a band may stand on the page at `url` – §3.2's never-on list, by address, for both
- * hosts' `BandFrame.ok`: not on the empty frame, the blank page or the new tab page
- * (`isEmptyTabUrl`, with the slash a load adds), and not on any `zen://` page – the chrome's
- * own pages (Settings, History) and the documents it serves alike, the version page and the
- * game included (the lead's ruling on #740: every `zen://` page is a chrome page for the band).
- * What stands around the page – a fullscreen, another window showing it – is the host's to add.
+ * Whether `url` is a PAGE to the band – one an offer may stand on – or CHROME, where only a
+ * state does (§3.2, §10), for both hosts' `BandFrame.offers`. The Design Lead's allow-list
+ * (from #754's gate, item 9): the pages are the documents of the web and what stands in for
+ * them – `http:`, `https:`, `file:` and `chrome-extension:`. Everything else is chrome:
+ * `zen://` – the chrome's own pages (Settings, History) and the documents it serves alike, the
+ * new tab page, the blank page, the version page and the game – `about:` (`about:blank`
+ * included), `chrome://`, `devtools://`, and the empty frame (no address at all). An allow-list:
+ * a scheme not named is chrome too. What stands around the page – a fullscreen, another window
+ * showing it – is the host's (`BandFrame.ok`).
  */
 export function isBandPageUrl(url: string | null | undefined): boolean {
-  return typeof url === 'string' && !isEmptyTabUrl(url) && !url.startsWith('zen://')
+  if (typeof url !== 'string') return false
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)
+  return scheme !== null && BAND_PAGE_SCHEMES.has(scheme[1].toLowerCase())
 }
 
 /** The band's height for a prompt: two lines with a detail, one without (§3.1). */
@@ -226,11 +248,15 @@ function pauseClock(): void {
   running = null
 }
 
-/** Run the clock of the shown offer (if it is an offer, unheld, in front) and no other. */
+/**
+ * Run the clock of the shown offer (if it is an offer, unheld, in front and uncovered) and no
+ * other: under a cover the page is not in front (§3.2), so the offer keeps what it has left and
+ * resumes when the cover goes.
+ */
 function syncClock(): void {
   const s = bandStore.get()
   const shown = chooseBand(s)
-  const wants = shown !== null && shown.duration !== null && !s.held
+  const wants = shown !== null && shown.duration !== null && !s.held && !s.covered
   if (running && (!wants || running.id !== shown.id)) pauseClock()
   if (!wants || running) return
   const ms = left.has(shown.id) ? Math.max(left.get(shown.id)!, RESUME_FLOOR_MS) : shown.duration!
@@ -321,8 +347,8 @@ export function holdBand(held: boolean): void {
 /**
  * The host's word on the frame: which tab is in front (and what scene that is), whether a band
  * may stand on it at all, whether offers may (a private tab's states show, its offers wait), and
- * whether something stands over the page (a prompt arriving waits; the standing one stays). A
- * band for another tab waits with its clock paused; a band withheld waits.
+ * whether something stands over the page (a prompt arriving waits; the standing one stays, its
+ * clock paused). A band for another tab waits with its clock paused; a band withheld waits.
  */
 export function setBandFrame(frame: BandFrame): void {
   const next = {
