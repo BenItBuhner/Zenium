@@ -10,6 +10,7 @@ import { groupColorVars } from '@renderer/lib/groups'
 import { CELL_ATTR, layoutAnimations } from '@renderer/lib/motion/flip'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { groupCardLabel } from '@renderer/lib/overviewLabels'
+import { noteGroupFolded, noteGroupUnfolded } from '@renderer/lib/overviewUi'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
@@ -263,10 +264,14 @@ export function GroupCard({
   }, [key, collapsed, dissolving, forming, members, columns])
 
   const press = useLongPress(() => onMenu(folder))
+  // The header's tap unfolds and folds (§2); an unfold is noted for the system back to undo
+  // (`TabOverview` registers the surface – `backFoldTarget`), a fold takes the note back.
   const toggle = (): void => {
     if (press.swallowsClick()) return
     if (renaming) return
     run('folder.update', { folderId: folder.id, patch: { collapsed: !collapsed } })
+    if (collapsed) noteGroupUnfolded(folder.id)
+    else noteGroupFolded(folder.id)
   }
 
   // Closing: the exit drawn over the card takes its place until the browser removes the tabs.
