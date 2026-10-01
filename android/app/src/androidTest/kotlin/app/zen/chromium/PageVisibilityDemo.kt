@@ -37,9 +37,13 @@ import java.net.URL
  * audible within the last 30 s (`kRecentAudioDelay`), and the `Page` that keeps that memory
  * outlives a navigation in the same tab, so the two kinds without sound run first, on a tab that
  * has never been audible, and the two with sound are measured inside that window. Then the
- * control, Home with the clip with sound (unchanged by OS-39); then the OS-08 case, the site
- * allowed `background-video`, playing, switched away – held from the hide as it is held from
- * Home's, the page visible to itself and the clip playing on.
+ * control, Home with the clip with sound (unchanged by OS-39); then the OS-08 cases, the site
+ * allowed `background-video` and switched away: playing – held from the hide as it is held from
+ * Home's, the page visible to itself and the clip playing on; silent – hidden like any other site
+ * (the allow holds only while the video plays); playing and then paused by the page while behind
+ * – hidden the moment the sound stops, and a `play()` while hidden un-hides nothing. Last, the
+ * tab overview opened over the page by a real touch and closed again, plain and allowed, as FACT
+ * lines of what the page reads under that cover today ([overviewCover]).
  *
  * A `check` that did not hold fails the run at its end; what is measured but not held to goes to
  * the notes as a `FACT`. Every touch injected has an assertion on what it did (the rule in
@@ -125,6 +129,10 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         switched("audio", "4. an <audio> track, playing: the tab switched away and back")
         homeControl()
         allowedSwitched()
+        allowedSilentSwitched()
+        allowedStopsBehind()
+        overviewCover()
+        forgetAllow()
         note("\nend: ${describeTab(TAB)}; active ${activeCoreTab()?.optString("id")}; $TAB ${viewState(TAB)}")
     }
 
@@ -216,7 +224,7 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
     private fun allowedSwitched() {
         note("\n6. OS-08: the site allowed background-video (permissions.set), the <video> with sound playing, the tab switched away and back")
         onPage("video")
-        val set = coreInvoke("permissions.set", """{"origin":${JSONObject.quote(ORIGIN)},"permission":"background-video","decision":"allow"}""")
+        val set = coreInvoke("permissions.set", allow("allow"))
         note("  permissions.set -> $set")
         play()
         SystemClock.sleep(1_500)
@@ -243,7 +251,155 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         shot("allowed-site-returned-heard-nothing-kept-playing-light-phone")
         pause()
         // The site's allow is forgotten, so the tab stands as the others do from here.
-        coreInvoke("permissions.set", """{"origin":${JSONObject.quote(ORIGIN)},"permission":"background-video","decision":null}""")
+        forgetAllow()
+    }
+
+    // --- OS-08 refined (the lead's ruling 1): the allow holds only while the video plays ------------
+
+    /** The site allowed, nothing playing: hidden behind another tab like any other site. */
+    private fun allowedSilentSwitched() {
+        note("\n7. OS-08, ruling 1: the site allowed background-video but SILENT (the clip loaded, not playing), the tab switched away and back")
+        onPage("video")
+        val set = coreInvoke("permissions.set", allow("allow"))
+        note("  permissions.set -> $set")
+        SystemClock.sleep(800)
+        note("  silent, allowed: view ${viewState(TAB)}")
+        check("allowed-silent: nothing plays, so the session keeps nothing for the view (keepsVideoInBackground false)", !keeps())
+        val away = switchTo(OTHER)
+        check("allowed-silent: the switch takes", away)
+        resetGaps()
+        SystemClock.sleep(1_000)
+        val a = read() ?: run { check("allowed-silent: the page behind answers", false); return }
+        SystemClock.sleep(3_000)
+        val b = read() ?: run { check("allowed-silent: the page behind answers a second time", false); return }
+        note("  behind, +1 s: ${a.line()}; view ${viewState(TAB)}")
+        note("  behind, +4 s: ${b.line()}; cadence ${rates(a, b)}")
+        check("allowed-silent: a silent allowed site is hidden behind another tab like any other (read \"${b.vis}\", ${b.vc} change(s); behind, nothing held)", b.vis == "hidden" && b.vc == 1 && behind() && !holding())
+        check("allowed-silent: behind another tab requestAnimationFrame stops (${"%.1f".format(frameHz(a, b))} frames/s)", frameHz(a, b) < 1.0)
+        fact("allowed-silent", "behind another tab the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms) – the throttling the engine allows a hidden page; this tab was audible in scene 6 moments before (Chrome's 30 s recently-audible memory outlives the navigation)")
+        val back = switchTo(TAB)
+        check("allowed-silent: the return takes", back)
+        SystemClock.sleep(2_000)
+        val c = read() ?: run { check("allowed-silent: the page answers after the return", false); return }
+        note("  back: ${c.line()}; view ${viewState(TAB)}")
+        check("allowed-silent: back in front the page reads \"visible\" with the second change (read \"${c.vis}\", ${c.vc} change(s) in all)", c.vis == "visible" && c.vc == 2 && !behind())
+    }
+
+    /** The allowed site playing behind another tab, then its sound stops there: hidden then; a `play()` while hidden un-hides nothing. */
+    private fun allowedStopsBehind() {
+        note("\n8. OS-08, ruling 1: the allowed site playing, switched away (the hide held), then the clip PAUSED by the page while behind – the page is hidden then; a play() while hidden un-hides nothing")
+        onPage("video")
+        coreInvoke("permissions.set", allow("allow"))
+        play()
+        SystemClock.sleep(1_500)
+        check("allowed-stop: the session keeps the video for the view before the switch", keeps())
+        val away = switchTo(OTHER)
+        check("allowed-stop: the switch takes", away)
+        SystemClock.sleep(1_500)
+        val a = read() ?: run { check("allowed-stop: the page behind answers", false); return }
+        note("  behind, playing: ${a.line()}; view ${viewState(TAB)}")
+        check("allowed-stop: playing behind the other tab, the switch's hide is held (visible to itself, no change, holding)", a.vis == "visible" && a.vc == 0 && behind() && holding())
+        // The sound stops while the tab is behind: the page's own pause (the notification's or the
+        // clip's end is the same word to the session).
+        val paused = pageJs("(function(){var m=document.getElementById('media');m.pause();return 'ok'})()")
+        val released = poll(10_000) { !holding() && !keeps() }
+        SystemClock.sleep(1_500)
+        val b = read() ?: run { check("allowed-stop: the page behind answers after the pause", false); return }
+        note("  behind, paused by the page: pause -> $paused; released=$released; ${b.line()}; view ${viewState(TAB)}")
+        check("allowed-stop: the sound stopping while behind lets the held hide through – the session's word turns, the hold releases, the page reads \"hidden\" and heard one change (read \"${b.vis}\", ${b.vc} change(s))", released && b.vis == "hidden" && b.vc == 1 && b.paused == true)
+        // The page starts the clip again while hidden: the page stays hidden whatever the engine does with the playback.
+        val played = pageJs("(function(){var m=document.getElementById('media');var p=m.play();if(p&&p.catch)p.catch(function(){});return 'ok'})()")
+        SystemClock.sleep(2_500)
+        val c = read() ?: run { check("allowed-stop: the page behind answers after the play()", false); return }
+        note("  behind, play() while hidden: -> $played; ${c.line()}; view ${viewState(TAB)}")
+        check("allowed-stop: a play() while hidden un-hides nothing (read \"${c.vis}\", ${c.vc} change(s); behind, nothing held)", c.vis == "hidden" && c.vc == 1 && behind() && !holding())
+        fact("allowed-stop", "after the play() while hidden the engine has the clip ${if (c.paused == true) "PAUSED" else "PLAYING"} (play events ${c.plays}, pause events ${c.pauses}, currentTime ${b.t} -> ${c.t} ms; the session keeps=${keeps()})")
+        val back = switchTo(TAB)
+        check("allowed-stop: the return takes", back)
+        SystemClock.sleep(2_000)
+        val d = read() ?: run { check("allowed-stop: the page answers after the return", false); return }
+        note("  back: ${d.line()}; view ${viewState(TAB)}")
+        check("allowed-stop: back in front the page reads \"visible\" with the second change (read \"${d.vis}\", ${d.vc} change(s) in all)", d.vis == "visible" && d.vc == 2 && !behind() && !holding())
+        fact("allowed-stop", "back in front the clip is ${if (d.paused == true) "PAUSED" else "PLAYING"} (play events ${d.plays}, pause events ${d.pauses}, currentTime ${c.t} -> ${d.t} ms)")
+        pause()
+        forgetAllow()
+    }
+
+    // --- the tab overview over the page: what the page reads under that cover today -----------------
+
+    /**
+     * The overview opened over the playing page by a real touch on the bar's Tabs button and closed
+     * by back; once with the site allowed `background-video` and playing. FACT lines, not checks:
+     * the lead's ruling 2 (the overview counts as switching away, as Chrome's Hub does) waits on a
+     * word from the core the host does not have today – every cover of the chrome hides the view
+     * the same way – so this scene records what the page reads under the cover now.
+     */
+    private fun overviewCover() {
+        note("\n9. the tab overview opened over the page (a real touch on the bar's Tabs button) and closed again by back – FACT lines of what the page reads under that cover today; then the same with the site allowed background-video")
+        onPage("video")
+        play()
+        val before = read() ?: run { check("overview: the page answers before the cover", false); return }
+        note("  in front: ${before.line()}")
+        if (!openOverview("overview")) { pause(); return }
+        resetGaps()
+        SystemClock.sleep(1_000)
+        val a = read() ?: run { check("overview: the page answers under the cover", false); closeOverview("overview"); return }
+        SystemClock.sleep(3_000)
+        val b = read() ?: run { check("overview: the page answers under the cover a second time", false); closeOverview("overview"); return }
+        note("  under the overview, +1 s: ${a.line()}; view ${viewState(TAB)}; $OTHER ${viewState(OTHER)}")
+        note("  under the overview, +4 s: ${b.line()}; cadence ${rates(a, b)}")
+        fact("overview", "under the overview the page reads \"${b.vis}\" with ${b.vc} change(s); the clip ${if (b.paused == true) "PAUSED" else "PLAYING"} (currentTime ${a.t} -> ${b.t} ms); the host has the tab ${if (behind()) "BEHIND another tab" else "under a cover, not behind"} (holding=${holding()})")
+        fact("overview", "under the overview the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms), requestAnimationFrame at ${"%.1f".format(frameHz(a, b))} frames/s")
+        closeOverview("overview")
+        SystemClock.sleep(2_000)
+        val c = read() ?: run { check("overview: the page answers after the cover", false); return }
+        note("  closed: ${c.line()}; view ${viewState(TAB)}")
+        fact("overview", "after the overview closed the page reads \"${c.vis}\" with ${c.vc} change(s) in all; the clip ${if (c.paused == true) "PAUSED" else "PLAYING"} (play events ${c.plays}, pause events ${c.pauses})")
+        // The allowed site, playing, under the overview.
+        coreInvoke("permissions.set", allow("allow"))
+        play()
+        SystemClock.sleep(1_500)
+        check("overview-allowed: the session keeps the video for the view before the cover", keeps())
+        if (!openOverview("overview-allowed")) { pause(); forgetAllow(); return }
+        SystemClock.sleep(1_000)
+        val d = read() ?: run { check("overview-allowed: the page answers under the cover", false); closeOverview("overview-allowed"); forgetAllow(); return }
+        SystemClock.sleep(3_000)
+        val e = read() ?: run { check("overview-allowed: the page answers under the cover a second time", false); closeOverview("overview-allowed"); forgetAllow(); return }
+        note("  allowed, under the overview, +4 s: ${e.line()}; view ${viewState(TAB)}")
+        fact("overview-allowed", "the allowed site playing under the overview reads \"${e.vis}\" with ${e.vc} change(s); the clip ${if (e.paused == true) "PAUSED" else "PLAYING"} (currentTime ${d.t} -> ${e.t} ms); behind=${behind()} holding=${holding()} keeps=${keeps()}")
+        closeOverview("overview-allowed")
+        SystemClock.sleep(1_500)
+        val f = read()
+        note("  allowed, closed: ${f?.line() ?: "no answer"}; view ${viewState(TAB)}")
+        pause()
+        forgetAllow()
+    }
+
+    /** The overview up: the chrome's `.zen-overview` at its resting scale. */
+    private fun overviewUp(): Boolean =
+        chromeJsString("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
+
+    /** A real touch on the bar's Tabs button (the count trails its label), asserted: the overview is up. */
+    private fun openOverview(scene: String): Boolean {
+        val close = closeUrlField()
+        if (!close.ok) note("  (${close.describe()})")
+        val opened = touchTapLabelExpecting("Tabs (", "the overview is up", prefix = true, timeoutMs = 8_000) { overviewUp() }
+        check("$scene: a real touch on the bar's Tabs button opens the overview", opened)
+        return opened
+    }
+
+    /** Back leaves the overview; the page's view is on screen again. */
+    private fun closeOverview(scene: String) {
+        back()
+        val closed = poll(8_000) { !overviewUp() && viewVisibility(TAB) == View.VISIBLE }
+        check("$scene: back closes the overview and the page's view is on screen again", closed)
+    }
+
+    private fun allow(decision: String?): String =
+        """{"origin":${JSONObject.quote(ORIGIN)},"permission":"background-video","decision":${if (decision == null) "null" else JSONObject.quote(decision)}}"""
+
+    private fun forgetAllow() {
+        coreInvoke("permissions.set", allow(null))
     }
 
     // --- helpers ------------------------------------------------------------------------------------
