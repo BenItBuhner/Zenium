@@ -7,6 +7,7 @@ import {
   MCP_SCENARIO,
   MCP_SOAK,
   PORT_POOL,
+  PROMPTS_PAGE,
   STAGE_PAGES,
   agentSettings,
   bindable,
@@ -17,6 +18,7 @@ import {
   judgePixels,
   judgeStep,
   mark,
+  promptsPage,
   samplePoints,
   startStagePages
 } from './mcp-scenario.mjs'
@@ -183,6 +185,22 @@ describe('the stage pages the hand-off is judged with', () => {
       expect(res.status).toBe(200)
       expect(await res.text()).toBe(colourPage(STAGE_PAGES.handOff))
       expect((await fetch(url.replace('/hand-off', '/other'))).status).toBe(404)
+    } finally {
+      await pages.close()
+    }
+  })
+
+  it('serve the native prompts page with each control the step drives', async () => {
+    const pages = await startStagePages()
+    try {
+      const res = await fetch(pages.url(PROMPTS_PAGE))
+      expect(res.status).toBe(200)
+      const html = await res.text()
+      expect(html).toBe(promptsPage())
+      for (const id of ['direct', 'chooser', 'hidden', 'print', 'country'])
+        expect(html).toContain(`id="${id}"`)
+      expect(html).toContain('hidden.click()')
+      expect(html).toContain('window.print()')
     } finally {
       await pages.close()
     }

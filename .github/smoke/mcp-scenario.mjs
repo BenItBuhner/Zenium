@@ -27,6 +27,9 @@
 //                           (the sidebar click's activation, without a row to click on the
 //                           Agents space today) and no agent call after – the screen must show
 //                           its colour the same way
+//     native-prompts        a session on the prompts page: files set on an input without a click,
+//                           a script-opened file chooser arriving as a prompt and answered, print
+//                           kept from the user, a drop-down refused (`nativePrompts`)
 //     shim                  MCP_SOAK.shimSessions of the same through `zenium --mcp`, one process
 //                           each (the build's own executable, the leg's --extra-args)
 //     drop                  a named agent goes quiet, then drops; another lists its group as its
@@ -236,10 +239,44 @@ export function colourPage({ title, rgb }) {
   )
 }
 
+/**
+ * The `native-prompts` step's page: an upload field that writes what it was given, a button that
+ * opens a file chooser from script (a hidden input's `click()`), a print button and a drop-down.
+ * Every one would be native UI on a user's tab.
+ */
+export const PROMPTS_PAGE = Object.freeze({ name: 'prompts', title: 'Stage native prompts' })
+
+export function promptsPage() {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${PROMPTS_PAGE.title}</title></head><body>
+<label>Direct upload <input id="direct" type="file" multiple accept=".txt"></label>
+<p id="direct-out">direct: none</p>
+<button id="chooser" type="button">Choose a file</button>
+<input id="hidden" type="file" hidden>
+<p id="chooser-out">chooser: none</p>
+<button id="print" type="button">Print</button>
+<label>Country <select id="country"><option>Norway</option><option>Peru</option></select></label>
+<script>
+const names = (input) => Array.from(input.files).map((f) => f.name + ':' + f.size).join(',') || 'none'
+direct.addEventListener('change', () => { document.getElementById('direct-out').textContent = 'direct: ' + names(direct) })
+chooser.addEventListener('click', () => hidden.click())
+hidden.addEventListener('change', () => { document.getElementById('chooser-out').textContent = 'chooser: ' + names(hidden) })
+hidden.addEventListener('cancel', () => { document.getElementById('chooser-out').textContent = 'chooser: cancelled' })
+document.getElementById('print').addEventListener('click', () => window.print())
+</script></body></html>`
+}
+
 /** The stage pages served on 127.0.0.1 (an ephemeral port): `{ url(page), close }`. */
 export function startStagePages() {
   const server = http.createServer((req, res) => {
     const { pathname } = new URL(req.url ?? '/', 'http://stage')
+    if (pathname === `/${PROMPTS_PAGE.name}`) {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store'
+      })
+      res.end(promptsPage())
+      return
+    }
     const page = Object.values(STAGE_PAGES).find((p) => pathname === `/${p.name}`)
     if (!page) {
       res.writeHead(404)
@@ -553,6 +590,105 @@ export async function stageUserSwitch(s, ctx, h, stage) {
   }
 }
 
+/** `base64` of `text`, as an agent on another machine sends a file. */
+const inline = (name, text) => ({ name, base64: Buffer.from(text).toString('base64') })
+
+/** Calls `browser_prompts` until a prompt of `kind` waits on `tabId` (null within `timeoutMs`). */
+async function waitForPrompt(call, tabId, kind, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const r = await call('browser_prompts', { tabId })
+    try {
+      const found = JSON.parse(r.text).prompts?.find((p) => p.kind === kind)
+      if (found) return found
+    } catch {
+      // "Nothing waits for you": not JSON.
+    }
+    if (Date.now() >= deadline) return null
+    await delay(250)
+  }
+}
+
+/**
+ * The `native-prompts` step: what would be native UI on a user's tab comes to the agent on its
+ * own, and nothing reaches the screen. A session opens the prompts page (`PROMPTS_PAGE`) and:
+ *   - sets two inline files on the upload field without a click (browser_file_upload target),
+ *     the page's `change` listener writing their names and sizes;
+ *   - clicks the button whose script opens a file chooser: the chooser must arrive as a
+ *     `file-chooser` prompt (browser_prompts), answered with an inline file the page then names;
+ *   - clicks Print: the next result must carry the notice that nothing was printed;
+ *   - clicks the drop-down: refused, pointing at browser_select_option.
+ * The session then ends with its tabs closed. All hard: a chooser that never comes to the agent
+ * would be the system's dialog on the screen.
+ */
+export async function nativePrompts(ctx, stage) {
+  const { verdict } = ctx
+  const client = new HttpClient({
+    ...ctx.endpoint,
+    name: 'smoke-prompts',
+    leg: 'prompts',
+    latencies: ctx.latencies
+  })
+  verdict.sessions++
+  const call = async (name, args) => {
+    const r = await client.call(name, args)
+    verdict.calls++
+    return r
+  }
+  const out = { direct: null, chooser: null, print: null, select: null }
+  try {
+    await client.initialize()
+    let r = await call('zen_session', { action: 'start', name: 'Smoke native prompts check' })
+    verdict.hard('zen_session start', !r.isError, r.text)
+    r = await call('browser_tabs', { action: 'new', url: stage.pages.url(PROMPTS_PAGE) })
+    const tabId = openedTab(r.text)
+    verdict.hard('browser_tabs new', !r.isError && Boolean(tabId), r.text)
+    if (!tabId) return out
+
+    r = await call('browser_file_upload', {
+      tabId,
+      target: '#direct',
+      files: [inline('a.txt', 'alpha'), inline('b.txt', 'be')]
+    })
+    out.direct = !r.isError && r.text.includes('direct: a.txt:5,b.txt:2')
+    verdict.hard('upload to an input', out.direct, r.text.slice(0, 400))
+
+    r = await call('browser_click', { tabId, target: '#chooser' })
+    verdict.hard('click the chooser button', !r.isError, r.text.slice(0, 400))
+    const prompt = await waitForPrompt(call, tabId, 'file-chooser')
+    verdict.hard('chooser comes to the agent', Boolean(prompt), 'no file-chooser prompt in 10 s')
+    if (prompt) {
+      r = await call('browser_file_upload', {
+        promptId: prompt.id,
+        files: [inline('c.txt', 'chooser')]
+      })
+      const shown = await call('browser_snapshot', { tabId, filter: 'chooser:' })
+      out.chooser = !r.isError && shown.text.includes('chooser: c.txt:7')
+      verdict.hard(
+        'answer the chooser',
+        out.chooser,
+        `${r.text.slice(0, 200)} | ${shown.text.slice(0, 300)}`
+      )
+    }
+
+    r = await call('browser_click', { tabId, target: '#print' })
+    const after = r.text.includes('window.print()') ? r : await call('zen_status', {})
+    out.print = after.text.includes('called window.print(); nothing was printed')
+    verdict.hard('print kept from the user', out.print, after.text.slice(0, 400))
+
+    r = await call('browser_click', { tabId, target: '#country' })
+    out.select = r.isError && r.text.includes('browser_select_option')
+    verdict.hard('drop-down not clicked open', out.select, r.text.slice(0, 400))
+
+    r = await call('zen_session', { action: 'end', closeTabs: true })
+    verdict.hard('zen_session end closeTabs', !r.isError, r.text)
+    return out
+  } finally {
+    const closed = await client.close()
+    verdict.hard('delete', closed, 'DELETE did not answer 204')
+  }
+}
+
 /**
  * Runs the scenario. `h` is what the harness lends it: `freshProfile`, `runScenario`, `log`,
  * the executable under test (`exe`; the shim processes are its `--mcp`), the leg's extra
@@ -635,6 +771,8 @@ export async function scenarioMcp(h) {
       await judged(s, 'user-switch', () => stageUserSwitch(s, ctx, h, stage), {
         timeoutMs: 90_000
       })
+      legs.push('prompts')
+      await judged(s, 'native-prompts', () => nativePrompts(ctx, stage), { timeoutMs: 90_000 })
       legs.push('stdio')
       await judged(
         s,
