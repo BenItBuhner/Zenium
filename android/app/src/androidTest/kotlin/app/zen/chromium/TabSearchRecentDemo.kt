@@ -72,7 +72,7 @@ import kotlin.math.roundToInt
  * 19. the search's Recently closed row restores Coffee and the overview leaves on it.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
- * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
+ * accessibility bounds of the overview's title), because the WebView's accessibility
  * tree trails the software-rendered emulator by seconds; typing is injected key by key
  * ([keys]). Findings go to `tab-search-recent-findings.txt` next to the stills (one PASS or
  * FAIL per claim, ALL CHECKS PASSED at the end); the run fails on any FAIL. Profile

@@ -41,7 +41,7 @@ import kotlin.math.roundToInt
  *  9. the system back ends the mode.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
- * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
+ * accessibility bounds of the overview's title), because the WebView's accessibility
  * tree trails the software-rendered emulator by seconds. Every touch is a down and an up a
  * frame apart and is checked for having taken ([touchUntil]; the emulator reads a tap as a hold
  * now and then under load). Findings go to `select-tabs-findings.txt` next to the stills (one
