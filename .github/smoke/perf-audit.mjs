@@ -1217,8 +1217,13 @@ async function main() {
     log(`wrote ${file}`)
     await closeApp(session.app)
     server.close()
-    // A killed Electron may still be dropping files into the profile for a moment (ENOTEMPTY).
-    fs.rmSync(session.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    // A killed Electron's children may still be dropping files into the profile for a moment
+    // (ENOTEMPTY); the run's data is written by now, so a directory left behind is a note.
+    try {
+      fs.rmSync(session.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    } catch (err) {
+      log(`profile directory left behind at ${session.root}: ${err.message}`)
+    }
   }
   printTable(result)
 }
