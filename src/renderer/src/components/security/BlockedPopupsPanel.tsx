@@ -425,7 +425,7 @@ export function BlockedPopupsChip({
       <button
         type="button"
         data-surface="page"
-        className="zen-animate-pop flex min-h-[var(--v2-row)] w-full items-center gap-3 rounded-[var(--v2-radius-control)] border border-[var(--v2-border)] bg-[var(--v2-panel)] px-3 text-left text-[14px] leading-[var(--v2-line-body)] text-[var(--v2-text)] outline-none transition-transform duration-[120ms] active:scale-[.98]"
+        className="zen-animate-pop flex min-h-[var(--v2-row)] w-full items-center gap-3 rounded-[var(--v2-radius-control)] border border-[var(--v2-border)] bg-[var(--v2-panel)] px-3 text-left text-[14px] leading-[var(--v2-line-body)] text-[var(--v2-text)] outline-none transition-transform duration-[var(--zen-motion-state)] active:scale-[.98]"
         onClick={() => void openBlockedPopups(tabId, null)}
       >
         <AppWindow className={GLYPH} aria-hidden />

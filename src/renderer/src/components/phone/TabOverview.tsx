@@ -50,6 +50,7 @@ import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
+import { ZEN_EASE } from '@renderer/lib/motion/tokens'
 import {
   indicatorFrame,
   planSpaceSwitch,
@@ -193,8 +194,6 @@ const OPEN_TIMEOUT_MS = 800
 const ENTER_TRAVEL = 120
 /** How far such a card grows on its way in (the exit's shrink). */
 const ENTER_SCALE = 0.1
-/** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 /** How long the search waits after a keystroke before its count is announced. */
 const SEARCH_ANNOUNCE_MS = 500
 /**
@@ -3165,7 +3164,7 @@ function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string })
  */
 function enterCard(el: HTMLElement, running: Set<() => void>): void {
   if (reducedMotion()) {
-    el.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_FADE_MS, easing: EASE })
+    el.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_FADE_MS, easing: ZEN_EASE })
     return
   }
   const settle = (): void => {

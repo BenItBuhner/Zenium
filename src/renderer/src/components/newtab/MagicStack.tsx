@@ -68,6 +68,7 @@ import { requestOverviewGroupsHint } from '@renderer/lib/iph'
 import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 import { openCustomize } from '@renderer/lib/newtab'
 import { openPage, openSettings } from '@renderer/lib/pages'
 import { browserStore, openClearBrowsingData, openOverlay, showLocalMenu } from '@renderer/lib/ui'
@@ -311,7 +312,7 @@ function PageDots({
 /** The gap between two cards (the stylesheet's `.zen-mstack-strip` gap). */
 const CARD_GAP = 8
 /** The hidden card's fade (§11.4), the stylesheet's `zen-mstack-leave`. */
-const LEAVE_MS = 120
+const LEAVE_MS = MOTION_STATE_MS
 
 const MODULE_GLYPHS: Record<MagicStackModuleId, LucideIcon> = {
   continue: History,

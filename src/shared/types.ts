@@ -7538,6 +7538,12 @@ export interface Commands {
   'webapp.pin': { args: { tabId: string; title: string }; result: void }
   /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
   'webapp.cancelInstall': { args: { tabId: string }; result: void }
+  /**
+   * The ambient banner's card is mounted on a surface that draws banners: the prompt counts as
+   * shown now and the app's cooldown starts on this word, not on the core's emit (#740). Without
+   * it inside the core's grace the prompt counts as undrawn and the cooldown is not spent.
+   */
+  'webapp.bannerShown': { args: { tabId: string }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
   /**

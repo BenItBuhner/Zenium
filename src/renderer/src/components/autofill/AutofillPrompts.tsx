@@ -14,6 +14,7 @@ import type {
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
 import { cn } from '@renderer/lib/utils'
 import {
   ChromePortal,
@@ -59,8 +60,8 @@ const PAGE_WAIT_MS = 1500
 const SUBMIT_GRACE_MS = 400
 /** The chip in the URL pill a desktop prompt hangs from (`NavRow`). */
 export const CHIP_SELECTOR = '[data-af-chip]'
-/** The prompt popover's pop, in and out (§9.20; `zen-animate-pop`'s 180). */
-const PROMPT_POP_MS = 180
+/** The prompt popover's pop, in and out (§9.20; `zen-animate-pop`'s length). */
+const PROMPT_POP_MS = MOTION_POP_MS
 
 /**
  * The prompts of `UIState.autofill.prompts`, one at a time, for the active tab: save / update a

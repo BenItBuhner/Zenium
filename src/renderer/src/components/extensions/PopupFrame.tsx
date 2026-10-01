@@ -3,11 +3,12 @@ import { useEffect, useRef } from 'react'
 import { popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { bindPopupFrame, placementFor } from '@renderer/lib/extensions/popup'
+import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
 import { ChromePortal, type PopoverAlignment } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 
 /** The pop (design-language.md §7): the view is shown once the frame has finished scaling in. */
-const POP_MS = 180
+const POP_MS = MOTION_POP_MS
 
 /**
  * The panel an action popup sits in (v2 draft §1–§3: the panel colour, a hairline border and

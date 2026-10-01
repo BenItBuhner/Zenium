@@ -11,6 +11,7 @@ export const SHEET_THRESHOLDS: SwipeThresholds = {
   projectionSeconds: 0.12
 }
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from './spring'
+import { MOTION_STATE_MS } from './tokens'
 
 export type SheetPhase = 'closed' | 'settling' | 'open' | 'dragging'
 
@@ -37,7 +38,7 @@ export const BACK_PEEK = 0.3
  * length, the spring having jumped it there (v2 draft §11.3); main.css transitions the opacity
  * of the sheet chassis' elements for as long.
  */
-export const REDUCED_MOTION_FADE_MS = 120
+export const REDUCED_MOTION_FADE_MS = MOTION_STATE_MS
 
 // ---------------------------------------------------------------------------
 // Geometry: detents, frames, drags and where a release settles
