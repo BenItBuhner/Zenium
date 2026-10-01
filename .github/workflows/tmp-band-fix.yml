@@ -1,0 +1,31 @@
+name: TEMP band fix
+
+# TEMPORARY (W6-S26-d, the blocker fold of PR #735): the band demo with its new scene 7b (the
+# bar under a standing band – one finger on Menu, one on the pill, through StripTouchRule) and
+# then the first-run demo, the reader whose Menu tap found the bar dead under the reader offer, on
+# one emulator boot of the nightly's phone recipe, through tmp-band-fix.sh (each driver under its
+# own wrapper's environment, the device reset between them). A push trigger on the PR's branch
+# because the nightly's dispatch door answers the agents' token 403. Removed with its script
+# before the PR is final; the nightly manifest is not touched.
+on:
+  push:
+    branches:
+      - cursor/android-motion-band-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-band-fix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drivers:
+    name: The band demo and the first-run reader under the fix
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/tmp-band-fix.sh
+      artifact-name: tmp-band-fix
+      artifact-path: artifacts/tmp-band-fix/
+      timeout-minutes: 70
+      retention-days: 7
