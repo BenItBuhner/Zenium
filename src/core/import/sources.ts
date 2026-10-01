@@ -132,6 +132,13 @@ async function chromiumSources(
         if (options.os === 'win32') limits.passwords = passwordLimit(browser, options.os)
         else kinds.push('passwords')
       }
+      // Addresses live in `Web Data` in the clear (no OSCrypt, no DPAPI), so every OS reads them;
+      // the vault they go into is the passwords capability's.
+      if (
+        options.passwordsAvailable &&
+        (await isFile(host, joinPath(path, CHROMIUM_FILES.addresses)))
+      )
+        kinds.push('addresses')
       if (kinds.length === 0 && Object.keys(limits).length === 0) continue
       const source: ImportSource = {
         id: `${browser}:${path}`,

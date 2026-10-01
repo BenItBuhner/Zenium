@@ -47,7 +47,7 @@ function source(patch: Partial<ImportSource> & Pick<ImportSource, 'id' | 'browse
     name: names[patch.browser],
     path: '',
     running: false,
-    kinds: ['bookmarks', 'history', 'passwords'],
+    kinds: ['bookmarks', 'history', 'passwords', 'addresses'],
     limits: {},
     ...patch
   }
@@ -237,10 +237,13 @@ describe('the import dialog', () => {
     expect(from!.textContent).toContain('Google Chrome')
     // Chrome has two profiles here: the Profile menulist tells them apart, the account beside.
     expect(profile!.textContent).toContain('Person 1')
+    // Four rows for a Chromium browser, the fourth the Autofill page's "Addresses" – its label
+    // alone, as its siblings' (ID-57).
     expect(kinds()).toEqual([
       { kind: 'bookmarks', checked: true, disabled: false, text: 'Bookmarks' },
       { kind: 'history', checked: true, disabled: false, text: 'Browsing history' },
-      { kind: 'passwords', checked: true, disabled: false, text: 'Saved passwords' }
+      { kind: 'passwords', checked: true, disabled: false, text: 'Saved passwords' },
+      { kind: 'addresses', checked: true, disabled: false, text: 'Addresses' }
     ])
     expect(document.querySelector('[data-testid="import-running"]')).toBeNull()
     expect(submitButton().disabled).toBe(false)
@@ -250,6 +253,7 @@ describe('the import dialog', () => {
     await open()
     await pick(menulists()[0]!, 'Firefox')
     expect(menulists()).toHaveLength(1)
+    // Firefox has no addresses row at all: the kind is Chromium's, and no limit is recorded for it.
     const rows = kinds()
     expect(rows.map((r) => [r.kind, r.checked, r.disabled, r.text])).toEqual([
       ['bookmarks', true, false, 'Bookmarks'],
@@ -451,17 +455,17 @@ describe('the import dialog', () => {
       await Promise.resolve()
     })
 
-    // Unchecking history keeps the other two for the run.
+    // Unchecking history keeps the other three for the run.
     const history = document.querySelector<HTMLInputElement>('[data-import-kind="history"] input')!
     act(() => {
       history.click()
     })
-    expect(kinds().map((r) => r.checked)).toEqual([true, false, true])
+    expect(kinds().map((r) => r.checked)).toEqual([true, false, true, true])
 
     press(submitButton())
     expect(vi.mocked(cmd)).toHaveBeenCalledWith('import.run', {
       source: CHROME_1.id,
-      kinds: ['bookmarks', 'passwords']
+      kinds: ['bookmarks', 'passwords', 'addresses']
     })
     // Busy from the press: the primary spins at full ink – busy is not disabled (§9.30) – Cancel
     // is off, the fields are read-only in place.
@@ -494,10 +498,11 @@ describe('the import dialog', () => {
     expect(uiStore.get().importDialog).not.toBeNull()
 
     const done = progress({
-      kinds: ['bookmarks', 'passwords'],
+      kinds: ['bookmarks', 'passwords', 'addresses'],
       results: {
         bookmarks: outcome({ imported: 12, duplicates: 3 }),
-        passwords: outcome({ imported: 4, unreadable: 2 })
+        passwords: outcome({ imported: 4, unreadable: 2 }),
+        addresses: outcome({ imported: 3, duplicates: 1 })
       },
       folderId: 'folder-1'
     })
@@ -512,11 +517,15 @@ describe('the import dialog', () => {
     expect(result.textContent).toContain(IMPORT_READY)
     expect(result.textContent).toContain('From Google Chrome (Person 1)')
     const rows = Array.from(result.querySelectorAll<HTMLElement>('li[data-import-kind]'))
-    expect(rows.map((r) => r.dataset.importKind)).toEqual(['bookmarks', 'passwords'])
+    expect(rows.map((r) => r.dataset.importKind)).toEqual(['bookmarks', 'passwords', 'addresses'])
     expect(rows[0]!.textContent).toContain('12 bookmarks imported')
     expect(rows[0]!.textContent).toContain('3 already saved')
     expect(rows[1]!.textContent).toContain('4 passwords imported')
     expect(rows[1]!.textContent).toContain('2 could not be opened')
+    // The Addresses row counts as its siblings do: the count line, then what was already saved.
+    expect(rows[2]!.textContent).toContain('Addresses')
+    expect(rows[2]!.textContent).toContain('3 addresses imported')
+    expect(rows[2]!.textContent).toContain('1 already saved')
     // The headline takes the focus so the outcome is read.
     expect(document.activeElement?.textContent).toBe(IMPORT_READY)
     // Bookmarks came in and the bar is not always shown: Chrome's box, checked.
