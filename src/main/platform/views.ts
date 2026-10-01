@@ -922,8 +922,9 @@ export class ElectronTabView implements TabView {
   async askDialog(call: PageDialogCall, frameUrl: string): Promise<PageDialogAnswer> {
     if (this.wc.isDestroyed()) return DISMISSED_ANSWER
     // A dialog in a window the user is not in flashes its taskbar button until they come
-    // (os-19); the window in front is left alone.
-    if (this.host) flashUntilFocused(this.host.win)
+    // (os-19); the window in front is left alone. A page an agent drives off screen asks the
+    // agent, never the user.
+    if (this.host && !this.agentDriven) flashUntilFocused(this.host.win)
     const response: PageDialogResponse = await this.events.onDialog({
       kind: call.kind,
       message: call.message,
@@ -963,8 +964,8 @@ export class ElectronTabView implements TabView {
     const reload = !check && (host ? host.reload : page?.navigationType === 'reload')
     // The question is a dialog too: a background window flashes for it (os-19). The core brings
     // the window to the front for the tab-modal question; where the OS refuses the focus, the
-    // flash stands until the user comes.
-    if (this.host) flashUntilFocused(this.host.win)
+    // flash stands until the user comes. An agent's page leaves without asking anyone.
+    if (this.host && !this.agentDriven) flashUntilFocused(this.host.win)
     void this.events.onLeaveSite(reload).then((leave) => {
       if (check) {
         check.settle(leave)

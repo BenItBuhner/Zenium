@@ -257,7 +257,9 @@ describe('soak: 300 agent lives, 8 at a time, over the fake browser', () => {
       resumed: parks,
       resurrected: resurrections,
       closed: SESSIONS + resurrections + 1,
-      unknown: 0
+      unknown: 0,
+      claimed: 0,
+      rebound: 0
     })
     expect(d.calls.total).toBe(calls)
     expect(d.calls.inFlight).toBe(0)
