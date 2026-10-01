@@ -7859,7 +7859,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("nbllaikcjebbpdemmekhnciekkjodlla", "SkrivaText", "skrivatext", account = true, core = popupLogin("SkrivaText")),
         Row("hmlcjjclebjnfohgmgikjfnbmfkigocc", "J2TEAM Security", "j2team-security", core = warningPage("J2TEAM Security", "$BASE/fb-phish.html", Regex("blocked\\.html", RegexOption.IGNORE_CASE))),
         Row("gngocbkfmikdgphklgmmehbjjlfgdemm", "SwagButton", "swagbutton", account = true, core = popupLogin("SwagButton")),
-        Row("njcickgebhnpgmoodjdgohkclfplejli", "RoValra - Roblox Improved", "rovalra", core = liveMarker("RoValra", "https://www.roblox.com/games/920587237", injectedAny("rovalra"))),
+        Row("njcickgebhnpgmoodjdgohkclfplejli", "RoValra - Roblox Improved", "rovalra", core = ::rovalra),
         Row("kiodaajmphnkcajieajajinghpejdjai", "Popup Blocker Pro", "popup-blocker-pro", core = popupBlocker("Popup Blocker Pro")),
         Row("jpfpebmajhhopeonhlcgidhclcccjcik", "Speed Dial 2 New tab", "speed-dial-2", core = newTabOverride("Speed Dial 2")),
         Row("icpklikeghomkemdellmmkoifgfbakio", "anonymoX", "anonymox", core = vpn("anonymoX", pac = true, connectSelector = ".toggle-button-area")),
@@ -8573,6 +8573,42 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             reached == 0 && sheet.isEmpty() -> Grade("F", "$label: the long press opened no menu sheet (driver: the press was not read as a long press)", extra)
             else -> Grade("F", "$label: the menu's level $reached is up without `${path[reached].pattern}` (sheets ${sheet.joinToString().take(80)})", extra)
         }
+    }
+
+    /**
+     * RoValra (compat round 26, R26-2's measure): the live marker's reading on the game page,
+     * with the course of the content script's cross-origin reads beside it. `content.js` reads
+     * its settings off its own site (`https://www.rovalra.com/RoValra/Settings/config.json`) and
+     * its API (`apis.rovalra.com`, under an `x-rovalra-user-agent` header, so preflighted), neither
+     * named by roblox.com's `connect-src`: in Chrome the isolated world's request is the page's
+     * own CORS request and no policy of the page's sees it; on a WebView the document's policy
+     * refused it before the round (round 25 §7), and since R26-2 the runtime's relay has the host
+     * send it framed as the page's (`extensionFetchRelay.ts`, `Extensions.extensionProxyFetch`,
+     * `CorsProxy.Framing.contentScript`) and judges the answer by CORS in the world. The record:
+     * the host's proxy lines for the row (`… GET 200 for the content script https://www.rovalra.com/…`,
+     * `extra.proxied`) and the runtime's own console line on the page's refusal
+     * (`extra.policyRefusals`, out of the attempts' kept `[Zenium]` lines). The grade is the
+     * marker's; the course is the note's.
+     */
+    private fun rovalra(row: Row, entry: JSONObject): Grade {
+        val marker = liveMarker("RoValra", "https://www.roblox.com/games/920587237", injectedAny("rovalra"))(row, entry)
+        val answers = proxied("rovalra.com").filter { it.startsWith("${row.id} ") }
+        val refusals = ArrayList<String>()
+        val attempts = marker.extra?.optJSONArray("attempts")
+        if (attempts != null) for (i in 0 until attempts.length()) {
+            val console = attempts.optJSONObject(i)?.optJSONArray("console") ?: continue
+            for (j in 0 until console.length()) {
+                val line = console.optString(j)
+                if (line.contains("the page's policy refused the content script's request")) refusals += line.take(220)
+            }
+        }
+        val extra = (marker.extra ?: JSONObject()).put("proxied", JSONArray(answers.takeLast(12))).put("policyRefusals", JSONArray(refusals.takeLast(6)))
+        val course = when {
+            answers.isNotEmpty() -> "the content script's cross-origin reads went through the host as the page's own (${answers.size}): ${answers.takeLast(3).joinToString(" | ") { it.removePrefix("${row.id} ").take(140) }}"
+            refusals.isNotEmpty() -> "the page's policy refused the content script's cross-origin read and no answer of the host's is on record: ${refusals.last().take(160)}"
+            else -> "no cross-origin read of rovalra.com left the page's way (none refused, none through the host)"
+        }
+        return Grade(marker.verdict, "${marker.note}; $course", extra)
     }
 
     /**

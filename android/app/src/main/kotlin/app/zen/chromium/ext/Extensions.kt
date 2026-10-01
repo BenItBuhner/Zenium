@@ -1178,7 +1178,9 @@ class Extensions(private val host: Host) {
             // A page policy's refusal handed to the host (or a webpack chunk of a module graph for
             // the content script's scope): the extension file asked for, and the answer.
             "mainScript", "extFetch", "chunkScript" -> message.str("url").take(100)
+            "extProxyFetch" -> "${message.str("method")} ${message.str("url").take(100)}"
             "mainScriptDone", "extFetchDone", "chunkDone" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
+            "extProxyDone" -> if (message.optBoolean("ok", true)) "ok status=${message.opt("status")}" else "error=${message.optString("error").take(80)}"
             else -> ""
         }
         synchronized(bridgeTrace) {
@@ -1694,6 +1696,10 @@ class Extensions(private val host: Host) {
                 extensionFetch(proxy, ep, message)
                 return
             }
+            "extProxyFetch" -> {
+                extensionProxyFetch(proxy, ep, message)
+                return
+            }
         }
         val tabId = (view as? TabWebView)?.tabId
         // To the core through the flood guard: now, at a later frame, folded into a newer action
@@ -1888,6 +1894,98 @@ class Extensions(private val host: Host) {
             ext == null -> reply(ExtensionFileAnswer.refused("the extension is not attached"))
             path == null -> reply(ExtensionFileAnswer.refused("$url is not on the extension's origin"))
             else -> io.execute { reply(ExtensionFileAnswer.answer(ext.dir, path, ext.webAccessible, ext.cssMessages)) }
+        }
+    }
+
+    /**
+     * A content script's CROSS-ORIGIN `fetch` / `XMLHttpRequest` the page's Content-Security-Policy
+     * refused (`connect-src`): Chrome runs the isolated world under the extension's policy, not
+     * the page's, and sends the request as the page's own CORS request – its `Origin` the page's,
+     * no host permission consulted (Chrome 85), the server's consent read from the response. A
+     * WebView's world runs under the document's policy, so the world asks here over the bridge
+     * once the policy has refused it (`extensionCorsRelay.ts`, `extensionFetchRelay.ts`): the
+     * proxy performs the request framed as the page's ([CorsProxy.Framing.contentScript]) and
+     * answers status, reason, headers, body and final URL for the world to judge as Chrome's
+     * renderer does – the CORS check, the exposed headers, an opaque answer for `no-cors` are the
+     * world's. Refused: an extension not attached, a URL off http(s), a request body the message
+     * did not carry whole, an answer past the bridge's size, a network failure (each with its
+     * reason; the world's rejection then stands as the page's did). Recorded in `proxied` while
+     * `debug` as `<status> for the content script` (compat round 26, RoValra's `config.json`).
+     */
+    private fun extensionProxyFetch(proxy: JavaScriptReplyProxy, ep: String, message: JSONObject) {
+        val id = message.opt("id")
+        val extId = endpoints[ep]?.extensionId ?: message.str("ext")
+        val url = message.str("url")
+        val method = message.str("method", "GET").uppercase(Locale.ROOT)
+        fun reply(fields: JSONObject) {
+            val text = fields.put("t", "extProxyDone").put("ep", ep).put("id", id).toString()
+            main.post {
+                if (debug) recordReply(ep, text)
+                runCatching { proxy.postMessage(text) }
+            }
+        }
+        fun refuse(why: String) = reply(json("ok" to false, "error" to why))
+        val ext = served[extId]
+        if (ext == null) return refuse("the extension is not attached")
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return refuse("$url is not an http(s) URL")
+        // The envelope reader keeps a big message's top-level scalars alone, so the headers come
+        // as one JSON text and the body as one base64 text.
+        val headers = LinkedHashMap<String, String>()
+        runCatching {
+            val pairs = JSONArray(message.str("headers", "[]"))
+            for (i in 0 until pairs.length()) {
+                val pair = pairs.optJSONArray(i) ?: continue
+                headers[pair.optString(0)] = pair.optString(1)
+            }
+        }
+        // The proxy reads a credentialed request off its marker header, as it does an extension page's.
+        if (message.optBoolean("credentials")) headers[CorsProxy.CREDENTIALS_HEADER] = "include"
+        val body = if (message.has("body") && !message.isNull("body")) {
+            runCatching { Base64.decode(message.str("body"), Base64.DEFAULT) }.getOrNull()
+                ?: return refuse("the request body did not arrive whole over the bridge")
+        } else null
+        val request = CorsProxy.Request(method, url, headers)
+        val framing = CorsProxy.Framing.contentScript(message.str("origin").ifEmpty { "null" }, message.strOrNull("referer"))
+        io.execute {
+            val answer = runCatching { corsProxy.forward(request, "https://$extId$ORIGIN_SUFFIX", body, framing) }
+                .getOrElse { e ->
+                    val why = "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+                    if (debug) recordProxy(extId, request, "failed ($why) for the content script")
+                    refuse(why)
+                    return@execute
+                }
+            val bytes = runCatching {
+                answer.body.use { stream ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = stream.read(buffer)
+                        if (n < 0) break
+                        out.write(buffer, 0, n)
+                        if (out.size() > ExtensionFileAnswer.MAX_BYTES) break
+                    }
+                    out.toByteArray()
+                }
+            }.getOrElse { e ->
+                if (debug) recordProxy(extId, request, "failed (${e.javaClass.simpleName} reading the body) for the content script")
+                refuse("${e.javaClass.simpleName}: ${e.message ?: "the body could not be read"}")
+                return@execute
+            }
+            if (bytes.size > ExtensionFileAnswer.MAX_BYTES) {
+                if (debug) recordProxy(extId, request, "${answer.status} for the content script, the body past the bridge's ${ExtensionFileAnswer.MAX_BYTES} bytes")
+                refuse("the answer is past the bridge's size")
+                return@execute
+            }
+            if (debug) recordProxy(extId, request, "${answer.status} for the content script")
+            val headerObject = JSONObject()
+            for ((name, value) in answer.headers) headerObject.put(name, value)
+            reply(
+                json(
+                    "ok" to true, "status" to answer.status, "reason" to answer.reason, "url" to answer.url,
+                    "redirected" to answer.redirected, "mime" to answer.mime, "charset" to answer.charset,
+                    "headers" to headerObject, "body" to Base64.encodeToString(bytes, Base64.NO_WRAP)
+                )
+            )
         }
     }
 

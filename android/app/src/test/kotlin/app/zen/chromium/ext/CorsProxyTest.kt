@@ -311,6 +311,61 @@ class CorsProxyTest {
     }
 
     @Test
+    fun `a content script's request is framed as the page's - its Origin and Referer, the server's CORS answer kept, cookies to the jar, the final URL told`() {
+        // Compat round 26 (R26-2): RoValra's content script on roblox.com fetching its config from
+        // www.rovalra.com, refused by the page's connect-src; Chrome sends it as the page's own
+        // CORS request and the renderer judges the server's answer – here the world does.
+        jar.intercepts = true
+        jar.cookieHeader = "sid=page"
+        val framing = CorsProxy.Framing.contentScript("https://www.roblox.com", "https://www.roblox.com/")
+        val reply = proxy.forward(
+            request("GET", "/echo", "Accept" to "application/json", "Referer" to "$origin/content.js", CREDENTIALS_HEADER to "include"),
+            origin, null, framing
+        )
+        assertEquals(200, reply.status)
+        val seen = reply.echoed()
+        assertEquals("https://www.roblox.com", seen.getString("origin"))
+        assertEquals("https://www.roblox.com/", seen.getString("referer"))
+        assertEquals("application/json", seen.getString("accept"))
+        assertEquals("sid=page", seen.getString("cookie"))
+        assertFalse(seen.has(CREDENTIALS_HEADER.lowercase(Locale.ROOT)))
+        // The server's CORS answer stands for the world to judge; nothing is added for the extension origin.
+        assertEquals("https://evil.test", reply.header("Access-Control-Allow-Origin"))
+        assertNull(reply.header("Access-Control-Allow-Credentials"))
+        assertNull(reply.header("Access-Control-Expose-Headers"))
+        assertEquals("yes", reply.header("X-Server"))
+        assertNull("framing headers are still re-derived by the caller", reply.header("Content-Length"))
+        assertEquals(url("/echo"), reply.url)
+        assertFalse(reply.redirected)
+        // Cookies go to the jar even when the WebView intercepts them: this answer never passes through a WebResourceResponse.
+        val withCookie = proxy.forward(request("GET", "/cookie", CREDENTIALS_HEADER to "include"), origin, null, framing)
+        assertEquals("ok", withCookie.text())
+        assertTrue(withCookie.cookies.isEmpty())
+        assertEquals(listOf(url("/cookie") to "sid=1; Path=/"), jar.stored)
+        // An uncredentialed request sends no cookie and stores none; a framing without a Referer sends none.
+        jar.stored.clear()
+        val noReferer = CorsProxy.Framing.contentScript("https://www.roblox.com", null)
+        proxy.forward(request("GET", "/cookie"), origin, null, noReferer).body.close()
+        assertTrue(jar.stored.isEmpty())
+        val anonymous = proxy.forward(request("GET", "/echo"), origin, null, noReferer).echoed()
+        assertFalse(anonymous.has("cookie"))
+        assertFalse(anonymous.has("referer"))
+        assertEquals("https://www.roblox.com", anonymous.getString("origin"))
+        // A redirect followed: the final URL and fetch's flag.
+        val redirected = proxy.forward(request("GET", "/found"), origin, null, framing)
+        assertEquals(200, redirected.status)
+        assertEquals(url("/echo"), redirected.url)
+        assertTrue(redirected.redirected)
+        // The extension page's framing is what it was: Origin chrome-extension://, the CORS answer rewritten, the URL told too.
+        val page = proxy.handle(request("GET", "/echo"), id, origin) ?: throw AssertionError("answered")
+        assertEquals("chrome-extension://$id", page.echoed().getString("origin"))
+        assertEquals(origin, page.header("Access-Control-Allow-Origin"))
+        assertEquals("true", page.header("Access-Control-Allow-Credentials"))
+        assertEquals(url("/echo"), page.url)
+        assertFalse(page.redirected)
+    }
+
+    @Test
     fun `an error status is re-served as such, body and charset included`() {
         val reply = proxy.handle(request("GET", "/fail"), id, origin) ?: throw AssertionError("answered")
         assertEquals(500, reply.status)
