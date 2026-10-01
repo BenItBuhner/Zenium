@@ -271,6 +271,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val share = Share(this, io)
     /** Screenshots to the gallery and the long screenshot held for its editor (`screenshot.*`; SH-07, SH-08). */
     val screenshots = Screenshots(this, io)
+    /** The picture of a page the chrome draws itself – a Settings tab's cover and card (`chrome.snapshot`). */
+    val chromePageSnapshot = ChromePageSnapshot(this, io)
     /** The pages' media on the OS controls: the media notification, the lock screen, picture-in-picture (`media.*`). */
     val media = MediaSessions(this, io)
     /** The pages' Web Notifications on the shade, one channel per site (`notification.*`). */
@@ -1105,6 +1107,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 thumbnails.disk.execute { thumbnails.sweep(keep) }
                 reply(null)
             }
+            // A page the chrome draws itself (Settings) has no view to copy: its cover and its card
+            // picture come out of a copy of the window where the content area is (`ChromePageSnapshot`).
+            "chrome.snapshot" -> chromePageSnapshot.take(args, reply)
 
             // --- views -----------------------------------------------------------------------
             // The tab the core makes for the served new tab page at boot (`newTabPage`, its tag on
