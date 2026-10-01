@@ -693,11 +693,14 @@ export class WebAppService {
 
   /**
    * The launcher confirmed the shortcut (NOT-20): register the app, tell the page, and have the
-   * chrome toast "Added <name> to Home screen" with an Open action for the shortcut's URL. A
-   * desktop host confirms with the icon it kept (`details.icon`); an app with a manifest then
-   * opens in its own window at once and the installing tab goes with it, as Chrome moves the
-   * tab into the new app window – unless the shortcut was made to open a tab ("Open as window"
-   * off), when the tab stays where it is, as Chrome leaves it.
+   * chrome toast "Added <name> to Home screen" (the desktop's "Installed <name>") with an Open
+   * action for the shortcut's URL. On the desktop a page without a manifest gets no record and
+   * is no installed app – the core toasts "Shortcut created" itself, with no action, and sends
+   * the chrome no `webapp.pinned` (the Design Lead's ruling on #761's first seam). A desktop
+   * host confirms with the icon it kept (`details.icon`); an app with a manifest then opens in
+   * its own window at once and the installing tab goes with it, as Chrome moves the tab into
+   * the new app window – unless the shortcut was made to open a tab ("Open as window" off),
+   * when the tab stays where it is, as Chrome leaves it.
    */
   onPinned(id: string, details: { icon?: string | null } = {}): void {
     const pending = this.pendingPins.get(id)
@@ -728,17 +731,23 @@ export class WebAppService {
       })
       this.save()
     }
-    this.browser.emit(
-      'webapp.pinned',
-      {
-        tabId: pending?.tabId ?? null,
-        name: title,
-        url: pending?.url ?? info?.startUrl ?? null,
-        surface,
-        appId: info ? id : null
-      },
-      win
-    )
+    if (surface === 'desktop' && !info) {
+      // A shortcut, not an install: there is no app for the chrome's Open action to launch,
+      // and its "Installed <name>" would say what did not happen.
+      this.browser.toast('Shortcut created', 'info', win)
+    } else {
+      this.browser.emit(
+        'webapp.pinned',
+        {
+          tabId: pending?.tabId ?? null,
+          name: title,
+          url: pending?.url ?? info?.startUrl ?? null,
+          surface,
+          appId: info ? id : null
+        },
+        win
+      )
+    }
     if (pending) {
       this.hideBanner(pending.tabId)
       this.settleSitePrompt(pending.tabId, 'accepted')

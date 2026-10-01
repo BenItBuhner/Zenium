@@ -4,7 +4,7 @@ import type { Browser } from '../browser'
 import type { PageHostMessage, ShortcutRequest, StoreIO } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
-import { MIN_VISIT_GAP_MS, type EngagementRecord } from '../../shared/webApp'
+import { MIN_VISIT_GAP_MS, installedMessage, type EngagementRecord } from '../../shared/webApp'
 import type { AppBadge } from '../../shared/appBadge'
 
 const DOCUMENT_URL = 'https://app.example/'
@@ -506,6 +506,55 @@ describe('WebAppService', () => {
     expect(h.appWindows).toHaveLength(2)
     expect(h.appWindows.map((w) => w.shown)).toEqual([2, 1])
     expect(h.createdTabs).toEqual([])
+  })
+
+  it('a page without a manifest pinned on the desktop is a shortcut, not an install: the core toasts "Shortcut created" itself and sends the chrome no `webapp.pinned`, whichever way the box stood', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    expect(h.toasts).toEqual(['Shortcut created'])
+    expect(h.events.filter((e) => e.name === 'webapp.pinned')).toEqual([])
+    // No record to open, no app window, the tab where it was.
+    expect(h.service.pinnedFor(DOCUMENT_URL)).toBeNull()
+    expect(h.appWindows).toEqual([])
+    expect(h.closedTabs).toEqual([])
+    // The page still hears the launcher took it, as before.
+    expect(h.pageMessages.at(-1)).toEqual({ type: 'webapp', action: 'installed' })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[1].id)
+    expect(h.toasts).toEqual(['Shortcut created', 'Shortcut created'])
+    expect(h.events.filter((e) => e.name === 'webapp.pinned')).toEqual([])
+  })
+
+  it('a page with a manifest leaves the toast to the chrome through `webapp.pinned` – "Installed <name>" on the desktop, "Added <name> to Home screen" on the phone, where a plain page reads the same', async () => {
+    const desktop = harness({ desktop: true })
+    postManifest(desktop)
+    await desktop.service.pin(desktop.tab.id, 'Sketch', desktop.win, true)
+    desktop.service.onPinned(desktop.pins[0].id)
+    expect(desktop.toasts).toEqual([])
+    const installed = desktop.events.filter((e) => e.name === 'webapp.pinned')
+    expect(installed.map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL, surface: 'desktop', appId: MANIFEST_ID }
+    ])
+    const [app] = installed.map((e) => e.payload as { surface: 'desktop'; name: string })
+    expect(installedMessage(app.surface, app.name)).toBe('Installed Sketch')
+
+    // The phone's words are the launcher's, with or without a manifest; the core toasts nothing.
+    const phone = harness()
+    await phone.service.pin(phone.tab.id, 'Sketch', phone.win)
+    phone.service.onPinned(phone.pins[0].id)
+    postManifest(phone)
+    await phone.service.pin(phone.tab.id, 'Sketch', phone.win)
+    phone.service.onPinned(phone.pins[1].id)
+    expect(phone.toasts).toEqual([])
+    const added = phone.events
+      .filter((e) => e.name === 'webapp.pinned')
+      .map((e) => e.payload as { surface: 'homeScreen'; name: string; appId: string | null })
+    expect(added.map((p) => p.appId)).toEqual([null, MANIFEST_ID])
+    expect(added.map((p) => installedMessage(p.surface, p.name))).toEqual([
+      'Added Sketch to Home screen',
+      'Added Sketch to Home screen'
+    ])
   })
 
   it('remembers where the app window stood and reopens it there', async () => {
