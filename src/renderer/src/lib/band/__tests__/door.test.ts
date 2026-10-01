@@ -53,16 +53,21 @@ describe('bandOptionsOf', () => {
     expect(options.action?.label).toBe('Show')
   })
 
-  it('a state has no clock; a request without a glyph gets the information mark', () => {
+  it('a state has no clock and carries its tone; a request without a glyph gets the information mark', () => {
     const options = bandOptionsOf({
       form: 'state',
       title: 'No internet connection',
       key: 'offline',
-      clock: null
+      clock: null,
+      tone: 'warn'
     })
     expect(options.duration).toBeNull()
     expect(options.icon).toBe(Info)
     expect(options.action).toBeUndefined()
+    expect(options.tone).toBe('warn')
+    expect('tone' in bandOptionsOf({ form: 'state', title: 'T', key: 't', clock: null })).toBe(
+      false
+    )
   })
 
   it('a request without a key stands under one of its own, never the same twice', () => {

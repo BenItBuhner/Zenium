@@ -21,12 +21,16 @@ import {
 import { uiStore } from '@renderer/lib/ui'
 import { createAndroidBandHost, type AndroidBandHost } from '../androidHost'
 
-function tab(id: string, url = `https://example.com/${id}`): Record<string, unknown> {
+function tab(
+  id: string,
+  url = `https://example.com/${id}`,
+  containerId = 'default'
+): Record<string, unknown> {
   return {
     id,
     url,
     title: id,
-    containerId: 'default',
+    containerId,
     pinned: false,
     essential: false,
     folderId: null,
@@ -45,12 +49,17 @@ function stateWith(activeTabId: string): UIState {
         id: 's1',
         name: 'Work',
         containerId: 'default',
-        tabIds: ['t1', 't2', 'ntp'],
+        tabIds: ['t1', 't2', 'ntp', 'p1'],
         activeTabId,
         pinnedCollapsed: false
       }
     ],
-    tabs: { t1: tab('t1'), t2: tab('t2'), ntp: tab('ntp', 'zen://newtab') },
+    tabs: {
+      t1: tab('t1'),
+      t2: tab('t2'),
+      ntp: tab('ntp', 'zen://newtab'),
+      p1: tab('p1', 'https://example.com/p1', 'private')
+    },
     essentialTabIds: [],
     folders: {},
     settings: { containerSpecificEssentials: false }
@@ -103,7 +112,19 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     browserStore.set({ state: stateWith('ntp') })
     expect(bandStore.get()).toMatchObject({ front: 'ntp', eligible: false })
     browserStore.set({ state: stateWith('t2') })
-    expect(bandStore.get()).toMatchObject({ front: 't2', eligible: true })
+    expect(bandStore.get()).toMatchObject({ front: 't2', eligible: true, offers: true })
+  })
+
+  it("a private tab in front withholds offers, not states – the model hears it as the host's word", () => {
+    host = createAndroidBandHost()
+    showBand(offer())
+    showBand(state())
+    browserStore.set({ state: stateWith('p1') })
+    expect(bandStore.get()).toMatchObject({ front: 'p1', eligible: true, offers: false })
+    expect(shownBand()?.key).toBe('offline')
+    expect(bandStore.get().entries).toHaveLength(2)
+    browserStore.set({ state: stateWith('t1') })
+    expect(bandStore.get().offers).toBe(true)
   })
 
   it("writes the band's frames for the page a band stands on through the one host channel", () => {

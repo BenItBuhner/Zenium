@@ -53,6 +53,7 @@ export function bandOptionsOf(request: BandRequest): BandOptions {
     duration: request.clock
   }
   if (request.detail !== undefined) options.detail = request.detail
+  if (request.tone !== undefined) options.tone = request.tone
   if (request.action) {
     const action = request.action
     options.action = { label: action.label, onPick: () => action.pick() }

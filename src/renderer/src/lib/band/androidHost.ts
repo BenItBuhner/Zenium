@@ -68,8 +68,9 @@ export function createAndroidBandHost(): AndroidBandHost {
   setPageHold(hold)
 
   const off = subscribeBandSignals((signals) => {
-    // The model first: it decides whether a band stands on the page coming to the front.
-    setBandFront(signals.tabId, bandMayShow(signals, 'state'))
+    // The model first: it decides whether a band stands on the page coming to the front – and
+    // whether an offer may (not on a private tab, whose offers Chrome withholds too; §3.2).
+    setBandFront(signals.tabId, bandMayShow(signals, 'state'), !signals.privateTab)
     if (signals.tabId === front) return
     if (front !== null && held === front) write(front, 0)
     front = signals.tabId

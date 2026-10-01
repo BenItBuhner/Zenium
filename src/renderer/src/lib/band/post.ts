@@ -7,7 +7,7 @@ import {
   type BannerDismissReason,
   type BannerOptions
 } from '@renderer/lib/ui'
-import { bandRequestFromBanner, type BandAction, type BandForm, type BandRequest } from './tenants'
+import { bandRequestFromBanner, type BandExtras, type BandForm, type BandRequest } from './tenants'
 
 /**
  * The tenants' one door to a page message: on the touch hosts (the phone, the tablet) the
@@ -63,11 +63,11 @@ export function bandIsTheDoor(): boolean {
 }
 
 /**
- * Post a tenant's message; `form` is the band's form for it (§3.1), `secondary` a second,
- * dismissing action a state may carry. Returns the id {@link dismissPosted} and
- * {@link postedUp} take.
+ * Post a tenant's message; `form` is the band's form for it (§3.1), `extras` what the band
+ * takes beyond the banner – a second, dismissing action a state may carry, a state's tone.
+ * Returns the id {@link dismissPosted} and {@link postedUp} take.
  */
-export function postBanner(opts: BannerOptions, form: BandForm, secondary?: BandAction): number {
+export function postBanner(opts: BannerOptions, form: BandForm, extras?: BandExtras): number {
   const id = nextId++
   const forget = (): void => {
     posted.delete(id)
@@ -75,7 +75,7 @@ export function postBanner(opts: BannerOptions, form: BandForm, secondary?: Band
   }
   if (bandDoor && isTouchLayout()) {
     const door = bandDoor
-    const request = bandRequestFromBanner(opts, form, secondary)
+    const request = bandRequestFromBanner(opts, form, extras)
     const onEnd = request.onEnd
     request.onEnd = (reason) => {
       forget()

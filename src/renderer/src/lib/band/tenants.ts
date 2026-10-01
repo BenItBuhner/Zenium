@@ -28,6 +28,19 @@ export interface BandAction {
 }
 
 /**
+ * A state's status ink for its glyph (§3.1): the chrome's ok / warn / danger inks; a state with
+ * none (the default-browser reminder is no alarm) draws it deemphasised. An offer's glyph is the
+ * accent whatever this says.
+ */
+export type BandTone = 'ok' | 'warn' | 'danger'
+
+/** What a tenant adds to its banner for the band: a second, dismissing action a state may carry, and a state's tone. */
+export interface BandExtras {
+  secondary?: BandAction
+  tone?: BandTone
+}
+
+/**
  * Why a band left, in the tenants' vocabulary: the §9.33 host's reasons – `action` (the action
  * taken), `close` (the ×), `swipe` (swiped up off the page), `timeout` (the clock), `replaced`
  * (a newer band took its place), `program` (its tenant or a rule took it down: a navigation,
@@ -50,6 +63,8 @@ export interface BandRequest {
    * the same end as the × – the content component shows it only where it has room.
    */
   secondary?: BandAction
+  /** A state's status ink for its glyph (§3.1); none draws it deemphasised. */
+  tone?: BandTone
   /** Bands of one `key` do not pile up: a newer one replaces the standing one (§3.2). */
   key?: string
   /**
@@ -71,7 +86,7 @@ export interface BandRequest {
 export function bandRequestFromBanner(
   opts: BannerOptions,
   form: BandForm,
-  secondary?: BandAction
+  extras: BandExtras = {}
 ): BandRequest {
   const shape: BandForm = opts.action ? form : 'state'
   const request: BandRequest = {
@@ -85,7 +100,8 @@ export function bandRequestFromBanner(
     const action = opts.action
     request.action = { label: action.label, pick: () => action.onPick() }
   }
-  if (secondary && shape === 'state') request.secondary = secondary
+  if (extras.secondary && shape === 'state') request.secondary = extras.secondary
+  if (extras.tone && shape === 'state') request.tone = extras.tone
   if (opts.key !== undefined) request.key = opts.key
   if (opts.onDismiss) {
     const onDismiss = opts.onDismiss

@@ -14,6 +14,7 @@ import { searchChoiceCovers } from '@renderer/lib/searchChoice'
 import { activeTab } from '@renderer/lib/selectors'
 import { type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { TouchBandLayer } from '../band/TouchBandLayer'
 import { BookmarksBar } from '../bookmarks/BookmarksBar'
 import { ContentArea } from '../content/ContentArea'
 import { ChromeDropLayer, DragLayer } from '../DragLayer'
@@ -218,6 +219,10 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
                 dialog on the host covers (`holdFrameInert`) and a sheet holds with the chrome. */}
             <div data-shell-chrome className="contents">
               <ContentArea state={state} ui={ui} hostsUrlbar={false} />
+              {/* The page-edge band (motion spec §3) at the frame's top, under the page's view,
+                  which the host moves down by the pull channel; mounting it makes the band the
+                  door for the tablet's page messages (lib/band/mount.ts). */}
+              <TouchBandLayer />
             </div>
             {/* Messages on the content frame's box (v2 §9.33): banners from its top edge over
                 the page and under the dialogs; the toast's slot seated in the frame dialog

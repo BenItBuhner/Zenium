@@ -65,6 +65,7 @@ import {
   type UiState
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { TouchBandLayer } from '../band/TouchBandLayer'
 import { ContentArea } from '../content/ContentArea'
 import { FakeboxMorphLayer } from '../newtab/FakeboxMorphLayer'
 import { Onboarding } from '../overlays/Onboarding'
@@ -179,7 +180,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         }
       },
       'state',
-      { label: 'Not now', pick: notNow }
+      { secondary: { label: 'Not now', pick: notNow } }
     )
     return () => dismissPosted(id)
   }, [bannerDue])
@@ -377,6 +378,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       >
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
+          {/* The page-edge band (motion spec §3) at the frame's top, under the page's view, which
+              the host moves down by the pull channel; mounting it makes the band the door for the
+              phone's four page messages (lib/band/mount.ts). */}
+          <TouchBandLayer />
         </div>
         {!barHidden && tab && (
           <BlockedPopupsChip

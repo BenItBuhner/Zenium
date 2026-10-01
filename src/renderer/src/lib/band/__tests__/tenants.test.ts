@@ -48,7 +48,7 @@ describe('bandRequestFromBanner', () => {
         duration: 4000
       },
       'state',
-      { label: 'Not now', pick: notNow }
+      { secondary: { label: 'Not now', pick: notNow }, tone: 'warn' }
     )
     expect(request.form).toBe('state')
     expect(request.clock).toBeNull()
@@ -56,6 +56,7 @@ describe('bandRequestFromBanner', () => {
     expect(request.secondary?.label).toBe('Not now')
     request.secondary?.pick()
     expect(notNow).toHaveBeenCalledTimes(1)
+    expect(request.tone).toBe('warn')
   })
 
   it('a banner without an action cannot be an offer: it is shown as a state', () => {
@@ -70,10 +71,11 @@ describe('bandRequestFromBanner', () => {
     const offer = bandRequestFromBanner(
       { title: 'Show Reader View?', action: { label: 'Show', onPick: () => undefined } },
       'offer',
-      { label: 'Never', pick: () => undefined }
+      { secondary: { label: 'Never', pick: () => undefined }, tone: 'warn' }
     )
     expect(offer.form).toBe('offer')
     expect(offer.secondary).toBeUndefined()
+    expect(offer.tone).toBeUndefined()
   })
 
   it('leaves out what the banner did not have (no undefined keys for the content to trip on)', () => {

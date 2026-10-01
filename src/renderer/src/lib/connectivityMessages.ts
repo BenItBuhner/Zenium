@@ -25,7 +25,8 @@ export function useConnectivityMessages(online: boolean): void {
       wasOffline.current = true
       const id = postBanner(
         { title: OFFLINE_BANNER_TITLE, icon: WifiOff, key: 'offline', duration: null },
-        'state'
+        'state',
+        { tone: 'warn' }
       )
       return () => dismissPosted(id)
     }
