@@ -991,7 +991,12 @@ export interface TabView {
   detach(): void
   setBounds(rect: Rect): void
   setBorderRadius(radius: number): void
-  setVisible(visible: boolean): void
+  /**
+   * `switched` names a hide a switch away from the page (`LayoutReport.switchedAway`: the tab
+   * overview over it), for a host whose pages are told so (Android); a host with no such word
+   * reads the first parameter alone.
+   */
+  setVisible(visible: boolean, switched?: boolean): void
   isVisible(): boolean
   bringToFront(): void
   /**
@@ -1008,6 +1013,22 @@ export interface TabView {
    * out; the swap then falls on the ceiling alone.
    */
   frameDrawn?(): Promise<number>
+  /**
+   * The page's word that the document it is to show has a frame on screen (W8-P0, the same
+   * §11 rule as `frameDrawn`'s, for a page shown on the activate commit – a tab switched to or
+   * woken – under the page it replaces): for a committed document, `frameDrawn`'s double
+   * `requestAnimationFrame` AND its first `paint` entry – a page loaded in the background never
+   * had its first paint, and under paint holding the engine runs its animation frames while it
+   * still defers the commits, so the frames alone would answer before anything is on screen;
+   * for a page still on its way (a woken tab, its document not committed yet) the same, asked of
+   * the document that commits next. Never resolves for a document that draws no frame; the asker
+   * holds the failure ceiling (`COVER_REPORT_CEILING_MS`) and takes a rejection (the page gone)
+   * as no word. The word of a host that shows on the commit (`TabViewHost.showsOnCommit`):
+   * the activated page shown at the frame's last reported rect, the page left in front standing
+   * over it until the word or the ceiling (`ZenWindow.showOnCommit`); a host without the flag
+   * shows the page with the layout report, as before.
+   */
+  shownPainted?(): Promise<number>
   /**
    * The message strips: chrome messages (toasts, banners) draw over these strips of the view's
    * edges. Hosts whose pages are layered above the chrome clip the page out of the strips –
@@ -1222,6 +1243,15 @@ export type { ContentRules } from '../shared/contentRules'
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
+  /**
+   * True when the core may show a tab switched to or woken on the activate commit, at the
+   * frame's last reported rect, under the page it replaces until that page's word that it has
+   * painted (`TabView.shownPainted`) or the ceiling (`ZenWindow.showOnCommit`, W8-P0): the
+   * host's views give the word, and its stand-in protocol bears a page shown ahead of the
+   * layout report. Left out (or false), every page is shown by the report, as before – the
+   * Android chassis, whose chrome sequences its own cover against the host's frames.
+   */
+  readonly showsOnCommit?: boolean
   /**
    * Create a second live page for `tab` – the reader's cover (`TabManager.cover`; the glossary
    * of the tree's four "covers" stands there): the `zen://reader` document drawn over the tab's
@@ -2406,6 +2436,15 @@ export interface SyncHost {
    * store that cannot keep it is the typed refusal (as `setup`'s), never a rejection.
    */
   setWebDavPassword(password: string): Promise<SyncSetupRefusal | null>
+  /**
+   * Sign in to the Zenium account: the sign-in page opens in a new tab of `win`'s and the code
+   * it shows is in the status; resolves once it is shown, the approval awaited in the background.
+   */
+  startAccountLink(win: ZenWindow): Promise<void>
+  /** Stop waiting for the sign-in under way. */
+  cancelAccountLink(): void
+  /** Sign out of the Zenium account at the service and here; sync turns off. */
+  signOutAccount(): void
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
   /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */
@@ -2430,6 +2469,7 @@ export interface SyncHost {
 export interface SyncTransport {
   list(): Promise<string[]>
   read(name: string): Promise<string | null>
+  readMany?(names: string[]): Promise<(string | null)[]>
   write(name: string, text: string): Promise<void>
   remove(name: string): Promise<void>
   removeAll(): Promise<void>
@@ -2477,10 +2517,16 @@ export interface SyncPlatformHost {
   /** False while the app is in the background: the poll skips its turn (Android, no service). */
   foreground?(): boolean
   /**
+   * The app's return to the foreground (Android's activity resuming), for a transport that
+   * watches by asking (the Zenium account's version poll); returns the unsubscribe.
+   */
+  onForeground?(listener: () => void): () => void
+  /**
    * The HTTP behind the WebDAV transport (ID-32, `core/sync/webdav.ts`): a fetch that reaches
    * any server with any method (PROPFIND, MKCOL, MOVE), from a process no page origin binds.
-   * Together with `Platform.secrets` it makes the WebDAV choice available; hosts without one
-   * offer the folder transport only.
+   * Together with `Platform.secrets` it makes the WebDAV choice available, and the Zenium account
+   * (`core/sync/account.ts`: JSON POSTs to the account service, which the WebView's own fetch
+   * could not make across origins); hosts without one offer the folder transport only.
    */
   fetch?: SyncFetch
 }

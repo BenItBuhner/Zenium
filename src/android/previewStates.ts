@@ -118,6 +118,9 @@ import {
   PREVIEW_SETTLE_LOADS_EVENT,
   PREVIEW_SLOW_LOAD_EVENT,
   PREVIEW_VOICE_EVENT,
+  PREVIEW_SHARE_APPS,
+  PREVIEW_SHARED_LINK,
+  PREVIEW_SHARED_TEXT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
   previewQrScript,
@@ -154,6 +157,7 @@ import {
   type PreviewNetworkVariant,
   type PreviewNtpPose,
   type PreviewPrivateSurface,
+  type PreviewShareTargetKind,
   type PreviewState,
   type PreviewStep,
   type PreviewWebAppSurface
@@ -1523,6 +1527,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'webapp' && tab) {
     seed()
     applyWebApp(target.surface, tab.id, spec)
+  } else if (target.kind === 'shareTarget' && tab) {
+    seed()
+    applyShareChooser(target.shared, tab.id, spec)
   } else if (target.kind === 'media' && state && tab) {
     // The seeds first, held over the media state's pushes: a blocked count or a translate offer
     // beside the Now playing chip is how the pill's fold is looked at.
@@ -4073,6 +4080,43 @@ function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string)
       whenStore(() => uiStore.get().toasts.some((t) => t.message.includes('Home screen')), spec)
       return
   }
+}
+
+/**
+ * The share chooser (MW-63): the two apps declaring share targets are installed from the tab
+ * the way the pinned state's app is (the stand-in host pins after 700 ms; the core records each
+ * once the pin lands), then another app's share – a link with a subject, or a note's text –
+ * arrives as the host's `intent` event and the chooser goes up for it. The state is reached
+ * once the chooser stands in the browser state (`UIState.shareChooser`, which the layer draws
+ * from). What the host cannot show is the phone's cold start – the intent in before the chrome
+ * has mounted – which the field is for; the core's suite pins that shape.
+ */
+function applyShareChooser(shared: PreviewShareTargetKind, tabId: string, spec: string): void {
+  const installed = (state: UIState): number => state.webApps.length
+  const install = (index: number, then: () => void): void => {
+    const app = PREVIEW_SHARE_APPS[index]
+    const before = browserStore.get().state?.webApps.length ?? 0
+    postPreviewManifest(tabId, app)
+    void run('webapp.pin', { tabId, title: app.manifest.short_name })
+    whenState((state) => installed(state) > before, then)
+  }
+  install(0, () =>
+    install(1, () => {
+      // The installs' "Added … to Home screen" toasts go before the share arrives: the still is
+      // the chooser's, not theirs.
+      for (const t of uiStore.get().toasts) {
+        dismissToast(t.id)
+        forgetToast(t.id)
+      }
+      const intent = shared === 'link' ? PREVIEW_SHARED_LINK : PREVIEW_SHARED_TEXT
+      const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
+      host.hostEvent('intent', JSON.stringify(intent))
+      whenState(
+        (state) => state.shareChooser !== null,
+        () => done(spec)
+      )
+    })
+  )
 }
 
 /**

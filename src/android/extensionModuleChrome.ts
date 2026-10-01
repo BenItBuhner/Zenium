@@ -44,7 +44,12 @@
  * `__zenExtChunk(<id>, <url>)` and awaits it: the chunk runs as a block of the content script's
  * scope instead, where its bare identifiers resolve as the script's own do
  * (`extensionChunkRelay.ts`); the stub imports the chunk plain, bracketed, when that answers
- * false.
+ * false. So is any module whose text is script-shaped (`isScriptShapedModule`: no `import` or
+ * `export` declaration, no `import.meta`), since a block runs it as its module would have: Web
+ * Highlights' `content.js`, `import()`ed by its loader, wrote `self.QrCreator = …` – `self` the
+ * scope while the module evaluates – and read `QrCreator` bare, which on the real global was a
+ * ReferenceError (compat round 25 on WebView 113); Web Scrobbler's connectors read the
+ * `Connector` its `main.js` set through `window` the same way.
  */
 
 export interface ModuleChrome {
@@ -202,6 +207,46 @@ const WEBPACK_CHUNK =
 /** Whether the head of a served script is a webpack chunk's registration (see `WEBPACK_CHUNK`). */
 export function isWebpackChunk(head: string): boolean {
   return WEBPACK_CHUNK.test(head.slice(0, WEBPACK_CHUNK_HEAD))
+}
+
+/**
+ * Module syntax a served file may carry: a static `import` declaration (`import x from`,
+ * `import {`, `import *`, `import "…"` – a dynamic `import(` is a script's too), `import.meta`,
+ * or an `export` declaration (`export {`, `export *`, `export default` and the declared forms).
+ * A declaration is a statement of the module's top level, so it is read only in statement
+ * position: at the start of the text, or after `;`, `}` or a line break with nothing but
+ * indentation between. That is what tells it from the word in a string: Web Highlights'
+ * `content.js` carries Polymer's `"import"===o.getAttribute("rel")` and its blog copy's
+ * "how to import all your annotations", twenty-six of them, and the first spelling of this
+ * expression (compat round 25's `[lane]`) read every one as the module graph's, so R25-1's block
+ * never ran for its own row. `import.meta` is an expression and is read anywhere a property
+ * read can stand. Still in the safe direction where the position cannot tell: a line of a
+ * template literal that starts with `import x from` costs the file only the scope (it is served
+ * bracketed, as every module was before); a miss costs a wasted evaluate, since a block with an
+ * `import` or an `export` in it is a SyntaxError the host answers with the plain import. The
+ * same expression is `ExtensionScripts.MODULE_SYNTAX` on the host, which reads the file in
+ * windows for it, and its lookbehind is at most `MODULE_SYNTAX_LOOKBEHIND` characters long so a
+ * window's overlap can carry it.
+ */
+const MODULE_SYNTAX =
+  /(?<![^\n\r;} \t][ \t]{0,63})(?:import(?:\s+[\w$]|\s*[*{"'])|export(?:\s+(?:default|const|let|var|function|class|async|enum)(?![\w$])|\s*[{*]))|(?<![\w$.])import\s*\.\s*meta(?![\w$])/
+
+/** The most characters `MODULE_SYNTAX` looks behind a declaration (one non-space and the indentation). */
+export const MODULE_SYNTAX_LOOKBEHIND = 64
+
+/** Whether a text carries module syntax (see `MODULE_SYNTAX`). */
+export function hasModuleSyntax(text: string): boolean {
+  return MODULE_SYNTAX.test(text)
+}
+
+/**
+ * Whether a served module's text is script-shaped: no `import` or `export` declaration and no
+ * `import.meta` anywhere in it, so it runs as a block of the content script's scope as it would
+ * have as a module of the world (the host serves the stub for it: `ExtensionScripts.chunkStub`,
+ * `isScriptShapedModule` there). An empty text is script-shaped.
+ */
+export function isScriptShapedModule(text: string): boolean {
+  return !hasModuleSyntax(text)
 }
 
 /** How far into a served module the host looks for a declaration of `chrome` of its own. */

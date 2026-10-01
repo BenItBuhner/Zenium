@@ -11,6 +11,8 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // The accounts backend and website: their own package and ESLint config (backend/eslint.config.mjs).
+      'backend/**',
       'android/**/build',
       'android/.gradle',
       'android/app/src/main/assets',

@@ -1,0 +1,10 @@
+{
+  "id": "page-visibility",
+  "class": "PageVisibilityDemo",
+  "shard": "phone-g",
+  "mirrors": "android-page-visibility-demo.yml",
+  "dir": "media-demo",
+  "timeout": 900,
+  "estimate": 5,
+  "note": "Page visibility on a tab switch (OS-39, W6-S26-a) on the image's own WebView 113: the loopback probe page as a <video> with sound, the same clip muted, an <audio> track and timers only, each played in front, switched away through the core's tab.activate and read from behind (document.visibilityState, the visibilitychange events heard, paused / currentTime, the 100 ms interval's and requestAnimationFrame's cadence), then switched back; the control, Home with the clip with sound (the engine's own pause, MED-08's fact a); the OS-08 cases, the site allowed background-video and switched away – playing (held visible to itself, plays on), silent (hidden like any other site), the sound stopping while behind (hidden then, and a play() while hidden un-hides nothing); and the tab overview opened over the page by a real touch – a switch away from the page under it, by the lead's ruling on #728: hidden under the overview and paused, visible again and resumed when it closes on the page, left behind when another card is picked (a real touch on the card), and the allowed site playing video under it playing on. FACT lines and PASS/FAIL checks in android-w6-s26-page-visibility-notes.txt; stills android-w6-s26-page-visibility-*. On phone-g, beside the background-video demo whose allow it reads, as the phone shard with the most room under the budget when it joined (46 of 68 minutes)."
+}
