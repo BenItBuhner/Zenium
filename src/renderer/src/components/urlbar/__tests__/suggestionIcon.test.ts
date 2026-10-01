@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Clock, Globe, Settings } from 'lucide-react'
+import { Clock, Globe, Search, Settings } from 'lucide-react'
 import { suggestionIcon } from '../suggestionIcon'
 
 /*
@@ -39,5 +39,27 @@ describe('suggestionIcon', () => {
       Icon: Globe,
       page: false
     })
+  })
+
+  it('gives a remembered search the clock on the touch layouts alone (OMN-04); a query row keeps the magnifier', () => {
+    const remembered = {
+      kind: 'search' as const,
+      url: 'https://www.google.com/search?q=cats',
+      group: 'Recent searches'
+    }
+    expect(suggestionIcon(remembered, { recentSearchClock: true })).toEqual({
+      Icon: Clock,
+      page: false
+    })
+    // The desktop's row: the magnifier it has, the option unset.
+    expect(suggestionIcon(remembered)).toEqual({ Icon: Search, page: false })
+    // A search row of no section – a query's suggestion – is no remembered search.
+    expect(suggestionIcon({ kind: 'search', url: null }, { recentSearchClock: true })).toEqual({
+      Icon: Search,
+      page: false
+    })
+    expect(
+      suggestionIcon({ kind: 'search', url: null, group: 'Searches' }, { recentSearchClock: true })
+    ).toEqual({ Icon: Search, page: false })
   })
 })
