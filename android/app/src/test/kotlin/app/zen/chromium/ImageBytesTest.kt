@@ -35,7 +35,7 @@ class ImageBytesTest {
     private val avif = ftyp("avif", "avif", "mif1", "miaf", "MA1B")
     private val avifSequence = ftyp("avis", "avis", "msf1", "miaf", "MA1B")
     private val heic = ftyp("heic", "mif1", "heic")
-    private val heif = ftyp("mif1", "mif1", "heix")
+    private val heif = ftyp("mif1", "mif1", "miaf")
     private val svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><rect width=\"8\" height=\"8\"/></svg>".toByteArray()
     private val svgWithProlog = (
         "\uFEFF<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- a comment -->\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" " +
