@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.content.Context
 import android.content.MutableContextWrapper
 import android.graphics.Rect
+import android.os.Trace
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -46,16 +47,114 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      * to another activity later (see [adopt]), which is what a custom tab creates its page with.
      */
     fun create(tabId: String, containerId: String, context: Context = container.context): TabWebView {
-        // A view already held under this id is an orphan: the core registers its new view before it
-        // asks, so a `destroyed` for the id would land on that new view and mark it dead – a tab
-        // that never gets bounds again. Drop the old one without a word.
-        views.remove(tabId)?.let(::drop)
-        val view = TabWebView(context, tabId, containerId, host)
-        show(view, false)
-        container.addView(view, FrameLayout.LayoutParams(0, 0))
-        readAfterChrome(view)
-        host.focusHandoff?.wirePage(view)
-        views[tabId] = view
+        Trace.beginSection("zen:TabHost.create")
+        val started = System.nanoTime()
+        try {
+            // A view already held under this id is an orphan: the core registers its new view before it
+            // asks, so a `destroyed` for the id would land on that new view and mark it dead – a tab
+            // that never gets bounds again. Drop the old one without a word.
+            views.remove(tabId)?.let(::drop)
+            val spare = takeSpare(containerId, context)
+            val view = spare ?: TabWebView(context, tabId, containerId, host)
+            if (spare != null) {
+                spare.tabId = tabId
+                // Views made since the spare was built sit above it: the new tab's view goes where a
+                // fresh one would, on top.
+                spare.bringToFront()
+            } else {
+                show(view, false)
+                container.addView(view, FrameLayout.LayoutParams(0, 0))
+            }
+            readAfterChrome(view)
+            host.focusHandoff?.wirePage(view)
+            views[tabId] = view
+            lastCreateTookSpare = spare != null
+            return view
+        } finally {
+            lastCreateMicros = (System.nanoTime() - started) / 1_000
+            Trace.endSection()
+        }
+    }
+
+    // --- the spare view (W6-S26-b) -----------------------------------------------------------------
+
+    /**
+     * Whether the last [create] took the spare view rather than building one (diagnostics, the
+     * tab-wake perf demo).
+     */
+    var lastCreateTookSpare = false
+        private set
+
+    /** How long the last [create] held the UI thread, in microseconds (diagnostics, the same demo). */
+    var lastCreateMicros = 0L
+        private set
+
+    /** How many spare views [warm] has built since this host came up (diagnostics). */
+    var sparesBuilt = 0
+        private set
+
+    /** Whether a spare view stands ready for the next [create] of its container. */
+    val hasSpare: Boolean get() = views.containsKey(SPARE_ID)
+
+    /** The container the standing spare was built for; null with none. */
+    val spareContainerId: String? get() = views[SPARE_ID]?.containerId
+
+    /**
+     * Whether [warm] builds anything. Off, every wake builds its view inside the morph as it
+     * did before the spare – the tab-wake perf demo's before-reading on the same run; the
+     * product never turns it off.
+     */
+    var warmingEnabled = true
+        internal set
+
+    /**
+     * Build the page view for the next tab the core wakes, ahead of the wake. Constructing a
+     * `TabWebView` – its settings, fonts, user agent, darkening, autofill provider, page script,
+     * extension bridges, renderer watch – is UI-thread work that otherwise lands inside the first
+     * frames of the overview's morph into the tapped card, the moment the user is watching. The
+     * host calls this on an idle moment once the pages are covered (the overview, a sheet), never
+     * on the boot path, for the container of the page that was covered; [create] takes the view
+     * for the first tab of that container and builds as before for any other. One at a time: a
+     * spare of another container ([spareContainerId]) is the host's to drop first, on the same
+     * idle moment, so the latest hide's container is the one a spare stands for.
+     *
+     * The spare lives in [views] under [SPARE_ID], hidden and unplaced like any view the core has
+     * yet to lay out, so every push the host makes to its pages – fonts, privacy, page rules, an
+     * extension installed meanwhile – reaches it the way it reaches a tab's hidden view; nothing
+     * reports it to the core, which never asked for the id. It is dropped under memory pressure
+     * ([dropSpare]), with its container's profile when that is cleared (a private session's end),
+     * and goes with every other view at a teardown.
+     */
+    fun warm(containerId: String): Boolean {
+        if (!warmingEnabled || hasSpare) return false
+        Trace.beginSection("zen:TabHost.warm")
+        try {
+            val view = TabWebView(container.context, SPARE_ID, containerId, host)
+            show(view, false)
+            container.addView(view, FrameLayout.LayoutParams(0, 0))
+            views[SPARE_ID] = view
+            sparesBuilt++
+            return true
+        } finally {
+            Trace.endSection()
+        }
+    }
+
+    /** Tear the spare view down, if one stands (memory pressure, a renderer gone). */
+    fun dropSpare(): Boolean {
+        val view = views.remove(SPARE_ID) ?: return false
+        drop(view)
+        return true
+    }
+
+    /**
+     * The spare, out of [views] and ready to be re-tagged, when it was built for `containerId`
+     * in this window (a custom tab's page is made with another context, and keeps building its own).
+     */
+    private fun takeSpare(containerId: String, context: Context): TabWebView? {
+        val view = views[SPARE_ID] ?: return null
+        if (view.containerId != containerId || context !== container.context) return null
+        views.remove(SPARE_ID)
         return view
     }
 
@@ -144,7 +243,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         reported.remove(tabId)
         heldBack.remove(tabId)
         drop(view)
-        host.viewEvent(tabId, "destroyed", null)
+        // The spare was never a tab of the core's: nothing to tell it.
+        if (tabId != SPARE_ID) host.viewEvent(tabId, "destroyed", null)
     }
 
     fun destroyAll() {
@@ -198,6 +298,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     fun replaceCrashed(dead: TabWebView): Boolean {
         val tabId = dead.tabId
         if (views[tabId] !== dead) return false
+        // A spare that lost its renderer is not worth a second one: the next wake builds its own.
+        if (tabId == SPARE_ID) {
+            dropSpare()
+            return false
+        }
         val lp = dead.layoutParams as? FrameLayout.LayoutParams
         val visible = dead.visibility == View.VISIBLE
         dead.backTransition?.abort()
@@ -511,5 +616,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
             view.bringToFront()
         }
         if (before != null || filled != null) host.windowFillChanged(filled?.tabId)
+    }
+
+    companion object {
+        /** The id the spare view is held under in [views] – never a tab id of the core's (those are `tab_…` and the popup / handoff ids). */
+        const val SPARE_ID = "spare"
     }
 }
