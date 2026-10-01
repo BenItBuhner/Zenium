@@ -31,10 +31,6 @@ on:
         description: Record the screen too (the encoder is a load of its own on the emulator; off for the numbers)
         type: boolean
         default: true
-  # TEMPORARY (W6-S26-b): the branch's own runs while the profile and the fix are measured; removed before the PR is ready.
-  push:
-    branches:
-      - cursor/android-tab-wake-perf-9271
 
 permissions:
   contents: read
