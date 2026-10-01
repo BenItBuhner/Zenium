@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { ClosedEntrySummary, Space, Tab, UIState } from '@shared/types'
+import type { ClosedEntrySummary, Folder, Space, Tab, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
 import { BLANK_URL } from '@shared/url'
 
 /*
@@ -16,8 +17,9 @@ import { BLANK_URL } from '@shared/url'
  * lot; the recently closed sheet lists the contract's entries and a tap restores one. On a host
  * with private tabs each pane closes its own (TAB-02, TAB-03): the regular pane its cards
  * through the same `tab.closeMany`, the private pane through `tab.closePrivate` from a menu of
- * that one row. Rendered for real in happy-dom with the sheets on the frame's dialog host, the
- * frame loop cranked by hand.
+ * that one row. The Groups pane's row sheet closes a group with the one Undo and deletes one
+ * after an ask, never both (TAB-16 / TAB-13, the Design Lead's option C). Rendered for real in
+ * happy-dom with the sheets on the frame's dialog host, the frame loop cranked by hand.
  */
 
 const SPACE = 'space'
@@ -52,7 +54,7 @@ const { browserStore, claimMessageCards, pickToastAction, uiStore } =
   await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
-const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/privateTabs')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 
 // --- a profile ---------------------------------------------------------------------------------
@@ -703,5 +705,175 @@ describe('on a host with private tabs', () => {
       ['Select Tabs', true],
       ['Close Private Tabs (0)', true]
     ])
+  })
+})
+
+// --- the Groups pane's Close Group and Delete Group (TAB-16 / TAB-13) --------------------------
+
+describe('the Groups pane’s row sheet: Undo for Close Group, an ask for Delete Group, never both (TAB-16 / TAB-13, option C)', () => {
+  const GROUP = 'folder_research'
+  const research = (patch: Partial<Folder> = {}): Folder =>
+    ({
+      id: GROUP,
+      spaceId: SPACE,
+      name: 'Research',
+      icon: '📁',
+      collapsed: false,
+      color: 'blue',
+      ...patch
+    }) as Folder
+  /**
+   * Research holds Alpha and Beta; Gamma is loose and in view. The members' ids carry `tag`, one
+   * per test: the app's undo remembers the entries it has claimed by id until a list read finds
+   * them gone, and this harness's list starts each test empty without a read (see the private
+   * block's note).
+   */
+  const grouped = (folder = research(), tag = 'r'): UIState => ({
+    ...stateOf([
+      tab('loose', 'https://c.example/', { title: 'Gamma' }),
+      tab(`${tag}a`, 'https://a.example/', { title: 'Alpha', folderId: GROUP }),
+      tab(`${tag}b`, 'https://b.example/', { title: 'Beta', folderId: GROUP })
+    ]),
+    folders: { [GROUP]: folder }
+  })
+  /** The core files the group's two members (`tag`'s), oldest first. */
+  const fileMembers = (tag: string): void => {
+    const state = grouped(research(), tag)
+    file(entry(state.tabs[`${tag}a`]!, NOW), entry(state.tabs[`${tag}b`]!, NOW))
+  }
+  /** Research SAVED: no live member, its two pages kept (`Folder.savedTabs`). */
+  const savedResearch = (): UIState => ({
+    ...stateOf([tab('loose', 'https://c.example/', { title: 'Gamma' })]),
+    folders: {
+      [GROUP]: research({
+        savedTabs: [
+          { url: 'https://a.example/', title: 'Alpha' },
+          { url: 'https://b.example/', title: 'Beta' }
+        ]
+      })
+    }
+  })
+  const dialogText = (): string =>
+    document.querySelector<HTMLElement>('.zen-frame-dialogs')?.textContent ?? ''
+  /** Open the row's sheet from its "More options" button and let it come up. */
+  async function rowMenu(name: string): Promise<void> {
+    act(() => byLabel(`More options for ${name}`).click())
+    await settle()
+    await land()
+  }
+  /** The prompt's Delete: the sheet leaves, then the deletion runs. */
+  async function confirmDelete(): Promise<void> {
+    const button = document.querySelector<HTMLElement>(
+      '[data-testid="overview-delete-group-confirm"]'
+    )
+    expect(button).not.toBeNull()
+    act(() => button!.click())
+    await land()
+  }
+  /** The wait a close's toast would need at the longest, and then some: nothing comes of it here. */
+  async function settleClose(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    })
+  }
+
+  beforeEach(() => {
+    act(() => pickOverviewPane('groups'))
+  })
+  afterEach(() => {
+    act(() => resetOverviewPane())
+  })
+
+  it('Close Group (N Tabs) asks nothing: the core’s folder.close at once, then the one toast, "<Name> tab group closed and saved" with Undo, which brings the tabs back into the group', async () => {
+    show(grouped())
+    await rowMenu('Research')
+    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
+      'Show in Tabs',
+      'Rename',
+      'Close Group (2 Tabs)',
+      'Delete Group'
+    ])
+    await pick('Close Group (2 Tabs)')
+    // No prompt (§9.23: the ask is Delete's alone); the group stays, saved with the pages.
+    expect(dialogTitle()).toBeUndefined()
+    expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
+    expect(toasts()).toEqual([])
+    // The core files the two members as it closes them: the toast in the group's words – not
+    // "2 tabs closed" – with Undo.
+    fileMembers('r')
+    await settle()
+    expect(toasts()).toEqual([['Research tab group closed and saved', 'Undo', false]])
+    // Undo restores newest first – the core puts each back into the group, whose record the
+    // saved group kept, and the group re-opens – then the tab the user was on is activated.
+    act(() => pickToastAction(liveToast().id))
+    await settle()
+    expect(of('session.restoreClosed')).toEqual([{ id: 'closed:rb' }, { id: 'closed:ra' }])
+    expect(of('tab.activate')).toEqual([{ tabId: 'loose' }])
+    expect(of('folder.delete')).toEqual([])
+  })
+
+  it('a group still wearing the default name closes to "Tab group closed and saved" – not called by it (the Lead’s addendum)', async () => {
+    show(grouped(research({ name: TOUCH_GROUP_DEFAULT_NAME }), 'n'))
+    await rowMenu(TOUCH_GROUP_DEFAULT_NAME)
+    await pick('Close Group (2 Tabs)')
+    expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
+    fileMembers('n')
+    await settle()
+    expect(toasts()).toEqual([['Tab group closed and saved', 'Undo', false]])
+  })
+
+  it('Delete Group asks first – "Its N tabs close with it; Recently Closed keeps their pages." – and Cancel keeps the group', async () => {
+    show(grouped())
+    await rowMenu('Research')
+    await pick('Delete Group')
+    // The row sheet has gone and the question stands on the frame's dialog host (§9.23), in the
+    // one source's words (`folderDeleteWords`): no promise of an Undo.
+    expect(sheetRows()).toEqual([])
+    expect(dialogTitle()).toBe('Delete Research?')
+    expect(dialogText()).toContain('Its 2 tabs close with it; Recently Closed keeps their pages.')
+    expect(dialogText()).not.toContain('Undo')
+    expect(commands()).toEqual([])
+    await pick('Cancel')
+    expect(dialogTitle()).toBeUndefined()
+    expect(commands()).toEqual([])
+    expect(toasts()).toEqual([])
+  })
+
+  it('Delete runs the core’s folder.delete at once, and no toast follows the closes it files – the ask was the guard, there is no Undo after it', async () => {
+    show(grouped(research(), 'd'))
+    await rowMenu('Research')
+    await pick('Delete Group')
+    await confirmDelete()
+    expect(dialogTitle()).toBeUndefined()
+    // The record goes with its tabs (`unpack: false`): not `folder.close`, which would keep it
+    // saved.
+    expect(commands()).toEqual([['folder.delete', { folderId: GROUP, unpack: false }]])
+    // The core files the two as it closes them: no intent claims them, so no toast – now, nor
+    // once a close's settle wait would have run out.
+    fileMembers('d')
+    await settle()
+    expect(toasts()).toEqual([])
+    await settleClose()
+    expect(toasts()).toEqual([])
+    expect(of('session.restoreClosed')).toEqual([])
+    expect(commands()).toEqual([['folder.delete', { folderId: GROUP, unpack: false }]])
+  })
+
+  it('a saved group’s Delete asks in the pages’ words – "Its N saved pages are forgotten with it. There is no undo." – and Delete drops the record, no toast', async () => {
+    show(savedResearch())
+    await rowMenu('Research')
+    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
+      'Open (2 Tabs)',
+      'Rename',
+      'Delete Group'
+    ])
+    await pick('Delete Group')
+    expect(dialogTitle()).toBe('Delete Research?')
+    expect(dialogText()).toContain('Its 2 saved pages are forgotten with it. There is no undo.')
+    await confirmDelete()
+    expect(commands()).toEqual([['folder.delete', { folderId: GROUP, unpack: false }]])
+    await settleClose()
+    expect(toasts()).toEqual([])
+    expect(of('session.recentlyClosed')).toEqual([])
   })
 })

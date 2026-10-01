@@ -3,6 +3,7 @@ import { useRef } from 'react'
 import { Ellipsis, Trash2 } from 'lucide-react'
 import type { Folder } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { folderDeleteWords } from '@renderer/lib/folderDelete'
 import { GROUP_PALETTE, groupColorVars } from '@renderer/lib/groups'
 import {
   groupRowDescription,
@@ -267,11 +268,14 @@ export function GroupRowSheet({
 /**
  * "Delete group" asks first when the group holds anything (TAB-16; v2 §9.23: a prompt sheet
  * with the title block, the one paragraph, the §9.11 footer with Cancel and the verb in the
- * danger ink): an open group's tabs close with it – Undo on the toast brings them back, loose,
- * the group itself being gone – and a saved group's pages are forgotten with no way back.
- * Escape, the scrim, the back gesture and Cancel keep the group. Focus lands on the sheet
- * itself, the title announced first (§9.22: a title-and-notice sheet focuses its container;
- * landing on Cancel would announce the way out first).
+ * danger ink): an open group's tabs close with it, each to Recently Closed – the ask is the
+ * guard, so no Undo follows on a toast (TAB-13, the Design Lead's option C) – and a saved
+ * group's pages are forgotten with no way back. The words are `folderDeleteWords`'s in the
+ * touch hosts' noun (v2 §6: "this group" for a group with no name), the one source the tablet's
+ * dialog and the desktop's read from too. Escape, the scrim, the back gesture and Cancel keep
+ * the group. Focus lands on the sheet itself, the title announced first (§9.22: a
+ * title-and-notice sheet focuses its container; landing on Cancel would announce the way out
+ * first).
  */
 export function DeleteGroupSheet({
   row,
@@ -284,20 +288,15 @@ export function DeleteGroupSheet({
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const { folder, kind, count } = row
-  const name = folder.name.trim() || 'this group'
-  const tabs = `${count} ${count === 1 ? 'tab' : 'tabs'}`
-  const description =
-    kind === 'saved'
-      ? `Its ${tabs} are forgotten with it. There is no undo.`
-      : `Its ${tabs} close and the group goes; Undo on the toast brings the tabs back, ungrouped.`
+  const words = folderDeleteWords(folder.name, count, kind === 'saved', 'group')
   return (
     <PhoneSheet
       name="overview-delete-group"
       title={{
         pose: 'block',
-        text: `Delete ${name}?`,
+        text: words.title,
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
-        description
+        description: words.detail
       }}
       focus="dialog"
       onClose={onClose}
