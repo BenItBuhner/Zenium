@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MOTION_POP_MS } from '../../lib/motion/tokens'
 import { attachFadeEdges, type FadeEdges } from '../useFadeEdges'
 
 /*
  * The fading edges of a scroll container (`useFadeEdges`): each edge fades only while content
  * lies past it, and a container whose header marks scrolled-under content with a hairline
- * instead (the sheet chassis, v2 §9.7) fades its end edge alone.
+ * instead (the sheet chassis, v2 §9.7) fades its end edge alone. The mask (`data-fade-axis`)
+ * is on the container only while an edge fades: a container with nothing past either edge
+ * carries none.
  */
 
 let raf: Array<() => void> = []
@@ -20,11 +23,16 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
   raf = []
 })
 
 /** A 300 px box over 900 px of content, scrolled to `top`, its fades kept by `attachFadeEdges`. */
-function scroller(edges: FadeEdges): { el: HTMLElement; scrollTo: (top: number) => void } {
+function scroller(edges: FadeEdges): {
+  el: HTMLElement
+  detach: () => void
+  scrollTo: (top: number) => void
+} {
   const el = document.createElement('div')
   let top = 0
   Object.defineProperty(el, 'clientHeight', { get: () => 300 })
@@ -35,9 +43,10 @@ function scroller(edges: FadeEdges): { el: HTMLElement; scrollTo: (top: number) 
       top = v
     }
   })
-  attachFadeEdges(el, 'y', 16, edges)
+  const detach = attachFadeEdges(el, 'y', 16, edges)
   return {
     el,
+    detach,
     scrollTo: (next: number) => {
       el.scrollTop = next
       el.dispatchEvent(new Event('scroll'))
@@ -84,14 +93,57 @@ describe('attachFadeEdges', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
       for (const cb of raf.splice(0)) cb()
     }
+    // Nothing past either edge: no fade, and no mask on the list.
     expect(fades(el)).toEqual(['0px', '0px'])
+    expect(el.dataset.fadeAxis).toBeUndefined()
     rows = 7
     el.append(document.createElement('div'))
     await settle()
     expect(fades(el)).toEqual(['0px', '24px'])
+    expect(el.dataset.fadeAxis).toBe('y')
     rows = 6
     el.firstChild?.remove()
     await settle()
     expect(fades(el)).toEqual(['0px', '0px'])
+  })
+
+  it('the mask is on the container only while an edge fades: it comes with the first fade and goes once the last has eased out', () => {
+    // W6-S26-e (#731): the selection menu's rows fit its sheet, so neither edge faded – yet the
+    // body carried the mask (0 px fades draw nothing), and the compositor lost that mask layer
+    // when the sheet was flung, blanking the rows under it. A container with nothing past
+    // either edge carries no mask at all; the mask returns with a fade.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { el, scrollTo } = scroller('end')
+    expect(el.dataset.fadeAxis).toBe('y')
+    expect(fades(el)).toEqual(['0px', '16px'])
+    // At the end of an end-only container nothing fades: the depth eases out under the mask
+    // for `MOTION_POP_MS` (the `[data-fade-axis]` transition), then the mask goes.
+    scrollTo(600)
+    expect(fades(el)).toEqual(['0px', '0px'])
+    expect(el.dataset.fadeAxis).toBe('y')
+    vi.advanceTimersByTime(MOTION_POP_MS - 1)
+    expect(el.dataset.fadeAxis).toBe('y')
+    vi.advanceTimersByTime(1)
+    expect(el.dataset.fadeAxis).toBeUndefined()
+    expect(fades(el)).toEqual(['0px', '0px'])
+    // Back from the end, the mask returns with the fade.
+    scrollTo(0)
+    expect(el.dataset.fadeAxis).toBe('y')
+    expect(fades(el)).toEqual(['0px', '16px'])
+  })
+
+  it('a fade that returns within the ease-out keeps its mask; teardown drops a pending unmask', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { el, detach, scrollTo } = scroller('end')
+    scrollTo(600)
+    vi.advanceTimersByTime(MOTION_POP_MS / 2)
+    scrollTo(0)
+    vi.advanceTimersByTime(MOTION_POP_MS * 2)
+    expect(el.dataset.fadeAxis).toBe('y')
+    expect(fades(el)).toEqual(['0px', '16px'])
+    scrollTo(600)
+    detach()
+    expect(el.dataset.fadeAxis).toBeUndefined()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

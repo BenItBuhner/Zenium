@@ -528,11 +528,11 @@ describe('a Space switch in the overview', () => {
     render(stateOf(WORK))
     render(stateOf(HOME))
     // Nothing measured the scroller in the commit: the fade's variables are not on it yet.
-    expect(grid().dataset.fadeAxis).toBeUndefined()
     expect(grid().style.getPropertyValue('--zen-fade-end')).toBe('')
     await Promise.resolve()
-    expect(grid().dataset.fadeAxis).toBe('y')
     expect(grid().style.getPropertyValue('--zen-fade-end')).toBe('0px')
+    // happy-dom lays out no overflow: nothing fades, so the grid carries no mask.
+    expect(grid().dataset.fadeAxis).toBeUndefined()
   })
 
   it('the grid and the strip attach their edge fades once for their life, not again on each render of the overview; a switch attaches the new grid alone', async () => {
