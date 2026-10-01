@@ -109,14 +109,20 @@ function finishSettle(m: Machine): void {
   m.settling = null
 }
 
-/** Let the slot spring back to rest from `from` at `v` progress/s. */
+/**
+ * Let the slot spring back to rest from `from` at `v` progress/s. The spring runs in pixels –
+ * the slot's width is a full travel – since its rest thresholds (0.4 px, 8 px/s) are pixel
+ * measures: in progress units a release under a third sits inside the rest delta and the slot
+ * would snap home on the first frame instead of springing.
+ */
 function settle(m: Machine, live: Live, from: number, v: number): void {
   finishSettle(m)
   m.settling = live
   m.spring ??= new SpringAnimation(
     SPRING_SNAPPY,
     (x) => {
-      if (m.settling) paint(m.settling, Math.max(0, Math.min(1, x)))
+      const s = m.settling
+      if (s) paint(s, Math.max(0, Math.min(1, x / travelWidth(s))))
     },
     () => {
       const done = m.settling
@@ -125,7 +131,13 @@ function settle(m: Machine, live: Live, from: number, v: number): void {
       m.settling = null
     }
   )
-  m.spring.start(from, v, 0)
+  const width = travelWidth(live)
+  m.spring.start(from * width, v * width, 0)
+}
+
+/** A full travel in pixels; a slot without a measured width still gets a finite spring. */
+function travelWidth(live: Live): number {
+  return live.width > 0 ? live.width : 1
 }
 
 /** The touch is over, whatever it was: its moves are the browser's again. */
