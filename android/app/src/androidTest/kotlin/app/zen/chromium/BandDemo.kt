@@ -686,14 +686,17 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         // A short swipe up on the band, held mid-way: the view TRANSLATED at seat 0 – the drag's
         // first frame below the seat unseats it (seat 0 written ahead of that frame's offset), so
         // the page keeps covering the frame on its way; released before half, the band springs
-        // back and the rest seats the view again.
+        // back and the rest seats the view again. The travel is about a third of this band's
+        // height (NUDGE + a tenth: some 40 px on the 98-px band, which the band follows 1:1 past
+        // the slop to about 36 px) – the first run's NUDGE + three tenths took it past half
+        // (55 of 98) and dismissed it, as a swipe past half must.
         val title = fingerOnText(OFFLINE_TITLE) ?: return
         var mid = viewGeometry()
         val back = scene("band-swipe-web-page", JankBudget.Kind.SPRING, took = { bandTitle() == OFFLINE_TITLE && viewGeometry().seatedAt(ONE_LINE) }) {
             Finger().apply {
                 down(title.x, title.y)
                 moveBy(0f, -NUDGE, 80)
-                moveBy(0f, -(ONE_LINE * density) * 0.3f, 240)
+                moveBy(0f, -(ONE_LINE * density) * 0.1f, 240)
                 hold(200)
                 mid = viewGeometry()
                 snap("web-page-swipe-mid")
@@ -711,6 +714,17 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         check("a swipe up released before half the height springs the band back and the rest SEATS the WebView again (seat ${settled.seatPx} px, translationY ${settled.translationY})", back)
         if (!back) touchFault("a short swipe on the band over the long page did not leave the band standing")
         beat()
+        if (bandTitle() != OFFLINE_TITLE) {
+            // The swipe took the state's band off after all: the scenes after this one read the
+            // band standing on a web page, so the radios bring the state back (its return is the
+            // state's own entrance, as in 6b) rather than leaving them without their precondition.
+            radios(true)
+            poll(15_000, step = 100) { findNode { it == BACK_ONLINE_TOAST } != null }
+            SystemClock.sleep(1_500)
+            radios(false)
+            val restored = awaitBand(OFFLINE_TITLE, 20_000)
+            finding("  the band put away by the swipe – the radios cycled to bring the state back for the scenes after: restored=$restored; ${viewGeometry()}")
+        }
         // The short page again for the pull and the bar (their scenes read the page where it was).
         navigate("$SITE_A/plain")
         awaitBand(OFFLINE_TITLE, 6_000)
