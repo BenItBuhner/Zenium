@@ -153,6 +153,26 @@ function sheetItem(label: string): HTMLButtonElement {
   ) as HTMLButtonElement
 }
 
+/**
+ * The sheet's one hairline (§4) stands as its own list item right before `label`'s row, out of
+ * the accessibility tree, and the rows above it are plain.
+ */
+function expectHairlineBefore(label: string): void {
+  const seps = all('.zen-sheet .zen-sheet-sep')
+  expect(seps).toHaveLength(1)
+  const sep = seps[0]!
+  expect(sep.tagName).toBe('LI')
+  expect(sep.getAttribute('aria-hidden')).toBe('true')
+  expect(sep.nextElementSibling?.querySelector('.zen-sheet-item')).toBe(sheetItem(label))
+  const items = all('.zen-sheet .zen-sheet-item')
+  const at = items.indexOf(sheetItem(label))
+  expect(items.slice(0, at).every((el) => el.style.color === '')).toBe(true)
+  expect(items.slice(at).every((el) => el.style.color === 'var(--zen-danger)')).toBe(true)
+  // The hairline is the phone menu's (`MenuSheet`): the §6 rule in the gutter.
+  expect(rule('.zen-sheet-sep')).toContain('height: 1px')
+  expect(rule('.zen-sheet-sep')).toContain('background: var(--v2-border)')
+}
+
 interface SheetPicks {
   opened: GroupRow[]
   closed: Folder[]
@@ -192,6 +212,10 @@ describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
     // Close Group destroys nothing the saved group does not keep: the plain ink (§6).
     expect(sheetItem('Close Group').style.color).toBe('')
     expect(sheetItem('Delete Group').style.color).toBe('var(--zen-danger)')
+    // Delete Group stands last after a hairline (cleanup spec §4: the one form for every sheet
+    // here, the ⋯ sheet's hairline before Close All Tabs): the phone menu's `.zen-sheet-sep`,
+    // out of the tree, between Close Group's row and Delete Group's and nowhere else.
+    expectHairlineBefore('Delete Group')
     // The colour swatches: Chrome's nine as a radio group, the group's checked.
     const swatches = all('.zen-sheet [role="radiogroup"][aria-label="Colour"] [role="radio"]')
     expect(swatches).toHaveLength(9)
@@ -230,12 +254,14 @@ describe('the saved card’s sheet (TAB-16, §9.1, §6)', () => {
     rowSheet(rows.saved[0])
     expect(sheetLabels()).toEqual(['Open (1 Tab)', 'Rename', 'Delete Group'])
     expect(sheetItem('Delete Group').style.color).toBe('var(--zen-danger)')
+    expectHairlineBefore('Delete Group')
   })
 
   it('for an empty group: Rename and Delete Group alone', () => {
     const rows = rowsOf([folder('later')])
     rowSheet(rows.open[0])
     expect(sheetLabels()).toEqual(['Rename', 'Delete Group'])
+    expectHairlineBefore('Delete Group')
   })
 
   it('Rename puts the row into its editing state; the other rows hand the group back to the pane', () => {

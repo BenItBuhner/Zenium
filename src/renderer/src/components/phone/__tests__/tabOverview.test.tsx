@@ -539,6 +539,12 @@ describe('the card and group menus', () => {
       'Close Other Tabs (3)',
       'Close Tab'
     ])
+    // The closes stand last in the danger ink after the one hairline (the cleanup spec §4: the
+    // one form for every sheet here, the ⋯ sheet's before Close All Tabs).
+    const seps = document.querySelectorAll('.zen-sheet .zen-sheet-sep')
+    expect(seps).toHaveLength(1)
+    expect(seps[0]!.getAttribute('aria-hidden')).toBe('true')
+    expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Close Other Tabs (3)')
   })
 
   it("a held member's rows offer the move out of its group in Title Case", () => {

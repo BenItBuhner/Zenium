@@ -842,6 +842,10 @@ describe('the group card’s ⋯ sheet and the saved card’s hold sheet: Undo f
       'Close Group (2 Tabs)',
       'Delete Group'
     ])
+    // Delete Group, the one danger row, stands last after the one hairline (the cleanup spec §4).
+    const seps = document.querySelectorAll('.zen-sheet .zen-sheet-sep')
+    expect(seps).toHaveLength(1)
+    expect(seps[0]!.nextElementSibling?.textContent?.trim()).toBe('Delete Group')
     await pick('Close Group (2 Tabs)')
     // No prompt (§9.23: the ask is Delete's alone); the group stays, saved with the pages.
     expect(dialogTitle()).toBeUndefined()

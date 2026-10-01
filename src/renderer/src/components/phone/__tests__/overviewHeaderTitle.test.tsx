@@ -204,13 +204,7 @@ describe('the title control (§1)', () => {
     expect(turned).toMatch(/transform: rotate\(180deg\);/)
     expect(css).not.toMatch(/prefers-reduced-motion[^}]*\.zen-overview-title-chevron/)
     render(
-      <OverviewTitle
-        view="tabs"
-        space={work}
-        count={3}
-        spacesOpen
-        onOpenSpaces={() => undefined}
-      />
+      <OverviewTitle view="tabs" space={work} count={3} spacesOpen onOpenSpaces={() => undefined} />
     )
     expect(title.getAttribute('aria-expanded')).toBe('true')
     expect(title.querySelector(CHEVRON)).toBe(chevron)

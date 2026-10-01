@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useEffect, useId, useRef } from 'react'
+import { Fragment, useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Check } from 'lucide-react'
 import { useBackSurface } from '@renderer/lib/back'
@@ -9,7 +9,7 @@ export interface SheetAction {
   id: string
   label: string
   icon?: ReactNode
-  /** Rendered in the danger ink: closes tabs. */
+  /** Rendered in the danger ink, last, after the hairline (§4): closes tabs, deletes the group. */
   destructive?: boolean
   disabled?: boolean
   /** An aside at the row's end (a count), before the check of a current row. */
@@ -35,10 +35,13 @@ interface Props {
 /**
  * A short sheet of actions for something in the tab overview (a held card, a group's header):
  * the phone menu's `BottomSheet` – draggable, on the shared sheet surface under the tinted
- * scrim – with a title row and 48px rows. A picked row slides the sheet away first and acts
- * once it is gone; the system back gesture pulls it down with the finger; Escape dismisses it.
- * Drawn on the body: the overview is a layer under the page bar, and a sheet inside it would be
- * cut off by the bar.
+ * scrim – with a title row and 48px rows. The destructive rows stand last, in the danger ink,
+ * after a hairline (tab overview cleanup spec §4: the one form for every sheet here, the ⋯
+ * sheet's hairline before Close All Tabs; a group's Delete Group and a saved group's after one
+ * too) – the phone menu's `.zen-sheet-sep`, drawn before the first destructive row when rows
+ * stand above it. A picked row slides the sheet away first and acts once it is gone; the system
+ * back gesture pulls it down with the finger; Escape dismisses it. Drawn on the body: the
+ * overview is a layer under the page bar, and a sheet inside it would be cut off by the bar.
  */
 export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -78,31 +81,38 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
     >
       {header}
       <ul className="flex flex-col pb-2">
-        {actions.map((action) => (
-          <li key={action.id}>
-            <button
-              type="button"
-              disabled={!!action.disabled}
-              className="zen-sheet-item"
-              style={action.destructive ? { color: 'var(--zen-danger)' } : undefined}
-              aria-current={action.current || undefined}
-              data-testid={action.testId}
-              onClick={() => sheet.current?.dismiss(() => action.onPick())}
-            >
-              {action.icon && (
-                <span className="flex w-5 shrink-0 items-center justify-center">{action.icon}</span>
-              )}
-              <span className="min-w-0 flex-1 truncate">{action.label}</span>
-              {action.trailing && (
-                <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
-                  {action.trailing}
-                </span>
-              )}
-              {action.current && (
-                <Check className="h-5 w-5 shrink-0" strokeWidth={2} aria-hidden data-check="" />
-              )}
-            </button>
-          </li>
+        {actions.map((action, index) => (
+          <Fragment key={action.id}>
+            {index > 0 && action.destructive && !actions[index - 1]!.destructive && (
+              <li aria-hidden className="zen-sheet-sep" data-testid="overview-sheet-sep" />
+            )}
+            <li>
+              <button
+                type="button"
+                disabled={!!action.disabled}
+                className="zen-sheet-item"
+                style={action.destructive ? { color: 'var(--zen-danger)' } : undefined}
+                aria-current={action.current || undefined}
+                data-testid={action.testId}
+                onClick={() => sheet.current?.dismiss(() => action.onPick())}
+              >
+                {action.icon && (
+                  <span className="flex w-5 shrink-0 items-center justify-center">
+                    {action.icon}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate">{action.label}</span>
+                {action.trailing && (
+                  <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
+                    {action.trailing}
+                  </span>
+                )}
+                {action.current && (
+                  <Check className="h-5 w-5 shrink-0" strokeWidth={2} aria-hidden data-check="" />
+                )}
+              </button>
+            </li>
+          </Fragment>
         ))}
       </ul>
     </BottomSheet>,
