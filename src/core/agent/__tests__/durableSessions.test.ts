@@ -531,6 +531,29 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     expect(dialogs.list().map((d) => d.tabId)).toEqual([mine.id])
   })
 
+  it("an away agent's tab in front of the user keeps the user's dialogs and Leave site?", async () => {
+    const fake = browser()
+    fake.service.dialogTtlMs = 50
+    const dialogs = new PageDialogService(fake.browser)
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    expect(fake.service.takesDialog(tab)).toBe(true)
+    fake.service.close(a.id)
+    expect(fake.service.heldBy(fake.model.tabs[tab].folderId!)).toBeDefined()
+    expect(fake.service.takesDialog(tab)).toBe(true)
+
+    fake.user.activate(tab)
+    expect(fake.service.isShown(fake.model.tabs[tab], fake.win as unknown as ZenWindow)).toBe(true)
+    expect(fake.service.takesDialog(tab)).toBe(false)
+    void dialogs.ask(tab, confirm('Discard the draft?'))
+    expect(dialogs.list().map((d) => d.tabId)).toEqual([tab])
+    expect(fake.service.pendingDialog(tab)).toBeNull()
+    const host = fake.win as unknown as { host: { isFocused(): boolean; focus(): void } }
+    host.host = { isFocused: () => true, focus: () => undefined }
+    expect(await settle(dialogs.confirmLeave(tab, false), 50)).toBe('HUNG')
+    expect(dialogs.list().filter((d) => d.tabId === tab)).toHaveLength(2)
+  })
+
   it('"Leave site?" on an agent\'s tab neither activates it nor focuses the window', async () => {
     const fake = browser()
     const host = fake.win as unknown as { host: { isFocused(): boolean; focus(): void } }

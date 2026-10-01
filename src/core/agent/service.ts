@@ -641,11 +641,16 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   /**
-   * Whether a page dialog of the tab is its agent's to answer (`PageDialogService.ask`): the tab
-   * sits in a live agent's group or one held for an agent.
+   * Whether a page dialog of the tab is its agent's to answer (`PageDialogService.ask`, and its
+   * "Leave site?"): the tab sits in a live agent's group, or in one held for an away agent while
+   * the user cannot see it. A held tab in front of the user is the user's to answer: nobody would
+   * hear of the dialog, and the page would sit blocked until it timed out.
    */
   takesDialog(tabId: string): boolean {
-    return this.isDriving(tabId)
+    if (this.driver(tabId) !== undefined) return true
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab?.folderId || !this.heldBy(tab.folderId)) return false
+    return !this.isShown(tab, this.browser.tabs.windowFor(tabId))
   }
 
   session(id: string): AgentSession | undefined {
