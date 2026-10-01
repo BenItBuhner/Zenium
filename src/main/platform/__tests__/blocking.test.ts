@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock, type MockInstance } from 'vitest'
 import {
   existsSync,
   mkdirSync,
@@ -1287,6 +1287,144 @@ describe('GhosteryTextMatcher', () => {
       expect(next.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
       expect(quiet).toHaveBeenCalledTimes(1)
       quiet.mockRestore()
+    })
+  })
+
+  describe("the loader's checks on the cache (W8-P1b)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    /**
+     * A cache written by one start (the excerpt alone), and the next start's matcher over the
+     * same source – the store holds the text, so a miss recompiles through `compile`, whose
+     * calls count the recompiles; `fromCache` says whether the cache was adopted.
+     */
+    function cached(): {
+      cacheDir: string
+      paths: { bin: string; meta: string; documents: string }
+      next(): { matcher: InstanceType<typeof GhosteryTextMatcher>; compile: Mock }
+      warn: MockInstance<typeof console.warn>
+    } {
+      const cacheDir = join(tempDir(), 'cache')
+      const s = source()
+      s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+      new GhosteryTextMatcher(s, cacheDir, 'v1', 0).rebuild()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      return {
+        cacheDir,
+        paths: {
+          bin: join(cacheDir, 'engine.bin'),
+          meta: join(cacheDir, 'engine.json'),
+          documents: join(cacheDir, 'documents.txt')
+        },
+        next: () => {
+          const compile = vi.fn((scopes: GhosteryCompileScope[]) =>
+            Promise.resolve(GHOSTERY_COMPILE_TASK.run({ scopes }))
+          )
+          const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0, compile)
+          matcher.rebuild()
+          return { matcher, compile }
+        },
+        warn
+      }
+    }
+
+    it('adopts an intact cache without a compile, and what it adopts matches', () => {
+      const c = cached()
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(true)
+      expect(compile).not.toHaveBeenCalled()
+      expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+      expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+        action: 'block'
+      })
+      expect(c.warn).not.toHaveBeenCalled()
+    })
+
+    it('recompiles on a `documents.txt` cut short – a prefix that parses as a smaller set – and on an empty one, before anything is deserialised', async () => {
+      const { FiltersEngine } = await import('@ghostery/adblocker')
+      const c = cached()
+      const whole = readFileSync(c.paths.documents, 'utf8')
+      expect(whole).toBe('||phish.example^$all\n@@||trusted.example^$document')
+      // The first line alone: a valid set, missing the exception. Never adopted.
+      writeFileSync(c.paths.documents, whole.split('\n')[0]!)
+      const deserialize = vi.spyOn(FiltersEngine, 'deserialize')
+      const short = c.next()
+      expect(short.matcher.fromCache).toBe(false)
+      expect(short.compile).toHaveBeenCalledTimes(1)
+      expect(deserialize).not.toHaveBeenCalled()
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not read')
+      expect(c.warn.mock.calls[0]![2]).toBe('document filters do not match the metadata')
+      // Zero bytes: the empty set parses too. Never adopted; the warning for the path is spent.
+      writeFileSync(c.paths.documents, '')
+      const empty = c.next()
+      expect(empty.matcher.fromCache).toBe(false)
+      expect(empty.compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      // The recompile's write puts the cache right again; the start after adopts it.
+      await new Promise((r) => setTimeout(r, 20))
+      await new Promise((r) => setImmediate(r))
+      expect(readFileSync(c.paths.documents, 'utf8')).toBe(whole)
+      const after = c.next()
+      expect(after.matcher.fromCache).toBe(true)
+      expect(after.compile).not.toHaveBeenCalled()
+    })
+
+    it('recompiles when `engine.bin` is not the file the metadata names: another length, or the same length with other bytes', () => {
+      const c = cached()
+      const bytes = readFileSync(c.paths.bin)
+      writeFileSync(c.paths.bin, bytes.subarray(0, bytes.length - 1))
+      expect(c.next().matcher.fromCache).toBe(false)
+      const flipped = Buffer.from(bytes)
+      flipped[Math.floor(flipped.length / 2)] ^= 0xff
+      writeFileSync(c.paths.bin, flipped)
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(false)
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![2]).toBe('engine bytes do not match the metadata')
+    })
+
+    it('recompiles on metadata without the digests, metadata of an older format (silently), and metadata that is not JSON', () => {
+      const c = cached()
+      const meta = JSON.parse(readFileSync(c.paths.meta, 'utf8')) as Record<string, unknown>
+      // The current format claimed, the digests missing: damage.
+      writeFileSync(
+        c.paths.meta,
+        JSON.stringify({ format: meta['format'], fingerprint: meta['fingerprint'], version: 'v1' })
+      )
+      expect(c.next().matcher.fromCache).toBe(false)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![2]).toBe('engine bytes do not match the metadata')
+      // A digest of the wrong shape counts as missing.
+      writeFileSync(
+        c.paths.meta,
+        JSON.stringify({ ...meta, engine: { bytes: String(meta['engine']), sha1: 'x' } })
+      )
+      expect(c.next().matcher.fromCache).toBe(false)
+      // What a build before this format wrote: a miss, not damage – recompiled once, no warning.
+      writeFileSync(
+        c.paths.meta,
+        JSON.stringify({ fingerprint: meta['fingerprint'], version: meta['version'] })
+      )
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(false)
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      // Not JSON (a torn metadata file): damage, on another cache path, so logged once there.
+      const otherDir = join(tempDir(), 'cache')
+      const s = source()
+      s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+      new GhosteryTextMatcher(s, otherDir, 'v1', 0).rebuild()
+      writeFileSync(join(otherDir, 'engine.json'), '{"format":2,"fingerp')
+      const torn = new GhosteryTextMatcher(s, otherDir, 'v1', 0)
+      torn.rebuild()
+      expect(torn.fromCache).toBe(false)
+      expect(c.warn).toHaveBeenCalledTimes(2)
+      expect(c.warn.mock.calls[1]![2]).toBe('metadata unreadable')
+      expect(torn.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
     })
   })
 
