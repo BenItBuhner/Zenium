@@ -13,6 +13,7 @@ import {
   markDismissed,
   markPrompted,
   MIN_VISIT_GAP_MS,
+  parseShareTarget,
   parseWebAppManifest,
   pickIcon,
   pinnedAppFor,
@@ -175,6 +176,141 @@ describe('parseWebAppManifest', () => {
     expect(parsed({ name: 'A', theme_color: 'url(x)' }).themeColor).toBe('url(x)')
     expect(parsed({ name: 'A', theme_color: 'red; background: url(x)' }).themeColor).toBeNull()
     expect(parsed({ name: 'A', theme_color: 42 }).themeColor).toBeNull()
+  })
+})
+
+describe('share_target (MW-63)', () => {
+  const SCOPE = 'https://app.example.com/tools/'
+
+  it('is null when the manifest declares none', () => {
+    expect(parsed({ name: 'App' }).shareTarget).toBeNull()
+    expect(parseShareTarget(undefined, MANIFEST, SCOPE)).toBeNull()
+    expect(parseShareTarget('share', MANIFEST, SCOPE)).toBeNull()
+  })
+
+  it('resolves a GET target against the manifest with the W3C defaults', () => {
+    const info = parsed({
+      name: 'App',
+      share_target: { action: 'share', params: { title: 'subject', text: 'body', url: 'link' } }
+    })
+    expect(info.shareTarget).toEqual({
+      action: 'https://app.example.com/tools/share',
+      method: 'GET',
+      enctype: 'application/x-www-form-urlencoded',
+      params: { title: 'subject', text: 'body', url: 'link', files: [] }
+    })
+  })
+
+  it('keeps a POST with its enctype and the file fields a multipart form takes', () => {
+    const target = parseShareTarget(
+      {
+        action: '/tools/receive',
+        method: 'post',
+        enctype: 'Multipart/Form-Data',
+        params: {
+          text: 'note',
+          files: [
+            { name: 'pictures', accept: ['image/*', '.PNG'] },
+            { name: 'doc', accept: '.txt' }
+          ]
+        }
+      },
+      MANIFEST,
+      SCOPE
+    )
+    expect(target).toEqual({
+      action: 'https://app.example.com/tools/receive',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: {
+        title: null,
+        text: 'note',
+        url: null,
+        files: [
+          { name: 'pictures', accept: ['image/*', '.png'] },
+          { name: 'doc', accept: ['.txt'] }
+        ]
+      }
+    })
+    // A urlencoded POST is fine too.
+    expect(
+      parseShareTarget({ action: 'receive', method: 'POST', params: { url: 'u' } }, MANIFEST, SCOPE)
+    ).toMatchObject({ method: 'POST', enctype: 'application/x-www-form-urlencoded' })
+  })
+
+  it('drops a target whose action lies outside the scope or on another origin', () => {
+    expect(
+      parseShareTarget({ action: '/other/share', params: { url: 'u' } }, MANIFEST, SCOPE)
+    ).toBeNull()
+    expect(
+      parseShareTarget(
+        { action: 'https://evil.example/share', params: { url: 'u' } },
+        MANIFEST,
+        SCOPE
+      )
+    ).toBeNull()
+    expect(parseShareTarget({ params: { url: 'u' } }, MANIFEST, SCOPE)).toBeNull()
+  })
+
+  it('drops a malformed target rather than keeping one the app would not recognise', () => {
+    // A method other than GET or POST.
+    expect(
+      parseShareTarget({ action: 'share', method: 'PUT', params: { url: 'u' } }, MANIFEST, SCOPE)
+    ).toBeNull()
+    // multipart needs a POST; an unknown enctype is out.
+    expect(
+      parseShareTarget(
+        { action: 'share', enctype: 'multipart/form-data', params: { url: 'u' } },
+        MANIFEST,
+        SCOPE
+      )
+    ).toBeNull()
+    expect(
+      parseShareTarget(
+        { action: 'share', method: 'POST', enctype: 'text/plain', params: { url: 'u' } },
+        MANIFEST,
+        SCOPE
+      )
+    ).toBeNull()
+    // `params` is required; files need a multipart POST; a file entry needs a name and accepts.
+    expect(parseShareTarget({ action: 'share' }, MANIFEST, SCOPE)).toBeNull()
+    expect(
+      parseShareTarget(
+        { action: 'share', params: { files: [{ name: 'f', accept: ['image/*'] }] } },
+        MANIFEST,
+        SCOPE
+      )
+    ).toBeNull()
+    expect(
+      parseShareTarget(
+        {
+          action: 'share',
+          method: 'POST',
+          enctype: 'multipart/form-data',
+          params: { files: [{ accept: ['image/*'] }] }
+        },
+        MANIFEST,
+        SCOPE
+      )
+    ).toBeNull()
+    // Field names that are not strings are simply not taken.
+    expect(
+      parseShareTarget({ action: 'share', params: { url: 7, text: 'body' } }, MANIFEST, SCOPE)
+        ?.params
+    ).toEqual({ title: null, text: 'body', url: null, files: [] })
+  })
+
+  it('drops a target whose params is an array or null rather than keeping one with no fields', () => {
+    // An array is an object to `typeof` but no dictionary of field names; null is no params.
+    for (const params of [['title', 'text', 'url'], [], null]) {
+      expect(parseShareTarget({ action: 'share', params }, MANIFEST, SCOPE)).toBeNull()
+    }
+    // The app installs, with no target.
+    const info = parsed({
+      name: 'App',
+      share_target: { action: 'share', params: ['url'] }
+    })
+    expect(info.shareTarget).toBeNull()
   })
 })
 
