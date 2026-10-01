@@ -158,8 +158,9 @@ none — no new user-facing strings. The one new sentence is the agent-facing no
 ## REVIEW FOLDED
 
 Review: store `internal/design-reviews/pr-755-first-line-review.md` (FAIL at `197462f82`: B1, SF1–4, N1–4).
-Folded in `868244e80`; `main` merged after it as `a04907dc2` (merge commit, no rebase; merge-base now
-`1be1aa877`). `git diff --stat 1be1aa877 HEAD -- src/main src/shared/types.ts src/renderer` is empty.
+Folded in `868244e80`; `main` merged after it as `a04907dc2`, and again as `925161d9c` (merge commits, no
+rebase; merge-base now `f83345782`). `git diff --stat f83345782 HEAD -- src/main src/shared/types.ts src/renderer`
+is empty.
 
 - **B1** – the chooser's `files` answer is inline bytes only. `AgentPrompts.UploadFile` is one data class
   (`AgentPrompts.kt:36`), `UploadFile.Path` and the `Uri.fromFile` branch are gone (`TabWebView.kt:1278-1308`
@@ -202,8 +203,8 @@ Folded in `868244e80`; `main` merged after it as `a04907dc2` (merge commit, no r
 - **N4** – `AndroidTabView.onFileChooser` answers `cancel` when `onFileChooser` rejects (`views.ts:495`);
   a core without the handler still answers `user`. Pin: `views.test.ts` fc_3 case.
 
-Rule-(b) values against the new merge-base `1be1aa877`
-(`git diff 1be1aa877 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum | cut -c1-12`; the report excluded):
+Rule-(b) values against the new merge-base `f83345782` (identical against `1be1aa877`)
+(`git diff f83345782 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum | cut -c1-12`; the report excluded):
 
 | Value          | File                                                               |
 | -------------- | ------------------------------------------------------------------ |
@@ -229,8 +230,9 @@ PR files); `npx vitest run src/android/__tests__/agentPrompts.test.ts src/androi
 src/android/__tests__/platformAgentPrompts.test.ts` 37 passed; `cd android && ./gradlew :app:testDebugUnitTest
 -PskipWeb --no-daemon` BUILD SUCCESSFUL, `AgentPromptsTest` tests=14 failures=0 (SDK ad hoc under `/tmp/android-sdk`,
 no `local.properties`); full `npm test` 1153 files / 16259 tests passed, full `testDebugUnitTest` 0 failures.
-CI: run [36847972983](https://github.com/BenItBuhner/Zenium/actions/runs/36847972983) on `6aa54bddf` (this section's
-first commit, code as in `a04907dc2`, whose own run 36847606927 was superseded by that push) – all six jobs pass. The
-commit correcting this paragraph touches only this report.
+CI: run [36851638723](https://github.com/BenItBuhner/Zenium/actions/runs/36851638723) on `925161d9c` (the second
+`main` merge, code as folded) – all six jobs pass; so did run 36847972983 on `6aa54bddf` (first report commit). Runs
+36847606927 and 36849298590 were superseded by the pushes that followed them. The commit correcting this paragraph
+touches only this report.
 
 service.ts moved: **no** (old `2d72fb071f80` → new `2d72fb071f80`).
