@@ -8637,8 +8637,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `extra.proxied`) and the runtime's own console line on the page's refusal
      * (`extra.policyRefusals`, out of the attempts' kept `[Zenium]` lines). The grade is the
      * marker's; the course is the note's.
+     *
+     * The row's second reading, after round 26's lane run read the core F on 156 against the
+     * BEFORE's P with every host answer in (§3.2): the init's gate. `startFeatures` awaits the
+     * i18n promise, which awaits the own-file fetch of `public/Assets/locales/index.json` (the
+     * relay's `extFetch` → `extFetchDone`), then `loadSettings`' ~20 KB `storage.local.get` of
+     * the defaults, then `getAuthenticatedUserId`'s `storage.local.get("rovalra_authed_user_id")`
+     * – and, with no signed-in id cached, a `DOMContentLoaded` listener registered with no
+     * `readyState` check (its sibling `waitForDom()` has one): three bridge round trips raced
+     * against the page's parse, which Chrome wins in a millisecond or two and the phone's bridge
+     * can lose under roblox's load, silently (no line of RoValra's prints; nothing throws). The
+     * record places a repeat without inference: the bridge trace's four relay kinds for the row
+     * (`extra.relayTrace`: `extFetch`/`extFetchDone` and `extProxyFetch`/`extProxyDone` with
+     * their uptime stamps – the file's round trip in host time), the relay's pending count beside
+     * the engines' unanswered posts (the world's `stats.relay` / `stats.unanswered`: both at
+     * zero and the wait is the extension's own), and the race's two clocks off the world's report
+     * (the content script's group `at`, the document's `domContentLoaded` and `readyState` at the
+     * read, on one time base) – `extra.race`, the note's last clause, not graded.
      */
     private fun rovalra(row: Row, entry: JSONObject): Grade {
+        val evidence = StepEvidence(row)
         val marker = liveMarker("RoValra", "https://www.roblox.com/games/920587237", injectedAny("rovalra"))(row, entry)
         val answers = proxied("rovalra.com").filter { it.startsWith("${row.id} ") }
         val refusals = ArrayList<String>()
@@ -8656,7 +8674,45 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             refusals.isNotEmpty() -> "the page's policy refused the content script's cross-origin read and no answer of the host's is on record: ${refusals.last().take(160)}"
             else -> "no cross-origin read of rovalra.com left the page's way (none refused, none through the host)"
         }
-        return Grade(marker.verdict, "${marker.note}; $course", extra)
+        // The bridge trace's relay lines for the row: the own-file reads and the cross-origin
+        // forwards, asked and answered, with the file's round trip in host time (uptime ms).
+        val relayLines = evidence.trace().filter { RELAY_TRACE_KINDS.containsMatchIn(it) }
+        val asked = relayLines.count { Regex(" extFetch( |$)").containsMatchIn(it) }
+        val answered = relayLines.count { " extFetchDone " in it }
+        val forwarded = relayLines.count { Regex(" extProxyFetch( |$)").containsMatchIn(it) }
+        val forwardsDone = relayLines.count { " extProxyDone " in it }
+        val fileAsk = relayLines.firstOrNull { Regex(" extFetch( |$)").containsMatchIn(it) }?.substringBefore(' ')?.toLongOrNull()
+        val fileDone = relayLines.firstOrNull { " extFetchDone " in it }?.substringBefore(' ')?.toLongOrNull()
+        val fileRoundTrip = if (fileAsk != null && fileDone != null) fileDone - fileAsk else null
+        extra.put(
+            "relayTrace",
+            JSONObject().put("extFetch", asked).put("extFetchDone", answered).put("extProxyFetch", forwarded).put("extProxyDone", forwardsDone)
+                .put("fileRoundTripMs", fileRoundTrip ?: JSONObject.NULL).put("lines", JSONArray(relayLines.takeLast(16)))
+        )
+        // The race's clocks off the last attempt's world report: the content script's first group
+        // against the document's DOMContentLoaded, both ms since the navigation; the relay's and
+        // the engines' outstanding counts at the read.
+        val world = attempts?.let { it.optJSONObject(it.length() - 1) }?.optJSONObject("world")
+        val stats = world?.optJSONObject("stats")
+        val groupAt = stats?.optJSONArray("groups")?.optJSONObject(0)?.optDouble("at")?.takeIf { !it.isNaN() }
+        val dcl = world?.opt("domContentLoaded") as? Number
+        val readyState = world?.optString("readyState", "")?.ifEmpty { null }
+        val relayPending = stats?.optJSONObject("relay")?.optInt("pending", 0)
+        val race = JSONObject()
+            .put("groupAtMs", groupAt ?: JSONObject.NULL).put("domContentLoadedMs", dcl ?: JSONObject.NULL).put("readyState", readyState ?: JSONObject.NULL)
+            .put("worldNowMs", world?.opt("now") ?: JSONObject.NULL).put("relayPending", relayPending ?: JSONObject.NULL)
+            .put("unanswered", if (world != null) unansweredLine(world) else JSONObject.NULL)
+        extra.put("race", race)
+        val raceNote = buildString {
+            append("the init's gate: own-file reads $asked asked / $answered answered")
+            if (fileRoundTrip != null) append(" (the first in $fileRoundTrip ms of host time)")
+            append(", cross-origin forwards $forwarded / $forwardsDone")
+            if (relayPending != null) append(", the relay's pending $relayPending")
+            if (groupAt != null && dcl != null) append("; the content script's group at ${groupAt.toLong()} ms, the document's DOMContentLoaded at ${dcl.toLong()} ms (${dcl.toLong() - groupAt.toLong()} ms later)")
+            else if (groupAt != null) append("; the content script's group at ${groupAt.toLong()} ms, DOMContentLoaded ${if (readyState == "loading") "not yet fired" else "unread"} at the read")
+            if (readyState != null) append(", readyState $readyState")
+        }
+        return Grade(marker.verdict, "${marker.note}; $course; $raceNote", extra)
     }
 
     /**
@@ -8664,9 +8720,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `content.js` 13.0.47: `Nd = () => window.innerWidth <= 767` picks the `-mobile` elements
      * on the phone's viewport). What a viewer does: SELECTS text, and the extension's
      * `webhighlights-marker-mobile` – the selection toolbox, listening to `selectionchange` –
-     * shows its `.marker-bar` (a `role=toolbar` strip of `.color-btn` colours and a `.note-btn`)
-     * 100 ms later when the selection is non-empty and its `showMarkerPopup` setting (default
-     * true) stands; a colour's tap dispatches `color-selected` → `saveMark(color)` →
+     * shows its `.marker-bar` (a `role=toolbar` row with a `.note-btn` and a nested
+     * `webhighlights-mobile-color-strip` element whose own shadow root holds the `.color-btn`
+     * colours – two shadow roots down from the document, which round 26's lane run found with
+     * the bar shown and `colours: 0` under a one-level query) 100 ms later when the selection is
+     * non-empty and its `showMarkerPopup` setting (default true) stands; a colour's tap (the
+     * strip's `color-selected` event, composed) reaches `saveMark(color)` →
      * `createMark`, which persists the mark (local, no account) and paints the selection as
      * `<web-highlight markid="…">` elements (`Fh.WEB_HIGHLIGHT`, `rc.markIdAttrKey`). The action
      * click sends `toggleSidebar`, which the mobile sidebar (`webhighlights-sidebar-mobile`)
@@ -13005,12 +13064,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /**
      * The world's host-bound posts still without their reply, as one line off a `WORLD_REPORT`
      * (`stats.unanswered`, by endpoint: `{id, what, ageMs}` oldest first – the engine's
-     * `unanswered()`): a wait that ran out with posts unanswered is the runtime's silence, one
-     * with none is the page's own await (R22-11). Empty when the report carries no stats
-     * (a world without the debug stats, or a page the extension never reached).
+     * `unanswered()`), and beside them the fetch relay's requests still waiting for the host
+     * (`stats.relay.pending`: an extension's own file asked over the bridge, a refused
+     * cross-origin request sent as the page's – a content script's `await fetch(…)` is this
+     * count's, not the engines'): a wait that ran out with either unanswered is the runtime's
+     * silence, one with both at zero is the page's own await (R22-11; round 26 §3.2 – RoValra's
+     * init on 156 waiting on a `DOMContentLoaded` that had fired, every host answer in). Empty
+     * when the report carries no stats (a world without the debug stats, or a page the
+     * extension never reached).
      */
     private fun unansweredLine(world: JSONObject?): String {
-        val map = world?.optJSONObject("stats")?.optJSONObject("unanswered") ?: return ""
+        val stats = world?.optJSONObject("stats") ?: return ""
+        val map = stats.optJSONObject("unanswered") ?: return ""
         val posts = ArrayList<String>()
         var count = 0
         for (ep in map.keys()) {
@@ -13021,8 +13086,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 if (posts.size < 6) posts += "${post.optString("what")}#${post.optInt("id")} ${post.optLong("ageMs") / 1000}s"
             }
         }
-        return if (count == 0) "the world's host-bound posts are all answered (the wait is the page's own)"
-        else "$count host-bound post(s) of the world unanswered at the wait's end: ${posts.joinToString(", ")}${if (count > posts.size) ", …" else ""}"
+        val relayPending = stats.optJSONObject("relay")?.optInt("pending", 0) ?: 0
+        val relay = when {
+            relayPending > 0 -> "; the fetch relay has $relayPending request(s) still waiting for the host"
+            stats.has("relay") -> "; the fetch relay's requests all answered"
+            else -> ""
+        }
+        return if (count == 0 && relayPending == 0) "the world's host-bound posts are all answered$relay (the wait is the page's own)"
+        else if (count == 0) "the world's engine posts are all answered$relay"
+        else "$count host-bound post(s) of the world unanswered at the wait's end: ${posts.joinToString(", ")}${if (count > posts.size) ", …" else ""}$relay"
     }
 
     private fun decisions(): List<String> {
@@ -14773,9 +14845,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var c=typeof chrome==='object'&&chrome&&chrome.runtime?chrome.runtime:null;" +
                 "return JSON.stringify({url:location.href,readyState:document.readyState,title:document.title,els:document.body?document.body.querySelectorAll('*').length:0," +
                 "text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):'',runtimeId:c?String(c.id):null,getURL:c&&typeof c.getURL==='function'?c.getURL('x.html'):null})})()"
-        /** What one extension's world sees on a page: the bootstrap's statistics and its `chrome`. */
+        /**
+         * What one extension's world sees on a page: the bootstrap's statistics and its `chrome`,
+         * and the document's two clocks on the bootstrap's own time base (`performance.now()`
+         * ms since the navigation, as `stats.startedAt` and the groups' `at` are): `readyState`
+         * and `now` at the read, and `domContentLoaded` – the navigation entry's
+         * `domContentLoadedEventEnd`, null until the event has fired. A content script that waits
+         * for `DOMContentLoaded` after a bridge round trip is placed by the two against the
+         * group's `at` and the trace's answer times (round 26 §3.2, RoValra on 156).
+         */
         private const val WORLD_REPORT =
-            "JSON.stringify({stats: window.__zenExtStats || null, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null})"
+            "JSON.stringify({stats: window.__zenExtStats || null, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null," +
+                "readyState: document.readyState, now: Math.round(performance.now()), domContentLoaded: (function(){try{var n=performance.getEntriesByType('navigation')[0];return n && n.domContentLoadedEventEnd ? Math.round(n.domContentLoadedEventEnd) : null}catch(e){return null}})()})"
         /** Video Speed Controller's main world: what inject.js left on window.VSC and the video's state. */
         private const val VSC_MAIN_WORLD_REPORT =
             "(function(){var v=document.getElementById('clip');var r=v?v.getBoundingClientRect():null;return JSON.stringify({vsc:window.VSC?Object.keys(window.VSC):null,stats:window.__zenExtStats||null,chrome:typeof chrome," +
@@ -15305,6 +15386,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private val SELECTION_MENU_WORDS = Regex("Copy|Select all|Share|Web search|Paste|Cut|Translate", RegexOption.IGNORE_CASE)
         /** A live page's "not found" (Amazon's dog page, a store's 404): the site served no product, so a live row's read is `n/m`, not a grade of the extension. */
         private val NOT_FOUND_WORDS = Regex("couldn.t find that page|page not found|looking for something\\?|this page isn.t available|error 404|404 not found", RegexOption.IGNORE_CASE)
+        /**
+         * The bridge trace's four relay message kinds (`Extensions.trace`): a content script's
+         * own-file read asked and answered, a refused cross-origin request forwarded and answered
+         * – the lines [rovalra]'s record keeps so a wait on the init's gate is placed in host time.
+         */
+        private val RELAY_TRACE_KINDS = Regex(" (extFetch|extFetchDone|extProxyFetch|extProxyDone)( |$)")
         /** DeepL: the Spanish phrase selected by script with the events a mouse's selection ends in (`mouseup`, `selectionchange`). */
         private const val DEEPL_SELECT =
             "(function(){var el=document.getElementById('phrase')||document.querySelector('p');if(!el)return 'no phrase';var r=document.createRange();r.selectNodeContents(el);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);var b=r.getBoundingClientRect();" +
@@ -16650,19 +16737,32 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({ok:true,text:sel.toString().slice(0,60),length:sel.toString().length,top:Math.round(r.top),height:Math.round(r.height)})})()"
 
         /**
+         * `deep(root, selector)`: the elements matching `selector` under `root` and under every
+         * shadow root of the elements below it (the Lit components nest their shadow roots), in
+         * document order of the hosts. Declared inline by the Web Highlights probes.
+         */
+        private const val WEB_HIGHLIGHTS_DEEP =
+            "function deep(root,sel){var out=[];(function walk(r,depth){if(!r||depth>6)return;out=out.concat(Array.prototype.slice.call(r.querySelectorAll(sel)));var all=r.querySelectorAll('*');for(var i=0;i<all.length&&i<2000;i++){if(all[i].shadowRoot)walk(all[i].shadowRoot,depth+1)}})(root,0);return out}"
+
+        /**
          * Web Highlights' selection toolbox shown: the marker host's shadow `.marker-bar` (its
          * `role=toolbar` strip) with a box, its `.color-btn` colours counted (the custom
          * `color-picker-btn` left out) and the first drawn colour's centre returned for the tap
          * (`button: {x, y, w, h}` in CSS px, [screenPoint]'s shape), the `.note-btn` read beside
-         * them and the live selection's text.
+         * them and the live selection's text. The colours sit ONE SHADOW ROOT DEEPER than the
+         * bar: the mobile bar's `.actions-row` holds a nested `webhighlights-mobile-color-strip`
+         * element (the bundle's `MobileColorStrip`, a Lit element with a shadow root of its own)
+         * whose `.color-row` renders the `.color-btn`s – round 26's lane run read the bar shown
+         * and `colours: 0` with the one-level query – so the buttons are looked for through every
+         * shadow root under the marker's ([WEB_HIGHLIGHTS_DEEP]); the strip host found is recorded.
          */
         private const val WEB_HIGHLIGHTS_TOOLBOX =
-            "(function(){var m=document.querySelector('webhighlights-marker-mobile')||document.querySelector('webhighlights-marker');var root=m&&m.shadowRoot;var bar=root&&(root.querySelector('.marker-bar')||root.querySelector('[role=toolbar]'));var br=bar?bar.getBoundingClientRect():null;var shown=!!bar&&br.width>0&&br.height>0;var btns=root?Array.prototype.slice.call(root.querySelectorAll('.color-btn')).filter(function(b){return !b.classList.contains('color-picker-btn')}):[];var b=null;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0){b={x:r.left+r.width/2,y:r.top+r.height/2,w:Math.round(r.width),h:Math.round(r.height)};break}}" +
-                "return JSON.stringify({pass:shown&&!!b,shown:shown,bar:br?[Math.round(br.left),Math.round(br.top),Math.round(br.width),Math.round(br.height)]:null,colours:btns.length,button:b,note:!!(root&&root.querySelector('.note-btn')),host:m?m.tagName.toLowerCase():null,selection:(window.getSelection()?window.getSelection().toString():'').trim().slice(0,40)})})()"
+            "(function(){$WEB_HIGHLIGHTS_DEEP;var m=document.querySelector('webhighlights-marker-mobile')||document.querySelector('webhighlights-marker');var root=m&&m.shadowRoot;var bar=root&&(root.querySelector('.marker-bar')||root.querySelector('[role=toolbar]'));var br=bar?bar.getBoundingClientRect():null;var shown=!!bar&&br.width>0&&br.height>0;var strip=root?deep(root,'webhighlights-mobile-color-strip'):[];var btns=root?deep(root,'.color-btn').filter(function(b){return !b.classList.contains('color-picker-btn')}):[];var b=null;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0){b={x:r.left+r.width/2,y:r.top+r.height/2,w:Math.round(r.width),h:Math.round(r.height)};break}}" +
+                "return JSON.stringify({pass:shown&&!!b,shown:shown,bar:br?[Math.round(br.left),Math.round(br.top),Math.round(br.width),Math.round(br.height)]:null,colours:btns.length,button:b,strip:strip.length?(strip[0].shadowRoot?'shadow':'light'):null,note:!!(root&&deep(root,'.note-btn').length),host:m?m.tagName.toLowerCase():null,selection:(window.getSelection()?window.getSelection().toString():'').trim().slice(0,40)})})()"
 
-        /** The fallback when the tap did not take: the toolbox's first colour clicked from a script through the shadow root. */
+        /** The fallback when the tap did not take: the toolbox's first colour clicked from a script through the (nested) shadow roots. */
         private const val WEB_HIGHLIGHTS_CLICK_COLOUR =
-            "(function(){var m=document.querySelector('webhighlights-marker-mobile')||document.querySelector('webhighlights-marker');var root=m&&m.shadowRoot;if(!root)return 'no marker';var btns=Array.prototype.slice.call(root.querySelectorAll('.color-btn')).filter(function(b){return !b.classList.contains('color-picker-btn')});if(!btns.length)return 'no colour button';btns[0].click();return 'clicked'})()"
+            "(function(){$WEB_HIGHLIGHTS_DEEP;var m=document.querySelector('webhighlights-marker-mobile')||document.querySelector('webhighlights-marker');var root=m&&m.shadowRoot;if(!root)return 'no marker';var btns=deep(root,'.color-btn').filter(function(b){return !b.classList.contains('color-picker-btn')});if(!btns.length)return 'no colour button';btns[0].click();return 'clicked'})()"
 
         /**
          * A highlight mounted: the `<web-highlight markid="…">` elements `createMark` paints over

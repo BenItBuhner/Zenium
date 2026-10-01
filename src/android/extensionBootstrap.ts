@@ -882,6 +882,15 @@ declare const __zenExtBoot: Boot
       enumerable: true,
       configurable: true
     })
+    // The fetch relay's requests still waiting for the host (an own file over the bridge, a
+    // refused cross-origin request sent as the page's), read beside `unanswered`: a content
+    // script's `await fetch(chrome.runtime.getURL(…))` that never settles shows here, not in
+    // the engines' counts – both at zero, and a core check's run-out wait is the page's own.
+    Object.defineProperty(stats, 'relay', {
+      get: (): BootStats['relay'] => (fetchRelay ? { pending: fetchRelay.pending() } : undefined),
+      enumerable: true,
+      configurable: true
+    })
     // The module graphs' webpack chunks: run in the content script's scope, imported plain, thrown.
     Object.defineProperty(stats, 'chunks', {
       get: (): ChunkStats | undefined => chunkRelay?.stats(),
