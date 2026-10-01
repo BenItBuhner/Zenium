@@ -528,6 +528,12 @@ export class AndroidExtensions implements ExtensionHost {
         updatedAt: record.updatedAt,
         pinned: record.pinned,
         toolbarPinned: record.toolbarPinned,
+        // The switches' clocks (ID-44): the flips made here carry one; a switch never flipped
+        // on this device has none.
+        ...(record.enabledAt !== undefined ? { enabledAt: record.enabledAt } : {}),
+        ...(record.toolbarPinnedAt !== undefined
+          ? { toolbarPinnedAt: record.toolbarPinnedAt }
+          : {}),
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
         allowUserScripts: record.allowUserScripts,
@@ -906,6 +912,9 @@ export class AndroidExtensions implements ExtensionHost {
         record.pendingWarnings = null
       }
       record.enabled = enabled
+      // The switch's clock for the sync merge (ID-44), taken as the flip completes – after the
+      // prompt, never at the tap – so a peer's flip that landed meanwhile does not outrank it.
+      record.enabledAt = this.now()
       if (enabled) await this.attach(record)
       else await this.detach(record.id)
       this.persist()
@@ -941,6 +950,7 @@ export class AndroidExtensions implements ExtensionHost {
     const record = this.record(id)
     if (!record || record.toolbarPinned === pinned) return
     record.toolbarPinned = pinned
+    record.toolbarPinnedAt = this.now()
     this.persist()
     this.browser.state.commitVolatile()
   }
@@ -1093,8 +1103,9 @@ export class AndroidExtensions implements ExtensionHost {
 
   /**
    * A running extension's `permissions.request` as the chrome's sheet (kind `request`), else the
-   * native chassis's sheet. The runtime's own `permissions.request` grants declared optional permissions
-   * without asking for now; this is the question a host raises when it does ask.
+   * native chassis's sheet: the runtime asks it (`RuntimeStoreLink.confirmPermissionRequest`) when
+   * the request adds a warning line over what the install prompt showed; a request adding none
+   * is granted without a question, as Chrome grants it.
    */
   confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
     const record = this.record(id)

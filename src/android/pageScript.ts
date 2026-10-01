@@ -207,6 +207,7 @@ function installGuards(
         hint?: PageHint | null
         result?: string
         text?: string
+        image?: ClipboardReadResult['image']
         error?: string
         edge?: string
         state?: NewTabPageState
@@ -267,10 +268,11 @@ function installGuards(
         onShareResult?.(data.id, data.result === 'shared' ? 'shared' : 'aborted')
       } else if (data.type === 'clipboardRead' && typeof data.id === 'string') {
         // One clipboard read's answer (MW-38): the text when the site's `clipboard-read`
-        // permission allowed it, else the denial the shim turns into Chrome's rejection.
+        // permission allowed it – with the clip's image beside it for a `read()`, the host's
+        // PNG the shim checks and decodes – else the denial the shim turns into Chrome's rejection.
         onClipboardRead?.(
           typeof data.text === 'string'
-            ? { id: data.id, text: data.text }
+            ? { id: data.id, text: data.text, image: data.image }
             : { id: data.id, error: 'denied' }
         )
       } else if (

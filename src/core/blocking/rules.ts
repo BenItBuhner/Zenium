@@ -208,6 +208,12 @@ export interface RuleSet {
    * filtered by one (`ExtensionInfo.allowPrivate` opts an extension in).
    */
   partitions?: string[]
+  /**
+   * The partitions the set does not apply to, whatever `partitions` says (declarativeNetRequest's
+   * `excludedTabIds` beside `tabIds`): the level-Off allow-all leaves the private partition to
+   * its lists while "Always use Strict in private windows" is on. Absent, nothing is excluded.
+   */
+  excludedPartitions?: string[]
 }
 
 /** What `listRuleSets` returns: a set without its payload plus counts. */
@@ -220,6 +226,7 @@ export interface RuleSetSummary {
   updatedAt?: number
   attribution?: RuleSetAttribution
   partitions?: string[]
+  excludedPartitions?: string[]
   /** Structured rules in the set. */
   ruleCount: number
   /** Network filters in `filterText` (comments and cosmetic filters excluded). */

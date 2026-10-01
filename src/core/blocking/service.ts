@@ -19,6 +19,7 @@ import {
   BLOCKING_PERMISSION,
   DEFAULT_FILTER_LISTS,
   FILTER_LIST_MAX_AGE_MS,
+  effectiveLevel,
   enabledListsFor,
   normalizeSiteException,
   siteOriginOf,
@@ -27,6 +28,7 @@ import {
   type FilterListDefinition,
   type FilterListStatus
 } from '../../shared/blocking'
+import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { PREPARE_LIST_TASK } from '../background/tasks'
 import type { Browser } from '../browser'
 import type { BundledFilterList } from '../platform'
@@ -70,6 +72,25 @@ interface ListSource {
   homepage: string
   licence: string
   custom: boolean
+}
+
+/**
+ * Which lists are on, and where: `general` the lists every window uses (the level's, after the
+ * overrides), `all` the lists any window uses – `general` plus the ones private windows alone
+ * turn on while "Always use Strict in private windows" holds (`effectiveLevel`). A list in `all`
+ * and not in `general` is enabled as a set scoped to the private partition, so only a private
+ * window's requests meet it.
+ */
+interface ListScopes {
+  general: Set<string>
+  all: Set<string>
+}
+
+/** A list's set as the scopes want it: on or off, and for which partitions (absent: every one). */
+function scopeOf(scopes: ListScopes, id: string): { enabled: boolean; partitions?: string[] } {
+  if (scopes.general.has(id)) return { enabled: true }
+  if (scopes.all.has(id)) return { enabled: true, partitions: [PRIVATE_CONTAINER_ID] }
+  return { enabled: false }
 }
 
 /**
@@ -156,6 +177,15 @@ export class BlockingService {
     return this.browser.permissions.defaultFor(BLOCKING_PERMISSION) !== 'allow'
   }
 
+  /** The lists on for every window and for any window ({@link ListScopes}), from the settings. */
+  private listScopes(): ListScopes {
+    const s = this.settings
+    return {
+      general: enabledListsFor(s, this.enabled),
+      all: enabledListsFor(s, this.enabled, true)
+    }
+  }
+
   /**
    * The host's requests are decided by this engine (`BlockingHost.requestEngine: 'core'`, the
    * desktop); a host that says nothing decides with an engine of its own (Android's Kotlin
@@ -214,8 +244,9 @@ export class BlockingService {
   }
 
   status(): BlockingStatus {
-    const s = this.settings
-    const enabled = enabledListsFor(s, this.enabled)
+    // `FilterListStatus.enabled` is the level's word for every window (the Level row's lists);
+    // a list private windows alone use is on in the engine, scoped, and reads off here.
+    const enabled = this.listScopes().general
     const lists: FilterListStatus[] = []
     let lastUpdatedAt: number | null = null
     let updating = false
@@ -345,7 +376,7 @@ export class BlockingService {
 
   /** Refresh one list, or every enabled one, from its canonical URL now. */
   async updateLists(id?: string): Promise<void> {
-    const enabled = enabledListsFor(this.settings, this.enabled)
+    const enabled = this.listScopes().all
     const targets = id
       ? this.sources().filter((s) => s.id === id)
       : this.sources().filter((s) => enabled.has(s.id))
@@ -399,19 +430,21 @@ export class BlockingService {
     return Boolean(info && summary?.hasFilterText && summary.updatedAt === info.builtAt)
   }
 
-  private listSet(source: ListSource, enabled: boolean): RuleSet {
+  private listSet(source: ListSource, scope: { enabled: boolean; partitions?: string[] }): RuleSet {
     const attribution: RuleSetAttribution = {
       name: source.name,
       url: source.homepage,
       licence: source.licence
     }
-    return {
+    const set: RuleSet = {
       id: source.id,
       source: 'filter-list',
       priority: RULE_SET_PRIORITY.filterList,
-      enabled,
+      enabled: scope.enabled,
       attribution
     }
+    if (scope.partitions) set.partitions = [...scope.partitions]
+    return set
   }
 
   /** Copy the snapshot built into the app for every default list that has no fresher copy. */
@@ -425,14 +458,14 @@ export class BlockingService {
       console.warn('[zenium] bundled filter lists unavailable:', describeError(error))
       return
     }
-    const enabled = enabledListsFor(this.settings, this.enabled)
+    const scopes = this.listScopes()
     for (const info of infos) {
       const def = DEFAULT_FILTER_LISTS.find((d) => d.id === info.id)
       if (!def || this.stopped) continue
       this.bundled.set(info.id, info)
       const current = this.engine.summary(def.id)
       if (current?.hasFilterText && (current.updatedAt ?? 0) >= info.builtAt) continue
-      const set = this.listSet(this.sourceOf(def), enabled.has(def.id))
+      const set = this.listSet(this.sourceOf(def), scopeOf(scopes, def.id))
       if (info.version) set.version = info.version
       set.updatedAt = info.builtAt
       try {
@@ -468,7 +501,7 @@ export class BlockingService {
   private async sweep(): Promise<void> {
     if (this.stopped) return
     const now = Date.now()
-    const enabled = enabledListsFor(this.settings, this.enabled)
+    const enabled = this.listScopes().all
     for (const source of this.sources()) {
       if (!enabled.has(source.id) || this.runtime.get(source.id)?.updating) continue
       const summary = this.engine.summary(source.id)
@@ -517,7 +550,7 @@ export class BlockingService {
       if (prepared.count === 0) throw new Error('the download is not a filter list')
       if (this.stopped) return false
       const header = prepared.header
-      const set = this.listSet(source, enabledListsFor(this.settings, this.enabled).has(id))
+      const set = this.listSet(source, scopeOf(this.listScopes(), id))
       set.filterText = prepared.text
       set.updatedAt = Date.now()
       if (header.version) set.version = header.version
@@ -567,13 +600,21 @@ export class BlockingService {
     const s = this.settings
     const previous = this.synced
     const exceptions = this.siteExceptions()
-    this.ensureBuiltin({
+    // The allow-all of the master switch and of level Off. At level Off with "Always use Strict
+    // in private windows" on, a private window's effective level is not Off (`effectiveLevel`):
+    // the set leaves the private partition to its lists and caps every other window as before.
+    const generalOff = effectiveLevel(s, false) === 'off'
+    const privateOff = effectiveLevel(s, true) === 'off'
+    const globalOff: RuleSet & { rules: Rule[] } = {
       id: BUILTIN_RULE_SETS.globalOff,
       source: 'builtin',
       priority: RULE_SET_PRIORITY.globalOff,
-      enabled: !this.enabled || s.level === 'off',
+      enabled: !this.enabled || generalOff,
       rules: [{ id: 1, action: { type: 'allow' }, condition: {} }]
-    })
+    }
+    if (this.enabled && generalOff && !privateOff)
+      globalOff.excludedPartitions = [PRIVATE_CONTAINER_ID]
+    this.ensureBuiltin(globalOff)
     this.ensureBuiltin({
       id: BUILTIN_RULE_SETS.siteExceptions,
       source: 'builtin',
@@ -608,7 +649,7 @@ export class BlockingService {
       }
     }
 
-    const enabled = enabledListsFor(s, this.enabled)
+    const scopes = this.listScopes()
     const wasEnabled = previous?.lists ?? new Set<string>()
     const wanted = new Set(this.sources().map((source) => source.id))
     for (const summary of this.engine.listRuleSets()) {
@@ -619,26 +660,30 @@ export class BlockingService {
         this.runtime.delete(summary.id)
         continue
       }
-      this.engine.setEnabled(summary.id, enabled.has(summary.id))
+      const scope = scopeOf(scopes, summary.id)
+      this.engine.setEnabled(summary.id, scope.enabled)
+      this.engine.setPartitions(summary.id, scope.partitions)
     }
     for (const source of this.sources()) {
       const summary = this.engine.summary(source.id)
-      const on = enabled.has(source.id)
+      const scope = scopeOf(scopes, source.id)
       if (!summary) {
         // Unknown to the engine: register it (disabled sets keep their place in the index).
-        this.engine.setRuleSet(this.listSet(source, on))
+        this.engine.setRuleSet(this.listSet(source, scope))
       }
       // Just switched on without content (a custom list added, a stricter level on a build
       // without a snapshot): fetch now instead of waiting for the next sweep.
-      const fresh = on && !wasEnabled.has(source.id) && !(summary?.hasFilterText ?? false)
+      const fresh =
+        scope.enabled && !wasEnabled.has(source.id) && !(summary?.hasFilterText ?? false)
       if (fresh && this.ready && !this.runtime.get(source.id)?.updating)
         void this.enqueue(source.id)
     }
-    this.synced = { userFilters: s.userFilters, lists: enabled }
+    this.synced = { userFilters: s.userFilters, lists: scopes.all }
   }
 
   private ensureBuiltin(set: RuleSet & { rules: Rule[] }): void {
-    const signature = `${set.enabled ? 1 : 0}:${JSON.stringify(set.rules)}`
+    const scope = JSON.stringify(set.excludedPartitions ?? null)
+    const signature = `${set.enabled ? 1 : 0}:${scope}:${JSON.stringify(set.rules)}`
     if (this.builtinSignatures.get(set.id) === signature && this.engine.has(set.id)) return
     this.builtinSignatures.set(set.id, signature)
     this.engine.setRuleSet(set)

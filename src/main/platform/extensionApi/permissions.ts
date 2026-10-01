@@ -11,11 +11,7 @@ import {
   requestablePermissions
 } from '../../../core/extensions/api/permissions'
 import { matchesAnyPattern } from '../../../core/extensions/api/matchPattern'
-import {
-  newWarnings,
-  permissionWarnings,
-  type PermissionWarningSource
-} from '../../../core/extensions/permissionMessages'
+import { grantWarnings } from '../../../core/extensions/permissionMessages'
 import {
   isWithheldPermission,
   restoreWithheldPermissions
@@ -248,26 +244,13 @@ export function reclassifyHostGrants(
 /**
  * Chrome's prompt lines for what a request adds: the install-style warnings of the manifest with
  * the grants after the request, less those the grants of today already produce (Chrome's
- * privilege-increase check). Empty when nothing new would be shown, so no prompt is due.
+ * privilege-increase check). Empty when nothing new would be shown, so no prompt is due. The
+ * core's `grantWarnings`, which the Android runtime's `permissions.request` asks the same way.
  */
 export function addedWarnings(
   ext: LoadedExtension,
   before: PermissionSet,
   after: PermissionSet
 ): string[] {
-  const mv3 = ext.manifest.manifest_version !== 2
-  // The manifest's other keys (content scripts, devtools_page, overrides) count in both sets and
-  // cancel out; MV2 lists its host patterns among `permissions`, MV3 under `host_permissions`.
-  const source = (grants: PermissionSet): PermissionWarningSource => ({
-    ...ext.manifest,
-    permissions: mv3 ? grants.permissions : [...grants.permissions, ...grants.origins],
-    host_permissions: mv3 ? grants.origins : undefined,
-    optional_permissions: undefined,
-    optional_host_permissions: undefined
-  })
-  const platform = warningPlatform()
-  return newWarnings(
-    permissionWarnings(source(before), platform),
-    permissionWarnings(source(after), platform)
-  ).flatMap((w) => [w.message, ...w.details.map((d) => `  ${d}`)])
+  return grantWarnings(ext.manifest, before, after, warningPlatform())
 }

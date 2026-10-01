@@ -8,13 +8,19 @@
  * action mode has collapsed the selection by the time the request lands, so the host wraps the
  * work so the one it cleared stands in (`withSelection`, `selectionMemory.ts`).
  *
- * Following one: an engine with text fragments (`document.fragmentDirective` present) scrolls to
- * and highlights the text itself and strips the directive from `location.hash`; one without
- * (Android's WebView leaves the feature off) shows the page's top and the directive stays in the
- * URL. The script then does the engine's part once the document has loaded: the directives'
- * first matches are found (`findTextDirective`), painted through the CSS Custom Highlight API in
- * the `::target-text` colours (or selected, where the API is missing), and the first one is
- * scrolled to the middle of the viewport, as Chrome's `TextFragmentAnchor` does.
+ * Following one: an engine with text fragments (`document.fragmentDirective` present – Chrome,
+ * Electron, and the Android WebView too: 113 on the API 34 lane follows the directive and paints
+ * its own `::target-text`, `TextFragmentDemo`) scrolls to and highlights the text itself and
+ * strips the directive from `location.hash`; an engine without it shows the page's top and the
+ * directive stays in the URL. The script then does the engine's part once the document has
+ * loaded: the directives' first matches are found (`findTextDirective`), painted through the CSS
+ * Custom Highlight API in the `::target-text` colours (or selected, where the API is missing), and
+ * the first one is scrolled to the middle of the viewport, as Chrome's `TextFragmentAnchor` does.
+ *
+ * The phone's selection toolbar asks for the link without the bridge (`TEXT_FRAGMENT_LINK_EVENT`,
+ * a DOM event the host's `evaluateJavascript` dispatches on the document; `TextFragmentLink.kt`):
+ * the listener writes the selection's directive into the event's `detail`, and the host builds
+ * the URL (PUI-40's Copy link to highlight).
  */
 
 import {
@@ -52,6 +58,14 @@ const STYLE_ID = 'zen-text-fragment-style'
 /** Content that renders late (a framework's first paint) gets one more look after this long. */
 export const LATE_CONTENT_MS = 600
 
+/**
+ * The DOM event the phone's host dispatches on the document to ask for the selection's directive
+ * (`TextFragmentLink.kt`'s script, through `evaluateJavascript`): dispatched with an object as
+ * `detail`, answered by writing `detail.directive` – the encoded `text=` directive, or null when
+ * the selection cannot be linked to. Nothing a page cannot compute of its own selection itself.
+ */
+export const TEXT_FRAGMENT_LINK_EVENT = 'zen-text-fragment-link'
+
 /** The Custom Highlight API's constructor, where the engine has it (the DOM lib in use predates it). */
 type HighlightConstructor = new (...ranges: Range[]) => object
 interface CssWithHighlights {
@@ -75,21 +89,30 @@ export function isTextFragmentPageMessage(value: unknown): value is TextFragment
   )
 }
 
-/** Answer the browser's `generate` requests, and follow the URL's own directive when the engine did not. */
+/**
+ * Answer the browser's `generate` requests (the bridge's, and the host's DOM event), and follow
+ * the URL's own directive when the engine did not.
+ */
 export function installTextFragmentScript(
   transport: TextFragmentTransport,
   win: Window = window
 ): void {
+  const generate = (): string | null => {
+    const run = (): string | null => generateForSelection(win.document)
+    try {
+      return transport.withSelection ? transport.withSelection(run) : run()
+    } catch {
+      return null
+    }
+  }
   transport.onCommand((message) => {
     if (!isTextFragmentHostMessage(message)) return
-    const run = (): string | null => generateForSelection(win.document)
-    let directive: string | null = null
-    try {
-      directive = transport.withSelection ? transport.withSelection(run) : run()
-    } catch {
-      directive = null
-    }
-    transport.send({ type: 'textFragment', id: message.id, directive })
+    transport.send({ type: 'textFragment', id: message.id, directive: generate() })
+  })
+  win.document.addEventListener(TEXT_FRAGMENT_LINK_EVENT, (e) => {
+    const detail: unknown = (e as CustomEvent<unknown>).detail
+    if (!detail || typeof detail !== 'object') return
+    ;(detail as { directive?: string | null }).directive = generate()
   })
   followTextFragment(win)
 }

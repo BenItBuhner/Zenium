@@ -2,8 +2,9 @@
   "id": "site-controls",
   "order": 40,
   "class": "SiteControlsDemo",
-  "shard": "phone-c",
+  "shard": "phone-h",
   "mirrors": "android-site-controls-demo.yml",
   "dir": "site-controls-demo",
-  "estimate": 5
+  "estimate": 5,
+  "note": "Moved from phone-c (61.5 of its 68 minutes, past the headroom line) to phone-h when that shard opened (W6-S24c-b), with pagecontrols, history-bookmarks and select-tabs: the largest drivers of phone-c that nothing ties there (fonts-languages-ui sits beside the two translate drivers, qr reads phone-c's emulated camera, perf-bar-hide keeps its frame series on the one shard, bookmarks-sort-view is named on phone-c by its workflow and its KDoc); phone-c at 44 without the four. The same image, no setup step of its own."
 }
