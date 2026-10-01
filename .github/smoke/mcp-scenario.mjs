@@ -265,6 +265,46 @@ document.getElementById('print').addEventListener('click', () => window.print())
 </script></body></html>`
 }
 
+/**
+ * The cross-site frame case: a page on 127.0.0.1 framing a chooser button served from
+ * `localhost` – another site, so Chromium runs the frame in a process of its own (an
+ * out-of-process iframe) with a DevTools target of its own. The frame fills the page's top-left
+ * corner (`OOPIF_FRAME_BOX`), so a click at its centre lands on the button; the frame posts what
+ * it was given to the page, which writes it where a snapshot reads it.
+ */
+export const OOPIF_PAGE = Object.freeze({
+  name: 'prompts-oopif',
+  title: 'Stage cross-site chooser'
+})
+export const OOPIF_FRAME = Object.freeze({ name: 'prompts-frame' })
+export const OOPIF_FRAME_BOX = Object.freeze({ width: 400, height: 200 })
+
+export function oopifPage(frameUrl) {
+  const { width, height } = OOPIF_FRAME_BOX
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${OOPIF_PAGE.title}</title>
+<style>body{margin:0}iframe{position:fixed;left:0;top:0;width:${width}px;height:${height}px;border:0}</style></head><body>
+<iframe id="frame" src="${frameUrl}"></iframe>
+<p id="oopif-out" style="margin-top:${height + 20}px">oopif: none</p>
+<script>
+addEventListener('message', (e) => { if (typeof e.data === 'string' && e.data.startsWith('oopif: ')) document.getElementById('oopif-out').textContent = e.data })
+</script></body></html>`
+}
+
+export function oopifFrame() {
+  return `<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;height:100%}button{width:100%;height:100%}</style></head><body>
+<button id="pick" type="button">Choose a file in the frame</button>
+<input id="file" type="file" hidden>
+<script>
+const say = (text) => parent.postMessage('oopif: ' + text, '*')
+document.getElementById('pick').addEventListener('click', () => document.getElementById('file').click())
+const file = document.getElementById('file')
+file.addEventListener('change', () => say(Array.from(file.files).map((f) => f.name + ':' + f.size).join(',') || 'none'))
+file.addEventListener('cancel', () => say('cancelled'))
+say('ready ' + location.origin)
+</script></body></html>`
+}
+
 /** The stage pages served on 127.0.0.1 (an ephemeral port): `{ url(page), close }`. */
 export function startStagePages() {
   const server = http.createServer((req, res) => {
@@ -275,6 +315,15 @@ export function startStagePages() {
         'cache-control': 'no-store'
       })
       res.end(promptsPage())
+      return
+    }
+    if (pathname === `/${OOPIF_PAGE.name}` || pathname === `/${OOPIF_FRAME.name}`) {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store'
+      })
+      const frameUrl = `http://localhost:${server.address().port}/${OOPIF_FRAME.name}`
+      res.end(pathname === `/${OOPIF_FRAME.name}` ? oopifFrame() : oopifPage(frameUrl))
       return
     }
     const page = Object.values(STAGE_PAGES).find((p) => pathname === `/${p.name}`)
@@ -617,7 +666,10 @@ async function waitForPrompt(call, tabId, kind, timeoutMs = 10_000) {
  *   - clicks the button whose script opens a file chooser: the chooser must arrive as a
  *     `file-chooser` prompt (browser_prompts), answered with an inline file the page then names;
  *   - clicks Print: the next result must carry the notice that nothing was printed;
- *   - clicks the drop-down: refused, pointing at browser_select_option.
+ *   - clicks the drop-down: refused, pointing at browser_select_option;
+ *   - opens the cross-site frame page (`OOPIF_PAGE`) and clicks the frame's chooser button:
+ *     the chooser of an out-of-process iframe must come to the agent too, and its answer reach
+ *     the frame's input.
  * The session then ends with its tabs closed. All hard: a chooser that never comes to the agent
  * would be the system's dialog on the screen.
  */
@@ -635,7 +687,7 @@ export async function nativePrompts(ctx, stage) {
     verdict.calls++
     return r
   }
-  const out = { direct: null, chooser: null, print: null, select: null }
+  const out = { direct: null, chooser: null, print: null, select: null, oopif: null }
   try {
     await client.initialize()
     let r = await call('zen_session', { action: 'start', name: 'Smoke native prompts check' })
@@ -679,6 +731,40 @@ export async function nativePrompts(ctx, stage) {
     r = await call('browser_click', { tabId, target: '#country' })
     out.select = r.isError && r.text.includes('browser_select_option')
     verdict.hard('drop-down not clicked open', out.select, r.text.slice(0, 400))
+
+    r = await call('browser_navigate', { tabId, url: stage.pages.url(OOPIF_PAGE) })
+    verdict.hard('open the cross-site frame page', !r.isError, r.text.slice(0, 400))
+    const ready = await call('browser_wait_for', {
+      tabId,
+      text: 'oopif: ready http://localhost',
+      timeout: 15
+    })
+    verdict.hard('cross-site frame loaded', !ready.isError, ready.text.slice(0, 400))
+    r = await call('browser_click', {
+      tabId,
+      x: OOPIF_FRAME_BOX.width / 2,
+      y: OOPIF_FRAME_BOX.height / 2
+    })
+    verdict.hard('click the frame chooser button', !r.isError, r.text.slice(0, 400))
+    const framed = await waitForPrompt(call, tabId, 'file-chooser')
+    verdict.hard(
+      'cross-site frame chooser comes to the agent',
+      Boolean(framed),
+      'no file-chooser prompt in 10 s: the frame opened the system dialog'
+    )
+    if (framed) {
+      r = await call('browser_file_upload', {
+        promptId: framed.id,
+        files: [inline('d.txt', 'framed')]
+      })
+      const seen = await call('browser_wait_for', { tabId, text: 'oopif: d.txt:6', timeout: 10 })
+      out.oopif = !r.isError && !seen.isError
+      verdict.hard(
+        'answer the cross-site frame chooser',
+        out.oopif,
+        `${r.text.slice(0, 200)} | ${seen.text.slice(0, 300)}`
+      )
+    }
 
     r = await call('zen_session', { action: 'end', closeTabs: true })
     verdict.hard('zen_session end closeTabs', !r.isError, r.text)

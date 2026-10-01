@@ -6,6 +6,8 @@ import {
   MCP_RESTART_SCENARIO,
   MCP_SCENARIO,
   MCP_SOAK,
+  OOPIF_FRAME,
+  OOPIF_PAGE,
   PORT_POOL,
   PROMPTS_PAGE,
   STAGE_PAGES,
@@ -18,6 +20,8 @@ import {
   judgePixels,
   judgeStep,
   mark,
+  oopifFrame,
+  oopifPage,
   promptsPage,
   samplePoints,
   startStagePages
@@ -201,6 +205,26 @@ describe('the stage pages the hand-off is judged with', () => {
         expect(html).toContain(`id="${id}"`)
       expect(html).toContain('hidden.click()')
       expect(html).toContain('window.print()')
+    } finally {
+      await pages.close()
+    }
+  })
+
+  it('frame the chooser from another site (localhost under 127.0.0.1)', async () => {
+    const pages = await startStagePages()
+    try {
+      const url = pages.url(OOPIF_PAGE)
+      expect(new URL(url).hostname).toBe('127.0.0.1')
+      const html = await (await fetch(url)).text()
+      const port = new URL(url).port
+      const frameUrl = `http://localhost:${port}/${OOPIF_FRAME.name}`
+      expect(html).toBe(oopifPage(frameUrl))
+      const frame = await fetch(`http://127.0.0.1:${port}/${OOPIF_FRAME.name}`)
+      expect(frame.status).toBe(200)
+      const inner = await frame.text()
+      expect(inner).toBe(oopifFrame())
+      expect(inner).toContain(`getElementById('file').click()`)
+      expect(inner).toContain("parent.postMessage('oopif: '")
     } finally {
       await pages.close()
     }
