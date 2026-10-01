@@ -1,0 +1,58 @@
+name: TEMPORARY W6-S26-f copy image type demo
+
+# TEMPORARY, branch-scoped: removed before the branch goes READY. Runs CopyImageTypeDemo on the
+# emulator through the shared wrapper on every push of this lane's branch, on the nightly's api33
+# recipe (Android 13 with the Google WebView 145 installed over the image's, as
+# android-share-demo.yml's record-api33 does), the shard the driver's manifest names.
+on:
+  push:
+    branches:
+      - cursor/android-copy-image-type-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-w6s26f-copy-image-type-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Copy image type demo (API 33)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.CopyImageTypeDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-copy-image-type-demo
+        DEMO_VIDEO=w6-s26f-copy-image-type-run.mp4
+        WEBVIEW_GOOGLE_DIR=artifacts/webview-google
+      setup-script: bash .github/scripts/android-webview-google.sh fetch artifacts/webview-google
+      setup-cache-path: artifacts/webview-google
+      setup-cache-key: webview-google-com.google.android.webview-145.0.7632.218
+      api-level: '33'
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-copy-image-type-demo
+      artifact-path: artifacts/android-copy-image-type-demo/
+
+  record-again:
+    name: Copy image type demo (API 33), second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.CopyImageTypeDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-copy-image-type-demo
+        DEMO_VIDEO=w6-s26f-copy-image-type-run.mp4
+        WEBVIEW_GOOGLE_DIR=artifacts/webview-google
+      setup-script: bash .github/scripts/android-webview-google.sh fetch artifacts/webview-google
+      setup-cache-path: artifacts/webview-google
+      setup-cache-key: webview-google-com.google.android.webview-145.0.7632.218
+      api-level: '33'
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-copy-image-type-demo-second-boot
+      artifact-path: artifacts/android-copy-image-type-demo/
