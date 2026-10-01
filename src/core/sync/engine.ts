@@ -171,7 +171,11 @@ interface Persisted {
   /**
    * The synced extensions the user DECLINED on this device (ID-44; the lead's ruling, round 4),
    * by id: the time the landing – installed by a peer's record, turned off, waiting for the
-   * user's approval – was removed here before being approved. A decline closes the request on
+   * user's approval – was removed here before being approved; this device's time at the
+   * removal, or the install time the landing's record carried when that is later (a peer whose
+   * clock runs ahead of this device's publishes an install "in the future" here, and a decline
+   * stamped at this device's time alone would stand against nothing until its clock caught up
+   * – the unchanged record re-handed every round the while). A decline closes the request on
    * this device alone: no tombstone goes out (the other devices keep the extension), and the
    * peer's live record is not handed to this device's applier again while the decline stands
    * against it – any copy whose install is not later than the decline (`extensionDeclineStands`
@@ -179,7 +183,7 @@ interface Persisted {
    * without the time). A copy carrying a LATER install (a fresh install of the id by hand on a
    * peer after the decline) is offered once more and closes the entry, as does a tombstone for
    * the id, or an install of it here. Persisted, so a relaunch does not re-offer what the user
-   * declined. Absent when nothing is declined.
+   * declined. Absent when nothing is declined; forgotten with the metadata at a disconnect.
    */
   declinedExtensions?: Record<string, number>
 }
@@ -187,6 +191,18 @@ interface Persisted {
 interface Payload {
   v: 1
   records: SyncRecord[]
+}
+
+/** One store extension as the previous `sources()` read saw it (`SyncEngine.presentExtensions`). */
+interface PresentExtension {
+  /** Still a synced landing waiting for the user's approval here (`ExtensionInfo.pendingApproval`). */
+  pending: boolean
+  /**
+   * The install time this copy publishes (`ExtensionSyncSource.installedAt`: a landing's is
+   * the time its record carried, 0 for none) – the floor of the decline's time, should the
+   * landing be gone at the next read.
+   */
+  installedAt: number
 }
 
 const PUSH_DEBOUNCE_MS = 4_000
@@ -282,12 +298,18 @@ export class SyncEngine implements SyncHost {
   private seededVault = false
   /**
    * The store extensions installed here at the previous `sources()` read (ID-44), each with
-   * whether it was still a landing waiting for the user's approval (`pendingApproval`), or null
-   * before the first: what an absence is measured against – an approved extension gone is an
-   * uninstall (`LocalSources.removedExtensions`), a pending one gone is the user's decline
-   * (`Persisted.declinedExtensions`).
+   * whether it was still a landing waiting for the user's approval (`pendingApproval`) and the
+   * install time its copy published (a landing's: its record's), or null before the first and
+   * again after a disconnect: what an absence is measured against – an approved extension gone
+   * is an uninstall (`LocalSources.removedExtensions`), a pending one gone is the user's decline
+   * (`Persisted.declinedExtensions`, stamped no earlier than the install it declines). Null
+   * across a disconnect, so the first read of the next setup measures nothing: a landing
+   * removed while this device was not syncing is no decline – a decline is the user's answer,
+   * on a connected device, to a request the engine is holding – and the next setup offers the
+   * peers' extensions afresh, as it does the ones declined before the disconnect
+   * (`disconnect` forgets `declinedExtensions` with the metadata).
    */
-  private presentExtensions: Map<string, boolean> | null = null
+  private presentExtensions: Map<string, PresentExtension> | null = null
   /** The device name behind each record the last `readRemote` read (`originOf`). */
   private remoteOrigins: WeakMap<SyncRecord, string> | null = null
   /** A remote stream is being applied to the history model: its events are not ours to publish. */
@@ -1066,6 +1088,10 @@ export class SyncEngine implements SyncHost {
     }
     delete this.data.unappliedExtensions
     delete this.data.declinedExtensions
+    // What an absence is measured against goes with the metadata (ID-44): the next setup's
+    // first read measures nothing, so a landing removed while this device was not syncing is
+    // no decline there – the peers' extensions are offered afresh, the declined ones included.
+    this.presentExtensions = null
     this.lastError = null
     this.lastErrorKind = null
     this.folderLost = false
@@ -1333,7 +1359,12 @@ export class SyncEngine implements SyncHost {
     // ruling, round 4): it tombstones nothing – the other devices keep the extension; the entry
     // stays frozen – and is remembered with its time (`Persisted.declinedExtensions`), so the
     // peer's record is not handed to the applier here again while the decline stands
-    // (`extensionDeclineStands`). An extension whose winning record is with the host's applier
+    // (`extensionDeclineStands`). The decline's time is this device's now, or the install time
+    // the landing published when that is later: the criterion compares the record's install
+    // with the decline, and a peer's clock ahead of this device's would otherwise leave the
+    // unchanged record "installed after the decline" – re-handed every round, and the landing
+    // declined again at each – until this device's clock passed it. An extension whose
+    // winning record is with the host's applier
     // and not committed yet is left out of the collected set – its entry stays frozen, so the
     // copy the record found here never travels under the winner's time; the applier's commit is
     // the edit that publishes the applied state – but it still counts as present, since a switch
@@ -1343,18 +1374,22 @@ export class SyncEngine implements SyncHost {
     // changes for it.
     const host = this.browser.extensions
     const all = host.syncSources?.() ?? host.list()
-    const present = new Map<string, boolean>()
+    const present = new Map<string, PresentExtension>()
     for (const ext of all)
-      if (extensionStoreOf(ext.source)) present.set(ext.id, ext.pendingApproval === true)
+      if (extensionStoreOf(ext.source))
+        present.set(ext.id, {
+          pending: ext.pendingApproval === true,
+          installedAt: Number.isFinite(ext.installedAt) && ext.installedAt > 0 ? ext.installedAt : 0
+        })
     const removedExtensions = new Set<string>()
     let declined = this.data.declinedExtensions
     let declinedChanged = false
     if (this.presentExtensions) {
       const now = Date.now()
-      for (const [id, wasPending] of this.presentExtensions) {
+      for (const [id, was] of this.presentExtensions) {
         if (present.has(id)) continue
-        if (wasPending && !meta[id]?.deleted) {
-          declined = { ...(declined ?? {}), [id]: now }
+        if (was.pending && !meta[id]?.deleted) {
+          declined = { ...(declined ?? {}), [id]: Math.max(now, was.installedAt) }
           declinedChanged = true
         } else removedExtensions.add(id)
       }
