@@ -141,7 +141,7 @@ export function PreviewPane({
         {showPages && (
           <div
             className={cn(
-              'mx-auto flex w-max flex-col items-center transition-opacity duration-[120ms]',
+              'mx-auto flex w-max flex-col items-center transition-opacity duration-[var(--zen-motion-state)]',
               dimmed && 'opacity-40'
             )}
             style={{ gap: PAGE_GAP }}

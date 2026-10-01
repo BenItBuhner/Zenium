@@ -1030,7 +1030,7 @@ export function ListRow({
       <button
         type="button"
         className={cn(
-          'outline-none transition-colors duration-[120ms] hover:bg-[var(--v2-fill)] active:bg-[var(--v2-fill-hover)] disabled:pointer-events-none disabled:opacity-40',
+          'outline-none transition-colors duration-[var(--zen-motion-state)] hover:bg-[var(--v2-fill)] active:bg-[var(--v2-fill-hover)] disabled:pointer-events-none disabled:opacity-40',
           layout
         )}
         disabled={disabled}

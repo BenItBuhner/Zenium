@@ -17,6 +17,7 @@ import {
   SPRING_GENTLE,
   SPRING_SNAPPY,
   SPRING_STEP_CLAMP_MS,
+  TOAST_ACTION_MS,
   TOAST_DURATION,
   TOAST_UNDO_MS,
   ZEN_EASE
@@ -82,18 +83,59 @@ describe('motion tokens (§1)', () => {
     // The shipped plain toast is v2 §9.33's 2.8 s (§1's table says 4 s; the gap is the lead's).
     expect(TOAST_DURATION).toBe(TOAST_SHOW_MS)
     expect(TOAST_DURATION).toBe(2800)
+    expect(TOAST_ACTION_MS).toBe(5000)
     expect(BAND_CLOCK_MS).toBe(10_000)
   })
 
-  it('`lib/ui.ts` hands out the same TOAST_DURATION', async () => {
+  it('`lib/ui.ts` hands out the same TOAST_DURATION, and its action clock is TOAST_ACTION_MS', async () => {
     const ui = await import('../ui')
     expect(ui.TOAST_DURATION).toBe(TOAST_DURATION)
+    expect(ui.TOAST_ACTION_DURATION).toBe(TOAST_ACTION_MS)
+    // The digits stay on the export's line (Android's `V2TokensPinTest` reads them from this
+    // file), bound to the token by `satisfies`.
+    expect(read('../ui.ts')).toMatch(
+      /^export const TOAST_ACTION_DURATION = 5000 satisfies typeof TOAST_ACTION_MS$/m
+    )
   })
 
   it('the curve is main.css’s --zen-ease', () => {
     const declared = [...css.matchAll(/--zen-ease:\s*([^;]+);/g)].map((m) => m[1].trim())
     expect(declared.length).toBeGreaterThan(0)
     for (const value of declared) expect(value).toBe(ZEN_EASE)
+  })
+
+  it('the durations are main.css’s --zen-motion-* custom properties, beside --zen-ease', () => {
+    const durations = {
+      state: MOTION_STATE_MS,
+      pop: MOTION_POP_MS,
+      message: MOTION_MESSAGE_MS
+    }
+    // Every declaration in the stylesheet reads the token's value …
+    for (const [name, ms] of Object.entries(durations)) {
+      const declared = [...css.matchAll(new RegExp(`--zen-motion-${name}:\\s*([^;]+);`, 'g'))]
+      expect(
+        declared.map((m) => m[1].trim()),
+        name
+      ).toEqual([`${ms}ms`, `${ms}ms`])
+    }
+    // … once in each block that declares `--zen-ease`: the chrome's `:root` and the served
+    // documents' `.zen-error-document`, which restates the chrome's tokens for the pages that
+    // cannot link main.css.
+    const blocks = css.split('}').filter((block) => block.includes('--zen-ease:'))
+    expect(blocks).toHaveLength(2)
+    for (const block of blocks)
+      for (const [name, ms] of Object.entries(durations))
+        expect(block).toContain(`--zen-motion-${name}: ${ms}ms;`)
+    // The Tailwind seats – a class string cannot read a TS token – read the property, not digits.
+    for (const seat of [
+      '../../components/print/PreviewPane.tsx',
+      '../../components/security/BlockedPopupsPanel.tsx',
+      '../../components/siteControls/primitives.tsx'
+    ]) {
+      const text = read(seat)
+      expect(text, seat).toContain('duration-[var(--zen-motion-state)]')
+      expect(text, seat).not.toMatch(/duration-\[\d/)
+    }
   })
 
   it('press and lift', () => {
@@ -135,6 +177,7 @@ describe('motion tokens (§1)', () => {
         'SPRING_GENTLE',
         'SPRING_SNAPPY',
         'SPRING_STEP_CLAMP_MS',
+        'TOAST_ACTION_MS',
         'TOAST_DURATION',
         'TOAST_SHOW_MS',
         'TOAST_UNDO_MS',

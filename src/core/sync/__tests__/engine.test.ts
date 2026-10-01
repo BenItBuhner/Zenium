@@ -3359,10 +3359,11 @@ describe('the extensions across two devices', () => {
     expect(A.publishedInstalledAt(EXT_A)).toBeLessThanOrEqual(declinedAt)
 
     // The peer, on a build with the field, installs the extension again by hand: its record
-    // carries an `installedAt` after the decline (the peer's clock, in step with B's – a peer
-    // clock ahead of B's would hold the re-offer open until B's clock passed the install, as
-    // any cross-device comparison of times does). B is offered it – once – and A adopts the
-    // later install as the time its copy publishes (`adoptInstalledAt`), its own untouched.
+    // carries an `installedAt` after the decline (the peer's clock, in step with B's here; a
+    // peer clock AHEAD of B's is the follow-ups' case below – the decline is stamped no earlier
+    // than the install it declines, so the same record re-offers nothing there either). B is
+    // offered it – once – and A adopts the later install as the time its copy publishes
+    // (`adoptInstalledAt`), its own untouched.
     const reinstalledAt = Date.now()
     expect(reinstalledAt).toBeGreaterThan(declinedAt)
     const reinstalled: SyncRecord = {
@@ -4255,5 +4256,454 @@ describe('the extensions across devices – the verifier’s round', () => {
       data: { store: 'chrome-web-store', enabled: false, toolbarPinned: false, enabledAt: t7 }
     })
     expect((await phoneCopy())!.modified).toBeGreaterThan(later.modified)
+  }, 30_000)
+})
+
+/**
+ * The #715 verifiers' low observations, built as one follow-up (services pass 17, seed #38):
+ * (a) the decline's time under a peer clock running ahead – stamped no earlier than the install
+ * it declines, so one decline closes the request; (b) what an absence is measured against goes
+ * with the metadata at a disconnect – a landing removed while this device was not syncing is
+ * no decline, and the next setup offers the peers' extensions afresh; (c) the round-3 notes
+ * pinned end to end – a switch flipped here while the applier holds the id's record is stamped
+ * at the release under the flip's own clock, and an approval given while a peer's flip landed
+ * during the open prompt is the later write.
+ */
+describe('the extensions across devices – the #715 follow-ups (seed #38)', () => {
+  const extensionRecords = async (d: Device): Promise<SyncRecord[]> =>
+    (await published(d)).filter((r) => r.type === 'extension')
+  const declinedOf = (d: Device): Record<string, number> | undefined => {
+    d.engine.flushSync()
+    return (JSON.parse(d.io.files['sync.json']!) as { declinedExtensions?: Record<string, number> })
+      .declinedExtensions
+  }
+  const metaOf = (d: Device): MetaMap => {
+    d.engine.flushSync()
+    return (JSON.parse(d.io.files['sync.json']!) as { meta: MetaMap }).meta
+  }
+  const handedTo = (host: StoreExtensions, id: string): number =>
+    host.applied.flat().filter((c) => c.id === id).length
+
+  /** A peer's device file in the folder, written with the folder's key: `record` its one record. */
+  async function peerWriter(
+    d: Device,
+    peerId: string,
+    peerName: string
+  ): Promise<(record: SyncRecord) => Promise<void>> {
+    const own = folderFiles('/drive').get(deviceFileName(d.engine.status().deviceId))!
+    const salt = (JSON.parse(own) as { envelope: { salt: string } }).envelope.salt
+    const key = await folderKey(salt)
+    return async (record) => {
+      folderFiles('/drive').set(
+        deviceFileName(peerId),
+        serializeDeviceFile({
+          deviceId: peerId,
+          deviceName: peerName,
+          updatedAt: record.modified,
+          envelope: await encryptJson(key, salt, { v: 1, records: [record] })
+        })
+      )
+    }
+  }
+
+  it('(a) a peer’s clock 10 min ahead: the decline is stamped no earlier than the install it declines – one decline closes the request, the unchanged record (and its flips) re-offers nothing across the rounds, and only a fresh install by hand on the peer, later still by its clock, re-offers once', async () => {
+    const b = device('Work laptop', { extensions: desktopExtensions })
+    const B = hostOf<StoreExtensions>(b)
+    await setup(b)
+    const peerFile = await peerWriter(b, 'peer-ahead', 'Studio')
+
+    // The peer's clock runs ten minutes ahead of the laptop's: the install it made by hand just
+    // now is stamped ten minutes into the laptop's future, as are its switches and the record.
+    const AHEAD_MS = 10 * 60_000
+    const installedAhead = Date.now() + AHEAD_MS
+    const ahead: SyncRecord = {
+      id: EXT_A,
+      type: 'extension',
+      modified: installedAhead,
+      deleted: false,
+      data: {
+        store: 'chrome-web-store',
+        enabled: true,
+        toolbarPinned: false,
+        enabledAt: installedAhead,
+        toolbarPinnedAt: installedAhead,
+        installedAt: installedAhead
+      }
+    }
+    await peerFile(ahead)
+    await b.engine.syncNow()
+    expect(B.log()).toEqual([`${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Studio`])
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    expect(B.installed.get(EXT_A)).toMatchObject({ enabled: false, pendingApproval: true })
+    // The landing publishes the install time its record carried – the peer's, ahead.
+    expect(B.publishedInstalledAt(EXT_A)).toBe(installedAhead)
+
+    // The user declines. The decline's time is the install's – ten minutes ahead of the
+    // laptop's clock – not the laptop's now: stamped at now, `installedAt > declinedAt` would
+    // hold for the unchanged record, and the round would hand it over again, the landing
+    // declined again at each, until the laptop's clock passed the peer's install.
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    const declinedAt = declinedOf(b)![EXT_A]!
+    expect(declinedAt).toBe(installedAhead)
+    expect(declinedAt).toBeGreaterThan(Date.now())
+    expect(B.ids()).toEqual([])
+
+    // Three rounds on the same record: no request reaches the host, the decline stands with
+    // its time, nothing for the id leaves the laptop.
+    const handed = handedTo(B, EXT_A)
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await settle()
+      expect(b.engine.status().lastError, `round ${round}`).toBeNull()
+    }
+    expect(handedTo(B, EXT_A)).toBe(handed)
+    expect(B.ids()).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
+    expect(await extensionRecords(b)).toEqual([])
+
+    // The peer flips a switch: its record is stamped anew – later still, by its clock – under
+    // the same install. A flip re-offers nothing.
+    const flippedAhead = installedAhead + 60_000
+    await peerFile({
+      ...ahead,
+      modified: flippedAhead,
+      data: { ...(ahead.data as object), enabled: false, enabledAt: flippedAhead }
+    })
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await settle()
+    }
+    expect(handedTo(B, EXT_A)).toBe(handed)
+    expect(B.ids()).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
+
+    // The peer uninstalls and installs it again by hand, two minutes later by its clock: an
+    // `installedAt` later than the decline – the one re-offer. The request reaches the host,
+    // the decline is closed.
+    const reinstalledAhead = installedAhead + 120_000
+    await peerFile({
+      ...ahead,
+      modified: reinstalledAhead,
+      data: {
+        ...(ahead.data as object),
+        enabledAt: reinstalledAhead,
+        toolbarPinnedAt: reinstalledAhead,
+        installedAt: reinstalledAhead
+      }
+    })
+    await b.engine.syncNow()
+    expect(handedTo(B, EXT_A)).toBe(handed + 1)
+    expect(B.log().at(-1)).toBe(`${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Studio`)
+    expect(declinedOf(b)).toBeUndefined()
+
+    // Landed and declined once more: the decline takes the new install's time, and the same
+    // record re-offers nothing again – once was the re-offer.
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    expect(B.publishedInstalledAt(EXT_A)).toBe(reinstalledAhead)
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    expect(declinedOf(b)).toEqual({ [EXT_A]: reinstalledAhead })
+    const after = handedTo(B, EXT_A)
+    for (let round = 0; round < 3; round += 1) {
+      await b.engine.syncNow()
+      await settle()
+    }
+    expect(handedTo(B, EXT_A)).toBe(after)
+    expect(B.ids()).toEqual([])
+    expect(declinedOf(b)).toEqual({ [EXT_A]: reinstalledAhead })
+  }, 30_000)
+
+  it('(a) a peer in step with this device: the decline is stamped at this device’s time, as before – the install, earlier, is no later than it', async () => {
+    const a = device('Desk (Linux)', { extensions: desktopExtensions })
+    const b = device('Work laptop', { extensions: desktopExtensions })
+    const A = hostOf<StoreExtensions>(a)
+    const B = hostOf<StoreExtensions>(b)
+    A.add(EXT_A, 'chrome-web-store', { enabled: true })
+    const installedAt = A.installed.get(EXT_A)!.installedAt
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    expect(B.publishedInstalledAt(EXT_A)).toBe(installedAt)
+    const beforeDecline = Date.now()
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    const declinedAt = declinedOf(b)![EXT_A]!
+    expect(declinedAt).toBeGreaterThanOrEqual(beforeDecline)
+    expect(declinedAt).toBeLessThanOrEqual(Date.now())
+    expect(declinedAt).toBeGreaterThanOrEqual(installedAt)
+    // The decline stands against the same record across the rounds, as before.
+    const handed = handedTo(B, EXT_A)
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await settle()
+    expect(handedTo(B, EXT_A)).toBe(handed)
+    expect(declinedOf(b)).toEqual({ [EXT_A]: declinedAt })
+  }, 30_000)
+
+  it('(b) a landing removed while this device is DISCONNECTED is no decline: the next setup – into a folder with no peer yet, whose first round runs at once – writes none, and the peer that joins it later is offered afresh; a decline made while connected stands until the disconnect, which forgets it with the metadata, and the next setup offers that one afresh too', async () => {
+    const a = device('Desk (Linux)', { extensions: desktopExtensions })
+    const b = device('Work laptop', { extensions: desktopExtensions })
+    const A = hostOf<StoreExtensions>(a)
+    const B = hostOf<StoreExtensions>(b)
+    const wireFor = async (d: Device, id: string, folder: string): Promise<SyncRecord[]> =>
+      ((await publishedAll(folder)).get(d.engine.status().deviceId) ?? []).filter(
+        (r) => r.id === id
+      )
+    A.add(EXT_A, 'chrome-web-store', { enabled: true })
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    expect(B.installed.get(EXT_A)).toMatchObject({ enabled: false, pendingApproval: true })
+    const laptop = b.engine.status().deviceId
+
+    // Sync is turned off on the laptop, and the landing removed while it is off: housekeeping,
+    // not the user's answer to a request – the engine holds none. No decline is written.
+    const handed = handedTo(B, EXT_A)
+    b.engine.disconnect(false)
+    expect(b.engine.status().enabled).toBe(false)
+    expect(declinedOf(b)).toBeUndefined()
+    await settle()
+    B.drop(EXT_A)
+    await settle()
+    expect(declinedOf(b)).toBeUndefined()
+    expect(B.ids()).toEqual([])
+
+    // The laptop sets up again, into a folder nobody else is in yet: no merge to confirm, the
+    // first round runs at once – and its read measures no absence. Measured against the set
+    // before the disconnect, the landing gone would have been written as a decline here (and
+    // kept: no merge wipes it), to stand against a peer joining this folder later with the
+    // extension – a decline carried from one setup into the next.
+    await setup(b, '/other')
+    expect(b.engine.status().deviceId).toBe(laptop)
+    expect(b.engine.status().pendingMerge).toBe(false)
+    expect(b.engine.status().lastError).toBeNull()
+    expect(declinedOf(b)).toBeUndefined()
+    expect(await wireFor(b, EXT_A, '/other')).toEqual([])
+
+    // The desktop joins that folder: its record is handed to the laptop's host – the landing
+    // offered afresh – and nothing for the id goes out from the laptop, no tombstone least of
+    // all; the desktop keeps the extension.
+    await setup(a, '/other')
+    await a.engine.confirmMerge(true)
+    await b.engine.syncNow()
+    expect(declinedOf(b)).toBeUndefined()
+    expect(handedTo(B, EXT_A)).toBe(handed + 1)
+    expect(B.log().at(-1)).toBe(
+      `${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Desk (Linux)`
+    )
+    expect(await wireFor(b, EXT_A, '/other')).toEqual([])
+    await a.engine.syncNow()
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true })
+
+    // By contrast, the landing removed while CONNECTED is the decline, as ruled: persisted with
+    // its time, standing across the rounds – no request reaches the host.
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    B.drop(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    expect(declinedOf(b)).toEqual({ [EXT_A]: expect.any(Number) as number })
+    const declined = handedTo(B, EXT_A)
+    for (let round = 0; round < 2; round += 1) {
+      await a.engine.syncNow()
+      await b.engine.syncNow()
+      await settle()
+    }
+    expect(handedTo(B, EXT_A)).toBe(declined)
+    expect(B.ids()).toEqual([])
+    expect(await wireFor(b, EXT_A, '/other')).toEqual([])
+
+    // The disconnect forgets the decline with the metadata, and the next setup – the same
+    // folder, the merge confirmed – offers the extension afresh: the one rule for both. What
+    // the next setup offers is the peers' current set, whatever this device answered under the
+    // previous one.
+    b.engine.disconnect(false)
+    expect(declinedOf(b)).toBeUndefined()
+    await setup(b, '/other')
+    expect(b.engine.status().pendingMerge).toBe(true)
+    await b.engine.confirmMerge(true)
+    expect(declinedOf(b)).toBeUndefined()
+    expect(handedTo(B, EXT_A)).toBe(declined + 1)
+    expect(B.log().at(-1)).toBe(
+      `${EXT_A.slice(0, 4)} chrome-web-store on unpinned from Desk (Linux)`
+    )
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true })
+  }, 30_000)
+
+  it('(c) a switch flipped here while the applier holds the id’s record is stamped at the release: nothing for the id leaves this device the while, and the commit that lands the record carries the flip under its own clock – the flip’s time – with a stamp later than the winner’s; the peer takes the pin by that clock', async () => {
+    const a = device('Desk (Linux)', { extensions: inFlightExtensions })
+    const b = device('Work laptop', { extensions: inFlightExtensions })
+    const A = hostOf<InFlightExtensions>(a)
+    const B = hostOf<InFlightExtensions>(b)
+    A.add(EXT_A, 'chrome-web-store', { enabled: true, toolbarPinned: false })
+    const installedAt = A.installed.get(EXT_A)!.installedAt
+    const t0 = A.installed.get(EXT_A)!.toolbarPinnedAt!
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    B.approve(EXT_A)
+    await settle()
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    await settle()
+    await a.engine.syncNow()
+    const approvedAt = B.installed.get(EXT_A)!.enabledAt!
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true, enabledAt: approvedAt })
+
+    // The desktop turns the extension off at t1; its record goes out.
+    await settle()
+    A.set(EXT_A, { enabled: false })
+    await settle()
+    await a.engine.syncNow()
+    const off = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
+    const t1 = (off.data as { enabledAt: number }).enabledAt
+    expect(t1).toBeGreaterThan(approvedAt)
+    expect((off.data as { toolbarPinnedAt: number }).toolbarPinnedAt).toBe(t0)
+
+    // The laptop's round takes it and hands it to the applier, which holds it (the startup
+    // hold, the attach, the id's busy work).
+    B.manual = true
+    await b.engine.syncNow()
+    expect(B.syncedExtensionsInFlight().has(EXT_A)).toBe(true)
+    expect(metaOf(b)[EXT_A]).toMatchObject({ modified: off.modified, hash: hashData(off.data) })
+
+    // The user pins it on the laptop meanwhile, at t2: the flip is clocked at its commit (the
+    // switch's own clock), but the id is in flight – the entry is not stamped, and nothing for
+    // the id leaves the laptop, not even across a round.
+    await settle()
+    B.set(EXT_A, { toolbarPinned: true })
+    await settle()
+    const t2 = B.installed.get(EXT_A)!.toolbarPinnedAt!
+    expect(t2).toBeGreaterThan(t1)
+    const laptop = b.engine.status().deviceId
+    const onWire = async (): Promise<SyncRecord | undefined> =>
+      ((await publishedAll()).get(laptop) ?? []).find((r) => r.id === EXT_A)
+    expect(metaOf(b)[EXT_A]).toMatchObject({ modified: off.modified, hash: hashData(off.data) })
+    await b.engine.syncNow()
+    expect(await onWire()).toBeUndefined()
+    expect(metaOf(b)[EXT_A]).toMatchObject({ modified: off.modified, hash: hashData(off.data) })
+
+    // The applier commits: the disable lands (t1 is later than the approval's clock), the pin is
+    // KEPT (t2 is later than the record's t0) – and the commit that lands the merge is the
+    // edit. The release stamps the merged record – later than the winner's stamp, so the peer
+    // takes it – with the pin under its own clock, t2: the flip's time, not the stamp's.
+    B.commit()
+    await settle()
+    expect(B.syncedExtensionsInFlight().size).toBe(0)
+    expect(B.installed.get(EXT_A)).toMatchObject({
+      enabled: false,
+      enabledAt: t1,
+      toolbarPinned: true,
+      toolbarPinnedAt: t2
+    })
+    const entry = metaOf(b)[EXT_A]!
+    expect(entry.modified).toBeGreaterThan(off.modified)
+    expect(entry.modified).toBeGreaterThanOrEqual(t2)
+    await b.engine.syncNow()
+    const merged = (await onWire())!
+    expect(merged.modified).toBe(entry.modified)
+    expect(merged.data).toEqual({
+      store: 'chrome-web-store',
+      enabled: false,
+      toolbarPinned: true,
+      enabledAt: t1,
+      toolbarPinnedAt: t2,
+      installedAt
+    })
+
+    // The desktop takes the pin by its clock and keeps its own disable (the same clock); the
+    // two hold one record.
+    await a.engine.syncNow()
+    await settle()
+    expect(A.installed.get(EXT_A)).toMatchObject({
+      enabled: false,
+      enabledAt: t1,
+      toolbarPinned: true,
+      toolbarPinnedAt: t2
+    })
+    await a.engine.syncNow()
+    expect((await extensionRecords(a)).find((r) => r.id === EXT_A)).toEqual(merged)
+    expect(A.republished).toEqual([])
+    // (The round run while the id was in flight handed the outstanding record over once more,
+    // as every round does; that second copy found the pin's clock here the later one and asked
+    // for a re-publish – a commit in the same tick as the one that landed the merge: one
+    // broadcast, one stamp, the record above.)
+    expect(B.republished).toEqual([EXT_A])
+  }, 30_000)
+
+  it('(c) a peer’s flip while the approval prompt stands open here: the approval is clocked at the confirm, the later write – both devices end on; the peer’s disable, made during the prompt, is the older write and reverts nothing', async () => {
+    const a = device('Desk (Linux)', { extensions: desktopExtensions })
+    const b = device('Work laptop', { extensions: desktopExtensions })
+    const A = hostOf<StoreExtensions>(a)
+    const B = hostOf<StoreExtensions>(b)
+    A.add(EXT_A, 'chrome-web-store', { enabled: true })
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await settle()
+    B.land(EXT_A)
+    await settle()
+    expect(B.installed.get(EXT_A)).toMatchObject({ enabled: false, pendingApproval: true })
+
+    // The user clicks Enable on the laptop: the approval prompt opens and stands.
+    const clickAt = Date.now()
+    await settle()
+    // The desktop turns the extension off meanwhile, at tA > the click; its record reaches the
+    // laptop, whose landing takes the disable's clock (a disable always lands; the landing was
+    // off already).
+    A.set(EXT_A, { enabled: false })
+    await settle()
+    const tA = A.installed.get(EXT_A)!.enabledAt!
+    expect(tA).toBeGreaterThan(clickAt)
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    await settle()
+    expect(B.installed.get(EXT_A)).toMatchObject({
+      enabled: false,
+      enabledAt: tA,
+      pendingApproval: true
+    })
+
+    // The user confirms, at tC > tA: the enable is written at the confirm (`flipClock`), never
+    // at the click – the click's time would be the older write, and the desktop's disable
+    // would have beaten the approval the user just gave.
+    await settle()
+    B.approve(EXT_A)
+    await settle()
+    const tC = B.installed.get(EXT_A)!.enabledAt!
+    expect(tC).toBeGreaterThan(tA)
+    await b.engine.syncNow()
+    const approval = (await extensionRecords(b)).find((r) => r.id === EXT_A)!
+    expect(approval.data).toMatchObject({ enabled: true, enabledAt: tC })
+    // The desktop takes the approval by its clock: both on, one record.
+    await a.engine.syncNow()
+    await settle()
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true, enabledAt: tC })
+    await a.engine.syncNow()
+    expect((await extensionRecords(a)).find((r) => r.id === EXT_A)).toEqual(approval)
+    // Steady: a round each more, and neither device reverts the other.
+    await b.engine.syncNow()
+    await a.engine.syncNow()
+    await settle()
+    expect(A.installed.get(EXT_A)).toMatchObject({ enabled: true, enabledAt: tC })
+    expect(B.installed.get(EXT_A)).toMatchObject({ enabled: true, enabledAt: tC })
   }, 30_000)
 })

@@ -30,7 +30,7 @@ import type {
   WebAppInstallPrompt
 } from '@shared/types'
 import { isEmptyTabUrl } from '@shared/url'
-import { TOAST_DURATION } from './motion/tokens'
+import { TOAST_ACTION_MS, TOAST_DURATION } from './motion/tokens'
 import { isZoomed } from '@renderer/components/zoom/bubble'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
@@ -847,10 +847,12 @@ export const uiStore = createStore<UiState>(
  * A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin:
  * `@shared/toastCard`, handed out by the motion tokens – `lib/motion/tokens.ts`, W8-M1 – and
  * re-exported here for the callers that read it from the store module); one with an action
- * needs time to be acted on.
+ * needs time to be acted on: the tokens' `TOAST_ACTION_MS`. The number stays written on this
+ * line – Android's `V2TokensPinTest` reads the digits after `TOAST_ACTION_DURATION =` from this
+ * file – and `satisfies` holds it to the token: a value that drifts fails the typecheck.
  */
 export { TOAST_DURATION }
-export const TOAST_ACTION_DURATION = 5000
+export const TOAST_ACTION_DURATION = 5000 satisfies typeof TOAST_ACTION_MS
 /** Banners beyond this many push the oldest out. */
 export const MAX_BANNERS = 3
 /**
@@ -886,6 +888,28 @@ export function claimMessageCards(): () => void {
 
 function onCards(): boolean {
   return cardHosts.size > 0
+}
+
+/**
+ * The surface that draws `banners` (`components/messages/MessageLayer`: the phone's and the
+ * tablet's) claims so while mounted. A banner shown with no claim standing sits in the store
+ * undrawn – the desktop today, whose sidebar draws toasts alone – and a caller that accounts
+ * for a drawn card asks first (the install prompt's word to the core, `lib/installBanner.ts`).
+ */
+const bannerSurfaces = new Set<symbol>()
+
+/** Say that banners are drawn from now on; call the return value when the surface unmounts. */
+export function claimBannerSurface(): () => void {
+  const token = Symbol('banner surface')
+  bannerSurfaces.add(token)
+  return () => {
+    bannerSurfaces.delete(token)
+  }
+}
+
+/** Whether a surface that draws `banners` is mounted right now. */
+export function bannerSurfaceMounted(): boolean {
+  return bannerSurfaces.size > 0
 }
 
 let messageSeq = 0
