@@ -43,7 +43,7 @@ before. Default on 2-minute expiry comes from `nativePrompts.ts` and is unchange
 
 | Prompt                                   | Kotlin hook                                                                               | Bridge                                                                                                                                                              | Core                                                                                                                            | Agent answer → Kotlin                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| File chooser (`<input type=file>`)       | `TabWebView.onShowFileChooser` holds the `ValueCallback` as `HeldFileChooser(fc_N)`       | view event `fileChooser {requestId, multiple, accept}` → `AndroidTabView.onFileChooser` → `events.onFileChooser(fileChooserSpec)`                                   | `fileChooserSpec` (default **cancel**)                                                                                          | `view.fileChooserAnswer`: `files` → inline bytes written to `cache/agent-uploads/u-<now>-<hex>/` and handed back as `FileProvider` URIs (`<pkg>.files`, new `cache-path agent-uploads`), path files as `Uri.fromFile`; `cancel` → `onReceiveValue(null)`; `user` → `BrowserActivity.showFileChooser` (system picker)                                                                                                                            |
+| File chooser (`<input type=file>`)       | `TabWebView.onShowFileChooser` holds the `ValueCallback` as `HeldFileChooser(fc_N)`       | view event `fileChooser {requestId, multiple, accept}` → `AndroidTabView.onFileChooser` → `events.onFileChooser(fileChooserSpec)`                                   | `fileChooserSpec` (default **cancel**)                                                                                          | `view.fileChooserAnswer`: `files` → inline bytes only, written to `cache/agent-uploads/u-<now>-<hex>/<i>/<name>` and handed back as `FileProvider` URIs (`<pkg>.files`, new `cache-path agent-uploads`); an answer naming a path is refused whole (cancel + notice to the agent, nothing of it reaches Kotlin); `cancel` → `onReceiveValue(null)`; `user` → `BrowserActivity.showFileChooser` (system picker)                                                                                                                            |
 | `setInputFiles`                          | —                                                                                         | `AndroidTabView.setInputFiles(selector, files)` → `executeJavaScript(setInputFilesScript)`                                                                          | —                                                                                                                               | Builds a `DataTransfer` of `File`s from inline bytes in the page (document and same-origin frames), sets `input.files`, fires `input`/`change`. Path files are refused with an error (the page cannot read device paths).                                                                                                                                                                                                                       |
 | Client certificate                       | `TabWebView.onReceivedClientCertRequest` → `Security.onClientCertRequest(tab, request)`   | host event `certificate.request {requestId, tabId, host, port, certificates[]}` → `platform.ts` → `browser.security.clientCertificate(host, certificates, tabId)`   | `clientCertificateSpec` (default **none**); `SecurityPrompts.clientCertificate` returns `null` for an empty list before routing | `certificate.respond`: `{index}` → `request.proceed(key, chain)` with `key = null` so nothing is remembered; `{index: null}` → `request.cancel()`; `{user: true}` → `KeyChain.choosePrivateKeyAlias` as before. Empty candidate list → `request.cancel()` + `AgentService.refuseClientCertificate` pushes a notice to the driver. Remembered user picks for the same host still win first (that is user memory, applied to the user's tab too). |
 | Download: ask where to save              | `Downloads.announce` now carries `saveAs` (true when Kotlin would open the Save As sheet) | `download.started` → `platform.ts bind()`: if `downloadAsksWhere(settings, saveAs)` and the agent takes `download` → `browser.agents.downloadDestination(tabId, …)` | `downloadSpec` (default **save** with the suggested name)                                                                       | `download.bind` with `destination.agent = {filename}` → Kotlin clears `saveAs`, uses `AgentPrompts.downloadName(agentName, suggested)` and does not let the `Content-Disposition` rename override the agent's name (`namedByAgent`); `{kind:'cancel'}` → `download.refuse` + record removed. Folder/default placement unchanged; user tabs unchanged.                                                                                           |
@@ -61,18 +61,31 @@ before. Default on 2-minute expiry comes from `nativePrompts.ts` and is unchange
    `agentPrompts`.
 2. **File System Access pickers do not exist in WebView** (`showOpenFilePicker`, `showSaveFilePicker`,
    `showDirectoryPicker` are undefined). Nothing to route; nothing claimed.
-3. **Client certificate candidates are the aliases the user has already picked this session** (for other
-   hosts), described via `KeyChain.getCertificateChain`. Android's `KeyChain` has no enumeration API —
-   `choosePrivateKeyAlias` _is_ the system UI — so on a fresh session the list is empty and the agent
-   gets a refusal notice instead of a choice. A cert the user has never granted to the app cannot be
-   offered to an agent.
+3. **Client certificate candidates are the aliases the user has already picked this session for the
+   same host** (another port of it; the exact `host:port` pick proceeds before the agent is asked),
+   described via `KeyChain.getCertificateChain` and narrowed by the request's `keyTypes` / `principals`
+   as the KeyChain narrows the user's own list. A pick the user made for a different host is never
+   offered. Android's `KeyChain` has no enumeration API — `choosePrivateKeyAlias` _is_ the system UI —
+   so in practice the list is almost always empty and the agent gets a refusal notice instead of a
+   choice. A cert the user has never granted to the app cannot be offered to an agent.
 4. **`webkitdirectory` is not supported by WebView**; the file chooser only sees `multiple` and `accept`.
    `fileChooserRequestOf` reports `source: 'input'`, mode `single`/`multiple`.
-5. **`setInputFiles` only accepts inline bytes.** Device paths cannot be read by page script; an answer
-   with a `path` file is rejected with an error before any script runs. Same-origin frames are searched;
-   cross-origin frames are not reachable.
-6. **Agent uploads live in app cache** (`cache/agent-uploads/`), kept 5 hours and swept at app start with
-   the capture sweep. A very large inline upload is bounded by the bridge message size, not by this PR.
+5. **Uploads are inline bytes only, on both paths.** `setInputFiles` and the chooser's `files` answer
+   take `{name, base64, mimeType}` entries; an answer with a `path` entry is refused whole (the chooser is
+   cancelled for the page, `setInputFiles` rejects) and the agent reads why with its next result. A path
+   would be opened by the WebView as Zenium itself and handed to the page the agent drives, which no
+   agent – loopback or not – may do; Kotlin has no code path that builds a `Uri` from agent input. Same-origin
+   frames are searched (the input is told by tag and type, not `instanceof`, so a frame's own realm
+   counts); cross-origin frames are not reachable.
+6. **Agent uploads live in app cache** (`cache/agent-uploads/<answer>/<i>/<name>`, one folder per file so
+   two files under one name stay two). A tab's folders are deleted when its agent lets the page go
+   (`view.interceptAgentPrompts off`) or the view is destroyed – the page reads them at submit while the
+   agent works it; a form still streaming at that instant would lose its file. Folders older than 5 hours
+   are swept at app start and before each new answer is written. A very large inline upload is bounded by
+   the bridge message size, not by this PR.
+8. **The agent's download name takes the user's path**: `DownloadLogic.sanitizeFilename` (no folders,
+   control characters, leading dot, reserved names; 200-char cap) and the type's extension when it has none,
+   at bind and again once the response names the type. The `Content-Disposition` name still does not replace it.
 7. **Downloads in the `ask` mode only route when the agent drives the source tab**; downloads without a
    source tab (e.g. from a notification) still ask the user.
 
@@ -141,3 +154,81 @@ none — no new user-facing strings. The one new sentence is the agent-facing no
 - One line: on Android, the file chooser, the client-certificate pick and the download's Save As of a tab an
   agent drives now go to the agent through `agentPrompts` (2-minute default, nothing remembered, no OS UI
   over the agent's tab); print and File System Access pickers are recorded as WebView limits, not listed.
+
+## REVIEW FOLDED
+
+Review: store `internal/design-reviews/pr-755-first-line-review.md` (FAIL at `197462f82`: B1, SF1–4, N1–4).
+Folded in `868244e80`; `main` merged after it as `a04907dc2` (merge commit, no rebase; merge-base now
+`1be1aa877`). `git diff --stat 1be1aa877 HEAD -- src/main src/shared/types.ts src/renderer` is empty.
+
+- **B1** – the chooser's `files` answer is inline bytes only. `AgentPrompts.UploadFile` is one data class
+  (`AgentPrompts.kt:36`), `UploadFile.Path` and the `Uri.fromFile` branch are gone (`TabWebView.kt:1278-1308`
+  builds URIs from `AgentUploads.write` alone). `AgentPrompts.fileChooserAnswer` cancels the whole answer when
+  any entry has a `path` (`AgentPrompts.kt:54-69`). TS refuses first: `fileChooserAnswerWire` → `cancel`
+  (`agentPrompts.ts:52-62`), `uploadPathsRefusal` is the one sentence both it and `setInputFilesScript` use
+  (`:68-72`), and `AndroidTabView.onFileChooser` pushes `fileChooserPathsNotice` to the driving session through
+  `AndroidTabViewHost.agentNotices` (`views.ts:490-494`, `:1256`), which `AndroidPlatform.bind` points at
+  `browser.agents.driver(tabId)?.notices` (`platform.ts:1925`) – no new core method. Pins:
+  `AgentPromptsTest.anAnswerNamingAPathCancelsTheChooserWhole`, `…KeepTheirOrderAndTheirNamesLoseTheirFolders`;
+  `agentPrompts.test.ts` "refuses an answer naming a path…"; `views.test.ts` fc_4 case (cancel + notice, the path
+  never on the bridge); `platformAgentPrompts.test.ts` "reaches the driving session's notices". Limits 5/6 updated.
+- **SF1** – `AgentPrompts.downloadName(agentName, suggested, mimeType, extensionFor)` runs the name through
+  `DownloadLogic.sanitizeFilename` then `DownloadLogic.filenameFor(suggestedName=…)` for the extension fill
+  (`AgentPrompts.kt:207-211`); `Downloads.bind` passes `l.mimeType`/`DownloadSink::extensionFor` (`Downloads.kt:247`),
+  and `readHeaders` keeps the extension fill for `namedByAgent` while still skipping the header rename
+  (`Downloads.kt:731-740`). Pin: `AgentPromptsTest.theAgentNameIsSanitisedAndGivenItsExtensionAsEveryDownloadNameIs`
+  (leading dot, `../`, control char, `CON`, 300 chars, missing extension, empties).
+- **SF2** – `setInputFilesScript` checks `input.tagName !== 'INPUT' || input.type !== 'file'`
+  (`agentPrompts.ts:186`); no `instanceof HTMLInputElement`. Pin: `agentPrompts.test.ts` "tells a file input by its
+  tag and type".
+- **SF3** – `Security.askAgent` offers `AgentPrompts.candidateAliases(certificateChoices, request.host)` – the
+  user's picks for the same host only – and drops a chain that fails
+  `AgentPrompts.certificateFits(chain, request.keyTypes, request.principals)` (key algorithm in `keyTypes`;
+  a chain subject/issuer among the canonical `principals`) (`Security.kt:83-92`, `AgentPrompts.kt:104-132`).
+  Pins: `AgentPromptsTest.theAgentIsOfferedOnlyThePicksTheUserMadeForTheSameHost`,
+  `aCandidateMustAnswerTheServersKeyTypesAndIssuersWhenItNamedAny`. Limit 3 updated.
+- **SF4** – the record-gone branch of the agent's download wait now `downloadTokens.delete` + `download.refuse`
+  (`platform.ts:2268-2275`). Pin: `platformAgentPrompts.test.ts` "refuses the transfer when the record went while
+  the agent was asked" (+ save → bind, cancel → refuse + remove, and the `certificate.request` handler's three
+  branches).
+- **N1** – `TabHost.adopt` and `bind` call `view.setInterceptAgentPrompts(false)` beside `agentDriven = false`
+  (`TabHost.kt:209`, `:233`).
+- **N2** – `TabWebView.setInterceptAgentPrompts(false)` and `destroy()` delete the tab's upload folders
+  (`clearAgentUploads`, `TabWebView.kt:1248-1251`, `:433`, `:1312-1317`); `answerFileChooser` sweeps stale folders
+  before writing (`:1290`).
+- **N3** – `AgentUploads.write` puts each file in its own numbered folder under the answer's
+  (`AgentPrompts.kt:232-241`), so the page still sees the agent's names and two alike stay two. Pin:
+  `AgentPromptsTest.inlineFilesAreWrittenUnderTheirNamesEachInItsOwnFolderAndStaleFoldersAreSwept`.
+- **N4** – `AndroidTabView.onFileChooser` answers `cancel` when `onFileChooser` rejects (`views.ts:495`);
+  a core without the handler still answers `user`. Pin: `views.test.ts` fc_3 case.
+
+Rule-(b) values against the new merge-base `1be1aa877`
+(`git diff 1be1aa877 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum | cut -c1-12`; the report excluded):
+
+| Value          | File                                                               |
+| -------------- | ------------------------------------------------------------------ |
+| `2d72fb071f80` | `src/core/agent/service.ts` (unchanged hunk)                       |
+| `38b4fb247409` | `src/android/agentPrompts.ts`                                      |
+| `09f921c7000a` | `src/android/views.ts`                                             |
+| `284113ce56ca` | `src/android/platform.ts`                                          |
+| `1183eea121e0` | `src/android/__tests__/agentPrompts.test.ts`                       |
+| `84ac8808eabb` | `src/android/__tests__/views.test.ts`                              |
+| `62b410fd4dc6` | `src/android/__tests__/platformAgentPrompts.test.ts` (new)         |
+| `5c7e0c2af3a2` | `android/app/src/main/kotlin/app/zen/chromium/AgentPrompts.kt`     |
+| `7372159624cf` | `android/app/src/main/kotlin/app/zen/chromium/TabWebView.kt`       |
+| `7f1b0439d319` | `android/app/src/main/kotlin/app/zen/chromium/Security.kt`         |
+| `7ea25642d5c5` | `android/app/src/main/kotlin/app/zen/chromium/Downloads.kt`        |
+| `aa4d34e5a445` | `android/app/src/main/kotlin/app/zen/chromium/TabHost.kt` (new)    |
+| `de62f7599375` | `android/app/src/main/kotlin/app/zen/chromium/Host.kt`             |
+| `1d59820565a2` | `android/app/src/main/kotlin/app/zen/chromium/BrowserActivity.kt`  |
+| `d020799b3c90` | `android/app/src/main/res/xml/file_paths.xml`                      |
+| `d7450625b81a` | `android/app/src/test/kotlin/app/zen/chromium/AgentPromptsTest.kt` |
+
+Checks on `a04907dc2`: `npm run typecheck` pass; `npm run lint` 0 errors (pre-existing prettier warnings, none in
+PR files); `npx vitest run src/android/__tests__/agentPrompts.test.ts src/android/__tests__/views.test.ts
+src/android/__tests__/platformAgentPrompts.test.ts` 37 passed; `cd android && ./gradlew :app:testDebugUnitTest
+-PskipWeb --no-daemon` BUILD SUCCESSFUL, `AgentPromptsTest` tests=14 failures=0 (SDK ad hoc under `/tmp/android-sdk`,
+no `local.properties`). CI run [36847606927](https://github.com/BenItBuhner/Zenium/actions/runs/36847606927) on
+`a04907dc2`; the commit adding this section touches only this report.
+
+service.ts moved: **no** (old `2d72fb071f80` → new `2d72fb071f80`).
