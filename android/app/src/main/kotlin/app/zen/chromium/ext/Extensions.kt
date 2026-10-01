@@ -39,6 +39,7 @@ import app.zen.chromium.blocking.WebRequestEvent
 import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.bool
 import app.zen.chromium.json
+import app.zen.chromium.num
 import app.zen.chromium.obj
 import app.zen.chromium.str
 import app.zen.chromium.strOrNull
@@ -580,6 +581,7 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.exec" -> exec(args, reply)
+            "ext.contextMenuEvent" -> { contextMenuEvent(args); reply(null) }
             "ext.cookies.read" -> reply(cookies.read(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url")))
             "ext.cookies.write" -> cookies.write(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url"), args.str("cookie"), reply)
             "ext.notifications.show" -> { showNotification(args.str("id"), args.obj("notification")); reply(null) }
@@ -1260,6 +1262,23 @@ class Extensions(private val host: Host) {
         val prefix = if (mine.none { !it.world }) ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) else null
         val script = ExtensionScripts.execScript(token, extensionId, "js", JSONObject(), code, emptyList(), null, null, prefix, true, true)
         view.evaluateJavascript(script) { result -> callback(result) }
+    }
+
+    /**
+     * The page's `contextmenu` event for a long press the embedder answered with the sheet
+     * ([ContextMenuEvent]), dispatched into the tab's main frame when the runtime gathers the
+     * extensions' items for it. The point arrives as the sheet's anchor (dp in the view's parent,
+     * `TabWebView.onLongPress`); the page is given the view's own pixels. A tab gone meanwhile
+     * has no page to tell. The script's answer is read only to log a page that threw.
+     */
+    private fun contextMenuEvent(args: JSONObject) {
+        val tab = host.tabs.get(args.str("tabId")) ?: return
+        val density = tab.resources.displayMetrics.density
+        val x = ContextMenuEvent.viewPixels(args.num("x", Double.NaN), tab.left, density)
+        val y = ContextMenuEvent.viewPixels(args.num("y", Double.NaN), tab.top, density)
+        tab.evaluateJavascript(ContextMenuEvent.script(x, y)) { result ->
+            if (result != null && result.startsWith("\"error")) Log.w(TAG, "contextmenu event: $result")
+        }
     }
 
     /**

@@ -2,7 +2,8 @@ import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
   type ExtensionControl,
-  type ExtensionInfo
+  type ExtensionInfo,
+  type Tab
 } from '@shared/types'
 import { pdfPageDownloadId } from '@shared/pdfPage'
 import { PDF_VIEWER_ORIGIN } from '@shared/pdfViewerProtocol'
@@ -2151,6 +2152,24 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
+   * `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the
+   * finger), and the page's own `contextmenu` event with them: Chrome dispatches one at the
+   * hold's point before it shows its menu, and the embedder's long press (`TabWebView.onLongPress`
+   * answers a link or image hold itself; a handled hold never reaches the renderer) leaves the
+   * page without – a content script listening for it hears nothing (Auto Clicker keeps the last
+   * one for the element its menu item acts on). The host dispatches a synthetic one at the point
+   * (`ext.contextMenuEvent`, Kotlin's `ContextMenuEvent`) whatever the extensions hold, as Chrome
+   * does; the keyboard's menu has no point under a finger. The page cannot prevent the sheet
+   * through it: the items are gathered here, before the event lands.
+   */
+  pageContextMenuItems(tab: Tab, params: PageContextParams): MenuItemTemplate[] {
+    if (params.menuSourceType !== 'keyboard') {
+      this.bridge.send('ext.contextMenuEvent', { tabId: tab.id, x: params.x, y: params.y })
+    }
+    return this.api.pageContextMenuItems(tab, params)
+  }
+
+  /**
    * `offscreen.createDocument`: Kotlin puts up a hidden `ExtensionWebView` on the URL (the same
    * kind of view as the background page's); the promise settles when the page reports `ready`
    * as an `offscreen` endpoint – its load event, its listeners registered – or when
@@ -3693,10 +3712,10 @@ export class AndroidExtensionsWithRuntime extends AndroidExtensions {
     this.runtime.closePopup()
   }
 
-  /** `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the finger). */
+  /** `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the finger), and the page's `contextmenu` event. */
   override pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
     const tab = this.browser.tabs.tab(tabId)
-    return tab ? this.runtime.api.pageContextMenuItems(tab, params) : []
+    return tab ? this.runtime.pageContextMenuItems(tab, params) : []
   }
 
   override actionContextMenuItems(id: string): MenuItemTemplate[] {
