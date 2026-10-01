@@ -7,7 +7,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeInstallSheet } from '@renderer/lib/ui'
-import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
+import { V2Button, V2CheckRow, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { AppIcon } from '../phone/InstallSheet'
 
 const TITLE_ID = 'zen-install-dialog-title'
@@ -16,18 +16,24 @@ const NAME_FIELD_ID = 'zen-install-dialog-name'
 /**
  * Chrome's "Create shortcut" dialog for a page without an installable manifest (MW-22; the app
  * menu's "Create Shortcut…"), as a `--v2-dialog` at the form width (§9.20) over the host's scrim
- * in the frame dialog host `TabDialogs` mounts: a title block (§9.23; Chrome's title, in sentence
- * case), then the page's tile beside a labelled name field (§9.12) with the origin as its
- * description, as Chrome's "Create shortcut" lets the name be edited. The §9.11 footer hugs and
- * right-aligns: Cancel, then the one primary (§9.33) – "Create" – which goes busy (§9.30) while
- * the core has the host write the launcher; the dialog leaves once the request has reached it
- * (the core toasts "Installed <name>") or failed (the core toasts that). Escape, the scrim and
- * Cancel report a cancelled install; there is no X. Focus starts on the name field and Tab wraps
- * (§9.22). The dialog belongs to the tab it was asked from and goes with it.
+ * in the frame dialog host `TabDialogs` mounts – a §9.5 frame dialog in Chrome's wording, the
+ * Design Lead's gate on #754 (§10): the title block (§9.23) "Create shortcut?", then the page's
+ * tile beside a labelled name field (§9.12) pre-filled with the page's title, the origin as its
+ * description, as Chrome lets the name be edited; under it Chrome's "Open as window" check row,
+ * unchecked as Chrome leaves it. The §9.11 footer hugs and right-aligns: Cancel, then the one
+ * primary (§9.33) – "Create" – which goes busy (§9.30) while the core has the host write the
+ * launcher; the dialog leaves once the request has reached it (the core toasts "Installed
+ * <name>") or failed (the core toasts that). Escape, the scrim and Cancel report a cancelled
+ * install; there is no X. Focus starts on the name field – a form, not a confirm, so §5.7's
+ * container focus is not this dialog's – and Tab wraps (§9.22). The dialog belongs to the tab it
+ * was asked from and goes with it.
+ *
+ * What the box says does not yet travel: `webapp.pin` carries the name alone, and the desktop's
+ * launcher opens the shortcut as a window whichever way the box stands (a seam in the shared
+ * message, the core's request and the host's launcher, for Services to name – listed on #754).
  *
  * The install of a page WITH an installable manifest is the pill's Install chip and its popover
- * (`InstallPopover.tsx`, the Design Lead's ruling on W8-M3's item 3); this dialog stands as it
- * stood until the Lead rules on it (Chrome's own is a bubble from the install icon).
+ * (`InstallPopover.tsx`, the Design Lead's ruling on W8-M3's item 3).
  */
 export function ShortcutDialog({
   prompt,
@@ -38,6 +44,8 @@ export function ShortcutDialog({
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [title, setTitle] = useState(prompt.title)
+  // Chrome's default: a shortcut opens in a tab unless the user asks for a window.
+  const [openAsWindow, setOpenAsWindow] = useState(false)
   const [busy, setBusy] = useState(false)
   const accepted = useRef(false)
   // The dialog leaves once, whichever of Escape, the scrim, a button or its tab going says so.
@@ -89,7 +97,7 @@ export function ShortcutDialog({
       className="zen-v2 zen-v2-dialog zen-animate-pop zen-install-dialog flex max-h-[calc(100%-32px)] max-w-[calc(100%-32px)] flex-col"
       style={{ width: POPOVER_WIDTH.form }}
     >
-      <V2TitleBlock id={TITLE_ID} title={copy.title} />
+      <V2TitleBlock id={TITLE_ID} title="Create shortcut?" />
       <div className="zen-install-dialog-body">
         <div className="zen-install-app">
           <AppIcon icon={prompt.icon} name={name} tint={prompt.tint} size={48} />
@@ -121,6 +129,12 @@ export function ShortcutDialog({
             )}
           </V2FormField>
         </div>
+        <V2CheckRow
+          label="Open as window"
+          checked={openAsWindow}
+          disabled={busy}
+          onChange={setOpenAsWindow}
+        />
       </div>
       <div className="zen-install-dialog-footer">
         <V2Button disabled={busy} onClick={cancel}>

@@ -7680,8 +7680,10 @@
    * title block brings its own 16 to the body (§9.23), so the body has none above, the dialog's
    * 16 gutter to the sides, 16 between its parts (§9.7) and none below – the §9.11 footer's 16
    * above is that gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls
-   * should it outgrow the frame; the footer stays. The install of an app is the pill's popover
-   * (`install/InstallPopover.tsx`), on the popover chassis with the same `.zen-install-app` row.
+   * should it outgrow the frame; the footer stays. Chrome's "Open as window" check row under the
+   * name runs edge to edge as the confirm dialog's does (§9.25: the row's own 16 is the dialog's
+   * one gutter). The install of an app is the pill's popover (`install/InstallPopover.tsx`), on
+   * the popover chassis with the same `.zen-install-app` row.
    */
   .zen-install-dialog-body {
     display: flex;
@@ -7693,6 +7695,10 @@
     overflow-y: auto;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
+  }
+  .zen-install-dialog-body > .zen-v2-check-row {
+    width: calc(100% + 32px);
+    margin: 0 -16px;
   }
   .zen-install-dialog-footer {
     display: flex;
