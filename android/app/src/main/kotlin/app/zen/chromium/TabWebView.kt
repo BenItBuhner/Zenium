@@ -3304,12 +3304,12 @@ class TabWebView(
          * cancels it, the page as it was ([stayedOnPage]). A check waits as long as the question
          * is up: its silence timer stops here, and the answer settles it.
          *
-         * The question is the user's only for the page in front of them, driven by them
-         * ([UnloadObjection], OS-40). A hidden tab's page may object too – an agent's input is
-         * trusted input, and so is the check's blank document – and its sheet would come up over
-         * whatever the user is looking at; so would an agent-driven page's. Such an objection is
-         * answered as Chrome answers a page the user is not on: the navigation goes on, with the
-         * bookkeeping a Leave runs, and a check in flight settles as leave, the view destroyed.
+         * A page an agent drives is not asked ([UnloadObjection], OS-40): the WebView raises
+         * the question only after a user gesture, but an agent's input is trusted input, so a
+         * page it works on in a hidden tab may object, and its sheet would come up over whatever
+         * the user is looking at. For such a page the navigation goes on, with the bookkeeping a
+         * Leave runs, and a check in flight settles as leave, the view destroyed. A page the
+         * user drives asks as it always has, shown or hidden.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3324,7 +3324,6 @@ class TabWebView(
                 return true
             }
             val decision = UnloadObjection.decide(
-                isShown = isShown,
                 agentDriven = agentDriven,
                 checkInFlight = check != null,
                 reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS

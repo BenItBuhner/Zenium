@@ -5,51 +5,50 @@ import org.junit.Test
 
 /**
  * The answer to a page's `beforeunload` objection (`UnloadObjection`, OS-40): the user's sheet
- * for the page in front of them that they drive, a silent Leave for a hidden or agent-driven
- * page, and a check in flight settled as leave – never a sheet over the page the user is on.
+ * for every page the user drives, as before – shown or hidden, under the unload check or not –
+ * and for a page an agent drives a silent Leave, or a check in flight settled as leave; never a
+ * sheet from an agent's page over whatever the user is looking at.
  */
 class UnloadObjectionTest {
-    private fun decide(isShown: Boolean, agentDriven: Boolean, checkInFlight: Boolean, reloadAsked: Boolean = false) =
-        UnloadObjection.decide(isShown = isShown, agentDriven = agentDriven, checkInFlight = checkInFlight, reloadAsked = reloadAsked)
+    private fun decide(agentDriven: Boolean, checkInFlight: Boolean, reloadAsked: Boolean = false) =
+        UnloadObjection.decide(agentDriven = agentDriven, checkInFlight = checkInFlight, reloadAsked = reloadAsked)
 
     @Test
-    fun theShownUserDrivenPageIsAskedAsBefore() {
-        assertEquals(UnloadObjection.Sheet(reload = false), decide(isShown = true, agentDriven = false, checkInFlight = false))
-        assertEquals(UnloadObjection.Sheet(reload = true), decide(isShown = true, agentDriven = false, checkInFlight = false, reloadAsked = true))
+    fun theUsersPageIsAskedAsBefore() {
+        assertEquals(UnloadObjection.Sheet(reload = false), decide(agentDriven = false, checkInFlight = false))
+        assertEquals(UnloadObjection.Sheet(reload = true), decide(agentDriven = false, checkInFlight = false, reloadAsked = true))
         // Under a check the sheet is "Leave site?", whatever the core asked for just before.
-        assertEquals(UnloadObjection.Sheet(reload = false), decide(isShown = true, agentDriven = false, checkInFlight = true))
-        assertEquals(UnloadObjection.Sheet(reload = false), decide(isShown = true, agentDriven = false, checkInFlight = true, reloadAsked = true))
+        assertEquals(UnloadObjection.Sheet(reload = false), decide(agentDriven = false, checkInFlight = true))
+        assertEquals(UnloadObjection.Sheet(reload = false), decide(agentDriven = false, checkInFlight = true, reloadAsked = true))
     }
 
     @Test
-    fun aHiddenPageLeavesWithoutASheet() {
-        assertEquals(UnloadObjection.LeaveSilently(reload = false), decide(isShown = false, agentDriven = false, checkInFlight = false))
-        assertEquals(UnloadObjection.LeaveSilently(reload = true), decide(isShown = false, agentDriven = false, checkInFlight = false, reloadAsked = true))
+    fun anAgentDrivenPageLeavesWithoutASheet() {
+        assertEquals(UnloadObjection.LeaveSilently(reload = false), decide(agentDriven = true, checkInFlight = false))
+        assertEquals(UnloadObjection.LeaveSilently(reload = true), decide(agentDriven = true, checkInFlight = false, reloadAsked = true))
     }
 
     @Test
-    fun anAgentDrivenPageLeavesWithoutASheetShownOrNot() {
-        assertEquals(UnloadObjection.LeaveSilently(reload = false), decide(isShown = true, agentDriven = true, checkInFlight = false))
-        assertEquals(UnloadObjection.LeaveSilently(reload = false), decide(isShown = false, agentDriven = true, checkInFlight = false))
-        assertEquals(UnloadObjection.LeaveSilently(reload = true), decide(isShown = true, agentDriven = true, checkInFlight = false, reloadAsked = true))
-    }
-
-    @Test
-    fun aCheckInFlightOnAPageNobodyIsAskedForSettlesAsLeave() {
-        assertEquals(UnloadObjection.SettleCheck, decide(isShown = false, agentDriven = false, checkInFlight = true))
-        assertEquals(UnloadObjection.SettleCheck, decide(isShown = true, agentDriven = true, checkInFlight = true))
-        assertEquals(UnloadObjection.SettleCheck, decide(isShown = false, agentDriven = true, checkInFlight = true))
+    fun aCheckInFlightOnAnAgentDrivenPageSettlesAsLeave() {
+        assertEquals(UnloadObjection.SettleCheck, decide(agentDriven = true, checkInFlight = true))
         // A reload is never asked under a check; the word is ignored either way.
-        assertEquals(UnloadObjection.SettleCheck, decide(isShown = false, agentDriven = false, checkInFlight = true, reloadAsked = true))
+        assertEquals(UnloadObjection.SettleCheck, decide(agentDriven = true, checkInFlight = true, reloadAsked = true))
     }
 
     @Test
-    fun theWholeTableHasASheetOnlyForTheShownUserDrivenPage() {
-        for (isShown in listOf(true, false)) for (agentDriven in listOf(true, false)) for (check in listOf(true, false)) for (reload in listOf(true, false)) {
-            val decision = decide(isShown, agentDriven, check, reload)
-            val expectSheet = isShown && !agentDriven
-            assertEquals("shown=$isShown agent=$agentDriven check=$check reload=$reload", expectSheet, decision is UnloadObjection.Sheet)
-            if (!expectSheet) assertEquals("shown=$isShown agent=$agentDriven check=$check reload=$reload", check, decision is UnloadObjection.SettleCheck)
+    fun theWholeTableTurnsOnTheAgentAlone() {
+        for (agentDriven in listOf(true, false)) for (check in listOf(true, false)) for (reload in listOf(true, false)) {
+            val decision = decide(agentDriven, check, reload)
+            val row = "agent=$agentDriven check=$check reload=$reload"
+            assertEquals(row, !agentDriven, decision is UnloadObjection.Sheet)
+            if (agentDriven) assertEquals(row, check, decision is UnloadObjection.SettleCheck)
+            // The reload word stands only without a check, whoever drives the page.
+            val reloadWord = when (decision) {
+                is UnloadObjection.Sheet -> decision.reload
+                is UnloadObjection.LeaveSilently -> decision.reload
+                UnloadObjection.SettleCheck -> false
+            }
+            assertEquals(row, reload && !check, reloadWord)
         }
     }
 }
