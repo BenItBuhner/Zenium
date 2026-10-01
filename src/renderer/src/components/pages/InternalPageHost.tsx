@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
+import { useChromePageCapture } from '@renderer/lib/chromePageCapture'
 import { cn } from '@renderer/lib/utils'
 import { LegalPage } from './about/LegalPage'
 import { WhatsNewPage } from './about/WhatsNewPage'
@@ -26,6 +27,10 @@ import { TasksPage } from './tasks/TasksPage'
  *
  * `hidden` keeps the page mounted but out of sight and out of reach (the phone's gesture stage
  * draws its own cards where the page was).
+ *
+ * The page's card picture is the chrome's to ask for (`lib/chromePageCapture.ts`): a page view's
+ * hide takes a page's, and a chrome page has none – so while the page is shown, a route it is
+ * on that is not pictured yet is captured once it has settled, on a host that pictures its chrome.
  */
 export function InternalPageHost({
   state,
@@ -36,6 +41,7 @@ export function InternalPageHost({
   tab: Tab
   hidden?: boolean
 }): JSX.Element | null {
+  useChromePageCapture(tab, !hidden, state.platform)
   const ref = parseInternalPageUrl(tab.url)
   if (!ref || internalPageOf(tab.url)?.render !== 'chrome') return null
   const page = pageFor(ref.id, state, tab)
