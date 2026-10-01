@@ -144,9 +144,9 @@ function fakeHost({ showsOnCommit = true, gives = true }: HostOptions = {}): Hos
       const page = fakeView(tab.url, events, gives)
       pages.set(tab.id, page)
       return page.view
-    }
+    },
+    ...(showsOnCommit ? { showsOnCommit: true } : {})
   }
-  if (showsOnCommit) views.showsOnCommit = true
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities: stub<HostCapabilities>({ windows: true, updates: false, agents: false }),
