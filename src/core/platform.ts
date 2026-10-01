@@ -846,7 +846,43 @@ export interface TabViewEvents {
   onLeaveSite(reload: boolean): Promise<boolean>
   /** `zen://newtab` asked for something (hosts route the page's dedicated channel here). */
   onNewTabAction(action: NewTabPageAction): void
+  /**
+   * The page opened a file chooser while the host intercepts them (`TabView.interceptAgentPrompts`).
+   * Resolves with the files to hand the page, a cancel, or `user` – the tab is not an agent's
+   * (any more): the host shows its own chooser, as it does for every tab it does not intercept.
+   */
+  onFileChooser?(request: FileChooserRequest): Promise<FileChooserAnswer>
+  /**
+   * The page asked for something the host would answer with system UI – `window.print()`, a
+   * File System Access picker – while the host intercepts them. `agent`: the tab's agent has it
+   * (the core told it), the host shows nothing; `user`: the host carries on as it would have.
+   */
+  onPagePrompt?(prompt: PagePromptRequest): 'agent' | 'user'
 }
+
+/**
+ * A file an agent hands a page (`browser_file_upload`, a file chooser's answer): a path on this
+ * computer, or the bytes themselves – from an agent on another machine, whose paths mean nothing
+ * here – which the host writes to a private temporary file first.
+ */
+export type AgentUploadFile = { path: string } | { name: string; mimeType?: string; base64: string }
+
+/** A file chooser the page opened (`TabViewEvents.onFileChooser`). */
+export interface FileChooserRequest {
+  /** One file, several, or a folder (`webkitdirectory`). */
+  mode: 'single' | 'multiple' | 'folder'
+  /** The input's `accept` list (`.pdf`, `image/*`…); empty when it takes anything. */
+  accept: string[]
+  /** An `<input type=file>` (clicked or `click()`ed), or `showOpenFilePicker`. */
+  source: 'input' | 'file-system-access'
+}
+
+export type FileChooserAnswer =
+  { kind: 'files'; files: AgentUploadFile[] } | { kind: 'cancel' } | { kind: 'user' }
+
+/** System UI a page asked for (`TabViewEvents.onPagePrompt`). */
+export type PagePromptRequest =
+  { kind: 'print' } | { kind: 'file-system-access'; picker: 'open' | 'save' | 'directory' }
 
 /**
  * The core's answer to a page opening a window: a tab in the opener's window or a Zenium window
@@ -1175,6 +1211,25 @@ export interface TabView {
    * Hosts whose hidden pages lay out anyway (Android's WebView) leave it out.
    */
   setAgentDriven?(driven: boolean): void
+  /**
+   * An agent works this page (`true` from the session's prepare, `false` once it lets the tab
+   * go): the page's file choosers, `window.print()` and File System Access pickers come to the
+   * core (`TabViewEvents.onFileChooser`, `onPagePrompt`) instead of opening system UI, and the
+   * core decides per request whose they are. Hosts that cannot intercept them leave it out and
+   * list no such kinds in `HostCapabilities.agentPrompts`.
+   */
+  interceptAgentPrompts?(on: boolean): void
+  /**
+   * Set the files of the `<input type=file>` the selector names, in the top document or a
+   * same-origin frame inside it, without a click and without a chooser – as a person picking
+   * them would: `input` and `change` fire. Rejects when no file input matches.
+   */
+  setInputFiles?(selector: string, files: AgentUploadFile[]): Promise<void>
+  /**
+   * Drop the files on the page at top-viewport CSS coordinates, as a person dragging them in
+   * from the file manager would (`dragenter`, `dragover`, `drop` with a `DataTransfer` of files).
+   */
+  dropFiles?(x: number, y: number, files: AgentUploadFile[]): Promise<void>
   /**
    * Screenshot for agents: the viewport, the full page or a region. Hosts without it fall back
    * to `snapshot()` (viewport only).
