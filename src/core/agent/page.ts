@@ -79,6 +79,11 @@ export interface PageLocation {
   /** Another element is painted over the target's centre (the click may land on it instead). */
   covered: boolean
   inViewport: boolean
+  /**
+   * A control a real click opens a popup window for, drawn outside the page: a drop-down
+   * `<select>` ("select") or a colour or date/time input (its `type`). Null for anything else.
+   */
+  popup: string | null
 }
 
 export interface PageActionResult {
@@ -87,6 +92,10 @@ export interface PageActionResult {
   value?: string
   scrollY?: number
 }
+
+export type PageUploadMark =
+  | { ok: true; mode: 'single' | 'multiple' | 'folder'; accept: string[] }
+  | { ok: false; error: string; notFileInput?: boolean }
 
 export interface PageInfo {
   url: string
@@ -126,6 +135,12 @@ export interface PageRuntime {
   submit(agent: string, target: string): PageActionResult
   select(agent: string, target: string, values: string[]): PageActionResult
   clickJs(agent: string, target: string, count: number): PageActionResult
+  /**
+   * Find the `<input type=file>` the target is (or labels, or holds as its one file input) and
+   * mark it with `data-zen-upload="<token>"` for the host's `setInputFiles`, which takes the mark
+   * off again. Says what the input takes.
+   */
+  markUpload(agent: string, target: string, token: string): PageUploadMark
   keyJs(key: string, modifiers: string[]): PageActionResult
   scroll(
     agent: string,
@@ -915,7 +930,16 @@ export function zenAgentPageRuntime(): PageRuntime {
           )) ||
         (el as HTMLElement).isContentEditable,
       covered,
-      inViewport: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+      inViewport: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth,
+      popup:
+        el.tagName === 'SELECT'
+          ? (el as HTMLSelectElement).multiple || (el as HTMLSelectElement).size > 1
+            ? null
+            : 'select'
+          : el.tagName === 'INPUT' &&
+              ['color', 'date', 'datetime-local', 'month', 'week', 'time'].includes(input.type)
+            ? input.type
+            : null
     }
   }
 
@@ -1009,7 +1033,11 @@ export function zenAgentPageRuntime(): PageRuntime {
         return { ok: false, error: 'Field is disabled or read-only' }
       if (input.type === 'checkbox' || input.type === 'radio')
         return { ok: false, error: 'Use browser_click for checkboxes and radios' }
-      if (input.type === 'file') return { ok: false, error: 'File inputs cannot be filled' }
+      if (input.type === 'file')
+        return {
+          ok: false,
+          error: 'A file input takes files, not text: browser_file_upload sets them'
+        }
       const next = clear ? text : input.value + text
       setNativeValue(input, next)
       input.dispatchEvent(
@@ -1404,6 +1432,31 @@ export function zenAgentPageRuntime(): PageRuntime {
     return { title: document.title, text: raw.slice(0, maxChars), truncated: raw.length > maxChars }
   }
 
+  function markUpload(agent: string, target: string, token: string): PageUploadMark {
+    const el = resolve(agent, target)
+    if (!(el instanceof Element)) return { ok: false, error: el.error }
+    const isFile = (e: Element | null | undefined): e is HTMLInputElement =>
+      e instanceof HTMLInputElement && e.type === 'file'
+    let input: HTMLInputElement | null = null
+    if (isFile(el)) input = el
+    else if (el instanceof HTMLLabelElement && isFile(el.control)) input = el.control
+    else {
+      const inside = el.querySelectorAll('input[type=file]')
+      if (inside.length === 1) input = inside[0] as HTMLInputElement
+    }
+    if (!input) return { ok: false, error: 'The target is not a file input', notFileInput: true }
+    if (input.disabled) return { ok: false, error: 'The file input is disabled' }
+    input.setAttribute('data-zen-upload', token)
+    return {
+      ok: true,
+      mode: input.webkitdirectory ? 'folder' : input.multiple ? 'multiple' : 'single',
+      accept: input.accept
+        .split(',')
+        .map((a) => a.trim())
+        .filter(Boolean)
+    }
+  }
+
   function dispose(agent: string): boolean {
     delete REF_STATES[agent]
     document.getElementById(`zen-agent-cursor-${agent}`)?.remove()
@@ -1426,6 +1479,7 @@ export function zenAgentPageRuntime(): PageRuntime {
     submit,
     select,
     clickJs,
+    markUpload,
     keyJs,
     scroll,
     waitFor,

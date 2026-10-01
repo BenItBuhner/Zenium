@@ -249,7 +249,11 @@ export function androidCapabilities({
     // drawn frame (Q1, `views.ts` `askShown`), and the chrome's stand-ins leave on that answer.
     placementAnswered: true,
     // Kotlin's WebChromeClient answers page dialogs itself, so none reaches an agent yet.
-    agentDialogs: false
+    agentDialogs: false,
+    // The prompts the core itself raises for the WebView (sign-in, site permissions, opening
+    // another app) go to an agent's tab's agent. The file chooser (WebChromeClient's
+    // onShowFileChooser), client certificates and printing are Kotlin's and stay with it.
+    agentPrompts: ['http-auth', 'permission', 'external-protocol']
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   DeviceGrant,
   DeviceKind,
   PermissionPrompt,
+  PermissionPromptAnswer,
   PermissionRule,
   RevokedSitePermissions
 } from '../shared/types'
@@ -97,7 +98,13 @@ export interface DeviceIdentity {
  * the grant then lives with that private session (`grantDevice`), as an answer given in private
  * does (`PermissionRequestDetails.privateContainerId`).
  */
-export type DeviceGrantDetails = Pick<PermissionRequestDetails, 'privateContainerId'>
+export type DeviceGrantDetails = Pick<PermissionRequestDetails, 'privateContainerId'> & {
+  /**
+   * The pick was an AI agent's, on this tab of its: the connection lasts while the tab is the
+   * agent's (`forgetAgentTab`) and is never written or listed, whatever the user remembers.
+   */
+  agentTabId?: string
+}
 
 /**
  * A decision changed: `origin` is null when it was a permission's default. `container` names
@@ -173,6 +180,17 @@ export interface PermissionRequestDetails {
   privateContainerId?: string
 }
 
+/** `PermissionService.agentPrompts`. */
+export interface AgentPermissionPrompts {
+  /** Whether the tab's prompts are its agent's. */
+  takes(tabId: string): boolean
+  /** The agent's answer to the request, or null when the request is the user's to answer. */
+  ask(
+    request: PermissionPrompt,
+    details: PermissionRequestDetails
+  ): Promise<PermissionPromptAnswer | null> | null
+}
+
 export interface PermissionPromptCopy {
   message: string
   detail: string
@@ -245,6 +263,12 @@ export class PermissionService {
    * exceptions of its own.
    */
   private readonly privateDeviceGrants = new Map<string, DeviceGrant[]>()
+  /**
+   * Devices an AI agent picked on one of its tabs, per tab: in memory only, read last
+   * (`hasDeviceGrant`), gone when the tab stops being the agent's (`forgetAgentTab`). The engine
+   * asks per site, not per tab, so the site may use the device from another tab meanwhile.
+   */
+  private readonly agentDeviceGrants = new Map<string, DeviceGrant[]>()
   /** Prompts dismissed without an answer, per decision key (reset by an answer). */
   private readonly dismissals = new Map<string, number>()
   /** Requests answered from a stored allow this session, per key (the notification review). */
@@ -267,6 +291,12 @@ export class PermissionService {
    */
   private readonly regranted = new Map<string, RevokedSitePermissions>()
   private override: PermissionOverride | null = null
+  /**
+   * The AI agents' side of the prompts (`AgentService.routePrompt`): a request of an agent's tab
+   * goes to its agent instead of the chrome, and its answer is never remembered for the user.
+   * The browser sets it once the agents exist; left unset, every prompt is the user's.
+   */
+  agentPrompts: AgentPermissionPrompts | null = null
 
   constructor(
     io: StoreIO,
@@ -353,6 +383,13 @@ export class PermissionService {
       }
       return true
     }
+    const agentGrant = [...this.agentDeviceGrants.values()]
+      .flat()
+      .find((g) => g.origin === origin && g.kind === kind && sameDevice(g, device))
+    if (agentGrant) {
+      agentGrant.deviceId = device.deviceId
+      return true
+    }
     const container = details?.privateContainerId
     if (!container) return false
     const kept = this.privateDeviceGrants
@@ -386,6 +423,14 @@ export class PermissionService {
       productId: device.productId ?? null,
       serialNumber: device.serialNumber ?? null,
       grantedAt: this.now()
+    }
+    const agentTab = details?.agentTabId
+    if (agentTab) {
+      const kept = (this.agentDeviceGrants.get(agentTab) ?? []).filter(
+        (g) => g.origin !== origin || g.kind !== kind || !sameDevice(g, device)
+      )
+      this.agentDeviceGrants.set(agentTab, [...kept, grant])
+      return
     }
     const container = details?.privateContainerId
     if (container) {
@@ -422,6 +467,11 @@ export class PermissionService {
     if (!origin) return
     const keep = (g: DeviceGrant): boolean =>
       g.origin !== origin || g.kind !== kind || (device !== undefined && !sameDevice(g, device))
+    for (const [tab, grants] of this.agentDeviceGrants) {
+      const left = grants.filter(keep)
+      if (left.length > 0) this.agentDeviceGrants.set(tab, left)
+      else this.agentDeviceGrants.delete(tab)
+    }
     const container = details?.privateContainerId
     if (container) {
       const kept = this.privateDeviceGrants.get(container)
@@ -667,7 +717,7 @@ export class PermissionService {
     // The Storage Access API needs a gesture before it may ask (Chrome's
     // `kDeniedByPrerequisites`): a request without one is refused at once, nothing shown.
     if (isStorageAccessPermission(permission) && details.userGesture === false) return false
-    return this.askOnce(key, () => this.prompt(permission, origin, [key], details))
+    return this.askOnce(key, details, () => this.prompt(permission, origin, [key], details))
   }
 
   /**
@@ -686,11 +736,22 @@ export class PermissionService {
     }
     const keys = open.map((row) => decisionKey(origin, row, details))
     const permission = open.length === 1 ? open[0] : 'media'
-    return this.askOnce(keys.join('+'), () => this.prompt(permission, origin, keys, details))
+    return this.askOnce(keys.join('+'), details, () =>
+      this.prompt(permission, origin, keys, details)
+    )
   }
 
-  /** Concurrent requests for the same question share one prompt and its answer. */
-  private askOnce(pendingKey: string, ask: () => Promise<boolean>): Promise<boolean> {
+  /**
+   * Concurrent requests for the same question share one prompt and its answer – an agent's tab
+   * its own, so a user's tab never waits on an agent's question nor takes its answer.
+   */
+  private askOnce(
+    key: string,
+    details: PermissionRequestDetails,
+    ask: () => Promise<boolean>
+  ): Promise<boolean> {
+    const tabId = details.tabId
+    const pendingKey = tabId && this.agentPrompts?.takes(tabId) ? `${key}|${tabId}` : key
     const inFlight = this.pending.get(pendingKey)
     if (inFlight) return inFlight
     const promise = ask().finally(() => this.pending.delete(pendingKey))
@@ -717,7 +778,7 @@ export class PermissionService {
       allowOnce: allowOnceFor(permission),
       requestedAt: this.now()
     }
-    const answer = await this.prompts.show(request)
+    const answer = await (this.agentPrompts?.ask(request, details) ?? this.prompts.show(request))
     switch (answer) {
       // Withdrawn (the page navigated away): refused this once, nothing counted or remembered.
       case null:
@@ -791,6 +852,11 @@ export class PermissionService {
         this.notify({ permission: grant.kind, origin: grant.origin, container: containerId })
   }
 
+  /** The tab is no longer an AI agent's (released, closed, its session ended): its picks go. */
+  forgetAgentTab(tabId: string): void {
+    this.agentDeviceGrants.delete(tabId)
+  }
+
   /** A stored allow answered a request. Private windows leave no trace in the activity either. */
   private recordHit(key: string, details: PermissionRequestDetails): void {
     if (details.privateContainerId) return
@@ -825,6 +891,7 @@ export class PermissionService {
     this.sessionAllows.clear()
     this.privateDecisions.clear()
     this.privateDeviceGrants.clear()
+    this.agentDeviceGrants.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of keys) this.notify(changeFor(key))
@@ -872,6 +939,7 @@ export class PermissionService {
     this.sessionAllows.clear()
     this.privateDecisions.clear()
     this.privateDeviceGrants.clear()
+    this.agentDeviceGrants.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
