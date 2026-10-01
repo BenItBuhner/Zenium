@@ -8690,7 +8690,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("akmglodbcihkcgojpdmbocmlpkfjhfof", "Mirror Mode for Google Meet™", "mirror-mode-for-google-meet", core = attachedGate("Mirror Mode for Google Meet", "https://meet.google.com/", "a Google account in a Meet call (its `mirrorVideos` interval turns the call's `<video>` elements by `rotateY(180deg)`; its `#reactions-plugin` sidebar mounts there)")),
         Row("dkagmnnkfinalebballociekdnlaniem", "Ad Block Genius - stop invasive ads", "ad-block-genius", core = listBlocker("Ad Block Genius", listOf("ads.pubmatic.com", "js.adsrvr.org", "x.bidswitch.net"))),
         Row("ihhkmalpkhkoedlmcnilbbhhbhnicjga", "Bardeen: Automate Browser Apps with AI", "bardeen", core = accountGate("Bardeen", Regex("bardeen\\.ai|accounts\\.google", RegexOption.IGNORE_CASE), injects = "#bardeen-root, [id*='bardeen'], [class*='bardeen']", gate = "a Bardeen account (its click opens its side panel – `sidePanel.open` with `debugger.html` – or mounts `#bardeen-root` over the tab, each behind a sign-in at bardeen.ai)")),
-        Row("dhhpefjklgkmgeafimnjhojgjamoafof", "Save Page WE", "save-page-we", core = pageDownload("Save Page WE", "article.html?savepagewe", Regex("tramway|probe article|\\.html?$", RegexOption.IGNORE_CASE))),
+        // Save Page WE's gather pass remembers `/favicon.ico` for a page whose head names no icon
+        // (content.js `findOtherResources`, the root icon), the fixture server answers 404, and
+        // its default `options-showwarning` raises "Some resources could not be loaded" in the
+        // page with a Save button (`showMessage`, `#savepage-message-panel-continue`) – the user's
+        // press in Chrome too, so the row presses it. The probe reads the page's frames (its own
+        // `#savepage-download-iframe`, an extension page it appends at load) and the panels it raises.
+        Row("dhhpefjklgkmgeafimnjhojgjamoafof", "Save Page WE", "save-page-we", core = pageDownload("Save Page WE", "article.html?savepagewe", Regex("tramway|probe article|\\.html?$", RegexOption.IGNORE_CASE), probe = SAVE_PAGE_WE_MARKS, press = "#savepage-message-panel-continue")),
         Row("jdlkkmamiaikhfampledjnhhkbeifokk", "PDF Viewer", "pdf-viewer-2", core = actionPage("PDF Viewer (1.0.13)", Regex("bg/helper/web/viewer\\.html"), PDFJS_VIEWER_PAGE, listOf("page-a.html?pdfviewer"))),
         Row("jhnleheckmknfcgijgkadoemagpecfol", "Auto Tab Discard (suspend)", "auto-tab-discard", core = discardsOthers("Auto Tab Discard", "[data-cmd=discard-window]")),
         Row("pliibjocnfmkagafnbkfcimonlnlpghj", "ClickUp: Tasks, Screenshots, Email, Time", "clickup", account = true, core = popupLogin("ClickUp")),
@@ -8807,10 +8813,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * WebView reports one, and the saver's own marks when `probe` names an expression for them)
      * into `samples` – round 27's BEFORE on 113 had Save Page WE's gather pass take the shared
      * renderer to V8's heap limit 74 s after the click, with nothing in any console; the samples
-     * are the trace of where the work goes. A sample that cannot be read (the renderer gone) is
-     * recorded as such and the sampling stops.
+     * are the trace of where the work goes. A sample that cannot be read within 4 s (the page's
+     * thread held by the saver, or the renderer gone) is recorded as such; the sampling goes on,
+     * so a thread that frees up again is seen to. The row's bridge since the fixture opened goes
+     * to `bridge-<slug>.txt` – the host's own record, kept when the renderer is lost – with its
+     * `content hello` lines counted (`contentHellos`: the content endpoints that booted during
+     * the row; frames the saver's own pages multiply would show here).
+     *
+     * `press` names a control the saver raises in the page for the user (Save Page WE's "Some
+     * resources could not be loaded" panel's Save, raised on 156 for the fixture's missing
+     * favicon): pressed by a script click once it has a box, as the user would press it in
+     * Chrome, and recorded in `presses` with the panel's text.
      */
-    private fun pageDownload(label: String, page: String, name: Regex, probe: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun pageDownload(label: String, page: String, name: Regex, probe: String? = null, press: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (tab, view) = fixture(page, factor, 2_500)
@@ -8818,20 +8833,28 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val tabsBefore = tabUrls().keys
         val since = StepEvidence(row)
         val samples = JSONArray()
+        val presses = JSONArray()
         val started = SystemClock.uptimeMillis()
         var lastSample = 0L
-        var sampling = true
+        val pressExpr = press?.let {
+            "(function(){var b=document.querySelector(${JSONObject.quote(it)});if(!b||!b.getClientRects().length)return JSON.stringify({pressed:false});" +
+                "var p=document.querySelector('#savepage-message-panel-text, #savepage-message-panel-header');b.click();" +
+                "return JSON.stringify({pressed:true,label:(b.textContent||'').trim().slice(0,40),text:p?(p.textContent||'').replace(/\\s+/g,' ').trim().slice(0,200):''})})()"
+        }
         val sample = {
-            if (sampling && samples.length() < 40 && SystemClock.uptimeMillis() - lastSample >= 2_500) {
+            if (samples.length() < 40 && SystemClock.uptimeMillis() - lastSample >= 2_500) {
                 lastSample = SystemClock.uptimeMillis()
                 val read = runCatching { tabEval(view, PAGE_WORK_SAMPLE, 4) }.getOrNull()
                 val entry = JSONObject().put("t", SystemClock.uptimeMillis() - started)
                 if (read == null || read == "null" || read.isEmpty()) {
                     entry.put("unreadable", true)
-                    sampling = false
                 } else {
                     entry.put("page", json(read))
                     if (probe != null) entry.put("probe", json(runCatching { tabEval(view, probe, 4) }.getOrDefault("{}")))
+                    if (pressExpr != null) {
+                        val pressed = json(runCatching { tabEval(view, pressExpr, 4) }.getOrDefault("{}"))
+                        if (pressed.optBoolean("pressed")) presses.put(pressed.put("t", SystemClock.uptimeMillis() - started))
+                    }
                 }
                 samples.put(entry)
             }
@@ -8841,7 +8864,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             sample()
             downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
         }
-        extra.put("samples", samples)
+        // A press late in the wait leaves the saver its own time to build and hand over the file.
+        if (item == null && presses.length() > 0) {
+            item = poll(scaled(20_000, factor), 700) {
+                sample()
+                downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
+            }
+        }
+        extra.put("samples", samples).put("presses", presses)
         if (item != null) {
             val id = item.optString("id")
             item = poll(scaled(15_000, factor), 500) { downloadRows().firstOrNull { it.optString("id") == id }?.takeIf { it.optString("state") == "completed" } }
@@ -8853,15 +8883,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
         popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
         since.record(extra, "atEnd")
+        val trace = since.trace()
+        File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+        extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size)
+            .put("contentHellos", trace.count { it.contains("/content hello") })
+            .put("stateChanges", JSONArray(trace.filter { it.contains("type=stateChanged") }.map { it.take(160) }))
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-saved-download")
         runCatching { coreCall("extension.closePopup", "null") }
         val summary = item?.let { "\"${it.optString("finalName").ifEmpty { it.optString("filename") }}\" ${it.optString("state")} ${it.optLong("receivedBytes")}/${it.optLong("totalBytes")} B, ${it.optString("mimeType")}, url ${it.optString("url").take(40)}" }
+        val pressed = if (presses.length() > 0) "; its \"${presses.getJSONObject(0).optString("text").take(80)}\" panel's ${presses.getJSONObject(0).optString("label")} pressed at +${presses.getJSONObject(0).optLong("t") / 1000} s" else ""
         when {
-            item != null && item.optString("state") == "completed" -> Grade("P", "$label: the page's single-file copy downloaded as the tab's own ($summary)", extra)
-            item != null -> Grade("PARTIAL", "$label: the download row came but did not complete within ${scaled(15_000, factor) / 1000} s ($summary)", extra)
-            opened != null -> Grade("F", "$label: the click opened ${opened.value.take(80)} and no download row came within ${scaled(40_000, factor) / 1000} s", extra)
-            else -> Grade("F", "$label: no download row within ${scaled(40_000, factor) / 1000} s of the click (${downloadRows().size} rows in all)", extra)
+            item != null && item.optString("state") == "completed" -> Grade("P", "$label: the page's single-file copy downloaded as the tab's own ($summary)$pressed", extra)
+            item != null -> Grade("PARTIAL", "$label: the download row came but did not complete within ${scaled(15_000, factor) / 1000} s ($summary)$pressed", extra)
+            opened != null -> Grade("F", "$label: the click opened ${opened.value.take(80)} and no download row came within ${scaled(40_000, factor) / 1000} s$pressed", extra)
+            else -> Grade("F", "$label: no download row within ${scaled(40_000, factor) / 1000} s of the click (${downloadRows().size} rows in all)$pressed; ${samples.length()} page samples, ${(0 until samples.length()).count { samples.getJSONObject(it).optBoolean("unreadable") }} unreadable; ${extra.optInt("contentHellos")} content hello(s) on the bridge", extra)
         }
     }
 
@@ -15849,6 +15885,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val PAGE_WORK_SAMPLE =
             "(function(){var m=(performance&&performance.memory)||null;var d=document.documentElement;return JSON.stringify({els:document.querySelectorAll('*').length,html:d?d.outerHTML.length:0," +
                 "blobs:document.querySelectorAll('a[href^=\"blob:\"], a[download]').length,heapMb:m?Math.round(m.usedJSHeapSize/1048576):null,heapLimitMb:m?Math.round(m.jsHeapSizeLimit/1048576):null,ready:document.readyState})})()"
+
+        /**
+         * Save Page WE's marks in the page under its save: the frames (`iframes`, and whether its
+         * own `#savepage-download-iframe` is among them – the extension page it appends at load,
+         * where its new save method builds the blob), the panels it raises (`savepage-*-panel-container`
+         * ids present), the message panel's text, and the key its frame script writes.
+         */
+        private const val SAVE_PAGE_WE_MARKS =
+            "(function(){var p=[].slice.call(document.querySelectorAll('[id$=\"-panel-container\"]')).map(function(e){return e.id}).filter(function(i){return i.indexOf('savepage-')===0});" +
+                "var t=document.querySelector('#savepage-message-panel-text');var f=document.querySelectorAll('iframe');return JSON.stringify({iframes:f.length,downloadIframe:!!document.getElementById('savepage-download-iframe')," +
+                "frameSrcs:[].slice.call(f).map(function(e){return (e.getAttribute('src')||'').slice(-48)}).slice(0,6),panels:p,message:t?(t.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):'',key:document.documentElement.getAttribute('data-savepage-key')})})()"
 
         /** The gallery's pictures are 320 by 240; a listing's size label for one, as a card prints it. */
         private val FIXTURE_PICTURE_SIZE = Regex("\\b320\\s*[x×]\\s*240\\b")
