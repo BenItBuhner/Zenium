@@ -139,6 +139,97 @@ export const HOLD_RELEASE_ATTEMPTS = 3
 /** How often the quit's trace reads the app once no exit has come (`Session.traceQuit`). */
 export const QUIT_TRACE_EVERY_MS = 500
 
+// ---------------------------------------------------------------------------------------------
+// Reading the hold while the chord is down (W8-H6). `Session.holdQuitChord` sends the key down
+// and then reads the chrome's `window.quitHold` through app.getState until it names the hold.
+// It used to poll with an unbounded wait – each read awaited to its answer – and on a starved
+// runner one read stalled for the whole hold: macos-x64, run 36816729301, scenario `visibility`,
+// the chord's key down at t=1790830501110 and before-quit at t=1790830503646, 2536 ms later and
+// past the hold's 1500 ms, so the hold armed, ran and quit the app (exit 0) while the one read
+// in flight hung until the quit closed its target. The closed-target rejection fell back to
+// null and the step read "the quit chord held showed no hold: null" – an app that did exactly
+// what it should, failed by the harness's read. Every read is now bounded (`readHold`): one
+// that has not answered within HOLD_READ_BOUND_MS is recorded as stalled and the next goes out,
+// so a later read can still catch the hold; the target going away ends the reading. The step's
+// rule is unchanged: no hold read still fails it.
+// ---------------------------------------------------------------------------------------------
+
+/** How long `holdQuitChord` keeps reading the chrome's state for the hold after the key down. */
+export const HOLD_READ_WINDOW_MS = 2000
+
+/** The pause between two reads of the hold that answered without it. */
+export const HOLD_READ_EVERY_MS = 50
+
+/** How long one read of the hold may take before it counts as stalled and the next goes out. */
+export const HOLD_READ_BOUND_MS = 500
+
+/**
+ * What one bounded read of the chrome's `window.quitHold` – `outcome`, a `probeOutcome` – says:
+ *   'hold'     it answered with the hold's state – the reading is done;
+ *   'not-yet'  it answered with no hold – the chord has not armed it yet, read again;
+ *   'stalled'  it had not answered within its bound – nothing known, read again (a later read
+ *              may still catch the hold; the stalled one is left to settle on its own);
+ *   'gone'     Playwright lost the target – the app is quitting, nothing more to read;
+ *   'error'    the read failed – the reading is done, the failure is the result.
+ */
+export function classifyHoldRead(outcome) {
+  const state = outcome && typeof outcome === 'object' ? outcome.state : undefined
+  if (state === 'responsive') {
+    return outcome.value === null || outcome.value === undefined ? 'not-yet' : 'hold'
+  }
+  if (state === 'blocked') return 'stalled'
+  if (state === 'gone') return 'gone'
+  return 'error'
+}
+
+/** Does `kind`, one `classifyHoldRead`, end the reading of the hold? */
+export function holdReadStops(kind) {
+  return kind === 'hold' || kind === 'gone' || kind === 'error'
+}
+
+/**
+ * The chrome's `window.quitHold` read until it names the hold or the reading is over: `read`
+ * returns one app.getState round trip's `quitHold` (a promise; it may hang, it may reject),
+ * each call bounded by `boundMs` through `probeOutcome` and classified by `classifyHoldRead`.
+ * A read that answered without the hold or stalled past its bound is followed by the next after
+ * `everyMs`, until `windowMs` have passed since `since` (the key down on the harness's clock;
+ * the last read may run on past the window by at most its bound). Resolves – never rejects –
+ * with `panel` (the hold's state; null when none was read; `{ error }` when a read failed, as
+ * the step's check expects) and `polls`, every read as `{ at, state }` with `at` in ms since
+ * `since` as the read went out, `value` for the hold read and `error` for the failed one.
+ */
+export async function readHold(
+  read,
+  {
+    since = Date.now(),
+    windowMs = HOLD_READ_WINDOW_MS,
+    everyMs = HOLD_READ_EVERY_MS,
+    boundMs = HOLD_READ_BOUND_MS,
+    delay = (ms) => new Promise((r) => setTimeout(r, ms))
+  } = {}
+) {
+  const deadline = since + windowMs
+  const polls = []
+  let panel = null
+  for (;;) {
+    const at = Date.now() - since
+    const outcome = await probeOutcome(
+      Promise.resolve().then(() => read()),
+      boundMs
+    )
+    const kind = classifyHoldRead(outcome)
+    const poll = { at, state: kind }
+    if (kind === 'hold') poll.value = outcome.value
+    if (kind === 'error') poll.error = String(outcome.state).replace(/^error: /, '')
+    polls.push(poll)
+    if (kind === 'hold') panel = outcome.value
+    if (kind === 'error') panel = { error: poll.error }
+    if (holdReadStops(kind) || Date.now() >= deadline) break
+    await delay(everyMs)
+  }
+  return { panel, polls }
+}
+
 /**
  * One `hold-release` poll of the chrome's `window.quitHold` – `{ askedAt, answeredAt, quitHold }`,
  * the harness's clock around one app.getState round trip and what it returned (null: no hold;
