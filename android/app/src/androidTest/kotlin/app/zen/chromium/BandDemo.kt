@@ -59,8 +59,9 @@ import kotlin.math.roundToInt
  *     offline state replaces it (`band-replace-offline`): one band root, the title changed, the
  *     page re-targeted 76 → 56 on the spring.
  *  6b. THE CHROME-DRAWN PAGES (the Design Lead's (B) on #735's question (8), its owed
- *     follow-up): the state's band follows the tab onto `zen://settings` and onto the phone's
- *     new tab page – pages the chrome draws, with no WebView under them – standing on the
+ *     follow-up): the state's band follows the front onto `zen://settings` (a chrome page typed
+ *     opens its own tab, the demo tab its opener; closed after) and onto the phone's new tab
+ *     page – pages the chrome draws, with no WebView under them – standing on the
  *     shared `PageBandLayer` (#740): one layer translated by the band's height, the page
  *     starting where the band ends, the host's WebView unmoved; a swipe up on the new tab page
  *     puts the band away (`band-swipe-new-tab`, the layer under the finger); the radios cycled
@@ -499,14 +500,18 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             check("the offline band stands to follow the tab onto the chrome-drawn pages", false)
             return
         }
-        // Settings: the band follows the tab onto a page the chrome draws; the layer takes the offset.
+        // Settings: a chrome page typed into the bar opens (or reuses) ITS OWN tab with this one
+        // as opener (`submitUrlbar`), so the band follows the FRONT onto the page the chrome
+        // draws – the demo tab's WebView goes home behind it – and the layer takes the offset.
         armFrameClock()
         sampler.start()
-        navigate(SETTINGS_URL)
-        val onSettings = awaitBand(OFFLINE_TITLE, 6_000)
+        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":${JSONObject.quote(SETTINGS_URL)}}""")
+        val settingsTab = poll(10_000) { activeCoreTab()?.optString("url")?.startsWith(SETTINGS_URL) == true }
+        val settingsId = activeCoreTab()?.optString("id") ?: ""
+        val onSettings = settingsTab && awaitBand(OFFLINE_TITLE, 6_000)
         SystemClock.sleep(900)
         val crossing = sampler.stop()
-        finding("  Settings: band=${bandTitle()}; ${describeTab()}; the host through the crossing: ${describeSamples(crossing)}; chrome frames ${describeFrames(frameClock())}")
+        finding("  Settings: in front=$settingsTab (tab $settingsId); band=${bandTitle()}; the demo tab behind it: ${describeTab()}; its WebView through the crossing: ${describeSamples(crossing)}; chrome frames ${describeFrames(frameClock())}")
         check("the offline state's band stands on Settings (a chrome-drawn page is a page the band stands on)", onSettings)
         if (onSettings) {
             layerGeometry("Settings", ONE_LINE)
@@ -514,6 +519,13 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             snap("design-settings-offline-light")
         }
         beat()
+        // Settings' tab closed, the demo tab is the front again (its opener).
+        if (settingsId.isNotEmpty() && settingsId != TAB) coreInvoke("tab.close", """{"tabId":"$settingsId","force":true}""")
+        coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+        val demoFront = poll(8_000) { activeCoreTab()?.optString("id") == TAB }
+        finding("  Settings closed: the demo tab in front=$demoFront; ${describeTab()}")
+        check("Settings' own tab closed, the demo tab is the front again", demoFront)
+        if (!demoFront) return
 
         // The new tab page: `zen://newtab` typed on the phone lands on the empty tab the chrome
         // draws the page over (`zen://blank`); the band stands there, the page pushed down under it.
