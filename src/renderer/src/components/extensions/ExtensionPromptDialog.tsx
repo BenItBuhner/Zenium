@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import type { ExtensionPromptRequest } from '@shared/types'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { usePopover } from '@renderer/hooks/usePopover'
+import { useBackSurface } from '@renderer/lib/back'
 import { answerExtensionPrompt } from '@renderer/lib/extensions/popup'
 import { noWarningsLine, promptCopy } from '@renderer/lib/extensions/promptCopy'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -18,8 +19,8 @@ import { WarningRow } from './WarningRow'
  * Install, update and `permissions.request` prompts as a v2 dialog (§1–§3: the panel colour,
  * radius 12, the dialog shadow; §9.23: a title block with the extension's icon, no bar and no
  * X). Main asks, the renderer shows what it will be able to do as rows with a glyph per kind,
- * and two buttons. One prompt at a time, oldest first; Escape, a press on the scrim and Cancel
- * all answer no.
+ * and two buttons. One prompt at a time, oldest first; Escape, a press on the scrim, the system
+ * back and Cancel all answer no.
  *
  * Rendered inside TabDialogs' `FrameDialogHost` (lib/portals.tsx), which centres the dialog in
  * the content frame over its §9.5 scrim – the frame alone dims; the sidebar and toolbar stay
@@ -116,12 +117,16 @@ function PromptBody({
 /**
  * The dialog (the desktop's, and the tablet's): its panel in flow in the frame dialog host, which
  * centres it above its scrim, takes the pointer over the frame, makes the window chrome inert
- * (§9.5) and closes the popover that is open when it appears; a press on the scrim answers no.
- * Focus lands on the accepting button, as Firefox's install prompt has it; Tab wraps inside;
- * nothing in the chrome opened it, so there is no control to return focus to (§9.22). A modal,
- * not a popover: it is not in the layer's popover registry, so a resize re-centres rather than
- * closes it and a popover opening later does not dismiss it. `glyph` is the title block's icon
- * size, the form factor's `--v2-icon` (§9.23); the pair's height is the pointer's control token.
+ * (§9.5) and closes the popover that is open when it appears; a press on the scrim answers no,
+ * and so does the tablet's system back – the dialog is the back registry's top surface while it
+ * shows (lib/back.ts), as the other two prompt dialogs are: a modal is outside the popover
+ * registry, so without a surface of its own the back fell through to the legacy chain and ran
+ * `tab.back` on the page behind it. Focus lands on the accepting button, as Firefox's install
+ * prompt has it; Tab wraps inside; nothing in the chrome opened it, so there is no control to
+ * return focus to (§9.22). A modal, not a popover: it is not in the layer's popover registry, so
+ * a resize re-centres rather than closes it and a popover opening later does not dismiss it.
+ * `glyph` is the title block's icon size, the form factor's `--v2-icon` (§9.23); the pair's
+ * height is the pointer's control token.
  */
 function PanelPrompt({
   prompt,
@@ -134,6 +139,7 @@ function PanelPrompt({
   const ref = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
   useFrameDialog({ onScrimPress: () => answer(false) })
+  useBackSurface({ name: 'extension-prompt', onCommit: () => answer(false) })
   usePopover(ref, {
     onClose: () => answer(false),
     initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),

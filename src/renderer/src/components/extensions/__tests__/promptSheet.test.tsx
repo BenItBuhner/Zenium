@@ -21,6 +21,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { ExtensionPromptDialog } = await import('../ExtensionPromptDialog')
 const { uiStore } = await import('@renderer/lib/ui')
 const { viewportStore } = await import('@renderer/lib/formFactor')
+const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 
 let root: Root | null = null
 let host: HTMLElement | null = null
@@ -262,5 +263,27 @@ describe('the extension prompt on a tablet', () => {
     render()
     expect(document.querySelector('.zen-sheet')).not.toBeNull()
     expect(document.querySelector('.zen-ext-dialog[role="dialog"]')).toBeNull()
+  })
+
+  // The dialog is the back registry's top surface while it shows (a modal is outside the popover
+  // registry, so without a surface of its own the back would fall to the legacy chain and run
+  // `tab.back` on the page behind it): the system back refuses the prompt, as Cancel does.
+  it('the system back refuses the prompt, as Cancel does – the dialog is the back registry’s top surface', () => {
+    tablet()
+    uiStore.set(() => ({ extensionPrompts: [prompt()] }))
+    expect(topBackSurface()).toBeNull()
+    render()
+    expect(document.querySelector('.zen-ext-dialog[role="dialog"]')).not.toBeNull()
+    expect(topBackSurface()?.name).toBe('extension-prompt')
+    act(() => {
+      expect(dispatchBackEvent('commit')).toBe(true)
+    })
+    expect(invoke).toHaveBeenCalledWith('extension.confirmInstall', {
+      requestId: 'r1',
+      accept: false
+    })
+    expect(uiStore.get().extensionPrompts).toEqual([])
+    expect(document.querySelector('.zen-ext-dialog[role="dialog"]')).toBeNull()
+    expect(topBackSurface()).toBeNull()
   })
 })
