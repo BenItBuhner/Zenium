@@ -170,14 +170,17 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
             finding("FAIL the banner's title is not in the accessibility tree")
             return
         }
-        // A fling sideways: the card leaves the way it was thrown and the core hears 'swipe'.
+        // A fling: the card leaves the way it was thrown and the core hears 'swipe' – the page-edge
+        // band (the phone's door for the offer, motion spec §3.2) up off the page, a banner card sideways.
+        val door = MessageProbe.parse(chromeJs(MessageProbe.PROBE_JS))
         f.down(card.exactCenterX(), card.exactCenterY())
-        f.moveBy(-0.55f * width, 0f, 140)
+        if (MessageProbe.isBand(door)) f.moveBy(0f, -MessageProbe.swipeUp(door, density), 140)
+        else f.moveBy(-0.55f * width, 0f, 140)
         f.up()
         val gone = awaitNoBanner(5_000)
         SystemClock.sleep(1_000)
         shot("04-banner-swiped-away")
-        finding("${verdict(gone)} the banner left on the swipe (cooldown starts)")
+        finding("${verdict(gone)} the banner (${door.optString("door").ifEmpty { "no door" }}) left on the swipe (cooldown starts)")
     }
 
     // --- 3. the install sheet and the launcher's pin dialog ---------------------------------------
@@ -380,12 +383,15 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         Log.w(tag, "gave up waiting for $url")
     }
 
-    /** The title of the banner up in the chrome, once one is (null when none came in time). */
+    /**
+     * The title of the message up in the chrome at either door – the page-edge band (the phone's
+     * door for the offer) or the banner stack ([MessageProbe]) – once one is (null when none came in time).
+     */
     private fun awaitBanner(timeoutMs: Long): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            val titles = JSONArray(json("JSON.stringify(window.__zenStores.ui.get().banners.filter(b => !b.leaving).map(b => b.title))"))
-            if (titles.length() > 0) return titles.getString(0)
+            val titles = json(MessageProbe.TITLES_JS).split('|').filter { it.isNotEmpty() }
+            if (titles.isNotEmpty()) return titles[0]
             SystemClock.sleep(250)
         }
         return null
@@ -394,7 +400,7 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
     private fun awaitNoBanner(timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (liveMessages("banners") == 0) return true
+            if (json(MessageProbe.LIVE_JS).toIntOrNull() == 0) return true
             SystemClock.sleep(200)
         }
         return false

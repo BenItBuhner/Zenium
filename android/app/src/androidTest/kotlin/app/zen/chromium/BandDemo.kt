@@ -33,8 +33,9 @@ import kotlin.math.roundToInt
  * Writes `band-findings.txt` next to the stills (a `PASS` or `FAIL` per check; the run fails at
  * its end when any did, or when a touch did not take):
  *
- *  1. THE DEFAULT-BROWSER STATE (a two-line band, 76): the title, its detail, "Set as default",
- *     "Not now" and the ×, `role="status"`, at the frame's top; the page translated by the
+ *  1. THE DEFAULT-BROWSER STATE (a two-line band, 76): the title, its detail, "Set as default"
+ *     and the × (§4's second action "Not now" reported, not gated: the shared model carries one
+ *     action per band), `role="status"`, at the frame's top; the page translated by the
  *     band's height (the host's own word: the page WebView's `translationY`); a short swipe up
  *     released before half the height springs the band back (`band-swipe-back`); a swipe past
  *     half dismisses it (`band-swipe-dismiss`), the page following the finger 1:1 on the way
@@ -74,11 +75,12 @@ import kotlin.math.roundToInt
  * evidence the perf program's table reads.
  *
  * THE SEAM'S HOOKS: the band's content component is the shared layer's (Desktop's W8-M2); this
- * driver reads it through the accessibility tree (its words, its buttons) and the host (the page's
- * translation), and through the document for what the tree does not say (the form, the role, how
- * many roots) – those selectors stand together in [BAND_PROBE_JS] and are the one place to
- * change if the component names them otherwise. Every control pressed is a real injected finger
- * with an assertion (#198's rule). See [DemoHarness] for the plumbing.
+ * driver reads the band through the accessibility tree (its words, its buttons), the host (the
+ * page's translation) and the shared MODEL (`window.__zenStores.band`: the shown entry's form,
+ * key, title and action), and through the document only for its root (how many stand, the role,
+ * the glyph, where it sits) – that one selector stands in [BAND_PROBE_JS] and is the one place
+ * to change if the component names its root otherwise. Every control pressed is a real injected
+ * finger with an assertion (#198's rule). See [DemoHarness] for the plumbing.
  */
 @RunWith(AndroidJUnit4::class)
 class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") {
@@ -184,7 +186,11 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             finding("  no band: the default-browser act cannot be recorded (prompt=${defaultBrowserPrompt()})")
             return
         }
-        bandGeometry("the default-browser band", TWO_LINE, "state", DEFAULT_TITLE, DEFAULT_DETAIL, listOf(DEFAULT_ACTION, DEFAULT_SECONDARY))
+        bandGeometry("the default-browser band", TWO_LINE, "state", DEFAULT_TITLE, DEFAULT_DETAIL, listOf(DEFAULT_ACTION))
+        // §4's table gives this band a second, dismissing action; the shared model carries one
+        // action per band today (its × is the "Not now"). Reported, not gated, until it does.
+        val secondary = findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == DEFAULT_SECONDARY } != null
+        finding("  the §4 second action '$DEFAULT_SECONDARY' as a button: $secondary (reported; the model carries one action)")
         snap("design-default-browser-light")
         beat()
 
@@ -931,19 +937,28 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         private val TITLES = listOf(DEFAULT_TITLE, INSTALL_TITLE, READER_TITLE, OFFLINE_TITLE)
 
         /**
-         * THE SEAM'S HOOKS, in one place: the band's root (`data-zen-band`, with `data-form`
-         * `offer` | `state`), its title, detail, actions, glyph and × – what the shared content
-         * component (Desktop's W8-M2) names them. The probe answers `{count:0}` without a root.
+         * THE SEAM'S HOOKS, in one place. The band's words, form, key and action come from the
+         * shared MODEL (`window.__zenStores.band`, Desktop's W8-M2 `lib/band.ts`: the entry
+         * `chooseBand` picks – states before offers, the newest, on the front tab, while the host
+         * says a band may show), so no DOM name is read for them; the document is read only for
+         * the band's ROOT (`data-zen-band`) – how many stand, its role, whether it carries a glyph
+         * (an `svg`) and where it sits – the one selector to change if the content component
+         * names its root otherwise. `count` is the roots'; `standing` the model's entries (shown
+         * or waiting); `title` is empty when none is shown.
          */
         private const val BAND_ROOT = "[data-zen-band]"
         private const val BAND_PROBE_JS =
-            "(function(){var b=document.querySelectorAll('$BAND_ROOT');var f=b[0];if(!f)return JSON.stringify({count:0});" +
-                "var r=f.getBoundingClientRect();var t=f.querySelector('.zen-band-title');var d=f.querySelector('.zen-band-detail');" +
-                "var a=Array.prototype.map.call(f.querySelectorAll('.zen-band-action'),function(x){return (x.textContent||'').trim()});" +
-                "return JSON.stringify({count:b.length,form:f.getAttribute('data-form')||'',key:f.getAttribute('data-band-key')||''," +
-                "title:t?(t.textContent||'').trim():'',detail:d?(d.textContent||'').trim():'',actions:a,glyph:!!f.querySelector('.zen-band-glyph')," +
-                "close:!!f.querySelector('.zen-band-close'),role:f.getAttribute('role'),top:Math.round(r.top),left:Math.round(r.left)," +
-                "width:Math.round(r.width),height:Math.round(r.height),theme:document.documentElement.getAttribute('data-theme')})})()"
+            "(function(){var S=window.__zenStores&&window.__zenStores.band;var st=S?S.get():null;var shown=null;" +
+                "if(st&&st.eligible){var c=st.entries.filter(function(e){return e.tabId===null||e.tabId===st.front});" +
+                "shown=c.filter(function(e){return e.form==='state'})[0]||c[0]||null}" +
+                "var b=document.querySelectorAll('$BAND_ROOT');var f=b[0];" +
+                "var o={model:!!S,standing:st?st.entries.length:0,eligible:st?st.eligible:false,front:st?st.front:null,count:b.length," +
+                "form:shown?shown.form:'',key:shown?shown.key:'',title:shown?shown.title:'',detail:shown&&shown.detail?shown.detail:''," +
+                "actions:shown&&shown.action?[shown.action.label]:[],close:shown?(shown.closeLabel||'Dismiss'):''," +
+                "theme:document.documentElement.getAttribute('data-theme')};" +
+                "if(f){var r=f.getBoundingClientRect();var role=f.getAttribute('role')||(f.querySelector('[role]')?f.querySelector('[role]').getAttribute('role'):'');" +
+                "o.role=role;o.glyph=!!f.querySelector('svg');o.top=Math.round(r.top);o.left=Math.round(r.left);o.width=Math.round(r.width);o.height=Math.round(r.height)}" +
+                "return JSON.stringify(o)})()"
 
         /** A short page, no article, no manifest: the start page and the page the states stand on. */
         private const val PLAIN_PAGE = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +

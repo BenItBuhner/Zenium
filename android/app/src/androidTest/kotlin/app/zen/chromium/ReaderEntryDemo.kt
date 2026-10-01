@@ -244,7 +244,7 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         check("$where: the offer '$STRIP_TITLE' is on screen", title != null)
         check("$where: the strip carries the one action '$STRIP_ACTION' and the X", findNode { it == STRIP_ACTION } != null && findNode { it == DISMISS_LABEL } != null)
         check(
-            "$where: one banner on the stack – the glyph, the title, the action, role status, at the frame's top",
+            "$where: one message at its door (${probe.optString("door").ifEmpty { "none" }}) – the glyph, the title, the action, role status, at the frame's top",
             probe.optInt("count") == 1 && probe.optString("title") == STRIP_TITLE && probe.optString("action") == STRIP_ACTION &&
                 probe.optBoolean("glyph") && probe.optBoolean("close") && probe.optString("role") == "status" &&
                 probe.optInt("top", Int.MAX_VALUE) * density < height / 2
@@ -382,14 +382,21 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         check("site E: an offer stands to be swiped", title != null)
         if (title != null) {
             // From the title, not the action: a touch on a control stays the control's (FirstRunDemo's swipe).
+            // The band is swiped up off the page (motion spec §3.2); a banner card sideways.
+            val door = bannerProbe()
             Finger().apply {
                 down(title.left + 0.3f * title.width(), title.exactCenterY())
-                moveBy(NUDGE, 0f, 80)
-                moveBy(0.6f * width, 0f, 260)
+                if (MessageProbe.isBand(door)) {
+                    moveBy(0f, -NUDGE, 80)
+                    moveBy(0f, -MessageProbe.swipeUp(door, density), 260)
+                } else {
+                    moveBy(NUDGE, 0f, 80)
+                    moveBy(0.6f * width, 0f, 260)
+                }
                 up()
             }
             val gone = waitForGone(STRIP_TITLE, 4_000)
-            finding("  the swipe: strip gone=$gone; stack: ${bannerProbe()}")
+            finding("  the swipe (${door.optString("door").ifEmpty { "no door" }}): strip gone=$gone; stack: ${bannerProbe()}")
             if (!gone) touchFault("a swipe on the strip did not take it off")
             check("site E: the swipe takes the strip off", gone)
             SystemClock.sleep(600)
@@ -747,18 +754,14 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
      * `querySelector` per DOM change; it touches nothing.
      */
     private fun armBannerLog() {
-        chromeJs(
-            "(function(){var w=window;if(!w.__zenBanners){var log=[];var seen=null;var read=function(){" +
-                "var s=document.querySelector('.zen-banner')?'shown':'gone';" +
-                "if(s!==seen){seen=s;log.push([Math.round(performance.now()),s]);}};" +
-                "new MutationObserver(read).observe(document.body,{subtree:true,childList:true});" +
-                "w.__zenBanners={log:log,reset:function(){log.length=0;seen=null;read();}};read();}else{w.__zenBanners.reset();}return 'armed'})()"
-        )
+        // The offer's door on the phone is the page-edge band, elsewhere the banner stack: the
+        // log watches the message's root at either (MessageProbe).
+        chromeJs(MessageProbe.ARM_LOG_JS)
     }
 
     /** The banner log's entries since it was armed: (ms, `shown` | `gone`). */
     private fun bannerLog(): List<Pair<Long, String>> {
-        val raw = jsonString(chromeJs("(function(){var b=window.__zenBanners;return b?JSON.stringify(b.log):'[]'})()"))
+        val raw = jsonString(chromeJs(MessageProbe.LOG_JS))
         return runCatching {
             val a = JSONArray(raw)
             (0 until a.length()).map { i -> val e = a.getJSONArray(i); e.getLong(0) to e.getString(1) }
@@ -776,17 +779,12 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     private fun stripUp(): Boolean = findNode { it == STRIP_TITLE } != null || bannerProbe().optString("title") == STRIP_TITLE
 
-    /** The banner stack from the chrome's document: how many, the first's title, action, glyph, X, role and place (CSS px). */
-    private fun bannerProbe(): JSONObject {
-        val raw = jsonString(chromeJs(
-            "(function(){var b=document.querySelectorAll('.zen-banner');var f=b[0];if(!f)return JSON.stringify({count:0});" +
-                "var r=f.getBoundingClientRect();var t=f.querySelector('.zen-banner-title span');var a=f.querySelector('.zen-message-button');" +
-                "return JSON.stringify({count:b.length,title:t?(t.textContent||'').trim():'',action:a?(a.textContent||'').trim():'',glyph:!!f.querySelector('.zen-message-glyph')," +
-                "close:!!f.querySelector('.zen-message-close'),role:f.getAttribute('role'),top:Math.round(r.top),left:Math.round(r.left),width:Math.round(r.width),height:Math.round(r.height)," +
-                "theme:document.documentElement.getAttribute('data-theme')})})()"
-        ))
-        return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
-    }
+    /**
+     * The message up at its door – the page-edge band on the phone (the shared model's shown
+     * entry, its root in the document) or the banner stack: how many, the first's title, action,
+     * glyph, X, role and place (CSS px), and `door` (`band` | `banner` | ``) – [MessageProbe].
+     */
+    private fun bannerProbe(): JSONObject = MessageProbe.parse(chromeJs(MessageProbe.PROBE_JS))
 
     private fun chromeTheme(): String = jsonString(chromeJs("(function(){return document.documentElement.getAttribute('data-theme')||''})()"))
 
