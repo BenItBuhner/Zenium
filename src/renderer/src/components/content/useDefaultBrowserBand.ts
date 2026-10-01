@@ -24,15 +24,19 @@ export const DEFAULT_BROWSER_BAND_KEY = 'default-browser'
  * once the OS has answered and on every return to the foreground – not through the band's own
  * dismissal. On Windows the hand-off opens Windows Settings, where only the user can finish, so
  * the band re-words itself in place – "Press Set default in Windows Settings", the same key, the
- * band's content cross-fading – and stands as that instruction, × only, until the role is
- * confirmed or the ×; a hand-off that failed on the spot (nothing opened, the request's toast
- * says so) takes the ask's words back.
+ * band's content cross-fading – and stands as that instruction until the role is confirmed or
+ * the ×. The instruction carries one action of its own, "Open Windows Settings" (the lead's
+ * gate on #754, §10): the hand-off again – the same OS request, for a Settings window the user
+ * closed or lost under the browser's. A hand-off that failed on the spot (nothing opened, the
+ * request's toast says so) takes the ask's words back.
  *
- * The × is "Dismiss", as on every band, and the × ALONE remembers the refusal for this feature
- * release (`dismissDefaultBrowserBanner`; the Lead's ruling, §3.2 / §9.6, one rule for both
- * hosts): a swipe up, Escape, the clock, a navigation or the tab leaving the front put the band
- * away for now and remember nothing – it may stand again at the next eligible moment – and the
- * band's going for any other reason (the window closing, a replacement) remembers nothing either.
+ * The × is "Dismiss", as on every band, and the ASK's × ALONE remembers the refusal for this
+ * feature release (`dismissDefaultBrowserBanner`; the Lead's ruling, §3.2 / §9.6, one rule for
+ * both hosts): a swipe up, Escape, the clock, a navigation or the tab leaving the front put the
+ * band away for now and remember nothing – it may stand again at the next eligible moment – and
+ * the band's going for any other reason (the window closing, a replacement) remembers nothing
+ * either. The instruction's × is a plain put-away too (§10): the user has not refused the role,
+ * they have Windows Settings open for it, and the band asks afresh at its next eligible moment.
  *
  * The strip across the frame's top (`content/DefaultBrowserBanner.tsx`) retired to this band in
  * W8-M2; the Settings row is as it was.
@@ -60,19 +64,24 @@ export function useDefaultBrowserBand(state: UIState): void {
         form: 'state',
         icon: Globe,
         title: instruction ? DEFAULT_BROWSER_WINDOWS_TITLE : DEFAULT_BROWSER_PROMPT_TITLE,
-        action: instruction ? undefined : { label: 'Set as default', holds: true, onPick: pick },
+        // Both actions are the one hand-off; the instruction's names where it goes.
+        action: instruction
+          ? { label: 'Open Windows Settings', holds: true, onPick: pick }
+          : { label: 'Set as default', holds: true, onPick: pick },
         onDismiss: (reason) => {
           if (reason === 'replaced') return
           // Gone for now or for good: whatever the request out still answers changes nothing,
-          // and the band asks afresh, in the ask's words, at its next eligible moment.
+          // and the band asks afresh, in the ask's words, at its next eligible moment. Only the
+          // ask's × is a refusal; the instruction's leaves a user who is finishing in Settings.
           standing = false
           handedOff.current = false
-          if (reason === 'close') dismissDefaultBrowserBanner({ version })
+          if (reason === 'close' && !instruction) dismissDefaultBrowserBanner({ version })
         }
       })
     }
     function pick(): void {
-      if (windows) {
+      // The instruction's own action asks again without re-wording what already stands.
+      if (windows && !handedOff.current) {
         handedOff.current = true
         stand()
       }

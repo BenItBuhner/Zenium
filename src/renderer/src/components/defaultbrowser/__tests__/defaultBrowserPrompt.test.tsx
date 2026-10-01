@@ -16,8 +16,9 @@ import type { BandHost } from '../../band/PageEdgeBand'
  * the × named Dismiss as on every band (§3.1, §9.29; the Lead's ruling on #740) – whose Set as
  * default asks the OS directly and holds (the Design Lead's ruling on the band's tenants, W8-M3:
  * the dialog the desktop raised before the hand-off is dropped); on Windows, where the hand-off
- * opens Windows Settings, the band re-words itself in place and leaves when the role is confirmed
- * or on ×. Then the phone's campaign promo (`PromoSheet`, the core's `prompt: 'sheet'` on a
+ * opens Windows Settings, the band re-words itself in place – Open Windows Settings its action,
+ * the hand-off again (the Lead's gate on #754, §10) – and leaves when the role is confirmed or
+ * on ×, which there remembers nothing. Then the phone's campaign promo (`PromoSheet`, the core's `prompt: 'sheet'` on a
  * coarse pointer): the §9.23 composition as a
  * sheet – the 48 app icon above the chassis' title block, no glyph on the title (§9.23 as the
  * #264 verdict wrote it; the primitives pass 3, #272) – and its mouse form (`HostedDialog`),
@@ -240,7 +241,7 @@ describe('the default-browser band (the strip under the toolbar until W8-M2)', (
 })
 
 describe('the band on Windows, where the hand-off opens Windows Settings', () => {
-  it('re-words itself in place on Set as default – the same band, its content cross-fading to "Press Set default in Windows Settings" with the × alone – and stands so while the user has not decided', async () => {
+  it('re-words itself in place on Set as default – the same band, its content cross-fading to "Press Set default in Windows Settings" with Open Windows Settings and the × – and stands so while the user has not decided', async () => {
     cmd.mockResolvedValue(null)
     render(view(state('win32')))
     const before = chooseBand(bandStore.get())!
@@ -262,9 +263,11 @@ describe('the band on Windows, where the hand-off opens Windows Settings', () =>
     expect(title()).toBe('Press Set default in Windows Settings')
     expect(band().querySelector('.zen-band-detail')).toBeNull()
     expect(band().style.getPropertyValue('--zen-band-height')).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
-    // An instruction: the user finishes in Windows Settings, so the band offers no action of
-    // its own; the × stays, by its one name.
-    expect(setDefaultButton()).toBeNull()
+    // An instruction: the user finishes in Windows Settings, so the band's one action is the
+    // hand-off again, named for where it goes (the Lead's gate on #754, §10); the × stays, by
+    // its one name.
+    expect(buttons(content())).toHaveLength(2)
+    expect(setDefaultButton()!.textContent).toBe('Open Windows Settings')
     expect(dismissButton().getAttribute('aria-label')).toBe('Dismiss')
     // The poll window closed without an answer: the instruction stands (the core reads the role
     // again on the next return to the foreground).
@@ -291,14 +294,50 @@ describe('the band on Windows, where the hand-off opens Windows Settings', () =>
     expect(setDefaultButton()).not.toBeNull()
   })
 
-  it('the × on the instruction is the remembered refusal, as on every band', async () => {
+  it('Open Windows Settings on the instruction is the hand-off again – the same request out, the instruction standing as it was with no re-wording', async () => {
+    cmd.mockResolvedValue(null)
+    render(view(state('win32')))
+    click(setDefaultButton())
+    await settle()
+    const standing = chooseBand(bandStore.get())!
+    // The one swap so far is the ask's words fading out under the instruction.
+    const swaps = band().querySelectorAll('.zen-band-content').length
+    click(setDefaultButton())
+    expect(requests()).toEqual([
+      ['defaultBrowser.request', { source: 'banner' }],
+      ['defaultBrowser.request', { source: 'banner' }]
+    ])
+    // The same entry holds: nothing swapped under the words already there.
+    expect(chooseBand(bandStore.get())!.id).toBe(standing.id)
+    expect(band().querySelectorAll('.zen-band-content')).toHaveLength(swaps)
+    expect(title()).toBe('Press Set default in Windows Settings')
+    expect(setDefaultButton()!.textContent).toBe('Open Windows Settings')
+    await settle()
+    expect(title()).toBe('Press Set default in Windows Settings')
+    expect(remembered()).toEqual([])
+  })
+
+  it('the × on the instruction is a plain put-away (§10): the user has Windows Settings open, not refused, so nothing is remembered and the band asks afresh in the ask’s words', async () => {
     cmd.mockResolvedValue(null)
     render(view(state('win32')))
     click(setDefaultButton())
     click(dismissButton())
-    expect(remembered()).toEqual([['settings.update', { defaultBrowserPromptDismissed: '0.3.77' }]])
+    expect(remembered()).toEqual([])
     expect(chooseBand(bandStore.get())).toBeNull()
     await settle()
+    expect(chooseBand(bandStore.get())).toBeNull()
+    // The next eligible moment: the hook mounting again on the same window state.
+    act(() => root.render(null))
+    render(view(state('win32')))
+    expect(title()).toBe('Make Zenium your default browser')
+    expect(setDefaultButton()!.textContent).toBe('Set as default')
+  })
+
+  it('the ask’s × alone keeps the refusal: on Windows as anywhere, before the hand-off', () => {
+    render(view(state('win32')))
+    click(dismissButton())
+    expect(remembered()).toEqual([['settings.update', { defaultBrowserPromptDismissed: '0.3.77' }]])
+    expect(cmd).not.toHaveBeenCalled()
     expect(chooseBand(bandStore.get())).toBeNull()
   })
 
