@@ -57,11 +57,14 @@ export function TabPreview({
 }: Props): JSX.Element {
   const thumbnail = useThumbnail(tab.id, { cover, sharp, visible })
   const masked = useTabMasked(tab)
-  // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
-  if (isChromePageUrl(tab.url)) {
+  // A chrome page (Settings) the host has no picture of – one that takes none (the desktop
+  // hosts), or a tab not yet captured – shows the page drawn small as its address names it
+  // (v2 §10.1): the landing, or the drill-in the tab is on. Where the host pictures its chrome
+  // (`chrome.snapshot`, Android), the picture is the page's own and comes first, as a page's.
+  if (!thumbnail && isChromePageUrl(tab.url)) {
     return (
       <div className={cn('h-full w-full', className)} style={style}>
-        <SettingsPreview />
+        <SettingsPreview url={tab.url} />
       </div>
     )
   }
