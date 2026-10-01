@@ -321,6 +321,93 @@ describe('standalone app windows (MW-23)', () => {
     expect(listed()).toEqual([{ id: 'https://app.example/dash/', windows: 0 }])
   })
 
+  it('a shortcut to a page without a manifest (seed D5): Create with "Open as window" on moves the page into the shortcut’s own window – its name, icon and id on the frame, the origin its scope – and the shortcut’s launcher (`--app=<its URL>`) finds the record by that URL alone', async () => {
+    const f = fixture()
+    const browserWin = f.browser.allWindows()[0]
+    const NOTES_URL = 'https://app.example/notes'
+    const tab = f.browser.tabs.createTab({ url: NOTES_URL, active: true }, browserWin)
+    await f.browser.webApps.pin(tab.id, 'Notes', browserWin, true)
+    f.browser.webApps.onPinned(NOTES_URL, { icon: 'file:///icons/notes.png' })
+    const appWin = f.browser.allWindows().find((w) => w.chrome === 'app')!
+    expect(appWin.app).toEqual({
+      name: 'Notes',
+      icon: 'file:///icons/notes.png',
+      scope: 'https://app.example/',
+      appId: NOTES_URL,
+      startUrl: NOTES_URL
+    })
+    expect(f.hostOf(appWin).init.app).toEqual(appWin.app)
+    expect(f.hostOf(appWin).init.title).toBe('Notes')
+    // The page moved: the window's one tab is at the page, the browser tab is gone.
+    const moved = f.browser.tabs.activeTabFor(appWin)!
+    expect(moved.url).toBe(NOTES_URL)
+    expect(f.browser.tabs.tab(tab.id)).toBeUndefined()
+    expect(f.browser.state.snapshot(browserWin).webApps).toEqual([
+      expect.objectContaining({ id: NOTES_URL, kind: 'shortcut', name: 'Notes', windows: 1 })
+    ])
+    // The window keeps the origin's pages and hands others to a browser tab, as any `--app=`
+    // window of no app does: the shortcut has no scope of its own.
+    const events = f.viewOf(moved.id).events
+    expect(events.onWillNavigate('https://app.example/other')).toBe(false)
+    expect(events.onWillNavigate('https://docs.example/help')).toBe(true)
+    // The launcher's `--app=<url>`: the shortcut's URL opens the shortcut's window, where it
+    // last stood; another URL of the origin is no app's.
+    f.browser.webApps.rememberBounds(NOTES_URL, { x: 5, y: 6, width: 700, height: 500 })
+    const again = f.browser.openAppWindow(NOTES_URL)!
+    expect(again.app).toEqual(appWin.app)
+    expect(f.hostOf(again).init.bounds).toEqual({ x: 5, y: 6, width: 700, height: 500 })
+    const other = f.browser.openAppWindow('https://app.example/other')!
+    expect(other.app).toEqual({
+      name: 'app.example',
+      icon: null,
+      scope: 'https://app.example/',
+      appId: null,
+      startUrl: 'https://app.example/other'
+    })
+  })
+
+  it('an app whose scope holds a shortcut’s URL does not take the shortcut’s launch: `--app=` of the shortcut’s URL is the shortcut’s window, of any other URL in the scope the app’s; both are listed, the shortcut’s windows its own', async () => {
+    const f = fixture()
+    const browserWin = f.browser.allWindows()[0]
+    const NOTES_URL = 'https://app.example/dash/notes'
+    const notes = f.browser.tabs.createTab({ url: NOTES_URL, active: true }, browserWin)
+    await f.browser.webApps.pin(notes.id, 'Notes', browserWin, false)
+    f.browser.webApps.onPinned(NOTES_URL, { icon: 'file:///icons/notes.png' })
+    // The box off: the tab stays and no window opened, as Chrome leaves it.
+    expect(f.browser.tabs.tab(notes.id)?.url).toBe(NOTES_URL)
+    expect(f.browser.allWindows().filter((w) => w.chrome === 'app')).toEqual([])
+    const tab = f.browser.tabs.createTab({ url: APP_URL, active: true }, browserWin)
+    f.browser.webApps.handleMessage(tab.id, {
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: 'https://app.example/dash/manifest.webmanifest',
+      manifest: { name: 'Dash Board', short_name: 'Dash', start_url: '/dash/', scope: '/dash/' }
+    })
+    await f.browser.webApps.pin(tab.id, 'Dash', browserWin)
+    f.browser.webApps.onPinned('https://app.example/dash/', { icon: 'file:///icons/dash.png' })
+    const shortcutWin = f.browser.openAppWindow(NOTES_URL)!
+    expect(shortcutWin.app).toEqual({
+      name: 'Notes',
+      icon: 'file:///icons/notes.png',
+      scope: 'https://app.example/',
+      appId: NOTES_URL,
+      startUrl: NOTES_URL
+    })
+    const reports = f.browser.openAppWindow('https://app.example/dash/reports')!
+    expect(reports.app).toMatchObject({
+      name: 'Dash',
+      appId: 'https://app.example/dash/',
+      scope: 'https://app.example/dash/'
+    })
+    // In the order of installing, as chrome://apps lists shortcuts beside the apps.
+    expect(
+      f.browser.state.snapshot(browserWin).webApps.map((a) => [a.id, a.kind, a.windows])
+    ).toEqual([
+      [NOTES_URL, 'shortcut', 1],
+      ['https://app.example/dash/', undefined, 2]
+    ])
+  })
+
   it('routes pages opened from the app window (target=_blank) to the browser window behind it', () => {
     const f = fixture()
     const browserWin = f.browser.allWindows()[0]

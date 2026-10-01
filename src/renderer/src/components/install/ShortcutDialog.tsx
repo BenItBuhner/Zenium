@@ -22,18 +22,20 @@ const NAME_FIELD_ID = 'zen-install-dialog-name'
  * description, as Chrome lets the name be edited; under it Chrome's "Open as window" check row
  * (§9.23), unchecked as Chrome leaves it. The §9.11 footer hugs and right-aligns: Cancel, then
  * the one primary (§9.33) – "Create" – which goes busy (§9.30) while the core has the host write
- * the launcher; the dialog leaves once the request has reached it (the core toasts "Installed
- * <name>") or failed (the core toasts that). Escape, the scrim and Cancel report a cancelled
+ * the launcher; the dialog leaves once the request has reached it (the core toasts "Shortcut
+ * created") or failed (the core toasts that). Escape, the scrim and Cancel report a cancelled
  * install; there is no X. Focus starts on the name field – a form, not a confirm, so §5.7's
  * container focus is not this dialog's – and Tab wraps (§9.22). The dialog belongs to the tab
  * it was asked from and goes with it.
  *
  * The box's two states travel with Create (W8-M3b, the Design Lead's ruling on the #754 seams):
  * `webapp.pin` carries `openAsWindow` – checked, the launcher the host writes runs `zenium
- * --app=<url>` and the shortcut opens in an app window of its own; unchecked, Chrome's default,
- * it runs `zenium <url>` and the page opens as a tab in Zenium's current window (the
- * second-instance path a `zenium <url>` from a shell takes). The core keeps the mode on the
- * app's record, so its "Open" opens the app the way the launcher does.
+ * --app=<url>` and the shortcut opens in an app window of its own, and the page moves into that
+ * window at once, as Chrome moves the tab (W8-M3c, seed D5); unchecked, Chrome's default, it
+ * runs `zenium <url>` and the page opens as a tab in Zenium's current window (the
+ * second-instance path a `zenium <url>` from a shell takes), and the tab stays. The core keeps
+ * the shortcut on record with the mode (`PinnedWebApp.kind` `shortcut`), so Settings › Apps
+ * lists it and its Open opens it the way the launcher does.
  *
  * The install of a page WITH an installable manifest is the pill's Install chip and its popover
  * (`InstallPopover.tsx`, the Design Lead's ruling on W8-M3's item 3); it installs an app, always
