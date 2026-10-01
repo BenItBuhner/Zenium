@@ -346,6 +346,30 @@ describe('page dialogs', () => {
 })
 
 describe('closing tabs with beforeunload', () => {
+  it("marks a page under the user's unload check (unloadingForUser) for exactly as long as it runs", async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const seen: boolean[] = []
+    // The user's close (`requestClose`): the signal an agent's dialog policy defers to.
+    f.viewOf(tab.id).view.confirmUnload = async () => {
+      seen.push(f.browser.tabs.unloadingForUser(tab.id))
+      return false
+    }
+    expect(f.browser.tabs.unloadingForUser(tab.id)).toBe(false)
+    await expect(f.browser.tabs.requestClose(tab.id)).resolves.toBe(false)
+    expect(seen).toEqual([true])
+    expect(f.browser.tabs.unloadingForUser(tab.id)).toBe(false)
+    // The window's or the app's check (`confirmUnload` with the tab kept) as well.
+    await expect(f.browser.tabs.confirmUnload(tab.id, true)).resolves.toBe(false)
+    expect(seen).toEqual([true, true])
+    expect(f.browser.tabs.unloadingForUser(tab.id)).toBe(false)
+    // A navigation's "Leave site?" runs under no such check: the page's or the agent's own.
+    f.viewOf(tab.id).objects = true
+    f.browser.tabs.navigate(tab.id, 'https://example.org/next')
+    expect(f.browser.tabs.unloadingForUser(tab.id)).toBe(false)
+  })
+
   it('lists a tab in closingTabIds from the close until its page has answered, whichever way', async () => {
     const f = fixture()
     const win = firstWindow(f)
