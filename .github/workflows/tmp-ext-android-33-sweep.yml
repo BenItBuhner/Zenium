@@ -4,7 +4,10 @@ name: TEMPORARY - compat round 27 sweep and frame budget trigger
 # android-ext-compat-sweep.yml or android-ext-runtime-demo.yml (HTTP 403 on the dispatches
 # endpoint), and both stay dispatch-only; this file runs the same jobs on a push to the branch,
 # and only for an EMPTY marker commit whose subject starts with the bracketed tokens below and
-# carries no other bracketed word:
+# carries no other bracketed word. Every gate below tests `startsWith(message, '[')` as well as
+# `contains(message, '[token]')`: `head_commit.message` is the WHOLE message, and run
+# 36916592491 ran the `[lane]` jobs off a token quoted in a code commit's body – the token in a
+# body no longer runs anything:
 #   - `[sweep]`: the two sweep jobs over compat round 27's rows – the thirty of ranks 691-720
 #     (`.github/scripts/ext-compat/next30-round24.json`, the five largest bundles last in the
 #     table as rounds 19-26 ordered their own; their ids lead the lists below in rank order, ahead
@@ -103,7 +106,7 @@ concurrency:
 
 jobs:
   system-webview:
-    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]'))
     name: System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -117,7 +120,7 @@ jobs:
       driver-timeout-minutes: 150
 
   modern-webview:
-    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]'))
     name: Best effort - Chromium snapshot WebView on an AOSP image
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -149,7 +152,7 @@ jobs:
   # minus its graded rows (the row in flight at the death is the first left, and runs last there);
   # every row when the driver never wrote one (the emulator never came up).
   remaining-system-webview:
-    if: always() && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]'))
+    if: always() && startsWith(github.event.head_commit.message, '[') && ((contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]')))
     needs: system-webview
     name: Rows left after an emulator death - System WebView
     runs-on: ubuntu-24.04
@@ -189,7 +192,7 @@ jobs:
       driver-timeout-minutes: 150
 
   remaining-modern-webview:
-    if: always() && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]'))
+    if: always() && startsWith(github.event.head_commit.message, '[') && ((contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]')))
     needs: modern-webview
     name: Rows left after an emulator death - modern WebView
     runs-on: ubuntu-24.04
@@ -246,7 +249,7 @@ jobs:
   # SingleFile's row alone, repeated on one boot (see the header): the measure of the offscreen
   # settle (round 17's 3-in-18 reading). SWEEP_REPEAT is the sweep script's env for the driver's `repeat`.
   singlefile-system-webview:
-    if: contains(github.event.head_commit.message, '[singlefile]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[singlefile]'))
     name: SingleFile's row six times - System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -261,7 +264,7 @@ jobs:
       driver-timeout-minutes: 60
 
   singlefile-modern-webview:
-    if: contains(github.event.head_commit.message, '[singlefile]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[singlefile]'))
     name: SingleFile's row six times - Best effort - Chromium snapshot WebView on an AOSP image
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -295,7 +298,7 @@ jobs:
   # then Auto Tab Discard (R27-5's row) and Save Page WE (the BEFORE's renderer crash, under the
   # driver's page samples), Reader View last of all.
   lane-system-webview:
-    if: contains(github.event.head_commit.message, '[lane]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[lane]'))
     name: Targeted rows - System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -309,7 +312,7 @@ jobs:
       driver-timeout-minutes: 60
 
   lane-modern-webview:
-    if: contains(github.event.head_commit.message, '[lane]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[lane]'))
     name: Targeted rows - Best effort - Chromium snapshot WebView on an AOSP image
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -341,7 +344,7 @@ jobs:
   # bridge trace (`bridge-redirect-path.txt`) and the runtime's redirect-pair lines in logcat the
   # reading; the row's grade beside them.
   redirectpath-system-webview:
-    if: contains(github.event.head_commit.message, '[redirectpath]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[redirectpath]'))
     name: Redirect Path alone - System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -355,7 +358,7 @@ jobs:
       driver-timeout-minutes: 60
 
   redirectpath-modern-webview:
-    if: contains(github.event.head_commit.message, '[redirectpath]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[redirectpath]'))
     name: Redirect Path alone - Best effort - Chromium snapshot WebView on an AOSP image
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -386,7 +389,7 @@ jobs:
   # Browser Lock alone on the Google image under the legacy SwiftShader GL translator (see the
   # header): one boot; the artifact carries the row's grade or the host's death.
   browserlock-system-webview:
-    if: contains(github.event.head_commit.message, '[browserlock]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[browserlock]'))
     name: Browser Lock alone under swiftshader_indirect - System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -401,7 +404,7 @@ jobs:
       driver-timeout-minutes: 60
 
   budget-system-webview:
-    if: contains(github.event.head_commit.message, '[budget]') || contains(github.event.head_commit.message, '[budget113]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[budget]') || contains(github.event.head_commit.message, '[budget113]'))
     name: Frame budget and engine probe - System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -417,7 +420,7 @@ jobs:
       driver-timeout-minutes: 60
 
   budget-modern-webview:
-    if: contains(github.event.head_commit.message, '[budget]')
+    if: startsWith(github.event.head_commit.message, '[') && (contains(github.event.head_commit.message, '[budget]'))
     name: Frame budget and engine probe - Best effort - Chromium snapshot WebView on an AOSP image
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
