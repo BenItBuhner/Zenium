@@ -4553,9 +4553,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             // what the page's probe can only infer, and the grade's evidence where the probe reads
             // nothing from a document whose scripts are off.
             var jsEnabled: Boolean? = null
+            var statusLine: String? = null
             if (scriptSetting) {
                 instrumentation.runOnMainSync { jsEnabled = view.settings.javaScriptEnabled }
                 extra.put("javaScriptEnabled", jsEnabled)
+                if (jsEnabled == false) {
+                    // `evaluateJavascript` answers null from a view whose scripts are off, so the
+                    // probe above read nothing (`{"raw":"null"}`, the unintended lane run of round
+                    // 27 on both WebViews): the fixture's status line is static text the page's
+                    // own script rewrites when it runs, read off the accessibility tree instead.
+                    statusLine = poll(scaled(5_000, factor), 500) {
+                        nodes { it.text?.contains("own script") == true }.firstOrNull()?.text?.toString()
+                    }
+                    extra.put("statusLine", statusLine)
+                }
             }
             if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
             popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
@@ -4563,9 +4574,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             SystemClock.sleep(600)
             snap("${entry.optString("slug")}-action-core")
             runCatching { coreCall("extension.closePopup", "null") }
-            val unreadable = found.length() == 0 && jsEnabled == false
-            val pass = found.optBoolean("pass") || unreadable
-            val setting = if (scriptSetting) "; the tab view's javaScriptEnabled $jsEnabled" + (if (unreadable) " (the document answered no probe)" else "") else ""
+            // A probe the document did not answer: no reading at all, or `evaluateJavascript`'s
+            // null (what `json` keeps as `raw`).
+            val probeless = found.length() == 0 || found.optString("raw") == "null"
+            val scriptsOff = jsEnabled == false && probeless && statusLine?.contains("ran.") != true
+            val pass = found.optBoolean("pass") || scriptsOff
+            val setting = if (scriptSetting) "; the tab view's javaScriptEnabled $jsEnabled" + (if (scriptsOff) " (the document answered no probe; its status line reads ${statusLine?.let { JSONObject.quote(it) } ?: "nothing on the accessibility tree"})" else "") else ""
             Grade(if (pass) "P" else "F", "$label: after the action click ${found.toString().take(240)}$setting", extra)
         } finally {
             restorePlaintext?.invoke()
@@ -17332,11 +17346,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * and reloads the tab, after which the page's own scripts do not run. `scripts.html`'s
          * inline script marks the document (`data-page-script="ran"` on the root and the
          * `#status` line) on every load whose scripts run, so a document without the mark after
-         * a reload is the effect (`jsRunning`); the probe itself runs through `evaluateJavascript`,
-         * which the host runs whatever the page's setting, and `navigation` is the Navigation
-         * Timing entry's type. Round 26 read F here with the worker's `contentSettings` refusal
-         * (the namespace the Android runtime had not); the runtime answers it from round 27
-         * (`AndroidContentSettings`, the permission store's override, the view's
+         * a reload is the effect (`jsRunning`), and `navigation` is the Navigation Timing entry's
+         * type. The probe runs through `evaluateJavascript`, which answers null from a view whose
+         * `javaScriptEnabled` is off – so after the effect the probe reads nothing, and
+         * [actionMarker] grades the row from the view's setting and the fixture's status line on
+         * the accessibility tree instead. Round 26 read F here with the worker's `contentSettings`
+         * refusal (the namespace the Android runtime had not); the runtime answers it from round
+         * 27 (`AndroidContentSettings`, the permission store's override, the view's
          * `javaScriptEnabled` flipped before the reload).
          */
         private const val QJS_PAGE_SCRIPTS =
