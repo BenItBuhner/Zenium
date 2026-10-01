@@ -3,13 +3,14 @@ import type { NewTabShortcut } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { collectCells, FlipTracker, REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { LIFT_SCALE, MOTION_STATE_MS, ZEN_EASE } from '@renderer/lib/motion/tokens'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import type { LongPressDrag } from '../phone/useLongPress'
 
 /** The tile in the hand is drawn at this scale (v2 §11.4: the lifted card's). */
-export const TILE_LIFT_SCALE = 1.02
-/** The lift's ease, 120 ms on `--zen-ease` (v2 §11.1's short transition), written inline while the tile is held still. */
-const LIFT_TRANSITION = 'transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1)'
+export const TILE_LIFT_SCALE = LIFT_SCALE
+/** The lift's ease, the state change's length on `--zen-ease` (v2 §11.1's short transition), written inline while the tile is held still. */
+const LIFT_TRANSITION = `transform ${MOTION_STATE_MS}ms ${ZEN_EASE}`
 /**
  * How far the finger travels from where it last chose a slot before the slot is looked up again
  * (v2 §11.4: the target belongs to the finger, past the 8 px touch slop, never to a reflow).
@@ -207,7 +208,7 @@ export function useTileReorder(
       anim.start(travel, 0, 0)
       el.animate?.([{ opacity: 0 }, { opacity: 1 }], {
         duration: REDUCED_FADE_MS,
-        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+        easing: ZEN_EASE
       })
       return
     }

@@ -10,6 +10,7 @@ import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
+import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
@@ -119,9 +120,10 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
     void captureActiveTab(glanceParentId).then(() => {
       if (cancelled) return
       uiStore.set({ glanceActive: true })
+      // The card's pop (`zen-animate-pop`) and a two-frame margin, then the view shows.
       setTimeout(() => {
         if (!cancelled) uiStore.set({ glanceReady: true })
-      }, 210)
+      }, MOTION_POP_MS + 30)
     })
     return () => {
       cancelled = true

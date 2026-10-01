@@ -1,7 +1,8 @@
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 
 /** v2 §11.3: with motion reduced, a docked panel's appearance and departure are a fade this long. */
-const REDUCED_FADE_MS = 120
+const REDUCED_FADE_MS = MOTION_STATE_MS
 
 /**
  * A docked panel's own entrance and exit (v2 §9.32's slot under the live page: the zoom sheet,
