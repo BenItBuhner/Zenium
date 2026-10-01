@@ -27,4 +27,4 @@
   - status:
     - text: Make Zenium your default browser
     - button "Set as default"
-    - button "Not now"
+    - button "Dismiss"

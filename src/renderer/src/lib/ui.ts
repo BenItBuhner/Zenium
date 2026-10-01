@@ -12,7 +12,6 @@ import {
 import type {
   BookmarkNodeType,
   ContentCover,
-  DefaultBrowserRequestSource,
   ExtensionPromptRequest,
   ExternalProtocolRequest,
   LongCapture,
@@ -628,12 +627,6 @@ export interface UiState {
    * page are offered. `seq` tells one opening from the next.
    */
   capture: { tabId: string; viewport: PageViewport | null; seq: number } | null
-  /**
-   * The desktop's default-browser prompt has been asked for – "Set as default" on the page-edge
-   * band – and says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
-   * asked from, or null. `defaultBrowserPrompt` goes true once it is up over the page's picture.
-   */
-  defaultBrowserAsk: DefaultBrowserRequestSource | null
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
   /**
@@ -812,7 +805,6 @@ export const uiStore = createStore<UiState>(
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     capture: null,
-    defaultBrowserAsk: null,
     install: null,
     mediaSheet: null,
     translateSelection: null,

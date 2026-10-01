@@ -83,9 +83,8 @@ export interface BandEntry {
   tone?: BandTone
   title: string
   detail?: string
+  /** One action at most; the × beside it is every band's "Dismiss" (the Design Lead's ruling on item 8). */
   action?: BandAction
-  /** The ×'s accessible name; the message close's "Dismiss" when absent. */
-  closeLabel?: string
   /** The clock (ms); null stands while the state holds. */
   duration: number | null
   onDismiss?: (reason: BandDismissReason) => void
@@ -100,7 +99,6 @@ export interface BandOptions {
   title: string
   detail?: string
   action?: BandAction
-  closeLabel?: string
   /** The clock; an offer's is `BAND_CLOCK_MS` unless given, a state's none. */
   duration?: number | null
   onDismiss?: (reason: BandDismissReason) => void
@@ -249,7 +247,6 @@ export function showBand(opts: BandOptions): number {
     title: opts.title,
     detail: opts.detail,
     action: opts.action,
-    closeLabel: opts.closeLabel,
     duration:
       opts.duration === undefined ? (opts.form === 'offer' ? BAND_CLOCK_MS : null) : opts.duration,
     onDismiss: opts.onDismiss

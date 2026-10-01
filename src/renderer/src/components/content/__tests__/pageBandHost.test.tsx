@@ -405,7 +405,7 @@ describe('PageBandHost – the default-browser tenant', () => {
       'Make Zenium your default browser'
     )
     expect(band()!.querySelector('.zen-band-button')!.textContent).toBe('Set as default')
-    expect(band()!.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Not now')
+    expect(band()!.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Dismiss')
     settle()
     expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
     render({ ...asking, defaultBrowser: { isDefault: true, prompt: null } } as UIState)

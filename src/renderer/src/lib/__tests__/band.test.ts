@@ -57,7 +57,6 @@ const defaultBrowser = (onDismiss?: (r: BandDismissReason) => void): number =>
     icon: Globe,
     title: 'Make Zenium your default browser',
     action: { label: 'Set as default', onPick: () => undefined, holds: true },
-    closeLabel: 'Not now',
     onDismiss
   })
 

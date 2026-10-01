@@ -1180,7 +1180,8 @@ describe('the v2 primitives (§9.34)', () => {
       css.indexOf('.zen-sheet-title-block {')
     )
     // The promo's phone sheet takes the slot and no inline glyph; its mouse dialog draws the
-    // same icon over its block, as the desktop's `AskDialog` does (the one composition).
+    // same icon over its block (the one composition; the desktop's own dialog before the
+    // hand-off went with the Lead's ruling on the band's tenants, W8-M3).
     const prompt = readFileSync(
       fileURLToPath(
         new URL('../../components/defaultbrowser/DefaultBrowserPrompt.tsx', import.meta.url)
@@ -1189,7 +1190,7 @@ describe('the v2 primitives (§9.34)', () => {
     )
     expect(prompt).toMatch(/appIcon: <AppIconImage variant=\{appIconVariant\(appIcon\)\} \/>/)
     expect(prompt).not.toMatch(/lucide-react/)
-    expect(prompt.match(/className="zen-default-browser-prompt-icon"/g)).toHaveLength(2)
+    expect(prompt.match(/className="zen-default-browser-prompt-icon"/g)).toHaveLength(1)
     // The site-info sheet's `data-control` rule went with the primitives pass 3: no row on that
     // surface sets the mark, and the mark's geometry is `.zen-v2-row[data-control]`'s alone.
     expect(css).not.toMatch(/\.zen-siteinfo-row\[data-control\]/)
