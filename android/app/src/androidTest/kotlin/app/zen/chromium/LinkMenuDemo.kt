@@ -37,8 +37,9 @@ import kotlin.math.roundToInt
  *     where it is on. The still `link-menu-design-rows-light.png` is the sheet. Then the touch on
  *     Open Link in New Tab in Group: a NEW folder (not the seeded Research) holds Home and the new
  *     tab, the new tab right behind Home in the background, Home still active, Research's two
- *     untouched, the folder named as the tab menu's Add Tab to New Folder names its own with a
- *     colour of the set, no rename editor over it; the strip's chips as found.
+ *     untouched, the folder named "Group" – the touch hosts' name for a group made with no name
+ *     of its own (§6), as the tab menu's Add Tab to New Folder names its own on this host – with
+ *     a colour of the set, no rename editor over it; the strip's chips as found.
  *  B. DARK, on Gamma (loose, activated by the core): the same rows, byte for byte the light
  *     list; `link-menu-design-rows-dark.png`; the touch makes a second group around Gamma. The
  *     device is put back to the light scheme at the end: the nightly runs its drivers back to
@@ -207,7 +208,7 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         val record = group?.let { coreState().getJSONObject("folders").optJSONObject(it) }
         val colour = record?.let { if (it.isNull("color")) null else it.optString("color") }
         finding("  the folder's record: name '${record?.optString("name")}' icon '${record?.optString("icon")}' colour $colour collapsed ${record?.optBoolean("collapsed")}")
-        check("$act: the folder is named as the tab menu's Add Tab to New Folder names its own, with a colour of the set, open", record != null && record.optString("name") == "New Folder" && !colour.isNullOrEmpty() && !record.optBoolean("collapsed"), "record $record")
+        check("$act: the folder is named \"Group\" – the touch hosts' name (§6), as the tab menu's Add Tab to New Folder names its own here – with a colour of the set, open", record != null && record.optString("name") == "Group" && !colour.isNullOrEmpty() && !record.optBoolean("collapsed"), "record $record")
         check("$act: no rename editor is opened over it (the row is the gesture)", !jsBoolean(RENAMING), "renaming ${jsText(RENAMING)}")
         check("$act: the sheet is gone after the touch", awaitDomGone(SHEET, SHEET_WAIT), "sheet ${inDom(SHEET)}")
         val strip = awaitDom(STRIP, 6_000)
