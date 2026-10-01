@@ -57,6 +57,45 @@ describe('readBandSignals', () => {
     expect(readBandSignals(stateWith('http://news.example/'), ui(), IDLE).webPage).toBe(true)
   })
 
+  it("every zen:// page is a chrome page (the Design Lead's ruling: not the new tab page and settings alone) – history, downloads, a page the chrome adds later, with a query or a fragment", () => {
+    for (const url of [
+      'zen://history',
+      'zen://downloads/',
+      'zen://bookmarks?folder=3',
+      'zen://reader#top',
+      'zen://some-page-not-yet-written',
+      'chrome://flags',
+      'about:about'
+    ]) {
+      expect(readBandSignals(stateWith(url), ui(), IDLE).webPage, url).toBe(false)
+    }
+  })
+
+  it("an open omnibox covers the page – the phone's field and the tablet's URL-bar popup are one `urlbar` state – so an arriving band waits rather than leaves (the Design Lead's ruling); the desktop split's empty-pane field alone, which never opens on a touch host, covers none", () => {
+    const base = ui().urlbar
+    const phone = { ...base, open: true, mode: 'edit' as const, tabId: 't1' }
+    expect(readBandSignals(stateWith(WEB), ui({ urlbar: phone }), IDLE).covered).toBe(true)
+    const tabletPopup = {
+      ...base,
+      open: true,
+      mode: 'new-tab' as const,
+      tabId: null,
+      attached: true
+    }
+    expect(readBandSignals(stateWith(WEB), ui({ urlbar: tabletPopup }), IDLE).covered).toBe(true)
+    const search = { ...base, open: true, mode: 'search' as const, tabId: 't1' }
+    expect(readBandSignals(stateWith(WEB), ui({ urlbar: search }), IDLE).covered).toBe(true)
+    expect(
+      readBandSignals(stateWith(WEB), ui({ urlbar: { ...phone, pane: true } }), IDLE).covered
+    ).toBe(false)
+    expect(bandFrameOf(readBandSignals(stateWith(WEB), ui({ urlbar: phone }), IDLE))).toMatchObject(
+      {
+        ok: true,
+        covered: true
+      }
+    )
+  })
+
   it('a private tab is told apart by its container', () => {
     expect(readBandSignals(stateWith(WEB, PRIVATE_CONTAINER_ID), ui(), IDLE).privateTab).toBe(true)
     expect(readBandSignals(stateWith(WEB), ui(), IDLE).privateTab).toBe(false)
