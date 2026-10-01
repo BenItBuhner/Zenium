@@ -6,6 +6,8 @@
     <cache-path name="updates" path="updates/" />
     <!-- Photos and videos the camera app writes for a page's file input (BrowserActivity.showFileChooser). -->
     <cache-path name="capture" path="capture/" />
+    <!-- Files an AI agent hands a page's file input, written here first (TabWebView.answerFileChooser). -->
+    <cache-path name="agent-uploads" path="agent-uploads/" />
     <external-files-path name="downloads" path="Download/" />
     <!-- Downloads on Android 8–9 land in the public directory (Android 10+ uses MediaStore). -->
     <external-path name="public-downloads" path="Download/" />

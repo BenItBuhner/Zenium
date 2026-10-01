@@ -45,6 +45,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.content.FileProvider
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebMessageCompat
@@ -63,6 +64,7 @@ import app.zen.chromium.privacy.SaverModes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.concurrent.Executors
@@ -321,6 +323,21 @@ class TabWebView(
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
+    /**
+     * An agent works this page (`view.interceptAgentPrompts`): the page's file choosers and the
+     * view's client-certificate requests are held for the core instead of opening system UI over
+     * the page (`AgentPrompts.kt`); the core says per request whose each one is, and a tab that
+     * is not an agent's (any more) gets the system's UI as every other tab does.
+     */
+    var interceptsAgentPrompts = false
+        private set
+    /** The file choosers held for the core's answer, by the request id the event carried. */
+    private val heldFileChoosers = HashMap<String, HeldFileChooser>()
+    private var fileChooserSeq = 0
+    /** Where the agent's chooser answers were written ([AgentUploads]), deleted when the agent lets the page go. */
+    private val agentUploadFolders = ArrayList<File>()
+
+    private class HeldFileChooser(val callback: ValueCallback<Array<Uri>>, val params: WebChromeClient.FileChooserParams)
 
     init {
         Profiles.apply(this, containerId)
@@ -412,6 +429,8 @@ class TabWebView(
             up.result.cancel()
         }
         unloadCheck?.settle(leave = true, destroyView = false)
+        cancelHeldFileChoosers()
+        clearAgentUploads()
         // An image search still waiting on a frame hears that the page went ([ImageOwner]).
         imageOwner?.destroy()
         NavigationReports.detach(this, navigationListener)
@@ -1216,6 +1235,92 @@ class TabWebView(
     /** The core's "always allow pop-ups on this site": window.open may open windows on its own. */
     fun setPopupsAllowed(allowed: Boolean) {
         settings.javaScriptCanOpenWindowsAutomatically = allowed
+    }
+
+    // --- an AI agent's native prompts (AgentPrompts.kt) ----------------------------------------------
+
+    /**
+     * `view.interceptAgentPrompts`: an agent took this page (on), or let it go (off). A chooser
+     * held when the agent lets go keeps waiting for the core's answer, which then says `user`;
+     * the files its answers wrote go with it ([AgentUploads]), the page having read them at
+     * submit while the agent worked it.
+     */
+    fun setInterceptAgentPrompts(on: Boolean) {
+        interceptsAgentPrompts = on
+        if (!on) clearAgentUploads()
+    }
+
+    /**
+     * The page opened a file chooser while an agent works it: nothing opens; the core hears of
+     * it (`fileChooser`) and answers with [answerFileChooser]. The callback waits meanwhile – the
+     * core's two-minute default cancels it, and [destroy] cancels one left waiting.
+     */
+    private fun holdFileChooser(callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams) {
+        val requestId = "fc_${++fileChooserSeq}"
+        heldFileChoosers[requestId] = HeldFileChooser(callback, params)
+        host.viewEvent(
+            tabId, "fileChooser",
+            AgentPrompts.fileChooserEvent(
+                requestId,
+                params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
+                params.acceptTypes?.toList() ?: emptyList()
+            )
+        )
+    }
+
+    /**
+     * The core's answer to a held chooser (`view.fileChooserAnswer`): the agent's files – bytes
+     * written to a private folder first ([AgentUploads]) and handed to the page as this app's
+     * `content://` URIs; never a path, which [AgentPrompts.fileChooserAnswer] turns into a cancel
+     * – a cancel, or `user`: the tab is not an agent's, the system's chooser opens as it would
+     * have. An answer to a chooser no longer held (the page went) is nothing.
+     */
+    fun answerFileChooser(requestId: String, args: JSONObject) {
+        val held = heldFileChoosers.remove(requestId) ?: return
+        when (val answer = AgentPrompts.fileChooserAnswer(args)) {
+            AgentPrompts.FileChooserAnswer.User ->
+                if (!host.activity.showFileChooser(host, held.callback, held.params)) held.callback.onReceiveValue(null)
+            AgentPrompts.FileChooserAnswer.Cancel -> held.callback.onReceiveValue(null)
+            is AgentPrompts.FileChooserAnswer.Files -> {
+                val activity = host.activity
+                Thread {
+                    val dir = File(activity.cacheDir, AgentUploads.DIR)
+                    val now = System.currentTimeMillis()
+                    // What an earlier run left behind goes before this answer is written.
+                    AgentUploads.sweep(dir, now)
+                    val written = runCatching {
+                        val w = AgentUploads.write(dir, answer.files, now)
+                        w to w.files.map { file -> FileProvider.getUriForFile(activity, "${activity.packageName}.files", file) }
+                    }.getOrElse { e ->
+                        Log.w("ZenTab", "an agent's upload could not be written: $e")
+                        null
+                    }
+                    post {
+                        if (written == null || written.second.isEmpty()) {
+                            held.callback.onReceiveValue(null)
+                            return@post
+                        }
+                        agentUploadFolders.add(written.first.folder)
+                        held.callback.onReceiveValue(written.second.toTypedArray())
+                    }
+                }.start()
+            }
+        }
+    }
+
+    /** The folders this tab's agent answers were written to go, off the main thread. */
+    private fun clearAgentUploads() {
+        if (agentUploadFolders.isEmpty()) return
+        val folders = agentUploadFolders.toList()
+        agentUploadFolders.clear()
+        Thread { for (f in folders) f.deleteRecursively() }.start()
+    }
+
+    /** The page went with choosers held: each hears it was cancelled, so no callback is left waiting. */
+    private fun cancelHeldFileChoosers() {
+        val held = heldFileChoosers.values.toList()
+        heldFileChoosers.clear()
+        for (h in held) h.callback.onReceiveValue(null)
     }
 
     // --- autofill and passkeys -----------------------------------------------------------------------
@@ -2901,7 +3006,7 @@ class TabWebView(
         }
 
         override fun onReceivedClientCertRequest(view: WebView, request: ClientCertRequest) {
-            host.security.onClientCertRequest(request)
+            host.security.onClientCertRequest(this@TabWebView, request)
         }
 
         /**
@@ -3455,7 +3560,13 @@ class TabWebView(
             webView: WebView,
             filePathCallback: ValueCallback<Array<Uri>>,
             fileChooserParams: FileChooserParams
-        ): Boolean = host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
+        ): Boolean {
+            if (interceptsAgentPrompts) {
+                holdFileChooser(filePathCallback, fileChooserParams)
+                return true
+            }
+            return host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
+        }
 
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             // The WebView only asks without a gesture when the site may open windows on its own.
