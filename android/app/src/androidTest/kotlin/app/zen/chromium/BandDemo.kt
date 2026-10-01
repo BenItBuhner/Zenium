@@ -57,8 +57,15 @@ import kotlin.math.roundToInt
  *     article of the site brings the offer again (the × and the clock still mute the site).
  *  6. ONE AT A TIME, STATE OVER OFFER: the radios off while the install offer stands – the
  *     offline state replaces it (`band-replace-offline`): one band root, the title changed, the
- *     page re-targeted 76 → 56 on the spring; NEVER ON THE NEW TAB PAGE: on `zen://newtab` no
- *     band and the page home; back on a web page the state returns (it holds).
+ *     page re-targeted 76 → 56 on the spring.
+ *  6b. THE CHROME-DRAWN PAGES (the Design Lead's (B) on #735's question (8), its owed
+ *     follow-up): the state's band follows the tab onto `zen://settings` and onto the phone's
+ *     new tab page – pages the chrome draws, with no WebView under them – standing on the
+ *     shared `PageBandLayer` (#740): one layer translated by the band's height, the page
+ *     starting where the band ends, the host's WebView unmoved; a swipe up on the new tab page
+ *     puts the band away (`band-swipe-new-tab`, the layer under the finger); the radios cycled
+ *     bring the state back there, and on a web page after it the WebView takes the offset again.
+ *     (Until this layer stood, this scene pinned the band WAITING on the new tab page.)
  *  7. A PULL ON A HELD PAGE (§3.4 Android): a pull-to-refresh begun while the band stands takes
  *     the page over where it sits – the band leaves, the page never jumps home first
  *     (`band-pull-takeover`, the host's offset sampled through the drag), the pull comes home
@@ -89,7 +96,8 @@ import kotlin.math.roundToInt
  * page's translation) and the shared MODEL (`window.__zenStores.band`: the shown entry's form,
  * key, title and action), and through the document only for its root (how many stand, the role,
  * the glyph, where it sits) – that one selector stands in [BAND_PROBE_JS] and is the one place
- * to change if the component names its root otherwise. Every control pressed is a real injected
+ * to change if the component names its root otherwise; the chrome-drawn page's layer is read
+ * the same way, by its one mark ([LAYER_PROBE_JS]). Every control pressed is a real injected
  * finger with an assertion (#198's rule). See [DemoHarness] for the plumbing.
  */
 @RunWith(AndroidJUnit4::class)
@@ -178,7 +186,8 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             readerOffer()
             clock()
             sheetWaits()
-            replacementAndNewTab()
+            replacement()
+            chromePages()
             pullTakeover()
             barUnderBand()
             stateEnds()
@@ -444,10 +453,10 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         beat()
     }
 
-    // --- 6. one at a time, the state over the offer; never on the new tab page -----------------------------------------
+    // --- 6. one at a time, the state over the offer -------------------------------------------------------------------------
 
-    private fun replacementAndNewTab() {
-        finding("\n§3.2 one band at a time, state > offer; never on the new tab page")
+    private fun replacement() {
+        finding("\n§3.2 one band at a time, state > offer")
         navigate("$SITE_D/app/")
         val up = awaitBand(INSTALL_TITLE, 12_000)
         check("site D: the install offer stands to be replaced", up)
@@ -469,17 +478,94 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         bandGeometry("the offline state", ONE_LINE, "state", OFFLINE_TITLE, null, emptyList())
         snap("design-offline-light")
         beat()
+    }
 
-        // Never on the new tab page: the state holds, the band does not show there.
-        navigate(NEW_TAB_URL)
-        val onNtp = poll(3_000) { bandUp() }
-        finding("  on the new tab page: band within 3 s=$onNtp; page offset ${offsetCss()}; ${describeTab()}")
-        check("no band on the new tab page, the page home (the offline state holds, unseen)", !onNtp && offsetCss() <= TOLERANCE)
-        snap("new-tab-no-band")
+    // --- 6b. the band over the chrome-drawn pages: Settings and the new tab page ----------------------------------------
+
+    /**
+     * The Design Lead's (B) ruling on #735's gate question (8), its owed follow-up: a state's
+     * band stands on Settings and on the phone's new tab page too. Neither has a page WebView
+     * under it – the chrome draws them – so the host's `translationY` reads 0 there and the pull
+     * channel would move nothing; the page rides the shared `PageBandLayer` (Desktop's #740),
+     * translated by the band's offset from the one frame writer (`lib/band/androidHost.ts`: the
+     * layer's store for these surfaces, the pull channel for a document), its seat 0 as the
+     * WebView's is (§3.4 Android: a translation, clipped by the frame). The band is the same
+     * component in the same place, and a swipe up puts it away as on a web page. Read through
+     * [LAYER_PROBE_JS] (the layer's transform and where its page starts) beside the host.
+     */
+    private fun chromePages() {
+        finding("\n§3.4 Android, §10: the band stands on the chrome-drawn pages – Settings and the new tab page")
+        if (!awaitBand(OFFLINE_TITLE, 4_000)) {
+            check("the offline band stands to follow the tab onto the chrome-drawn pages", false)
+            return
+        }
+        // Settings: the band follows the tab onto a page the chrome draws; the layer takes the offset.
+        armFrameClock()
+        sampler.start()
+        navigate(SETTINGS_URL)
+        val onSettings = awaitBand(OFFLINE_TITLE, 6_000)
+        SystemClock.sleep(900)
+        val crossing = sampler.stop()
+        finding("  Settings: band=${bandTitle()}; ${describeTab()}; the host through the crossing: ${describeSamples(crossing)}; chrome frames ${describeFrames(frameClock())}")
+        check("the offline state's band stands on Settings (a chrome-drawn page is a page the band stands on)", onSettings)
+        if (onSettings) {
+            layerGeometry("Settings", ONE_LINE)
+            check("Settings: the page under the layer is the chrome's page host", layerProbe().optBoolean("host"))
+            snap("design-settings-offline-light")
+        }
+        beat()
+
+        // The new tab page: `zen://newtab` typed on the phone lands on the empty tab the chrome
+        // draws the page over (`zen://blank`); the band stands there, the page pushed down under it.
+        navigate(NEW_TAB_URL, landsOn = PHONE_NEW_TAB)
+        val onNtp = awaitBand(OFFLINE_TITLE, 6_000)
+        finding("  the new tab page: band=${bandTitle()}; ${describeTab()}")
+        check("the offline state's band stands on the new tab page (the (B) ruling: the band's tenant lands there, no longer waiting for a web page)", onNtp)
+        if (!onNtp) return
+        layerGeometry("the new tab page", ONE_LINE)
+        snap("design-new-tab-offline-light")
+        beat()
+
+        // The swipe up: the band leaves and the layer comes home with the page – the state put
+        // away by hand (it returns on the next flip, as on a web page).
+        val title = fingerOnText(OFFLINE_TITLE) ?: return
+        var midShift = -1f
+        val gone = scene("band-swipe-new-tab", JankBudget.Kind.GESTURE, took = { !bandUp() && layerShift() <= TOLERANCE }) {
+            Finger().apply {
+                down(title.x, title.y)
+                moveBy(0f, -NUDGE, 80)
+                moveBy(0f, -(ONE_LINE * density) * 0.3f, 240)
+                hold(200)
+                midShift = layerShift()
+                snap("new-tab-swipe-mid")
+                moveBy(0f, -(ONE_LINE * density) * 0.7f, 200)
+                up()
+            }
+        }
+        finding("  the swipe on the new tab page: ${describeSamples(sampler.stop())}; the layer under the finger mid-swipe: $midShift; after: ${layerProbe()}")
+        check("a swipe up past half puts the band away on the new tab page, the layer home (shift ${layerShift()})", gone)
+        if (!gone) touchFault("a swipe up on the band over the new tab page did not take it off")
+        check("the page followed the finger: the layer's shift fell under the drag ($midShift, from $ONE_LINE) while the host's WebView never moved (${offsetCss()})", midShift >= 0f && midShift < ONE_LINE - 1f && offsetCss() <= TOLERANCE)
+        snap("new-tab-band-swiped")
+        beat()
+
+        // The state returns on the next loss (online, then offline again) – here while the new
+        // tab page is in front, so the return lands on the layer; then a web page, where §7's
+        // pull and the bar find the state standing on the WebView again.
+        radios(true)
+        val toast = poll(15_000, step = 100) { findNode { it == BACK_ONLINE_TOAST } != null }
+        finding("  the radios back after the swipe: '$BACK_ONLINE_TOAST' seen=$toast")
+        SystemClock.sleep(1_500)
+        radios(false)
+        val returned = awaitBand(OFFLINE_TITLE, 20_000)
+        SystemClock.sleep(900)
+        finding("  the radios off again on the new tab page: band=${bandTitle()}; ${layerProbe()}")
+        check("the state's return lands on the new tab page too, the layer taking it (shift ${layerShift()})", returned && abs(layerShift() - ONE_LINE) <= TOLERANCE)
         navigate("$SITE_A/plain")
-        val returned = awaitBand(OFFLINE_TITLE, 6_000)
-        finding("  back on a web page: band=${bandTitle()}; page offset ${offsetCss()}")
-        check("back on a web page the state's band returns (a state stands while the state holds)", returned)
+        val onWeb = awaitBand(OFFLINE_TITLE, 6_000)
+        SystemClock.sleep(900)
+        finding("  back on a web page: band=${bandTitle()}; host offset ${offsetCss()}; ${layerProbe()}")
+        check("back on a web page the state's band holds and the host's WebView takes the offset again (the layer gone with the chrome's page)", onWeb && abs(offsetCss() - ONE_LINE) <= TOLERANCE && layerProbe().optInt("layers") == 0)
         beat()
     }
 
@@ -702,6 +788,43 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
                 probe.optBoolean("glyph") && top <= frameTopPx() + 8 * density
         )
     }
+
+    /**
+     * The chrome-drawn page's shape under the band: one layer ([LAYER_PROBE_JS]), translated by
+     * the band's height with its seat at 0 (the Android layer is a translation, as the WebView's
+     * under the pull channel), its page starting where the band ends – pushed down, not covered;
+     * the host's WebView unmoved (no page view stands under a chrome-drawn page); one band root,
+     * the state form, at the frame's top.
+     */
+    private fun layerGeometry(where: String, bandHeight: Float) {
+        val layer = layerProbe()
+        val band = bandProbe()
+        val host = offsetCss()
+        finding("  $where: host offset $host; layer $layer; band $band")
+        val shift = layer.optDouble("shift", -1.0).toFloat()
+        check(
+            "$where: one page layer under the band, translated by the band's height ($bandHeight; the layer reads $shift), its seat 0",
+            layer.optInt("layers") == 1 && abs(shift - bandHeight) <= TOLERANCE && layer.optInt("seat", -1) == 0
+        )
+        val pageTop = layer.optDouble("pageTop", -1e6)
+        val bandTop = band.optDouble("top", 1e6)
+        check(
+            "$where: the page starts where the band ends (page top $pageTop, band top $bandTop + $bandHeight; the page pushed down, never covered)",
+            abs(pageTop - (bandTop + bandHeight)) <= TOLERANCE
+        )
+        check("$where: the host's page WebView never moved (translationY $host; the layer's move is the chrome's, the pull channel a document's)", host <= TOLERANCE)
+        val top = band.optInt("top", Int.MAX_VALUE).toFloat() * density
+        check(
+            "$where: one band root, the state form, role status, at the frame's top (root top ${band.optInt("top", -1)} CSS px)",
+            band.optInt("count") == 1 && band.optString("form") == "state" && band.optString("role") == "status" && top <= frameTopPx() + 8 * density
+        )
+    }
+
+    /** The chrome-drawn page's layer from the chrome's document ([LAYER_PROBE_JS]); `{layers:0}` without one. */
+    private fun layerProbe(): JSONObject = runCatching { JSONObject(jsonString(chromeJs(LAYER_PROBE_JS))) }.getOrDefault(JSONObject())
+
+    /** The layer's translation below the frame's top, CSS px; 0 without a layer (the page home, or no chrome-drawn page in front). */
+    private fun layerShift(): Float = layerProbe().optDouble("shift", 0.0).toFloat()
 
     /** Where the frame's top edge is on screen (px): the touchable window's top, the status bar above it. */
     private fun frameTopPx(): Float = touchable.top.toFloat().coerceAtLeast(0f)
@@ -1018,9 +1141,10 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         return "url=${tab.optString("url").take(60)} title=\"${tab.optString("title").take(40)}\" readerable=${tab.optBoolean("readerable")} loading=${tab.optBoolean("loading")}"
     }
 
-    private fun navigate(url: String) {
+    /** Navigates the demo tab to [url] and waits for it – or for [landsOn], where the core takes the typed address elsewhere (`zen://newtab` on the phone). */
+    private fun navigate(url: String, landsOn: String = url) {
         coreInvoke("tab.navigate", """{"tabId":"$TAB","input":${JSONObject.quote(url)}}""")
-        awaitLoaded(url)
+        awaitLoaded(landsOn)
     }
 
     private fun awaitLoaded(url: String, timeoutMs: Long = 20_000) {
@@ -1072,6 +1196,10 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         private const val SITE_E = "http://127.0.0.5:$PORT"
         private const val TAB = "tab_demo"
         private const val NEW_TAB_URL = "zen://newtab"
+        /** Where `zen://newtab` lands on the phone: the empty tab the chrome draws the new tab page over (`core/browser.ts`'s `typedToUrl`). */
+        private const val PHONE_NEW_TAB = "zen://blank"
+        /** A page the chrome draws itself (`render: 'chrome'`, `InternalPageHost`): no page WebView under it. */
+        private const val SETTINGS_URL = "zen://settings"
         private const val HTML = "text/html; charset=utf-8"
         /** The stills' and the frame files' prefix (the harness's `shotPrefix`). */
         private const val MEDIA_PREFIX = "android-band"
@@ -1135,6 +1263,25 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
                 "theme:document.documentElement.getAttribute('data-theme')};" +
                 "if(f){var r=f.getBoundingClientRect();var role=f.getAttribute('role')||(f.querySelector('[role]')?f.querySelector('[role]').getAttribute('role'):'');" +
                 "o.role=role;o.glyph=!!f.querySelector('svg');o.top=Math.round(r.top);o.left=Math.round(r.left);o.width=Math.round(r.width);o.height=Math.round(r.height)}" +
+                "return JSON.stringify(o)})()"
+
+        /**
+         * The chrome-drawn page's LAYER (`PageBandLayer`, Desktop's #740; its `data-band-layer`
+         * mark is the one selector here): how many stand (`layers`), its translation from its
+         * computed transform (`shift`, CSS px – the band's offset less the seat, as the host
+         * writes it per frame), its seat (`top`), where it sits (`top`) and where its page starts
+         * (`pageTop`, its first child's top), whether that page is the chrome's page host
+         * (`.zen-page-host`, Settings and the other `render: 'chrome'` pages; the phone's new
+         * tab page is its own component), and the band root's edges beside them.
+         */
+        private const val LAYER_ROOT = "[data-band-layer]"
+        private const val LAYER_PROBE_JS =
+            "(function(){var l=document.querySelectorAll('$LAYER_ROOT');var f=l[0];var o={layers:l.length};" +
+                "if(f){var cs=getComputedStyle(f);var m=cs.transform;var y=0;if(m&&m!=='none'){var p=m.match(/matrix\\(([^)]+)\\)/);" +
+                "if(p){y=parseFloat(p[1].split(',')[5])}else{var q=m.match(/matrix3d\\(([^)]+)\\)/);if(q){y=parseFloat(q[1].split(',')[13])}}}" +
+                "var r=f.getBoundingClientRect();o.shift=Math.round(y*10)/10;o.top=Math.round(r.top);o.seat=Math.round(parseFloat(cs.top)||0);" +
+                "var c=f.firstElementChild;if(c){o.pageTop=Math.round(c.getBoundingClientRect().top*10)/10}o.host=!!f.querySelector('.zen-page-host')}" +
+                "var b=document.querySelector('$BAND_ROOT');if(b){var br=b.getBoundingClientRect();o.bandTop=Math.round(br.top);o.bandBottom=Math.round(br.bottom)}" +
                 "return JSON.stringify(o)})()"
 
         /** A short page, no article, no manifest: the start page and the page the states stand on. */
