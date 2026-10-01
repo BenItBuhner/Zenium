@@ -15,6 +15,7 @@ import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { errorDetail, newestFirst } from '@renderer/lib/extensions/errorText'
 import { formatDate, relativeTime } from '@renderer/lib/extensions/format'
+import { SYNCED_PENDING_LINE } from '@renderer/lib/extensions/promptCopy'
 import { sourceLabel, storePageUrl } from '@renderer/lib/extensions/storeInput'
 import { closeOverlay } from '@renderer/lib/ui'
 import { ExtensionIcon } from './ExtensionIcon'
@@ -69,7 +70,7 @@ export function ExtensionDetails({
           The page title's description (§9.26): the extension's own line (or its error) 15 at 69%
           under the header's 16, a caption 4 under that, then 16 from the block to the first card.
         */}
-        {(ext.error || ext.description || ext.manifestVersion === 2) && (
+        {(ext.error || ext.description || ext.manifestVersion === 2 || ext.pendingApproval) && (
           <div className="zen-ext-intro">
             {ext.error ? (
               <p className="zen-v2-body text-[var(--v2-danger)]">{ext.error}</p>
@@ -81,6 +82,12 @@ export function ExtensionDetails({
             {ext.manifestVersion === 2 && (
               <p className="zen-v2-caption" data-tone="warn">
                 Manifest V2 extensions are being retired; check the store for a newer version.
+              </p>
+            )}
+            {/* The synced landing's line (ID-44), the card's word again over its own page. */}
+            {ext.pendingApproval && (
+              <p className="zen-v2-caption" data-tone="warn" data-pending-approval="">
+                {SYNCED_PENDING_LINE}
               </p>
             )}
           </div>
