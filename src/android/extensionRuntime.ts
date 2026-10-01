@@ -42,6 +42,7 @@ import {
   splitDue,
   type Alarm
 } from '@core/extensions/api/alarms'
+import type { ContentSettingRule } from '@core/extensions/api/contentSettings'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
 import type { PersistedRule } from '@core/extensions/api/declarativeContent'
 import type { FontName, FontValues } from '@core/extensions/api/fontSettings'
@@ -540,6 +541,8 @@ interface RuntimeData {
   fontSettings: Record<string, FontValues>
   /** id → the `chrome.privacy` values it set, by setting key and scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
   privacy: Record<string, Record<string, ScopedValues>>
+  /** id → the `chrome.contentSettings` rules it set, by type (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
+  contentSettings: Record<string, Record<string, ContentSettingRule[]>>
   /**
    * id → the optional permissions `permissions.request` granted (API permissions and host
    * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
@@ -720,6 +723,7 @@ function emptyData(): RuntimeData {
     proxy: {},
     fontSettings: {},
     privacy: {},
+    contentSettings: {},
     grants: {}
   }
 }
@@ -742,6 +746,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.proxy = saved.proxy ?? {}
   data.fontSettings = saved.fontSettings ?? {}
   data.privacy = saved.privacy ?? {}
+  data.contentSettings = saved.contentSettings ?? {}
   data.grants = saved.grants ?? {}
   return data
 }
@@ -1258,6 +1263,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.proxy[id]
     delete this.data.fontSettings[id]
     delete this.data.privacy[id]
+    delete this.data.contentSettings[id]
     delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
@@ -1720,6 +1726,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   setPrivacyValues(id: string, values: Record<string, ScopedValues>): void {
     if (Object.keys(values).length === 0) delete this.data.privacy[id]
     else this.data.privacy[id] = values
+    this.save()
+  }
+
+  contentSettingRules(id: string): unknown {
+    return this.data.contentSettings[id] ?? {}
+  }
+
+  setContentSettingRules(id: string, rules: Record<string, ContentSettingRule[]>): void {
+    if (Object.keys(rules).length === 0) delete this.data.contentSettings[id]
+    else this.data.contentSettings[id] = rules
     this.save()
   }
 

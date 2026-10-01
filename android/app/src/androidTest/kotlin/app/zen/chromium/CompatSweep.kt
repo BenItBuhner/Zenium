@@ -4482,21 +4482,39 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `video.html`, an `action.onClicked` row without a popup): the fixture settles, the action
      * is clicked, `expr` is polled on the page.
      */
-    private fun actionMarker(label: String, page: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun actionMarker(label: String, page: String, expr: String, settleMs: Long = 25_000, scriptSetting: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val (_, view) = fixture(page, factor, 2_500)
-        val since = StepEvidence(row)
-        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val found = pollExpr(view, expr, scaled(settleMs, factor))
-        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
-        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
-        since.record(extra, "atEnd")
-        SystemClock.sleep(600)
-        snap("${entry.optString("slug")}-action-core")
-        runCatching { coreCall("extension.closePopup", "null") }
-        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: after the action click ${found.toString().take(240)}", extra)
+        // A fixture under a public-looking name is allowed over plaintext for the row, as [domMarker] does; the address needs nothing.
+        val restorePlaintext = allowPlaintext(listOf(fixtureUrl(page)), factor, extra)
+        try {
+            val (_, view) = fixture(page, factor, 2_500)
+            val since = StepEvidence(row)
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            val found = pollExpr(view, expr, scaled(settleMs, factor))
+            extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            // The tab view's own script setting after the click (Quick Javascript Switcher's effect
+            // is `WebSettings.javaScriptEnabled` flipped before the reload): the host's reading of
+            // what the page's probe can only infer, and the grade's evidence where the probe reads
+            // nothing from a document whose scripts are off.
+            var jsEnabled: Boolean? = null
+            if (scriptSetting) {
+                instrumentation.runOnMainSync { jsEnabled = view.settings.javaScriptEnabled }
+                extra.put("javaScriptEnabled", jsEnabled)
+            }
+            if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            since.record(extra, "atEnd")
+            SystemClock.sleep(600)
+            snap("${entry.optString("slug")}-action-core")
+            runCatching { coreCall("extension.closePopup", "null") }
+            val unreadable = found.length() == 0 && jsEnabled == false
+            val pass = found.optBoolean("pass") || unreadable
+            val setting = if (scriptSetting) "; the tab view's javaScriptEnabled $jsEnabled" + (if (unreadable) " (the document answered no probe)" else "") else ""
+            Grade(if (pass) "P" else "F", "$label: after the action click ${found.toString().take(240)}$setting", extra)
+        } finally {
+            restorePlaintext?.invoke()
+        }
     }
 
     /**
@@ -8455,8 +8473,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // controls) – its rate-us popup window opens every tenth click, not the first; Notepad's
         // popup is a `<textarea id="notepad">` kept in storage; Quick Javascript Switcher's click
         // sets `contentSettings.javascript` for the tab's site (`set({primaryPattern, setting:
-        // "block"})`) and reloads it – `chrome.contentSettings` is a namespace the Android runtime
-        // has not (§7); PDF Editor for Chrome's content scripts append a `.pdffiller-button` after
+        // "block"})`) and reloads it – the public-name fixture `scripts.html`, whose own inline
+        // script marks the document when it runs (QJS_PAGE_SCRIPTS; the runtime answers the
+        // namespace from round 27); PDF Editor for Chrome's content scripts append a `.pdffiller-button` after
         // every link whose path ends in `.pdf`, never for a loopback, private-range or single-label
         // host (`isReachableByUploadApi`): the fixture is served under the nip.io name
         // (`pdf-links.html`); SEO Minion's click injects its sidebar scripts and `cs-sidebar.js`
@@ -8498,7 +8517,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("cdcpabkolgalpgeingbdcebojebfelgb", "Eightify: AI YouTube Summarizer", "eightify", core = { row, entry -> youtube(row, entry, EIGHTIFY_MOUNTED, "Eightify's summarize button and panel frame on the watch page", desktopSite = true, settleMs = 45_000) }),
         Row("adnielbhikcbmegcfampbclagcacboff", "Picture in Picture - Floating player", "picture-in-picture-floating-player", core = ::pictureInPicture),
         Row("ffbhefmlcoihbjcmibbfkocmnaiacinp", "Notepad", "notepad", core = popupMarker("Notepad", NOTEPAD_POPUP)),
-        Row("geddoclleiomckbhadiaipdggiiccfje", "Quick Javascript Switcher", "quick-javascript-switcher", core = actionMarker("Quick Javascript Switcher", "page-a.html?qjs", QJS_PAGE_SCRIPTS, settleMs = 12_000)),
+        Row("geddoclleiomckbhadiaipdggiiccfje", "Quick Javascript Switcher", "quick-javascript-switcher", core = actionMarker("Quick Javascript Switcher", "$PUBLIC_NAME_BASE/scripts.html?qjs", QJS_PAGE_SCRIPTS, settleMs = 20_000, scriptSetting = true)),
         Row("gphandlahdpffmccakmbngmbjnjiiahp", "PDF Editor for Chrome:Edit, Fill, Sign, Print", "pdf-editor-for-chrome", core = domMarker("PDF Editor for Chrome's button beside the PDF links", "$PUBLIC_NAME_BASE/pdf-links.html?pdffiller", PDFFILLER_BUTTON, settleMs = 25_000)),
         Row("giihipjfimkajhlcilipnjeohabimjhi", "SEO Minion", "seo-minion", core = actionMarker("SEO Minion", "article.html?seominion", SEO_MINION_WIDGET, settleMs = 30_000)),
         Row("afkoofjocpbclhnldmmaphappihehpma", "zkPass TransGate", "zkpass-transgate", core = popupMarker("zkPass TransGate", ZKPASS_POPUP, settleMs = 30_000)),
@@ -17152,17 +17171,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({pass:!!ta&&ta.tagName==='TEXTAREA'&&!!r&&r.height>20,textarea:!!ta,size:r?[Math.round(r.width),Math.round(r.height)]:null,value:ta?String(ta.value).slice(0,40):null,placeholder:ta?String(ta.placeholder||'').slice(0,40):null})})()"
 
         /**
-         * Quick Javascript Switcher's effect on the fixture after the action click: its worker sets
-         * `contentSettings.javascript` to block for the site and reloads the tab, after which the
-         * page runs no script – a reading the page cannot make of itself, so `pass` is never true
-         * from here; the fields say whether the page is still running scripts and whether a reload
-         * came (`navigation`: the Navigation Timing entry's type). The row's expected reading is F
-         * with the worker's `contentSettings` refusal in `bgAtEnd.console` (§7 of round 26's
-         * report: the namespace the Android runtime has not).
+         * Quick Javascript Switcher's effect on the fixture after the action click: its worker
+         * builds the site's pattern from the tab's host (every scheme, `*.nip.io:8765`, every
+         * path in its domain mode – it builds none for an IP address, a loopback name or a file
+         * URL, so the fixture is served under the public name), sets `contentSettings.javascript`
+         * to `block` for it
+         * and reloads the tab, after which the page's own scripts do not run. `scripts.html`'s
+         * inline script marks the document (`data-page-script="ran"` on the root and the
+         * `#status` line) on every load whose scripts run, so a document without the mark after
+         * a reload is the effect (`jsRunning`); the probe itself runs through `evaluateJavascript`,
+         * which the host runs whatever the page's setting, and `navigation` is the Navigation
+         * Timing entry's type. Round 26 read F here with the worker's `contentSettings` refusal
+         * (the namespace the Android runtime had not); the runtime answers it from round 27
+         * (`AndroidContentSettings`, the permission store's override, the view's
+         * `javaScriptEnabled` flipped before the reload).
          */
         private const val QJS_PAGE_SCRIPTS =
-            "(function(){var nav=(performance.getEntriesByType?performance.getEntriesByType('navigation'):[])[0];" +
-                "return JSON.stringify({pass:false,jsRunning:true,navigation:nav?nav.type:null,title:document.title,host:location.host})})()"
+            "(function(){var nav=(performance.getEntriesByType?performance.getEntriesByType('navigation'):[])[0];var ran=document.documentElement.getAttribute('data-page-script')==='ran';var status=document.getElementById('status');var text=status?String(status.textContent):'';" +
+                "return JSON.stringify({pass:!!status&&!ran&&text.indexOf('did not run')>=0,jsRunning:ran,navigation:nav?nav.type:null,status:text.slice(0,48),title:document.title,host:location.host})})()"
 
         /**
          * SEO Minion's sidebar after the action click: `#smin-widget` is the container its

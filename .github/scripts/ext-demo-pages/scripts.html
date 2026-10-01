@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Script Page</title>
+    <script>
+      document.documentElement.setAttribute('data-page-script', 'ran')
+    </script>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Script Page</h1>
+    <p id="status">The page's own script did not run.</p>
+    <noscript><p id="noscript">Scripts are off for this site.</p></noscript>
+    <script>
+      document.getElementById('status').textContent = "The page's own script ran."
+    </script>
+  </body>
+</html>
