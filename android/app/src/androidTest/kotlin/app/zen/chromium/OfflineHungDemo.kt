@@ -132,7 +132,7 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         val bannerMs = SystemClock.uptimeMillis() - lostAt
         claim(banner != null, "the offline banner '$OFFLINE_BANNER' is in the tree (${bannerMs} ms after the radios went)")
         val bannerDom = chromeJs(BANNER_TITLE_JS)
-        claim(bannerDom.contains(OFFLINE_BANNER), "the banner card is in the chrome's banner stack (DOM reads $bannerDom)")
+        claim(bannerDom.contains(OFFLINE_BANNER), "the offline message is up at its door – the page-edge band on the phone, else the banner stack (reads $bannerDom)")
         SystemClock.sleep(1_200)
         shot("01-offline-banner")
 
@@ -681,8 +681,8 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         private const val SIDECAR_SETTLE_MS = 4_500L
         /** The `ZenHost` line for a saved list withheld from a page coming back as the crash page (`Host.kt`, `view.restoreNavigation`). */
         private const val RESTORE_REFUSED = "is not restored: its page comes back as the crash page"
-        private const val BANNER_TITLE_JS =
-            "Array.prototype.map.call(document.querySelectorAll('.zen-banner .zen-banner-title'),function(e){return e.textContent.trim()}).join('|')"
+        /** The titles of the messages up at either door, `|`-joined (the band's, then the banner stack's) – [MessageProbe]. */
+        private val BANNER_TITLE_JS = MessageProbe.TITLES_JS
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }

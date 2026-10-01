@@ -1,0 +1,59 @@
+name: Android band demo
+
+# Records the page-edge band on the phone (motion and interaction spec §3, §3.4 Android, §4's
+# tenants, §6's guards): the pull pattern for prompts – the page slides down by the band's height
+# on SPRING_GENTLE and the prompt lives in the gap the frame opens at its top, one band at a
+# time, never a card over the page. The driver's five loopback sites serve a short page, the
+# read-aloud demo's article and the PWA demo's Sketch Studio; its state seeds the default-browser
+# campaign so the phone's lighter reminder is due in the session, and `webapps.json` so every
+# site's app is on its second visit. Then: the default-browser state band (76; a short swipe
+# springs it back, `band-swipe-back`; the system Back is the band's Escape, spec §9 item 6 –
+# `band-back-escape` takes it away UNANSWERED, the campaign's prompt as it was, the page not
+# navigated), the install offer (a swipe past half dismisses it with the page 1:1 under the
+# finger, `band-swipe-dismiss`, no cooldown; its × is the refusal, `band-close-x`: the cooldown,
+# a reload brings no offer), the reader offer's Show through the crossing (`band-action-show`),
+# the offer's clock (about 10 s standing, the timeout the reader entry's mute), the sheet-waits
+# rule (an offer under the app menu waits for the sheet to go; a swipe on the offer is no mute), the
+# offline state replacing a standing offer (`band-replace-offline`: one root, 76 → 56) and never
+# on the new tab page, a pull-to-refresh on the held page taking the page over where it sits
+# (`band-pull-takeover`), the state's leave with the Back online toast (`band-leave-online`), and
+# the install offer, the reader offer and the offline state in dark. Every band motion is a
+# frame scene (`frames.jsonl`): HWUI's summary, the renderer's trace, the host sampler (the page's
+# `translationY` every 8 ms) and the chrome's frame clock – reported with a verdict, not gated
+# (the emulator's software GPU). The driver writes `band-findings.txt` with a PASS or FAIL per
+# check and fails when any did. The wrapper script (android-band-demo.sh) enables Chrome and
+# hands it the browser role first, as the first-run demo's does: the campaign only speaks while
+# another browser holds the role (with Zenium the only browser, Android gives it the role unasked
+# and the first scene has nothing to show). Dispatch-only, like the other demos. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver
+# and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-band-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Band demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-band-demo.sh
+      artifact-name: android-band-demo
+      artifact-path: artifacts/android-band-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Band demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-band-demo.sh
+      artifact-name: android-band-demo-second-boot
+      artifact-path: artifacts/android-band-demo/

@@ -37,9 +37,12 @@ import type {
 } from '../../core/blocking/rules'
 import { BLOCKING_DIR, type RuleSetStore } from '../../core/blocking/store'
 import {
+  GHOSTERY_CACHE_FORMAT,
   GHOSTERY_COMPILE_TASK,
   compileGhosteryEngine,
+  matchesCacheDigest,
   writeGhosteryCache,
+  type GhosteryCacheMeta,
   type GhosteryCachePaths,
   type GhosteryCompileOutput,
   type GhosteryCompileScope
@@ -247,16 +250,25 @@ export const LIST_SETTLE_MS = 1000
 export const LIST_SETTLE_CAP_MS = 5000
 /**
  * The most the deserialise of a compiled engine waits for an idle moment on the main thread
- * before it runs regardless: protection is never deferred past this by the idle heuristic.
+ * before it runs regardless, while the scope it is for has no list compiled yet: protection
+ * is never deferred past this by the idle heuristic.
  */
 export const DESERIALISE_IDLE_CAP_MS = 250
+/**
+ * Once a scope has a list compiled, a later build's bytes protect no one yet, and their
+ * deserialise waits for a real gap: the main thread quiet – every probe on time – for this long
+ * (W8-P1b). A gap this wide is one no task of the chrome's is in the middle of.
+ */
+export const IDLE_QUIET_MS = 50
+/** The most that wait lasts; past it the deserialise runs at the next probe, quiet or not. */
+export const IDLE_WAIT_CAP_MS = 3000
 
 /**
- * Runs `fn` once, when the main thread looks idle or at `capMs` from now, whichever is first;
- * returns the function that cancels it. {@link mainThreadIdleSlot} is the main process's; the
- * tests hand in one they fire by hand.
+ * Runs `fn` once, when the main thread has looked idle for `quietMs` (0: at the first idle
+ * moment) or at `capMs` from now, whichever is first; returns the function that cancels it.
+ * {@link mainThreadIdleSlot} is the main process's; the tests hand in one they fire by hand.
  */
-export type IdleSlot = (fn: () => void, capMs: number) => () => void
+export type IdleSlot = (fn: () => void, capMs: number, quietMs?: number) => () => void
 
 /** How long the idle slot's probe timer is set for. */
 export const IDLE_PROBE_MS = 4
@@ -268,22 +280,27 @@ const IDLE_LATE_MS = 4
  * has is the event loop itself, and a short timer's lateness is the loop's own measure of how
  * busy it is (what `monitorEventLoopDelay` reads). The slot sets a {@link IDLE_PROBE_MS} probe
  * – a yield, so whatever already landed (an IPC message, a hook's callback) runs first – and
- * runs `fn` when the probe fires on time; a probe that fires late (another task held the loop)
- * sets the next, until `capMs` from the start, when `fn` runs regardless.
+ * runs `fn` when the probe fires on time with the loop quiet for `quietMs` behind it; a probe
+ * that fires late (another task held the loop) starts the quiet count over and sets the next,
+ * until `capMs` from the start, when `fn` runs at the next probe regardless.
  */
 export function idleSlot(
   options: { busy?: (lateMs: number) => boolean; now?: () => number } = {}
 ): IdleSlot {
   const now = options.now ?? (() => performance.now())
   const busy = options.busy ?? ((lateMs: number): boolean => lateMs > IDLE_LATE_MS)
-  return (fn, capMs) => {
+  return (fn, capMs, quietMs = 0) => {
     const started = now()
+    let quietSince = started
     let timer: ReturnType<typeof setTimeout> | null = null
     const probe = (): void => {
       const expected = now() + IDLE_PROBE_MS
       timer = setTimeout(() => {
         timer = null
-        if (busy(now() - expected) && now() - started < capMs) {
+        const at = now()
+        if (busy(at - expected)) quietSince = at
+        const quiet = quietSince !== at && at - quietSince >= quietMs
+        if (!quiet && at - started < capMs) {
           probe()
           return
         }
@@ -348,6 +365,22 @@ function scopeKey(partition: string | null): string {
   return partition === null ? '' : `.${partition}`
 }
 
+/** Cache paths whose damage was already logged this session: the warning is not repeated. */
+const warnedDamagedCaches = new Set<string>()
+
+/**
+ * A cache that is there but cannot be trusted (`readCache` names the reason): a miss, logged
+ * once per path – the files are not removed, since the build that follows overwrites them.
+ */
+function damagedCache(bin: string, reason: string, error?: unknown): null {
+  if (!warnedDamagedCaches.has(bin)) {
+    warnedDamagedCaches.add(bin)
+    if (error === undefined) console.warn('[zenium] filter engine cache not read', bin, reason)
+    else console.warn('[zenium] filter engine cache not read', bin, reason, error)
+  }
+  return null
+}
+
 /**
  * Matches the enabled `filterText` sets with Ghostery's `FiltersEngine`. The engine is rebuilt
  * (off the current tick) whenever one of those sets changes – compiled in the background worker
@@ -376,9 +409,14 @@ function scopeKey(partition: string | null): string {
  *
  * Where the work runs. The worker compiles every scope of a build in one message and writes
  * the cache files itself, after it has answered; the main thread deserialises the bytes in an
- * idle slot ({@link IdleSlot}, capped at {@link DESERIALISE_IDLE_CAP_MS}) and adopts each scope
- * by one reference assignment – a request in flight answers from the old engine or the new one,
- * never from nothing. Bytes a newer build replaces before the slot fires are dropped unread.
+ * idle slot ({@link IdleSlot}) and adopts each scope by one reference assignment – a request in
+ * flight answers from the old engine or the new one, never from nothing. One scope per slot
+ * (W8-P1b): each scope's engine is its own blob, so a build of several scopes costs the main
+ * thread several short stalls rather than one long one; a scope with no list compiled yet
+ * takes the first idle moment, capped at {@link DESERIALISE_IDLE_CAP_MS}, and any other waits
+ * for the loop to be quiet {@link IDLE_QUIET_MS}, capped at {@link IDLE_WAIT_CAP_MS} – unless
+ * a scope with no list compiled yet arrives during that wait, which cuts it short (W8-P1c).
+ * Bytes a newer build replaces before their slot fires are dropped unread.
  */
 export class GhosteryTextMatcher implements TextMatcher, CspSource {
   /** The matcher of the unscoped sets: every partition no scoped text set names. */
@@ -403,6 +441,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   /** Compiled bytes back from the worker, by scope, until the idle slot deserialises them. */
   private readonly waiting = new Map<string, Waiting>()
   private cancelIdle: (() => void) | null = null
+  /** Whether the slot on its way was asked for as the urgent one (the first idle moment). */
+  private slotUrgent = false
   /** Builds so far, for tests and diagnostics. */
   builds = 0
   /** Whether the current unscoped matcher came out of the cache. */
@@ -543,10 +583,18 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
 
   /** Whether a scope the set applies to has no engine built from any list yet. */
   private unprotected(summary: RuleSetSummary): boolean {
-    const scopes = summary.partitions?.length
-      ? summary.partitions.map((partition) => this.scoped.get(partition) ?? this.general)
-      : [this.general]
-    return scopes.some((compiled) => !compiled || compiled.fingerprint === '')
+    const scopes = summary.partitions?.length ? summary.partitions : [null]
+    return scopes.some((partition) => this.unprotectedScope(partition))
+  }
+
+  /**
+   * Whether `partition`'s requests meet no list yet: no matcher answers for it (its own, or
+   * the unscoped one it falls back to), or the one that does was built from no sets.
+   */
+  private unprotectedScope(partition: string | null): boolean {
+    const compiled =
+      partition === null ? this.general : (this.scoped.get(partition) ?? this.general)
+    return !compiled || compiled.fingerprint === ''
   }
 
   /**
@@ -732,31 +780,74 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
         documents: compiled.documents
       })
     }
-    if (this.waiting.size > 0 && !this.cancelIdle)
-      this.cancelIdle = this.idle(() => {
-        this.cancelIdle = null
-        this.adoptWaiting()
-      }, DESERIALISE_IDLE_CAP_MS)
+    this.requestSlot()
   }
 
-  /** The idle slot: deserialise every scope's waiting bytes and adopt each by one assignment. */
-  private adoptWaiting(): void {
-    const batch = [...this.waiting.values()]
-    this.waiting.clear()
-    for (const item of batch) {
-      try {
-        const compiled: Compiled = {
-          engine: FiltersEngine.deserialize(item.engine),
-          documents: DocumentFilters.parse([item.documents]),
-          fingerprint: item.fingerprint
-        }
-        this.adopt(item.partition, compiled)
-        if (item.partition === null) this.fromCache = false
-        this.compiledInBackground++
-      } catch (error) {
-        console.error('[zenium] filter engine could not be adopted', error)
-      }
+  /**
+   * The scope whose bytes the next slot is for: one with no list compiled yet before any other
+   * (its requests meet nothing meanwhile), else the longest waiting.
+   */
+  private nextWaiting(): Waiting | undefined {
+    let first: Waiting | undefined
+    for (const item of this.waiting.values()) {
+      if (this.unprotectedScope(item.partition)) return item
+      first ??= item
     }
+    return first
+  }
+
+  /**
+   * Ask for the idle slot for the next waiting scope, unless one is already on its way or
+   * nothing waits. A scope with no list compiled yet gets the first idle moment, capped at
+   * {@link DESERIALISE_IDLE_CAP_MS}; any other's bytes wait for {@link IDLE_QUIET_MS} of quiet,
+   * capped at {@link IDLE_WAIT_CAP_MS}, since the scope's requests are answered meanwhile. A
+   * slot on its way keeps what it was asked for, with one exception (W8-P1c): when the bytes
+   * that just arrived make the next scope one with no list compiled yet, a slot waiting for
+   * quiet is cancelled and asked for again as the urgent one, so that scope is not left
+   * unprotected for up to the quiet wait's cap.
+   */
+  private requestSlot(): void {
+    const next = this.nextWaiting()
+    if (!next) return
+    const urgent = this.unprotectedScope(next.partition)
+    if (this.cancelIdle) {
+      if (this.slotUrgent || !urgent) return
+      this.cancelIdle()
+      this.cancelIdle = null
+    }
+    this.slotUrgent = urgent
+    this.cancelIdle = this.idle(
+      () => {
+        this.cancelIdle = null
+        this.adoptNext()
+      },
+      urgent ? DESERIALISE_IDLE_CAP_MS : IDLE_WAIT_CAP_MS,
+      urgent ? 0 : IDLE_QUIET_MS
+    )
+  }
+
+  /**
+   * The idle slot: deserialise one scope's waiting bytes – the newest for that scope, whatever
+   * waited when the slot was asked for – and adopt it by one assignment; the next scope, if
+   * any waits, gets a slot of its own.
+   */
+  private adoptNext(): void {
+    const item = this.nextWaiting()
+    if (!item) return
+    this.waiting.delete(scopeKey(item.partition))
+    try {
+      const compiled: Compiled = {
+        engine: FiltersEngine.deserialize(item.engine),
+        documents: DocumentFilters.parse([item.documents]),
+        fingerprint: item.fingerprint
+      }
+      this.adopt(item.partition, compiled)
+      if (item.partition === null) this.fromCache = false
+      this.compiledInBackground++
+    } catch (error) {
+      console.error('[zenium] filter engine could not be adopted', error)
+    }
+    this.requestSlot()
   }
 
   private adopt(partition: string | null, compiled: Compiled): void {
@@ -798,22 +889,50 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }
   }
 
+  /**
+   * One scope's cached matcher for `fingerprint`, or null – a miss, and the build compiles the
+   * lists' text instead. Every path to null: a file of the three missing; metadata that is not
+   * JSON or not an object; metadata of another {@link GHOSTERY_CACHE_FORMAT} (a cache an older
+   * build wrote: one recompile); another fingerprint or app version (the lists moved); metadata
+   * without a well-formed digest for either file; `engine.bin` or `documents.txt` of another
+   * length or SHA-1 than the metadata names (a file left short or stale under a completed
+   * rename – a short `documents.txt`, or an empty one, would parse as a smaller set, and is
+   * never adopted); the engine's bytes not deserialising. The files are checked against their
+   * digests before any of them is deserialised or parsed. A miss that means damage – anything
+   * past the fingerprint and version – is logged once per cache path, like a failed write.
+   */
   private readCache(partition: string | null, fingerprint: string): Compiled | null {
     const { bin, meta, documents } = this.cachePaths(partition)
+    if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
+    let info: Partial<GhosteryCacheMeta> | null
     try {
-      if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
-      const info = JSON.parse(readFileSync(meta, 'utf8')) as {
-        fingerprint?: unknown
-        version?: unknown
-      }
-      if (info.fingerprint !== fingerprint || info.version !== this.cacheVersion) return null
+      info = JSON.parse(readFileSync(meta, 'utf8')) as Partial<GhosteryCacheMeta> | null
+    } catch (error) {
+      return damagedCache(bin, 'metadata unreadable', error)
+    }
+    if (!info || typeof info !== 'object') return damagedCache(bin, 'metadata malformed')
+    if (info.format !== GHOSTERY_CACHE_FORMAT) return null
+    if (info.fingerprint !== fingerprint || info.version !== this.cacheVersion) return null
+    let engineBytes: Uint8Array
+    let documentBytes: Buffer
+    try {
+      engineBytes = new Uint8Array(readFileSync(bin))
+      documentBytes = readFileSync(documents)
+    } catch (error) {
+      return damagedCache(bin, 'files unreadable', error)
+    }
+    if (!matchesCacheDigest(engineBytes, info.engine))
+      return damagedCache(bin, 'engine bytes do not match the metadata')
+    if (!matchesCacheDigest(documentBytes, info.documents))
+      return damagedCache(bin, 'document filters do not match the metadata')
+    try {
       return {
-        engine: FiltersEngine.deserialize(new Uint8Array(readFileSync(bin))),
-        documents: DocumentFilters.parse([readFileSync(documents, 'utf8')]),
+        engine: FiltersEngine.deserialize(engineBytes),
+        documents: DocumentFilters.parse([documentBytes.toString('utf8')]),
         fingerprint
       }
-    } catch {
-      return null
+    } catch (error) {
+      return damagedCache(bin, 'engine not deserialised', error)
     }
   }
 

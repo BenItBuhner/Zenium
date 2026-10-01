@@ -877,6 +877,19 @@ export interface Tab {
    * this way; absent on records older than the field and read as null – in no bounded range.
    */
   lastNavigatedAt?: number | null
+  /**
+   * The tab's document generation: counts up at every committed navigation of a NEW document
+   * in the main frame – a load, a reload, a link followed, back to another page, an error page
+   * committing – as the host reports the commit (`TabViewEvents.onNavigated` with `inPage`
+   * false), and never at a same-document navigation – a `pushState`, a `replaceState`, a
+   * fragment – which moves the URL and `lastNavigatedAt` but keeps the document. The page-edge
+   * band reads it for its dismissal on navigation (motion spec §3.2; the Design Lead's ruling on
+   * #740: a same-document navigation does not dismiss the band, a new document does), since the
+   * URL alone cannot tell a `pushState` to another path from a document. A session's own (not
+   * persisted, never synced); absent on a tab that committed no document this session and on
+   * records older than the field, and read as 0.
+   */
+  documentGeneration?: number
   /** Set when a navigation failed – rendered by the zen://error page. */
   errorCode: number | null
   /**
@@ -5548,6 +5561,21 @@ export interface ViewPlacement {
   cover?: ContentCover
 }
 
+/**
+ * The page-edge band's word in a layout (motion spec §3.4, the desktop's mechanics): `seat` is
+ * the band's seated height these placements were laid out under – the page's laid-out top is
+ * the frame's edge plus it – and `offset` is where the page is right now, its offset from the
+ * frame's edge, which differs from the seat while the band travels. The host places the views
+ * `offset - seat` below their laid-out rects; a `layout.pageOffset` between reports moves them
+ * by a new offset against this report's seat, so the page is never placed against a seat its
+ * rects were not laid out with. Absent (both 0) where no band stands or the host moves the
+ * page another way (Android's pull channel).
+ */
+export interface LayoutBand {
+  seat: number
+  offset: number
+}
+
 export interface LayoutReport {
   placements: ViewPlacement[]
   glance: { tabId: string; rect: Rect; radius: number; cover?: ContentCover } | null
@@ -5564,6 +5592,8 @@ export interface LayoutReport {
   switchedAway?: boolean
   /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
   sidePanel?: Rect | null
+  /** The page-edge band's seat and the page's present offset (`LayoutBand`). */
+  band?: LayoutBand
 }
 
 // ---------------------------------------------------------------------------
@@ -5641,6 +5671,12 @@ export interface Commands {
     result: void
   }
   'layout.report': { args: LayoutReport; result: void }
+  /**
+   * The page-edge band's frame (motion spec §3.4, §6): the page's offset from the frame's top
+   * edge right now. The host moves the placed views by it against the last report's seat
+   * (`LayoutBand`) – a move of their bounds, never a resize – per frame of the band's travel.
+   */
+  'layout.pageOffset': { args: { offset: number }; result: void }
 
   /**
    * The user asked for a new tab: the URL bar in new-tab mode, or the page an extension

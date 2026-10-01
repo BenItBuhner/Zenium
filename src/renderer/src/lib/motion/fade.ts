@@ -3,8 +3,9 @@
  * appearance or departure is a 120 ms opacity fade in place, nothing travels. Written per frame,
  * because the reduced-motion stylesheet removes every CSS transition it does not re-declare, so
  * a transition could not carry it. `SpringAnimation` jumps under the same preference; a surface
- * whose spring carried its arrival runs this instead.
+ * whose spring carried its arrival runs this instead – on the same clock (§6).
  */
+import { cancelFrame, requestFrame } from './clock'
 import { MOTION_STATE_MS } from './tokens'
 
 /** How long the fade takes: the state change's length (motion spec §0.5, §1). */
@@ -25,15 +26,15 @@ export function fadeOpacity(el: HTMLElement, to: 0 | 1, done?: () => void): () =
     const t = Math.min(1, (now - startedAt) / REDUCED_FADE_MS)
     el.style.opacity = (from + (to - from) * t).toFixed(3)
     if (t < 1) {
-      frame = requestAnimationFrame(step)
+      frame = requestFrame(step)
       return
     }
     frame = null
     done?.()
   }
-  frame = requestAnimationFrame(step)
+  frame = requestFrame(step)
   return () => {
-    if (frame !== null) cancelAnimationFrame(frame)
+    if (frame !== null) cancelFrame(frame)
     frame = null
   }
 }

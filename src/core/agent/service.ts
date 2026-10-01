@@ -2945,6 +2945,21 @@ export class AgentService implements SessionStore, McpHandlers {
     return true
   }
 
+  /**
+   * A site asked an agent's tab for a client certificate and the host has none to offer the
+   * agent (Android's KeyChain has no enumeration API: only the certificates the user already
+   * picked this session can be described). The request goes on without one, as a chooser
+   * cancelled would; the agent hears why.
+   */
+  refuseClientCertificate(tabId: string, host: string): boolean {
+    if (!this.takesPrompt(tabId, 'client-certificate')) return false
+    this.driver(tabId)?.notices.push(
+      `Notice: ${host} asked the page in tab ${tabId} for a client certificate; none is available to agents on this device, so the request went on without one. If the site needs one, the user must pick it in Zenium themselves.`
+    )
+    this.log(`tab ${tabId}: client certificate for ${host} refused, none on offer for the agent`)
+    return true
+  }
+
   private onPromptOpened(p: AgentPrompt): void {
     this.log(`prompt ${p.id} (${p.kind}) on tab ${p.tabId}: ${p.summary}`)
     this.browser.state.commitVolatile()

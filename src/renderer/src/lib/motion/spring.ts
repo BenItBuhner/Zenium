@@ -1,8 +1,11 @@
 /**
  * Damped-spring motion for gesture-driven UI. The maths (`stepSpring`) is shared with the new
- * tab page; this module adds the frame loop the chrome's surfaces run it on.
+ * tab page; this module adds the frame loop the chrome's surfaces run it on – on the chrome's
+ * one animation clock (`./clock`, motion spec §6): every spring in flight steps on the same
+ * frame, at the same `now`, from one `requestAnimationFrame`.
  */
 import { isAtRest, stepSpring, type SpringConfig, type SpringState } from '@shared/spring'
+import { cancelFrame, requestFrame } from './clock'
 
 export { SPRING_GENTLE, SPRING_SNAPPY, isAtRest, stepSpring } from '@shared/spring'
 export type { SpringConfig, SpringState } from '@shared/spring'
@@ -58,7 +61,7 @@ export class SpringAnimation {
       return
     }
     this.last = performance.now()
-    if (this.frame === null) this.frame = requestAnimationFrame(this.tick)
+    if (this.frame === null) this.frame = requestFrame(this.tick)
   }
 
   /** Change the destination without disturbing the current motion. */
@@ -92,7 +95,7 @@ export class SpringAnimation {
   }
 
   private cancelFrame(): void {
-    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    if (this.frame !== null) cancelFrame(this.frame)
     this.frame = null
   }
 
@@ -119,7 +122,7 @@ export class SpringAnimation {
       this.onRest(this.state.x)
       return
     }
-    this.frame = requestAnimationFrame(this.tick)
+    this.frame = requestFrame(this.tick)
   }
 }
 

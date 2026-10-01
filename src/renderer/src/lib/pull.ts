@@ -18,6 +18,10 @@ import { browserStore } from './ui'
  * threshold (or a fling) the tab reloads; the page waits at {@link PULL_REST} with the disc
  * spinning until the load is over, then everything springs back. Every motion is a spring on
  * {@link SPRING_GENTLE}, and a finger landing on a spring in flight takes over from where it is.
+ *
+ * The same host channel moves the page for one other thing: the page-edge band's hold (see
+ * {@link holdPage}), which opens a gap above the page while it stands. One source has the page
+ * at a time.
  */
 
 export type PullPhase = 'idle' | 'pulling' | 'settling' | 'refreshing' | 'finishing'
@@ -142,11 +146,20 @@ export class PullMachine {
     return this.offset
   }
 
-  /** Host → machine. */
-  dispatch(tabId: string, phase: PullEventPhase, payload?: PullEventPayload | null): void {
+  /**
+   * Host → machine. `from`: the page already sits this far down, held there by another source
+   * (see {@link holdPage}) that lets go to this finger – the pull carries on from there, as from
+   * a spring in flight, and the page does not move.
+   */
+  dispatch(
+    tabId: string,
+    phase: PullEventPhase,
+    payload?: PullEventPayload | null,
+    from = 0
+  ): void {
     switch (phase) {
       case 'start':
-        this.start(tabId)
+        this.start(tabId, from)
         return
       case 'move':
         if (this.tabId !== tabId || this.phase !== 'pulling') return
@@ -202,9 +215,12 @@ export class PullMachine {
     this.pollIn((this.sawLoading ? MAX_SPIN_MS : LOADING_GRACE_MS) - elapsed)
   }
 
-  private start(tabId: string): void {
+  private start(tabId: string, from = 0): void {
     if (this.tabId && this.tabId !== tabId) this.abort()
-    const caught = this.phase !== 'idle'
+    // A page another source held out and is letting go of is caught like one on a spring.
+    const held = this.phase === 'idle' && from > 0
+    if (held) this.offset = from
+    const caught = this.phase !== 'idle' || held
     this.spring.stop()
     this.clearTimer()
     this.tabId = tabId
@@ -355,12 +371,77 @@ const machine = new PullMachine({
   }
 })
 
+// ---------------------------------------------------------------------------
+// The second source of the offset: a hold
+// ---------------------------------------------------------------------------
+
+/**
+ * Something other than a pull holding the page down: the page-edge band (`lib/band`), which
+ * stands in the gap it opens between the frame's top edge and the page. It moves the page
+ * through the same host channel, so the page travels as one piece whichever source moves it –
+ * and only one source has it at a time: a hold is refused while a pull has the page (the hold
+ * waits; {@link pullStore} says when the page is free), and a pull that begins while a hold
+ * stands takes the page over where it is – the hold is told it was {@link PageHold.displaced}
+ * and lets go without the page moving. On the host, a finger on a held page is the page's
+ * (`PullGestureClassifier.kt` tells a hold from a pull's own offset); only a drag down from the
+ * top becomes the pull that displaces the hold.
+ */
+export interface PageHold {
+  /** A pull began on the held page and carries on from `offset`: let go without moving it. */
+  displaced(tabId: string, offset: number): void
+}
+
+let hold: PageHold | null = null
+let heldTab: string | null = null
+let heldOffset = 0
+
+/** The one hold the chrome runs (the band's driver); null when none is mounted. */
+export function setPageHold(next: PageHold | null): void {
+  hold = next
+}
+
+/**
+ * Hold `tabId`'s page `offset` CSS px down (0 lets go). Moves nothing and returns false while a
+ * pull has the page – letting go of a page this hold has is the one write that always goes
+ * through – or while another tab's page is held (let go of that one first).
+ */
+export function holdPage(tabId: string, offset: number): boolean {
+  const next = Math.max(0, offset)
+  const mine = heldTab === tabId
+  if (heldTab !== null && !mine) return false
+  if (machine.state.phase !== 'idle' && (next > 0 || !mine)) return false
+  heldTab = next > 0 ? tabId : null
+  heldOffset = next
+  host?.setOffset(tabId, next)
+  return true
+}
+
+/** How far down the hold has `tabId`'s page right now (0 when it holds nothing of it). */
+export function heldPageOffset(tabId: string): number {
+  return heldTab === tabId ? heldOffset : 0
+}
+
+/** Whether a pull has the page right now (a hold must wait for it to come home). */
+export function pageHeldByPull(): boolean {
+  return machine.state.phase !== 'idle'
+}
+
 /** Host → chrome: one touch phase of a pull on the tab's page. */
 export function dispatchPullEvent(
   tabId: string,
   phase: PullEventPhase,
   payload?: PullEventPayload | null
 ): void {
+  if (phase === 'start' && heldTab === tabId && heldOffset > 0) {
+    // A pull on a held page: the pull carries on from where the page sits, then the hold is
+    // told to let go – in that order, so that nothing it writes in letting go moves the page.
+    const from = heldOffset
+    heldTab = null
+    heldOffset = 0
+    machine.dispatch(tabId, 'start', payload, from)
+    hold?.displaced(tabId, from)
+    return
+  }
   machine.dispatch(tabId, phase, payload)
 }
 

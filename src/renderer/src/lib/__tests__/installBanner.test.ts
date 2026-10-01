@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WebAppBanner } from '@shared/types'
-import { BANNER_TIMEOUT_MS } from '@shared/webApp'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 
 vi.stubGlobal('window', { zen: { invoke: async () => null, on: () => () => undefined } })
 vi.mock('@renderer/lib/api', () => ({
@@ -49,8 +49,11 @@ describe('the install banner’s word to the core (#740, seed #42)', () => {
     presentInstallBanner(BANNER)
     expect(installBannerShown('t1')).toBe(true)
     expect(calls()).toEqual([['webapp.bannerShown', { tabId: 't1' }]])
-    // The card runs the shared clock; its timeout is the core's own word back.
-    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
+    // The card runs the one offer clock (`BAND_CLOCK_MS`; the core runs none): its running out
+    // is the chrome's word back, `timeout`, which starts no cooldown.
+    vi.advanceTimersByTime(BAND_CLOCK_MS - 1)
+    expect(calls()).toEqual([['webapp.bannerShown', { tabId: 't1' }]])
+    vi.advanceTimersByTime(1)
     expect(calls()).toEqual([
       ['webapp.bannerShown', { tabId: 't1' }],
       ['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }]
