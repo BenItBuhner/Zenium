@@ -17,6 +17,14 @@ export type TrackingLevel = 'off' | 'basic' | 'balanced' | 'strict'
 /** Which level first enables a list (a list is on for its tier and every stricter level). */
 export type ListTier = 'basic' | 'balanced' | 'strict'
 
+/**
+ * The level private windows use: `default` follows {@link BlockingSettings.level}; `strict`
+ * evaluates a private window's requests at `strict` whatever the level says (Edge's "Always use
+ * 'Strict' tracking prevention when browsing InPrivate"). The shape of
+ * `privacy.thirdPartyCookiesPrivate`: a private-window override beside the general setting.
+ */
+export type TrackingLevelPrivateMode = 'default' | 'strict'
+
 export interface FilterListDefinition {
   id: string
   name: string
@@ -52,6 +60,12 @@ export const BLOCKING_PERMISSION = 'ads'
  */
 export interface BlockingSettings {
   level: TrackingLevel
+  /**
+   * "Always use Strict in private windows": `strict` makes a private window's requests evaluate
+   * at `strict` whatever `level` says (see {@link effectiveLevel}); `default` leaves them at
+   * `level`. Moot – the row dims – while blocking is off or `level` is already `strict`.
+   */
+  levelPrivate: TrackingLevelPrivateMode
   /** Per-list overrides of the level's choice (`false` turns a list off, `true` forces it on). */
   lists: Record<string, boolean>
   customLists: CustomFilterList[]
@@ -63,6 +77,7 @@ export interface BlockingSettings {
 
 export const DEFAULT_BLOCKING_SETTINGS: BlockingSettings = {
   level: 'balanced',
+  levelPrivate: 'default',
   lists: {},
   customLists: [],
   userFilters: '',
@@ -172,15 +187,35 @@ export function levelIncludes(level: TrackingLevel, tier: ListTier): boolean {
 }
 
 /**
- * The default lists a level turns on, after the user's per-list overrides. `off` and a disabled
- * master switch (`enabled`) enable nothing.
+ * The level a request evaluates at, by the window kind it comes from: a private window's at
+ * `strict` while {@link BlockingSettings.levelPrivate} says so (whatever `level` is – Off
+ * included), every other window's at `level`. The one place the private override is read, so
+ * every reader of the level – the list selection, the level-Off switch, the status – agrees.
  */
-export function enabledListsFor(settings: BlockingSettings, enabled = true): Set<string> {
+export function effectiveLevel(
+  settings: Pick<BlockingSettings, 'level' | 'levelPrivate'>,
+  isPrivate: boolean
+): TrackingLevel {
+  return isPrivate && settings.levelPrivate === 'strict' ? 'strict' : settings.level
+}
+
+/**
+ * The default lists a level turns on, after the user's per-list overrides. `off` and a disabled
+ * master switch (`enabled`) enable nothing. `isPrivate` asks for a private window's lists (the
+ * level {@link effectiveLevel} gives it), which are a superset of the other windows': the
+ * overrides apply to both, and `strict` includes every tier.
+ */
+export function enabledListsFor(
+  settings: BlockingSettings,
+  enabled = true,
+  isPrivate = false
+): Set<string> {
   const out = new Set<string>()
-  if (!enabled || settings.level === 'off') return out
+  const level = effectiveLevel(settings, isPrivate)
+  if (!enabled || level === 'off') return out
   for (const list of DEFAULT_FILTER_LISTS) {
     const override = settings.lists[list.id]
-    const on = override === undefined ? levelIncludes(settings.level, list.tier) : override
+    const on = override === undefined ? levelIncludes(level, list.tier) : override
     if (on) out.add(list.id)
   }
   for (const list of settings.customLists) if (list.enabled) out.add(list.id)
@@ -254,6 +289,7 @@ export function sanitizeBlockingSettings(
     }
   return {
     level: LEVELS.includes(s.level as TrackingLevel) ? (s.level as TrackingLevel) : d.level,
+    levelPrivate: s.levelPrivate === 'strict' ? 'strict' : d.levelPrivate,
     lists,
     customLists,
     userFilters: typeof s.userFilters === 'string' ? s.userFilters.slice(0, 200_000) : '',
