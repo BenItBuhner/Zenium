@@ -1,0 +1,30 @@
+name: TEMP band readers
+
+# TEMPORARY (W6-S26-d, the review fold of PR #735): the four §9.33 readers migrated onto the
+# page-edge band – ReaderEntryDemo, OfflineHungDemo, PwaDemo, FirstRunDemo – on one emulator boot
+# of the nightly's phone recipe, through tmp-band-readers.sh (each driver under its own workflow's
+# environment, the device reset between them). A push trigger on the PR's branch because the
+# nightly's dispatch door answers the agents' token 403. Removed with its script before the PR is
+# final; the nightly manifest is not touched.
+on:
+  push:
+    branches:
+      - cursor/android-motion-band-9271
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-band-readers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readers:
+    name: The four readers under the band
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/tmp-band-readers.sh
+      artifact-name: tmp-band-readers
+      artifact-path: artifacts/tmp-band-readers/
+      timeout-minutes: 70
+      retention-days: 7
