@@ -322,6 +322,10 @@ class ExtensionScriptsTest {
         assertFalse(declaration.contains("__zenCompletion="))
         assertFalse(declaration.contains("return __zenCompletion"))
         assertTrue(declaration.contains("{\nfoo();\nfunction f() {}\n;" + """try{__zenMirror("f",f)}catch(e){}""" + "\n})"))
+        // A script that is one bare block (Auto Tab Discard's `meta.js`) answers the block's last statement, as Chrome does:
+        // the assignment is written inside the braces, where the block's own `const` is in scope.
+        val block = ExtensionScripts.exec("tok", id, "js", JSONObject(), "{\n  const top = window.top === window;\n  (top ? { ready: document.readyState } : { ready: true })\n}\n", null, null)
+        assertTrue(block.contains("{\n  const top = window.top === window;\n  __zenCompletion=(top ? { ready: document.readyState } : { ready: true })\n}\n\n;return __zenCompletion\n})"))
         // A func returns what it returns; a CSS injection has no completion.
         val func = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "async () => document.title", "[]")
         assertFalse(func.contains("__zenCompletion="))

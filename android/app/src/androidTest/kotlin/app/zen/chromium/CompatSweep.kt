@@ -2016,7 +2016,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val extra = JSONObject()
         val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", "#phrase")))
         val point = screenPoint(view, centre)
-        val buttonProbe = "(function(){var b=document.querySelector(${JSONObject.quote(button)});return JSON.stringify({pass:!!b&&b.offsetParent!==null,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
+        // Shown = laid out and not `visibility: hidden`; `offsetParent` is null for a `position: fixed`
+        // button (Simple Translate's), which round 27's BEFORE read as absent.
+        val buttonProbe = "(function(){var b=document.querySelector(${JSONObject.quote(button)});var shown=!!b&&b.getClientRects().length>0&&getComputedStyle(b).visibility!=='hidden';return JSON.stringify({pass:shown,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
         var found = JSONObject()
         var how = "none"
         if (point != null && onScreen("$label: the long press")) {
@@ -4088,7 +4090,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // address, is non-unique and needs nothing).
         val restorePlaintext = allowPlaintext(listOf(gallery), factor, extra)
         try {
-            fixture(gallery, factor, 2_500)
+            val (_, galleryView) = fixture(gallery, factor, 2_500)
             val before = tabUrls().keys
             val since = StepEvidence(row)
             coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -4099,6 +4101,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 tapLabel(tap, factor, steps, "menu")
                 extra.put("menu", steps)
             }
+            // Fatkun mounts its listing INSIDE the source tab (`#ftk-sidepanel-iframe-container` with an
+            // `<iframe src=output.html>` of the extension's origin, its default "current" mode; round
+            // 27's BEFORE read "no panel, popup or page" with the frame standing): another origin's
+            // frame in the tab's WebView, found from the page (through open shadow roots, as
+            // [clearCache] finds its confirmation) and read through the accessibility tree, which
+            // Chromium exposes across frames – [inPageFrameListing].
+            val frameSelector = JSONObject.quote("iframe[src*=\"${row.id}\"]")
+            val inPageFrameExpr = "(function(){var sel=$frameSelector;var find=function(root){var f=root.querySelector(sel);if(f)return f;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){if(all[i].shadowRoot){var r=find(all[i].shadowRoot);if(r)return r}}return null};" +
+                "var f=find(document);if(!f)return JSON.stringify({frame:false});var r=f.getBoundingClientRect();return JSON.stringify({frame:true,w:r.width,h:r.height,x:r.left,y:r.top,src:String(f.src).slice(0,160)})})()"
+            val inPageFrame = { json(runCatching { tabEval(galleryView, inPageFrameExpr) }.getOrDefault("{}")).takeIf { it.optBoolean("frame") && it.optDouble("w") > 80 && it.optDouble("h") > 80 } }
             var surface = ""
             var list = JSONObject()
             val found = poll(scaled(30_000, factor), 700) {
@@ -4111,14 +4123,28 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     surface = if (pageView != null) "tab ${extensionPath(page!!.value).take(40)}" else "sheet (${sheet!!.context})"
                     list = json(tabEval(view, IMAGE_LIST_REPORT))
                     if (list.optBoolean("pass")) view else null
-                } else null
+                } else {
+                    val frame = inPageFrame()
+                    if (frame != null) {
+                        surface = "panel in the page (iframe ${frame.optString("src").substringAfter(row.id).take(40)}, ${frame.optInt("w")}x${frame.optInt("h")} css px)"
+                        list = inPageFrameListing(galleryView, frame)
+                        if (list.optBoolean("pass")) galleryView else null
+                    } else null
+                }
             }
             if (found == null) {
                 // The surface is up without the pictures: read it once more, settled.
-                (openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView())?.let { view ->
+                val view = openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView()
+                if (view != null) {
                     SystemClock.sleep(scaled(3_000, factor))
                     list = json(tabEval(view, IMAGE_LIST_REPORT))
                     list.put("console", JSONArray(consoleOf(view).takeLast(10)))
+                } else {
+                    inPageFrame()?.let { frame ->
+                        SystemClock.sleep(scaled(3_000, factor))
+                        list = inPageFrameListing(galleryView, frame)
+                        list.put("console", JSONArray(consoleOf(galleryView).takeLast(10)))
+                    }
                 }
             }
             extra.put("surface", surface).put("list", list).put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
@@ -4134,6 +4160,35 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         } finally {
             restorePlaintext?.invoke()
         }
+    }
+
+    /**
+     * An image listing inside another origin's frame in the tab's WebView (Fatkun's `output.html`
+     * panel), read as [IMAGE_LIST_REPORT] reads a document the driver can script: the nodes of the
+     * accessibility tree within the frame's screen bounds – the pictures as `android.widget.Image`
+     * nodes, their sizes as "320 x 240" labels (Fatkun prints `width x height` on every card) –
+     * the better count the photos; `pass` at the gallery's four, the report's bar.
+     */
+    private fun inPageFrameListing(view: WebView, frame: JSONObject): JSONObject {
+        val report = JSONObject().put("byAccessibility", true).put("frame", frame)
+        val topLeft = screenPoint(view, JSONObject().put("x", frame.optDouble("x")).put("y", frame.optDouble("y")))
+        val bottomRight = screenPoint(view, JSONObject().put("x", frame.optDouble("x") + frame.optDouble("w")).put("y", frame.optDouble("y") + frame.optDouble("h")))
+        if (topLeft == null || bottomRight == null) return report.put("pass", false).put("photos", 0).put("images", 0).put("text", "")
+        val bounds = Rect(topLeft.first.toInt(), topLeft.second.toInt(), bottomRight.first.toInt(), bottomRight.second.toInt())
+        var images = 0
+        var labels = 0
+        val texts = ArrayList<String>()
+        nodes { node ->
+            val b = Rect().also(node::getBoundsInScreen)
+            if (!bounds.contains(b.centerX(), b.centerY())) return@nodes false
+            val text = (node.text ?: node.contentDescription)?.toString()?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+            if (node.className == "android.widget.Image") images++
+            if (FIXTURE_PICTURE_SIZE.containsMatchIn(text)) labels++
+            if (text.isNotEmpty() && texts.size < 24) texts += text
+            false
+        }
+        val photos = maxOf(images, labels)
+        return report.put("pass", photos >= 4).put("photos", photos).put("images", images).put("labels", labels).put("text", texts.joinToString(" / ").take(200))
     }
 
     /**
@@ -8621,10 +8676,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("cgipcgghboamefelooajpiabilddemlh", "WA Sender - Bulk Messages & Automation", "wa-sender", core = attachedGate("WA Sender", "https://web.whatsapp.com/", "a linked WhatsApp Web session (its bulk sender acts on the chat list; signed out the page is the QR code)")),
         Row("iebpjdmgckacbodjpijphcplhebcmeop", "Table Capture", "table-capture", core = popupMarker("Table Capture", TABLE_CAPTURE_POPUP, page = "table.html?tablecapture", settleMs = 25_000)),
         Row("mmpljcghnbpkokhbkmfdmoagllopfmlm", "Allow Copy - Select & Enable Right Click", "allow-copy", core = popupSwitch("Allow Copy", "right-click.html?allowcopy", "[class*=\"_switch_ve\"]", ALLOW_COPY_ENABLED, settleMs = 30_000)),
-        Row("mkpegjkblkkefacfnmkajcjmabijhclg", "Magic Eden Wallet", "magic-eden-wallet", core = domMarker("Magic Eden Wallet's providers injected into the page world", "wallet.html?magiceden", MAGIC_EDEN_PROVIDER, settleMs = 30_000)),
+        // Magic Eden's content script matches `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`
+        // and `http://[::1]/*` – no plain-http host but the loopback names (round 27's BEFORE on
+        // `10.0.2.2`: no provider, as Chrome would inject none there) – so its fixture is served
+        // under `localhost` through the sweep's `adb reverse`, as Coinbase Wallet's and Trust Wallet's are.
+        Row("mkpegjkblkkefacfnmkajcjmabijhclg", "Magic Eden Wallet", "magic-eden-wallet", core = domMarker("Magic Eden Wallet's providers injected into the page world", "$LOCALHOST_BASE/wallet.html?magiceden", MAGIC_EDEN_PROVIDER, settleMs = 30_000)),
         Row("geplbbbmdpmdodfmohpikfacgkfpkhec", "Email Finder by Skrapp.io", "skrapp", core = accountGate("Email Finder by Skrapp.io", Regex("skrapp\\.io|linkedin\\.com", RegexOption.IGNORE_CASE), injects = "[id*='skrapp'], [class*='skrapp']", site = "https://www.linkedin.com/in/williamhgates/", gate = "a Skrapp account and a LinkedIn profile page (its click injects `modalContentScript.bundle.js` into a linkedin.com tab alone – `B(url)` –, whose modal signs in at skrapp.io; signed out, linkedin.com serves its sign-in)")),
         Row("pihphjfnfjmdbhakhjifipfdgbpenobg", "DocsAfterDark", "docsafterdark", core = siteGate("DocsAfterDark", "https://docs.google.com/document/u/0/", "html[class*='DocsAfterDark_'], link[id^='DocsAfterDark_'], link[href*='pihphjfnfjmdbhakhjifipfdgbpenobg']", Regex("^https://docs\\.google\\.com/document/"), "a Google sign-in (its script runs on a document; docs.google.com sends a fresh browser to its sign-in)")),
-        Row("ibplnjkanclpjokhdolnendpplpjiace", "Simple Translate", "simple-translate", core = selectionTranslator("Simple Translate", "editor.html?simpletranslate", ".simple-translate-button", ".simple-translate-panel, .simple-translate-result")),
+        // Simple Translate's button and panel are `position: fixed` and `visibility: hidden` until
+        // their `isShow` class (content.css); the shown ones are the row's.
+        Row("ibplnjkanclpjokhdolnendpplpjiace", "Simple Translate", "simple-translate", core = selectionTranslator("Simple Translate", "editor.html?simpletranslate", ".simple-translate-button.isShow", ".simple-translate-panel.isShow, .simple-translate-result")),
         Row("hfjngafpndganmdggnapblamgbfjhnof", "RoSeal - Augmented Roblox Experience", "roseal", core = liveMarker("RoSeal", "https://www.roblox.com/games/920587237", injectedAny("roseal"))),
         Row("akmglodbcihkcgojpdmbocmlpkfjhfof", "Mirror Mode for Google Meet™", "mirror-mode-for-google-meet", core = attachedGate("Mirror Mode for Google Meet", "https://meet.google.com/", "a Google account in a Meet call (its `mirrorVideos` interval turns the call's `<video>` elements by `rotateY(180deg)`; its `#reactions-plugin` sidebar mounts there)")),
         Row("dkagmnnkfinalebballociekdnlaniem", "Ad Block Genius - stop invasive ads", "ad-block-genius", core = listBlocker("Ad Block Genius", listOf("ads.pubmatic.com", "js.adsrvr.org", "x.bidswitch.net"))),
@@ -8740,18 +8801,47 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * download list is polled for a new row whose name matches `name` or whose URL is a `blob:`
      * – `completed` is `P`, a row that never completes `PARTIAL` with its state, no row `F` with
      * the fixture's and the worker's console (a tab the click opened instead is named).
+     *
+     * While the download is awaited the fixture's document is sampled every ~2.5 s
+     * ([PAGE_WORK_SAMPLE]: its element count, its markup's length, the script heap where the
+     * WebView reports one, and the saver's own marks when `probe` names an expression for them)
+     * into `samples` – round 27's BEFORE on 113 had Save Page WE's gather pass take the shared
+     * renderer to V8's heap limit 74 s after the click, with nothing in any console; the samples
+     * are the trace of where the work goes. A sample that cannot be read (the renderer gone) is
+     * recorded as such and the sampling stops.
      */
-    private fun pageDownload(label: String, page: String, name: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun pageDownload(label: String, page: String, name: Regex, probe: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (tab, view) = fixture(page, factor, 2_500)
         val before = downloadRows().map { it.optString("id") }.toSet()
         val tabsBefore = tabUrls().keys
         val since = StepEvidence(row)
+        val samples = JSONArray()
+        val started = SystemClock.uptimeMillis()
+        var lastSample = 0L
+        var sampling = true
+        val sample = {
+            if (sampling && samples.length() < 40 && SystemClock.uptimeMillis() - lastSample >= 2_500) {
+                lastSample = SystemClock.uptimeMillis()
+                val read = runCatching { tabEval(view, PAGE_WORK_SAMPLE, 4) }.getOrNull()
+                val entry = JSONObject().put("t", SystemClock.uptimeMillis() - started)
+                if (read == null || read == "null" || read.isEmpty()) {
+                    entry.put("unreadable", true)
+                    sampling = false
+                } else {
+                    entry.put("page", json(read))
+                    if (probe != null) entry.put("probe", json(runCatching { tabEval(view, probe, 4) }.getOrDefault("{}")))
+                }
+                samples.put(entry)
+            }
+        }
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         var item = poll(scaled(40_000, factor), 700) {
+            sample()
             downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
         }
+        extra.put("samples", samples)
         if (item != null) {
             val id = item.optString("id")
             item = poll(scaled(15_000, factor), 500) { downloadRows().firstOrNull { it.optString("id") == id }?.takeIf { it.optString("state") == "completed" } }
@@ -15750,6 +15840,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * "320x240" label – so the shown image's `naturalWidth` is not the fixture's; round 15's
          * AFTER read four items and no size match).
          */
+        /**
+         * A document under a saver's work, as the page itself can read it: its element count, its
+         * markup's length, the number of `blob:` anchors (a save handed to the tab's download), and
+         * the script heap where the WebView exposes `performance.memory` (Chromium's legacy
+         * `MemoryInfo`, in megabytes, rounded) – [pageDownload]'s samples.
+         */
+        private const val PAGE_WORK_SAMPLE =
+            "(function(){var m=(performance&&performance.memory)||null;var d=document.documentElement;return JSON.stringify({els:document.querySelectorAll('*').length,html:d?d.outerHTML.length:0," +
+                "blobs:document.querySelectorAll('a[href^=\"blob:\"], a[download]').length,heapMb:m?Math.round(m.usedJSHeapSize/1048576):null,heapLimitMb:m?Math.round(m.jsHeapSizeLimit/1048576):null,ready:document.readyState})})()"
+
+        /** The gallery's pictures are 320 by 240; a listing's size label for one, as a card prints it. */
+        private val FIXTURE_PICTURE_SIZE = Regex("\\b320\\s*[x×]\\s*240\\b")
+
         private const val IMAGE_LIST_REPORT =
             "(function(){var imgs=[];var sized=0;var attrs=0;var labels=0;var walk=function(root){var all=root.querySelectorAll('img, [style*=\"background-image\"]');for(var i=0;i<all.length;i++){var e=all[i];var s=e.currentSrc||e.src||(e.style&&e.style.backgroundImage)||'';imgs.push(String(s));if(e.tagName==='IMG'&&e.naturalWidth===320&&e.naturalHeight===240)sized++;if(e.shadowRoot)walk(e.shadowRoot)}" +
                 "attrs+=root.querySelectorAll('[data-width=\"320\"][data-height=\"240\"], [data-resolution=\"320x240\"]').length;var texts=root.querySelectorAll('div, span, small, p, figcaption');for(var k=0;k<texts.length;k++){if(texts[k].children.length===0&&/^\\s*320\\s*[x×]\\s*240\\s*$/i.test(texts[k].textContent||''))labels++}" +
@@ -17061,7 +17164,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
         /** AiPrice(AliPrice)'s popup: its Vue app mounted under an `ap-root-…` element with its controls and text. */
         private const val AIPRICE_POPUP =
-            "(function(){var root=document.querySelector('[id^=\"ap-root\"], [class^=\"ap-root\"]');var n=root?root.querySelectorAll('*').length:0;var t=(root||document.body||{}).innerText||'';t=t.replace(/\\s+/g,' ').trim();" +
+            // popup.html's shell is `div.ap-ext > div#ap-root-…`; Vue 2's `$mount` replaces the inner
+            // div with the rendered root (`ap-popup-nav`, `ap-popup-main`, …), so the shell that stays
+            // is `.ap-ext` – round 27's BEFORE read the replaced id as no root.
+            "(function(){var root=document.querySelector('.ap-ext, [id^=\"ap-root\"], [class^=\"ap-root\"], [class*=\"ap-popup\"]');var n=root?root.querySelectorAll('*').length:0;var t=(root||document.body||{}).innerText||'';t=t.replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!root&&n>=10,root:root?(root.id||root.className).slice(0,40):null,nodes:n,text:t.slice(0,160)})})()"
 
         /** pdf.js's viewer page (PDF Viewer 1.0.13's `bg/helper/web/viewer.html`, its own sample) after the action click: a page canvas drawn or a page marked loaded. */

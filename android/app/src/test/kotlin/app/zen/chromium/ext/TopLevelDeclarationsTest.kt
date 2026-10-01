@@ -197,7 +197,31 @@ class TopLevelDeclarationsTest {
     }
 
     @Test
-    fun `a script ending in a declaration, a block, a control statement, a label or nothing has no completion statement`() {
+    fun `a script ending in a bare block answers the block's last statement, as eval does`() {
+        // Auto Tab Discard's `meta.js`: one block, `const` declarations, the report as its last statement.
+        val meta = "{\n  const top = window.top === window;\n  const paused = [...document.querySelectorAll('video,audio')].some(e => {\n" +
+            "    return e.paused && e.currentTime;\n  });\n\n  (top ? {\n    'time': window.lastVisit || performance.timing.domLoading,\n" +
+            "    'ready': document.readyState === 'complete' || document.readyState === 'loaded',\n    'forms': window.isReceivingFormInput || false\n" +
+            "  } : {\n    paused,\n    'forms': window.isReceivingFormInput || false\n  // eslint-disable-next-line semi\n  })\n}\n"
+        val report = last(meta)
+        assertEquals(true, report?.startsWith("(top ? {"))
+        assertEquals(true, report?.endsWith("})"))
+        assertEquals("a()", last("foo(); { a() }"))
+        assertEquals("a()", last("{ a() }"))
+        assertEquals("a()", last("{ a(); }"))
+        assertEquals("b", last("{ { a; b } }"))
+        assertEquals("x + 1", last("{\n  let x = 1\n  x + 1\n}"))
+        assertEquals("go()", last("{ a() };\ngo()"))
+        // A block ending in a declaration, an empty block, or a function's body answer nothing, as before.
+        assertEquals(null, last("{ a(); const x = 1 }"))
+        assertEquals(null, last("{}"))
+        assertEquals(null, last("{ }"))
+        assertEquals(null, last("function f() { a() }"))
+        assertEquals(null, last("if (x) { a() }"))
+    }
+
+    @Test
+    fun `a script ending in a declaration, a control statement, a label or nothing has no completion statement`() {
         assertEquals(null, last("foo();\nfunction f(){}"))
         assertEquals(null, last("foo();\nasync function f(){}"))
         assertEquals(null, last("foo();\nclass X {}"))
@@ -208,7 +232,6 @@ class TopLevelDeclarationsTest {
         assertEquals(null, last("for (const x of xs) { a(x) }"))
         assertEquals(null, last("while (x) a()"))
         assertEquals(null, last("foo: bar()"))
-        assertEquals(null, last("foo(); { a() }"))
         assertEquals(null, last("try { a() } catch (e) {}"))
         assertEquals(null, last(""))
         assertEquals(null, last(";;\n// nothing\n"))

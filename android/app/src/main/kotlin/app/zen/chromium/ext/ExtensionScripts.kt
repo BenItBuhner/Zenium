@@ -452,7 +452,9 @@ object ExtensionScripts {
      * returns, nothing. So when the text's last statement is an expression
      * ([TopLevelDeclarations.lastExpressionStatement]) the wrapper writes it into its completion
      * parameter and returns that after the mirror; a promise there is awaited by the bootstrap as
-     * a `func`'s is. A script ending in a declaration or a block answers undefined, as in Chrome.
+     * a `func`'s is. A script ending in a bare block answers the block's last statement (Auto Tab
+     * Discard's `meta.js` is one block whose last statement is its report; Chrome answers the
+     * report); one ending in a declaration answers undefined, as in Chrome.
      */
     fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?, scoped: Boolean = false): String {
         val body = execBody(code, funcSource, argsJson)

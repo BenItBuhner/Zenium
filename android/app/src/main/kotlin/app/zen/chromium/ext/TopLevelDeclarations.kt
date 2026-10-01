@@ -288,8 +288,10 @@ object TopLevelDeclarations {
 
     /**
      * The last statement of `text[from, to)` when it is an expression statement: the offset of its
-     * first token and the end of its last (a trailing `;`, comments and blank lines left out), null
-     * when the script ends in a declaration, a block, a control statement, a label, or nothing.
+     * first token and the end of its last (a trailing `;`, comments and blank lines left out); for a
+     * script ending in a bare block, the block's own last statement read the same way (a block's
+     * completion value is its last statement's); null when the script ends in a declaration, a
+     * control statement (whose value is its taken branch's – not read), a label, or nothing.
      * This is what Chrome answers for a `files` or `code` injection – the script's completion
      * value, as `eval` gives it – and the exec wrapper ([ExtensionScripts.execScript]) keeps that
      * statement's value in its completion parameter to return after the mirror ran. Statement
@@ -315,8 +317,12 @@ object TopLevelDeclarations {
         var lastEnd = -1
         var prev: Token? = null
         var last: IntArray? = null
+        var block: IntArray? = null
         fun close(end: Int) {
-            if (start >= 0) last = if (expression && end > start) intArrayOf(start, end) else null
+            if (start >= 0) {
+                last = if (expression && end > start) intArrayOf(start, end) else null
+                block = if (!expression && word == "{" && end > start + 1) intArrayOf(start, end) else null
+            }
             start = -1
         }
         while (true) {
@@ -382,6 +388,13 @@ object TopLevelDeclarations {
         // A bracket left open (a text the WebView will refuse to compile) is no statement to write into.
         if (depth != 0) return null
         close(lastEnd)
+        // A bare block's completion value is its own last statement's (`{ const t = top(); (t ? a : b) }`
+        // answers the conditional, as `eval` does and as Chrome answers Auto Tab Discard's `meta.js`),
+        // so the reading goes on inside the braces; a block ending in a declaration answers nothing, as above.
+        val inner = block
+        if (last == null && inner != null && text[inner[1] - 1] == '}') {
+            return lastExpressionStatement(text, inner[0] + 1, inner[1] - 1)
+        }
         return last
     }
 

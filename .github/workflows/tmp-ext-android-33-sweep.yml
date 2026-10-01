@@ -61,7 +61,9 @@ name: TEMPORARY - compat round 27 sweep and frame budget trigger
 #     both WebViews with the app alive, `(0 grown)` and the heap per step –, then Compose AI (the
 #     watch row), Quick Javascript Switcher (R27-1), Image Downloader - picture and photos saver
 #     (R27-2), Redirect Path (R26-1), RoValra (R26-2), Popup Blocker (strict) (its popup's
-#     `confirm()` as the host's page-dialog sheet), the storage order probe, Magical, and Reader
+#     `confirm()` as the host's page-dialog sheet), the storage order probe, Magical, Auto Tab
+#     Discard (R27-5: a `files` script's block completion value), Save Page WE (the BEFORE's
+#     renderer crash on 113, the driver's page samples during its wait), and Reader
 #     View LAST OF ALL (round 23's R23-7: the stall poll's sink on 156 – a row that sinks loses
 #     nothing behind it). The driver runs the selected rows in ITS TABLE's order with the
 #     SWEEP_LAST ids moved to the end in THEIR LIST's order (round 23's `SweepOrder`); so the lane's
@@ -290,7 +292,8 @@ jobs:
 
   # A targeted lane (see the header): the ids set by hand for a change read on its own – Adblock
   # Ad Blocker Pro first (the one row not in SWEEP_LAST), the nine behind it in SWEEP_LAST's order,
-  # Reader View last of all.
+  # then Auto Tab Discard (R27-5's row) and Save Page WE (the BEFORE's renderer crash, under the
+  # driver's page samples), Reader View last of all.
   lane-system-webview:
     if: contains(github.event.head_commit.message, '[lane]')
     name: Targeted rows - System WebView (API 34 image)
@@ -300,8 +303,8 @@ jobs:
       artifact-name: android-ext-compat-sweep-lane
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
-        SWEEP_LAST=ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
+        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,jhnleheckmknfcgijgkadoemagpecfol,dhhpefjklgkmgeafimnjhojgjamoafof,ecabifbgmdmgdllomnfinbmaellmclnh
+        SWEEP_LAST=ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,jhnleheckmknfcgijgkadoemagpecfol,dhhpefjklgkmgeafimnjhojgjamoafof,ecabifbgmdmgdllomnfinbmaellmclnh
       timeout-minutes: 75
       driver-timeout-minutes: 60
 
@@ -318,8 +321,8 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
-        SWEEP_LAST=ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
+        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,jhnleheckmknfcgijgkadoemagpecfol,dhhpefjklgkmgeafimnjhojgjamoafof,ecabifbgmdmgdllomnfinbmaellmclnh
+        SWEEP_LAST=ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,jhnleheckmknfcgijgkadoemagpecfol,dhhpefjklgkmgeafimnjhojgjamoafof,ecabifbgmdmgdllomnfinbmaellmclnh
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
