@@ -351,4 +351,32 @@ describe('the campaign promo (§9.23: a prompt about Zenium itself)', () => {
       'Make Zenium your default browser'
     )
   })
+
+  // §9.36 as the lead amended it on #750: a prompt on the tablet is a dialog, not a sheet – the
+  // split is the form factor's, so a tablet's finger gets the mouse's dialog in the frame's host
+  // (its pair at the coarse pointer's 40, the token's) and the phone's finger keeps the sheet.
+  it("on a tablet's finger is the same dialog in the frame's host, never the sheet", async () => {
+    browserStore.set({ state: due('android') })
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet', coarse: true })
+    render(
+      <>
+        <FrameDialogHost frame />
+        <DefaultBrowserLayer />
+      </>
+    )
+    await raise()
+    expect(document.querySelector('.zen-sheet')).toBeNull()
+    const d = dialog()!
+    expect(d).not.toBeNull()
+    expect(d.closest('.zen-frame-dialogs-slot')).not.toBeNull()
+    expect(d.classList.contains('zen-v2-dialog')).toBe(true)
+    const [icon, block] = [...d.children]
+    expect(icon.classList.contains('zen-default-browser-prompt-icon')).toBe(true)
+    expect(block.classList.contains('zen-v2-title-block')).toBe(true)
+    const [notNow, setDefault] = buttons(d)
+    expect(notNow!.textContent).toBe('Not now')
+    expect(setDefault!.textContent).toBe('Set as default')
+    expect(setDefault!.hasAttribute('data-primary')).toBe(true)
+    expect(setDefault!.classList.contains('zen-v2-button')).toBe(true)
+  })
 })

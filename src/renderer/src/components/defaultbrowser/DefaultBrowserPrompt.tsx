@@ -139,7 +139,7 @@ function CampaignLayer(): JSX.Element | null {
     returnFocusToPage()
   }
   if (!up) return null
-  return viewport.coarse ? (
+  return viewport.coarse && viewport.formFactor !== 'tablet' ? (
     <PromoSheet due={due} onGone={gone} />
   ) : (
     <PromoDialog due={due} onGone={gone} />
