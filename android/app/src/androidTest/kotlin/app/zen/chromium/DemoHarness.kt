@@ -2327,6 +2327,83 @@ abstract class DemoHarness(
         return true
     }
 
+    // --- the tab overview's menu (tab overview cleanup spec §4) ----------------------------------
+    //
+    // While the overview stands the BAR's ⋯ opens the overview's own menu instead of the app
+    // menu – the overview draws no ⋯ of its own – through the bar's own surface: the phone's
+    // sheet (`MenuSheet`'s rows, `.zen-sheet-item`, in the sheet with the Resize menu handle),
+    // the tablet's popover anchored at the button (`.zen-v2-menu .zen-v2-menu-item`);
+    // `shared/overviewMenu.ts` writes the rows. The rows carry their counts in parentheses
+    // ("Private Tabs (3)", "Inactive Tabs (5)", "Close All Tabs (7)"), so a driver names a row by
+    // its start and the helpers find it in the menu's DOM – not the tree, where "Tabs (7)" is the
+    // bar's own button as much as the menu's row.
+
+    /** The open overview menu's rows by their labels, in their order; empty while no menu is up. */
+    protected fun overviewMenuRows(): List<String> {
+        val raw = chromeJsString(
+            "(function(){var rows=$MENU_ROWS_JS;" +
+                "return JSON.stringify(rows.map(function(e){return e.textContent.trim()}))})()"
+        ) ?: return emptyList()
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        return (0 until arr.length()).map { arr.optString(it) }
+    }
+
+    /** The open menu's first row whose label starts with `prefix`, as a box on screen; null when none. */
+    protected fun overviewMenuRow(prefix: String): Rect? =
+        domBox(
+            "(function(){var rows=$MENU_ROWS_JS;var p=${JSONObject.quote(prefix)};" +
+                "return rows.find(function(e){return e.textContent.trim().indexOf(p)===0})||null})()"
+        )
+
+    /**
+     * Open the overview's menu with a finger on the bar's ⋯ ([tapMenuButton]), pull it to its
+     * full height, and touch the row that starts with `prefix` (its box from the sheet's DOM,
+     * once it holds still). False when the menu never opened or carries no such row – the menu
+     * is left as it is then (a `back()` puts it away).
+     */
+    protected fun openOverviewMenuRow(prefix: String): Boolean {
+        tapMenuButton()
+        if (!awaitTrue(6_000) { overviewMenuRows().isNotEmpty() }) {
+            Log.w(tag, "the overview's menu never opened from the bar's ⋯")
+            return false
+        }
+        SystemClock.sleep(1_200)
+        pullMenuUp()
+        var last: Rect? = null
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val box = overviewMenuRow(prefix)
+            if (box != null && !box.isEmpty && box == last) break
+            last = box
+            SystemClock.sleep(350)
+        }
+        val box = last ?: run {
+            Log.w(tag, "no row starting '$prefix' in the overview's menu: ${overviewMenuRows()}")
+            return false
+        }
+        val point = touchPoint(box) ?: run {
+            Log.w(tag, "the row '$prefix' at $box lies outside the touchable window $touchable")
+            return false
+        }
+        Finger().tap(point.x, point.y)
+        return true
+    }
+
+    /**
+     * The overview's other view through its menu (the cleanup spec's §3): from the regular view
+     * the row "Private Tabs (N)" – there only while private tabs exist – and from the private
+     * view "Tabs (N)". `view` is the one wanted, `tabs` or `private`. True once the row was
+     * touched; the caller reads the view off the title's `data-view` ([overviewView]).
+     */
+    protected fun switchOverviewView(view: String): Boolean =
+        openOverviewMenuRow(if (view == "private") "Private Tabs (" else "Tabs (")
+
+    /** The view the overview shows, off its title: `tabs`, `private`, or "" while it is not up. */
+    protected fun overviewView(): String =
+        chromeJsString(
+            "(function(){var e=document.querySelector('$OVERVIEW_TITLE_SELECTOR');return e?(e.getAttribute('data-view')||''):''})()"
+        ) ?: ""
+
     /**
      * The open menu pulled to its full height: a finger flings its handle up two fifths of the
      * screen, and the sheet gets two seconds to settle. The menu opens at its peek detent with
@@ -3315,6 +3392,14 @@ abstract class DemoHarness(
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+        /**
+         * The open menu's row elements as an array: the phone's sheet (the `.zen-sheet` with the
+         * Resize menu handle, its `.zen-sheet-item` rows) or, without one, the tablet's popover
+         * (`.zen-v2-menu .zen-v2-menu-item`); empty while no menu is up.
+         */
+        const val MENU_ROWS_JS = "(function(){var h=document.querySelector('.zen-sheet [aria-label=\"$MENU_HANDLE_LABEL\"]');var s=h?h.closest('.zen-sheet'):null;" +
+            "if(s)return Array.prototype.slice.call(s.querySelectorAll('.zen-sheet-item'));" +
+            "return Array.prototype.slice.call(document.querySelectorAll('.zen-v2-menu .zen-v2-menu-item'))})()"
         /**
          * [tapMenuButton]: how long the menu's sheet gets to reach the document, how many taps
          * are tried when one is read as a hold or as nothing, and how long a chrome surface still

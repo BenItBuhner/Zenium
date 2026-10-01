@@ -20,7 +20,9 @@ import kotlin.math.roundToInt
  * §9.30, §9.33, §11.4), every press a real touch and every outcome read off the chrome's DOM or
  * the core's state, never off the chrome's word alone:
  *
- *  1. entered from the header menu's Select Tabs: the cards are checkboxes, the header row is
+ *  1. entered from the overview's menu's Select Tabs – the BAR's ⋯ while the overview stands
+ *     (the cleanup spec's §4; the overview draws no ⋯ of its own): the cards are checkboxes,
+ *     the header row (the title, §1) is
  *     REPLACED by the ×, "Select tabs" and Select all (one header row in the DOM), the action
  *     strip stands with every action off; TalkBack sees the cards checkable and the actions named;
  *  2. a touch on a card picks it and again unpicks it, the count following; Select all picks
@@ -97,15 +99,15 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
 
     // --- the scenarios ---------------------------------------------------------------------------
 
-    /** 1. The header menu's Select Tabs: the mode at none. */
+    /** 1. The overview's menu's Select Tabs (the bar's ⋯): the mode at none. */
     private fun enterFromHeader() {
-        finding("\n1. Select Tabs from the header menu: the mode at none")
+        finding("\n1. Select Tabs from the overview's menu (the bar's ⋯): the mode at none")
         enterByMenu()
         val mode = modeState()
         expect("the cards are checkboxes, none checked (${mode.cards} cards, ${mode.checked} checked)", mode.cards == CARDS && mode.checked == 0)
         expect("ONE header row, its content replaced: ${mode.header}", mode.headerRows == 1 && mode.header == listOf("Done", "Select all"))
         expect("the count reads 'Select tabs' as a live region: '${mode.title}'", mode.title == "Select tabs" && mode.live)
-        // The overview's row reads "Work" and "7 tabs"; the mode's reads "Select tabs" (no count).
+        // The overview's row reads "Work · 7 tabs" (the title, §1); the mode's reads "Select tabs" (no count).
         expect("the space's name and count have left the header row: '${mode.headerText}'", !mode.headerText.contains("Work") && !TAB_COUNT.containsMatchIn(mode.headerText))
         expect("the strip stands with Close, Group, Bookmark, Share, every one off: ${mode.actions}", mode.actions == listOf("close" to true, "group" to true, "bookmark" to true, "share" to true))
         expect("no card draws a close while the mode is on", !inDom(".zen-overview-card-close"))
@@ -164,8 +166,9 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         touchUntil("the header's ×", { steadyRect({ domRect(DONE) }) }, { !modeState().on })
         val mode = modeState()
         expect("the mode is off: the cards are buttons again", !mode.on && mode.cards == 0)
-        // The overview's header since #316 (TAB-21): the search toggle leads the row on the Tabs pane.
-        expect("the header row is the overview's: ${mode.header}", mode.header == listOf("Search tabs", "Spaces", "More"))
+        // The overview's one header row (the cleanup spec's §1): the title – the space switcher,
+        // named "Work, 7 tabs" – and nothing trailing it (no search toggle, no Spaces, no ⋯).
+        expect("the header row is the overview's: the title alone, ${mode.header}", mode.header.size == 1 && mode.header[0].startsWith("Work, ") && TAB_COUNT.containsMatchIn(mode.header[0]))
         expect("the strip has left", awaitDom("!document.querySelector('[data-testid=\"overview-actions\"]')", 4_000))
         expect("the cards draw their close again", inDom(".zen-overview-card-close"))
         still("done")
@@ -315,11 +318,11 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
 
     // --- moves -----------------------------------------------------------------------------------
 
-    /** Open the header's menu and touch Select Tabs until the mode is on. */
+    /** Open the overview's menu (the bar's ⋯) and touch Select Tabs until the mode is on. */
     private fun enterByMenu() {
         if (modeState().on) return
         openMenu()
-        touchUntil("'Select Tabs' in the menu", { steadyRect { menuRow("Select Tabs") } }, { modeState().on }, waitMs = SHEET_WAIT)
+        touchUntil("'Select Tabs' in the overview's menu", { steadyRect { menuRow("Select Tabs") } }, { modeState().on }, waitMs = SHEET_WAIT)
         if (!modeState().on) error("the select-tabs mode never came on from the menu")
     }
 
@@ -383,18 +386,25 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         return took
     }
 
-    /** Touch More in the overview header until the menu sheet's rows are there. */
+    /**
+     * Open the overview's menu – the bar's ⋯ while the overview stands (the cleanup spec's §4:
+     * the core pops the overview's rows through the bar's own sheet) – pulled to its full
+     * height so Select Tabs, the fourth row, is in reach.
+     */
     private fun openMenu() {
         if (menuRow("") != null) {
             back()
             awaitUntil(SHEET_WAIT) { menuRow("") == null }
             SystemClock.sleep(500)
         }
-        val opened = touchUntil("More in the overview header", { domRect("[aria-label=\"More\"]") }, { menuRow("") != null }, waitMs = SHEET_WAIT)
-        if (!opened) error("the overview's menu never opened")
+        tapMenuButton()
+        val opened = awaitUntil(SHEET_WAIT) { menuRow("Select Tabs") != null }
+        if (!opened) error("the overview's menu never opened from the bar's ⋯")
+        SystemClock.sleep(1_200)
+        pullMenuUp()
     }
 
-    /** A row of the sheet that is up by the start of its label. */
+    /** A row of the sheet that is up (the overview's menu, a card's hold sheet, the group picker) by the start of its label. */
     private fun menuRow(row: String): Rect? = textRect(".zen-sheet-item", row)
 
     private fun firstSheetRow(): String? = sheetRows().firstOrNull()
@@ -645,14 +655,14 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         SystemClock.sleep(500)
     }
 
-    /** Check the DOM's coordinates against the accessibility tree once (the Spaces button never moves). */
+    /** Check the DOM's coordinates against the accessibility tree once (the overview's title never moves). */
     private fun calibrate() {
         if (calibrated) return
-        val fromDom = domRect("[aria-label=\"Spaces\"]") ?: return
-        val fromTree = waitFor("Spaces", 4_000) ?: return
+        val fromDom = domRect(OVERVIEW_TITLE_SELECTOR) ?: return
+        val fromTree = awaitOverviewTitle(4_000) ?: return
         val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
         val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
-        finding("coordinates: Spaces button at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
+        finding("coordinates: the overview's title at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
         if (abs(dx) <= MAX_OFFSET && abs(dy) <= MAX_OFFSET) {
             originX = dx
             originY = dy

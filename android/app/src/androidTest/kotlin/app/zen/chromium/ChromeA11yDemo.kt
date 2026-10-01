@@ -458,43 +458,48 @@ class ChromeA11yDemo : DemoHarness(
             )
         )
         if (openOverview()) {
+            // The private VIEW (tab overview cleanup spec §3): the one header row reads the mask
+            // and "Private · 1 tab" – a heading, no control (the session has no space to switch)
+            // – and nothing trails it; the views switch through the BAR's ⋯ (§4), the overview
+            // draws no segment row and no ⋯ of its own.
             audit(
                 "private-overview",
                 listOf(
-                    Want("Spaces", "Button"),
-                    Want("More", "Button"),
-                    Want("Tabs", "Tab"),
-                    Want("Private", "Tab", listOf("selected")),
                     Want("Example Domain, tab 1 of 1", "Button", prefix = true),
                     Want("Close Example Domain", "Button")
                 )
             )
+            val title = walk().firstOrNull { it.label == "Private, 1 tab" }
+            expect("[private] the private view's title is in the tree as 'Private, 1 tab', a heading and no control: ${title?.states}", title != null && !title.control)
+            expect("[private] nothing of the old header row remains (no Spaces, no More, no Tabs / Private segment)", walk().none { it.control && it.label in setOf("Spaces", "More", "Tabs", "Private") })
             val card = walk().firstOrNull { it.control && it.label.startsWith("Example Domain, tab 1 of 1") }
             expect("[private] the private card is the current one: '${card?.label}'", card?.label?.endsWith(", current") == true)
-            // The pane's slot fades over 120 ms, but the snapshot WebView on the software GPU took
-            // up to four seconds to draw and list the other pane (run 4: 81 frames skipped, the
+            // The view's slot fades over 120 ms, but the snapshot WebView on the software GPU took
+            // up to four seconds to draw and list the other view (run 4: 81 frames skipped, the
             // header switched at 1.4 s, the grid between 2.3 and 3.7 s, the driver's read at 2.8 s
-            // saw the private pane still up): the tree is waited for, and how long it took is written.
-            if (touchTapLabel("Tabs")) {
-                val switched = awaitPane("Tabs") { it.startsWith("Alpha, tab ") }
-                val tabs = walk().firstOrNull { it.control && it.label == "Tabs" }
+            // saw the private view still up): the tree is waited for, and how long it took is written.
+            if (switchOverviewView("tabs")) {
+                val switched = awaitPane("tabs") { it.startsWith("Alpha, tab ") }
+                val regularTitle = overviewTitleLabel()
                 expect(
-                    "[private] a finger on the segment's Tabs shows the regular pane (${switched}): Tabs ${tabs?.states}, Alpha's card ${findNode { it.startsWith("Alpha, tab ") } != null}",
-                    tabs?.states?.contains("selected") == true && findNode { it.startsWith("Alpha, tab ") } != null
+                    "[private] the menu's Tabs (N) row shows the regular view (${switched}): the title '$regularTitle', Alpha's card ${findNode { it.startsWith("Alpha, tab ") } != null}",
+                    overviewView() == "tabs" && findNode { it.startsWith("Alpha, tab ") } != null
                 )
-                snap("private-overview-tabs-pane")
-                if (touchTapLabel("Private")) {
-                    val back = awaitPane("Private") { it.startsWith("Example Domain, tab 1 of 1") }
-                    val private = walk().firstOrNull { it.control && it.label == "Private" }
+                expect("[private] the regular view's title is a button named by the space and its count: '$regularTitle'", regularTitle != null && findNode { it == regularTitle } != null)
+                snap("private-overview-tabs-view")
+                if (switchOverviewView("private")) {
+                    val back = awaitPane("private") { it.startsWith("Example Domain, tab 1 of 1") }
                     expect(
-                        "[private] and its Private brings the private pane back (${back}): Private ${private?.states}",
-                        private?.states?.contains("selected") == true && findNode { it.startsWith("Example Domain, tab 1 of 1") } != null
+                        "[private] and its Private Tabs (1) row brings the private view back (${back})",
+                        overviewView() == "private" && findNode { it.startsWith("Example Domain, tab 1 of 1") } != null
                     )
                 } else {
-                    fail("[private] no touch landed on the segment's Private")
+                    fail("[private] no Private Tabs (N) row in the overview's menu: ${overviewMenuRows()}")
+                    back()
                 }
             } else {
-                fail("[private] no touch landed on the segment's Tabs")
+                fail("[private] no Tabs (N) row in the overview's menu: ${overviewMenuRows()}")
+                back()
             }
             dismiss()
             awaitChrome(8_000) { !overviewOpen() }
@@ -510,9 +515,10 @@ class ChromeA11yDemo : DemoHarness(
     }
 
     /**
-     * Waits (up to 12 s) for the overview's segment to have switched to `pane`: its tab reads
-     * `selected` and a card of that pane (`card` on the label) is in the tree; then a moment for
-     * the fade. Returns what it saw and how long it took, for the finding.
+     * Waits (up to 12 s) for the overview to have switched to the view `pane` (`tabs` or
+     * `private`): its title's `data-view` reads it and a card of that view (`card` on the label)
+     * is in the tree; then a moment for the fade. Returns what it saw and how long it took, for
+     * the finding.
      */
     private fun awaitPane(pane: String, card: (String) -> Boolean): String {
         // Read past UiAutomation's cache with a frame asked of the document each poll, as
@@ -525,14 +531,14 @@ class ChromeA11yDemo : DemoHarness(
         var settled: Boolean
         while (true) {
             dropTreeCache()
-            settled = findNode(card) != null && walk().any { it.control && it.label == pane && "selected" in it.states }
+            settled = findNode(card) != null && overviewView() == pane
             if (settled || SystemClock.uptimeMillis() >= deadline) break
             nudgeFrame()
             SystemClock.sleep(300)
         }
         val took = SystemClock.uptimeMillis() - start
         if (settled) SystemClock.sleep(600)
-        return if (settled) "the $pane pane's tree up after $took ms" else "no $pane pane in the tree within $took ms"
+        return if (settled) "the $pane view's tree up after $took ms" else "no $pane view in the tree within $took ms"
     }
 
     private fun privateActive(): Boolean =
@@ -562,13 +568,11 @@ class ChromeA11yDemo : DemoHarness(
         audit(
             "overview",
             listOf(
-                Want("Spaces", "Button"),
-                Want("More", "Button", listOf("expanded=false")),
-                // The Tabs / Private segment draws only where the WebView has multi-profile
-                // (`capabilities.privateTabs`); WebView 113 on the Google APIs image has not, so
-                // the `private` run on the snapshot WebView walks it ([privateScene]).
-                Want("Tabs", "Tab", listOf("selected"), optional = true),
-                Want("Private", "Tab", optional = true),
+                // The one header row (tab overview cleanup spec §1): the title – the space's name
+                // with its count, "Work, 7 tabs" – is the space switcher, a popup button; nothing
+                // trails it (the Spaces button, the ⋯ and the segment row are gone; the ⋯ is the
+                // bar's, its rows the overview's while the overview stands).
+                Want(overviewTitleLabel() ?: "", "Button", listOf("expanded=false")),
                 Want("Research, tab group, 3 tabs", "Button", listOf("expanded=true")),
                 Want("Alpha, tab ", "Button", prefix = true),
                 Want("Close Alpha", "Button"),
@@ -2566,7 +2570,7 @@ class ChromeA11yDemo : DemoHarness(
             fail("the Tabs button did not open the overview")
             return false
         }
-        awaitNode(8_000) { it == "Spaces" }
+        awaitOverview(8_000)
         SystemClock.sleep(2_000)
         return true
     }
