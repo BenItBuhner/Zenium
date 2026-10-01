@@ -502,9 +502,10 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     }
 
     /**
-     * Open the overview header's menu with a touch on More, then touch the row whose label
-     * starts with `row` (`Close All Tabs (7)`, `Recently Closed (1)`, the menu's Title Case, v2 §9.1)
-     * once the sheet has risen;
+     * Open the overview's menu with a touch on the bar's ⋯ (the overview draws no ⋯ of its own;
+     * while it stands the bar's opens the overview's menu, tab overview cleanup spec §4), then
+     * touch the row whose label starts with `row` (`Close All Tabs (7)`, `Recently Closed (1)`,
+     * the menu's Title Case, v2 §9.1) once the sheet has risen;
      * `took` says what the row's touch brings about (the prompt, the list).
      */
     private fun openMenuRow(row: String, took: () -> Boolean) {
@@ -512,13 +513,13 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         touchUntil("'$row' in the menu", { steadyRect { menuRow(row) } }, took, waitMs = SHEET_WAIT)
     }
 
-    /** A row of the header menu by the start of its label, wherever the sheet is at the moment. */
+    /** A row of the overview's menu by the start of its label, wherever the sheet is at the moment. */
     private fun menuRow(row: String): Rect? = textRect(".zen-sheet-item", row)
 
-    /** Touch More in the overview header until the menu sheet's rows are there. */
+    /** Touch the bar's ⋯ until the overview menu's rows are there, and pull the sheet to its full height. */
     private fun openMenu() {
         // A menu still up from an earlier step (a row that had nothing to do) is sent away first:
-        // a touch on More would land on its scrim and only send it away.
+        // a touch on the bar would land on its scrim and only send it away.
         if (menuRow("") != null) {
             back()
             awaitUntil(SHEET_WAIT) { menuRow("") == null }
@@ -526,8 +527,13 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         }
         // The menu reads the recently closed list before it comes up: a second touch too soon
         // would land on its scrim and send it away again.
-        val opened = touchUntil("More in the overview header", { domRect("[aria-label=\"More\"]") }, { menuRow("") != null }, waitMs = SHEET_WAIT)
-        if (!opened) error("the overview's menu never opened")
+        tapMenuButton()
+        val opened = awaitUntil(SHEET_WAIT) { menuRow("") != null }
+        if (!opened) error("the overview's menu never opened from the bar's ⋯")
+        // Close All Tabs sits under the hairline at the menu's foot: the sheet at its peek
+        // detent folds it under the window, the pull brings every row within reach.
+        SystemClock.sleep(1_200)
+        pullMenuUp()
     }
 
     /**

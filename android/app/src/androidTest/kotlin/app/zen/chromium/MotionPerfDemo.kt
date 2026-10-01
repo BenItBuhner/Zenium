@@ -858,15 +858,16 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
                 closeOverview()
                 return
             }
-            // The search, off the record: the magnifier, the field with the focus, the keyboard up,
-            // and a rest for the window's insets to land (the grid re-lays out under the keyboard).
-            val toggle = domRect(SEARCH_TOGGLE)
-            if (toggle == null) {
-                finding("overview-group-leave-search: no search magnifier in the header; the leave scenes are skipped")
+            // The search, off the record: the Search Tabs row of the overview's menu (the bar's ⋯
+            // while the overview stands; tab overview cleanup spec §4 – the header carries no
+            // magnifier), the field pinned under the header with the focus, the keyboard up, and
+            // a rest for the window's insets to land (the grid re-lays out under the keyboard).
+            if (!openOverviewMenuRow(SEARCH_ROW)) {
+                finding("overview-group-leave-search: no '$SEARCH_ROW' row in the overview's menu (${overviewMenuRows()}); the leave scenes are skipped")
+                back()
                 closeOverview()
                 return
             }
-            Finger().tap(toggle.exactCenterX(), toggle.exactCenterY())
             val fieldUp = awaitDom(SEARCH_INPUT, 4_000)
             val imeUp = awaitIme(true, 8_000)
             SystemClock.sleep(SEARCH_REST_MS)
@@ -2008,7 +2009,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         /** After the search opens off the record: the keyboard's own animation and the window's insets, the grid re-laid under them. */
         private const val SEARCH_REST_MS = 1_500L
         /** The tab search (TAB-21): the header's magnifier, the field's input, and its X (`Clear search` with a query, `Close search` without). */
-        private const val SEARCH_TOGGLE = "[data-testid=\"overview-search-toggle\"]"
+        /** The overview menu's row that pins the search field under the header (tab overview cleanup spec §4). */
+        private const val SEARCH_ROW = "Search Tabs"
         private const val SEARCH_INPUT = "#overview-search"
         private const val SEARCH_CLEAR = "[data-testid=\"overview-search-clear\"]"
         /**

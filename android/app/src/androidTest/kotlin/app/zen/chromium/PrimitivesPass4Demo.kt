@@ -201,10 +201,12 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
             }
             if (!opened) error("the overview never opened under a finger")
             SystemClock.sleep(1_500)
-            val menu = touchControlExpecting("More", OVERVIEW_MORE_JS, "the overview's menu sheet is up", timeoutMs = 8_000) {
+            // While the overview stands the bar's ⋯ opens the overview's own menu (the overview
+            // draws no ⋯ of its own; tab overview cleanup spec §4).
+            val menu = touchControlExpecting(MENU_LABEL, barButtonPrefixJs(MENU_LABEL), "the overview's menu sheet is up", timeoutMs = 8_000, prefix = true) {
                 chromeValue("String(!!document.querySelector('.zen-sheet .zen-sheet-item'))") == "true"
             }
-            if (!menu) error("the overview's More never opened its sheet")
+            if (!menu) error("the bar's ⋯ never opened the overview's menu sheet")
             awaitSheetSettled(".zen-sheet .zen-sheet-item", 6_000)
             val rowLabel = chromeValue("(function(){var b=$RECENTLY_CLOSED_ROW_JS;return b?b.textContent.trim():''})()")
             // The core's list: the twenty seeded and, filed on top of them, the Settings tab the
@@ -883,9 +885,6 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
         /** The Delete history prompt's primary ("Delete all") in its footer. */
         private const val PROMPT_PRIMARY = ".zen-sheet .zen-sheet-footer [data-primary]"
         private const val OVERVIEW_SCALE_JS = "(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()"
-        /** The overview header's More button (`aria-label="More"`), the one on screen. */
-        private const val OVERVIEW_MORE_JS =
-            "Array.prototype.find.call(document.querySelectorAll('button[aria-label=\"More\"]'),function(b){return b.getBoundingClientRect().height>0})"
         /** The overview menu's Recently Closed row (`OverviewSheet`'s `.zen-sheet-item`, its count in the label). */
         private const val RECENTLY_CLOSED_ROW_JS =
             "Array.prototype.find.call(document.querySelectorAll('.zen-sheet .zen-sheet-item'),function(b){return b.textContent.trim().indexOf('Recently Closed (')===0})"
