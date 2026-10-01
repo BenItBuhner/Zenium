@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { extensionOrigin } from '@core/extensions/runtime/plan'
 import { createFetchRelay, type FetchRelayHost } from '../extensionFetchRelay'
 import type { ProxyRequest } from '../extensionCorsRelay'
+import { NET_ERROR_HEADER } from '../extensionCorsProxy'
 
 const ROPRO = 'adbacgifemdbhdkfppmeilbgppmhaobf'
 const OTHER = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -572,5 +573,67 @@ describe("createFetchRelay: a content script's cross-origin fetch the page's pol
     await expect(promise).rejects.toBe(pageError)
     expect(proxies).toHaveLength(0)
     expect(native).toHaveBeenCalledTimes(1)
+  })
+})
+
+/*
+ * R26-3, the content-script half of R25-11: the host marks a 404 Chrome would fail as a network
+ * error (`X-Zenium-Net-Error`); the relay's fallback to the page's fetch, and the page's way for
+ * another extension's file, read the mark and reject with Chrome's `TypeError`, as the extension
+ * page's own `fetch` does.
+ */
+describe("createFetchRelay: the host's marked refusal is Chrome's network error for a content script too", () => {
+  const marked = (input: RequestInfo | URL): Promise<Response> => {
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
+    return Promise.resolve(
+      new Response('Not found', {
+        status: 404,
+        headers: { [NET_ERROR_HEADER]: 'ERR_FILE_NOT_FOUND', 'X-Asked': url }
+      })
+    )
+  }
+
+  it("the extension's own missing file: the host cannot, the page's marked 404 rejects – a 404 without the mark still stands", async () => {
+    const { relay, errors } = harness(marked)
+    const promise = relay.fetch(`${extensionOrigin(ROPRO)}/locales/xx.json`)
+    relay.done('f1', { ok: false, error: 'locales/xx.json: the extension has no such file' })
+    await expect(promise).rejects.toThrow('Failed to fetch')
+    expect(String(errors[0]?.[0])).toContain("the page's fetch answers it")
+
+    const bare = harness(() => Promise.resolve(new Response('not found', { status: 404 })))
+    const standing = bare.relay.fetch(`${extensionOrigin(ROPRO)}/locales/xx.json`)
+    bare.relay.done('f1', { ok: false, error: 'no such file' })
+    expect((await standing).status).toBe(404)
+  })
+
+  it("an unreadable answer over the bridge falls to the page's fetch, whose mark rejects too", async () => {
+    const { relay } = harness(marked)
+    const promise = relay.fetch(LOCALE)
+    relay.done('f1', { ok: true, body: 42 })
+    await expect(promise).rejects.toThrow('Failed to fetch')
+  })
+
+  it("another extension's file goes the page's way on the served spelling, Chrome's spelling included, and its mark rejects as Black Menu's probe expects", async () => {
+    const native = vi.fn(marked)
+    const { relay, requests } = harness(native as never)
+    const vivaldi = 'mpognobbkildjkofajifpdfhcoklimli'
+    const probe = relay
+      .fetch(`chrome-extension://${vivaldi}/components/reader/reader.html`, { method: 'HEAD' })
+      .then(
+        () => true,
+        () => null
+      )
+    expect(await probe).toBeNull()
+    expect(requests).toHaveLength(0)
+    const asked = native.mock.calls[0]?.[0] as string | Request
+    expect(typeof asked === 'string' ? asked : asked.url).toBe(
+      `${extensionOrigin(vivaldi)}/components/reader/reader.html`
+    )
+
+    // Another installed extension's web-accessible file answers as the page's fetch answers it.
+    const served = harness(() => Promise.resolve(new Response('{}', { status: 200 })))
+    const response = await served.relay.fetch(`${extensionOrigin(OTHER)}/data/public.json`)
+    expect(response.status).toBe(200)
   })
 })

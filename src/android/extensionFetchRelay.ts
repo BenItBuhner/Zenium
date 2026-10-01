@@ -1,7 +1,7 @@
 import { extensionOrigin } from '@core/extensions/runtime/plan'
-import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
+import { isExtensionPageUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import { matchesAnyPatternOrigin } from '@core/extensions/api/matchPattern'
-import { MAX_BODY_BYTES, base64 } from './extensionCorsProxy'
+import { MAX_BODY_BYTES, base64, refusedByHost } from './extensionCorsProxy'
 import {
   corsAllows,
   corsResponse,
@@ -40,7 +40,13 @@ import {
  * `ExtensionFileAnswer`), rebuilt here as a `Response` with the file's URL and type. When the
  * host cannot (not web-accessible, missing, past the bridge's size), the request goes the page's
  * way after all, and the page's answer – the served origin's 404, or the policy's refusal – is
- * the extension's, as it was before the relay.
+ * the extension's, as it was before the relay; a 404 the host MARKED as Chrome's network error
+ * (`NET_ERROR_HEADER`: a file the extension has not, another extension's file that is not
+ * web-accessible or of an extension that is not installed) rejects with Chrome's `TypeError`, as
+ * the extension page's own `fetch` does (`extensionCorsProxy.ts`, R25-11) – so an extension
+ * reading its file's absence off the rejection reads it here too. Another extension's file
+ * (an extension origin not attached to this scope) goes the page's way on the served spelling
+ * and is read the same.
  *
  * A CROSS-ORIGIN URL THE PAGE'S POLICY REFUSED (RoValra's content script on roblox.com reading
  * `https://www.rovalra.com/RoValra/Settings/config.json`, which roblox.com's `connect-src` does
@@ -171,6 +177,12 @@ export function createFetchRelay(
   }
 
   const failed = (): TypeError => new win.TypeError('Failed to fetch')
+
+  /** The page's answer for an extension-origin request as Chrome gives it: the host's marked refusal rejects. */
+  const asChromeAnswers = (response: Response): Response => {
+    if (refusedByHost(response)) throw failed()
+    return response
+  }
 
   const nowMs = (): number => Date.now()
 
@@ -327,6 +339,13 @@ export function createFetchRelay(
     const served = toServedUrl(asked)
     const extId = extensionFor(served)
     if (extId === null) {
+      // Another extension's file: the page's way on the served spelling, the host's marked
+      // refusal read as Chrome's network error.
+      if (isExtensionPageUrl(served)) {
+        return native
+          .call(win, served === asked ? input : respelled(win, input, served), init)
+          .then(asChromeAnswers)
+      }
       if (host.proxy && isCrossOriginHttp(served, pageOrigin())) {
         const forExt = extensionForCrossOrigin(served)
         if (forExt !== null) return crossOrigin(input, init, served, forExt)
@@ -387,11 +406,15 @@ export function createFetchRelay(
       if (!entry) return
       waiting.delete(id)
       entry.settle()
+      // The page's fetch answers where the host cannot; its marked 404 is Chrome's network error.
+      const pageAnswers = (): void => {
+        entry.page().then(asChromeAnswers).then(entry.resolve, entry.reject)
+      }
       if (reply.ok !== true || typeof reply.body !== 'string') {
         host.error(
           `[Zenium] ${entry.url} could not be read for the content script: ${String(reply.error ?? 'the host refused')}; the page's fetch answers it`
         )
-        entry.page().then(entry.resolve, entry.reject)
+        pageAnswers()
         return
       }
       let response: Response
@@ -422,7 +445,7 @@ export function createFetchRelay(
         }
       } catch (e) {
         host.error(`[Zenium] ${entry.url} arrived unreadable over the bridge`, e)
-        entry.page().then(entry.resolve, entry.reject)
+        pageAnswers()
         return
       }
       entry.resolve(response)
