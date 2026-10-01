@@ -16,7 +16,13 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.0.0-test', getAppPath: () => '/nowhere', isPackaged: false }
 }))
 
-const { BlockingHandler, ElectronBundledLists, GhosteryTextMatcher } = await import('../blocking')
+const {
+  BlockingHandler,
+  ElectronBundledLists,
+  GhosteryTextMatcher,
+  LIST_SETTLE_CAP_MS,
+  LIST_SETTLE_MS
+} = await import('../blocking')
 const { GHOSTERY_COMPILE_TASK } = await import('../blockingCompile')
 
 const dirs: string[] = []
@@ -962,6 +968,138 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
     expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
     expect(matcher.ready).toBe(true)
+  })
+
+  describe('the settle window', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    /** A matcher on fake timers, parsing on the spot, with a list arriving as the service lands one. */
+    function settling(): {
+      matcher: InstanceType<typeof GhosteryTextMatcher>
+      engine: RuleEngine
+      arrive(id: string, text: string, updatedAt?: number): void
+      stop(): void
+    } {
+      vi.useFakeTimers()
+      const s = source()
+      const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 50)
+      const stop = matcher.start()
+      vi.advanceTimersByTime(50)
+      expect(matcher.builds).toBe(1)
+      return {
+        matcher,
+        engine: s.engine,
+        arrive: (id, text, updatedAt = Date.now()) =>
+          s.engine.setRuleSet({ ...textSet(id, text), updatedAt }),
+        stop
+      }
+    }
+    const blocks = (matcher: InstanceType<typeof GhosteryTextMatcher>, host: string): boolean =>
+      matcher.match(ctx(`https://${host}/x.js`))?.action === 'block'
+
+    it('adopts the first arrival of an unprotected scope at once and settles the rest for a second (refinement A)', () => {
+      const { matcher, arrive, stop } = settling()
+      arrive('a', '||a.example^')
+      vi.advanceTimersByTime(50)
+      expect(matcher.builds).toBe(2)
+      expect(blocks(matcher, 'a.example')).toBe(true)
+      // The second and third arrivals, within a second of each other: one build when they settle.
+      arrive('b', '||b.example^')
+      vi.advanceTimersByTime(600)
+      expect(matcher.builds).toBe(2)
+      arrive('c', '||c.example^')
+      vi.advanceTimersByTime(600)
+      expect(matcher.builds).toBe(2)
+      expect(blocks(matcher, 'b.example')).toBe(false)
+      vi.advanceTimersByTime(LIST_SETTLE_MS - 600)
+      expect(matcher.builds).toBe(3)
+      expect(blocks(matcher, 'b.example')).toBe(true)
+      expect(blocks(matcher, 'c.example')).toBe(true)
+      expect(matcher.ready).toBe(true)
+      stop()
+    })
+
+    it('builds at the cap when arrivals keep coming for longer than it', () => {
+      const { matcher, arrive, stop } = settling()
+      arrive('a', '||a.example^')
+      vi.advanceTimersByTime(50)
+      const start = Date.now()
+      // A list every 800 ms: each extends the window, none lets it end; the cap from the first
+      // arrival does, with every list so far.
+      for (let i = 0; i < 7; i++) {
+        arrive(`l${i}`, `||l${i}.example^`)
+        vi.advanceTimersByTime(800)
+        expect(matcher.builds).toBe(Date.now() - start >= LIST_SETTLE_CAP_MS ? 3 : 2)
+      }
+      expect(Date.now() - start).toBe(5600)
+      expect(matcher.builds).toBe(3)
+      for (let i = 0; i < 7; i++) expect(blocks(matcher, `l${i}.example`)).toBe(true)
+      // The next arrival after the cap's build starts a window of its own.
+      arrive('late', '||late.example^')
+      vi.advanceTimersByTime(LIST_SETTLE_MS - 1)
+      expect(matcher.builds).toBe(3)
+      vi.advanceTimersByTime(1)
+      expect(matcher.builds).toBe(4)
+      expect(blocks(matcher, 'late.example')).toBe(true)
+      stop()
+    })
+
+    it("cancels a pending window on a user's change and runs the one build with the arrivals (refinement B)", () => {
+      const { matcher, engine, arrive, stop } = settling()
+      arrive('a', '||a.example^')
+      vi.advanceTimersByTime(50)
+      arrive('b', '||b.example^')
+      arrive('c', '||c.example^')
+      vi.advanceTimersByTime(300)
+      expect(matcher.builds).toBe(2)
+      // The user toggles a list: the short timer, and the build reads b and c too.
+      engine.setEnabled('a', false)
+      vi.advanceTimersByTime(50)
+      expect(matcher.builds).toBe(3)
+      expect(blocks(matcher, 'a.example')).toBe(false)
+      expect(blocks(matcher, 'b.example')).toBe(true)
+      expect(blocks(matcher, 'c.example')).toBe(true)
+      // No second build when the window would have ended.
+      vi.advanceTimersByTime(LIST_SETTLE_MS + LIST_SETTLE_CAP_MS)
+      expect(matcher.builds).toBe(3)
+      stop()
+    })
+
+    it("tells a list's refresh (updatedAt moved) from a toggle (enabled moved) on the same set", () => {
+      const { matcher, engine, arrive, stop } = settling()
+      arrive('a', '||a.example^')
+      vi.advanceTimersByTime(50)
+      arrive('b', '||b.example^')
+      vi.advanceTimersByTime(LIST_SETTLE_MS)
+      expect(matcher.builds).toBe(3)
+      // A sweep refreshes `a` (its text, updatedAt): an arrival, settled.
+      arrive('a', '||a.example^\n||a2.example^', Date.now())
+      vi.advanceTimersByTime(50)
+      expect(matcher.builds).toBe(3)
+      vi.advanceTimersByTime(LIST_SETTLE_MS - 50)
+      expect(matcher.builds).toBe(4)
+      expect(blocks(matcher, 'a2.example')).toBe(true)
+      // The user turns `b` off: the short timer.
+      engine.setEnabled('b', false)
+      vi.advanceTimersByTime(50)
+      expect(matcher.builds).toBe(5)
+      expect(blocks(matcher, 'b.example')).toBe(false)
+      // The user's own filters: the short timer too.
+      engine.setRuleSet({
+        id: 'user-filters',
+        source: 'user',
+        priority: 10,
+        enabled: true,
+        filterText: '||mine.example^',
+        updatedAt: Date.now()
+      })
+      vi.advanceTimersByTime(50)
+      expect(matcher.builds).toBe(6)
+      expect(blocks(matcher, 'mine.example')).toBe(true)
+      stop()
+    })
   })
 
   it('keeps a partition an enabled text set stands aside from out of that set (PS-49)', () => {
