@@ -1,0 +1,11 @@
+{
+  "id": "media-screen-on",
+  "order": 94,
+  "class": "MediaScreenOnDemo",
+  "shard": "phone-h",
+  "mirrors": "android-background-video-demo.yml",
+  "dir": "media-demo",
+  "timeout": 1200,
+  "estimate": 5,
+  "note": "The screen while media plays (OS-30) and Copy Image into a page (PUI-38), read on the image's own WebView 113 (W6-S25-c): the display timeout at 15 s with stayon off, an inline clip playing – the screen still on after 22 s, the engine's keepScreenOn on the tab's view, the window's KEEP_SCREEN_ON and the WindowManager lock as dumpsys reports them; paused – the screen off; a track alone – off (Chrome's rule: the wake lock is for video); a tab switch, fullscreen, Home and the close of the playing tab – where the hold goes each time. OS-14 as facts in the warm-up: the tab view's isAutoHandwritingEnabled, the global setting, the input method manager's word. Then Copy Image through the product's own bridge method (a JPEG, then a PNG): a finger focuses a contenteditable, the toolbar's Paste (Ctrl+V when it offers none) pastes, the page's paste event reports the File's type against its first bytes, and a script-focused <input type=file> takes a paste for the record. Stills w6-s25c-media-screen-on-*. The driver sets the display timeout and stayon for its scenes and restores both at its end. Runs through the media demo wrapper's script with DEMO_CLASS on this class; no workflow of its own. On phone-h for the room (re-laid from phone-e at the squash: phone-e stood at 63 of its 68 minutes with it, past the 60-minute line; phone-h at 40.5 before it, 45.5 with it)."
+}
