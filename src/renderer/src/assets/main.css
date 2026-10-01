@@ -15701,6 +15701,53 @@ ol.zen-page-prose-list {
     outline: 2px solid var(--v2-ring);
     outline-offset: 0;
   }
+  /*
+   * The two corner masks under the band (content/PageBandCorners.tsx; the Design Lead's seed D3
+   * on W8-M2): a strip the frame's radius tall at the page's top edge – translated to the band's
+   * offset per frame by the host, hidden at home – with a box the radius square at each end.
+   * Each box is the inverse of the frame's corner: a pseudo-element the box's size, rounded at
+   * the outer top corner alone, whose spread shadow in the frame's ground (`--zen-bg-solid`, the
+   * content frame's own background) fills the box outside that arc and is clipped to the box –
+   * the ground shows in the notch and the page through the arc, with the arc's own
+   * anti-aliasing rather than a gradient's. The frame's corners are plain arcs (no
+   * `corner-shape`), so these are too. Above the band's layer and the page's picture, under the
+   * band (its `z-index` 6) and the frame's layers over the page; no pointer of their own.
+   */
+  .zen-band-corners {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 5;
+    height: var(--zen-content-radius);
+    pointer-events: none;
+  }
+  .zen-band-corners[data-home] {
+    display: none;
+  }
+  .zen-band-corner {
+    position: absolute;
+    top: 0;
+    width: var(--zen-content-radius);
+    height: var(--zen-content-radius);
+    overflow: hidden;
+  }
+  .zen-band-corner[data-side='left'] {
+    left: 0;
+  }
+  .zen-band-corner[data-side='right'] {
+    right: 0;
+  }
+  .zen-band-corner::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    box-shadow: 0 0 0 var(--zen-content-radius) var(--zen-bg-solid);
+  }
+  .zen-band-corner[data-side='left']::before {
+    border-radius: var(--zen-content-radius) 0 0 0;
+  }
+  .zen-band-corner[data-side='right']::before {
+    border-radius: 0 var(--zen-content-radius) 0 0;
+  }
 }
 
 /*
