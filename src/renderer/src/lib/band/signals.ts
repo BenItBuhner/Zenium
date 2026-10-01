@@ -2,6 +2,7 @@ import type { UIState } from '@shared/types'
 import { isEmptyTabUrl, isInternalUrl } from '@shared/url'
 import type { BandFrame } from '@renderer/lib/band'
 import { KEYBOARD_INSET_MIN } from '@renderer/lib/barHide'
+import { overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { pullStore, type PullState } from '@renderer/lib/pull'
 import { activeTab } from '@renderer/lib/selectors'
@@ -25,8 +26,12 @@ export interface BandSignals {
   /** The tab in front is private: its offers are withheld (§3.2); states still show. */
   privateTab: boolean
   /**
-   * A sheet, dialog, menu or other overlay stands over the page: a prompt arriving WAITS for it
-   * to go; the one standing already stays (§3.2 – the model's `covered`).
+   * A sheet, dialog, menu or other overlay stands over the page, or the tab overview is open: a
+   * prompt arriving WAITS for it to go; the one standing already stays (§3.2 – the model's
+   * `covered`). The overview counts from its first dragging frame to its close (the Design
+   * Lead's ruling on #731's still 09, a banner over the overview's header): `ui.stageActive`
+   * joins only once the hero card's capture is in, and a band arriving in that gap would hold
+   * the page under the overview and be standing when it closed.
    */
   covered: boolean
   /** The keyboard is up over the page's own field (the chrome's fields count as `covered`): a cover too. */
@@ -35,15 +40,27 @@ export interface BandSignals {
   pulling: boolean
 }
 
-/** The signals for a given state of the chrome. */
-export function readBandSignals(state: UIState | null, ui: UiState, pull: PullState): BandSignals {
+/**
+ * The signals for a given state of the chrome; `overviewOpen` is the stage's word on the tab
+ * overview (`overviewIsOpen()` – any phase but closed).
+ */
+export function readBandSignals(
+  state: UIState | null,
+  ui: UiState,
+  pull: PullState,
+  overviewOpen: boolean
+): BandSignals {
   const tab = state ? activeTab(state) : null
   const url = tab?.url ?? ''
   return {
     tabId: tab?.id ?? null,
     webPage: tab !== null && !isEmptyTabUrl(url) && !isInternalUrl(url),
     privateTab: tab !== null && isPrivateTab(tab),
-    covered: overlayCoversContent(ui) || ui.frameDialogsOpen > 0 || ui.frameDialogCover > 0,
+    covered:
+      overlayCoversContent(ui) ||
+      ui.frameDialogsOpen > 0 ||
+      ui.frameDialogCover > 0 ||
+      overviewOpen,
     keyboardUp: ui.insets.bottom >= KEYBOARD_INSET_MIN,
     pulling: pull.phase !== 'idle'
   }
@@ -54,8 +71,9 @@ export function readBandSignals(state: UIState | null, ui: UiState, pull: PullSt
  * front; `ok` – a band may stand on what is in front at all: a web page, and not while a pull
  * has it (one source of the page's offset at a time, §3.4 Android: the band withheld waits and
  * a state returns on its own entrance when the pull ends); `offers` – not on a private tab;
- * `covered` – an overlay over the page or the keyboard over its field, under which a prompt
- * arriving waits and the one standing stays. The scene is the tab's (the model's default): the
+ * `covered` – an overlay over the page, the open tab overview or the keyboard over its field,
+ * under which a prompt arriving waits and the one standing stays. The scene is the tab's (the
+ * model's default): the
  * touch hosts show one page in the frame and a page's fullscreen hides the chrome with the band.
  */
 export function bandFrameOf(signals: BandSignals): BandFrame {
@@ -69,12 +87,14 @@ export function bandFrameOf(signals: BandSignals): BandFrame {
 
 /** The chrome's own signals right now. */
 export function bandSignals(): BandSignals {
-  return readBandSignals(browserStore.get().state, uiStore.get(), pullStore.get())
+  return readBandSignals(browserStore.get().state, uiStore.get(), pullStore.get(), overviewIsOpen())
 }
 
 /**
- * Hear every change of the signals (the stores publish at rest – no per-frame work here);
- * `listener` runs once at once with the current reading. Returns the unsubscribe.
+ * Hear every change of the signals (the browser, ui and pull stores publish at rest – no
+ * per-frame work on them; the stage publishes every frame of the overview's drag and settle, so
+ * it is read for the one flip that matters, open or closed); `listener` runs once at once with
+ * the current reading. Returns the unsubscribe.
  */
 export function subscribeBandSignals(listener: (signals: BandSignals) => void): () => void {
   let last = bandSignals()
@@ -93,7 +113,19 @@ export function subscribeBandSignals(listener: (signals: BandSignals) => void): 
     last = next
     listener(next)
   }
-  const offs = [browserStore.subscribe(check), uiStore.subscribe(check), pullStore.subscribe(check)]
+  let overviewOpen = overviewIsOpen()
+  const stageCheck = (): void => {
+    const open = overviewIsOpen()
+    if (open === overviewOpen) return
+    overviewOpen = open
+    check()
+  }
+  const offs = [
+    browserStore.subscribe(check),
+    uiStore.subscribe(check),
+    pullStore.subscribe(check),
+    stageStore.subscribe(stageCheck)
+  ]
   return () => {
     for (const off of offs) off()
   }
