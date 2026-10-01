@@ -1,8 +1,8 @@
 import { Smartphone } from 'lucide-react'
 import type { WebAppBanner } from '@shared/types'
-import { BANNER_TIMEOUT_MS } from '@shared/webApp'
 import { run } from '@renderer/lib/api'
 import { dismissPosted, postBanner, postedUp } from '@renderer/lib/band/post'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import {
   bannerSurfaceMounted,
   type BannerDismissReason,
@@ -15,7 +15,9 @@ import {
  * shared top banner (v2 §9.33) – on the touch hosts the page-edge band in its offer form
  * (motion spec §4; `lib/band/post.ts` is the door): the phone glyph on the title, the app's
  * origin as the detail, one "Add" that opens the install sheet through the core like the menu
- * item, the card's own swipe, close and clock. One banner at a time under the `install` key.
+ * item, the card's own swipe and close, and the one offer clock (`BAND_CLOCK_MS`, 10 s – the
+ * Design Lead's ruling: one offer, one clock; the core runs none and hears it ran out as
+ * `timeout`, which starts no cooldown). One banner at a time under the `install` key.
  * The card drawn is the core's word to start the app's cooldown (`webapp.bannerShown`): it
  * goes the moment the card is posted with a surface mounted that draws banners (the phone's
  * and the tablet's `MessageLayer`, under which the band is the door – so the word goes as the
@@ -38,7 +40,7 @@ export function installBannerOptions(
     icon: Smartphone,
     action: { label: 'Add', onPick: () => run('webapp.openInstall', { tabId: banner.tabId }) },
     key: 'install',
-    duration: BANNER_TIMEOUT_MS,
+    duration: BAND_CLOCK_MS,
     onDismiss
   }
 }

@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
 
 /**
@@ -89,8 +90,10 @@ export interface BandRequest {
   /** Bands of one `key` do not pile up: a newer one replaces the standing one (§3.2). */
   key?: string
   /**
-   * The clock, ms: offers run `BAND_CLOCK_MS` (paused under a finger and while the page is not
-   * in front, armed at the show); null for states, which stand while the state holds.
+   * The clock, ms: an offer that opened on its own runs `BAND_CLOCK_MS` – the one offer clock
+   * (paused under a finger, under a cover and while the page is not in front; armed at the
+   * show); null for a prompt the user opened, which has none, and for states, which stand while
+   * the state holds (the Design Lead's ruling: one offer, one clock).
    */
   clock: number | null
   /** The band left; `reason` says how, in the tenants' vocabulary. */
@@ -99,11 +102,14 @@ export interface BandRequest {
 
 /**
  * A tenant's §9.33 banner, as the band: the words, glyph and action carry over unchanged; the
- * form decides the clock – an offer keeps its tenant's own clock (the banner's `duration`: the
- * reader's `READER_ENTRY_CLOCK_MS`, 10 s = `BAND_CLOCK_MS`; the install prompt's is the core's
- * `BANNER_TIMEOUT_MS`, 12 s, which the band does not clamp to §3.2's 10 s – the design gate's
- * question on #735), a state has none whatever the banner asked. A banner with no action
- * cannot be an offer (an offer proposes something): it is shown as a state.
+ * form decides the clock. One offer, one clock (the Design Lead's ruling, SF2 on #735): an
+ * offer runs the band's `BAND_CLOCK_MS` (10 s), not a clock of its tenant's – the banner's
+ * `duration` times the stack's card where the stack is the door (the install tenant and the
+ * reader offer set it to the same 10 s, so the two doors agree), the band does not take it.
+ * A tenant that says `duration: null` posts an offer with NO clock: a prompt the user opened
+ * (from the menu, the page controls) stands until answered, as the stack's card would. A state
+ * has none whatever the banner asked. A banner with no action cannot be an offer (an offer
+ * proposes something): it is shown as a state.
  */
 export function bandRequestFromBanner(
   opts: BannerOptions,
@@ -114,7 +120,7 @@ export function bandRequestFromBanner(
   const request: BandRequest = {
     form: shape,
     title: opts.title,
-    clock: shape === 'offer' ? (opts.duration ?? null) : null
+    clock: shape === 'offer' && opts.duration !== null ? BAND_CLOCK_MS : null
   }
   if (opts.detail !== undefined) request.detail = opts.detail
   if (opts.icon) request.glyph = opts.icon

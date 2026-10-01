@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Smartphone } from 'lucide-react'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
 import {
   bandRequestFromBanner,
@@ -38,7 +39,7 @@ describe('bandRequestFromBanner', () => {
     expect(request.detail).toBe('notes.example')
     expect(request.glyph).toBe(Smartphone)
     expect(request.key).toBe('install')
-    expect(request.clock).toBe(10_000)
+    expect(request.clock).toBe(BAND_CLOCK_MS)
     expect(request.action?.label).toBe('Add')
     request.action?.pick()
     expect(onPick).toHaveBeenCalledTimes(1)
@@ -86,11 +87,24 @@ describe('bandRequestFromBanner', () => {
     expect(Object.keys(request).sort()).toEqual(['clock', 'form', 'title'])
   })
 
-  it('an offer with no clock of its own has none (the model may fall back to its own)', () => {
+  it('one offer, one clock (the Design Lead’s ruling): an offer runs the band’s BAND_CLOCK_MS, not a clock of its tenant’s – the install prompt’s old 12 s, a reader offer’s 10 s, a banner with none all come out as the one clock', () => {
+    const action = { label: 'A', onPick: (): void => undefined }
+    expect(bandRequestFromBanner({ title: 'T', action, duration: 12_000 }, 'offer').clock).toBe(
+      BAND_CLOCK_MS
+    )
+    expect(bandRequestFromBanner({ title: 'T', action, duration: 10_000 }, 'offer').clock).toBe(
+      BAND_CLOCK_MS
+    )
+    expect(bandRequestFromBanner({ title: 'T', action }, 'offer').clock).toBe(BAND_CLOCK_MS)
+    expect(BAND_CLOCK_MS).toBe(10_000)
+  })
+
+  it('a prompt the user opened has no clock: a tenant that says `duration: null` posts an offer that stands until answered', () => {
     const request = bandRequestFromBanner(
-      { title: 'T', action: { label: 'A', onPick: () => undefined } },
+      { title: 'T', action: { label: 'A', onPick: () => undefined }, duration: null },
       'offer'
     )
+    expect(request.form).toBe('offer')
     expect(request.clock).toBeNull()
   })
 
