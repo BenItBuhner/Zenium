@@ -25,6 +25,7 @@
  *   scene is a cut and never a travel of the next page for the last page's prompt.
  */
 import type { LucideIcon } from 'lucide-react'
+import { isEmptyTabUrl } from '@shared/url'
 import { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE, type BandHeight } from './motion/band'
 import { BAND_CLOCK_MS } from './motion/tokens'
 import { createStore } from './store'
@@ -83,7 +84,10 @@ export interface BandEntry {
   tone?: BandTone
   title: string
   detail?: string
-  /** One action at most; the × beside it is every band's "Dismiss" (the Design Lead's ruling on item 8). */
+  /**
+   * The one action (§3.1). The × beside it is every band's and is named "Dismiss" on every
+   * band (the lead's ruling on #740): no tenant names it.
+   */
   action?: BandAction
   /** The clock (ms); null stands while the state holds. */
   duration: number | null
@@ -156,6 +160,18 @@ const INITIAL: BandState = {
 }
 
 export const bandStore = createStore<BandState>(INITIAL, 'band')
+
+/**
+ * Whether a band may stand on the page at `url` – §3.2's never-on list, by address, for both
+ * hosts' `BandFrame.ok`: not on the empty frame, the blank page or the new tab page
+ * (`isEmptyTabUrl`, with the slash a load adds), and not on any `zen://` page – the chrome's
+ * own pages (Settings, History) and the documents it serves alike, the version page and the
+ * game included (the lead's ruling on #740: every `zen://` page is a chrome page for the band).
+ * What stands around the page – a fullscreen, another window showing it – is the host's to add.
+ */
+export function isBandPageUrl(url: string | null | undefined): boolean {
+  return typeof url === 'string' && !isEmptyTabUrl(url) && !url.startsWith('zen://')
+}
 
 /** The band's height for a prompt: two lines with a detail, one without (§3.1). */
 export function bandHeightOf(entry: BandEntry): BandHeight {

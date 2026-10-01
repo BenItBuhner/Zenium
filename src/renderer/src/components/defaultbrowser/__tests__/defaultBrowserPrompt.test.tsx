@@ -13,11 +13,12 @@ import type { BandHost } from '../../band/PageEdgeBand'
  * The desktop's default-browser surfaces on v2: the page-edge band's state (motion spec §3.4;
  * `content/useDefaultBrowserBand.ts` – the strip under the toolbar before W8-M2) – a page
  * surface with the Settings section's globe, the sentence, the one action Set as default and
- * the × named Dismiss (§3.1, §9.29) – whose Set as default asks the OS directly and holds (the
- * Design Lead's ruling on the band's tenants, W8-M3: the dialog the desktop raised before the
- * hand-off is dropped); on Windows, where the hand-off opens Windows Settings, the band re-words
- * itself in place and leaves when the role is confirmed or on ×. Then the phone's campaign promo
- * (`PromoSheet`, the core's `prompt: 'sheet'` on a coarse pointer): the §9.23 composition as a
+ * the × named Dismiss as on every band (§3.1, §9.29; the Lead's ruling on #740) – whose Set as
+ * default asks the OS directly and holds (the Design Lead's ruling on the band's tenants, W8-M3:
+ * the dialog the desktop raised before the hand-off is dropped); on Windows, where the hand-off
+ * opens Windows Settings, the band re-words itself in place and leaves when the role is confirmed
+ * or on ×. Then the phone's campaign promo (`PromoSheet`, the core's `prompt: 'sheet'` on a
+ * coarse pointer): the §9.23 composition as a
  * sheet – the 48 app icon above the chassis' title block, no glyph on the title (§9.23 as the
  * #264 verdict wrote it; the primitives pass 3, #272) – and its mouse form (`HostedDialog`),
  * the icon over the block.
@@ -110,6 +111,7 @@ const content = (): HTMLElement =>
 const title = (): string => content().querySelector('.zen-band-title')!.textContent ?? ''
 const setDefaultButton = (): HTMLButtonElement | null =>
   content().querySelector<HTMLButtonElement>('.zen-band-button')
+/** The band's ×: "Dismiss" on every band (the Lead's ruling on #740), the one refusal remembered. */
 const dismissButton = (): HTMLButtonElement =>
   content().querySelector<HTMLButtonElement>('.zen-band-close')!
 /** What the tenant asked of the core: the requests out, the refusal remembered. */
@@ -144,7 +146,7 @@ afterEach(() => {
 })
 
 describe('the default-browser band (the strip under the toolbar until W8-M2)', () => {
-  it('is the page-edge band’s state: a page surface with the globe, the sentence, the one action Set as default and the × named Dismiss (§3.1, §9.29: the one name for the act)', () => {
+  it('is the page-edge band’s state: a page surface with the globe, the sentence, the one action Set as default and the × named Dismiss, as on every band (§3.1, §9.29: the one name for the act)', () => {
     render(view(state('linux')))
     const el = band()
     expect(el).not.toBeNull()
@@ -158,13 +160,13 @@ describe('the default-browser band (the strip under the toolbar until W8-M2)', (
     expect(el.querySelector('.zen-band-detail')).toBeNull()
     expect(buttons(el)).toHaveLength(2)
     expect(setDefaultButton()!.textContent).toBe('Set as default')
-    // The × is every band's "Dismiss": no "Not now" on the band (the Lead's ruling on item 8).
+    // The × is every band's "Dismiss": no "Not now" on the band (the Lead's ruling on #740).
     expect(dismissButton().getAttribute('aria-label')).toBe('Dismiss')
     // Nothing of the strip remains in the frame.
     expect(container.querySelector('.zen-frame-strip')).toBeNull()
   })
 
-  it('remembers the × for this feature release and asks nothing of the OS', () => {
+  it('remembers the × (Dismiss) for this feature release and asks nothing of the OS', () => {
     render(view(state('linux')))
     click(dismissButton())
     expect(remembered()).toEqual([['settings.update', { defaultBrowserPromptDismissed: '0.3.77' }]])
