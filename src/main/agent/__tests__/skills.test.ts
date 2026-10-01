@@ -104,7 +104,10 @@ const CONTRACT_V2_TOOLS = [
   'browser_take_screenshot',
   'browser_read_page',
   'browser_evaluate',
-  'browser_handle_dialog'
+  'browser_handle_dialog',
+  'browser_prompts',
+  'browser_respond_prompt',
+  'browser_file_upload'
 ]
 
 /** The frontmatter's top-level scalars and the `metadata` block, without a YAML library. */
@@ -184,7 +187,8 @@ describe('the shipped SKILL.md', () => {
       'adopt',
       'lease',
       '[ref=e12]',
-      'never a position'
+      'never a position',
+      'OS automation'
     ])
       expect(body).toContain(phrase)
   })

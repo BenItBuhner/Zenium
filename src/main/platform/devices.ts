@@ -61,6 +61,15 @@ export function deviceGrantDetails(containerId: string | undefined): DeviceGrant
   return containerId === PRIVATE_CONTAINER_ID ? { privateContainerId: containerId } : {}
 }
 
+/** An AI agent's pick is its tab's alone (`DeviceGrantDetails.agentTabId`); the user's is stored. */
+function pickDetails(
+  handle: DeviceChooserHandle,
+  tabId: string | null,
+  details: DeviceGrantDetails
+): DeviceGrantDetails {
+  return handle.byAgent && tabId ? { ...details, agentTabId: tabId } : details
+}
+
 /**
  * The device choosers of WebUSB, Web Serial and WebHID for one session (Electron's
  * `select-*-device` events; the `*-added` / `*-removed` events keep the open list live), the
@@ -115,7 +124,13 @@ export function attachDeviceHandlers(
       if (live.get(k) === request) live.delete(k)
       if (deviceId !== null) {
         const identity = identities.get(deviceId)
-        if (identity) browser.permissions.grantDevice(kind, origin, identity, grantDetails)
+        if (identity)
+          browser.permissions.grantDevice(
+            kind,
+            origin,
+            identity,
+            pickDetails(handle, tabId, grantDetails)
+          )
       }
       request.answer(deviceId)
     })
@@ -310,7 +325,13 @@ export function attachBluetoothChooser(
       if (request === current) request = null
       if (deviceId !== null) {
         const identity = identities.get(deviceId)
-        if (identity) browser.permissions.grantDevice('bluetooth', origin, identity, grantDetails)
+        if (identity)
+          browser.permissions.grantDevice(
+            'bluetooth',
+            origin,
+            identity,
+            pickDetails(handle, tabId, grantDetails)
+          )
       }
       current.answer(deviceId)
     })

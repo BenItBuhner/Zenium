@@ -32,7 +32,8 @@ export class ExternalLaunches {
     const tab = this.browser.tabs.tab(tabId)
     const pageUrl = tab?.url ?? ''
     const allowed = await this.browser.permissions.decide('openExternal', pageUrl, {
-      externalUrl: url
+      externalUrl: url,
+      tabId
     })
     if (allowed && openIfAllowed) this.browser.platform.shell.openExternal(url)
     return allowed

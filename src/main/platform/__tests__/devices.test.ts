@@ -246,6 +246,36 @@ describe('attachDeviceHandlers: WebHID', () => {
     expect(f.permissions.deviceGrants()).toEqual([])
   })
 
+  it("lets an AI agent's pick open the device for its tab without storing a grant", async () => {
+    const f = fixture()
+    let picked: (id: string | null) => void = () => undefined
+    ;(f.browser as { agents: unknown }).agents = {
+      takesPrompt: (tabId: string) => tabId === 'tab-1',
+      routePrompt: () => ({
+        id: 'prompt_1',
+        result: new Promise<string | null>((r) => (picked = r)),
+        update: vi.fn(),
+        close: vi.fn()
+      })
+    }
+    const callback = vi.fn()
+    f.ses.emit(
+      'select-hid-device',
+      { preventDefault: vi.fn() },
+      { deviceList: [MOUSE], frame: f.frame },
+      callback
+    )
+    expect(f.devices.list()).toEqual([])
+    picked('hid-1')
+    await tick()
+    expect(callback).toHaveBeenCalledWith('hid-1')
+    expect(f.permissions.deviceGrants()).toEqual([])
+    const handler = f.ses.devicePermission!
+    expect(handler({ deviceType: 'hid', origin: 'https://app.example', device: MOUSE })).toBe(true)
+    f.permissions.forgetAgentTab('tab-1')
+    expect(handler({ deviceType: 'hid', origin: 'https://app.example', device: MOUSE })).toBe(false)
+  })
+
   it('keeps the open list live from hid-device-added / -removed, and ignores them once answered', async () => {
     const f = fixture()
     const callback = vi.fn()

@@ -203,6 +203,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         host.extensions?.attach(view)
         view.applyAutofillProvider()
         view.tabId = viewId
+        // The core's view for the new tab says whether an agent drives it (OS-40).
+        view.agentDriven = false
         show(view, false)
         view.translationX = 0f
         container.addView(view, FrameLayout.LayoutParams(0, 0))
@@ -223,6 +225,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // The list and the state pushed under the provisional id are not kept under it.
         host.viewBound(viewId, tabId)
         view.tabId = tabId
+        // The tab is the core's from here: its word on an agent driving the page comes with it (OS-40).
+        view.agentDriven = false
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
         heldBack.remove(viewId)?.let { heldBack[tabId] = it }
@@ -437,6 +441,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val view = views[tabId] ?: return
         // Shown again: whatever switch its last hide was is over ([switched]).
         if (visible) switchedOff.remove(tabId)
+        // A tab brought in front is the user's again, sheet and all (§9.23): the agent's word
+        // on driving it hidden ends with the show, whoever asked for the show.
+        if (visible) view.agentDriven = false
         val held = filled?.takeIf { it.tabId == tabId }
         if (held != null) {
             held.visible = visible

@@ -504,3 +504,18 @@ describe('AndroidTabView and the per-navigation content rules (the core decides,
     expect(calls[4]).toEqual({ method: 'view.load', args: { tabId: 'tab_3', url: 'about:blank' } })
   })
 })
+
+describe('AndroidTabView.setAgentDriven', () => {
+  it("carries the agent's word on driving the hidden page to Kotlin, as said (OS-40)", () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.setAgentDriven(true)
+    view.setAgentDriven(true)
+    view.setAgentDriven(false)
+    expect(calls).toEqual([
+      { method: 'view.setAgentDriven', args: { tabId: 'tab_1', driven: true } },
+      { method: 'view.setAgentDriven', args: { tabId: 'tab_1', driven: true } },
+      { method: 'view.setAgentDriven', args: { tabId: 'tab_1', driven: false } }
+    ])
+  })
+})
