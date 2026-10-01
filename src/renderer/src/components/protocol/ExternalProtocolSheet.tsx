@@ -22,23 +22,28 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 /**
  * A page wants to leave the web – `mailto:`, `tel:`, an `intent://`, a site's own app – and the
- * core asks before it lets go: a sheet on the menu's chassis with the app that would open, the
- * address, and for the schemes that have one answer ("always allow phone numbers") a toggle to
- * remember it. Dismissing the sheet is "not now". Mounted once, above whichever shell is up.
+ * core asks before it lets go: on the phone a sheet on the menu's chassis with the app that
+ * would open, the address, and for the schemes that have one answer ("always allow phone
+ * numbers") a toggle to remember it; on a tablet and under a mouse (DeX, a trackpad) the same
+ * content as the centred 400 dialog over a scrim, as the share chooser draws it (v2 draft §9.36
+ * as the lead read it on #727: the split is the form factor's, not the pointer's alone – a
+ * tablet's finger gets the dialog, the phone's the sheet). Dismissing either is "not now".
+ * Mounted once, above whichever shell is up.
  *
  * The sheet's leave outlives its request (`SheetPresence`, v2 draft §11.1): the core withdraws
  * a question with `externalProtocol.cancel` – the tab closed, its view gone, a newer request
  * from the same page taking the sheet over – and the store's `null` is a leave, the sheet
  * running its own way down before it unmounts; a new request meanwhile is a new sheet above it.
- * The mouse panel reads no leave and goes with its request, as before.
+ * The dialog reads no leave and goes with its request, as before.
  */
 export function ExternalProtocolLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.externalProtocol)
   const viewport = useViewport()
+  const sheet = viewport.coarse && viewport.formFactor !== 'tablet'
   // A new request is a new sheet: its own toggle state, its own presentation.
   return (
     <SheetPresence>
-      {!request ? null : viewport.coarse ? (
+      {!request ? null : sheet ? (
         <ProtocolSheet key={request.requestId} request={request} />
       ) : (
         <ProtocolPanel key={request.requestId} request={request} />
@@ -275,7 +280,7 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
 }
 
 // ---------------------------------------------------------------------------
-// Mouse (DeX, tablets with a trackpad): a centred panel
+// Tablets and a mouse (DeX, a trackpad): a centred dialog
 // ---------------------------------------------------------------------------
 
 function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.Element {

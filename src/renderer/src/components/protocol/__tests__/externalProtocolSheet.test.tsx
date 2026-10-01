@@ -143,6 +143,65 @@ describe('the phone sheet (a title block, §9.23)', () => {
   })
 })
 
+describe("which host draws the question (v2 §9.36 as read on #727: the split is the form factor's)", () => {
+  beforeEach(() => {
+    giveLayout()
+    vi.stubGlobal('requestAnimationFrame', () => 1)
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    takeLayoutBack()
+  })
+
+  it("the phone's finger gets the sheet", async () => {
+    viewportStore.set({ ...viewportStore.get(), coarse: true, formFactor: 'phone' })
+    render(<ExternalProtocolLayer />)
+    act(() => uiStore.set({ externalProtocol: request }))
+    await settle()
+    expect(document.querySelector('.zen-sheet')).not.toBeNull()
+    expect(document.querySelector('[aria-modal="true"].zen-panel')).toBeNull()
+  })
+
+  it("a tablet's finger gets the centred dialog, as the share chooser's does – never the sheet", async () => {
+    viewportStore.set({ ...viewportStore.get(), coarse: true, formFactor: 'tablet' })
+    render(<ExternalProtocolLayer />)
+    act(() => uiStore.set({ externalProtocol: request }))
+    await settle()
+    const dialog = document.querySelector('[role="dialog"][aria-modal="true"].zen-panel')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.getAttribute('aria-label')).toBe(`Open in ${LONG_APP}?`)
+    expect(document.querySelector('.zen-sheet')).toBeNull()
+    // The same content as the mouse's: the remember row and the two buttons.
+    expect(dialog!.querySelector('.zen-sheet-item-secondary')?.textContent).toBe(
+      'Without asking again'
+    )
+    expect(
+      [...dialog!.querySelectorAll('.justify-end button')].map((b) => b.textContent)
+    ).toEqual(['Not now', 'Open'])
+    expect(dialog!.querySelector('[role="switch"]')).not.toBeNull()
+  })
+
+  it('a mouse on the tablet layout (DeX, a trackpad) gets the dialog too', async () => {
+    viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'tablet' })
+    render(<ExternalProtocolLayer />)
+    act(() => uiStore.set({ externalProtocol: request }))
+    await settle()
+    expect(document.querySelector('[role="dialog"][aria-modal="true"].zen-panel')).not.toBeNull()
+    expect(document.querySelector('.zen-sheet')).toBeNull()
+  })
+
+  it('the desktop gets the dialog, as before', async () => {
+    viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'desktop' })
+    render(<ExternalProtocolLayer />)
+    act(() => uiStore.set({ externalProtocol: request }))
+    await settle()
+    expect(document.querySelector('[role="dialog"][aria-modal="true"].zen-panel')).not.toBeNull()
+    expect(document.querySelector('.zen-sheet')).toBeNull()
+  })
+})
+
 describe('the mouse panel (a centred dialog)', () => {
   it('clamps the description to two lines with the sentence as its title, in a header row that grows from 56', async () => {
     render(<ExternalProtocolLayer />)
