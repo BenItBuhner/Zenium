@@ -1,6 +1,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { Check } from 'lucide-react'
 import { useBackSurface } from '@renderer/lib/back'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -11,6 +12,15 @@ export interface SheetAction {
   /** Rendered in the danger ink: closes tabs. */
   destructive?: boolean
   disabled?: boolean
+  /** An aside at the row's end (a count), before the check of a current row. */
+  trailing?: ReactNode
+  /**
+   * The row names where the user already is (the Spaces sheet's current space): the check at
+   * its end and `aria-current`; a pick of it is a pick all the same.
+   */
+  current?: boolean
+  /** The row's `data-testid`, where a driver reads it apart from its label. */
+  testId?: string
   onPick: () => void
 }
 
@@ -75,12 +85,22 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
               disabled={!!action.disabled}
               className="zen-sheet-item"
               style={action.destructive ? { color: 'var(--zen-danger)' } : undefined}
+              aria-current={action.current || undefined}
+              data-testid={action.testId}
               onClick={() => sheet.current?.dismiss(() => action.onPick())}
             >
               {action.icon && (
                 <span className="flex w-5 shrink-0 items-center justify-center">{action.icon}</span>
               )}
               <span className="min-w-0 flex-1 truncate">{action.label}</span>
+              {action.trailing && (
+                <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
+                  {action.trailing}
+                </span>
+              )}
+              {action.current && (
+                <Check className="h-5 w-5 shrink-0" strokeWidth={2} aria-hidden data-check="" />
+              )}
             </button>
           </li>
         ))}

@@ -75,6 +75,35 @@ export type OverviewMenuCommand =
   | 'deselect-all'
   | 'close-selected'
 
+/**
+ * The rows the CHROME acts on – the overview's own state: its view, its selection, its search,
+ * its sheets. The core runs the other three itself (New Tab, New Private Tab, a space switch:
+ * tabs it opens or switches, as the app menu's rows do) and hands these to the chrome as one
+ * `overview.command` event.
+ */
+export type OverviewChromeCommand = Exclude<
+  OverviewMenuCommand,
+  'new-tab' | 'new-private-tab' | 'switch-space'
+>
+
+const CHROME_COMMANDS: ReadonlySet<OverviewMenuCommand> = new Set<OverviewMenuCommand>([
+  'switch-view',
+  'select-tabs',
+  'search-tabs',
+  'inactive-tabs',
+  'recently-closed',
+  'close-all',
+  'select-all',
+  'deselect-all',
+  'close-selected'
+])
+
+export function isOverviewChromeCommand(
+  command: OverviewMenuCommand
+): command is OverviewChromeCommand {
+  return CHROME_COMMANDS.has(command)
+}
+
 export interface OverviewMenuSpaceRow {
   spaceId: string
   label: string

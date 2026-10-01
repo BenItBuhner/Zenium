@@ -44,6 +44,8 @@ export type OverviewSheet =
   | { kind: 'group-picker' }
   | { kind: 'group-row'; folderId: string }
   | { kind: 'delete-group'; folderId: string }
+  /** The Spaces sheet the header's title opens (tab overview cleanup spec §1). */
+  | { kind: 'spaces' }
 
 /**
  * The select-tabs mode with the grid it was entered on (`pane|spaceId`, null while the overview
