@@ -1,10 +1,11 @@
 /**
  * The page-edge band's model (motion spec §3.2) – which prompt the band shows, and for how long.
- * Host-free: the desktop and Android hosts tell it which tab is in front and whether a band may
- * show on it at all (not on the new tab page, not on a chrome page, not while a sheet or dialog
- * stands, not with the keyboard up over the page's field), the tenants `showBand` their prompts,
- * and `chooseBand` says what stands at the frame's edge. The motion is `lib/motion/band.ts`'s,
- * the drawing `components/band/`'s.
+ * Host-free: the desktop and Android hosts tell it what the frame shows (`setBandFrame`: which
+ * tab is in front, whether a band may stand on it at all – not on the new tab page, not on a
+ * chrome page, not in a fullscreen – whether offers may, and whether something stands over the
+ * page – a sheet or dialog, the keyboard up over the page's field), the tenants `showBand` their
+ * prompts, and `chooseBand` says what stands at the frame's edge. The motion is
+ * `lib/motion/band.ts`'s, the drawing `components/band/`'s.
  *
  * - One band at a time. A newer offer replaces the standing offer in its scope (the same tab, or
  *   window-wide); the same `key` again replaces its earlier self. States are not replaced: they
@@ -17,6 +18,11 @@
  * - Per tab: a tab-scoped band goes when its tab leaves the front (its clock pauses) and returns
  *   with it; a navigation to another document dismisses it (`dismissTabBands`). A window-wide
  *   band (`tabId: null`) stands on every page tab.
+ * - Under a cover (§3.2: "the band waits, it does not stack") a prompt arriving waits for the
+ *   cover to go; the one standing already stays while it is still the frame's (`shown`).
+ * - The scene (`BandFrame.scene`, the tab in front unless the host says more) rides with the
+ *   choice: the band's drawing reads both from one snapshot, so a standing that changes with the
+ *   scene is a cut and never a travel of the next page for the last page's prompt.
  */
 import type { LucideIcon } from 'lucide-react'
 import { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE, type BandHeight } from './motion/band'
@@ -80,23 +86,58 @@ export interface BandOptions {
   onDismiss?: (reason: BandDismissReason) => void
 }
 
+/** The host's word on the frame (`setBandFrame`). */
+export interface BandFrame {
+  /** The tab in front, or null for the empty frame. */
+  front: string | null
+  /**
+   * What page the frame shows, for the band's motion: a standing that changes with the scene is
+   * a cut, not a travel (the tab leaving the front, a page's fullscreen). The tab in front unless
+   * the host says more.
+   */
+  scene?: string | null
+  /** A band may stand on what is in front at all: false on the new tab page, a chrome page, a fullscreen. */
+  ok: boolean
+  /** Offers may stand on it: false on a private tab, whose offers Chrome withholds too (§3.2). */
+  offers?: boolean
+  /**
+   * Something stands over the page – a sheet, a dialog, the keyboard over the page's field: a
+   * prompt arriving waits for it to go; the one standing already stays (§3.2).
+   */
+  covered?: boolean
+}
+
 export interface BandState {
   /** Every prompt standing (shown or waiting), newest first. */
   entries: BandEntry[]
   /** The tab in front, as the host reports it. */
   front: string | null
-  /** The host says a band may show on what is in front now. */
-  eligible: boolean
-  /** The host says offers may show on what is in front: false on a private tab (§3.2). */
+  /** The frame's scene, as the host reports it (`BandFrame.scene`). */
+  scene: string | null
+  /** The host says a band may stand on what is in front. */
+  ok: boolean
+  /** The host says offers may stand on what is in front: false on a private tab (§3.2). */
   offers: boolean
+  /** The host says something stands over the page: a prompt arriving waits, the standing stays. */
+  covered: boolean
+  /** The prompt shown, by the model's own bookkeeping: under a cover, the one that stays. */
+  shown: number | null
   /** A finger has the shown band: its clock waits. */
   held: boolean
 }
 
-export const bandStore = createStore<BandState>(
-  { entries: [], front: null, eligible: false, offers: true, held: false },
-  'band'
-)
+const INITIAL: BandState = {
+  entries: [],
+  front: null,
+  scene: null,
+  ok: false,
+  offers: true,
+  covered: false,
+  shown: null,
+  held: false
+}
+
+export const bandStore = createStore<BandState>(INITIAL, 'band')
 
 /** The band's height for a prompt: two lines with a detail, one without (§3.1). */
 export function bandHeightOf(entry: BandEntry): BandHeight {
@@ -111,14 +152,24 @@ function inFront(entry: BandEntry, front: string | null): boolean {
 /**
  * The prompt the band shows for `state`: null when none may (nothing stands for the front tab,
  * or the host withholds the band, or withholds offers there). States before offers; the newest
- * of each.
+ * of each. Under a cover only the prompt shown before it came stays, and only while it is still
+ * the frame's: anything else waits.
  */
 export function chooseBand(state: BandState): BandEntry | null {
-  if (!state.eligible) return null
+  if (!state.ok) return null
   const candidates = state.entries.filter(
     (e) => inFront(e, state.front) && (e.form === 'state' || state.offers)
   )
+  if (state.covered) return candidates.find((e) => e.id === state.shown) ?? null
   return candidates.find((e) => e.form === 'state') ?? candidates[0] ?? null
+}
+
+/** Write `patch` and, with it, the model's own word on what the band shows now. */
+function commit(patch: Partial<BandState>): void {
+  bandStore.set((s) => {
+    const next = { ...s, ...patch }
+    return { ...patch, shown: chooseBand(next)?.id ?? null }
+  })
 }
 
 /** The shown prompt right now. */
@@ -190,7 +241,7 @@ export function showBand(opts: BandOptions): number {
     else if (opts.form === 'offer' && e.form === 'offer' && sameScope(e))
       dismissBand(e.id, 'replaced')
   }
-  bandStore.set((s) => ({ entries: [entry, ...s.entries] }))
+  commit({ entries: [entry, ...bandStore.get().entries] })
   syncClock()
   return id
 }
@@ -204,7 +255,7 @@ export function dismissBand(id: number, reason: BandDismissReason = 'program'): 
     running = null
   }
   left.delete(id)
-  bandStore.set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }))
+  commit({ entries: bandStore.get().entries.filter((e) => e.id !== id) })
   entry.onDismiss?.(reason)
   syncClock()
 }
@@ -235,16 +286,29 @@ export function holdBand(held: boolean): void {
 }
 
 /**
- * The host's word on the frame: which tab is in front, whether a band may show on it now (false
- * on the new tab page, a chrome page, under a sheet or dialog, with the keyboard up over the
- * page's field), and whether offers may (false on a private tab, whose offers Chrome withholds
- * too; its states show). A band for another tab waits with its clock paused; a band withheld
- * waits.
+ * The host's word on the frame: which tab is in front (and what scene that is), whether a band
+ * may stand on it at all, whether offers may (a private tab's states show, its offers wait), and
+ * whether something stands over the page (a prompt arriving waits; the standing one stays). A
+ * band for another tab waits with its clock paused; a band withheld waits.
  */
-export function setBandFront(front: string | null, eligible: boolean, offers = true): void {
+export function setBandFrame(frame: BandFrame): void {
+  const next = {
+    front: frame.front,
+    scene: frame.scene === undefined ? frame.front : frame.scene,
+    ok: frame.ok,
+    offers: frame.offers ?? true,
+    covered: frame.covered ?? false
+  }
   const s = bandStore.get()
-  if (s.front === front && s.eligible === eligible && s.offers === offers) return
-  bandStore.set({ front, eligible, offers, held: false })
+  if (
+    s.front === next.front &&
+    s.scene === next.scene &&
+    s.ok === next.ok &&
+    s.offers === next.offers &&
+    s.covered === next.covered
+  )
+    return
+  commit({ ...next, held: false })
   syncClock()
 }
 
@@ -259,5 +323,5 @@ export function resetBands(): void {
   if (running) clearTimeout(running.timer)
   running = null
   left.clear()
-  bandStore.set({ entries: [], front: null, eligible: false, offers: true, held: false })
+  bandStore.set(INITIAL)
 }

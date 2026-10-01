@@ -3,6 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import {
   bandHeightOf,
+  bandStore,
+  chooseBand,
   dismissBand,
   holdBand,
   pickBandAction,
@@ -29,10 +31,10 @@ export interface BandHost {
 const BAND_DIRS: DismissDirections = { x: [], y: [-1] }
 
 interface Props {
-  /** The prompt the model chose for the frame, or null: the band shows it, or leaves. */
-  entry: BandEntry | null
   host: BandHost
 }
+
+const sceneOf = (s: { scene: string | null }): string | null => s.scene
 
 /**
  * The page-edge band (motion spec §3): one prompt about the page, between the content frame's
@@ -43,8 +45,17 @@ interface Props {
  * page with the finger 1:1; Escape with focus in the band dismisses it; `role="status"` reads the
  * title once. A new tenant on an open band cross-fades its content 120 ms at the current height
  * while the height re-targets. Everything per frame is written straight to the DOM (§6).
+ *
+ * What it shows is the model's choice (`chooseBand`), read with the frame's scene from the one
+ * snapshot the host wrote (`setBandFrame`): a standing that changes with the scene – the tab
+ * leaving the front, a page's fullscreen – is a cut, not a travel. A band goes with its page at
+ * once and stands again at once when the page comes back; the page of the next tab never
+ * travels for the last tab's prompt, and a prompt the page never showed travels in as on any
+ * page.
  */
-export function PageEdgeBand({ entry, host }: Props): JSX.Element | null {
+export function PageEdgeBand({ host }: Props): JSX.Element | null {
+  const entry = bandStore.use(chooseBand)
+  const scene = bandStore.use(sceneOf)
   /** What is drawn: the prompt, or the last one while the band leaves. */
   const [showing, setShowing] = useState<BandEntry | null>(null)
   /** The tenant before a swap, fading out over the new one. */
@@ -52,6 +63,9 @@ export function PageEdgeBand({ entry, host }: Props): JSX.Element | null {
   const contentRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef(host)
   const showingRef = useRef(showing)
+  const sceneRef = useRef(scene)
+  /** Prompts the band cut away with their page, to stand again at once when it comes back. */
+  const cutAway = useRef(new Set<number>())
   const motion = useRef<BandMotion | null>(null)
 
   useLayoutEffect(() => {
@@ -75,18 +89,49 @@ export function PageEdgeBand({ entry, host }: Props): JSX.Element | null {
     return motion.current
   }
 
-  // The prompt arrived, changed or went: open, re-target (with a content swap) or leave.
+  // The prompt arrived, changed or went: open, re-target (with a content swap) or leave – or,
+  // where the scene changed with it, cut. The choice and the scene come from one snapshot of the
+  // model, so a change of standing that is the scene's never reads as the page's own (a
+  // window-wide band stays through a tab switch: the same prompt, nothing to do).
   useLayoutEffect(() => {
     const m = ensure()
+    const sceneChanged = sceneRef.current !== scene
+    sceneRef.current = scene
     const was = showingRef.current
     if (entry) {
-      if (was && was.id !== entry.id && m.phase !== 'closed') setLeaving(was)
+      // The same prompt again is nothing – unless the band is on its way out with it (it went
+      // and came back within the leave): then the leave reverses.
+      const same = was?.id === entry.id
+      if (same && m.phase !== 'closing') return
+      if (sceneChanged) {
+        // The page in the frame is another document: what stood goes at once, and what this
+        // page had – a prompt cut away with it before – stands again at once. A prompt the page
+        // never showed (one that arrived while it was not in front, or the host's first word)
+        // travels in as on any page.
+        const returning = cutAway.current.has(entry.id)
+        if (was && !same) {
+          cutAway.current.add(was.id)
+          if (!returning) m.jump(0)
+        }
+        if (returning) {
+          cutAway.current.delete(entry.id)
+          setLeaving(null)
+          setShowing(entry)
+          m.jump(bandHeightOf(entry))
+          return
+        }
+      }
+      if (was && !same && m.phase !== 'closed') setLeaving(was)
       setShowing(entry)
       m.open(bandHeightOf(entry))
       return
     }
-    if (was) m.close()
-  }, [entry])
+    if (!was) return
+    if (sceneChanged) {
+      cutAway.current.add(was.id)
+      m.jump(0)
+    } else m.close()
+  }, [entry, scene])
 
   // A swapped-out tenant's content is gone once its fade has run.
   useEffect(() => {
