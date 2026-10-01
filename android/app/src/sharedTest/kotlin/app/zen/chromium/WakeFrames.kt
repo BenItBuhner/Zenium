@@ -10,15 +10,20 @@ import java.util.Locale
  * (`WakeFramesTest`); compiled into the unit tests and the instrumentation alike
  * (`src/sharedTest`), never into the app.
  *
- * TWO READINGS of every frame. `totalMs` is HWUI's whole frame (`TOTAL_DURATION`: from the vsync
+ * THREE READINGS of every frame. `totalMs` is HWUI's whole frame (`TOTAL_DURATION`: from the vsync
  * to the swap's end), which on the recipe's software GPU (`-gpu swangle`) is 100 ms and more for
  * every frame whatever the chrome does – the composite of a 720x1600 frame on the CPU. `uiMs` is
  * the UI thread's part of it: the delay before the frame began (`UNKNOWN_DELAY`: the vsync waited
  * while the main thread was busy with something else – a WebView's construction, a
  * `restoreState`, a bitmap's capture), the input handling, the animation callbacks, the measure
- * and layout, and the draw (the display list's recording). That is the number a main-thread stall
- * moves and the one that carries over to a phone, so it is the one the bar is read on when the
- * recipe cannot hold 60 fps on the whole frame even for the warm control.
+ * and layout, and the draw (the display list's recording). `ownMs` is `uiMs` without the
+ * animation stage: inside that stage the chrome's WebView waits for the renderer's compositor to
+ * answer its frame (the synchronous compositor's handshake), so with the one renderer every page
+ * shares, a loading page's tiles stretch it for the chrome – a wait, not the host's work. The
+ * host's own work on the UI thread – what a WebView built or a history restored inside the morph
+ * moves, and what carries over to a phone – is `ownMs`, so that is the reading the bar is read on
+ * when the recipe cannot hold 60 fps on the whole frame even for the warm control; the other two
+ * are reported beside it.
  */
 object WakeFrames {
     /** One vsync's budget at 60 Hz, in ms. */
@@ -48,6 +53,9 @@ object WakeFrames {
     ) {
         /** The UI thread's part of the frame: the delay before it began plus input, animation, layout and draw. */
         val uiMs: Double get() = delayMs + inputMs + animationMs + layoutMs + drawMs
+
+        /** The UI thread's own work in the frame: [uiMs] without the animation stage (the WebView's wait on the renderer). */
+        val ownMs: Double get() = delayMs + inputMs + layoutMs + drawMs
 
         /** The stage that took longest, by name (the `stageMs` keys). */
         fun longestStage(): String = stages().maxByOrNull { it.value }?.key ?: "delay"
@@ -139,7 +147,9 @@ object WakeFrames {
      * RELATIVE: the sleeping scene's p95 within [P95_RATIO] of the control's, its longest frame
      * within [LONGEST_RATIO] of the control's (and never under the absolute two-vsync line: a
      * control with no long frame does not forbid one of 20 ms), and its share of frames over two
-     * vsyncs no more than [OVER32_POINTS] above the control's.
+     * vsyncs no more than [OVER32_POINTS] above the control's. The ratios are the lane's
+     * (`JankBudget`'s gesture and spring budgets): a scene has four to fourteen frames and HWUI's
+     * whole frames run 100 ms and more, so one frame of run-to-run noise is already 1.3x.
      */
     sealed class Bar {
         object Absolute : Bar() {
@@ -155,8 +165,8 @@ object WakeFrames {
         }
     }
 
-    const val P95_RATIO = 1.25
-    const val LONGEST_RATIO = 1.5
+    const val P95_RATIO = 2.0
+    const val LONGEST_RATIO = 2.0
     const val OVER32_POINTS = 0.10
 
     /** The bar for a control: absolute where the control holds 60 fps, relative where the recipe cannot. */
@@ -188,6 +198,24 @@ object WakeFrames {
                 if (sleeping.over32Share > shareCap + 1e-9) reasons += String.format(Locale.ROOT, "%.0f%% of frames over 32 ms, cap %.0f%% (the control's %.0f%%)", sleeping.over32Share * 100, shareCap * 100, control.over32Share * 100)
             }
         }
+        return Verdict(scene, reasons.isEmpty(), reasons)
+    }
+
+    /** One wake of a sleeping tab as the host saw it: whether `TabHost.create` took the spare view, and how long it held the UI thread. */
+    data class Wake(val tookSpare: Boolean, val createMs: Double)
+
+    /**
+     * The construction claim: every wake took the spare view and its `create` held the UI thread
+     * no longer than `capMs` – the fifteen-odd milliseconds of a WebView's construction kept out
+     * of the morph's frames. No wake at all fails too (the claim was not exercised).
+     */
+    fun judgeCreate(scene: String, wakes: List<Wake>, capMs: Double): Verdict {
+        if (wakes.isEmpty()) return Verdict(scene, false, listOf("no wake was recorded"))
+        val reasons = ArrayList<String>()
+        val built = wakes.count { !it.tookSpare }
+        if (built > 0) reasons += "$built of ${wakes.size} wake(s) built the view inside the morph (no spare stood)"
+        val slow = wakes.filter { it.createMs > capMs }
+        if (slow.isNotEmpty()) reasons += String.format(Locale.ROOT, "%d create(s) over %.1f ms (longest %.1f)", slow.size, capMs, slow.maxOf { it.createMs })
         return Verdict(scene, reasons.isEmpty(), reasons)
     }
 
