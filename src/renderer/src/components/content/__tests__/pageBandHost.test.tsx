@@ -78,6 +78,9 @@ const TABS: Record<string, Tab> = {
   ntp: tab('ntp', 'zen://newtab/'),
   loadedBlank: tab('loadedBlank', `${BLANK_URL}/`),
   settings: tab('settings', 'zen://settings'),
+  // The documents the chrome serves in the frame: chrome pages to the band all the same.
+  version: tab('version', 'zen://version'),
+  game: tab('game', 'zen://game'),
   secret: tab('secret', 'https://secret.example/', 'private')
 }
 
@@ -207,7 +210,7 @@ afterEach(() => {
 })
 
 describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
-  it('a page tab in front welcomes a band; the empty frame, the blank page, the new tab page, a chrome page, a page shown in another window and a fullscreen do not – each a scene of its own', () => {
+  it('a page tab in front welcomes a band; the empty frame, the blank page, the new tab page, a chrome page – every zen:// page, the version page and the game included – a page shown in another window and a fullscreen do not – each a scene of its own', () => {
     render(state())
     expect(model()).toEqual({
       front: 'page',
@@ -229,6 +232,13 @@ describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
     expect(model()).toMatchObject({ front: 'loadedBlank', ok: false })
     render(state({ front: 'settings' }))
     expect(model()).toMatchObject({ front: 'settings', ok: false })
+    // Every `zen://` page is a chrome page to the band (the Design Lead's ruling on #740): the
+    // version page and the game are documents the chrome serves in the frame, and the band
+    // stands on neither – the host read them as documents of the web before.
+    render(state({ front: 'version' }))
+    expect(model()).toMatchObject({ front: 'version', ok: false })
+    render(state({ front: 'game' }))
+    expect(model()).toMatchObject({ front: 'game', ok: false })
     render(state({ foreign: ['page'] }))
     expect(model()).toMatchObject({ scene: 'page:::foreign', ok: false })
     render(state({ fullscreen: true }))
