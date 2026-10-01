@@ -3434,10 +3434,15 @@ class TabWebView(
          * (the close is undoable, and Undo is the protection); a page an agent drives (OS-40:
          * the WebView raises the question only after a user gesture, but an agent's input is
          * trusted input, so a page it works on may object, and the question is the agent's,
-         * not the user's) leaves silently, with the bookkeeping a Leave runs; a hidden user
-         * page objecting to its own navigation, or to the reload the chrome asked of it, stays,
-         * the navigation cancelled as a Stay cancels it ([stayedOnPage]). The page the user is
-         * looking at asks as it always has.
+         * not the user's) leaves silently, with the bookkeeping a Leave runs; a user page that
+         * is not in front – behind another tab, or under the tab overview – objecting to its
+         * own navigation, or to the reload the chrome asked of it, stays, the navigation
+         * cancelled as a Stay cancels it ([stayedOnPage]). The tab the user is on asks as it
+         * always has – its view drawn or not: the shown tab's view is GONE under the URL field
+         * and the app menu, and the typed address's load runs before the field closes, so the
+         * word is the tab's ([UnloadObjection.inFront]: `isShown`, or not [backgroundTab] – the
+         * host's own line between a cover's hide and a switch's, [BackgroundTabRule]), never
+         * the view's alone, which would cancel a typed URL or a menu Reload with no sheet.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3452,7 +3457,7 @@ class TabWebView(
                 return true
             }
             val decision = UnloadObjection.decide(
-                isShown = isShown,
+                inFront = UnloadObjection.inFront(shown = isShown, behind = backgroundTab),
                 agentDriven = agentDriven,
                 checkInFlight = check != null,
                 reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
@@ -3468,11 +3473,12 @@ class TabWebView(
                     leaveChosen(askedAt = now, chosenAt = now, reload = decision.reload)
                 }
                 is UnloadObjection.StayHidden -> {
+                    // A page behind another tab or under the overview: the page stays, as a Stay would leave it.
                     result.cancel()
                     stayedOnPage()
                 }
                 is UnloadObjection.Sheet -> {
-                    // Never under a check (a check settles above): the question is the shown page's own navigation's.
+                    // Never under a check (a check settles above): the question is the tab in front's own navigation's.
                     val reload = decision.reload
                     showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
                         if (!leave) stayedOnPage()
