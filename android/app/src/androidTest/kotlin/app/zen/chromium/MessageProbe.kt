@@ -14,7 +14,8 @@ import org.json.JSONTokener
  * [PROBE_JS] answers `{door, count, title, detail, action, actions, key, form, glyph, close,
  * role, top, left, width, height, theme, standing}`: `door` is [DOOR_BAND] when the band shows a
  * message (the entry `chooseBand` picks – a state before an offer, the newest, on the front tab,
- * while the host says a band may show), [DOOR_BANNER] when the stack has a card, `""` when
+ * while the host says a band may show and, for an offer, that offers may – not on a private
+ * tab), [DOOR_BANNER] when the stack has a card, `""` when
  * neither. The band's words, key, form and action are the MODEL's; the document is read only for
  * the band's root ([BAND_ROOT] – how many stand, the role, the glyph, where it sits), the one DOM
  * name the band contributes. The banner's fields are the stack's, as the drivers read them before.
@@ -22,15 +23,18 @@ import org.json.JSONTokener
  * A band is swiped UP ([swipeUp]); a banner sideways.
  */
 object MessageProbe {
-    /** The band's root in the chrome's document: the shared content component's one hook read here. */
-    const val BAND_ROOT = "[data-zen-band]"
+    /**
+     * The band's root in the chrome's document (`PageEdgeBand`'s `.zen-band`, a `role="status"`
+     * region with `data-form` and `data-tone`): the shared content component's one hook read here.
+     */
+    const val BAND_ROOT = ".zen-band"
     const val DOOR_BAND = "band"
     const val DOOR_BANNER = "banner"
 
     /** `shown`: the band entry shown now, or null (the model's `chooseBand`, in the page's words). */
     private const val SHOWN_BAND_JS =
         "var S=window.__zenStores&&window.__zenStores.band;var st=S?S.get():null;var shown=null;" +
-            "if(st&&st.eligible){var c=st.entries.filter(function(e){return e.tabId===null||e.tabId===st.front});" +
+            "if(st&&st.eligible){var c=st.entries.filter(function(e){return (e.tabId===null||e.tabId===st.front)&&(e.form==='state'||st.offers)});" +
             "shown=c.filter(function(e){return e.form==='state'})[0]||c[0]||null}"
 
     /** `cards`: the banner stack's cards not leaving, from the UI store (what the stack draws). */

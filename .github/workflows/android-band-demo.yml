@@ -7,11 +7,13 @@ name: Android band demo
 # read-aloud demo's article and the PWA demo's Sketch Studio; its state seeds the default-browser
 # campaign so the phone's lighter reminder is due in the session, and `webapps.json` so every
 # site's app is on its second visit. Then: the default-browser state band (76; a short swipe
-# springs it back, `band-swipe-back`; a swipe past half dismisses it with the page 1:1 under the
-# finger, `band-swipe-dismiss`, the campaign's "Not now" recorded), the install offer and its ×
-# (`band-close-x`; a reload brings no offer), the reader offer's Show through the crossing
-# (`band-action-show`), the offer's clock (about 10 s standing, the timeout the reader entry's
-# mute), the sheet-waits rule (an offer under the app menu waits for the sheet to go), the
+# springs it back, `band-swipe-back`; the system Back is the band's Escape, spec §9 item 6 –
+# `band-back-escape` takes it away UNANSWERED, the campaign's prompt as it was, the page not
+# navigated), the install offer (a swipe past half dismisses it with the page 1:1 under the
+# finger, `band-swipe-dismiss`, no cooldown; its × is the refusal, `band-close-x`: the cooldown,
+# a reload brings no offer), the reader offer's Show through the crossing (`band-action-show`),
+# the offer's clock (about 10 s standing, the timeout the reader entry's mute), the sheet-waits
+# rule (an offer under the app menu waits for the sheet to go; a swipe on the offer is no mute), the
 # offline state replacing a standing offer (`band-replace-offline`: one root, 76 → 56) and never
 # on the new tab page, a pull-to-refresh on the held page taking the page over where it sits
 # (`band-pull-takeover`), the state's leave with the Back online toast (`band-leave-online`), and

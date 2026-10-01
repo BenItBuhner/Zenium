@@ -37,18 +37,23 @@ import kotlin.math.roundToInt
  *     and the × (§4's second action "Not now" reported, not gated: the shared model carries one
  *     action per band), `role="status"`, at the frame's top; the page translated by the
  *     band's height (the host's own word: the page WebView's `translationY`); a short swipe up
- *     released before half the height springs the band back (`band-swipe-back`); a swipe past
- *     half dismisses it (`band-swipe-dismiss`), the page following the finger 1:1 on the way
- *     (the host's offset sampled under the drag), the campaign's "Not now" recorded by the core.
+ *     released before half the height springs the band back (`band-swipe-back`); the SYSTEM
+ *     BACK is the band's Escape (spec §9 item 6; `band-back-escape`): the host hears the band
+ *     as a surface, the Back takes it and the page home UNANSWERED – the page not navigated, the
+ *     campaign's prompt as it was (no "Not now" given; a remembered refusal is only ever an
+ *     explicit button).
  *  2. THE INSTALL OFFER (76; the first tenant, §7): "Add Sketch Studio to Home screen" with the
- *     app's origin, one "Add", the ×; the × (`band-close-x`) takes the band off and starts the
- *     app's cooldown (a reload brings no offer).
+ *     app's origin, one "Add", the ×; a swipe past half dismisses it (`band-swipe-dismiss`), the
+ *     page following the finger 1:1 on the way (the host's offset sampled under the drag) –
+ *     unanswered: the app's record takes no `dismissedAt` (site A); the × (`band-close-x`,
+ *     site B) is the refusal: the record's `dismissedAt`, the cooldown, a reload brings no offer.
  *  3. THE READER OFFER (56): "Show Reader View?" with one "Show"; the action (`band-action-show`)
  *     runs the reader crossing, the band gone with it.
  *  4. THE CLOCK: an offer left standing leaves on its own at about `BAND_CLOCK_MS` (10 s); the
  *     timeout is a refusal the reader entry remembers for the site, as today.
  *  5. THE SHEET WAITS: an offer that arises while the app menu stands does not show under it;
- *     the sheet gone, the band comes.
+ *     the sheet gone, the band comes; a swipe up on the reader offer is no refusal – another
+ *     article of the site brings the offer again (the × and the clock still mute the site).
  *  6. ONE AT A TIME, STATE OVER OFFER: the radios off while the install offer stands – the
  *     offline state replaces it (`band-replace-offline`): one band root, the title changed, the
  *     page re-targeted 76 → 56 on the spring; NEVER ON THE NEW TAB PAGE: on `zen://newtab` no
@@ -212,31 +217,28 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         if (!back) touchFault("a short swipe on the band did not leave the band standing")
         beat()
 
-        // The swipe that dismisses: the page follows the finger 1:1, let go past half, the band leaves.
-        val again = fingerOnText(DEFAULT_TITLE) ?: return
-        val height = offsetCss()
-        val gone = scene("band-swipe-dismiss", JankBudget.Kind.GESTURE, took = { !bandUp() && offsetCss() <= TOLERANCE }) {
-            Finger().apply {
-                down(again.x, again.y)
-                moveBy(0f, -NUDGE, 80)
-                moveBy(0f, -(height * density) * 0.3f, 240)
-                hold(200)
-                snap("design-swipe-mid-light")
-                moveBy(0f, -(height * density) * 0.7f, 200)
-                up()
-            }
+        // §9 item 6: the system Back is the band's Escape – it puts the band away UNANSWERED. The
+        // host hears the band as a surface a back would dismiss (`back.update`), the Back takes the
+        // band and the page home, the page is not navigated, and the campaign stands as it was: no
+        // "Not now" was given (a remembered refusal is only ever an explicit button – here the ×).
+        val surface = chromeSurfaceUp()
+        finding("  the host's word with the band standing: chrome surface up=$surface")
+        check("the host hears the standing band as a surface a back would dismiss (the band is the chrome's topmost back surface)", surface)
+        val urlBefore = tab()?.optString("url") ?: ""
+        val promptBefore = defaultBrowserPrompt()
+        val away = scene("band-back-escape", JankBudget.Kind.SPRING, took = { !bandUp() && offsetCss() <= TOLERANCE }) {
+            back()
         }
-        val samples = sampler.stop()
-        finding("  the dismissing swipe: ${describeSamples(samples)}")
-        val follow = followedTheFinger(samples, height)
-        finding("  1:1 follow: $follow")
-        check("a swipe up past half the height dismisses the band and brings the page home", gone)
-        if (!gone) touchFault("a swipe up on the band did not take it off")
-        check("the page followed the finger down the way (the offset fell through the drag before the release)", follow.ok)
-        val prompt = poll(4_000) { defaultBrowserPrompt() == null }
-        finding("  the campaign after the swipe: prompt=${defaultBrowserPrompt()}")
-        check("the swipe is the campaign's \"Not now\" (the core's prompt cleared, as the banner's swipe did)", prompt)
-        snap("default-browser-dismissed")
+        val awaySamples = sampler.stop()
+        finding("  the Back: ${describeSamples(awaySamples)}; ${describeTab()}")
+        check("the system Back puts the band away and brings the page home (§9 item 6: Back is the band's Escape)", away)
+        SystemClock.sleep(1_500)
+        val promptAfter = defaultBrowserPrompt()
+        finding("  the campaign after the Back: prompt=$promptAfter (before: $promptBefore)")
+        check("the Back is no \"Not now\": the campaign's prompt stands as it was (no dismissal recorded, no cooldown started)", promptAfter == "banner")
+        check("the Back did not navigate the page (the band took it; a second Back would)", (tab()?.optString("url") ?: "") == urlBefore)
+        check("the band gone, the chrome has no surface left for a back", awaitSurface(up = false, timeoutMs = 4_000))
+        snap("default-browser-after-back")
         beat()
     }
 
@@ -258,23 +260,63 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         snap("design-install-offer-light")
         // No beat: the offer is on its clock.
         SystemClock.sleep(400)
+
+        // The swipe that dismisses: the page follows the finger 1:1, let go past half, the band
+        // leaves – UNANSWERED (§9 item 6): the core hears the band go as for the clock, and the
+        // app's record takes no `dismissedAt` (a card's swipe started the 14-day cooldown).
+        val title = fingerOnText(INSTALL_TITLE) ?: return
+        val height = offsetCss()
+        val gone = scene("band-swipe-dismiss", JankBudget.Kind.GESTURE, took = { !bandUp() && offsetCss() <= TOLERANCE }) {
+            Finger().apply {
+                down(title.x, title.y)
+                moveBy(0f, -NUDGE, 80)
+                moveBy(0f, -(height * density) * 0.3f, 240)
+                hold(200)
+                snap("design-swipe-mid-light")
+                moveBy(0f, -(height * density) * 0.7f, 200)
+                up()
+            }
+        }
+        val swipeSamples = sampler.stop()
+        finding("  the dismissing swipe: ${describeSamples(swipeSamples)}")
+        val follow = followedTheFinger(swipeSamples, height)
+        finding("  1:1 follow: $follow")
+        check("a swipe up past half the height dismisses the band and brings the page home", gone)
+        if (!gone) touchFault("a swipe up on the band did not take it off")
+        check("the page followed the finger down the way (the offset fell through the drag before the release)", follow.ok)
+        val swiped = poll(5_000) { engagement(SITE_A)?.isNull("promptedAt") == false }
+        val recordA = engagement(SITE_A)
+        finding("  site A's app record after the swipe: $recordA (written=$swiped)")
+        check("the swipe is no refusal: the app's record has no dismissedAt (no cooldown), only the prompt's time – an ignored prompt (§9 item 6)", swiped && recordA?.isNull("dismissedAt") == true)
+        snap("install-offer-swiped")
+        beat()
+
+        // The ×: the explicit refusal – the core hears it, the cooldown starts, a reload brings no offer.
+        navigate("$SITE_B/app/")
+        val second = awaitBand(INSTALL_TITLE, 12_000)
+        check("site B: the install offer stands on the app's second visit, to be refused", second)
+        if (!second) return
+        SystemClock.sleep(400)
         val x = fingerOnButton(DISMISS_LABEL) ?: run {
             check("a finger can reach the band's ×", false)
             return
         }
-        val gone = scene("band-close-x", JankBudget.Kind.OPEN, took = { !bandUp() && offsetCss() <= TOLERANCE }) {
+        val closed = scene("band-close-x", JankBudget.Kind.OPEN, took = { !bandUp() && offsetCss() <= TOLERANCE }) {
             Finger().tap(x)
         }
         finding("  the ×: ${describeSamples(sampler.stop())}")
-        check("the × takes the install offer off and brings the page home", gone)
-        if (!gone) touchFault("a touch on the band's × did not take it off")
+        check("the × takes the install offer off and brings the page home", closed)
+        if (!closed) touchFault("a touch on the band's × did not take it off")
         snap("install-offer-closed")
         // The cooldown: the core heard the refusal; a reload brings no offer.
+        val refused = poll(5_000) { engagement(SITE_B)?.isNull("dismissedAt") == false }
+        finding("  site B's app record after the ×: ${engagement(SITE_B)} (written=$refused)")
+        check("the × is the refusal: the app's record takes its dismissedAt (the cooldown, as the card's swipe and × did)", refused)
         coreInvoke("tab.reload", "{\"tabId\":\"$TAB\"}")
-        awaitLoaded("$SITE_A/app/")
+        awaitLoaded("$SITE_B/app/")
         val again = poll(4_000) { bandTitle() == INSTALL_TITLE }
         finding("  after the reload: band=${bandTitle()}")
-        check("the refusal starts the app's cooldown (no offer on the reload, as the banner's swipe did)", !again)
+        check("the refusal starts the app's cooldown (no offer on the reload)", !again)
         beat()
     }
 
@@ -365,11 +407,27 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         check("site C: the sheet gone, the waiting offer comes", after)
         snap("sheet-gone-band-up")
         if (after) {
-            val x = fingerOnButton(DISMISS_LABEL)
-            if (x != null) {
-                Finger().tap(x)
+            // §9 item 6 on the reader offer: a swipe up puts it away UNANSWERED – the site is NOT
+            // muted (Chrome's card muted on its swipe; the × and the clock still do), so another
+            // article of the site brings the offer again.
+            val title = fingerOnText(READER_TITLE)
+            if (title != null) {
+                val h = offsetCss()
+                Finger().apply {
+                    down(title.x, title.y)
+                    moveBy(0f, -NUDGE, 80)
+                    moveBy(0f, -(h * density) * 1.25f, 300)
+                    up()
+                }
                 val gone = poll(4_000) { !bandUp() }
-                if (!gone) touchFault("a touch on the band's × did not take it off (site C)")
+                if (!gone) touchFault("a swipe up on the reader band did not take it off (site C)")
+                check("site C: a swipe up takes the reader offer off", gone)
+                navigate("$SITE_C/second")
+                val secondReaderable = poll(15_000) { tab()?.optBoolean("readerable") == true }
+                val again = awaitBand(READER_TITLE, 6_000)
+                finding("  site C's second article after the swipe: readerable=$secondReaderable; offer within 6 s=$again")
+                check("site C: the swipe was no refusal – another article of the site brings the offer again (§9 item 6: the site is not muted)", secondReaderable && again)
+                if (again) closeBand("site C: the second offer")
             }
         }
         beat()
@@ -576,6 +634,18 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         val probe = runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
         if (probe.optInt("count") > maxRoots) maxRoots = probe.optInt("count")
         return probe
+    }
+
+    /**
+     * The install prompt's record for a site's app, from the core's `webapps.json` (the test
+     * shares the app's uid): `{visits, firstVisitAt, lastVisitAt, dismissedAt, promptedAt}`, or
+     * null while the file or the record is not there yet (the core writes it after the show).
+     */
+    private fun engagement(site: String): JSONObject? {
+        val file = File(File(app.filesDir, "zen"), "webapps.json")
+        if (!file.exists()) return null
+        val doc = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
+        return doc.optJSONObject("engagement")?.optJSONObject("http://$site:$PORT/app/")
     }
 
     private fun chromeTheme(): String = jsonString(chromeJs("(function(){return document.documentElement.getAttribute('data-theme')||''})()"))
@@ -940,16 +1010,17 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
          * THE SEAM'S HOOKS, in one place. The band's words, form, key and action come from the
          * shared MODEL (`window.__zenStores.band`, Desktop's W8-M2 `lib/band.ts`: the entry
          * `chooseBand` picks – states before offers, the newest, on the front tab, while the host
-         * says a band may show), so no DOM name is read for them; the document is read only for
-         * the band's ROOT (`data-zen-band`) – how many stand, its role, whether it carries a glyph
+         * says a band may show and, for an offer, that offers may), so no DOM name is read for
+         * them; the document is read only for
+         * the band's ROOT (`.zen-band`) – how many stand, its role, whether it carries a glyph
          * (an `svg`) and where it sits – the one selector to change if the content component
          * names its root otherwise. `count` is the roots'; `standing` the model's entries (shown
          * or waiting); `title` is empty when none is shown.
          */
-        private const val BAND_ROOT = "[data-zen-band]"
+        private const val BAND_ROOT = ".zen-band"
         private const val BAND_PROBE_JS =
             "(function(){var S=window.__zenStores&&window.__zenStores.band;var st=S?S.get():null;var shown=null;" +
-                "if(st&&st.eligible){var c=st.entries.filter(function(e){return e.tabId===null||e.tabId===st.front});" +
+                "if(st&&st.eligible){var c=st.entries.filter(function(e){return (e.tabId===null||e.tabId===st.front)&&(e.form==='state'||st.offers)});" +
                 "shown=c.filter(function(e){return e.form==='state'})[0]||c[0]||null}" +
                 "var b=document.querySelectorAll('$BAND_ROOT');var f=b[0];" +
                 "var o={model:!!S,standing:st?st.entries.length:0,eligible:st?st.eligible:false,front:st?st.front:null,count:b.length," +
