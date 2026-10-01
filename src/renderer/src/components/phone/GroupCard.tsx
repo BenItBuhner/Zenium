@@ -46,9 +46,10 @@ interface Props {
   folder: Folder
   tabs: Tab[]
   card: (tab: Tab) => JSX.Element
-  /** The header held: the group's hold sheet (`GroupSheet`) opens. */
+  /** The header held, or its ⋯: the group's sheet (`GroupSheet`) opens. */
   onMenu: (folder: Folder) => void
-  /** Close Group and Delete Group, the sheet's two that reach past the card (`groupActions`). */
+  /** New Tab in Group, Close Group and Delete Group: the sheet's rows that reach past the card (`groupActions`). */
+  onNewTab: (folder: Folder) => void
   onCloseGroup: (folder: Folder) => void
   onDelete: (folder: Folder) => void
   /** Columns of the overview grid: a group of two or more spans them all and lays out in as many. */
@@ -91,6 +92,7 @@ export function GroupCard({
   tabs,
   card,
   onMenu,
+  onNewTab,
   onCloseGroup,
   onDelete,
   columns,
@@ -350,6 +352,7 @@ export function GroupCard({
         <GroupCardControls
           folder={folder}
           count={count}
+          onNewTab={onNewTab}
           onCloseGroup={onCloseGroup}
           onDelete={onDelete}
         />
@@ -436,15 +439,18 @@ function GroupMosaic({
 function GroupCardControls({
   folder,
   count,
+  onNewTab,
   onCloseGroup,
   onDelete
 }: {
   folder: Folder
   count: number
+  onNewTab: (folder: Folder) => void
   onCloseGroup: (folder: Folder) => void
   onDelete: (folder: Folder) => void
 }): JSX.Element {
   const controls = groupCardControls(folder, count, {
+    newTabInGroup: onNewTab,
     closeGroup: onCloseGroup,
     deleteGroup: onDelete
   })
@@ -466,9 +472,9 @@ function GroupCardControls({
 }
 
 /**
- * The group's name being edited in place (`uiStore.renamingFolderId`): in the card's header, and
- * in the Groups pane's row (TAB-16) at the row's own size through `className`. Enter and a blur
- * save a changed, non-empty name; Escape keeps the old one.
+ * The group's name being edited in place (`uiStore.renamingFolderId`): in the open group's card
+ * header, and in the saved group's card (TAB-16, `SavedGroupCard`) – a host's own size through
+ * `className`. Enter and a blur save a changed, non-empty name; Escape keeps the old one.
  */
 export function GroupRename({
   folder,

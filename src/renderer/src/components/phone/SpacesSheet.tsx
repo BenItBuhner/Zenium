@@ -1,9 +1,8 @@
 import type { JSX } from 'react'
 import { Plus } from 'lucide-react'
-import type { Space, UIState } from '@shared/types'
-import { resolveTheme, rgbToHex } from '@shared/theme'
+import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { overviewTabCount, tabsWord } from '@renderer/lib/overviewHeader'
+import { overviewTabCount, spaceSwatch, tabsWord } from '@renderer/lib/overviewHeader'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay } from '@renderer/lib/ui'
 import { SpaceGlyph } from '../SpaceGlyph'
@@ -47,9 +46,4 @@ export function SpacesSheet({ state, isDark, onClose }: Props): JSX.Element {
     onPick: () => void openOverlay('space-editor', active?.id ?? null, null)
   })
   return <OverviewSheet title={SPACES_SHEET_TITLE} actions={actions} onClose={onClose} />
-}
-
-/** The space's dot: its theme's accent in the current scheme, as the drawer's rows draw it. */
-function spaceSwatch(space: Space, isDark: boolean): string | undefined {
-  return space.theme ? rgbToHex(resolveTheme(space.theme, isDark).accent) : undefined
 }

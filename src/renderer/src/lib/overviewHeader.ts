@@ -1,5 +1,6 @@
 import type { Space, UIState } from '@shared/types'
 import type { OverviewView } from '@shared/overviewMenu'
+import { resolveTheme, rgbToHex } from '@shared/theme'
 import { privateTabsOf, tabsOnPane } from './privateTabs'
 import { essentialsFor, pinnedOf, regularOf } from './selectors'
 
@@ -46,4 +47,12 @@ export function overviewTitle(view: OverviewView, space: Pick<Space, 'name'>): s
  */
 export function overviewTitleLabel(title: string, count: number): string {
   return `${title}, ${tabsWord(count)}`
+}
+
+/**
+ * The space's dot: its theme's accent in the current scheme, as the drawer's rows draw it – the
+ * overview's title draws the same dot before the name (§1), the Spaces sheet's rows before theirs.
+ */
+export function spaceSwatch(space: Space, isDark: boolean): string | undefined {
+  return space.theme ? rgbToHex(resolveTheme(space.theme, isDark).accent) : undefined
 }

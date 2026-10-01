@@ -1,12 +1,17 @@
 import type { JSX } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { VenetianMask } from 'lucide-react'
 import type { Space } from '@shared/types'
 import type { OverviewView } from '@shared/overviewMenu'
 import { overviewTitleLabel, PRIVATE_TITLE, tabsWord } from '@renderer/lib/overviewHeader'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { PANE_FADE_MS } from './PaneSlot'
 
 /** The title control's `data-testid` (the harness reads the view off `data-view`). */
 export const OVERVIEW_TITLE_TESTID = 'overview-title'
+
+/** How long the words that were stand fading over the words that are at a space switch (§6). */
+export const TITLE_FADE_MS = PANE_FADE_MS
 
 interface Props {
   view: OverviewView
@@ -25,8 +30,9 @@ interface Props {
  * and name with the count – "Default · 3 tabs" – start-aligned at the grid's gutter, 17/600,
  * and nothing trailing it. THE TITLE IS THE SPACE SWITCHER: a tap opens the Spaces sheet
  * (`SpacesSheet`); a horizontal drag across the grid still moves between spaces (GN-19), the
- * title following. In the private view (§3) the row reads the mask and "Private · N tabs" and
- * is no control: the private session is one across the spaces.
+ * title following – its words cross-fade over 120 ms at the switch (§6, `TitleWords`). In the
+ * private view (§3) the row reads the mask and "Private · N tabs" and is no control: the private
+ * session is one across the spaces.
  *
  * Under TalkBack the control is one stop named "Default, 3 tabs" (`overviewTitleLabel`: the
  * typographic dot is not read), a dialog popping up; the words inside are its face.
@@ -67,22 +73,87 @@ export function OverviewTitle({
       onClick={onOpenSpaces}
     >
       <SpaceGlyph icon={space.icon} size={20} dotColor={dotColor} />
-      <TitleWords title={space.name} count={count} />
+      <TitleWords title={space.name} count={count} switchKey={space.id} />
     </button>
   )
 }
 
+/** The words that were, standing over the words that are while they fade (§6). */
+interface WordsStill {
+  key: number
+  title: string
+  count: number
+}
+
+let stillSeq = 0
+
 /**
  * "Default · 3 tabs": the name in the ink, the dot and the count in the muted ink, one line
  * that truncates at the name (the count always shows). The face of a control named by
- * `overviewTitleLabel`, which reads the same words without the dot.
+ * `overviewTitleLabel`, which reads the same words without the dot. A change of `switchKey`
+ * – the space, at a switch (GN-19, the Spaces sheet, the menu) – cross-fades the words over
+ * `TITLE_FADE_MS` (§6): the words that were are kept over the new ones as a still fading out
+ * (`.zen-overview-title-still`, opacity alone) while the new ones stand beneath from the first
+ * frame; a count that changes within one space is a cut, as the grid's card count is.
  */
-function TitleWords({ title, count }: { title: string; count: number }): JSX.Element {
+function TitleWords({
+  title,
+  count,
+  switchKey
+}: {
+  title: string
+  count: number
+  switchKey?: string
+}): JSX.Element {
+  const [still, setStill] = useState<WordsStill | null>(null)
+  const last = useRef({ switchKey, title, count })
+  useEffect(() => {
+    const was = last.current
+    last.current = { switchKey, title, count }
+    if (switchKey === undefined || was.switchKey === undefined || was.switchKey === switchKey)
+      return
+    setStill({ key: ++stillSeq, title: was.title, count: was.count })
+  }, [switchKey, title, count])
+  useEffect(() => {
+    if (!still) return
+    const timer = setTimeout(() => setStill(null), TITLE_FADE_MS)
+    return () => clearTimeout(timer)
+  }, [still])
+  return (
+    <span className="relative flex min-w-0">
+      <Words title={title} count={count} />
+      {still && (
+        <span
+          key={still.key}
+          className="zen-overview-title-still absolute inset-0 flex min-w-0"
+          aria-hidden
+          data-testid="overview-title-still"
+        >
+          <Words title={still.title} count={still.count} still />
+        </span>
+      )}
+    </span>
+  )
+}
+
+function Words({
+  title,
+  count,
+  still = false
+}: {
+  title: string
+  count: number
+  /** The fading copy: it carries no hook of the live words'. */
+  still?: boolean
+}): JSX.Element {
   return (
     <span className="zen-title flex min-w-0 items-baseline">
       <span className="min-w-0 truncate">{title}</span>
       <span className="shrink-0 whitespace-pre text-[var(--zen-muted)]"> · </span>
-      <span className="shrink-0 tabular-nums text-[var(--zen-muted)]" data-testid="overview-count">
+      <span
+        className="shrink-0 tabular-nums text-[var(--zen-muted)]"
+        data-testid={still ? undefined : 'overview-count'}
+      >
         {tabsWord(count)}
       </span>
     </span>

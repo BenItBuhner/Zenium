@@ -8,18 +8,19 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { BLANK_URL } from '@shared/url'
 
 /*
- * The phone overview's tab search (matrix TAB-21; v2 §9.12, §11.4) and its reach (the #316
- * gate; TAB-02, §9.17, §9.27, §10.4): the header's magnifier opens a field pinned under the
- * header that narrows the pane's cards by title and address as it is typed – the dropped cards
- * departing in place, the New Tab card with them – with the count told to the status region; the
- * X, Escape and the system back clear a query and close an empty field. On the Tabs pane the query
- * reaches past the cards: this device's recently closed tabs and the other devices' open ones
- * list as rows under headings beneath the matching cards, each row leaving the overview on the
- * tab it brings up; a hidden device, a sync that is off and the Private pane are out of its
- * reach. The search is the card panes' – the Groups pane (TAB-16) has no magnifier – and a query
- * narrows what is shown, not what a group is: a group's close and count read the whole group.
- * Rendered for real in happy-dom with the sheets on the frame's dialog host, the frame loop
- * cranked by hand, the core stubbed.
+ * The phone overview's tab search (matrix TAB-21; v2 §9.12, §11.4; tab overview cleanup spec §4
+ * and the root's ruling §9: Search Tabs is a ⋯ row, the header has no magnifier) and its reach
+ * (the #316 gate; TAB-02, §9.17, §9.27, §10.4): the bar's ⋯ menu's "Search Tabs" row – its
+ * `overview.command`, which this file dispatches – opens a field pinned under the header that
+ * narrows the view's cards by title and address as it is typed – the dropped cards departing in
+ * place, the New Tab card with them – with the count told to the status region; the X, Escape
+ * and the system back clear a query and close an empty field, and closing it gives the header
+ * row back. On the regular view the query reaches past the cards: this device's recently closed
+ * tabs and the other devices' open ones list as rows under headings beneath the matching cards,
+ * each row leaving the overview on the tab it brings up; a hidden device, a sync that is off and
+ * the private view are out of its reach. A query narrows what is shown, not what a group is: a
+ * group's close and count read the whole group. Rendered for real in happy-dom with the sheets
+ * on the frame's dialog host, the frame loop cranked by hand, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -56,6 +57,8 @@ const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, claimMessageCards, uiStore } = await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { dispatchOverviewCommand } = await import('@renderer/lib/overviewCommands')
+const { overviewMenuRequest } = await import('@renderer/lib/overviewMenuRequest')
 const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { announcerStore, resetAnnouncer } = await import('@renderer/lib/announce')
@@ -517,9 +520,14 @@ function back(): void {
   })
 }
 
-/** Open the search from the header's magnifier, type `text`, and let the reach read its lists. */
+/** The ⋯ menu's Search Tabs row picked (§4): the field comes up under the header, focused. */
+function openSearch(): void {
+  act(() => dispatchOverviewCommand('search-tabs'))
+}
+
+/** Open the search from the ⋯ menu's row, type `text`, and let the reach read its lists. */
 async function search(text: string): Promise<void> {
-  if (!field()) act(() => byTestId('overview-search-toggle')!.click())
+  if (!field()) openSearch()
   type(text)
   await settle()
 }
@@ -527,19 +535,22 @@ async function search(text: string): Promise<void> {
 // --- (A) the tab search ------------------------------------------------------------------------
 
 describe('the tab search (TAB-21)', () => {
-  it('opens from the header magnifier, takes focus only then, and the overview opens without it', () => {
+  it('opens from the ⋯ menu’s Search Tabs row, takes focus only then, and the overview opens without it; the header has no magnifier (root §9)', () => {
     show(stateOf(pages()))
     expect(field()).toBeNull()
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
-    const toggle = byTestId('overview-search-toggle')!
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    // The header row is the title alone (§1): no magnifier, no toggle.
+    expect(headerButtons()).toEqual(['Work, 6 tabs'])
+    expect(byTestId('overview-search-toggle')).toBeNull()
     expect(document.activeElement).not.toBe(field())
 
-    act(() => toggle.click())
+    openSearch()
     expect(field()).not.toBeNull()
     expect(document.activeElement).toBe(field())
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(toggle.getAttribute('aria-controls')).toBe('overview-search')
+    // The field stands under the header row, which keeps its title.
+    expect(headerButtons()).toEqual(['Work, 6 tabs'])
+    expect(
+      header().compareDocumentPosition(field()!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     expect(field()!.placeholder).toBe('Title or address')
     // Nothing is filtered yet: every card and the New Tab card.
     expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
@@ -547,7 +558,7 @@ describe('the tab search (TAB-21)', () => {
 
   it('narrows the grid by title and address as typed, case and diacritics folded; the dropped cards depart in place and the New Tab card with them (§9.34)', () => {
     show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
 
     type('WIKI')
     expect(cellKeys()).toEqual(['coffee', 'tea'])
@@ -572,7 +583,7 @@ describe('the tab search (TAB-21)', () => {
 
   it('a card the query dropped has its exit released once the grid no longer holds it', () => {
     show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('coffee')
     // The exits of the dropped cards run from the commit that unmounted them, the New Tab
     // card's among them.
@@ -587,7 +598,7 @@ describe('the tab search (TAB-21)', () => {
 
   it('says nothing is found where the grid was, and tells the count once the typing pauses', () => {
     show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('zzz')
     expect(cellKeys()).toEqual([])
     expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
@@ -606,7 +617,7 @@ describe('the tab search (TAB-21)', () => {
 
   it('the X clears a query and keeps the field; on an empty field it closes the search', () => {
     show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('wiki')
     const clear = byTestId('overview-search-clear')!
     expect(clear.getAttribute('aria-label')).toBe('Clear search')
@@ -617,13 +628,14 @@ describe('the tab search (TAB-21)', () => {
     expect(byTestId('overview-search-clear')!.getAttribute('aria-label')).toBe('Close search')
     act(() => byTestId('overview-search-clear')!.click())
     expect(field()).toBeNull()
-    expect(byTestId('overview-search-toggle')!.getAttribute('aria-expanded')).toBe('false')
+    // Closing the field gives the header row back as it was (§4).
+    expect(headerButtons()).toEqual(['Work, 6 tabs'])
   })
 
   it('the system back clears the query first and closes the field second; with the field closed the overview is next', () => {
     show(stateOf(pages()))
     expect(topBackSurface()?.name).not.toBe('overview-search')
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     expect(topBackSurface()?.name).toBe('overview-search')
     type('tea')
     expect(cellKeys()).toEqual(['tea'])
@@ -638,7 +650,7 @@ describe('the tab search (TAB-21)', () => {
 
   it('Escape does what back does', () => {
     show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('hacker')
     expect(cellKeys()).toEqual(['hn'])
     act(() => {
@@ -651,37 +663,25 @@ describe('the tab search (TAB-21)', () => {
     expect(field()).toBeNull()
   })
 
-  it('the header menu counts the pane, not the query', async () => {
+  it('the ⋯ menu is asked for the view, not the query: its counts are the core’s own, and the field stays up under it', async () => {
     show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('wiki')
-    act(() => byLabel('More')!.click())
+    expect(cellKeys()).toEqual(['coffee', 'tea'])
+    // The bar's ⋯ asks for the regular view's rows (the core counts the six open tabs whatever
+    // the query shows: `overviewMenuTemplate.test.ts`); the field is not closed by the ask.
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
+    expect(field()!.value).toBe('wiki')
+    // Search Tabs picked again while the field stands leaves it as it is: the query kept.
+    openSearch()
     await settle()
-    await land()
-    // Five pages and a blank tab are open whatever the query shows.
-    expect(sheetRows()).toContain('Close All Tabs (6)')
-  })
-
-  it("is the card panes' alone: the Groups pane has no magnifier, and picking it closes an open search", async () => {
-    show(stateOf(pages()))
-    act(() => byTestId('overview-search-toggle')!.click())
-    type('wiki')
-    expect(cellsOn('tabs')).toEqual(['coffee', 'tea'])
-    act(() => byTestId('overview-pane-groups')!.click())
-    await settle()
-    expect(field()).toBeNull()
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
-    // Back on the Tabs pane the magnifier is back and the grid whole: the query did not keep.
-    act(() => byTestId('overview-pane-tabs')!.click())
-    await settle()
-    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
-    expect(field()).toBeNull()
-    expect(cellsOn('tabs')).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
+    expect(field()!.value).toBe('wiki')
+    expect(cellKeys()).toEqual(['coffee', 'tea'])
   })
 
   it("reads a group whole under a query: the one card of it shown closes its tab alone, and the group's sheet counts every member", async () => {
     show(grouped())
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('wiki')
     // The group's card stays for its one match; the other member and the loose page left.
     expect(cellKeys()).toEqual(['group:research', 'm1'])
@@ -690,7 +690,7 @@ describe('the tab search (TAB-21)', () => {
     expect(of('tab.close')).toEqual([{ tabId: 'm1' }])
     expect(of('folder.close')).toEqual([])
 
-    // The group's own sheet counts the pane's members, as its Close Group closes them.
+    // The group's own sheet counts the view's members, as its Close Group closes them.
     const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
     act(() => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
@@ -700,15 +700,15 @@ describe('the tab search (TAB-21)', () => {
     expect(sheetRows()).toContain('Close Group (2 Tabs)')
   })
 
-  it('keeps the field and its query across the segment: the Private pane is narrowed by the same words', async () => {
+  it('keeps the field and its query across a view switch (§3): the private view is narrowed by the same words', async () => {
     show(withPrivate(stateOf([...pages(), privateTab('p1', 'https://one.example/')])))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     type('wiki')
     expect(cellsOn('tabs')).toEqual(['coffee', 'tea'])
-    act(() => byTestId('overview-pane-private')!.click())
+    act(() => dispatchOverviewCommand('switch-view'))
     await settle()
     expect(field()!.value).toBe('wiki')
-    // The private pane's New Private Tab card is off the grid under the query as well.
+    // The private view's New Private Tab card is off the grid under the query as well.
     expect(cellsOn('private')).toEqual([])
     expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
     type('example')
@@ -717,12 +717,12 @@ describe('the tab search (TAB-21)', () => {
     expect(cellsOn('private')).toEqual(['p1', 'new-tab'])
   })
 
-  it("never lists the private side on the Tabs pane – not a private tab, not a private group's name – and lists private tabs alone on the Private pane", async () => {
+  it("never lists the private side on the regular view – not a private tab, not a private group's name – and lists private tabs alone on the private view", async () => {
     show(withPrivateGroup())
-    // Nothing private is drawn on the Tabs pane before a query, the group's name included.
+    // Nothing private is drawn on the regular view before a query, the group's name included.
     expect(cellsOn('tabs')).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
     expect(document.body.textContent).not.toContain('Vault')
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
 
     // A query only a private tab matches: the grid empties, the sentence stands, the count says
     // none – the private tab is no part of what is found – and the private tab's title is
@@ -745,10 +745,10 @@ describe('the tab search (TAB-21)', () => {
     expect(document.body.textContent).not.toContain('Keys')
     expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
 
-    // The Private pane under the same words: the group's member as a loose card (the private
-    // pane groups nothing), then the other private tab, then both – and never a regular page,
+    // The private view under the same words: the group's member as a loose card (the private
+    // view groups nothing), then the other private tab, then both – and never a regular page,
     // though `example` is in a regular page's title and in every address here.
-    act(() => byTestId('overview-pane-private')!.click())
+    act(() => dispatchOverviewCommand('switch-view'))
     await settle()
     expect(field()!.value).toBe('vault')
     expect(cellsOn('private')).toEqual(['p2'])
@@ -770,7 +770,7 @@ describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
     closed = closedTabs()
     remote = devices()
     show(stateOf(pages(), { sync: sync(true) }))
-    act(() => byTestId('overview-search-toggle')!.click())
+    openSearch()
     await settle()
     // The lists are not asked for until a query needs them.
     expect(of('sync.tabsFromDevices')).toEqual([])
@@ -903,7 +903,7 @@ describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
     expect(reachTexts()).toEqual(['# From your other devices', 'Web browser - Wikipedia'])
   })
 
-  it("reaches nothing from the Private pane: a private tab is never filed, and the other devices' pages are not private", async () => {
+  it("reaches nothing from the private view: a private tab is never filed, and the other devices' pages are not private", async () => {
     closed = closedTabs()
     remote = devices()
     show(

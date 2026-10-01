@@ -108,6 +108,7 @@ function Grid({ collapsed, tabs, columns, forming, dissolving, onDissolved }: In
     tabs: [...tabs],
     card: (t: Tab) => createElement('div', { key: t.id, 'data-cell': t.id }, t.title),
     onMenu: () => undefined,
+    onNewTab: () => undefined,
     onCloseGroup: () => undefined,
     onDelete: () => undefined,
     columns,

@@ -29,15 +29,15 @@ export interface OverviewSearchState {
 export const SEARCH_OFF: OverviewSearchState = { open: false, query: '' }
 
 /**
- * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
- * closed list as the menu read it), the close-all question, the recently closed list, the
- * inactive tabs list (as the segment row's entry read it), the select-tabs mode's group picker,
- * a Groups pane row's menu and the delete-group question.
+ * The sheet up over the grid: a card's or a group's menu, the close-all question, the recently
+ * closed list (as the menu's row read it), the inactive tabs list (as its row read it), the
+ * select-tabs mode's group picker, a saved group card's menu, the delete-group question and the
+ * Spaces sheet the title opens. The overview's ⋯ menu is no sheet of its own: the bar's ⋯ pops
+ * it through the core while the overview stands (tab overview cleanup spec §4).
  */
 export type OverviewSheet =
   | { kind: 'tab'; tabId: string }
   | { kind: 'group'; folderId: string }
-  | { kind: 'menu'; closed: ClosedEntrySummary[] }
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
   | { kind: 'inactive-tabs'; entries: ArchivedTabSummary[] }

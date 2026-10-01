@@ -2,8 +2,10 @@ import type { CSSProperties, JSX } from 'react'
 import type { Folder, SavedGroupTab } from '@shared/types'
 import { groupColorVars } from '@renderer/lib/groups'
 import { groupRowLabel, type GroupRow } from '@renderer/lib/groupRows'
+import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
+import { GroupRename } from './GroupCard'
 import { mosaicOf, MOSAIC_TILES } from './groupMosaic'
 import { useLongPress } from './useLongPress'
 
@@ -14,7 +16,9 @@ import { useLongPress } from './useLongPress'
  * header's glyph slot (`GroupGlyph saved`, §9.36), the name, the pages' count as the aside, and
  * a 2×2 mosaic of the pages it keeps: no captures to show, so each tile is the page's favicon
  * over its title. A tap reopens the group (the owner's `folder.open`); a hold opens its sheet
- * (Rename, Delete). The card is the grid's cell `saved:<id>` for the glide.
+ * (Open, Rename, Delete – `GroupRowSheet`), Rename editing the name in the header in place
+ * (`GroupRename`, as the open group's card does). The card is the grid's cell `saved:<id>` for
+ * the glide.
  */
 export function SavedGroupCard({
   row,
@@ -27,6 +31,7 @@ export function SavedGroupCard({
 }): JSX.Element {
   const { folder } = row
   const pages = folder.savedTabs ?? []
+  const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const press = useLongPress(() => onMenu(row))
   const open = (): void => {
     if (press.swallowsClick()) return
@@ -56,9 +61,13 @@ export function SavedGroupCard({
         {...press.handlers}
       >
         <GroupGlyph folder={folder} saved />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-          {folder.name.trim()}
-        </span>
+        {renaming ? (
+          <GroupRename folder={folder} />
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+            {folder.name.trim()}
+          </span>
+        )}
         <span className="zen-group-row-count" data-testid="group-card-count">
           {row.count}
         </span>

@@ -17,6 +17,7 @@ import type { UpdateDotRecord } from '../core/updateDot'
 import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { EducationalTipMemory } from './educationalTips'
 import type { ToolbarPins } from './toolbarPins'
+import type { OverviewChromeCommand, OverviewView } from './overviewMenu'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
 import type {
@@ -5329,6 +5330,18 @@ export interface MenuAnchor {
  * thumbnail. The sheet draws it as a two-line row in the §9.16 header's place; a tap expands the
  * address to its full length, a long-press copies it.
  */
+/**
+ * The chrome's word to `app.menu` while the tab overview stands (tab overview cleanup spec §4):
+ * which VIEW the overview shows – the space's tabs, or the private session's under the mask –
+ * and, in the select-tabs mode (§5), how many cards are picked of how many, so the menu is the
+ * selection's three rows. The counts the rows carry (the view's tabs, the inactive and recently
+ * closed lists, the spaces) are the core's own.
+ */
+export interface OverviewMenuRequest {
+  view: OverviewView
+  selection?: { selected: number; total: number }
+}
+
 export interface MenuHeader {
   /** The address the header names; what a long-press copies. */
   url: string
@@ -5765,7 +5778,17 @@ export interface Commands {
    * reads the fold from the button's box; the core builds the menu without the toolbar's width.
    */
   'app.menu': {
-    args: { anchor?: Rect; keyboard?: boolean; mediaHubFolded?: boolean }
+    args: {
+      anchor?: Rect
+      keyboard?: boolean
+      mediaHubFolded?: boolean
+      /**
+       * The tab overview stands (tab overview cleanup spec §1, §4): the bar's ⋯ opens the
+       * overview's menu – the chrome's word on its view and its selection, the core's on the
+       * counts – in place of the app menu; absent, the app menu.
+       */
+      overview?: OverviewMenuRequest
+    }
     result: void
   }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
@@ -7495,6 +7518,12 @@ export interface Events {
    * within the minute suggests closing other tabs): the phone chrome opens its overview.
    */
   'overview.open': void
+  /**
+   * A row of the tab overview's ⋯ menu (tab overview cleanup spec §4; `app.menu` with
+   * `overview`) that the chrome acts on – its view, its selection, its search, its sheets, the
+   * New Tab card's tap – handed back as the command; the mounted overview runs it.
+   */
+  'overview.command': { command: OverviewChromeCommand }
   /**
    * The app menu's "Media Controls…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's

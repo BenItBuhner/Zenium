@@ -72,6 +72,8 @@ import { activeTab, isEmptySplitPane, regularOf } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { closeWithUndo } from '@renderer/lib/closeUndo'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
+import { dispatchOverviewCommand } from '@renderer/lib/overviewCommands'
+import { overviewMenuRequest } from '@renderer/lib/overviewMenuRequest'
 import { tabsOnPane } from '@renderer/lib/privateTabs'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
@@ -297,7 +299,12 @@ export function useMainEvents(): void {
         // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
-        if (!claimed) run('app.menu', { keyboard: true, mediaHubFolded: mediaHubFolded() })
+        if (!claimed)
+          run('app.menu', {
+            keyboard: true,
+            mediaHubFolded: mediaHubFolded(),
+            ...overviewMenuRequest()
+          })
       }),
       // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
       // and the page (lib/panes.ts).
@@ -484,6 +491,9 @@ export function useMainEvents(): void {
         )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
+      // A row of the tab overview's ⋯ menu that is the chrome's to act on (tab overview cleanup
+      // spec §4): the mounted overview hears it (`onOverviewCommand`).
+      onEvent('overview.command', ({ command }) => dispatchOverviewCommand(command)),
       onEvent('menu.hide', ({ menuId }) => {
         if (uiStore.get().menu?.id === menuId) closeMenu(false)
       }),

@@ -61,6 +61,7 @@ const { layoutAnimations } = await import('@renderer/lib/motion/flip')
 const { cancelLift } = await import('../useCardLift')
 const { clearDepartures } = await import('../departureStore')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
+const { dispatchOverviewCommand } = await import('@renderer/lib/overviewCommands')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -457,15 +458,10 @@ describe('the select-tabs mode under the spring', () => {
   it("entered while the overview settles open, the mode stays through the spring's frames and its landing", async () => {
     overview({ phase: 'settling', progress: 0.9, heroTabId: 'a', target: 1 })
     mount(stateOf(), true)
-    // The header's menu, then its first row: the cards are checkboxes, the header is Done's.
-    act(() => byLabel('More')!.click())
+    // The bar's ⋯ menu's Select Tabs (cleanup spec §4, the row's `overview.command`): the cards
+    // are checkboxes, the header is Done's.
+    act(() => dispatchOverviewCommand('select-tabs'))
     await settle()
-    await land()
-    const row = [...document.querySelectorAll<HTMLElement>('button')].find(
-      (b) => b.textContent?.trim() === 'Select Tabs'
-    )
-    expect(row).toBeDefined()
-    act(() => row!.click())
     await land()
     expect(checkboxes().sort()).toEqual(['a', 'b', 'm1', 'm2'])
     expect(byLabel('Done')).not.toBeNull()

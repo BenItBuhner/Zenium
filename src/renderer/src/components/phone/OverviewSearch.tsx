@@ -14,45 +14,34 @@ import type { SearchReach } from './useSearchReach'
 export const OVERVIEW_SEARCH_ID = 'overview-search'
 
 /**
- * The tab search's field (matrix TAB-21; v2 §9.12): the phone field, 40 tall at the grid's
- * gutter, pinned under the overview's header and over the segment – part of what stays put
- * while the pane under it scrolls and narrows.
+ * The tab search's field (matrix TAB-21; v2 §9.12; tab overview cleanup spec §4, §7): the phone
+ * field, 40 tall at the grid's gutter, pinned under the overview's one header row while the
+ * search stands – part of what stays put while the view under it scrolls and narrows – on the
+ * phone and the tablet alike (§7: the tablet's field in the header row is gone; the ⋯ menu's
+ * "Search Tabs" row opens this one on both).
  * On the overview's window backdrop it is a resting control in the URL bar's own fill
  * (`--v2-urlbar`) with the panel's shadow and no hairline – the pill's look, as the new tab
  * page's field wears it – its text in the page ink: a page surface standing on the window
  * (§9.29). The trailing X is one control with two meanings, the ones Escape and back have
- * (`TabOverview`): with a query it clears the field and keeps it up; empty, it closes the field.
- * The field takes the keyboard only from the header's magnifier (a user's tap, `inputRef`),
- * never as the overview opens.
- *
- * `inline` is the tablet header's pose (TABLET-14): the same field standing in the header row
- * itself, where the phone has the magnifier – always there while the pane is searchable, so it
- * has no close, and its X stands only over a query (`.zen-overview-search-inline`).
+ * (`TabOverview`): with a query it clears the field and keeps it up; empty, it closes the field
+ * and gives the header row back. The field takes the keyboard only from the menu's row (a
+ * user's pick, `inputRef`), never as the overview opens.
  */
 export function OverviewSearchField({
   value,
   inputRef,
   onChange,
   onClear,
-  onClose,
-  inline = false
+  onClose
 }: {
   value: string
   inputRef: RefObject<HTMLInputElement | null>
   onChange: (value: string) => void
   onClear: () => void
   onClose: () => void
-  inline?: boolean
 }): JSX.Element {
   return (
-    <div
-      className={
-        inline
-          ? 'zen-overview-search zen-overview-search-inline shrink-0'
-          : 'zen-overview-search shrink-0 px-3 pb-2'
-      }
-      data-testid="overview-search"
-    >
+    <div className="zen-overview-search shrink-0 px-3 pb-2" data-testid="overview-search">
       <div className="zen-phone-field zen-overview-search-field">
         <Search className="zen-phone-field-icon h-5 w-5" strokeWidth={1.75} aria-hidden />
         <input
@@ -69,21 +58,19 @@ export function OverviewSearchField({
           enterKeyHint="search"
           onChange={(e) => onChange(e.target.value)}
         />
-        {(!inline || value) && (
-          <button
-            type="button"
-            className="zen-phone-field-clear zen-v2-field-clear"
-            aria-label={value ? 'Clear search' : 'Close search'}
-            data-testid="overview-search-clear"
-            // The press never takes the focus (the omnibox's Clear the same): the input keeps it
-            // and the keyboard stays where it is. Otherwise the button's moment of focus would
-            // send the host a hide, the input's refocus a show right after, and the two race.
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={value ? onClear : onClose}
-          >
-            <X className="h-5 w-5" strokeWidth={1.75} />
-          </button>
-        )}
+        <button
+          type="button"
+          className="zen-phone-field-clear zen-v2-field-clear"
+          aria-label={value ? 'Clear search' : 'Close search'}
+          data-testid="overview-search-clear"
+          // The press never takes the focus (the omnibox's Clear the same): the input keeps it
+          // and the keyboard stays where it is. Otherwise the button's moment of focus would
+          // send the host a hide, the input's refocus a show right after, and the two race.
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={value ? onClear : onClose}
+        >
+          <X className="h-5 w-5" strokeWidth={1.75} />
+        </button>
       </div>
     </div>
   )

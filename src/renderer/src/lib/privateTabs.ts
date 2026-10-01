@@ -1,3 +1,4 @@
+import type { OverviewView } from '@shared/overviewMenu'
 import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { run } from './api'
@@ -9,21 +10,25 @@ import type { LocalMenuItem } from './ui'
  * Private tabs on the phone (INC-01 … INC-08, TAB-02/03). The core models private browsing as a
  * container (`PRIVATE_CONTAINER_ID`); on a host without windows that container's tabs live in
  * the one window next to the regular ones, and the chrome keeps the two apart: the overview shows
- * them on a pane of their own, the pill's swipe stays on the track of the mode it started in, and
+ * them in a VIEW of their own, the pill's swipe stays on the track of the mode it started in, and
  * the window surfaces blend to the private theme while a private tab is the one in view.
  */
 
 /**
- * The overview's panes: the space's tabs, its tab groups – open and saved, as rows (Chrome's
- * "Tab groups" pane, TAB-16) – and the private tabs (TAB-02).
+ * The overview's two views (tab overview cleanup spec §3): the space's tabs – its groups inline
+ * among them as cards (§2) – or the private session's tabs under the mask. The private view is
+ * the same overview in the private family, not a pane beside the tabs: the ⋯ menu's "Private
+ * Tabs (N)" / "Tabs (N)" row moves between the two, and the overview opens on the view of the
+ * tab in view. (`OverviewPane` is the view's older name, kept for the stores that key on it.)
  */
-export type OverviewPane = 'tabs' | 'groups' | 'private'
+export type OverviewPane = OverviewView
+export type { OverviewView }
 
 interface PrivateTabsState {
   /**
-   * The pane the user picked with the segment while the overview was up; null follows the tab in
-   * view (a private tab opens the overview on its own pane, as Chrome's switcher does). Reset when
-   * the overview goes, so the next one opens where the user is.
+   * The view the user picked from the ⋯ menu while the overview was up; null follows the tab in
+   * view (a private tab opens the overview on the private view, as Chrome's switcher does). Reset
+   * when the overview goes, so the next one opens where the user is.
    */
   pane: OverviewPane | null
 }
@@ -90,7 +95,7 @@ export function privateTabsOf(state: UIState): Tab[] {
   return order
 }
 
-/** The pane the overview shows: the one picked, else the one the tab in view belongs to. */
+/** The view the overview shows: the one picked, else the one the tab in view belongs to. */
 export function overviewPane(
   state: UIState,
   picked: OverviewPane | null = privateTabsStore.get().pane
@@ -108,7 +113,7 @@ export function resetOverviewPane(): void {
   privateTabsStore.set({ pane: null })
 }
 
-/** `tabs` on `pane`: private cards never show in the regular pane, nor regular ones in the private pane. */
+/** `tabs` on `pane`: private cards never show in the regular view, nor regular ones in the private view. */
 export function tabsOnPane(tabs: readonly Tab[], pane: OverviewPane): Tab[] {
   const wanted = pane === 'private'
   return tabs.filter((tab) => isPrivateTab(tab) === wanted)
@@ -158,7 +163,7 @@ export function openInPrivateItems(
 
 /**
  * Whether the chrome stands on a private surface: a private tab is the one in view, or the
- * overview is up (or on its way up) on the private pane, whose cards are private pages. What the
+ * overview is up (or on its way up) on the private view, whose cards are private pages. What the
  * theme blend (MOT-14), the status bar and the window's screenshot guard follow (§9.29: the
  * private theme is the window surfaces' look, not a page's).
  */

@@ -77,16 +77,17 @@ export type OverviewMenuCommand =
 
 /**
  * The rows the CHROME acts on – the overview's own state: its view, its selection, its search,
- * its sheets. The core runs the other three itself (New Tab, New Private Tab, a space switch:
- * tabs it opens or switches, as the app menu's rows do) and hands these to the chrome as one
+ * its sheets – and the two new-tab rows, which are the New Tab card's tap (the phone's new tab
+ * page comes up over the overview, grown out of the chrome, `zen-new-tab`; a core-opened tab
+ * would leave the overview on a blank page). The core runs the space switch itself (it switches
+ * the window's space, as the app menu's rows do) and hands these to the chrome as one
  * `overview.command` event.
  */
-export type OverviewChromeCommand = Exclude<
-  OverviewMenuCommand,
-  'new-tab' | 'new-private-tab' | 'switch-space'
->
+export type OverviewChromeCommand = Exclude<OverviewMenuCommand, 'switch-space'>
 
 const CHROME_COMMANDS: ReadonlySet<OverviewMenuCommand> = new Set<OverviewMenuCommand>([
+  'new-tab',
+  'new-private-tab',
   'switch-view',
   'select-tabs',
   'search-tabs',

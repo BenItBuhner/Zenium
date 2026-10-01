@@ -17,10 +17,6 @@ import type { MenuItemTemplate } from './platform'
  */
 
 export interface OverviewMenuActs {
-  /** New Tab: the core opens the new tab page in the window (`Browser.openNewTab`). */
-  newTab(): void
-  /** New Private Tab: the core opens a private tab (`Tabs.newPrivateTab`). */
-  newPrivateTab(): void
   /** A row of Switch Space ▸: the core switches the window to the space (`Tabs.switchSpace`). */
   switchSpace(spaceId: string): void
   /** Every other row: the chrome's to act on (the `overview.command` event). */
@@ -45,9 +41,7 @@ export function overviewMenuTemplate(
       }))
       return item
     }
-    if (command === 'new-tab') item.click = () => acts.newTab()
-    else if (command === 'new-private-tab') item.click = () => acts.newPrivateTab()
-    else if (isOverviewChromeCommand(command)) item.click = () => acts.chrome(command)
+    if (isOverviewChromeCommand(command)) item.click = () => acts.chrome(command)
     return item
   })
 }

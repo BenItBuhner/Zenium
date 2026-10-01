@@ -5,10 +5,11 @@ import type { MenuItemTemplate } from '../platform'
 
 /*
  * The tab overview's ⋯ menu as the core's template (tab overview cleanup spec §4, §5): the
- * rows `overviewMenu` writes, each mapped to the host's item – the three the core runs itself
- * (New Tab, New Private Tab, a Switch Space ▸ row) and every other row handed to the chrome as
- * its command; the destructive row in the danger ink; a zero-count row greyed, not gone; the
- * hairline a separator; the spaces as radio rows with the current one checked.
+ * rows `overviewMenu` writes, each mapped to the host's item – a Switch Space ▸ row the core
+ * runs itself and every other row handed to the chrome as its command (New Tab among them: the
+ * phone's new tab page comes up over the overview from the chrome); the destructive row in the
+ * danger ink; a zero-count row greyed, not gone; the hairline a separator; the spaces as radio
+ * rows with the current one checked.
  */
 
 function acts(): OverviewMenuActs & {
@@ -17,8 +18,6 @@ function acts(): OverviewMenuActs & {
   const calls: string[] = []
   return {
     calls,
-    newTab: () => calls.push('newTab'),
-    newPrivateTab: () => calls.push('newPrivateTab'),
     switchSpace: (id) => calls.push(`switchSpace:${id}`),
     chrome: (command) => calls.push(`chrome:${command}`)
   }
@@ -39,7 +38,7 @@ const labels = (items: MenuItemTemplate[]): string[] =>
   items.map((i) => (i.type === 'separator' ? '—' : i.label!))
 
 describe('the overview menu template (§4)', () => {
-  it('maps every row in order: the core’s three to its own acts, the rest to the chrome’s command', () => {
+  it('maps every row in order: the space switch to the core’s act, the rest to the chrome’s command', () => {
     const a = acts()
     const items = overviewMenuTemplate(AT_REST, a)
     expect(labels(items)).toEqual([
@@ -56,8 +55,8 @@ describe('the overview menu template (§4)', () => {
     ])
     for (const item of items) if (item.type !== 'separator' && !item.submenu) item.click?.()
     expect(a.calls).toEqual([
-      'newTab',
-      'newPrivateTab',
+      'chrome:new-tab',
+      'chrome:new-private-tab',
       'chrome:switch-view',
       'chrome:select-tabs',
       'chrome:search-tabs',

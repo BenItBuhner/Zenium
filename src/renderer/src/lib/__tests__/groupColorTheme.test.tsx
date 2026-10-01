@@ -13,7 +13,7 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
-import { GroupColorPalette } from '@renderer/components/phone/GroupsPane'
+import { GroupColorPalette } from '@renderer/components/phone/GroupSheets'
 import { groupColorChannels, groupColorVars } from '../groups'
 
 /*

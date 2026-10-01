@@ -160,6 +160,10 @@ function takeStill(el: HTMLElement, root: HTMLElement): PaneStill {
   // starts from it and not from a jump to solid.
   const opacity = el.ownerDocument.defaultView?.getComputedStyle(el).opacity
   if (opacity && opacity !== '1') node.style.opacity = opacity
+  // A Space's slot leaving mid-swipe (GN-19, `useSpaceSwipe`) is drawn where the finger left
+  // it: its travel is in the box measured above, so the copy must not carry the transform too.
+  node.style.transform = ''
+  delete node.dataset.swipe
   for (const hook of node.querySelectorAll(
     [...HOOKS.map((attr) => `[${attr}]`), '.zen-overview-grid'].join(', ')
   )) {
