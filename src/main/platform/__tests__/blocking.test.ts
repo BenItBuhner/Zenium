@@ -1207,6 +1207,123 @@ describe('GhosteryTextMatcher', () => {
       expect(ran.length).toBe(1)
       expect(ran[0]!).toBeLessThan(DESERIALISE_IDLE_CAP_MS)
     })
+
+    it('with a quiet wait, runs once the probes have been on time for that long; a late probe starts the count over; the cap runs it regardless (W8-P1b)', () => {
+      vi.useFakeTimers()
+      const now = (): number => Date.now()
+      let late = false
+      const idle = idleSlot({ busy: () => late, now })
+      const ran: number[] = []
+      const start = Date.now()
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      // Probes every 4 ms, all on time: the first one at or past 50 ms of quiet runs it.
+      vi.advanceTimersByTime(IDLE_QUIET_MS - 2)
+      expect(ran).toEqual([])
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran).toEqual([52])
+
+      // A late probe 40 ms in: the quiet window starts over from it.
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const second = Date.now()
+      vi.advanceTimersByTime(36)
+      late = true
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      late = false
+      expect(ran.length).toBe(1)
+      vi.advanceTimersByTime(IDLE_QUIET_MS - 2)
+      expect(ran.length).toBe(1)
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran.length).toBe(2)
+      expect(ran[1]! - (second - start)).toBe(40 + 52)
+
+      // Never quiet: the cap.
+      late = true
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const third = Date.now()
+      vi.advanceTimersByTime(IDLE_WAIT_CAP_MS - 1)
+      expect(ran.length).toBe(2)
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran.length).toBe(3)
+      expect(ran[2]! - (third - start)).toBeGreaterThanOrEqual(IDLE_WAIT_CAP_MS)
+      expect(ran[2]! - (third - start)).toBeLessThan(IDLE_WAIT_CAP_MS + IDLE_PROBE_MS)
+
+      // Quiet for 30 ms, busy once, then quiet: 30 ms of the window are not enough.
+      late = false
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const fourth = Date.now()
+      vi.advanceTimersByTime(28)
+      late = true
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      late = false
+      vi.advanceTimersByTime(IDLE_QUIET_MS - 4)
+      expect(ran.length).toBe(3)
+      vi.advanceTimersByTime(IDLE_PROBE_MS * 2)
+      expect(ran.length).toBe(4)
+      expect(ran[3]! - (fourth - start)).toBe(32 + 52)
+    })
+
+    it('with a quiet wait, runs no sooner than the quiet on an idle loop', async () => {
+      vi.useRealTimers()
+      const idle = idleSlot()
+      const ran: number[] = []
+      const start = performance.now()
+      idle(() => ran.push(performance.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const deadline = Date.now() + IDLE_WAIT_CAP_MS + 500
+      while (ran.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+      expect(ran.length).toBe(1)
+      expect(ran[0]!).toBeGreaterThanOrEqual(IDLE_QUIET_MS)
+    })
+  })
+
+  it('takes the first idle moment for a scope with no list compiled, waits for quiet for every later build of it, and still drops superseded bytes unread (W8-P1b pins)', async () => {
+    const s = source()
+    const h = handDriven()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0, h.compile, h.slot)
+    // The first list: nothing answers for the scope yet, so the slot is the urgent one.
+    s.engine.setRuleSet(textSet('a', '||a.example^'))
+    matcher.rebuild()
+    await h.release(0)
+    expect(h.asked).toEqual([{ capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 }])
+    h.fireSlot()
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+
+    // Every build after it: the scope is protected, the bytes wait for a quiet main thread.
+    s.engine.setRuleSet(textSet('b', '||b.example^'))
+    matcher.rebuild()
+    await h.release(1)
+    expect(h.asked).toEqual([
+      { capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 },
+      { capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS }
+    ])
+    expect(matcher.match(ctx('https://b.example/'))).toBeNull()
+    // A newer build comes back before the slot fires: its bytes replace the waiting ones, and
+    // the slot already asked for serves them – no second slot, one deserialise.
+    s.engine.setRuleSet(textSet('c', '||c.example^'))
+    matcher.rebuild()
+    await h.release(2)
+    expect(matcher.superseded).toBe(1)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(h.slots).toBe(2)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(2)
+    expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://c.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.ready).toBe(true)
+    expect(h.slots).toBe(2)
+
+    // The master switch off and on again: the scope's matcher is the empty one meanwhile
+    // (built from no sets), so the list's return is urgent again.
+    s.engine.setEnabled('a', false)
+    s.engine.setEnabled('b', false)
+    s.engine.setEnabled('c', false)
+    matcher.rebuild()
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    s.engine.setEnabled('a', true)
+    matcher.rebuild()
+    await h.release(3)
+    expect(h.asked.at(-1)).toEqual({ capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 })
+    h.fireSlot()
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
   })
 
   describe("the worker's cache write", () => {

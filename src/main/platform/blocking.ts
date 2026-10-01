@@ -589,7 +589,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
    * the unscoped one it falls back to), or the one that does was built from no sets.
    */
   private unprotectedScope(partition: string | null): boolean {
-    const compiled = partition === null ? this.general : (this.scoped.get(partition) ?? this.general)
+    const compiled =
+      partition === null ? this.general : (this.scoped.get(partition) ?? this.general)
     return !compiled || compiled.fingerprint === ''
   }
 
