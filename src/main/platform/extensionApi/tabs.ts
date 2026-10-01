@@ -22,8 +22,10 @@ import {
   tabChangeInfo,
   tabMatchesQuery
 } from '../../../core/extensions/api/tabs'
+import { ERROR_AGENT_GROUP } from '../../../core/extensions/api/tabGroups'
 import { cssOriginFor } from './cssOrigin'
 import type { ModelSnapshot, TabSnapshot } from './model'
+import { isAgentFolder } from './tabGroups'
 import {
   ApiError,
   WINDOW_ID_CURRENT,
@@ -306,7 +308,9 @@ export class TabsApi {
    * Put a tab at a Chrome index of a window: Chrome indices run across Essentials, pinned and
    * regular tabs; the neighbour at the target index decides the space and section. Into another
    * window (`into`, the window's own space): its space, and its pinned section for an Essential,
-   * which blank and private windows do not have.
+   * which blank and private windows do not have. A tab of an AI agent's folder stays in its
+   * space: a reorder there keeps its folder; a landing in another space (or in another window's)
+   * would drop it, and is refused as `tabs.ungroup` is.
    */
   private moveToIndex(tab: Tab, win: ZenWindow, index: number, into: Space | null = null): void {
     const others = this.model.tabsInWindow(win).filter((t) => t.id !== tab.id)
@@ -328,6 +332,13 @@ export class TabsApi {
         tab.spaceId ??
         undefined
     }
+    if (
+      tab.folderId &&
+      spaceId !== undefined &&
+      spaceId !== tab.spaceId &&
+      isAgentFolder(this.host, tab.folderId)
+    )
+      throw new ApiError(ERROR_AGENT_GROUP)
     const sectionIndex = before.filter((t) => {
       if (section === 'essential') return t.essential
       if (t.essential || (t.spaceId ?? undefined) !== spaceId) return false
