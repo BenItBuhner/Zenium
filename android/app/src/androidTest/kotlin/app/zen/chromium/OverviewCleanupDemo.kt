@@ -63,6 +63,12 @@ import java.io.File
  * Positions come from the chrome's DOM (`domBox`, calibrated at the warm-up): the WebView's
  * accessibility tree trails the software-rendered emulator by seconds. See [DemoHarness] for
  * the plumbing.
+ *
+ * The recorder and the stills see the private view only because
+ * `PrivateBrowsing.captureForRecording` is on for the run (the debug-build override the private
+ * drivers use): the window's screenshot guard (`FLAG_SECURE`) stands while the surface is
+ * private and would black the private view's captures out, as it did the retry's at
+ * `372e5246e` (its four private stills blank, every §3 check PASS by the DOM).
  */
 @RunWith(AndroidJUnit4::class)
 class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cleanup", "overview-cleanup-demo") {
@@ -70,6 +76,11 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
     private lateinit var findings: File
     private var shots = 0
     private var failures = 0
+
+    /** The private view must show in the stills and the recording; see the class comment. */
+    override fun beforeLaunch() {
+        PrivateBrowsing.captureForRecording = true
+    }
 
     @Test
     fun record() {
@@ -148,10 +159,10 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
             val up = touchDomExpecting("the title", q(TITLE), "the Spaces sheet is presented") { sheetRows().isNotEmpty() }
             SystemClock.sleep(1_200)
             val rows = sheetRows()
-            val current = jsList("Array.prototype.map.call(document.querySelectorAll('$SPACE_ROW[aria-current=\"true\"]'),function(e){return e.textContent.trim()})")
+            val current = currentSpaceRows()
             still("spaces-sheet-light")
-            expect("the Spaces sheet lists the spaces with their counts and New Space… last: $rows", up && rows.size == 3 && rows[0].startsWith("Work") && rows[1].startsWith("Personal") && rows[2] == "New Space…")
-            expect("the current space is marked (aria-current): $current", current.size == 1 && current[0].startsWith("Work"))
+            expect("the Spaces sheet lists the spaces with their counts and New Space… last: $rows", up && rows == SPACES_ROWS)
+            expect("the current space is marked (aria-current): $current", current == listOf(SPACES_ROWS[0]))
             expect("the title reads expanded while the sheet stands", attr(TITLE, "aria-expanded") == "true")
             back()
             val away = awaitUntil(6_000) { sheetRows().isEmpty() }
@@ -208,18 +219,18 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
             awaitUntil(6_000) { !inDom("$GROUP[data-clip]") }
             SystemClock.sleep(1_000)
             still("group-card-light")
-            expect("folded: the card with the 2×2 mosaic, its count '${textOf(CARD_COUNT)}', its name '${cardName()}', the members off the grid", folded && textOf(CARD_COUNT) == "2" && cardName() == "Research" && !inDom("$GROUP .zen-group-members [data-cell=\"tab_www\"]") && !inDom(OPTIONS))
+            expect("folded: the card with the 2×2 mosaic, its count '${textOf(CARD_COUNT)}', its name '${cardName()}', the members off the grid (hidden from the eye and the reader, kept for the FLIP): ${membersHidden()}", folded && textOf(CARD_COUNT) == "2" && cardName() == "Research" && membersHidden() && !inDom(OPTIONS))
             setColorScheme("dark")
             still("group-card-dark")
             setColorScheme("light")
             // The unfold in place: the next touch.
             val unfolded = touchDomExpecting("the folded card's header", q(GROUP_HEADER), "the card unfolds in place") {
-                attr(GROUP_HEADER, "aria-expanded") == "true" && inDom("$GROUP .zen-group-members [data-cell=\"tab_www\"]")
+                attr(GROUP_HEADER, "aria-expanded") == "true" && !membersHidden() && inDom("$GROUP .zen-group-members [data-cell=\"tab_www\"]")
             }
             awaitUntil(6_000) { !inDom("$GROUP[data-clip]") }
             SystemClock.sleep(1_000)
             still("group-unfolded")
-            expect("unfolded: the members' cards under the header row, the header's ⋯ back", unfolded && !inDom("$GROUP[data-collapsed]") && inDom(OPTIONS) && cellKeys().indexOf("group:$GROUP_ID") >= 0)
+            expect("unfolded: the members' cards under the header row (shown again), the header's ⋯ back", unfolded && !inDom("$GROUP[data-collapsed]") && !membersHidden() && inDom(OPTIONS) && cellKeys().indexOf("group:$GROUP_ID") >= 0)
             // The header's ⋯: the group's sheet.
             val sheet = touchDomExpecting("the group's ⋯", q(OPTIONS), "the group's sheet is presented") { sheetRows().isNotEmpty() }
             SystemClock.sleep(1_200)
@@ -567,12 +578,28 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
 
     // --- the sheets ------------------------------------------------------------------------------
 
-    /** The rows of any overview sheet up (the Spaces sheet's, a group's), by their words; empty with none. */
+    /**
+     * The rows of any overview sheet up (the Spaces sheet's, a group's), by their words – what
+     * the reader says: the text nodes outside `aria-hidden` (a space's emoji glyph is drawn as
+     * text, hidden from the tree), the row's spans a space apart ("Work 10 tabs"); empty with none.
+     */
     private fun sheetRows(): List<String> =
-        jsList("Array.prototype.map.call(document.querySelectorAll('.zen-sheet .zen-sheet-item'),function(e){return e.textContent.trim()}).filter(function(t){return t.length>0})")
+        jsList("Array.prototype.map.call(document.querySelectorAll('.zen-sheet .zen-sheet-item'),function(e){return ($WORDS_JS)(e)}).filter(function(t){return t.length>0})")
 
     private fun spaceRow(name: String): String =
-        "(function(){return Array.prototype.find.call(document.querySelectorAll('$SPACE_ROW'),function(e){return e.textContent.trim().indexOf(${JSONObject.quote(name)})===0})||null})()"
+        "(function(){return Array.prototype.find.call(document.querySelectorAll('$SPACE_ROW'),function(e){return ($WORDS_JS)(e).indexOf(${JSONObject.quote(name)})===0})||null})()"
+
+    /** The rows marked current (`aria-current`), by their words. */
+    private fun currentSpaceRows(): List<String> =
+        jsList("Array.prototype.map.call(document.querySelectorAll('$SPACE_ROW[aria-current=\"true\"]'),function(e){return ($WORDS_JS)(e)})")
+
+    /**
+     * The group card's members hidden under the fold: the member grid stays in the DOM for the
+     * FLIP (the unfold grows it back from its box) with `aria-hidden` and opacity 0 – off the
+     * grid for the eye and the reader both.
+     */
+    private fun membersHidden(): Boolean =
+        jsString("(function(){var m=document.querySelector('$GROUP > .zen-group-members');return m&&m.getAttribute('aria-hidden')==='true'&&getComputedStyle(m).opacity==='0'?'hidden':''})()") == "hidden"
 
     /** The Close-all prompt (`CloseAllSheet`) is up: its title block's heading. */
     private fun promptUp(): Boolean = inDom(PROMPT_TITLE)
@@ -726,6 +753,14 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
         private const val COUNT = ".zen-overview [data-testid=\"overview-count\"]"
         private const val SPACE_SLOT = ".zen-overview-space"
         private const val SPACE_ROW = ".zen-sheet [data-testid=\"spaces-sheet-space\"]"
+        /** The Spaces sheet's rows by their words (`sheetRows`): the seeded profile's two spaces with the overview's counts, New Space… last. */
+        private val SPACES_ROWS = listOf("Work 10 tabs", "Personal 5 tabs", "New Space…")
+        /**
+         * A JS function of an element: its words as the reader says them – the text nodes outside
+         * any `aria-hidden` subtree (the space glyph, the check), each text node a word apart.
+         */
+        private const val WORDS_JS =
+            "function(root){var parts=[];(function walk(n){if(n.nodeType===3){var t=n.nodeValue.trim();if(t)parts.push(t);return}if(n.nodeType!==1||n.hasAttribute('aria-hidden'))return;for(var c=n.firstChild;c;c=c.nextSibling)walk(c)})(root);return parts.join(' ')}"
         private const val GROUP = ".zen-overview-grid .zen-group[data-cell=\"group:$GROUP_ID\"]"
         private const val GROUP_HEADER = "$GROUP .zen-group-header"
         private const val CARD_COUNT = "$GROUP [data-testid=\"group-card-count\"]"
