@@ -33,6 +33,8 @@ export interface DeviceChooserHandle {
   update(candidates: DeviceCandidate[], scanning?: boolean): void
   /** The engine withdrew the request (the page navigated away, a scan gave up): no answer. */
   close(): void
+  /** An AI agent answers it, on its own tab: the pick is granted to that tab alone, never stored. */
+  readonly byAgent?: boolean
 }
 
 interface Pending {
@@ -103,7 +105,8 @@ export class DeviceChooserService {
             candidates = dedupe(list)
             agent.update({ candidates, ...(scanning !== undefined ? { scanning } : {}) })
           },
-          close: () => agent.close()
+          close: () => agent.close(),
+          byAgent: true
         }
     }
     const chooser: DeviceChooser = {

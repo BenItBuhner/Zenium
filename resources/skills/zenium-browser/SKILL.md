@@ -264,7 +264,7 @@ Listed only where native prompts route to agents. Lists what your tabs wait for 
 
 Answer a prompt with one of its actions: `promptId` (or `tabId` when that tab has only one prompt) and `action`, plus what that action reads. Returns a snapshot afterwards.
 
-- Permissions: `"action":"allow"` or `"deny"` - an allow lasts until the tab leaves the site and is never saved for the user. Sign-in: `"action":"sign-in","username":"...","password":"..."` or `"cancel"`. Client certificate: `"action":"select","index":0` or `"none"`. Download: `"action":"save","filename":"report.pdf"` (the name only; it stays in Downloads) or `"cancel"`. Screen sharing: `"action":"share","sourceId":"..."`. Device picker: `"action":"connect","deviceId":"..."`. Link to another app: `"action":"allow"` or `"deny"`.
+- Permissions: `"action":"allow"` or `"deny"` - an allow lasts until the tab leaves the site and is never saved for the user. Sign-in: `"action":"sign-in","username":"...","password":"..."` or `"cancel"`. Client certificate: `"action":"select","index":0` or `"none"`. Download: `"action":"save","filename":"report.pdf"` (the name only; it stays in Downloads) or `"cancel"`. Screen sharing: `"action":"share","sourceId":"..."`. Device picker: `"action":"connect","deviceId":"..."` - the site keeps the device while the tab is yours, never saved for the user. Link to another app: `"action":"allow"` or `"deny"`.
 - Example: `browser_respond_prompt {"promptId":"prompt_7c1e...","action":"deny"}`
 - Pitfalls: a sign-in, certificate, device or app link is a decision with the user's identity or hardware. Use only what the task gives you; when unsure, refuse it and tell the user. Page dialogs (alert, confirm, "Leave site?") are answered with `browser_handle_dialog`, not here.
 

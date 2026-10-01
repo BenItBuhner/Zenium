@@ -318,7 +318,7 @@ export function deviceChooserSpec(
     details: { origin, device: kind, candidates: current() },
     actions: {
       connect:
-        'give the site the device {"deviceId":…} (a pick is a grant the site keeps, as a person\'s would be) – browser_prompts shows the list as it fills in',
+        'give the site the device {"deviceId":…} while this tab is yours (never saved for the user) – browser_prompts shows the list as it fills in',
       cancel: 'refuse'
     },
     defaultAction: 'cancel',
@@ -353,7 +353,7 @@ export function devicePairingSpec(
       pin: prompt.pin
     },
     actions: {
-      confirm: prompt.kind === 'providePin' ? 'pair with {"pin":"…"}' : 'pair',
+      confirm: `${prompt.kind === 'providePin' ? 'pair with {"pin":"…"}' : 'pair'} – nothing is saved in the browser, but the operating system keeps the pairing; pair only when the task asks for it`,
       cancel: 'do not pair'
     },
     defaultAction: 'cancel',

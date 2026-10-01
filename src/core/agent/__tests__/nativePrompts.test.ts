@@ -244,6 +244,8 @@ describe("native prompts on an agent's tab are the agent's", () => {
     expect(await settle(choosing, 200)).toEqual({ kind: 'cancel' })
     fake.service.releaseTab(tab)
     expect(await settle(saving!, 200)).toEqual({ kind: 'cancel' })
+    // Neither tab keeps a device the agent picked on it.
+    expect(fake.devicePicksForgotten).toEqual(expect.arrayContaining([other, tab]))
   })
 
   it("refuses answers to another agent's prompt", async () => {

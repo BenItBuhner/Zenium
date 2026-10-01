@@ -1798,7 +1798,7 @@ const browserRespondPrompt: AgentTool = {
     name: 'browser_respond_prompt',
     title: 'Answer a prompt',
     description:
-      'Answer a prompt one of your tabs waits on (browser_prompts lists them; every result names those still waiting): its id (or tabId when the tab has only one) and one of its actions, with the arguments that action reads – e.g. {"promptId":"prompt_…","action":"allow"}, {"action":"sign-in","username":"…","password":"…"}, {"action":"select","index":0}, {"action":"save","filename":"report.pdf"}, {"action":"upload","paths":["/tmp/a.png"]}. Nothing you answer is remembered for the user: a permission lasts until the tab leaves the site, a sign-in or certificate goes with that one request. Returns a snapshot of the page afterwards.',
+      'Answer a prompt one of your tabs waits on (browser_prompts lists them; every result names those still waiting): its id (or tabId when the tab has only one) and one of its actions, with the arguments that action reads – e.g. {"promptId":"prompt_…","action":"allow"}, {"action":"sign-in","username":"…","password":"…"}, {"action":"select","index":0}, {"action":"save","filename":"report.pdf"}, {"action":"upload","paths":["/tmp/a.png"]}. Nothing you answer is remembered for the user: a permission lasts until the tab leaves the site, a device while the tab is yours, a sign-in or certificate goes with that one request. Returns a snapshot of the page afterwards.',
     inputSchema: schema(
       {
         promptId: PROMPT_ID,

@@ -800,6 +800,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.browser.tabs.moveToFolder(tab.id, null)
     this.detach(s, tab.id)
     this.prompts.dismissTab(tab.id)
+    this.browser.permissions.forgetAgentTab(tab.id)
     this.browser.state.commitVolatile()
   }
 
@@ -817,6 +818,7 @@ export class AgentService implements SessionStore, McpHandlers {
     }
     this.dismissAgentDialog(tabId)
     this.prompts.dismissTab(tabId)
+    this.browser.permissions.forgetAgentTab(tabId)
     this.suspectTabs.delete(tabId)
     this.browser.state.commitVolatile()
   }
@@ -967,6 +969,7 @@ export class AgentService implements SessionStore, McpHandlers {
       for (const t of owned) {
         this.dismissAgentDialog(t.id)
         this.prompts.dismissTab(t.id)
+        this.browser.permissions.forgetAgentTab(t.id)
       }
       const now = Date.now()
       for (const groupId of s.groupIds)

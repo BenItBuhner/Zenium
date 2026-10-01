@@ -98,7 +98,13 @@ export interface DeviceIdentity {
  * the grant then lives with that private session (`grantDevice`), as an answer given in private
  * does (`PermissionRequestDetails.privateContainerId`).
  */
-export type DeviceGrantDetails = Pick<PermissionRequestDetails, 'privateContainerId'>
+export type DeviceGrantDetails = Pick<PermissionRequestDetails, 'privateContainerId'> & {
+  /**
+   * The pick was an AI agent's, on this tab of its: the connection lasts while the tab is the
+   * agent's (`forgetAgentTab`) and is never written or listed, whatever the user remembers.
+   */
+  agentTabId?: string
+}
 
 /**
  * A decision changed: `origin` is null when it was a permission's default. `container` names
@@ -257,6 +263,12 @@ export class PermissionService {
    * exceptions of its own.
    */
   private readonly privateDeviceGrants = new Map<string, DeviceGrant[]>()
+  /**
+   * Devices an AI agent picked on one of its tabs, per tab: in memory only, read last
+   * (`hasDeviceGrant`), gone when the tab stops being the agent's (`forgetAgentTab`). The engine
+   * asks per site, not per tab, so the site may use the device from another tab meanwhile.
+   */
+  private readonly agentDeviceGrants = new Map<string, DeviceGrant[]>()
   /** Prompts dismissed without an answer, per decision key (reset by an answer). */
   private readonly dismissals = new Map<string, number>()
   /** Requests answered from a stored allow this session, per key (the notification review). */
@@ -371,6 +383,13 @@ export class PermissionService {
       }
       return true
     }
+    const agentGrant = [...this.agentDeviceGrants.values()]
+      .flat()
+      .find((g) => g.origin === origin && g.kind === kind && sameDevice(g, device))
+    if (agentGrant) {
+      agentGrant.deviceId = device.deviceId
+      return true
+    }
     const container = details?.privateContainerId
     if (!container) return false
     const kept = this.privateDeviceGrants
@@ -404,6 +423,14 @@ export class PermissionService {
       productId: device.productId ?? null,
       serialNumber: device.serialNumber ?? null,
       grantedAt: this.now()
+    }
+    const agentTab = details?.agentTabId
+    if (agentTab) {
+      const kept = (this.agentDeviceGrants.get(agentTab) ?? []).filter(
+        (g) => g.origin !== origin || g.kind !== kind || !sameDevice(g, device)
+      )
+      this.agentDeviceGrants.set(agentTab, [...kept, grant])
+      return
     }
     const container = details?.privateContainerId
     if (container) {
@@ -440,6 +467,11 @@ export class PermissionService {
     if (!origin) return
     const keep = (g: DeviceGrant): boolean =>
       g.origin !== origin || g.kind !== kind || (device !== undefined && !sameDevice(g, device))
+    for (const [tab, grants] of this.agentDeviceGrants) {
+      const left = grants.filter(keep)
+      if (left.length > 0) this.agentDeviceGrants.set(tab, left)
+      else this.agentDeviceGrants.delete(tab)
+    }
     const container = details?.privateContainerId
     if (container) {
       const kept = this.privateDeviceGrants.get(container)
@@ -820,6 +852,11 @@ export class PermissionService {
         this.notify({ permission: grant.kind, origin: grant.origin, container: containerId })
   }
 
+  /** The tab is no longer an AI agent's (released, closed, its session ended): its picks go. */
+  forgetAgentTab(tabId: string): void {
+    this.agentDeviceGrants.delete(tabId)
+  }
+
   /** A stored allow answered a request. Private windows leave no trace in the activity either. */
   private recordHit(key: string, details: PermissionRequestDetails): void {
     if (details.privateContainerId) return
@@ -854,6 +891,7 @@ export class PermissionService {
     this.sessionAllows.clear()
     this.privateDecisions.clear()
     this.privateDeviceGrants.clear()
+    this.agentDeviceGrants.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of keys) this.notify(changeFor(key))
@@ -901,6 +939,7 @@ export class PermissionService {
     this.sessionAllows.clear()
     this.privateDecisions.clear()
     this.privateDeviceGrants.clear()
+    this.agentDeviceGrants.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))

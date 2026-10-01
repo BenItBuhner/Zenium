@@ -52,6 +52,8 @@ export interface FakeBrowser {
   agentDriven: Map<string, boolean[]>
   /** Every `interceptAgentPrompts` a page's view heard, by tab id, in order. */
   intercepts: Map<string, boolean[]>
+  /** Tabs whose agent device picks were forgotten (`permissions.forgetAgentTab`), in order. */
+  devicePicksForgotten: string[]
   /** Files set on inputs (`setInputFiles`) or dropped (`dropFiles`), by tab id. */
   uploads: Map<
     string,
@@ -159,6 +161,7 @@ export function fakeBrowser(
   const input = new Map<string, AgentInputEvent[]>()
   const agentDriven = new Map<string, boolean[]>()
   const intercepts = new Map<string, boolean[]>()
+  const devicePicksForgotten: string[] = []
   const uploads: FakeBrowser['uploads'] = new Map()
   const gates = new Map<string, Promise<void>>()
   const files = options.files ?? new Map<string, string>()
@@ -428,6 +431,7 @@ export function fakeBrowser(
     deleteFolder,
     governor: { thaw: async () => undefined },
     history: { search: () => [] },
+    permissions: { forgetAgentTab: (tabId: string) => devicePicksForgotten.push(tabId) },
     handleCommand: () => undefined
   } as unknown as Browser & { agents: AgentService }
 
@@ -468,6 +472,7 @@ export function fakeBrowser(
     input,
     agentDriven,
     intercepts,
+    devicePicksForgotten,
     uploads,
     user,
     hold: (tabId) => {

@@ -1192,4 +1192,41 @@ describe("PermissionService: an AI agent's tab", () => {
     expect(p.get('notifications', 'https://example.com')).toBeUndefined()
     expect(await p.decide('notifications', PAGE, { tabId: 'user' })).toBe(true)
   })
+
+  it("keeps an agent's device pick to its tab: never written or listed, gone with the tab", () => {
+    const io = fakeIo()
+    const p = new PermissionService(io, prompts(true))
+    const pen = { deviceId: 'd1', name: 'Pen', vendorId: 1, productId: 2, serialNumber: 'S1' }
+    p.grantDevice('usb', PAGE, pen, { agentTabId: 'agent' })
+    p.flushSync()
+    expect(io.writes).toEqual([])
+    expect(p.deviceGrants()).toEqual([])
+    expect(p.deviceGrantsFor(PAGE)).toEqual([])
+    // The engine asks per site; the device found again under a new id is still the agent's pick.
+    expect(p.hasDeviceGrant('usb', PAGE, { ...pen, deviceId: 'd2' })).toBe(true)
+    expect(p.hasDeviceGrant('hid', PAGE, pen)).toBe(false)
+    p.forgetAgentTab('other')
+    expect(p.hasDeviceGrant('usb', PAGE, pen)).toBe(true)
+    p.forgetAgentTab('agent')
+    expect(p.hasDeviceGrant('usb', PAGE, pen)).toBe(false)
+    p.flushSync()
+    expect(io.writes).toEqual([])
+    // The user's own pick is stored as before.
+    p.grantDevice('usb', PAGE, pen)
+    p.flushSync()
+    expect(p.deviceGrants()).toHaveLength(1)
+    expect(JSON.parse(io.writes.at(-1) ?? '{}').devices).toHaveLength(1)
+  })
+
+  it("lets a page's forget() and a blocked site end an agent's device pick", () => {
+    const p = new PermissionService(fakeIo(), prompts(true))
+    const key = { deviceId: 'k1', name: 'Key', vendorId: 3, productId: 4, serialNumber: null }
+    p.grantDevice('hid', PAGE, key, { agentTabId: 'agent' })
+    p.set('hid', 'https://example.com', 'deny')
+    expect(p.hasDeviceGrant('hid', PAGE, key)).toBe(false)
+    p.set('hid', 'https://example.com', null)
+    expect(p.hasDeviceGrant('hid', PAGE, key)).toBe(true)
+    p.forgetDevice('hid', PAGE, key)
+    expect(p.hasDeviceGrant('hid', PAGE, key)).toBe(false)
+  })
 })
