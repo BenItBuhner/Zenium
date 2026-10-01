@@ -760,7 +760,7 @@ describe('the offer’s clock (motion spec §3.2, §10: the band’s offer clock
 })
 
 describe('the "Create shortcut" dialog for a page without an installable manifest', () => {
-  it('is the §9.5 frame dialog in Chrome’s wording (the Lead’s gate on #754): "Create shortcut?", the name field with the page title, "Open as window" unchecked, then Cancel | Create – with the field focused', () => {
+  it('is the §9.5 frame dialog in Chrome’s wording (the Lead’s gate on #754): "Create shortcut?", the name field with the page title, no "Open as window" row until it has its two states, then Cancel | Create – with the field focused', () => {
     uiStore.set({ install: PAGE_PROMPT })
     const el = render(layer(stateWith('t1')))
     expect(popover()).toBeNull()
@@ -773,19 +773,17 @@ describe('the "Create shortcut" dialog for a page without an installable manifes
     expect(field.value).toBe('A plain page')
     expect(dialog.querySelector('label')!.textContent).toBe('Name')
     expect(dialog.querySelector('.zen-v2-field-message')!.textContent).toBe('app.example')
-    // Chrome's "Open as window", a check row under the name, unchecked as Chrome leaves it.
-    const row = dialog.querySelector<HTMLLabelElement>('.zen-v2-check-row')!
-    expect(row).not.toBeNull()
-    expect(row.textContent).toBe('Open as window')
-    const box = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    expect(box.checked).toBe(false)
-    // The order: the name row, the check row, then the footer.
+    // Chrome's "Open as window" check row is withheld (the Lead's ruling on the #754 seams):
+    // every shortcut opens as a window until `webapp.pin` carries the box's two states
+    // (W8-M3b), so the dialog shows no checkbox and no row under the name.
+    expect(dialog.querySelector('.zen-v2-check-row')).toBeNull()
+    expect(dialog.querySelector('input[type="checkbox"]')).toBeNull()
+    expect(dialog.textContent).not.toContain('Open as window')
+    // The order: the name row, then the footer.
     const body = dialog.querySelector('.zen-install-dialog-body')!
     expect(body.contains(field)).toBe(true)
-    expect(body.contains(row)).toBe(true)
-    expect(field.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const footer = dialog.querySelector('.zen-install-dialog-footer')!
-    expect(row.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(body.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(buttons(dialog)).toEqual(['Cancel', 'Create'])
     const create = dialog.querySelector('[data-accept]')!
     expect(create.textContent).toBe('Create')
@@ -793,11 +791,6 @@ describe('the "Create shortcut" dialog for a page without an installable manifes
     // A form, not a confirm: the keyboard starts in the name field (Chrome's too), not on the
     // container (§5.7 is the destructive confirms').
     expect(document.activeElement).toBe(field)
-    // The box toggles with the user.
-    click(box)
-    expect(box.checked).toBe(true)
-    click(box)
-    expect(box.checked).toBe(false)
   })
 
   it('"Create" pins through the core with the edited name, busy meanwhile, and the dialog leaves once it settled', async () => {

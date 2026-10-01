@@ -2453,8 +2453,8 @@ describe('the app menu', () => {
 
   it('offers the install item only to a window whose chrome has an install surface up', () => {
     // A desktop host that writes launchers: the engine can install, but the item is a way into
-    // the chrome's install dialog, so until the chrome registers one (`ui.surface`, as the
-    // desktop's InstallDialogLayer does on mount) the menu offers no way into a prompt nothing
+    // the chrome's install surface, so until the chrome registers one (`ui.surface`, as the
+    // desktop's InstallPopoverLayer does on mount) the menu offers no way into a prompt nothing
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)

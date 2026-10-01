@@ -7682,8 +7682,9 @@
    * above is that gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls
    * should it outgrow the frame; the footer stays. Chrome's "Open as window" check row under the
    * name runs edge to edge as the confirm dialog's does (§9.25: the row's own 16 is the dialog's
-   * one gutter). The install of an app is the pill's popover (`install/InstallPopover.tsx`), on
-   * the popover chassis with the same `.zen-install-app` row.
+   * one gutter) – the rule waits for the row, withheld until `webapp.pin` carries its two states
+   * (W8-M3b). The install of an app is the pill's popover (`install/InstallPopover.tsx`), on the
+   * popover chassis with the same `.zen-install-app` row.
    */
   .zen-install-dialog-body {
     display: flex;
