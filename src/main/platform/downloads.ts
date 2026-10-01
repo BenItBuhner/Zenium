@@ -31,12 +31,19 @@ import {
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
 import type { ZenWindow } from '../../core/window'
+import type { DownloadDestination } from '../../core/agent/nativePrompts'
 import { APP_ICON_DEFAULT, type AppIconId } from '../../shared/appIcon'
 import { openDownloadsFolder, startFileDrag } from './downloadsShell'
 import type { WebRequestDetails, WebRequestEvent, WebRequestListener } from './webRequest'
 import { uniquePath } from './uniquePath'
 
 export { uniquePath } from './uniquePath'
+
+/** `AgentService.downloadDestination`, as the host is bound to it. */
+export type AgentDestination = (
+  sourceTabId: string | null,
+  download: { url: string; filename: string; mimeType: string; totalBytes: number }
+) => Promise<DownloadDestination> | null
 
 let configuredDirectory: (() => string | null) | null = null
 
@@ -217,6 +224,8 @@ export class ElectronDownloads implements DownloadHost {
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
   /** Stop the tab's pending navigation (a dead download link's, see `deadLink`). */
   private stopNavigation: (tabId: string) => void = () => undefined
+  /** An AI agent's tab names the file itself instead of the save dialog (null: not an agent's). */
+  private agentDestination: AgentDestination = () => null
   /** The core's automatic resumes waiting for the network (see `onOnline`). */
   private readonly onlineWaiters = new Set<() => void>()
   private onlinePoll: ReturnType<typeof setInterval> | null = null
@@ -238,12 +247,14 @@ export class ElectronDownloads implements DownloadHost {
       parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined
       /** Stop the tab's pending navigation, a dead download link's (nothing when absent). */
       stopNavigation?: (tabId: string) => void
+      agentDestination?: AgentDestination
     }
   ): void {
     this.service = service
     this.tabIdFor = hooks.tabIdFor
     this.parentWindow = hooks.parentWindow
     this.stopNavigation = hooks.stopNavigation ?? (() => undefined)
+    this.agentDestination = hooks.agentDestination ?? (() => null)
   }
 
   /**
@@ -794,6 +805,29 @@ export class ElectronDownloads implements DownloadHost {
     sourceTabId: string | null,
     candidate: string
   ): Promise<void> {
+    const agent = this.agentDestination(sourceTabId, {
+      url: record.url,
+      filename: basename(candidate),
+      mimeType: item.getMimeType(),
+      totalBytes: item.getTotalBytes()
+    })
+    if (agent) {
+      const destination = await agent
+      if (this.service?.item(record.id) !== record || record.state === 'cancelled') return
+      if (destination.kind === 'cancel') {
+        await this.dropUnplaced(record)
+        return
+      }
+      if (destination.filename && destination.filename !== basename(candidate)) {
+        const target = uniquePath(
+          dirname(candidate),
+          destination.filename,
+          (p) => p !== candidate && this.taken(p)
+        )
+        this.retarget(record, candidate, target)
+      }
+      return
+    }
     const parent = this.parentWindow(sourceTabId)
     const options = {
       title: 'Save As',
@@ -806,15 +840,7 @@ export class ElectronDownloads implements DownloadHost {
       ? await dialog.showSaveDialog(parent, options)
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) {
-      // No download at all, like Chrome: cancel the transfer and drop the record.
-      const live = this.live.get(record.id)
-      if (live && live.item.getState() !== 'completed') {
-        live.item.once('done', () => this.service?.remove(record.id))
-        live.item.cancel()
-      } else {
-        await this.deletePartial(record)
-        this.service?.remove(record.id)
-      }
+      await this.dropUnplaced(record)
       return
     }
     const chosen = result.filePath
@@ -823,6 +849,18 @@ export class ElectronDownloads implements DownloadHost {
       finalName: basename(chosen),
       state: item.isPaused() ? 'paused' : 'progressing'
     })
+  }
+
+  /** "Save As" cancelled: no download at all, like Chrome – the transfer stops, the record goes. */
+  private async dropUnplaced(record: DownloadItem): Promise<void> {
+    const live = this.live.get(record.id)
+    if (live && live.item.getState() !== 'completed') {
+      live.item.once('done', () => this.service?.remove(record.id))
+      live.item.cancel()
+    } else {
+      await this.deletePartial(record)
+      this.service?.remove(record.id)
+    }
   }
 
   private taken(path: string): boolean {

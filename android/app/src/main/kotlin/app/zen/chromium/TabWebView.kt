@@ -304,6 +304,20 @@ class TabWebView(
     private var unloadCheck: UnloadCheck? = null
     /** When the core last asked for a reload: a `beforeunload` objection right after it is "Reload site?". */
     private var reloadAskedAt = 0L
+    /**
+     * An agent works this page while the layout hides it (the core's `TabView.setAgentDriven`,
+     * said before each of the agent's actions and taken back when it lets the tab go; OS-40).
+     * The page's `beforeunload` objection is then the agent's question, not the user's
+     * ([UnloadObjection]): the agent's input is trusted input, so a page it drives may raise
+     * one. Hidden, the view runs as any hidden one does (nothing pauses a GONE WebView;
+     * [TabHost.setVisible]). A show clears it: a tab brought in front is the user's again, sheet
+     * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
+     * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
+     *
+     * TODO(OS-40 part B): route `alert` / `confirm` / `prompt` of an agent-driven page to the
+     * agent (a `view.pageDialog` host event) once PR #742's `PageDialogService` is on main.
+     */
+    var agentDriven = false
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
@@ -3304,6 +3318,12 @@ class TabWebView(
          * page the user has touched, as Chrome), and its answer lets the navigation go on or
          * cancels it, the page as it was ([stayedOnPage]). A check waits as long as the question
          * is up: its silence timer stops here, and the answer settles it.
+         *
+         * A page an agent drives is not asked ([UnloadObjection], OS-40): the WebView raises
+         * the question only after a user gesture, but an agent's input is trusted input, so a
+         * page it works on may object, and the question is the agent's, not the user's. For
+         * such a page the navigation goes on, with the bookkeeping a Leave runs, and a check in
+         * flight settles as leave, the view destroyed. A page the user drives asks as it always has.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3317,26 +3337,51 @@ class TabWebView(
                 result.confirm()
                 return true
             }
-            if (check != null) {
-                removeCallbacks(check.timeout)
-                check.asked = true
-            }
-            val reload = check == null && now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
-            showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
-                if (check != null) check.settle(leave = leave, destroyView = leave)
-                else if (!leave) stayedOnPage()
-                // A reload never passes shouldOverrideUrlLoading, so nothing of it is held or re-issued.
-                else if (!reload) {
-                    val chosenAt = SystemClock.uptimeMillis()
-                    leaveCarry.leaveChosen(chosenAt)
-                    // The sheet stood open from the question (`now`) to this Leave, between the
-                    // tap and its navigation reaching the hook: that time is not the hop's, and
-                    // the page's word on this navigation's referrer policy, live when the page
-                    // objected, is live for the hold past the Leave.
-                    referrerPolicyWord.leaveChosen(askedAt = now, now = chosenAt)
+            val decision = UnloadObjection.decide(
+                agentDriven = agentDriven,
+                checkInFlight = check != null,
+                reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+            )
+            when (decision) {
+                is UnloadObjection.SettleCheck -> {
+                    // No sheet is up for settle to dismiss: the navigation is let go here.
+                    result.confirm()
+                    checkNotNull(check) { "SettleCheck without a check in flight" }.settle(leave = true, destroyView = true)
+                }
+                is UnloadObjection.LeaveSilently -> {
+                    result.confirm()
+                    leaveChosen(askedAt = now, chosenAt = now, reload = decision.reload)
+                }
+                is UnloadObjection.Sheet -> {
+                    if (check != null) {
+                        removeCallbacks(check.timeout)
+                        check.asked = true
+                    }
+                    val reload = decision.reload
+                    showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
+                        if (check != null) check.settle(leave = leave, destroyView = leave)
+                        else if (!leave) stayedOnPage()
+                        else leaveChosen(askedAt = now, chosenAt = SystemClock.uptimeMillis(), reload = reload)
+                    }
                 }
             }
             return true
+        }
+
+        /**
+         * The page's objection to a navigation of its own (no check) ends in Leave – the user's
+         * at the sheet, asked at `askedAt` and answered at `chosenAt`, or the silent one of a
+         * page an agent drives, both at once. A reload never passes shouldOverrideUrlLoading,
+         * so nothing of it is held or re-issued; any other navigation's Leave carries to the
+         * hold that follows ([LeaveCarry]). The sheet stood open from the question to the Leave,
+         * between the tap and its navigation reaching the hook: that time is not the hop's, and
+         * the page's word on this navigation's referrer policy, live when the page objected, is
+         * live for the hold past the Leave.
+         */
+        private fun leaveChosen(askedAt: Long, chosenAt: Long, reload: Boolean) {
+            if (reload) return
+            leaveCarry.leaveChosen(chosenAt)
+            referrerPolicyWord.leaveChosen(askedAt = askedAt, now = chosenAt)
         }
 
         override fun onReceivedTitle(view: WebView, title: String?) {
