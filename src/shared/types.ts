@@ -2967,10 +2967,12 @@ export interface Shortcut {
   extraBindings: KeyBinding[]
   /**
    * The row's words on the system's keyboard-shortcut helper (Android's Meta + / sheet), in the
-   * sentence form Chrome's rows there use ('Duplicate tab', 'Move tab to start'; a product's name
-   * keeps its capitals – 'Toggle Split View grid'). A second register, read by the helper alone:
-   * `label` stays the Settings page's Title Case and is what every other listing prints. Left
-   * out, the helper prints `label`. Never derived from `label` by a case transform.
+   * sentence form Chrome's rows there use ('Duplicate tab', 'Move tab to start'; a coined sense
+   * keeps its capital – 'Create new Space'). The string table's sentence face of the action
+   * (§9.1: the derived face, or the entry's own `sentence`), carried where it differs from
+   * `label`; a second register, read by the helper alone: `label` stays the Settings page's
+   * Title Case and is what every other listing prints. Left out, the helper prints `label` –
+   * or, for a row Chrome's helper has too, Chrome's own words from its table.
    */
   helperLabel?: string
   /**
