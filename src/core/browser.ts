@@ -4507,7 +4507,7 @@ export class Browser {
       'webapp.pin': ({ tabId, title, openAsWindow }, win) =>
         this.webApps.pin(tabId, title, win, openAsWindow),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
-      'webapp.bannerShown': ({ tabId }) => this.webApps.bannerShown(tabId),
+      'webapp.bannerShown': ({ tabId, visible }) => this.webApps.bannerShown(tabId, visible),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
       'webapp.launch': ({ appId }, win) => this.webApps.launch(appId, win),
       'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),

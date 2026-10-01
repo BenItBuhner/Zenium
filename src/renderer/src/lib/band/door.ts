@@ -1,6 +1,7 @@
 import { Info } from 'lucide-react'
 import {
   bandStore,
+  chooseBand,
   dismissBand,
   showBand,
   type BandDismissReason,
@@ -66,6 +67,9 @@ export function createModelDoor(): BandDoor {
     dismiss: (id, reason: BannerDismissReason) => dismissBand(id, reason),
     up: (id) => bandStore.get().entries.some((e) => e.id === id),
     upByKey: (key) => bandStore.get().entries.some((e) => e.key === key),
+    // The model's own choice – what the band's layer draws (`PageEdgeBand`, `TouchBandLayer`
+    // read the same): under a cover a request posted after it waits, unchosen (§3.2).
+    shown: (id) => chooseBand(bandStore.get())?.id === id,
     subscribe: (listener) => bandStore.subscribe(listener)
   }
 }
