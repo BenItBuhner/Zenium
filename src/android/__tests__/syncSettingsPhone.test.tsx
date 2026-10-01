@@ -81,6 +81,11 @@ function syncStatus(patch: Partial<SyncStatus> = {}): SyncStatus {
     webdav: null,
     webdavAvailable: true,
     authRefused: false,
+    accountAvailable: false,
+    account: null,
+    accountLink: null,
+    accountLinkFailure: null,
+    accountSignedOut: false,
     ...patch
   }
 }

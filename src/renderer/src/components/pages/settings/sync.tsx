@@ -22,6 +22,7 @@ import {
   editWebDavDraft,
   probeLine,
   syncScopeRowId,
+  syncErrorLine,
   syncSetupRefusalLine,
   syncSetupStore,
   syncStatusLine,
@@ -31,7 +32,6 @@ import {
   webDavCredentials,
   webDavDraftComplete,
   webDavFolderLine,
-  webDavOutcomeLine,
   webDavServerLine,
   type SyncSetupDraft
 } from '@renderer/lib/syncSetup'
@@ -363,16 +363,11 @@ function connectedGroups(
   }
   // The error the engine keeps is the folder-lost sentence while the folder is lost, and the
   // server's answer while the sign-in is refused: the row above says it, so the status line does
-  // not say it twice. A server's other answer is the page's sentence for its class
-  // (`lastErrorKind` through `webDavOutcomeLine`), never the engine's method and status; an
+  // not say it twice. A server's or the account's other answer is the page's sentence for its
+  // class (`lastErrorKind` through `syncErrorLine`), never the engine's method and status; an
   // error with no class – the folder transport's, a record that would not decrypt – is the
   // engine's line, as before.
-  const error =
-    sync.folderLost || sync.authRefused
-      ? null
-      : sync.lastErrorKind
-        ? webDavOutcomeLine(sync.lastErrorKind)
-        : sync.lastError
+  const error = sync.folderLost || sync.authRefused ? null : syncErrorLine(sync)
   status.push({
     kind: 'action',
     id: 'sync-now',

@@ -7512,6 +7512,11 @@ describe('ID-08’s Sync category on a phone', () => {
       webdav: null,
       webdavAvailable: false,
       authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false,
       ...patch
     }
   }

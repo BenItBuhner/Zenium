@@ -2355,6 +2355,15 @@ export interface SyncHost {
    * store that cannot keep it is the typed refusal (as `setup`'s), never a rejection.
    */
   setWebDavPassword(password: string): Promise<SyncSetupRefusal | null>
+  /**
+   * Sign in to the Zenium account: the sign-in page opens in a new tab of `win`'s and the code
+   * it shows is in the status; resolves once it is shown, the approval awaited in the background.
+   */
+  startAccountLink(win: ZenWindow): Promise<void>
+  /** Stop waiting for the sign-in under way. */
+  cancelAccountLink(): void
+  /** Sign out of the Zenium account at the service and here; sync turns off. */
+  signOutAccount(): void
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
   /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */
@@ -2379,6 +2388,7 @@ export interface SyncHost {
 export interface SyncTransport {
   list(): Promise<string[]>
   read(name: string): Promise<string | null>
+  readMany?(names: string[]): Promise<(string | null)[]>
   write(name: string, text: string): Promise<void>
   remove(name: string): Promise<void>
   removeAll(): Promise<void>
@@ -2426,10 +2436,16 @@ export interface SyncPlatformHost {
   /** False while the app is in the background: the poll skips its turn (Android, no service). */
   foreground?(): boolean
   /**
+   * The app's return to the foreground (Android's activity resuming), for a transport that
+   * watches by asking (the Zenium account's version poll); returns the unsubscribe.
+   */
+  onForeground?(listener: () => void): () => void
+  /**
    * The HTTP behind the WebDAV transport (ID-32, `core/sync/webdav.ts`): a fetch that reaches
    * any server with any method (PROPFIND, MKCOL, MOVE), from a process no page origin binds.
-   * Together with `Platform.secrets` it makes the WebDAV choice available; hosts without one
-   * offer the folder transport only.
+   * Together with `Platform.secrets` it makes the WebDAV choice available, and the Zenium account
+   * (`core/sync/account.ts`: JSON POSTs to the account service, which the WebView's own fetch
+   * could not make across origins); hosts without one offer the folder transport only.
    */
   fetch?: SyncFetch
 }

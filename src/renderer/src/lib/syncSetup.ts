@@ -1,4 +1,5 @@
 import type {
+  AccountErrorKind,
   SyncScope,
   SyncSetupRefusal,
   SyncStatus,
@@ -157,7 +158,15 @@ export const SYNC_COPY = {
   // a row or a second action of its own.
   wipeRemote: 'Also remove this device’s data from the folder',
   wipeRemoteHint: 'Other devices forget what this one synced; what they have of their own stays.',
-  turnOffAction: 'Turn off'
+  turnOffAction: 'Turn off',
+  // The account's outcomes as the page says them (`accountOutcomeLine`): what happened, stated
+  // of the account, a full stop each, never a code or a status (§9.33).
+  accountSignedOutLine: 'You were signed out of your Zenium account.',
+  accountQuota: 'Your Zenium account’s sync storage is full.',
+  accountTooLarge: 'Some of this device’s data is too large to sync.',
+  accountRateLimited: 'Too many requests to your Zenium account. Try again in a moment.',
+  accountUnreachable: 'Your Zenium account could not be reached.',
+  accountRefused: 'Your Zenium account did not accept the request.'
 } as const
 
 /**
@@ -398,14 +407,60 @@ export function webDavOutcomeLine(kind: WebDavErrorKind): string {
 }
 
 /**
+ * The account service's typed outcome (`AccountErrorKind`) as the page's sentence – the line
+ * under Sync now, the Turn on refusal – in the page's words alone: no function name, error code
+ * or status ever reaches it (§9.33). The service ended the sign-in; the account's storage is
+ * full; a document too large to keep; too many requests; the service not reached; anything
+ * else it refused.
+ */
+export function accountOutcomeLine(kind: AccountErrorKind): string {
+  switch (kind) {
+    case 'signed-out':
+      return SYNC_COPY.accountSignedOutLine
+    case 'quota':
+      return SYNC_COPY.accountQuota
+    case 'too-large':
+      return SYNC_COPY.accountTooLarge
+    case 'rate-limited':
+      return SYNC_COPY.accountRateLimited
+    case 'unavailable':
+      return SYNC_COPY.accountUnreachable
+    case 'refused':
+      return SYNC_COPY.accountRefused
+  }
+}
+
+/**
+ * The line under Sync now for the round's error: a classified one is the page's sentence for
+ * its class – the server's (`webDavOutcomeLine`) or the account's (`accountOutcomeLine`), read
+ * by the transport since the two share some names – and an error with no class (the folder
+ * transport's, a record that would not decrypt) is the engine's line.
+ */
+export function syncErrorLine(
+  sync: Pick<SyncStatus, 'transport' | 'lastError' | 'lastErrorKind'>
+): string | null {
+  const kind = sync.lastErrorKind
+  if (!kind) return sync.lastError
+  return sync.transport === 'account'
+    ? accountOutcomeLine(kind as AccountErrorKind)
+    : webDavOutcomeLine(kind as WebDavErrorKind)
+}
+
+/**
  * The engine's typed refusal of a setup or a new app password (`sync.setup`,
  * `sync.setWebDavPassword`) as the form's sentence: the server's answer through
- * `webDavOutcomeLine`, or the secret store that could not keep the password.
+ * `webDavOutcomeLine`, the account's through `accountOutcomeLine`, or the secret store that
+ * could not keep the password.
  */
 export function syncSetupRefusalLine(refusal: SyncSetupRefusal): string {
-  return refusal.reason === 'server'
-    ? webDavOutcomeLine(refusal.kind)
-    : SYNC_COPY.appPasswordNotKept
+  switch (refusal.reason) {
+    case 'server':
+      return webDavOutcomeLine(refusal.kind)
+    case 'account':
+      return accountOutcomeLine(refusal.kind)
+    case 'secrets':
+      return SYNC_COPY.appPasswordNotKept
+  }
 }
 
 /**

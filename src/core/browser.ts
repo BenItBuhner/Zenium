@@ -4290,6 +4290,9 @@ export class Browser {
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
       'sync.testWebDav': (credentials) => this.sync.testWebDav(credentials),
       'sync.setWebDavPassword': ({ password }) => this.sync.setWebDavPassword(password),
+      'sync.accountSignIn': (_a, win) => this.sync.startAccountLink(win),
+      'sync.accountCancel': () => this.sync.cancelAccountLink(),
+      'sync.accountSignOut': () => this.sync.signOutAccount(),
       'sync.tabsFromDevices': () => this.sync.tabsFromDevices(),
       'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 
