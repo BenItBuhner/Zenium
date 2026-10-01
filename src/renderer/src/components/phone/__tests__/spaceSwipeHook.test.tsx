@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useRef, type JSX } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -337,5 +339,26 @@ describe('the space swipe (GN-19)', () => {
     expect(queued).toHaveLength(0)
     expect(slot(el).style.transform).toBe('')
     expect(slot(el).dataset.swipe).toBeUndefined()
+  })
+
+  it("the nightly driver's idea of what a swipe may not start from is the hook's, byte for byte", () => {
+    // OverviewCleanupDemo.kt finds the swipe's start by the product's own hit test: the first
+    // point of the slot's background on no INTERACTIVE element. Its list is a twin of the hook's
+    // so a new gesture owner (a card kind, a row) declines a start in the driver as in the product.
+    const hook = readFileSync(resolve(__dirname, '../useSpaceSwipe.ts'), 'utf8')
+    const pieces = /const INTERACTIVE =\s*((?:'[^']*'\s*\+?\s*)+)/.exec(hook)
+    expect(pieces, 'useSpaceSwipe.ts names INTERACTIVE').not.toBeNull()
+    const product = Array.from(pieces![1].matchAll(/'([^']*)'/g), (m) => m[1]).join('')
+    const kotlin = readFileSync(
+      resolve(
+        __dirname,
+        '../../../../../../android/app/src/androidTest/kotlin/app/zen/chromium/OverviewCleanupDemo.kt'
+      ),
+      'utf8'
+    )
+    const twin = /SWIPE_INTERACTIVE =\s*"((?:[^"\\]|\\.)*)"/.exec(kotlin)
+    expect(twin, 'OverviewCleanupDemo.kt names SWIPE_INTERACTIVE').not.toBeNull()
+    expect(twin![1].replace(/\\"/g, '"')).toBe(product)
+    expect(product).toContain('[data-cell]')
   })
 })

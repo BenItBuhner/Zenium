@@ -180,10 +180,12 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
             still("space-personal")
 
             // The swipe back to Work: a drag across the grid's background, the slot live under
-            // the finger, the title following on the release.
-            val slot = domBox("document.querySelector('$SPACE_SLOT')") ?: error("no space slot in the overview")
-            val y = slot.top + slot.height() * 0.78f
-            val startX = width * 0.18f
+            // the finger, the title following on the release. The finger goes down where the
+            // background is – not on a card, an essential or a control, which the product
+            // declines a start from by design (`useSpaceSwipe`'s INTERACTIVE, as Chrome's
+            // `Pane.isTouchOnInteractiveElement`); the first run's start at 78 % of the slot's
+            // height landed on Personal's New Tab card and no swipe began.
+            val (startX, y) = swipeStart() ?: error("no background to start the space swipe from inside the slot")
             val travel = width * 0.5f
             val f = Finger()
             f.down(startX, y)
@@ -544,6 +546,26 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
 
     private fun cardName(): String = textOf("$GROUP_HEADER > span.truncate")
 
+    /**
+     * A screen point on the Space slot's background for a space swipe to start from: the first
+     * point, scanning up from the slot's visible bottom in its left column, then its right, then
+     * the gutter between, that the page's own hit test puts inside the slot and on nothing with
+     * a gesture of its own (`useSpaceSwipe`'s INTERACTIVE list, byte for byte) – a card, an
+     * essential, a control. The columns sit inside `PANE_SWIPE_EDGE_GUTTER` (32 CSS px) by far.
+     * Null when every scanned point is a card's.
+     */
+    private fun swipeStart(): Pair<Float, Float>? {
+        val text = jsString(
+            "(function(){var s=document.querySelector('$SPACE_SLOT');if(!s)return '';var r=s.getBoundingClientRect();" +
+                "var sel='$SWIPE_INTERACTIVE';var xs=[0.18,0.82,0.5];var bottom=Math.min(r.bottom,window.innerHeight)-24;" +
+                "for(var y=bottom;y>r.top+24;y-=12){for(var i=0;i<xs.length;i++){var x=Math.round(r.left+r.width*xs[i]);" +
+                "var e=document.elementFromPoint(x,y);if(!e||!s.contains(e)||e.closest(sel))continue;return x+','+y}}return ''})()"
+        )
+        val css = text.split(',').map { it.toFloatOrNull() ?: return null }
+        if (css.size != 2) return null
+        return Pair(css[0] * density + domShiftX, css[1] * density + domShiftY)
+    }
+
     private fun slotLive(): Boolean = jsString("(function(){var e=document.querySelector('$SPACE_SLOT');return e&&e.hasAttribute('data-swipe')?'live':''})()") == "live"
 
     private fun slotTransform(): String = jsString("(function(){var e=document.querySelector('$SPACE_SLOT');return e?e.style.transform:''})()")
@@ -752,6 +774,9 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
         private const val TITLE = ".zen-overview [data-testid=\"overview-title\"]"
         private const val COUNT = ".zen-overview [data-testid=\"overview-count\"]"
         private const val SPACE_SLOT = ".zen-overview-space"
+        /** What a space swipe may not start from: `useSpaceSwipe.ts`'s INTERACTIVE, byte for byte. */
+        private const val SWIPE_INTERACTIVE =
+            "[data-cell], .zen-essential, button, a, input, textarea, select, [role=\"button\"], [role=\"checkbox\"], [role=\"tab\"], [role=\"tablist\"]"
         private const val SPACE_ROW = ".zen-sheet [data-testid=\"spaces-sheet-space\"]"
         /** The Spaces sheet's rows by their words (`sheetRows`): the seeded profile's two spaces with the overview's counts, New Space… last. */
         private val SPACES_ROWS = listOf("Work 10 tabs", "Personal 5 tabs", "New Space…")
