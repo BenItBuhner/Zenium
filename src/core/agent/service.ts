@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  AgentPromptKind,
   AwayAgentInfo,
   AgentMode,
   AgentServerStatus,
@@ -23,7 +24,15 @@ import {
   sectionIndexOf
 } from '../model'
 import { describeDialog } from '../pageDialogs'
-import type { AgentSkillsHost, AgentTransport, TabView } from '../platform'
+import type {
+  AgentSkillsHost,
+  AgentTransport,
+  FileChooserAnswer,
+  FileChooserRequest,
+  PagePromptRequest,
+  TabView
+} from '../platform'
+import type { AgentPermissionPrompts } from '../permissions'
 import type { ZenWindow } from '../window'
 import {
   StreamableHttp,
@@ -38,6 +47,21 @@ import { checkAgentName, NAME_YOURSELF } from './naming'
 import { TabFrames } from './frames'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, pageDispose, type PageCursorOptions } from './page'
+import {
+  ANSWER_FROM_THIS_COMPUTER,
+  downloadSpec,
+  fileChooserSpec,
+  permissionSpec,
+  type DownloadDestination
+} from './nativePrompts'
+import {
+  AgentPromptQueue,
+  describePrompt,
+  type AgentPrompt,
+  type AgentPromptAnswer,
+  type AgentPromptHandle,
+  type AgentPromptSpec
+} from './prompts'
 import {
   LATEST_PROTOCOL_VERSION,
   McpProtocol,
@@ -114,6 +138,12 @@ export const CALL_DEADLINE_MS = 45_000
 const PAGE_PROBE_MS = 3000
 /** An agent's page dialog nobody answered is dismissed after this, so the page does not stay blocked. */
 export const AGENT_DIALOG_TTL_MS = 2 * 60 * 1000
+/**
+ * How long a native prompt of an agent's tab (`AgentPromptQueue`) waits for its agent before its
+ * default answer applies – the refusal for everything but a download, which is saved where
+ * Downloads puts it.
+ */
+export const AGENT_PROMPT_TTL_MS = 2 * 60 * 1000
 /** A claim with no groups left and no client for this long is forgotten. */
 const EMPTY_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** What an agent may call before it has named itself (`zen_session start`). */
@@ -310,6 +340,10 @@ export class AgentService implements SessionStore, McpHandlers {
   private readonly agentDialogs = new Map<string, AgentDialog>()
   /** Per session, the running call's way out when a dialog opens on one of its tabs. */
   private readonly dialogWaiters = new Map<string, (tabId: string) => void>()
+  /** Native prompts of agents' tabs (file choosers, permissions, sign-ins…) waiting for their agent. */
+  readonly prompts: AgentPromptQueue
+  /** Per session, the running call's way out when a prompt the page waits on opens on its tab. */
+  private readonly promptWaiters = new Map<string, (prompt: AgentPrompt) => void>()
   /** Tabs whose last call ran into the deadline: probed before the next call acts on them. */
   private readonly suspectTabs = new Set<string>()
   /** The window agents open tabs in, chosen once – never whatever window the user focused last. */
@@ -320,6 +354,8 @@ export class AgentService implements SessionStore, McpHandlers {
   pageProbeMs = PAGE_PROBE_MS
   /** How long an agent's page dialog waits for its answer (`AGENT_DIALOG_TTL_MS`); tests shorten it. */
   dialogTtlMs = AGENT_DIALOG_TTL_MS
+  /** How long a native prompt of an agent's tab waits (`AGENT_PROMPT_TTL_MS`); tests shorten it. */
+  promptTtlMs = AGENT_PROMPT_TTL_MS
   /**
    * Whether an agent must name itself (`zen_session start`) before it may act. Not a user
    * setting: a nameless agent cannot own anything durably, so the host never turns this off.
@@ -368,6 +404,21 @@ export class AgentService implements SessionStore, McpHandlers {
     this.claims = new ClaimStore(browser.platform.io)
     this.token = this.loadToken()
     this.status.token = this.token
+    this.prompts = new AgentPromptQueue({
+      now: () => Date.now(),
+      opened: (p) => this.onPromptOpened(p),
+      ended: (p, how, action) => {
+        if (how !== 'answered')
+          this.log(`prompt ${p.id} (${p.kind}) on tab ${p.tabId} ${how}: ${action}`)
+        if (how === 'expired') {
+          const owner = this.driver(p.tabId)
+          owner?.notices.push(
+            `Notice: ${p.kind} prompt ${p.id} on tab ${p.tabId} went unanswered and got its default, "${action}".`
+          )
+        }
+        this.browser.state.commitVolatile()
+      }
+    })
     this.skills = emptyAgentSkillStatus(browser.platform.info.version)
   }
 
@@ -415,6 +466,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.skillRefresh = null
     for (const id of [...this.sessions.keys()]) this.close(id)
     for (const tabId of [...this.agentDialogs.keys()]) this.dismissAgentDialog(tabId)
+    this.prompts.dismissAll()
     await this.applying
     await this.stopServer()
     await this.writing
@@ -747,6 +799,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.memo(s).tabs.delete(tab.id)
     this.browser.tabs.moveToFolder(tab.id, null)
     this.detach(s, tab.id)
+    this.prompts.dismissTab(tab.id)
     this.browser.state.commitVolatile()
   }
 
@@ -763,6 +816,7 @@ export class AgentService implements SessionStore, McpHandlers {
       s.frames.delete(tabId)
     }
     this.dismissAgentDialog(tabId)
+    this.prompts.dismissTab(tabId)
     this.suspectTabs.delete(tabId)
     this.browser.state.commitVolatile()
   }
@@ -910,7 +964,10 @@ export class AgentService implements SessionStore, McpHandlers {
         s.homeGroupId = null
       }
     } else {
-      for (const t of owned) this.dismissAgentDialog(t.id)
+      for (const t of owned) {
+        this.dismissAgentDialog(t.id)
+        this.prompts.dismissTab(t.id)
+      }
       const now = Date.now()
       for (const groupId of s.groupIds)
         if (this.browser.state.model.folders[groupId])
@@ -1321,7 +1378,16 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   private hostHas(tool: (typeof AGENT_TOOLS)[number]): boolean {
-    return !tool.needs || this.browser.platform.capabilities[tool.needs]
+    switch (tool.needs) {
+      case undefined:
+        return true
+      case 'agentDialogs':
+        return this.browser.platform.capabilities.agentDialogs
+      case 'agentPrompts':
+        return this.promptKinds().length > 0
+      case 'fileUpload':
+        return this.promptKinds().includes('file-chooser')
+    }
   }
 
   callTool(session: McpSession, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -1369,12 +1435,16 @@ export class AgentService implements SessionStore, McpHandlers {
     const dialog = new Promise<ToolResult>((resolve) => {
       this.dialogWaiters.set(s.id, (tabId) => resolve(this.dialogResult(name, tabId)))
     })
+    const prompt = new Promise<ToolResult>((resolve) => {
+      this.promptWaiters.set(s.id, (p) => resolve(this.promptResult(name, p)))
+    })
     let result: ToolResult
     try {
-      result = await Promise.race([work, deadline, dialog])
+      result = await Promise.race([work, deadline, dialog, prompt])
     } finally {
       if (timer) clearTimeout(timer)
       this.dialogWaiters.delete(s.id)
+      this.promptWaiters.delete(s.id)
       // A background agent (or a foreground one that had to act in the background) may have
       // focused one of its hidden pages; hand keyboard focus back to what the user looks at.
       if (s.mode === 'background' || state.degraded) this.restoreUserFocus(s)
@@ -1452,9 +1522,14 @@ export class AgentService implements SessionStore, McpHandlers {
     state.degraded = cause
   }
 
-  /** Queued notices and the call's notes go above the tool's own text, then the queue drains. */
+  /**
+   * Queued notices, the call's notes and the prompts still waiting on the session's tabs go above
+   * the tool's own text, then the notice queue drains. The prompts stay until they are answered:
+   * whatever the agent calls, it hears of them.
+   */
   private decorate(s: AgentSession, state: CallState, result: ToolResult): ToolResult {
-    const lines = [...s.notices.splice(0), ...state.notes]
+    const said = result.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
+    const lines = [...s.notices.splice(0), ...state.notes, ...this.pendingPromptLines(s, said)]
     if (!lines.length) return result
     const content = [...result.content]
     const i = content.findIndex((c) => c.type === 'text')
@@ -1595,7 +1670,8 @@ export class AgentService implements SessionStore, McpHandlers {
       s?.mode ?? this.settings.defaultMode,
       this.settings.allowScripts,
       others.length,
-      this.browser.platform.capabilities.agentDialogs
+      this.browser.platform.capabilities.agentDialogs,
+      this.promptKinds()
     )
   }
 
@@ -2514,6 +2590,10 @@ export class AgentService implements SessionStore, McpHandlers {
       agents: [...this.sessions.values()]
         .filter((o) => o.id !== s.id && (o.approved || o.pending) && !o.parked)
         .map((o) => ({ name: o.name, mode: o.mode, groups: o.groupIds.size, pending: o.pending })),
+      prompts: {
+        routed: this.promptKinds(),
+        waiting: this.promptsOf(s)
+      },
       server: {
         url: this.status.url,
         running: this.status.running,
@@ -2538,6 +2618,7 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!view) return
     view.setBackgroundThrottling?.(true)
     view.setAgentDriven?.(false)
+    view.interceptAgentPrompts?.(false)
     void this.evalPage(view, pageDispose(s.id)).catch(() => undefined)
     for (const node of frames?.nodes ?? []) {
       if (node.id === 0) continue
@@ -2580,6 +2661,10 @@ export class AgentService implements SessionStore, McpHandlers {
     // layout viewport and paint nothing lays it out and paints it where the user cannot see it
     // (`TabView.setAgentDriven`). A tab in front of the user is the layout's as before.
     view.setAgentDriven?.(!this.isShown(tab, win))
+    // The page's file choosers and print come to the agent (`AgentService.takesPrompt`) instead
+    // of opening the system's dialog; the host asks per request, so a tab shown to the user later
+    // still gets its native UI.
+    if (this.promptKinds().length) view.interceptAgentPrompts?.(true)
     return view
   }
 
@@ -2717,6 +2802,160 @@ export class AgentService implements SessionStore, McpHandlers {
     clearTimeout(d.timer)
     d.resolve({ accepted: accept, value: accept ? (text ?? d.dialog.defaultValue) : null })
     return d.dialog
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agent prompts (file choosers, permissions, sign-ins… – `AgentPromptQueue`)
+  // ---------------------------------------------------------------------------
+
+  /** The prompt kinds this host hands to agents (`HostCapabilities.agentPrompts`). */
+  promptKinds(): readonly AgentPromptKind[] {
+    const kinds = this.browser.platform.capabilities.agentPrompts
+    return Array.isArray(kinds) ? kinds : []
+  }
+
+  /**
+   * Whether a native prompt of `kind` the tab raised is its agent's to answer: the host routes
+   * that kind, and the tab is an agent's the way its page dialogs are (`takesDialog`). Anything
+   * else – a user's tab, a held tab in front of the user – keeps the native UI it always had.
+   */
+  takesPrompt(tabId: string | null | undefined, kind: AgentPromptKind): boolean {
+    if (!tabId || !this.promptKinds().includes(kind)) return false
+    return this.takesDialog(tabId)
+  }
+
+  /**
+   * Hand a native prompt to the tab's agent instead of showing it: the handle's `result` is the
+   * answer (the agent's, the default once it waited `promptTtlMs`, or the dismissal). Null when
+   * the prompt is not the agent's (`takesPrompt`): the caller shows its UI as before.
+   */
+  routePrompt<T>(
+    spec: Omit<AgentPromptSpec<T>, 'ttlMs'> & { ttlMs?: number }
+  ): AgentPromptHandle<T> | null {
+    if (!this.takesPrompt(spec.tabId, spec.kind)) return null
+    return this.prompts.open({ ...spec, ttlMs: spec.ttlMs ?? this.promptTtlMs })
+  }
+
+  /** The prompts waiting on the session's tabs, oldest first. */
+  promptsOf(s: AgentSession, tabId?: string): AgentPrompt[] {
+    const owned = new Set(this.ownedTabs(s).map((t) => t.id))
+    return this.prompts.list(tabId).filter((p) => owned.has(p.tabId))
+  }
+
+  /** `browser_respond_prompt`: the agent's answer to a prompt on one of its tabs. */
+  answerPrompt(s: AgentSession, id: string, answer: AgentPromptAnswer): AgentPrompt {
+    const p = this.prompts.get(id)
+    if (!p || this.driver(p.tabId)?.id !== s.id)
+      throw new RpcError(
+        -32002,
+        `No prompt ${id} is waiting on your tabs (it was answered, timed out or withdrawn)`
+      )
+    return this.prompts.answer(id, { ...answer, [ANSWER_FROM_THIS_COMPUTER]: this.isLocal(s) })
+  }
+
+  /** The tabs of the agent that holds `tabId` (the tab itself when its agent is away). */
+  agentTabsOf(tabId: string): string[] {
+    const owner = this.driver(tabId)
+    return owner ? this.ownedTabs(owner).map((t) => t.id) : [tabId]
+  }
+
+  /** Whether the agent runs on this computer, so the paths it names are this computer's files. */
+  isLocal(s: AgentSession): boolean {
+    return s.transport === 'stdio' || isLoopbackAddress(s.remoteAddress)
+  }
+
+  /** `PermissionService.agentPrompts`: permission requests (and desktop app launches) of agents' tabs. */
+  permissionPrompts(): AgentPermissionPrompts {
+    return {
+      takes: (tabId) =>
+        this.takesPrompt(tabId, 'permission') || this.takesPrompt(tabId, 'external-protocol'),
+      ask: (request, details) => {
+        const tabId = request.tabId
+        if (!tabId) return null
+        const external = details.externalUrl !== undefined
+        const handle = this.routePrompt(
+          permissionSpec(
+            { ...request, tabId },
+            external ? { externalUrl: details.externalUrl } : {}
+          )
+        )
+        return handle?.result ?? null
+      }
+    }
+  }
+
+  /**
+   * A file chooser the page of an agent's tab opened (`TabViewEvents.onFileChooser`): the agent
+   * answers it with `browser_respond_prompt` or `browser_file_upload`. A tab that is not an
+   * agent's gets the system's chooser from its host.
+   */
+  /**
+   * "Ask where to save each file" (the setting, the caller's `saveAs`, a "Save As…") for a download
+   * an agent's tab started: the agent names the file, which stays in the Downloads folder. Null
+   * when the tab is not an agent's: the host shows its save dialog.
+   */
+  downloadDestination(
+    tabId: string | null,
+    download: { url: string; filename: string; mimeType: string; totalBytes: number }
+  ): Promise<DownloadDestination> | null {
+    if (!tabId) return null
+    return this.routePrompt(downloadSpec(tabId, download))?.result ?? null
+  }
+
+  onFileChooser(tabId: string, request: FileChooserRequest): Promise<FileChooserAnswer> {
+    const handle = this.routePrompt(fileChooserSpec(tabId, request))
+    return handle ? handle.result : Promise.resolve({ kind: 'user' })
+  }
+
+  /**
+   * `window.print()` or a File System Access picker on an agent's tab: nothing is shown, the agent
+   * hears of it. `showOpenFilePicker` becomes the page's file chooser (`onFileChooser`); a save
+   * or directory picker is refused, as a cancelled one would be.
+   */
+  onPagePrompt(tabId: string, prompt: PagePromptRequest): 'agent' | 'user' {
+    const kind: AgentPromptKind = prompt.kind === 'print' ? 'print' : 'file-chooser'
+    if (!this.takesPrompt(tabId, kind)) return 'user'
+    if (prompt.kind === 'file-system-access' && prompt.picker === 'open') return 'agent'
+    const owner = this.driver(tabId)
+    owner?.notices.push(
+      prompt.kind === 'print'
+        ? `Notice: the page in tab ${tabId} called window.print(); nothing was printed and no dialog shown. browser_take_screenshot shows the page if that is what you need.`
+        : `Notice: the page in tab ${tabId} asked for a ${prompt.picker === 'save' ? 'save-file' : 'folder'} picker (File System Access), which agents cannot answer; the page heard it was cancelled. Look for another way to get the file (a download link, an upload field).`
+    )
+    this.log(
+      `tab ${tabId}: ${prompt.kind === 'print' ? 'print' : `${prompt.picker} picker`} kept from the user`
+    )
+    return 'agent'
+  }
+
+  private onPromptOpened(p: AgentPrompt): void {
+    this.log(`prompt ${p.id} (${p.kind}) on tab ${p.tabId}: ${p.summary}`)
+    this.browser.state.commitVolatile()
+    const owner = this.driver(p.tabId)
+    if (owner && p.blocking) this.promptWaiters.get(owner.id)?.(p)
+  }
+
+  /** What a call interrupted by a prompt the page waits on answers. */
+  private promptResult(name: string, p: AgentPrompt): ToolResult {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${describePrompt(p, Date.now())}\nIt opened while ${name} ran; the page waits for your answer, so ${name} may not have finished – take a snapshot once you answered.`
+        }
+      ]
+    }
+  }
+
+  /** The footer every result carries while prompts wait on the session's tabs (those the result does not already name). */
+  private pendingPromptLines(s: AgentSession, already: string): string[] {
+    const waiting = this.promptsOf(s).filter((p) => !already.includes(p.id))
+    if (!waiting.length) return []
+    const now = Date.now()
+    return [
+      `Waiting for your answer (${waiting.length} prompt${waiting.length === 1 ? '' : 's'}; browser_prompts lists them):`,
+      ...waiting.map((p) => `- ${describePrompt(p, now)}`)
+    ]
   }
 
   evalPage(view: TabView, code: string): Promise<unknown> {
@@ -2873,7 +3112,12 @@ function isTruthy(v: string | null): boolean {
 }
 
 function describeRemote(address: string): string {
-  if (!address || address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1')
-    return 'this computer'
+  if (!address || isLoopbackAddress(address)) return 'this computer'
   return address.replace(/^::ffff:/, '')
+}
+
+/** A peer address on this computer: 127.0.0.0/8, ::1, or either mapped. */
+function isLoopbackAddress(address: string): boolean {
+  const bare = address.replace(/^::ffff:/i, '')
+  return bare === '::1' || /^127(\.\d{1,3}){3}$/.test(bare)
 }

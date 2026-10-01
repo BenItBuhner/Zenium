@@ -1,4 +1,4 @@
-import type { AgentMode, Folder, Space, Tab } from '../../shared/types'
+import type { AgentMode, AgentPromptKind, Folder, Space, Tab } from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
@@ -17,7 +17,9 @@ import {
 import { summarize } from './diagnostics'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { NAME_YOURSELF } from './naming'
-import { pageCall, type PageLocation } from './page'
+import { uploadFiles } from './nativePrompts'
+import { pageCall, type PageLocation, type PageUploadMark } from './page'
+import type { AgentPrompt, AgentPromptAnswer } from './prompts'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
 import {
@@ -59,8 +61,11 @@ export interface AgentTool {
   definition: ToolDefinition
   /** Runs arbitrary JavaScript – hidden when scripts are disabled in Settings. */
   scripting?: boolean
-  /** Listed only where the host has this capability. */
-  needs?: 'agentDialogs'
+  /**
+   * Listed only where the host has this: page dialogs for agents, native prompts for agents (any
+   * `HostCapabilities.agentPrompts`), or file choosers among them.
+   */
+  needs?: 'agentDialogs' | 'agentPrompts' | 'fileUpload'
   run(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult>
 }
 
@@ -540,6 +545,29 @@ export async function routeInput(
 }
 
 /** The tool's headline plus the synthetic-input warning line when the input was not real. */
+/**
+ * Why a click on a drop-down `<select>`, a colour or a date field is refused: a real click opens a
+ * popup window outside the page (the system's, on some platforms) that the user would see and the
+ * agent could not. What sets the value instead.
+ */
+function popupRefusal(loc: Located, target: string | null): string {
+  const t = JSON.stringify(target ?? `${loc.x},${loc.y}`)
+  const how =
+    loc.popup === 'select'
+      ? `browser_select_option {"target":${t},"values":["…"]} picks its option`
+      : `browser_type {"target":${t},"text":"${POPUP_FORMATS[loc.popup ?? ''] ?? '…'}"} sets its value`
+  return `${describeElement(loc)} opens a picker outside the page when clicked, which you could not see and the user would; nothing was clicked. ${how}.`
+}
+
+const POPUP_FORMATS: Record<string, string> = {
+  color: '#rrggbb',
+  date: 'YYYY-MM-DD',
+  'datetime-local': 'YYYY-MM-DDThh:mm',
+  month: 'YYYY-MM',
+  week: 'YYYY-Www',
+  time: 'hh:mm'
+}
+
 function withInputNote(headline: string, routing: InputRouting): string {
   return routing.trusted || !routing.note ? headline : `${headline}\n${routing.note}`
 }
@@ -1681,6 +1709,251 @@ const browserHandleDialog: AgentTool = {
   }
 }
 
+/** The prompt `browser_respond_prompt` / `browser_file_upload` answer: the named one, or the tab's only one. */
+function promptToAnswer(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+  kind?: AgentPromptKind
+): AgentPrompt | null {
+  const id = str(args, 'promptId')
+  const waiting = ctx.agents.promptsOf(ctx.session).filter((p) => !kind || p.kind === kind)
+  if (id) {
+    const p = waiting.find((w) => w.id === id || w.id.startsWith(id))
+    if (!p)
+      throw new RpcError(
+        -32002,
+        `No ${kind ? `${kind} ` : ''}prompt ${id} is waiting on your tabs (answered, timed out or withdrawn). browser_prompts lists what waits.`
+      )
+    return p
+  }
+  const raw = pick(args, 'tabId')
+  const tabId = raw !== undefined ? targetTab(ctx, args).id : null
+  const mine = tabId ? waiting.filter((p) => p.tabId === tabId) : waiting
+  if (mine.length > 1)
+    throw new RpcError(
+      -32602,
+      `${mine.length} prompts wait${tabId ? ` on tab ${tabId}` : ''}: name one by "promptId" – ${mine.map((p) => `${p.id} (${p.kind}, tab ${p.tabId})`).join(', ')}`
+    )
+  return mine[0] ?? null
+}
+
+const PROMPT_ID = {
+  type: 'string',
+  description:
+    'The prompt: its id from browser_prompts or the notice that announced it ("prompt_…")'
+}
+
+const browserPrompts: AgentTool = {
+  needs: 'agentPrompts',
+  definition: {
+    name: 'browser_prompts',
+    title: 'List waiting prompts',
+    description:
+      'List what your tabs wait for you to answer instead of showing the user: file choosers, downloads asking where to save, sign-ins (HTTP authentication), client certificates, permission requests (camera, microphone, location, notifications, clipboard…), screen sharing, Bluetooth/USB/serial/HID device pickers, links to other apps – and page dialogs (alert, confirm, prompt, "Leave site?"). Each comes with its details, the actions it takes and the default it gets when you leave it: answer with browser_respond_prompt (browser_file_upload for files, browser_handle_dialog for page dialogs). Never use OS automation for these: they are never on screen.',
+    inputSchema: schema({ tabId: TAB_ID }),
+    annotations: { readOnlyHint: true, openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const tabId = pick(args, 'tabId') !== undefined ? targetTab(ctx, args).id : undefined
+    const now = Date.now()
+    const prompts = ctx.agents.promptsOf(ctx.session, tabId).map((p) => ({
+      id: p.id,
+      tabId: p.tabId,
+      kind: p.kind,
+      summary: p.summary,
+      details: p.details,
+      actions: p.actions,
+      defaultAction: p.defaultAction,
+      secondsLeft: Math.max(0, Math.round((p.expiresAt - now) / 1000)),
+      pageWaits: p.blocking
+    }))
+    const dialogs = ctx.agents
+      .ownedTabs(ctx.session)
+      .filter((t) => tabId === undefined || t.id === tabId)
+      .flatMap((t) => {
+        const d = ctx.agents.pendingDialog(t.id)
+        return d
+          ? [
+              {
+                tabId: t.id,
+                kind: d.kind,
+                summary: describeDialog(d),
+                answer: `browser_handle_dialog {"tabId":"${t.id}","accept":true} (or false)`
+              }
+            ]
+          : []
+      })
+    const kinds = ctx.agents.promptKinds()
+    if (!prompts.length && !dialogs.length)
+      return text(
+        `Nothing waits for you${tabId ? ` on tab ${tabId}` : ''}. These come to you instead of the user here: ${kinds.join(', ')} prompts and page dialogs.`
+      )
+    return text(JSON.stringify({ prompts, dialogs }, null, 2))
+  }
+}
+
+const browserRespondPrompt: AgentTool = {
+  needs: 'agentPrompts',
+  definition: {
+    name: 'browser_respond_prompt',
+    title: 'Answer a prompt',
+    description:
+      'Answer a prompt one of your tabs waits on (browser_prompts lists them; every result names those still waiting): its id (or tabId when the tab has only one) and one of its actions, with the arguments that action reads – e.g. {"promptId":"prompt_…","action":"allow"}, {"action":"sign-in","username":"…","password":"…"}, {"action":"select","index":0}, {"action":"save","filename":"report.pdf"}, {"action":"upload","paths":["/tmp/a.png"]}. Nothing you answer is remembered for the user: a permission lasts until the tab leaves the site, a sign-in or certificate goes with that one request. Returns a snapshot of the page afterwards.',
+    inputSchema: schema(
+      {
+        promptId: PROMPT_ID,
+        tabId: TAB_ID,
+        action: {
+          type: 'string',
+          description: 'One of the prompt\'s actions ("allow", "deny", "cancel", "sign-in"…)'
+        },
+        username: { type: 'string', description: 'sign-in: the user name' },
+        password: { type: 'string', description: 'sign-in: the password' },
+        index: { type: 'number', description: 'select (client certificate): which certificate' },
+        filename: {
+          type: 'string',
+          description: 'save (download): the file name in the Downloads folder'
+        },
+        sourceId: { type: 'string', description: 'share (screen capture): which tab' },
+        deviceId: { type: 'string', description: 'connect (device chooser): which device' },
+        pin: { type: 'string', description: 'confirm (Bluetooth pairing): the PIN' },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'upload: files on this computer'
+        },
+        files: {
+          type: 'array',
+          items: { type: 'object' },
+          description: 'upload: files sent inline, [{"name","base64","mimeType"?}]'
+        }
+      },
+      ['action']
+    ),
+    annotations: { openWorldHint: true }
+  },
+  async run(ctx, args) {
+    const prompt = promptToAnswer(ctx, args)
+    if (!prompt)
+      return textError(
+        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, "Leave site?") is answered with browser_handle_dialog.`
+      )
+    const action = need(args, 'action', `one of ${Object.keys(prompt.actions).join(', ')}`)
+    const answer: AgentPromptAnswer = { ...args, action }
+    delete answer.promptId
+    delete answer.tabId
+    ctx.agents.answerPrompt(ctx.session, prompt.id, answer)
+    const said = `Answered the ${prompt.kind} prompt ${prompt.id} with "${action}".`
+    return afterPrompt(ctx, prompt.tabId, said)
+  }
+}
+
+/** A snapshot of the tab once a prompt is answered (the page may be loading what it waited for). */
+async function afterPrompt(ctx: ToolContext, tabId: string, said: string): Promise<ToolResult> {
+  const tab = ctx.browser.tabs.tab(tabId)
+  if (!tab) return text(said)
+  await settle(ctx, tabId)
+  if (ctx.agents.pendingDialog(tabId)) return text(said)
+  const view = ctx.browser.tabs.view(tabId)
+  if (!view || view.isDestroyed()) return text(said)
+  return pageResult(ctx, tab, view, said)
+}
+
+const browserFileUpload: AgentTool = {
+  needs: 'fileUpload',
+  definition: {
+    name: 'browser_file_upload',
+    title: 'Upload files',
+    description:
+      'Hand a page files – never through the system file dialog, which agents do not get. Three ways: (1) a file chooser the page opened (clicking an upload button sends it to you as a prompt) – answer it with paths or files, promptId or tabId naming it; (2) target an <input type=file> (or its label) and the files are set without any click or chooser; (3) target a drop zone with drop: true and the files are dropped on it as from the file manager. paths are files on this computer (only for an agent running on it); from another machine send files: [{"name":"a.pdf","base64":"…","mimeType":"application/pdf"}]. A folder input takes one folder path. Returns a snapshot afterwards. ' +
+      PAGE_CHANGED,
+    inputSchema: pageSchema({
+      promptId: PROMPT_ID,
+      target: TARGET,
+      drop: {
+        type: 'boolean',
+        description: 'Drop the files on the target (a drop zone) instead of setting an input'
+      },
+      paths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Absolute paths of files (or one folder) on this computer'
+      },
+      files: {
+        type: 'array',
+        items: { type: 'object' },
+        description:
+          'Files sent inline: [{"name":"report.pdf","base64":"…","mimeType":"application/pdf"}]'
+      }
+    }),
+    annotations: { openWorldHint: true }
+  },
+  async run(ctx, args) {
+    const target = str(args, 'target')
+    const local = ctx.agents.isLocal(ctx.session)
+    const filesArgs = { paths: args.paths ?? args.path, files: args.files }
+    if (!target) {
+      const prompt = promptToAnswer(ctx, args, 'file-chooser')
+      if (!prompt)
+        return textError(
+          "No file chooser waits on your tabs. Click the page's upload button (its chooser comes to you as a prompt), or pass the <input type=file> as target to set the files directly."
+        )
+      ctx.agents.answerPrompt(ctx.session, prompt.id, { action: 'upload', ...filesArgs })
+      const n = countFiles(filesArgs)
+      return afterPrompt(ctx, prompt.tabId, `Handed the page's file chooser ${n}.`)
+    }
+    const { tab, view, page } = await actOn(ctx, args)
+    const loc = await locate(page, target)
+    if (bool(args, 'drop')) {
+      if (!view.dropFiles) return textError('This browser cannot drop files on a page')
+      const files = uploadFiles(filesArgs, { local, mode: 'multiple' })
+      await view.dropFiles(loc.x, loc.y, files)
+      await settle(ctx, tab.id)
+      return pageResult(
+        ctx,
+        tab,
+        ctx.browser.tabs.view(tab.id) ?? view,
+        `Dropped ${countFiles(filesArgs)} on ${describeElement(loc)}.`
+      )
+    }
+    if (!view.setInputFiles) return textError('This browser cannot set the files of an input')
+    const token = `u${Math.random().toString(36).slice(2, 10)}`
+    const mark = (await page.eval(
+      loc.frameId,
+      pageCall('markUpload', ctx.session.id, target, token)
+    )) as PageUploadMark | null
+    if (!mark || !mark.ok)
+      return textError(
+        `${describeElement(loc)}: ${mark?.error ?? 'the page did not answer'}.${mark && !mark.ok && mark.notFileInput ? ' Target the <input type=file> itself (it is often hidden: browser_snapshot {"filter":"file"} or a CSS selector like "input[type=file]" finds it), click the upload button and answer its chooser, or pass drop: true to drop the files on this element.' : ''}`
+      )
+    const files = uploadFiles(filesArgs, { local, mode: mark.mode })
+    try {
+      await view.setInputFiles(`[data-zen-upload="${token}"]`, files)
+    } catch (error) {
+      return textError(
+        `Could not set the files of ${describeElement(loc)}: ${(error as Error).message}. If the input sits in a frame of another site, click its upload button instead – the chooser comes to you.`
+      )
+    }
+    await settle(ctx, tab.id)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      `Set ${countFiles(filesArgs)} on ${describeElement(loc)}${mark.accept.length ? ` (it accepts ${mark.accept.join(', ')})` : ''}.`
+    )
+  }
+}
+
+function countFiles(args: { paths?: unknown; files?: unknown }): string {
+  const paths = Array.isArray(args.paths)
+    ? args.paths.length
+    : typeof args.paths === 'string'
+      ? 1
+      : 0
+  const n = paths + (Array.isArray(args.files) ? args.files.length : 0)
+  return `${n} file${n === 1 ? '' : 's'}`
+}
+
 const browserSnapshot: AgentTool = {
   definition: {
     name: 'browser_snapshot',
@@ -1734,6 +2007,7 @@ const browserClick: AgentTool = {
     const { loc, target } = await locateArg(page, args, 'browser_click')
     if (loc.disabled)
       return textError(`${describeElement(loc)} is disabled, so it cannot be clicked`)
+    if (loc.popup) return textError(popupRefusal(loc, target ?? loc.ref))
     const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 260 : 30)
@@ -1815,7 +2089,8 @@ const browserType: AgentTool = {
     const value = typeof raw === 'string' ? raw : raw === undefined ? '' : String(raw)
     const { tab, view, page } = await actOn(ctx, args)
     const loc = await locate(page, target)
-    if (!loc.editable)
+    if (loc.popup === 'select') return textError(popupRefusal(loc, target))
+    if (!loc.editable && !loc.popup)
       return textError(
         `${describeElement(loc)} is not an editable field${loc.role === 'combobox' ? ' – use browser_select_option to choose an option' : loc.role === 'checkbox' || loc.role === 'radio' ? ' – use browser_click to toggle it' : ''}`
       )
@@ -1823,15 +2098,18 @@ const browserType: AgentTool = {
     const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 220 : 20)
-    // Focus the way a person would, so focus handlers and autocomplete popups behave.
-    await clickAt(
-      page,
-      view,
-      loc,
-      target,
-      { button: 'left', count: 1, modifiers: [] },
-      routing.trusted
-    )
+    // Focus the way a person would, so focus handlers and autocomplete popups behave – except
+    // on a colour or date field, whose click opens a picker window outside the page: the fill
+    // below sets its value as the picker would.
+    if (!loc.popup)
+      await clickAt(
+        page,
+        view,
+        loc,
+        target,
+        { button: 'left', count: 1, modifiers: [] },
+        routing.trusted
+      )
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
     await sleep(60)
     // The field's own frame runs the fill: that is where the ref (and the element) lives.
@@ -2369,12 +2647,34 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserReadPage,
   browserEvaluate,
   browserHandleDialog,
+  browserPrompts,
+  browserRespondPrompt,
+  browserFileUpload,
   zenGroups,
   zenSession,
   zenSpaces,
   zenMode,
   zenHistory
 ]
+
+const ALL_PROMPT_KINDS: readonly AgentPromptKind[] = [
+  'file-chooser',
+  'download',
+  'http-auth',
+  'client-certificate',
+  'permission',
+  'screen-capture',
+  'device-chooser',
+  'device-pairing',
+  'external-protocol',
+  'print'
+]
+
+/** The instructions' line on the native prompts this host hands to agents. */
+function nativePromptsLine(kinds: readonly AgentPromptKind[]): string {
+  const kept = ALL_PROMPT_KINDS.filter((k) => !kinds.includes(k))
+  return `- Native prompts on your tabs come to you, never to the user and never on screen: ${kinds.join(', ')}. A "Notice:" or a "Waiting for your answer" block names each (every result repeats the ones still waiting), browser_prompts lists them, browser_respond_prompt answers, browser_file_upload hands a page files (a chooser it opened, an <input type=file>, or a drop zone). Never reach for OS automation (xdotool, AppleScript, clicking system dialogs in screenshots): there is nothing on screen to automate. Unanswered, a prompt gets its default after two minutes – the refusal; a download is saved to Downloads. A drop-down <select>, colour or date field is set with browser_select_option / browser_type, not clicked.${kept.length ? ` This browser does not hand you: ${kept.join(', ')}.` : ''}`
+}
 
 /**
  * The server's `instructions`: how to behave in a browser the user and other agents share. `others`
@@ -2385,7 +2685,8 @@ export function agentInstructions(
   mode: AgentMode,
   allowScripts: boolean,
   others = 0,
-  agentDialogs = true
+  agentDialogs = true,
+  promptKinds: readonly AgentPromptKind[] = []
 ): string {
   const company =
     others > 0
@@ -2399,6 +2700,7 @@ export function agentInstructions(
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
     `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
     `${agentDialogs ? '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
+    ...(promptKinds.length ? [nativePromptsLine(promptKinds)] : []),
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',
