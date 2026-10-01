@@ -79,7 +79,6 @@ export interface AgentTool {
 }
 
 const SNAPSHOT_MAX_CHARS = 30_000
-const LOAD_TIMEOUT_MS = 15_000
 const LEASE_SECONDS = Math.round(FOREGROUND_LEASE_MS / 1000)
 
 // ---------------------------------------------------------------------------
@@ -416,7 +415,7 @@ function viewportInsteadOf(kind: string): string {
 async function settle(ctx: ToolContext, tabId: string): Promise<void> {
   await sleep(200)
   const tab = ctx.browser.tabs.tab(tabId)
-  if (tab?.loading) await ctx.agents.waitForLoad(tabId, LOAD_TIMEOUT_MS)
+  if (tab?.loading) await ctx.agents.waitForLoad(tabId, ctx.agents.loadTimeoutMs)
   else await sleep(150)
 }
 
@@ -1456,7 +1455,7 @@ const browserTabs: AgentTool = {
       const loadedByPrepare = !ctx.browser.tabs.view(tab.id)
       const view = await ctx.agents.prepare(s, tab.id, { activate: active })
       if (url && !loadedByPrepare)
-        await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
+        await ctx.agents.waitForLoad(tab.id, ctx.agents.loadTimeoutMs, { expectNavigation: true })
       return pageResult(
         ctx,
         tab,
@@ -1588,9 +1587,28 @@ const browserTabs: AgentTool = {
 // Tools: navigation and the page
 // ---------------------------------------------------------------------------
 
-/** The headline of a navigation the agent's dialog policy's `stay` cancelled. */
-const STAYED =
-  'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.'
+/**
+ * The headlines of a navigation a "Leave site?" stopped: the agent's dialog policy's `stay` on a
+ * hidden tab; the user's stay on a tab in front of them; the user still asked when the call's
+ * wait ran out.
+ */
+const STAYED = {
+  policy:
+    'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.',
+  user: 'Did not navigate: the page objected ("Leave site?") and the user chose to stay (the tab is in front of the user, so the user\'s rules answered it, not your policy); the tab still shows the page as it was.',
+  asked:
+    'Did not navigate yet: the page objected ("Leave site?") and the user is being asked (the tab is in front of the user, so the user\'s rules answer it, not your policy); the tab still shows the page as it was. browser_snapshot later shows what the user chose.'
+} as const
+
+/**
+ * After a navigation's wait: the headline of the "Leave site?" that stopped it, or null when
+ * the page went (or had nothing to object).
+ */
+function leaveSiteHeadline(ctx: ToolContext, tabId: string): string | null {
+  const stayed = ctx.agents.takeStayed(tabId)
+  if (stayed) return STAYED[stayed]
+  return ctx.browser.pageDialogs.asksToLeave(tabId) ? STAYED.asked : null
+}
 
 const browserNavigate: AgentTool = {
   definition: {
@@ -1619,17 +1637,20 @@ const browserNavigate: AgentTool = {
     } else tab = targetTab(ctx, args)
     await ctx.agents.prepare(s, tab.id)
     ctx.browser.tabs.navigate(tab.id, url)
-    const loaded = await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
+    const loaded = await ctx.agents.waitForLoad(tab.id, ctx.agents.loadTimeoutMs, {
+      expectNavigation: true
+    })
     const view = ctx.browser.tabs.view(tab.id)
     if (!view) throw new RpcError(-32002, 'The tab went away while loading')
     const pos = ctx.agents.cursorPosition(s, tab.id)
     if (pos) await ctx.agents.cursor(s, tab.id, view, pos.x, pos.y, 'show')
-    if (ctx.agents.takeStayed(tab.id)) return pageResult(ctx, tab, view, STAYED)
+    const stopped = leaveSiteHeadline(ctx, tab.id)
+    if (stopped) return pageResult(ctx, tab, view, stopped)
     return pageResult(
       ctx,
       tab,
       view,
-      `Navigated to ${url}${loaded ? '' : ' (still loading after 15 s – browser_wait_for can wait for content)'}.${opened}`
+      `Navigated to ${url}${loaded ? '' : ` (still loading after ${Math.round(ctx.agents.loadTimeoutMs / 1000)} s – browser_wait_for can wait for content)`}.${opened}`
     )
   }
 }
@@ -1649,13 +1670,12 @@ const browserNavigateBack: AgentTool = {
         `There is no previous page in tab ${tab.id} (it is at the start of its history)`
       )
     ctx.browser.tabs.goBack(tab.id)
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
-    const stayed = ctx.agents.takeStayed(tab.id)
+    await ctx.agents.waitForLoad(tab.id, ctx.agents.loadTimeoutMs, { expectNavigation: true })
     return pageResult(
       ctx,
       tab,
       ctx.browser.tabs.view(tab.id) ?? view,
-      stayed ? STAYED : 'Went back.'
+      leaveSiteHeadline(ctx, tab.id) ?? 'Went back.'
     )
   }
 }
@@ -1675,13 +1695,12 @@ const browserNavigateForward: AgentTool = {
         `There is no next page in tab ${tab.id} – forward only works after going back`
       )
     ctx.browser.tabs.goForward(tab.id)
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
-    const stayed = ctx.agents.takeStayed(tab.id)
+    await ctx.agents.waitForLoad(tab.id, ctx.agents.loadTimeoutMs, { expectNavigation: true })
     return pageResult(
       ctx,
       tab,
       ctx.browser.tabs.view(tab.id) ?? view,
-      stayed ? STAYED : 'Went forward.'
+      leaveSiteHeadline(ctx, tab.id) ?? 'Went forward.'
     )
   }
 }
@@ -1699,13 +1718,12 @@ const browserReload: AgentTool = {
   async run(ctx, args) {
     const { tab, view } = await actOn(ctx, args)
     ctx.browser.tabs.reload(tab.id, bool(args, 'ignoreCache'))
-    await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
-    const stayed = ctx.agents.takeStayed(tab.id)
+    await ctx.agents.waitForLoad(tab.id, ctx.agents.loadTimeoutMs, { expectNavigation: true })
     return pageResult(
       ctx,
       tab,
       ctx.browser.tabs.view(tab.id) ?? view,
-      stayed ? STAYED : 'Reloaded.'
+      leaveSiteHeadline(ctx, tab.id) ?? 'Reloaded.'
     )
   }
 }
@@ -1860,7 +1878,7 @@ const browserDialogPolicy: AgentTool = {
     name: 'browser_dialog_policy',
     title: 'Set how page dialogs are answered',
     description:
-      'Say ahead of an action how the dialogs a page opens on your tabs are to be answered, and the browser answers them at once from your policy instead of handing them to you: confirm "accept" (OK) or "dismiss" (Cancel); prompt "accept" (OK with the page\'s default text), "dismiss" (Cancel) or {"text":"…"} (OK with that text); beforeunload "leave" or "stay" for a page\'s "Leave site?" under your navigations. Alerts are not a rule – they always get OK. Without a policy the defaults apply: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave. With tabId the policy is that tab\'s and overrides your session-wide one kind by kind; without tabId it covers every tab you own, now and later. A set replaces the earlier rule of the same scope; action: "clear" drops that scope\'s rule only (the session-wide one without tabId, the tab\'s own with it). ttl: seconds the rule stands; once: true spends each kind\'s rule with the first dialog it answers (then the next rule, else the default, applies). Every dialog answered by the policy or by a default is reported in your next result as a "Notice:" line with the page\'s words. A navigation or close the user makes on your tab follows the user\'s rules, never your policy.',
+      'Say ahead of an action how the dialogs a page opens on your tabs are to be answered, and the browser answers them at once from your policy instead of handing them to you: confirm "accept" (OK) or "dismiss" (Cancel); prompt "accept" (OK with the page\'s default text), "dismiss" (Cancel) or {"text":"…"} (OK with that text); beforeunload "leave" or "stay" for a page\'s "Leave site?" under your navigations on a tab the user is not looking at. Alerts are not a rule – they always get OK. Without a policy the defaults apply: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave. With tabId the policy is that tab\'s and overrides your session-wide one kind by kind; without tabId it covers every tab you own, now and later. A set replaces the earlier rule of the same scope; action: "clear" drops that scope\'s rule only (the session-wide one without tabId, the tab\'s own with it). ttl: seconds the rule stands; once: true spends each kind\'s rule with the first dialog it answers (then the next rule, else the default, applies). Every dialog answered by the policy or by a default is reported in your next result as a "Notice:" line with the page\'s words. A navigation or close the user makes on your tab follows the user\'s rules, never your policy.',
     inputSchema: schema({
       action: {
         type: 'string',
@@ -1893,7 +1911,7 @@ const browserDialogPolicy: AgentTool = {
         type: 'string',
         enum: ['leave', 'stay'],
         description:
-          '"Leave site?" under your navigations and the page\'s own: "leave" lets the page go, "stay" cancels the navigation'
+          '"Leave site?" under your navigations and the page\'s own on a tab the user is not looking at: "leave" lets the page go, "stay" cancels the navigation. A tab in front of the user follows the user\'s rules – the user is asked, and your navigating call reports what the user chose.'
       },
       ttl: {
         type: 'number',

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { AgentSettings } from '../../../shared/types'
 import { PageDialogService } from '../../pageDialogs'
 import type { ZenWindow } from '../../window'
-import type { AgentSession } from '../service'
+import { AgentService, type AgentSession } from '../service'
 import { CLAIMS_FILE } from '../claims'
 import { AGENT_TOOLS } from '../tools'
 import { fakeBrowser, textOf, type FakeBrowser, type FakeBrowserOptions } from './fakeBrowser'
@@ -958,7 +958,7 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     )
   })
 
-  it('"Leave site?" under the agent\'s navigation: stay cancels it and the result says so, leave is reported', async () => {
+  it('"Leave site?" under the agent\'s navigation on a hidden tab: stay cancels it and the result says so, leave is reported', async () => {
     const fake = browser()
     objectingPages(fake)
     const { s: a } = await named(fake, 'Invoice reconciliation')
@@ -992,13 +992,14 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     )
   })
 
-  it("the user outranks the policy: the user's close or navigation on a held tab is never held by stay", async () => {
+  it("the user outranks the policy: a hidden tab's \"Leave site?\" is the policy's, a shown tab's is the user's whoever navigates it", async () => {
     const fake = browser()
     const dialogs = fake.browser.pageDialogs
     const { s: a } = await named(fake, 'Invoice reconciliation')
     const tab = await openTab(fake, a, 'https://billing.test')
     await policy(fake, a, { beforeunload: 'stay' })
-    // The page's own navigation on the agent's hidden tab: the policy's.
+    // The page's own navigation on the agent's hidden tab: the policy's (the agent's own
+    // navigation there: the test above).
     expect(fake.service.takesLeave(tab)).toBe(true)
     expect(await dialogs.confirmLeave(tab, false)).toBe(false)
     expect(await next(fake, a)).toContain('– answered stayed by your dialog policy.')
@@ -1014,19 +1015,84 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     fake.closing.delete(tab)
     expect(await next(fake, a)).not.toContain('Leave site?')
 
-    // The user brings the tab in front and navigates it while no call of the agent acts on
-    // it: the user's question as well.
+    // The user brings the tab in front: every "Leave site?" there is the user's question –
+    // the user's navigation while no call acts on the tab…
     fake.user.activate(tab)
     expect(fake.service.takesLeave(tab)).toBe(false)
     expect(await settle(dialogs.confirmLeave(tab, false), 50)).toBe('HUNG')
     expect(dialogs.list()).toHaveLength(1)
-    dialogs.respond(dialogs.list()[0].id, { accepted: false, value: null })
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
 
-    // The agent's own navigation on that same shown tab is the policy's again.
-    objectingPages(fake)
-    const res = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
-    expect(textOf(res)).toContain('Did not navigate: the page objected')
+    // …and the race the policy must lose: the user navigates the shown tab WHILE a call of
+    // the agent acts on it (the two cannot be told apart mid-call). The user is asked; the
+    // policy's stay holds nothing and reports nothing.
+    const gate = fake.hold(tab)
+    const acting = fake.call(a, 'browser_snapshot', { tabId: tab })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(fake.service.takesLeave(tab)).toBe(false)
+    expect(await settle(dialogs.confirmLeave(tab, false), 50)).toBe('HUNG')
+    expect(dialogs.list().map((d) => [d.tabId, d.kind])).toEqual([[tab, 'beforeunload']])
+    dialogs.respond(dialogs.list()[0].id, { accepted: false, value: null })
+    gate.release()
+    const snap = await acting
+    expect(snap.isError, textOf(snap)).toBeFalsy()
+    expect(textOf(snap)).not.toContain('Leave site?')
+    expect(await next(fake, a)).not.toContain('Leave site?')
     expect(fake.model.tabs[tab].url).toBe('https://billing.test')
+  })
+
+  it("the agent's own navigation on a tab in front of the user meets the user's rules: the user is asked, and the call reports what the user chose", async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    objectingPages(fake)
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { beforeunload: 'stay' })
+    fake.user.activate(tab)
+    expect(fake.service.takesLeave(tab)).toBe(false)
+    // The real wait: a navigating call waits on the user's answer, within its load timeout.
+    fake.service.waitForLoad = AgentService.prototype.waitForLoad
+    fake.service.loadTimeoutMs = 600
+
+    // The user stays: the user's answer, not the policy's, and the result says whose.
+    const asked = fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(dialogs.list().map((d) => [d.tabId, d.kind])).toEqual([[tab, 'beforeunload']])
+    dialogs.respond(dialogs.list()[0].id, { accepted: false, value: null })
+    const stayed = await asked
+    expect(stayed.isError, textOf(stayed)).toBeFalsy()
+    expect(textOf(stayed)).toContain(
+      'Did not navigate: the page objected ("Leave site?") and the user chose to stay (the tab is in front of the user, so the user\'s rules answered it, not your policy); the tab still shows the page as it was.'
+    )
+    expect(textOf(stayed)).not.toContain('by your dialog policy')
+    expect(fake.model.tabs[tab].url).toBe('https://billing.test')
+    expect(dialogs.list()).toEqual([])
+
+    // The user leaves: the navigation goes ahead, with the normal headline and no Notice.
+    const going = fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(dialogs.list()).toHaveLength(1)
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
+    const left = await going
+    expect(textOf(left)).toContain('Navigated to https://next.test')
+    expect(textOf(left)).not.toContain('Leave site?')
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+
+    // The user has not answered when the call's wait runs out: the result says so, and the
+    // page is still as it was; the user's later answer runs its course.
+    const waiting = await fake.call(a, 'browser_navigate', {
+      tabId: tab,
+      url: 'https://third.test'
+    })
+    expect(textOf(waiting)).toContain(
+      'Did not navigate yet: the page objected ("Leave site?") and the user is being asked (the tab is in front of the user, so the user\'s rules answer it, not your policy); the tab still shows the page as it was. browser_snapshot later shows what the user chose.'
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+    expect(dialogs.list()).toHaveLength(1)
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(fake.model.tabs[tab].url).toBe('https://third.test')
+    expect(await next(fake, a)).not.toContain('Leave site?')
   })
 
   it("the policy goes with the tab (closed, let go) and with the session; a host's view hears of it", async () => {

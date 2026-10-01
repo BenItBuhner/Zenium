@@ -98,6 +98,7 @@ import {
   describeIdle,
   FOREGROUND_LEASE_MS,
   GHOST_IDLE_MS,
+  LOAD_TIMEOUT_MS,
   randomToken,
   sleep,
   textError,
@@ -378,10 +379,12 @@ export class AgentService implements SessionStore, McpHandlers {
   private readonly dialogPolicies = new Map<string, DialogPolicyState>()
   /** Timers that drop an expiring dialog rule (`ttl`) from the hosts' views, by rule. */
   private readonly dialogRuleTimers = new Map<DialogRule, ReturnType<typeof setTimeout>>()
-  /** The tabs an agent's call acts on right now (from `prepare` to the call's end), by tab: `takesLeave`. */
-  private readonly acting = new Map<string, string>()
-  /** Tabs whose page a dialog policy's `stay` just kept, until the navigating call reads it. */
-  private readonly stayed = new Set<string>()
+  /**
+   * Tabs whose page a "Leave site?" just kept – by the agent's dialog policy's `stay` on a
+   * hidden tab, or by the USER on a tab in front of them – until the navigating call reads it
+   * (`takeStayed`); the next `prepare` of the tab drops a reading nobody took.
+   */
+  private readonly stayed = new Map<string, 'policy' | 'user'>()
   /** Native prompts of agents' tabs (file choosers, permissions, sign-ins…) waiting for their agent. */
   readonly prompts: AgentPromptQueue
   /** Per session, the running call's way out when a prompt the page waits on opens on its tab. */
@@ -392,6 +395,8 @@ export class AgentService implements SessionStore, McpHandlers {
   private agentWinId: string | null = null
   /** The longest a tool call may run (`CALL_DEADLINE_MS`); tests shorten it. */
   callDeadlineMs = CALL_DEADLINE_MS
+  /** The longest a navigating call waits for the page (`LOAD_TIMEOUT_MS`); tests shorten it. */
+  loadTimeoutMs = LOAD_TIMEOUT_MS
   /** How long a suspect page has to answer a trivial script (`PAGE_PROBE_MS`); tests shorten it. */
   pageProbeMs = PAGE_PROBE_MS
   /** How long an agent's page dialog waits for its answer (`AGENT_DIALOG_TTL_MS`); tests shorten it. */
@@ -859,7 +864,6 @@ export class AgentService implements SessionStore, McpHandlers {
       s.frames.delete(tabId)
       this.dropTabDialogRule(s, tabId)
     }
-    this.acting.delete(tabId)
     this.stayed.delete(tabId)
     this.dismissAgentDialog(tabId)
     this.prompts.dismissTab(tabId)
@@ -1496,7 +1500,6 @@ export class AgentService implements SessionStore, McpHandlers {
       if (timer) clearTimeout(timer)
       this.dialogWaiters.delete(s.id)
       this.promptWaiters.delete(s.id)
-      this.doneActing(s)
       // A background agent (or a foreground one that had to act in the background) may have
       // focused one of its hidden pages; hand keyboard focus back to what the user looks at.
       if (s.mode === 'background' || state.degraded) this.restoreUserFocus(s)
@@ -1703,16 +1706,12 @@ export class AgentService implements SessionStore, McpHandlers {
     const m = /^zenium:\/\/tab\/([^/]+)\/text$/.exec(path)
     if (m) {
       const tab = this.resolveTab(s, m[1], isTruthy(query.get('allowForeign')))
-      try {
-        const view = await this.prepare(s, tab.id, { activate: false })
-        const result = (await this.evalPage(view, pageCall('text', 100_000))) as {
-          title: string
-          text: string
-        }
-        return [{ uri, mimeType: 'text/plain', text: `${result.title}\n\n${result.text}` }]
-      } finally {
-        this.doneActing(s)
+      const view = await this.prepare(s, tab.id, { activate: false })
+      const result = (await this.evalPage(view, pageCall('text', 100_000))) as {
+        title: string
+        text: string
       }
+      return [{ uri, mimeType: 'text/plain', text: `${result.title}\n\n${result.text}` }]
     }
     throw new RpcError(-32002, `Unknown resource ${uri}`)
   }
@@ -2673,7 +2672,6 @@ export class AgentService implements SessionStore, McpHandlers {
     s.frames.delete(tabId)
     // The tab's own dialog rule goes with the tab; the session-wide one stays for the rest.
     this.dropTabDialogRule(s, tabId)
-    this.acting.delete(tabId)
     this.stayed.delete(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!view) return
@@ -2723,9 +2721,6 @@ export class AgentService implements SessionStore, McpHandlers {
     // layout viewport and paint nothing lays it out and paints it where the user cannot see it
     // (`TabView.setAgentDriven`). A tab in front of the user is the layout's as before.
     view.setAgentDriven?.(!this.isShown(tab, win))
-    // The call acts on this tab until it returns: a "Leave site?" its navigation raises is the
-    // agent's dialog policy's to answer, not the user's (`takesLeave`).
-    this.acting.set(tabId, s.id)
     // A host that answers page dialogs itself answers from the agent's policy for this tab.
     if (this.browser.platform.capabilities.agentDialogPolicy)
       view.setDialogPolicy?.(this.effectiveDialogPolicy(s, tabId))
@@ -2743,7 +2738,10 @@ export class AgentService implements SessionStore, McpHandlers {
    * sign of it yet is given a moment to begin before it counts as loaded, or the caller would
    * snapshot the previous page. The grace ends at the first sign: `loading` seen on, the tab's
    * URL moved, or the view committed another document (a tab created with its URL never changes
-   * it, so the view's own URL is what tells a fresh view's load from an idle tab).
+   * it, so the view's own URL is what tells a fresh view's load from an idle tab). While the
+   * USER is asked "Leave site?" about the page (a tab in front of the user: its question, never
+   * the policy's – `takesLeave`) the navigation waits on the answer, and so does this, within
+   * the timeout; the caller reads what the user chose (`takeStayed`, `PageDialogService.asksToLeave`).
    */
   async waitForLoad(
     tabId: string,
@@ -2754,12 +2752,26 @@ export class AgentService implements SessionStore, McpHandlers {
     const before = this.browser.tabs.tab(tabId)?.url
     const viewBefore = this.browser.tabs.view(tabId)?.getURL() ?? ''
     let graceUntil = opts.expectNavigation ? started + NAVIGATION_START_GRACE_MS : started
+    let asked = false
     // Navigation starts asynchronously: give `loading` a moment to flip on before we look at it.
     await sleep(120)
     for (;;) {
       const tab = this.browser.tabs.tab(tabId)
       const view = this.browser.tabs.view(tabId)
       if (!tab || !view || view.isDestroyed()) return false
+      if (this.browser.pageDialogs.asksToLeave(tabId)) {
+        asked = true
+        if (Date.now() - started > timeoutMs) return false
+        await sleep(100)
+        continue
+      }
+      if (asked) {
+        // The user answered: stayed, the page is as it was; left, the navigation begins now –
+        // asynchronously, so it gets the grace again.
+        asked = false
+        if (this.stayed.get(tabId) === 'user') return true
+        if (opts.expectNavigation) graceUntil = Date.now() + NAVIGATION_START_GRACE_MS
+      }
       if (tab.loading || tab.url !== before || view.getURL() !== viewBefore) graceUntil = started
       if (!tab.loading) {
         if (Date.now() < graceUntil) {
@@ -3024,37 +3036,48 @@ export class AgentService implements SessionStore, McpHandlers {
     }
   }
 
-  /** A call of the session is through: the tabs it acted on are no longer under its hand. */
-  private doneActing(s: AgentSession): void {
-    for (const [tabId, sessionId] of this.acting) if (sessionId === s.id) this.acting.delete(tabId)
+  /**
+   * The navigating call reads – once – that a "Leave site?" kept the tab's page: the policy's
+   * `stay` (a hidden tab), or the user's on a tab in front of them; null when nothing did.
+   */
+  takeStayed(tabId: string): 'policy' | 'user' | null {
+    const who = this.stayed.get(tabId) ?? null
+    this.stayed.delete(tabId)
+    return who
   }
 
-  /** The navigating call reads – once – that the policy's `stay` kept the tab's page. */
-  takeStayed(tabId: string): boolean {
-    return this.stayed.delete(tabId)
+  /**
+   * The user answered a "Leave site?" on a live agent's tab with stay – a tab in front of the
+   * user, whose question it is whoever navigated (`PageDialogService.confirmLeave`): a
+   * navigating call of the agent that waits on it reads so (`takeStayed`).
+   */
+  userStayed(tabId: string): void {
+    if (this.driver(tabId)) this.stayed.set(tabId, 'user')
   }
 
   /**
    * Whether a "Leave site?" of the tab is its agent's dialog policy's to answer
-   * (`PageDialogService.confirmLeave`): the tab is an agent's (`takesDialog`) and the question
-   * comes from the agent's own navigation or the page's – never from the USER. The user outranks
-   * the policy: an unload check the user started (`TabManager.unloadingForUser` – the tab's ×,
-   * the overview's swipe, a window's or the app's close) or a navigation on a tab in front of
-   * the user while no call of its agent acts on it is the user's question, answered by the
-   * user's rules. Only where the host has the policy (`HostCapabilities.agentDialogPolicy`).
+   * (`PageDialogService.confirmLeave`): the tab is an agent's (`takesDialog`) and the user is
+   * NOT looking at it. The policy governs the agent's hidden tabs – the agent's navigations
+   * and the page's own there. The user outranks it: an unload check the user started
+   * (`TabManager.unloadingForUser` – the tab's ×, the overview's swipe, a window's or the app's
+   * close) and every "Leave site?" of a tab in front of the user – the user's navigation or the
+   * agent's own, which cannot be told apart mid-call (an in-page click is nobody's to
+   * attribute) – are the user's question, answered by the user's rules; the agent's navigating
+   * call reads the user's stay (`userStayed`). Only where the host has the policy
+   * (`HostCapabilities.agentDialogPolicy`).
    */
   takesLeave(tabId: string): boolean {
     if (!this.browser.platform.capabilities.agentDialogPolicy) return false
     const tabs = this.browser.tabs
     if (tabs.unloadingForUser(tabId)) return false
-    if (!this.takesDialog(tabId)) return false
-    if (this.acting.has(tabId)) return true
     const tab = tabs.tab(tabId)
-    return tab !== undefined && !this.isShown(tab, tabs.windowFor(tabId))
+    if (!tab || this.isShown(tab, tabs.windowFor(tabId))) return false
+    return this.takesDialog(tabId)
   }
 
   /**
-   * A "Leave site?" on an agent's tab under the agent's or the page's own navigation
+   * A "Leave site?" on an agent's hidden tab under the agent's or the page's own navigation
    * (`takesLeave`): `stay` in the agent's dialog policy keeps the page – the navigating call's
    * result says so (`takeStayed`) – anything else leaves, and every answer is reported to the
    * agent in the Notice every host uses. Returns whether the page may go.
@@ -3063,7 +3086,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const owner = this.driver(tabId)
     const hit = owner ? this.dialogRuleFor(owner, tabId, 'beforeunload') : null
     const stay = hit?.rule.policy.beforeunload === 'stay'
-    if (stay) this.stayed.add(tabId)
+    if (stay) this.stayed.set(tabId, 'policy')
     if (owner) {
       if (hit) this.spendDialogRule(owner, tabId, hit, 'beforeunload')
       this.reportAnswered(

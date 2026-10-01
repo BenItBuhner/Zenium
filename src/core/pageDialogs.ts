@@ -139,6 +139,11 @@ export class PageDialogService {
     return this.pending.some((p) => p.dialog.tabId === tabId)
   }
 
+  /** Whether the user is being asked "Leave site?" (or "Reload site?") about the tab's page. */
+  asksToLeave(tabId: string): boolean {
+    return this.pending.some((p) => p.dialog.tabId === tabId && p.dialog.kind === 'beforeunload')
+  }
+
   /**
    * A page opened a dialog. Resolves once the user answered (an alert counts as accepted when
    * dismissed) or the dialog became moot (its tab went away, or is being checked for unload).
@@ -166,11 +171,13 @@ export class PageDialogService {
   /**
    * A page's `beforeunload` handler objects to the page going away: ask whether to leave. The
    * tab is brought to the front first, as Chrome does, since the dialog is tab-modal. Resolves
-   * true when the user leaves (or the tab is gone), false when the page stays. An agent's own
-   * navigation (and its page's) is answered by the agent's dialog policy – `stay` keeps the
-   * page, anything else leaves – and reported to the agent (`AgentService.onLeaveSite`); its
-   * tab is never brought in front of the user nor its window focused. A close or navigation
-   * the USER makes on an agent's tab is the user's question, policy or not (`takesLeave`).
+   * true when the user leaves (or the tab is gone), false when the page stays. On an agent's
+   * HIDDEN tab the agent's own navigation (and its page's) is answered by the agent's dialog
+   * policy – `stay` keeps the page, anything else leaves – and reported to the agent
+   * (`AgentService.onLeaveSite`); the tab is never brought in front of the user nor its window
+   * focused. A close the USER makes on an agent's tab, and every "Leave site?" of an agent's
+   * tab in front of the user, is the user's question, policy or not (`takesLeave`); the user's
+   * stay there reaches the agent's navigating call (`AgentService.userStayed`).
    */
   async confirmLeave(tabId: string, reload: boolean): Promise<boolean> {
     const tabs = this.browser.tabs
@@ -194,6 +201,7 @@ export class PageDialogService {
       message: reload ? 'reload' : 'leave',
       defaultValue: ''
     })
+    if (!answer.accepted) agents?.userStayed(tabId)
     return answer.accepted
   }
 
