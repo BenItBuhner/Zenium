@@ -46,6 +46,8 @@ import type {
   AutofillHost,
   BlockingHost,
   BundledFilterList,
+  ChromeSnapshot,
+  ChromeSnapshotRequest,
   ClipboardHost,
   ConnectivityHost,
   DialogHost,
@@ -1205,6 +1207,34 @@ export class AndroidWindowHost implements WindowHost {
   normalBounds(): null {
     return null
   }
+
+  /**
+   * The picture of a page the chrome draws (Settings) as the window shows it: Kotlin copies
+   * its window where the content area is (`ChromePageSnapshot.kt`, the same `PixelCopy` a page
+   * view's cover comes from), answers the cover, and scales the card picture from the same copy
+   * – kept on disk under the tab's address as a page's is (`Thumbnails.kt`).
+   */
+  async snapshotChrome(request: ChromeSnapshotRequest): Promise<ChromeSnapshot | null> {
+    const raw = await this.bridge.call<unknown>('chrome.snapshot', request)
+    return chromeSnapshotFrom(raw)
+  }
+}
+
+/** Kotlin's `chrome.snapshot` answer as the core's `ChromeSnapshot`, or null for anything else. */
+export function chromeSnapshotFrom(raw: unknown): ChromeSnapshot | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const { cover, card } = raw as { cover?: unknown; card?: unknown }
+  if (typeof cover !== 'string' || cover === '') return null
+  return { cover, card: thumbnailPictureFrom(card) }
+}
+
+function thumbnailPictureFrom(raw: unknown): ThumbnailPicture | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const { data, width, height } = raw as { data?: unknown; width?: unknown; height?: unknown }
+  if (typeof data !== 'string' || data === '') return null
+  if (typeof width !== 'number' || typeof height !== 'number' || width <= 0 || height <= 0)
+    return null
+  return { data, width, height }
 }
 
 /** The bundled filter-list snapshot lives in the APK's assets; Kotlin copies it into the profile. */

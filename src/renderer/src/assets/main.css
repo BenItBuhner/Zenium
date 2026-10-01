@@ -13842,6 +13842,34 @@
   flex-shrink: 0;
   stroke-width: 1.75;
 }
+/*
+ * A tab on a section or a drill-in page: the drill-in's bar as `.zen-settings-bar` draws it on
+ * the phone (the 44 icon button and 12 of air, the back chevron, the 17/600 title), over its
+ * empty pane – the page the tab is on, not the landing it is not on.
+ */
+.zen-settings-preview-bar {
+  --u: calc(100cqw / 412);
+  display: flex;
+  height: calc(56 * var(--u));
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: 0 calc(16 * var(--u));
+}
+.zen-settings-preview-bar > svg {
+  width: calc(24 * var(--u));
+  height: calc(24 * var(--u));
+  flex-shrink: 0;
+  stroke-width: 2;
+}
+.zen-settings-preview-bar-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(17 * var(--u));
+  font-weight: var(--v2-weight-heading);
+  line-height: calc(22 * var(--u));
+}
 
 /* ---------------------------------------------------------------------------
  * List pages as chrome page tabs – History, the bookmarks manager, Downloads (design language
