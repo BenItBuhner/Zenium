@@ -1033,6 +1033,60 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     )
   })
 
+  it("a session-wide policy covers tabs opened later from their first call; a ttl runs out by its timer; a tab let go drops its own rule – and the hosts' views hear each", async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const first = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { confirm: 'accept' })
+    const viewOf = (tab: string): unknown => fake.dialogPolicies.get(tab)?.at(-1)
+    expect(viewOf(first)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+
+    // Now and later: a tab opened after the set hears the policy as it is readied for the
+    // agent's first call on it, and its dialogs are answered from it.
+    const later = await openTab(fake, a, 'https://later.test')
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+    expect(
+      (await dialogs.ask(later, request('confirm', 'Later?', '', 'https://later.test/'))).accepted
+    ).toBe(true)
+    expect(await next(fake, a)).toContain(
+      `the page in tab ${later} (later.test) opened a confirm dialog: "Later?" – answered OK by your dialog policy.`
+    )
+
+    // A ttl runs out by its timer, with no dialog or call to notice: the tab's own rule is
+    // gone and its view hears what is left – the session's.
+    await policy(fake, a, { tabId: later, confirm: 'dismiss', prompt: 'accept', ttl: 0.1 })
+    expect(viewOf(later)).toEqual({
+      confirm: { answer: 'dismiss', rule: 'tab' },
+      prompt: { answer: 'accept', rule: 'tab' }
+    })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+    expect(fake.service.dialogPolicyOf(a).tabs.size).toBe(0)
+    // The session-wide rule's ttl the same: every view of the session hears what is left.
+    await policy(fake, a, { tabId: first, prompt: 'accept' })
+    await policy(fake, a, { confirm: 'dismiss', ttl: 0.1 })
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'dismiss', rule: 'session' } })
+    expect(viewOf(first)).toEqual({
+      confirm: { answer: 'dismiss', rule: 'session' },
+      prompt: { answer: 'accept', rule: 'tab' }
+    })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(fake.service.dialogPolicyOf(a).all).toBeNull()
+    expect(viewOf(later)).toBeNull()
+    expect(viewOf(first)).toEqual({ prompt: { answer: 'accept', rule: 'tab' } })
+
+    // The user takes one tab back: its own rule goes with it and its view hears null; the
+    // session-wide rule stands for the rest, and the released tab's dialogs are the user's.
+    await policy(fake, a, { confirm: 'accept' })
+    fake.service.releaseTab(first)
+    expect(fake.service.dialogPolicyOf(a).tabs.has(first)).toBe(false)
+    expect(viewOf(first)).toBeNull()
+    expect(fake.service.takesDialog(first)).toBe(false)
+    expect(fake.service.dialogPolicyOf(a).all?.policy).toEqual({ confirm: 'accept' })
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+  })
+
   it('"Leave site?" under the agent\'s navigation on a hidden tab: stay cancels it and the result says so, leave is reported', async () => {
     const fake = browser()
     objectingPages(fake)
