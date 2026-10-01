@@ -663,3 +663,85 @@ describe('AndroidTabView.setAgentDriven', () => {
     ])
   })
 })
+
+describe("AndroidTabView and an agent's dialog policy (agentDialogs.ts)", () => {
+  it("hands Kotlin the tab's effective policy as the core resolved it, and null to clear it (`view.setDialogPolicy`)", () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.setDialogPolicy({
+      confirm: { answer: 'accept', rule: 'tab' },
+      prompt: { answer: { text: 'Zenium' }, rule: 'session' }
+    })
+    view.setDialogPolicy({ beforeunload: { answer: 'stay', rule: 'session' } })
+    view.setDialogPolicy(null)
+    expect(calls).toEqual([
+      {
+        method: 'view.setDialogPolicy',
+        args: {
+          tabId: 'tab_1',
+          policy: {
+            confirm: { answer: 'accept', rule: 'tab' },
+            prompt: { answer: { text: 'Zenium' }, rule: 'session' }
+          }
+        }
+      },
+      {
+        method: 'view.setDialogPolicy',
+        args: { tabId: 'tab_1', policy: { beforeunload: { answer: 'stay', rule: 'session' } } }
+      },
+      { method: 'view.setDialogPolicy', args: { tabId: 'tab_1', policy: null } }
+    ])
+  })
+
+  it("routes Kotlin's report of a dialog it answered to the core's onPageDialogAnswered, and drops one it cannot read", () => {
+    const { bridge } = fakeBridge()
+    const reports: unknown[] = []
+    const view = new AndroidTabView('tab_1', bridge)
+    view.events = {
+      onPageDialogAnswered: (report) => reports.push(report)
+    } as unknown as TabViewEvents
+    view.dispatch('pageDialogAnswered', {
+      kind: 'prompt',
+      url: 'https://example.com/form',
+      message: 'Your name?',
+      defaultValue: '',
+      answer: { text: 'Zenium' },
+      rule: 'session'
+    })
+    view.dispatch('pageDialogAnswered', {
+      kind: 'beforeunload',
+      url: 'https://example.com/form',
+      message: 'Changes you made may not be saved.',
+      answer: 'leave',
+      rule: 'default'
+    })
+    view.dispatch('pageDialogAnswered', { kind: 'confirm', answer: 'accept' })
+    expect(reports).toEqual([
+      {
+        kind: 'prompt',
+        url: 'https://example.com/form',
+        message: 'Your name?',
+        defaultValue: '',
+        answer: { text: 'Zenium' },
+        rule: 'session'
+      },
+      {
+        kind: 'beforeunload',
+        url: 'https://example.com/form',
+        message: 'Changes you made may not be saved.',
+        answer: 'leave',
+        rule: 'default'
+      }
+    ])
+    // A core without the event (an older one) hears nothing and nothing throws.
+    view.events = {} as TabViewEvents
+    view.dispatch('pageDialogAnswered', {
+      kind: 'alert',
+      url: 'https://example.com/',
+      message: 'Hi',
+      answer: 'accept',
+      rule: 'default'
+    })
+    expect(reports).toHaveLength(2)
+  })
+})
