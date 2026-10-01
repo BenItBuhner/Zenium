@@ -24,7 +24,7 @@ import {
   withDefaultSearchEngineActive,
   withSearchEngineActive
 } from '../search'
-import { searchCommands } from '../commands'
+import { URLBAR_COMMANDS, searchCommands } from '../commands'
 import type { FormFactor, HostCapabilities, SearchEngine } from '../types'
 
 const google = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'google')!
@@ -688,5 +688,30 @@ describe('command bar', () => {
     expect(actions('tablet', 'sidebar width')).toContain('sidebar.toggle')
     expect(actions('tablet', 'split grid')).toContain('split.grid')
     expect(actions('phone', 'split grid')).not.toContain('split.grid')
+  })
+
+  it('names the sidebar row for the side its act would take', () => {
+    const caps = new Proxy({} as HostCapabilities, { get: () => true })
+    const sidebarRow = (query: string, sidebarExpanded?: boolean): string | undefined =>
+      searchCommands(query, { capabilities: caps, formFactor: 'desktop', sidebarExpanded }).find(
+        (c) => c.action === 'sidebar.toggle'
+      )?.label
+    // The state pair: Collapse Sidebar while it is expanded, Expand Sidebar at the rail; a host
+    // that does not say reads the stateless face. The old name's words still find the row.
+    expect(sidebarRow('sidebar', true)).toBe('Collapse Sidebar')
+    expect(sidebarRow('sidebar', false)).toBe('Expand Sidebar')
+    expect(sidebarRow('sidebar')).toBe('Expand Sidebar')
+    expect(sidebarRow('collapse', true)).toBe('Collapse Sidebar')
+    expect(sidebarRow('expand', true)).toBe('Collapse Sidebar')
+    expect(sidebarRow('toggle sidebar width', false)).toBe('Expand Sidebar')
+    // The table's row is left as it was: the label is the result's alone.
+    expect(URLBAR_COMMANDS.find((c) => c.action === 'sidebar.toggle')?.label).toBe('Expand Sidebar')
+    // No other row reads the state.
+    expect(sidebarRow('compact', true)).toBeUndefined()
+    const labels = (sidebarExpanded: boolean): string[] =>
+      searchCommands('split', { capabilities: caps, formFactor: 'desktop', sidebarExpanded }).map(
+        (c) => c.label
+      )
+    expect(labels(true)).toEqual(labels(false))
   })
 })

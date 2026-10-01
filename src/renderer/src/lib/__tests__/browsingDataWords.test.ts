@@ -3,6 +3,7 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
+import { S } from '@shared/strings'
 
 /**
  * The words of the Delete browsing data family, swept (W8-7). Chrome renamed the family in M124
@@ -279,10 +280,18 @@ describe('the Delete browsing data words (W8-7): Chrome M124+’s "Delete" on ev
     expect(find('src/renderer/src/lib/browsingData.ts', 'deleted')).toBe(true)
     expect(find('src/renderer/src/lib/browsingData.ts', 'Deleted')).toBe(true)
     expect(find('src/renderer/src/lib/browsingData.ts', 'Nothing deleted')).toBe(true)
-    // The menu rows and the shortcut's label were Chrome's Title Case already (#396).
+    // The menu rows and the shortcut's label were Chrome's Title Case already (#396). The mac
+    // menu bar and the key table now read the string table's entry (`privacy.clearBrowsingData`,
+    // an ask: the ellipsis is the face's, never typed); the app menu's row spells the words
+    // until its family lands.
     expect(find('src/core/menus.ts', 'Delete Browsing Data…')).toBe(true)
-    expect(find('src/core/menuBar.ts', 'Delete Browsing Data…')).toBe(true)
-    expect(find('src/shared/shortcuts.ts', 'Delete Browsing Data…')).toBe(true)
+    expect(find('src/shared/strings/actions.ts', 'Delete Browsing Data')).toBe(true)
+    expect(S.menu('privacy.clearBrowsingData')).toBe('Delete Browsing Data…')
+    expect(S.title('privacy.clearBrowsingData')).toBe('Delete browsing data')
+    for (const file of ['src/core/menuBar.ts', 'src/shared/shortcuts.ts']) {
+      expect(readFileSync(join(repo, file), 'utf8'), file).toContain("'privacy.clearBrowsingData'")
+      expect(find(file, 'Delete Browsing Data…'), file).toBe(false)
+    }
     // The phone's demo driver looks the sheet up by the new words.
     expect(
       find(

@@ -1,3 +1,4 @@
+import { S } from './strings'
 import type { CommandDescriptor, FormFactor, HostCapabilities } from './types'
 
 /**
@@ -13,160 +14,171 @@ const SIDEBAR_LAYOUTS: FormFactor[] = ['desktop', 'tablet']
 const DESKTOP_LAYOUT: FormFactor[] = ['desktop']
 
 /**
- * Zen's "Command Bar": actions that can be run by typing their name into the URL bar.
+ * Zen's "Command Bar": actions that can be run by typing their name into the URL bar. A row's
+ * label is the string table's menu face of its action (§9 item 10: one label per act on every
+ * surface, the ellipsis where the act asks – Q5), so the palette says what the key table and
+ * the menus say. The words a row's old name carried and its label no longer does ("toggle",
+ * "switch", "width", "page", "open") stay as keywords: what the user typed yesterday finds the
+ * row today.
  */
 export const URLBAR_COMMANDS: CommandDescriptor[] = [
   {
     id: 'compact',
-    label: 'Toggle Compact Mode',
-    keywords: ['compact', 'mode', 'hide sidebar'],
+    label: S.menu('compact.toggle'),
+    keywords: ['compact', 'mode', 'toggle', 'hide sidebar'],
     action: 'compact.toggle',
     layouts: DESKTOP_LAYOUT
   },
   {
     id: 'compact-sidebar',
-    label: 'Toggle Floating Sidebar',
-    keywords: ['sidebar', 'floating'],
+    label: S.menu('compact.toggleSidebar'),
+    keywords: ['sidebar', 'floating', 'toggle'],
     action: 'compact.toggleSidebar',
     layouts: DESKTOP_LAYOUT
   },
   {
     id: 'sidebar',
-    label: 'Toggle Sidebar Width',
-    keywords: ['sidebar', 'collapse', 'expand'],
+    // The stateless face; `searchCommands` reads the state pair where the host knows the state.
+    label: S.menu('sidebar.toggle'),
+    keywords: ['sidebar', 'width', 'collapse', 'expand', 'toggle'],
     action: 'sidebar.toggle',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'new-space',
-    label: 'Create New Space',
+    label: S.menu('space.new'),
     keywords: ['space', 'workspace', 'new'],
     action: 'space.new'
   },
   {
     id: 'next-space',
-    label: 'Switch to Next Space',
-    keywords: ['space', 'next', 'workspace'],
+    label: S.menu('space.next'),
+    keywords: ['space', 'next', 'switch', 'workspace'],
     action: 'space.next'
   },
   {
     id: 'prev-space',
-    label: 'Switch to Previous Space',
-    keywords: ['space', 'previous', 'workspace'],
+    label: S.menu('space.prev'),
+    keywords: ['space', 'previous', 'switch', 'workspace'],
     action: 'space.prev'
   },
   {
     id: 'theme',
-    label: 'Change Theme',
+    label: S.menu('theme.open'),
     keywords: ['theme', 'gradient', 'color', 'colour', 'picker'],
     action: 'theme.open'
   },
   {
     id: 'split-grid',
-    label: 'Split View: Grid',
+    label: S.menu('split.grid'),
     keywords: ['split', 'grid'],
     action: 'split.grid',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'split-vertical',
-    label: 'Split View: Vertical',
+    label: S.menu('split.vertical'),
     keywords: ['split', 'vertical', 'side by side'],
     action: 'split.vertical',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'split-horizontal',
-    label: 'Split View: Horizontal',
+    label: S.menu('split.horizontal'),
     keywords: ['split', 'horizontal', 'stack'],
     action: 'split.horizontal',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'unsplit',
-    label: 'Unsplit View',
+    label: S.menu('split.unsplit'),
     keywords: ['split', 'unsplit', 'remove'],
     action: 'split.unsplit',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'new-split',
-    label: 'New Empty Split View',
+    label: S.menu('split.newEmpty'),
     keywords: ['split', 'empty', 'new'],
     action: 'split.newEmpty',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'swap-split',
-    label: 'Swap Split Panes',
+    label: S.menu('split.swap'),
     keywords: ['split', 'swap', 'reverse', 'panes', 'left', 'right'],
     action: 'split.swap',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'pin',
-    label: 'Pin / Unpin Tab',
+    label: S.menu('tab.togglePin'),
     keywords: ['pin', 'unpin', 'tab'],
     action: 'tab.togglePin'
   },
   {
     id: 'reset-pinned',
-    label: 'Reset Pinned Tab',
+    label: S.menu('tab.resetPinned'),
     keywords: ['pin', 'reset'],
     action: 'tab.resetPinned'
   },
   {
     id: 'duplicate',
-    label: 'Duplicate Tab',
+    label: S.menu('tab.duplicate'),
     keywords: ['duplicate', 'tab', 'copy'],
     action: 'tab.duplicate'
   },
   {
     id: 'copy-url',
-    label: 'Copy Current URL',
-    keywords: ['copy', 'url', 'link'],
+    label: S.menu('tab.copyUrl'),
+    keywords: ['copy', 'url', 'link', 'current'],
     action: 'tab.copyUrl'
   },
   {
     id: 'copy-url-md',
-    label: 'Copy Current URL as Markdown',
-    keywords: ['copy', 'url', 'markdown'],
+    label: S.menu('tab.copyUrlMarkdown'),
+    keywords: ['copy', 'url', 'link', 'markdown', 'current'],
     action: 'tab.copyUrlMarkdown'
   },
   {
     id: 'close-unpinned',
-    label: 'Close All Unpinned Tabs',
-    keywords: ['close', 'clear', 'unpinned', 'tabs'],
+    label: S.menu('space.closeUnpinned'),
+    keywords: ['close', 'clear', 'all', 'unpinned', 'tabs'],
     action: 'space.closeUnpinned'
   },
   {
     id: 'reopen',
-    label: 'Reopen Closed Tab',
+    label: S.menu('tab.reopenClosed'),
     keywords: ['reopen', 'undo', 'closed'],
     action: 'tab.reopenClosed'
   },
-  { id: 'reload', label: 'Reload Page', keywords: ['reload', 'refresh'], action: 'nav.reload' },
+  {
+    id: 'reload',
+    label: S.menu('nav.reload'),
+    keywords: ['reload', 'refresh', 'page'],
+    action: 'nav.reload'
+  },
   {
     id: 'mute',
-    label: 'Mute / Unmute Tab',
+    label: S.menu('page.toggleMute'),
     keywords: ['mute', 'audio', 'sound'],
     action: 'page.toggleMute'
   },
   {
     id: 'mute-site',
-    label: 'Mute / Unmute Site',
+    label: S.menu('page.toggleMuteSite'),
     keywords: ['mute', 'site', 'audio', 'sound', 'host'],
     action: 'page.toggleMuteSite'
   },
   {
     id: 'screenshot',
-    label: 'Take Screenshot',
+    label: S.menu('page.screenshot'),
     keywords: ['screenshot', 'capture'],
     action: 'page.screenshot'
   },
   {
     id: 'captureFullPage',
-    label: 'Capture Full Page',
+    label: S.menu('page.captureFullPage'),
     keywords: ['screenshot', 'capture', 'full page', 'long'],
     action: 'page.captureFullPage'
   },
@@ -174,43 +186,65 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   // full page, then Copy or Save). "web capture" typed names this row, not the one above.
   {
     id: 'web-capture',
-    label: 'Screenshot',
+    label: S.menu('capture.start'),
     keywords: ['web capture', 'capture', 'screenshot', 'region', 'select', 'clip', 'snip'],
     action: 'capture.start',
     layouts: DESKTOP_LAYOUT
   },
   {
     id: 'fullscreen',
-    label: 'Toggle Fullscreen',
-    keywords: ['fullscreen', 'full screen'],
+    label: S.menu('page.fullscreen'),
+    keywords: ['fullscreen', 'full screen', 'toggle'],
     action: 'page.fullscreen',
     layouts: SIDEBAR_LAYOUTS
   },
-  { id: 'zoom-in', label: 'Zoom In', keywords: ['zoom', 'in', 'bigger'], action: 'zoom.in' },
-  { id: 'zoom-out', label: 'Zoom Out', keywords: ['zoom', 'out', 'smaller'], action: 'zoom.out' },
-  { id: 'zoom-reset', label: 'Reset Zoom', keywords: ['zoom', 'reset'], action: 'zoom.reset' },
-  { id: 'find', label: 'Find in Page', keywords: ['find', 'search page'], action: 'find.open' },
+  {
+    id: 'zoom-in',
+    label: S.menu('zoom.in'),
+    keywords: ['zoom', 'in', 'bigger'],
+    action: 'zoom.in'
+  },
+  {
+    id: 'zoom-out',
+    label: S.menu('zoom.out'),
+    keywords: ['zoom', 'out', 'smaller'],
+    action: 'zoom.out'
+  },
+  {
+    id: 'zoom-reset',
+    label: S.menu('zoom.reset'),
+    keywords: ['zoom', 'reset'],
+    action: 'zoom.reset'
+  },
+  {
+    id: 'find',
+    label: S.menu('find.open'),
+    keywords: ['find', 'search page'],
+    action: 'find.open'
+  },
   {
     id: 'bookmark',
-    label: 'Bookmark This Page',
-    keywords: ['bookmark', 'save', 'star'],
+    label: S.menu('bookmark.add'),
+    keywords: ['bookmark', 'save', 'star', 'page'],
     action: 'bookmark.add'
   },
   {
     id: 'bookmark-all-tabs',
-    label: 'Bookmark All Tabs',
+    label: S.menu('bookmark.allTabs'),
     keywords: ['bookmark', 'all', 'tabs', 'folder'],
     action: 'bookmark.allTabs'
   },
+  // `bookmarks.open` and `history.open` are the palette's own ids for the key table's
+  // `bookmark.library` and `history.sidebar` (the same code runs): the rows read the act's entry.
   {
     id: 'bookmarks',
-    label: 'Bookmark Manager',
+    label: S.menu('bookmark.library'),
     keywords: ['bookmarks', 'library', 'manager'],
     action: 'bookmarks.open'
   },
   {
     id: 'bookmarks-bar',
-    label: 'Show / Hide Bookmarks Bar',
+    label: S.menu('bookmark.toggleBar'),
     keywords: ['bookmarks', 'bar', 'toolbar', 'favorites'],
     action: 'bookmark.toggleBar'
   },
@@ -219,24 +253,29 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   // list yet, so neither row is offered there (as its menus leave the rows out).
   {
     id: 'reading-list-add',
-    label: 'Add to Reading List',
+    label: S.menu('readingList.add'),
     keywords: ['reading list', 'read later', 'save for later', 'unread'],
     action: 'readingList.add',
     layouts: SIDEBAR_LAYOUTS
   },
   {
     id: 'reading-list',
-    label: 'Show Reading List',
+    label: S.menu('readingList.open'),
     keywords: ['reading list', 'read later', 'saved pages', 'unread'],
     action: 'readingList.open',
     layouts: SIDEBAR_LAYOUTS
   },
-  { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
+  {
+    id: 'history',
+    label: S.menu('history.sidebar'),
+    keywords: ['history', 'recent'],
+    action: 'history.open'
+  },
   // Chrome's "Delete browsing data" action (its Ctrl+Shift+Delete dialog; omnibox-39): "clear
   // browsing data", "delete browsing data" and "clear history" all name this row.
   {
     id: 'clear-browsing-data',
-    label: 'Delete Browsing Data',
+    label: S.menu('privacy.clearBrowsingData'),
     keywords: ['delete', 'clear', 'browsing data', 'history', 'cookies', 'cache'],
     action: 'privacy.clearBrowsingData',
     layouts: SIDEBAR_LAYOUTS
@@ -246,26 +285,26 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   // a sheet wherever Settings is.
   {
     id: 'manage-search-engines',
-    label: 'Manage Search Engines',
+    label: S.menu('search.manageEngines'),
     keywords: ['search engines', 'engines', 'manage', 'change', 'edit', 'default', 'keyword'],
     action: 'search.manageEngines'
   },
   {
     id: 'downloads',
-    label: 'Show Downloads',
+    label: S.menu('downloads.open'),
     keywords: ['downloads', 'files'],
     action: 'downloads.open'
   },
   {
     id: 'settings',
-    label: 'Open Settings',
-    keywords: ['settings', 'preferences', 'options'],
+    label: S.menu('settings.open'),
+    keywords: ['settings', 'preferences', 'options', 'open'],
     action: 'settings.open'
   },
   {
     id: 'devtools',
-    label: 'Toggle Developer Tools',
-    keywords: ['devtools', 'inspect', 'developer'],
+    label: S.menu('devtools.toggle'),
+    keywords: ['devtools', 'inspect', 'developer', 'toggle'],
     action: 'devtools.toggle',
     requires: 'devtools'
   },
@@ -273,61 +312,61 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     // Chrome's More Tools › Task Manager (Shift+Esc): the `zen://tasks` page – in its own
     // window on a host with windows (W5-18) – desktop alone.
     id: 'task-manager',
-    label: 'Task Manager',
+    label: S.menu('tasks.open'),
     keywords: ['task manager', 'tasks', 'processes', 'memory', 'cpu', 'end process'],
     action: 'tasks.open',
     layouts: DESKTOP_LAYOUT
   },
   {
     id: 'print',
-    label: 'Print Page',
-    keywords: ['print'],
+    label: S.menu('page.printPreview'),
+    keywords: ['print', 'page'],
     action: 'page.printPreview',
     requires: 'print'
   },
   {
     // Zen 1.20.1: type "New Boost" to boost the current site.
     id: 'new-boost',
-    label: 'New Boost',
+    label: S.menu('boost.new'),
     keywords: ['boost', 'tint', 'zap', 'dark mode', 'site style'],
     action: 'boost.new'
   },
   {
     id: 'reader',
-    label: 'Toggle Reader View',
-    keywords: ['reader', 'read', 'article'],
+    label: S.menu('page.readerMode'),
+    keywords: ['reader', 'read', 'article', 'toggle'],
     action: 'page.readerMode'
   },
   {
     id: 'translate',
-    label: 'Translate Page',
+    label: S.menu('translate.open'),
     keywords: ['translate', 'translation', 'language'],
     action: 'translate.open'
   },
   {
     id: 'new-window',
-    label: 'New Window',
+    label: S.menu('window.new'),
     keywords: ['window', 'new'],
     action: 'window.new',
     requires: 'windows'
   },
   {
     id: 'new-blank-window',
-    label: 'New Blank Window',
+    label: S.menu('window.newUnsynced'),
     keywords: ['window', 'blank', 'unsynced'],
     action: 'window.newUnsynced',
     requires: 'windows'
   },
   {
     id: 'move-tab-to-new-window',
-    label: 'Move Tab to New Window',
+    label: S.menu('tab.moveToNewWindow'),
     keywords: ['window', 'move', 'tab', 'tear', 'detach'],
     action: 'tab.moveToNewWindow',
     requires: 'windows'
   },
   {
     id: 'new-private-window',
-    label: 'New Private Window',
+    label: S.menu('window.newPrivate'),
     keywords: ['window', 'private', 'incognito'],
     action: 'window.newPrivate',
     requires: 'windows'
@@ -335,7 +374,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   // Chrome's More tools › Name window…: the desktop's, whose title bar reads the name.
   {
     id: 'name-window',
-    label: 'Name Window',
+    label: S.menu('window.name'),
     keywords: ['window', 'name', 'rename', 'title'],
     action: 'window.name',
     layouts: DESKTOP_LAYOUT
@@ -343,72 +382,86 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   // Duplicate Window (session-19): a second window like this one, cascaded from it.
   {
     id: 'duplicate-window',
-    label: 'Duplicate Window',
+    label: S.menu('window.duplicate'),
     keywords: ['window', 'duplicate', 'clone', 'copy'],
     action: 'window.duplicate',
     requires: 'windows'
   },
   {
     id: 'addons',
-    label: 'Add-ons and Themes',
+    label: S.menu('addons.open'),
     keywords: ['addons', 'extensions', 'mods'],
     action: 'addons.open',
     requires: 'extensions'
   },
   {
     id: 'source',
-    label: 'View Page Source',
+    label: S.menu('page.viewSource'),
     keywords: ['source', 'html'],
     action: 'page.viewSource',
     requires: 'viewSource'
   },
   {
     id: 'freeze-others',
-    label: 'Freeze Other Tabs',
+    label: S.menu('tab.freezeOthers'),
     keywords: ['freeze', 'sleep', 'suspend', 'tabs', 'background'],
     action: 'tab.freezeOthers',
     requires: 'resourceGovernor'
   },
   {
     id: 'wake-all',
-    label: 'Wake All Tabs',
+    label: S.menu('tab.wakeAll'),
     keywords: ['wake', 'thaw', 'unfreeze', 'resume', 'tabs'],
     action: 'tab.wakeAll',
     requires: 'resourceGovernor'
   },
   {
     id: 'trim',
-    label: 'Free Up Memory Now',
+    label: S.menu('resources.trim'),
     keywords: ['memory', 'free', 'trim', 'unload', 'purge', 'ram', 'cpu'],
     action: 'resources.trim',
     requires: 'resourceGovernor'
   },
   {
     id: 'resources',
-    label: 'Resource Budgets',
+    label: S.menu('resources.open'),
     keywords: ['resources', 'memory', 'cpu', 'gpu', 'budget', 'limit', 'performance'],
     action: 'resources.open',
     requires: 'resourceGovernor'
   },
   {
     id: 'passwords',
-    label: 'Password Manager',
+    label: S.menu('passwords.open'),
     keywords: ['passwords', 'logins', 'credentials', 'vault', 'checkup', 'generator'],
     action: 'passwords.open',
     requires: 'passwords'
   }
 ]
 
-/** Where a URL bar is: what its host can do and the layout its chrome is in. */
+/**
+ * Where a URL bar is: what its host can do, the layout its chrome is in and – when the host knows
+ * it – whether the sidebar is expanded, the state the Expand / Collapse Sidebar row names.
+ */
 export interface CommandContext {
   capabilities: HostCapabilities
   formFactor: FormFactor
+  sidebarExpanded?: boolean
 }
 
 /** Whether the command would do anything on this host, in this layout. */
 export function commandAvailable(cmd: CommandDescriptor, ctx: CommandContext): boolean {
   if (cmd.layouts && !cmd.layouts.includes(ctx.formFactor)) return false
   return cmd.requires === undefined || ctx.capabilities[cmd.requires] === true
+}
+
+/**
+ * The row's label where the palette is. The sidebar row names the side its act would take –
+ * Collapse Sidebar while the sidebar is expanded, Expand Sidebar at the rail – when the context
+ * knows the state, the stateless face when it does not; every other row's label is fixed.
+ */
+function labelled(cmd: CommandDescriptor, ctx?: CommandContext): CommandDescriptor {
+  if (cmd.action !== 'sidebar.toggle' || ctx?.sidebarExpanded === undefined) return cmd
+  return { ...cmd, label: S.menu(cmd.action, { state: ctx.sidebarExpanded }) }
 }
 
 /**
@@ -420,6 +473,7 @@ export function searchCommands(query: string, ctx?: CommandContext): CommandDesc
   if (!q) return []
   const offered = ctx ? URLBAR_COMMANDS.filter((c) => commandAvailable(c, ctx)) : URLBAR_COMMANDS
   return offered
+    .map((c) => labelled(c, ctx))
     .filter((c) => {
       const label = c.label.toLowerCase()
       if (label.includes(q)) return true
