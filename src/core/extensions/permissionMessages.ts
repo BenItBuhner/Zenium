@@ -1191,3 +1191,31 @@ export function newWarnings(
   const seen = new Set(before.map((w) => JSON.stringify([w.message, w.details])))
   return after.filter((w) => !seen.has(JSON.stringify([w.message, w.details])))
 }
+
+/**
+ * Chrome's prompt lines for what a running extension's `permissions.request` adds: the
+ * install-style warnings of the manifest with the grants after the request, less those the
+ * grants of today already produce (Chrome's privilege-increase check). Empty when nothing new
+ * would be shown, so no prompt is due. The manifest's other keys (content scripts,
+ * `devtools_page`, overrides) count in both sets and cancel out; MV2 lists its host patterns
+ * among `permissions`, MV3 under `host_permissions`.
+ */
+export function grantWarnings(
+  manifest: PermissionWarningSource,
+  before: { permissions: readonly string[]; origins: readonly string[] },
+  after: { permissions: readonly string[]; origins: readonly string[] },
+  platform: WarningPlatform = 'other'
+): string[] {
+  const mv3 = manifest.manifest_version !== 2
+  const source = (grants: typeof before): PermissionWarningSource => ({
+    ...manifest,
+    permissions: mv3 ? [...grants.permissions] : [...grants.permissions, ...grants.origins],
+    host_permissions: mv3 ? [...grants.origins] : undefined,
+    optional_permissions: undefined,
+    optional_host_permissions: undefined
+  })
+  return newWarnings(
+    permissionWarnings(source(before), platform),
+    permissionWarnings(source(after), platform)
+  ).flatMap((w) => [w.message, ...w.details.map((d) => `  ${d}`)])
+}

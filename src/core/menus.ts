@@ -32,7 +32,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
 import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
-import { touchLayout } from '../shared/formFactor'
+import { newFolderName, touchLayout } from '../shared/formFactor'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -916,14 +916,15 @@ export class Menus {
   /**
    * The group Chrome for Android's "Open in new tab in group" makes around a tab in none: a new
    * folder of the tab's space with the tab moved in, named and coloured as the tab menu's "Add
-   * Tab to New Folder" names its own, with no editor opened – the row is the gesture, and the
-   * group's header is where its name is changed. The link's tab then joins behind the opener.
-   * Resolves to the folder's id.
+   * Tab to New Folder" names its own – the host's noun, "Group" here since the row is a touch
+   * host's alone (§6: a group a touch host makes is named "Group", never "New Folder") – with
+   * no editor opened – the row is the gesture, and the group's header is where its name is
+   * changed. The link's tab then joins behind the opener. Resolves to the folder's id.
    */
   private groupAround(tab: Tab, win: ZenWindow): string {
     const folder = this.browser.createFolder(
       tab.spaceId ?? win.activeSpaceId,
-      'New Folder',
+      newFolderName(win.formFactor),
       '📁',
       win,
       { rename: false }
@@ -2772,7 +2773,12 @@ export class Menus {
                   {
                     label: 'New Folder…',
                     click: () => {
-                      const folder = this.browser.createFolder(space.id, 'New Folder', '📁', win)
+                      const folder = this.browser.createFolder(
+                        space.id,
+                        newFolderName(win.formFactor),
+                        '📁',
+                        win
+                      )
                       for (const t of nonEssential)
                         if (!t.pinned) tabs.moveToFolder(t.id, folder.id)
                     }
@@ -2897,7 +2903,8 @@ export class Menus {
           : [
               {
                 label: 'New Folder',
-                click: () => this.browser.createFolder(space.id, 'New Folder', '📁', win)
+                click: () =>
+                  this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
               },
               {
                 label: 'New Live Folder…',
@@ -3193,9 +3200,14 @@ export class Menus {
    * bubble's name and colour folded in, the bubble being the desktop's. Rename Group…, Colour
    * (Chrome's nine as radio items, the group's checked), New Tab in Group, Collapse or Expand
    * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
-   * group stays SAVED with their pages (TAB-16) – and Delete Group, which asks first when the
+   * group stays SAVED with their pages (TAB-16), with Undo on the toast: the item emits
+   * `folder.closeUndoable` for the chrome to run the close through its one close-with-undo
+   * (`lib/closeUndo.ts`, the phone's Close Group's path; the Design Lead's option C on
+   * TAB-16 / TAB-13), where the desktop's Close Folder calls `closeFolder` itself, toastless –
+   * and Delete Group, which asks first when the
    * group holds anything (`deleteFolderAsking`: the chrome's §9.23 prompt, as the phone's sheet
-   * and the desktop's Delete Folder ask). A saved group (its tabs closed, its pages kept) leads
+   * and the desktop's Delete Folder ask) and offers no Undo after the ask. A saved group (its
+   * tabs closed, its pages kept) leads
    * with Open Group (N Tabs) and has nothing to fold, ungroup or close; Delete Group forgets its
    * pages, asking first too. Title Case throughout (v2 §9.1). Delete Group alone
    * takes the danger ink (§6: for what destroys the user's own; Close Group destroys nothing
@@ -3226,7 +3238,10 @@ export class Menus {
     const closing: Template = live
       ? [
           { label: 'Ungroup', click: () => browser.deleteFolder(id, true) },
-          { label: `Close Group (${tabs})`, click: () => browser.closeFolder(id, win) }
+          {
+            label: `Close Group (${tabs})`,
+            click: () => browser.emit('folder.closeUndoable', { folderId: id }, win)
+          }
         ]
       : []
     return [

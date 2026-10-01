@@ -3339,7 +3339,7 @@ function privateLockGroups({ state, screenLock }: SectionContext): RowGroup[] {
  * host it searches; the user's engines are listed under the picker with Make default and
  * Remove, and a form adds one by name and `%s` template.
  */
-function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
+function searchSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
   // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
   // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
@@ -3358,14 +3358,13 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   const suggestControl = extensionControlled(state, 'search.suggestions')
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
   // A deactivated engine (settings-43) is offered nowhere – not as the default, not by shortcut
-  // – and the desktop lists it under Inactive; the default engine reads active whatever a peer's
-  // list says. The other layouts keep every engine under Added (the rows that deactivate are
-  // the desktop's).
+  // – and every layout lists it under Inactive (SET-10: the phone's page and the tablet's pane
+  // as the desktop's, since #710 gave them the row's sheet); the default engine reads active
+  // whatever a peer's list says.
   const isActive = (e: SearchEngine): boolean =>
     isActiveSearchEngine(e) || e.id === s.searchEngineId
   const active = engines.filter(isActive)
-  const splitInactive = formFactor === 'desktop'
-  const inactiveOwn = splitInactive ? own.filter((e) => !isActive(e)) : []
+  const inactiveOwn = own.filter((e) => !isActive(e))
   const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
   /**
    * The picker's heading for the user's engines; the shipped ones (no `source`) sit above any
@@ -3468,24 +3467,21 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
       heading: 'Added search engines',
       description:
         'Engines you added, and engines from sites you visited that offer one. Sites in private tabs are never listed.',
-      rows: (splitInactive ? own.filter(isActive) : own).map((e) =>
-        searchEngineItem(e, state, set, glyph(e))
-      ),
+      rows: own.filter(isActive).map((e) => searchEngineItem(e, state, set, glyph(e))),
       empty: 'No search engines added yet'
     },
     // The engines taken out of the omnibox (settings-43; Chrome's Inactive shortcuts): kept
-    // with their shortcut, answering to nothing until activated. No empty state: the group
-    // comes with the first engine deactivated and goes with the last activated.
+    // with their shortcut, answering to nothing until activated. No empty state (§9.17): the
+    // group comes with the first engine deactivated and goes with the last activated, on every
+    // layout – the phone's page and the tablet's pane list it under the same heading as the
+    // desktop, and the row's sheet or dialog offers Activate (SET-10's tail).
     ...(inactiveOwn.length > 0
       ? [
           {
             id: 'inactive-search-engines',
             heading: 'Inactive',
             description: 'Engines kept but not offered in the address bar until you activate them.',
-            layouts: ['desktop'] as const,
-            rows: inactiveOwn.map((e) =>
-              searchEngineItem(e, state, set, glyph(e), { underInactiveHeading: true })
-            )
+            rows: inactiveOwn.map((e) => searchEngineItem(e, state, set, glyph(e)))
           } satisfies RowGroup
         ]
       : []),
@@ -3526,32 +3522,28 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
 /**
  * One of the user's engines under Added or Inactive (omnibox-09, settings-43; Chrome's Site
  * search rows): the row's second line carries the engine's standing – the default, a visited
- * site's, inactive – its shortcut (Chrome's Shortcut column) and the host it searches; its
- * sheet offers Make default (an active engine; the default's is held), Edit – the Add form
- * pre-filled with a Shortcut field, on every layout as Chrome 152's row menu offers it on every
- * custom engine (SET-10) – Deactivate or Activate (the desktop's; the default engine stays
- * active), and Remove. Under the desktop's Inactive heading the row does
- * not say "Inactive" again – the heading says it, as Added's rows do not say "Added" (§9.17) –
- * and carries its source instead; on the phone and the tablet, where every engine sits under
- * Added, an inactive engine's row is the one place that says so.
+ * site's – its shortcut (Chrome's Shortcut column) and the host it searches; its sheet offers
+ * Make default (an active engine; the default's is held), Edit – the Add form pre-filled with a
+ * Shortcut field – Deactivate or Activate (the default engine stays active), and Remove, on
+ * every layout as Chrome 152's row menu offers them on every custom engine (SET-10; the phone's
+ * sheet and the tablet's dialog got the rows with #710's Edit and this tail's Activate /
+ * Deactivate). Under the Inactive heading the row does not say "Inactive" again – the heading
+ * says it, as Added's rows do not say "Added" (§9.17) – and carries its source instead.
  */
 function searchEngineItem(
   e: SearchEngine,
   state: UIState,
   set: SectionContext['set'],
-  leading: ReactNode,
-  { underInactiveHeading = false }: { underInactiveHeading?: boolean } = {}
+  leading: ReactNode
 ): SettingsRow {
   const s = state.settings
   const isDefault = e.id === s.searchEngineId
   const inactive = !isDefault && !isActiveSearchEngine(e)
   const standing = isDefault
     ? 'Default search engine'
-    : inactive && !underInactiveHeading
-      ? 'Inactive'
-      : e.source === 'discovered'
-        ? 'Recently visited'
-        : null
+    : e.source === 'discovered'
+      ? 'Recently visited'
+      : null
   const rows: SettingsRow[] = []
   if (!inactive)
     rows.push({
@@ -3599,7 +3591,6 @@ function searchEngineItem(
           id: `search-engine:${e.id}:activate`,
           label: 'Activate',
           description: `${e.keyword} works in the URL bar again.`,
-          layouts: ['desktop'],
           onPress: () => run('search.setEngineActive', { id: e.id, active: true })
         }
       : {
@@ -3609,7 +3600,6 @@ function searchEngineItem(
           description: isDefault
             ? 'The default search engine stays active.'
             : `Keeps ${e.name} in the list but out of the URL bar until you activate it.`,
-          layouts: ['desktop'],
           disabled: isDefault,
           onPress: () => run('search.setEngineActive', { id: e.id, active: false })
         },

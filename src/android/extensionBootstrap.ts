@@ -39,6 +39,7 @@ import { installModuleChrome } from './extensionModuleChrome'
 import { createChunkRelay, type ChunkRelay, type ChunkStats } from './extensionChunkRelay'
 import {
   createScriptRecovery,
+  IMPORT_HELPER,
   type ScriptRecovery,
   type ViolationEventLike
 } from './extensionScriptRecovery'
@@ -54,6 +55,7 @@ import {
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 import { installCorsProxy } from './extensionCorsProxy'
 import { createFetchRelay, type FetchRelay } from './extensionFetchRelay'
+import { createXhrRelay } from './extensionXhrRelay'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
 import { installPdfDocumentType } from './extensionPdfDocument'
 import { installExtensionPolyfills, type PolyfillRealm } from './extensionPolyfills'
@@ -203,6 +205,7 @@ declare const __zenExtBoot: Boot
   let scriptRecovery: ScriptRecovery | null = null
   /** Content mode: extension-origin fetches the page's CSP refused, and the stylesheet recovery's reads (see below). */
   let fetchRelay: FetchRelay | null = null
+  let xhrRelay: typeof XMLHttpRequest | null = null
   /** Content mode under the `with` fallback: webpack chunks of a module graph run in the content script's scope (see below). */
   let chunkRelay: ChunkRelay | null = null
   transport.listen((event) => {
@@ -732,11 +735,12 @@ declare const __zenExtBoot: Boot
   /** What the host's `exec` and a late boot run as: the extension's content scope. */
   const contentUnit: UnitContext = { world: 'isolated', messaging: true }
 
-  // A content script's `fetch` of its extension's file under the page's `connect-src`: the
-  // page's fetch first, the host's answer over the bridge for an extension-origin file the
-  // policy refused (`extensionFetchRelay.ts`). It is the content scripts' `fetch` in both
+  // A content script's `fetch` of its extension's own file under the page's `connect-src`: the
+  // host's answer over the bridge first, which no page policy governs, the page's fetch when
+  // the host cannot (`extensionFetchRelay.ts`). It is the content scripts' `fetch` in both
   // isolations: the `with` scope's, and the isolated world's own, which a WebView's world runs
-  // under the document's policy too (Chrome's isolated world carries the extension's).
+  // under the document's policy too (Chrome's isolated world carries the extension's). The
+  // scope's `XMLHttpRequest` rides on it for the same files (`extensionXhrRelay.ts`).
   fetchRelay = createFetchRelay(window, {
     attachedIds: () => attached.map((e) => e.id),
     request: (id, extId, url) =>
@@ -753,6 +757,10 @@ declare const __zenExtBoot: Boot
     error: primordials.error
   })
   const relay = fetchRelay
+  xhrRelay = createXhrRelay(window, {
+    owns: (url) => relay.owns(url),
+    fetch: (url, init) => relay.fetch(url, init)
+  })
   // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
   // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
   // world through the host instead; a `<link rel=stylesheet>` its `style-src` refused is read
@@ -783,8 +791,12 @@ declare const __zenExtBoot: Boot
     // The page's own origin (an `about:blank` frame's is "null": no alias there).
     pageOrigin: location.origin,
     // The bundler leaves a computed specifier as the native `import()` (the bootstrap is a
-    // classic script; the world's `import()` is what the content script's own call was).
-    importModule: (url) => import(/* @vite-ignore */ url)
+    // classic script; the world's `import()` is what the content script's own call was, and
+    // the call's second argument rides along when it had one).
+    importModule: (url, options) =>
+      options === undefined
+        ? import(/* @vite-ignore */ url)
+        : import(/* @vite-ignore */ url, options as ImportCallOptions)
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
@@ -921,12 +933,22 @@ declare const __zenExtBoot: Boot
   }
   const scopes = new Map<string, Scope>()
 
-  // A webpack chunk of a content script's module graph under the `with` fallback runs as a block
-  // of the content script's scope, asked of the host by the stub the chunk was served as
-  // (`extensionChunkRelay.ts`): in a top frame only (`evaluateJavascript` takes no frame), and
-  // only where this copy made the extension's content scope, which is where the graph started.
+  // A webpack chunk, or a script-shaped module, of a content script's module graph under the
+  // `with` fallback runs as a block of the content script's scope, asked of the host by the stub
+  // the file was served as (`extensionChunkRelay.ts`): in a top frame only (`evaluateJavascript`
+  // takes no frame), only where this copy made the extension's content scope, which is where
+  // the graph started, and not for a `<script type="module">` element in the document asking
+  // for the file – that module is the page's own, run in the main world in Chrome.
   chunkRelay = createChunkRelay({
     canRun: (extId) => frame.isTopFrame && scopes.has(`${extId}/with/content`),
+    isModuleElement: (url) => {
+      const scripts = document.scripts
+      for (let i = 0; i < scripts.length; i++) {
+        const script = scripts[i]
+        if (script.type === 'module' && script.src === url) return true
+      }
+      return false
+    },
     request: (id, extId, url) =>
       post(
         primordials.stringify({
@@ -1015,10 +1037,12 @@ declare const __zenExtBoot: Boot
     if (isolation === 'world') {
       shieldWorld(ext, 'world')
       root = realWindow
-      // The world's `fetch` is the relay's: the world's global is the content scripts' alone, so
-      // the page's window never sees it, and the world's own fetch runs under the document's
-      // `connect-src` on a WebView (RoPro's locale file refused on roblox.com with worlds too).
+      // The world's `fetch` and `XMLHttpRequest` are the relays': the world's global is the
+      // content scripts' alone, so the page's window never sees them, and the world's own fetch
+      // runs under the document's `connect-src` on a WebView (RoPro's locale file refused on
+      // roblox.com with worlds too).
       if (fetchRelay) root.fetch = fetchRelay.fetch
+      if (xhrRelay) root.XMLHttpRequest = xhrRelay
       // The world's `URL` answers an extension URL's origin as the extension's pages know it
       // (extensionUrlOrigin.ts); the world's interface object is the content scripts' alone.
       installUrlOrigin(root)
@@ -1026,10 +1050,11 @@ declare const __zenExtBoot: Boot
       shieldWorld(ext, 'with')
       operations ??= collectOperations(realWindow)
       root = createScopeProxy(realWindow, builtins, operations)
-      // The scope's `fetch` (a bare `fetch(...)`, `window.fetch`, `self.fetch`) is the relay's:
-      // the page's fetch first, the host's answer for an extension-origin file the page's policy
-      // refused. It lands in the scope's own store, never on the page's window.
+      // The scope's `fetch` (a bare `fetch(...)`, `window.fetch`, `self.fetch`) and its
+      // `XMLHttpRequest` are the relays': the host's answer for the extension's own file, the
+      // page's for anything else. They land in the scope's own store, never on the page's window.
       if (fetchRelay) root.fetch = fetchRelay.fetch
+      if (xhrRelay) root.XMLHttpRequest = xhrRelay
       // The scope's `URL` is the page's subclassed, an extension URL's origin patched
       // (extensionUrlOrigin.ts); in the store too, the page's own `URL` untouched.
       if (typeof realWindow.URL === 'function')
@@ -1047,6 +1072,14 @@ declare const __zenExtBoot: Boot
         (id, url) => chunks.claim(id, url)
       )
     }
+    // The content script's own dynamic `import()` – the keyword rewritten to this binding as
+    // its files went into the unit (`RelativeImports`, the host) – is the recovery's: the
+    // world's import, and the page-origin alias in its place when the page's policy refused
+    // the extension's URL, so the promise the script awaits resolves as Chrome's does
+    // (extensionScriptRecovery.ts). In the world's global or the scope's store, never on the
+    // page's window; a `world: "MAIN"` script keeps the native call and is never rewritten.
+    root[IMPORT_HELPER] = (specifier: unknown, options?: unknown): Promise<unknown> =>
+      recovery.importModule(specifier, options)
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
     const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null
     // The Web Speech API's synthesis in the content scripts' scope: Chrome's content script

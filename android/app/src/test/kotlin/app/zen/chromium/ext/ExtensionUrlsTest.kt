@@ -65,4 +65,31 @@ class ExtensionUrlsTest {
             assertEquals(other, null, ExtensionUrls.pageAlias(other))
         }
     }
+
+    @Test
+    fun namesTheExtensionsOwnFileAtItsOriginOrItsPageOriginAlias() {
+        // The spelling a content script's own `import()` asks the chunk exec with (`chunkScript`):
+        // the served origin, or the page-origin alias under any page once the page's policy refused
+        // the origin; the path without its leading slash, the query and fragment dropped.
+        assertEquals("connectors/youtube.js", ExtensionUrls.ownFile("$served/connectors/youtube.js", id))
+        assertEquals("connectors/youtube.js", ExtensionUrls.ownFile("$served/connectors/youtube.js?zenium-plain=1#x", id))
+        assertEquals("connectors/youtube.js", ExtensionUrls.ownFile("https://m.youtube.com/.zenium-ext/$id/connectors/youtube.js", id))
+        assertEquals("a/b.js", ExtensionUrls.ownFile("http://10.0.2.2:8765/.zenium-ext/${id.uppercase()}/a/b.js?v=2", id))
+        assertEquals("a/b.js", ExtensionUrls.ownFile("HTTPS://${id.uppercase()}.EXT.ZENIUM.INVALID/a/b.js", id))
+        assertEquals("", ExtensionUrls.ownFile("$served/", id))
+        assertEquals("", ExtensionUrls.ownFile("https://page.example/.zenium-ext/$id", id))
+        // Another extension's file, either spelling; a page's own file; the alias segment off the root.
+        val other = "dhdgffkkebhmkfjojejmpbldmpobfkfp"
+        for (foreign in listOf(
+            "https://$other.ext.zenium.invalid/a.js",
+            "https://m.youtube.com/.zenium-ext/$other/a.js",
+            "https://m.youtube.com/connectors/youtube.js",
+            "https://m.youtube.com/x/.zenium-ext/$id/a.js",
+            "chrome-extension://$id/a.js",
+            "zenium-ext://content-scripts/boot.js",
+            ""
+        )) {
+            assertEquals(foreign, null, ExtensionUrls.ownFile(foreign, id))
+        }
+    }
 }

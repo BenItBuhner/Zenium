@@ -822,6 +822,12 @@ function mergeNamespace(
     ...(base?.constants || over?.constants
       ? { constants: { ...base?.constants, ...over?.constants } }
       : {}),
+    // The constructors a rule is written with (`declarativeContent.PageStateMatcher`) travel
+    // with the namespace: without them the emulated engine's `chrome.declarativeContent` had the
+    // event and none of its classes, and a worker's `new chrome.declarativeContent.
+    // PageStateMatcher(...)` was "is not a constructor" (iCloud Passwords' `onInstalled` rule,
+    // Android compat round 25).
+    ...(base?.classes || over?.classes ? { classes: { ...base?.classes, ...over?.classes } } : {}),
     ...((base?.manifestVersion ?? over?.manifestVersion)
       ? { manifestVersion: base?.manifestVersion ?? over?.manifestVersion }
       : {}),
