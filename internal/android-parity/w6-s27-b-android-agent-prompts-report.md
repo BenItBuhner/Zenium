@@ -12,7 +12,8 @@ PR: https://github.com/BenItBuhner/Zenium/pull/755 (draft, base `main`).
 
 The task said to stack on `cursor/mcp-native-prompts-5c87` (#745). #745 merged to `main` while this
 was being built and its branch was deleted, so the PR is opened against `main` with `main` merged in
-(merge commit `a5c0703d6`, no rebase). Everything here sits on top of #745's `AgentService.takesPrompt`,
+(merge commits `a5c0703d6` and, after #743/#752 landed, `9c5c8cafc`; no rebase). Everything here sits
+on top of #745's `AgentService.takesPrompt`,
 `routePrompt`, the `AgentPromptQueue` (2-minute TTL, expiry takes the default action) and the
 `nativePrompts.ts` specs; nothing in that machinery was changed.
 
@@ -22,10 +23,13 @@ Related store report (not edited here): `internal/mcp-reliability/native-prompts
 
 Built, tested locally, draft PR open. Waiting on GitHub Actions for the PR (see `## Tests run`).
 
-- #743's `agentDriven` flag is **not** on `main` (PR still open on `cursor/android-agent-dialogs-9271`),
-  so this PR carries its own per-`TabWebView` boolean, `interceptsAgentPrompts`, set from the core via
-  `view.interceptAgentPrompts`. The two flags mean the same thing and should be folded into one when
-  #743 lands (see `## Follow-ups`).
+- #743's `agentDriven` flag landed on `main` while this was open and is merged in. It is **not**
+  reused: the core has two distinct hooks with different lifetimes. `TabView.setAgentDriven` is said
+  before each action only while the tab is hidden and Kotlin clears it on every show (a tab brought in
+  front is the user's again); `TabView.interceptAgentPrompts` is on from the session's `prepare()` to
+  its `detach()` and the core decides per request with `takesPrompt`. So `TabWebView` keeps both
+  booleans, `agentDriven` (beforeunload) and `interceptsAgentPrompts` (this PR), each set by its own
+  `view.*` command, matching the core's contract one to one.
 - Nothing an agent answers is remembered for the user: no `rememberedCertificates` entry, no
   download-folder change, no file-chooser memory.
 - No OS UI is shown over an agent-driven tab for any routed kind. The system UI only appears when the
@@ -74,8 +78,8 @@ before. Default on 2-minute expiry comes from `nativePrompts.ts` and is unchange
 
 ## Per-file changes
 
-Rule-(b) value: `git diff 38cfb6345 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum | cut -c1-12`
-(merge-base with `main` = `38cfb6345`).
+Rule-(b) value: `git diff b5de02664 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum | cut -c1-12`
+(merge-base with `main` = `b5de02664`). The report itself is excluded from the table.
 
 | Value          | File                                                               | Note                                                                                                                                                                                                     |
 | -------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -84,7 +88,7 @@ Rule-(b) value: `git diff 38cfb6345 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum
 | `4c727b71b83d` | `src/android/views.ts`                                             | `fileChooser` view event → `onFileChooser` → `events.onFileChooser`, answers via `view.fileChooserAnswer`; `interceptAgentPrompts(on)`; `setInputFiles`.                                                 |
 | `cbd5bad6d7ce` | `src/android/platform.ts`                                          | `agentPrompts` list; `download.started` gains `saveAs` and routes Save As through `agents.downloadDestination`; `certificate.request` host event → `security.clientCertificate` → `certificate.respond`. |
 | `3ed72be3d83b` | `src/android/__tests__/agentPrompts.test.ts`                       | New vitest for the helpers (6 tests).                                                                                                                                                                    |
-| `e525d96a6eb2` | `src/android/__tests__/views.test.ts`                              | Adds "AndroidTabView and an agent's native prompts" (intercept toggle, chooser answers files/cancel/user, core-without-handler → user, `setInputFiles` ok/error).                                        |
+| `ec8d69190920` | `src/android/__tests__/views.test.ts`                              | Adds "AndroidTabView and an agent's native prompts" (intercept toggle, chooser answers files/cancel/user, core-without-handler → user, `setInputFiles` ok/error).                                        |
 | `fb98e326cfd5` | `android/app/src/main/kotlin/app/zen/chromium/AgentPrompts.kt`     | New. Pure logic: chooser event/answer parsing, `uploadFileName`, `CertificateAnswer`, `describeCertificate`, `commonNameOf`, `downloadName`; `AgentUploads.write/sweep`.                                 |
 | `4ec9ea625554` | `android/app/src/main/kotlin/app/zen/chromium/TabWebView.kt`       | `interceptsAgentPrompts`; holds `onShowFileChooser` callbacks; `answerFileChooser`; `onReceivedClientCertRequest` passes the tab to `Security`; held choosers cancelled on `destroy()`.                  |
 | `eac45fd9f8ff` | `android/app/src/main/kotlin/app/zen/chromium/Security.kt`         | `onClientCertRequest(tab, request)`: remembered → KeyChain chooser → or `askAgent`; `respondClientCertificate`; `proceed(key: String?)` only remembers when `key != null`.                               |
@@ -115,8 +119,8 @@ none — no new user-facing strings. The one new sentence is the agent-facing no
 
 ## Follow-ups
 
-- Fold `TabWebView.interceptsAgentPrompts` into #743's `agentDriven` once #743 lands (same meaning, set
-  from the same `prepare()`/`detach()` calls); whichever lands second does the rename.
+- OS-40 part B (#743's TODO): route `alert`/`confirm`/`prompt` of an agent-driven page through
+  `PageDialogService` on Android the same way; `interceptsAgentPrompts` is the flag to key it on.
 - Desktop nod on `src/core/agent/service.ts` `refuseClientCertificate`; Desktop could call it too when
   its candidate list is empty, instead of silently answering none.
 - If a `KeyChain` enumeration ever appears (or Zenium gains its own cert store), `Security.askAgent`
