@@ -4296,12 +4296,20 @@
       0 0 0 2px rgb(var(--zen-accent-rgb) / 0.55);
   }
   /*
-   * The card in the hand is positioned per frame at 90% opacity (v2 §11.4); its elevation is a
-   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is
-   * §1's rise, not a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a
-   * target, 1 as it lands) and the transform transition eases each step over `MOTION_STATE_MS`;
-   * under reduced motion the rule at the foot makes the step a cut.
+   * The card in the hand is two elements (motion spec §0.4). The SEAT follows the finger by a
+   * per-frame `translate` on its own layer – never `left`/`top`, which laid the page out every
+   * frame. The CARD inside it is drawn at 90% opacity (v2 §11.4); its elevation is a level swap
+   * (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is §1's rise, not
+   * a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a target, 1 as it
+   * lands) and the transform transition eases each step over `MOTION_STATE_MS` – on the card
+   * alone, so it never smears the seat's follow; under reduced motion the rule at the foot makes
+   * the step a cut.
    */
+  .zen-overview-ghost-seat {
+    left: 0;
+    top: 0;
+    will-change: transform;
+  }
   .zen-overview-ghost {
     opacity: 0.9;
     box-shadow: var(--zen-shadow-2);
@@ -4310,7 +4318,7 @@
       opacity 120ms var(--zen-ease),
       transform 120ms var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
-    will-change: transform, left, top;
+    will-change: transform;
   }
   .zen-overview-ghost[data-landing] {
     opacity: 1;

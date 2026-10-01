@@ -155,6 +155,11 @@ describe('motion tokens (§1)', () => {
     expect(card).toContain(`opacity: ${LIFT_OPACITY}`)
     expect(card).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
     expect(card).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    // The follow is a translate on the card's seat (§0.4): neither element promises `left`/`top`.
+    expect(card).not.toMatch(/left|top/)
+    const seat = css.match(/\.zen-overview-ghost-seat\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(seat).toContain('will-change: transform')
+    expect(seat).not.toMatch(/transition/)
     const cardLift = read('../../components/phone/useCardLift.ts')
     expect(cardLift).not.toMatch(/scaleSpring/)
     expect(cardLift).toMatch(/scale: reduced \? LIFT_SCALE : 1/)
