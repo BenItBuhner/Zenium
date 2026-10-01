@@ -159,6 +159,12 @@ export const OVERVIEW_LABELS = {
   newSpace: 'New Space…',
   /** The open group header's ⋯ (§2), its accessible name. */
   groupOptions: 'Group options',
+  /** The group's rename field (§2), its accessible name. */
+  groupName: 'Group name',
+  /** The group sheet's colour palette (§2), the radio group's accessible name. */
+  colour: 'Colour',
+  /** The tab search's field (§4 Search Tabs; TAB-21), its accessible name. */
+  searchTabs: 'Search tabs',
   /** The group sheets' rows (§2). */
   rename: 'Rename',
   newTabInGroup: 'New Tab in Group',

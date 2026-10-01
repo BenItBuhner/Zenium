@@ -2,6 +2,7 @@ import type { JSX, RefObject } from 'react'
 import { useState } from 'react'
 import { Search, X } from 'lucide-react'
 import type { SyncRemoteTab } from '@shared/types'
+import { OVERVIEW_LABELS } from '@shared/overviewMenu'
 import type { ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { OTHER_DEVICES_COPY, remoteTabLines } from '@renderer/lib/otherDevices'
 import { SEARCH_TABS_PLACEHOLDER } from '@renderer/lib/overviewSearch'
@@ -51,7 +52,7 @@ export function OverviewSearchField({
           value={value}
           // The label names the field, the placeholder is its example text (§9.12): different
           // words, so a reader hears a name and a hint, not the same thing twice (A11Y-01).
-          aria-label="Search tabs"
+          aria-label={OVERVIEW_LABELS.searchTabs}
           placeholder={SEARCH_TABS_PLACEHOLDER}
           autoComplete="off"
           spellCheck={false}

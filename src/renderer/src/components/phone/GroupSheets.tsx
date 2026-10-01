@@ -28,7 +28,11 @@ import { PhoneSheet } from './PhoneSheet'
  */
 export function GroupColorPalette({ folder }: { folder: Folder }): JSX.Element {
   return (
-    <div className="flex items-center gap-2 px-3 pb-2 pt-1" role="radiogroup" aria-label="Colour">
+    <div
+      className="flex items-center gap-2 px-3 pb-2 pt-1"
+      role="radiogroup"
+      aria-label={OVERVIEW_LABELS.colour}
+    >
       {GROUP_PALETTE.map(({ color, name }) => {
         const selected = (folder.color ?? null) === color
         return (

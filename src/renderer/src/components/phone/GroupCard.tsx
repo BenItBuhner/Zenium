@@ -501,7 +501,7 @@ export function GroupRename({
     <input
       ref={ref}
       value={value}
-      aria-label="Group name"
+      aria-label={OVERVIEW_LABELS.groupName}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => commit(true)}
       onClick={(e) => e.stopPropagation()}
