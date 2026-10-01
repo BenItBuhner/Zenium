@@ -118,6 +118,14 @@ export interface PinnedWebApp {
   bounds?: Rect | null
   /** The app's share target as its manifest declared it at install (MW-63); absent for none. */
   shareTarget?: WebAppShareTarget | null
+  /**
+   * How the desktop's launcher was asked to open the app (Chrome's "Open as window" in the
+   * "Create shortcut?" dialog): false, as a tab in Zenium, and `launch` follows the launcher –
+   * a tab, not a window. True or absent (an app installed from the pill's popover, a record
+   * from before the box travelled, a phone's tile), the host's own rule: a window of its own on
+   * the desktop.
+   */
+  openAsWindow?: boolean
 }
 
 /**
