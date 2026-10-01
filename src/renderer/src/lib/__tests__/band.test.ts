@@ -316,13 +316,15 @@ describe('the band model (motion spec §3.2)', () => {
 
   it('every dismissal names its reason once, and a band gone is gone: a second dismissal is nothing', () => {
     const heard: BandDismissReason[] = []
-    for (const reason of ['close', 'swipe', 'escape', 'program'] as const) {
+    // `'back'` is Android's Back button putting the band away: a put-away like a swipe, which
+    // the model carries to the tenant as any other reason (the desktop never emits it).
+    for (const reason of ['close', 'swipe', 'escape', 'back', 'program'] as const) {
       const a = install('t1', (r) => heard.push(r))
       dismissBand(a, reason)
       dismissBand(a, reason)
       expect(shownBand()).toBeNull()
     }
-    expect(heard).toEqual(['close', 'swipe', 'escape', 'program'])
+    expect(heard).toEqual(['close', 'swipe', 'escape', 'back', 'program'])
     // The store's setter is a no-op on an unknown id: no listener hears anything.
     const listener = vi.fn()
     const off = bandStore.subscribe(listener)

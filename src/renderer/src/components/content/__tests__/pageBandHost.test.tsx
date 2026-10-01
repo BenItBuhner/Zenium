@@ -33,7 +33,8 @@ vi.mock('@renderer/lib/api', () => ({
 const { PageBandHost } = await import('../PageBandHost')
 const { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE } = await import('@renderer/lib/motion/band')
 const { framesPending } = await import('@renderer/lib/motion/clock')
-const { bandStore, chooseBand, resetBands, showBand } = await import('@renderer/lib/band')
+const { bandStore, chooseBand, dismissBandByKey, resetBands, showBand } =
+  await import('@renderer/lib/band')
 type BandDismissReason = import('@renderer/lib/band').BandDismissReason
 const { bandSeat, resetPageBand } = await import('@renderer/lib/pageBand')
 const { uiStore } = await import('@renderer/lib/ui')
@@ -412,5 +413,71 @@ describe('PageBandHost – the default-browser tenant', () => {
     settle()
     expect(band()).toBeNull()
     expect(bandSeat()).toBe(0)
+  })
+
+  it('the × ALONE is the refusal remembered for this release (the Design Lead’s ruling, §3.2 / §9.6): a swipe, Escape, the clock, a navigation, a replacement, the tab closing and Android’s Back put the band away for now, remember nothing, and the band stands again at the next eligible moment', () => {
+    const asking = {
+      ...state(),
+      defaultBrowser: { isDefault: false, prompt: null }
+    } as UIState
+    /** What the tenant wrote to the settings: the refusal remembered, if any. */
+    const remembered = (): unknown[][] => run.mock.calls.filter(([c]) => c === 'settings.update')
+    /**
+     * The next eligible moment on the desktop: the host mounting again on the same window state
+     * (the next window, the next launch) – the tenant's effect stands the band once per mount
+     * while nothing is remembered against it.
+     */
+    const remount = (): void => {
+      act(() => root!.render(null))
+      render(asking)
+    }
+    const putAways = [
+      'swipe',
+      'escape',
+      'timeout',
+      'navigation',
+      'replaced',
+      'program',
+      'back'
+    ] as const
+    for (const reason of putAways) {
+      render(asking)
+      expect(chooseBand(bandStore.get())?.key, reason).toBe('default-browser')
+      // What the swipe's release, Escape, the clock, `useBandTabs` and a replacing `showBand`
+      // each do: take the entry down under its reason. The tenant hears it and keeps nothing.
+      act(() => dismissBandByKey('default-browser', reason))
+      expect(chooseBand(bandStore.get()), reason).toBeNull()
+      expect(remembered(), reason).toEqual([])
+      remount()
+      expect(chooseBand(bandStore.get())?.key, reason).toBe('default-browser')
+      act(() => root!.render(null))
+      resetBands()
+    }
+    // Escape as the keyboard reaches it – with focus in the band: the same put-away.
+    render(asking)
+    act(() => {
+      const close = band()!.querySelector<HTMLButtonElement>('.zen-band-close')!
+      close.focus()
+      close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(chooseBand(bandStore.get())).toBeNull()
+    expect(remembered()).toEqual([])
+    remount()
+    expect(chooseBand(bandStore.get())?.key).toBe('default-browser')
+    // The ×: the refusal, remembered once for this release; the answer coming back through the
+    // settings ends the state, so no remount stands it again until the next feature release.
+    act(() => band()!.querySelector<HTMLButtonElement>('.zen-band-close')!.click())
+    expect(remembered()).toEqual([['settings.update', { defaultBrowserPromptDismissed: '0.3.77' }]])
+    expect(chooseBand(bandStore.get())).toBeNull()
+    const answered = {
+      ...asking,
+      settings: { ...asking.settings, defaultBrowserPromptDismissed: '0.3.77' }
+    } as UIState
+    act(() => root!.render(null))
+    render(answered)
+    expect(chooseBand(bandStore.get())).toBeNull()
+    settle()
+    expect(band()).toBeNull()
+    expect(remembered()).toHaveLength(1)
   })
 })

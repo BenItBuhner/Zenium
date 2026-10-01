@@ -173,6 +173,24 @@ describe('the default-browser band (the strip under the toolbar until W8-M2)', (
     expect(chooseBand(bandStore.get())).toBeNull()
   })
 
+  it('Escape with focus in the band puts it away for now and remembers nothing (the Lead’s ruling, §3.2 / §9.6): the × alone is the refusal kept', () => {
+    render(view(state('linux')))
+    act(() => {
+      const close = notNowButton()
+      close.focus()
+      close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(chooseBand(bandStore.get())).toBeNull()
+    expect(run).not.toHaveBeenCalledWith('settings.update', expect.anything())
+    expect(cmd).not.toHaveBeenCalled()
+    // Nothing kept against it: the band stands again at the next eligible moment – here the
+    // hook mounting again on the same window state (the next window, the next launch).
+    act(() => root.render(null))
+    render(view(state('linux')))
+    expect(band()).not.toBeNull()
+    expect(chooseBand(bandStore.get())).not.toBeNull()
+  })
+
   it('stands again once the answer is for an older release, and not while it is this one’s', () => {
     render(view(state('linux', '0.3.77')))
     expect(container.querySelector('.zen-band')).toBeNull()

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Globe } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { dismissBandByKey, showBand, type BandDismissReason } from '@renderer/lib/band'
+import { dismissBandByKey, showBand } from '@renderer/lib/band'
 import {
   askDefaultBrowser,
   DEFAULT_BROWSER_PROMPT_TITLE,
@@ -10,9 +10,6 @@ import {
 } from '@renderer/lib/defaultBrowser'
 
 export const DEFAULT_BROWSER_BAND_KEY = 'default-browser'
-
-/** The refusals: the ×, a swipe up, Escape – each remembers the answer for this feature release. */
-const REFUSALS: ReadonlySet<BandDismissReason> = new Set(['close', 'swipe', 'escape'])
 
 /**
  * "Make Zenium your default browser" as the page-edge band's first desktop tenant (motion spec
@@ -23,9 +20,12 @@ const REFUSALS: ReadonlySet<BandDismissReason> = new Set(['close', 'swipe', 'esc
  * raises the prompt that says what the OS will do before the hand-off (`askDefaultBrowser`,
  * `DefaultBrowserPrompt.tsx`), and the band HOLDS through it – the prompt's own "Set as default"
  * ends the state through the settings, its Not now or Escape leaves the band standing, as the
- * strip stood. The × is the strip's "Not now", by that name: it, a swipe up or Escape remembers
- * the refusal for this feature release (`dismissDefaultBrowserBanner`). The band's going for
- * any other reason – the window closing, a replacement – remembers nothing.
+ * strip stood. The × is the strip's "Not now", by that name, and the × ALONE remembers the
+ * refusal for this feature release (`dismissDefaultBrowserBanner`; the Design Lead's ruling on
+ * the prompt band, §3.2 / §9.6, one rule for both hosts): a swipe up, Escape, the clock, a
+ * navigation or the tab leaving the front put the band away for now and remember nothing – it
+ * may stand again at the next eligible moment – and the band's going for any other reason (the
+ * window closing, a replacement) remembers nothing either.
  *
  * The strip across the frame's top (`content/DefaultBrowserBanner.tsx`) retired to this band;
  * the prompt's flow and the Settings row are as they were.
@@ -45,7 +45,7 @@ export function useDefaultBrowserBand(state: UIState): void {
       action: { label: 'Set as default', holds: true, onPick: () => askDefaultBrowser('banner') },
       closeLabel: 'Not now',
       onDismiss: (reason) => {
-        if (REFUSALS.has(reason)) dismissDefaultBrowserBanner({ version })
+        if (reason === 'close') dismissDefaultBrowserBanner({ version })
       }
     })
     return () => dismissBandByKey(DEFAULT_BROWSER_BAND_KEY)
