@@ -99,6 +99,7 @@ describe('tool definitions', () => {
           'browser_tabs',
           'browser_navigate',
           'browser_handle_dialog',
+          'browser_dialog_policy',
           'browser_prompts',
           'browser_respond_prompt'
         ].includes(t.definition.name)

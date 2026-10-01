@@ -4068,7 +4068,10 @@ export class Menus {
    * (Chrome), the phone goes to the app's start URL in this tab. An app whose shortcut opens a
    * tab ("Open as window" off, `openAsWindow` false) has no row: its launcher opens a tab like
    * this one, and Chrome offers none for it (the Design Lead's ruling on #761's second seam).
-   * The phone's flat row and the sidebar layouts' More Tools row are both this one.
+   * A shortcut to a page without a manifest (`PinnedWebApp.kind` `shortcut`) has none either,
+   * whichever way its box stood: it has no scope and claims no page, so `pinnedFor` never
+   * answers with it, and Create Shortcut… stays on offer instead (`installItems`). The phone's
+   * flat row and the sidebar layouts' More Tools row are both this one.
    */
   private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser

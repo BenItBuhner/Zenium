@@ -1,9 +1,22 @@
-import type { PageDialog, PageDialogResponse } from '../shared/types'
+import type {
+  AgentDialogAnswer,
+  AgentDialogRuleScope,
+  PageDialog,
+  PageDialogAnswered,
+  PageDialogKind,
+  PageDialogResponse
+} from '../shared/types'
 import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { PageDialogRequest } from './platform'
 
 export const CANCELLED: PageDialogResponse = { accepted: false, value: null }
+
+/**
+ * The line Chrome shows in a "Leave site?" / "Reload site?" dialog whatever the page's handler
+ * set – and so the message a report of one carries (`PageDialogAnswered.message`).
+ */
+export const LEAVE_SITE_MESSAGE = 'Changes you made may not be saved.'
 
 interface Pending {
   dialog: PageDialog
@@ -24,18 +37,75 @@ export function dialogSite(url: string): string {
   }
 }
 
+/** The words for a dialog's kind as an agent reads them: "a confirm dialog", 'a prompt (default "…")'… */
+function describeKind(kind: PageDialogKind, defaultValue: string): string {
+  return kind === 'alert'
+    ? 'an alert'
+    : kind === 'confirm'
+      ? 'a confirm dialog'
+      : kind === 'prompt'
+        ? `a prompt${defaultValue ? ` (default ${JSON.stringify(defaultValue)})` : ''}`
+        : 'a "Leave site?" dialog'
+}
+
+/** Which page of the tab opened the dialog: its site, an embedded frame's, or "the page" when unknown. */
+function describeFrom(site: string, embedded: boolean): string {
+  return site ? `${site}${embedded ? ' (an embedded frame)' : ''}` : 'the page'
+}
+
 /** One line for an agent: which page of its tab asked what. */
 export function describeDialog(d: PageDialog): string {
-  const from = d.site ? `${d.site}${d.embedded ? ' (an embedded frame)' : ''}` : 'the page'
-  const what =
-    d.kind === 'alert'
-      ? 'an alert'
-      : d.kind === 'confirm'
-        ? 'a confirm dialog'
-        : d.kind === 'prompt'
-          ? `a prompt${d.defaultValue ? ` (default ${JSON.stringify(d.defaultValue)})` : ''}`
-          : 'a "Leave site?" dialog'
-  return `The page in tab ${d.tabId} (${from}) opened ${what}: ${JSON.stringify(d.message.slice(0, 500))}`
+  return `The page in tab ${d.tabId} (${describeFrom(d.site, d.embedded)}) opened ${describeKind(d.kind, d.defaultValue)}: ${JSON.stringify(d.message.slice(0, 500))}`
+}
+
+/** The words for the answer a dialog got without its agent: OK, Cancel, with "…", left, stayed. */
+export function describeAnswer(answer: AgentDialogAnswer): string {
+  if (typeof answer === 'object') return `with ${JSON.stringify(answer.text)}`
+  switch (answer) {
+    case 'accept':
+      return 'OK'
+    case 'dismiss':
+      return 'Cancel'
+    case 'leave':
+      return 'left'
+    case 'stay':
+      return 'stayed'
+  }
+}
+
+/** What a report of an answered dialog names about the dialog itself. */
+export type AnsweredDialog = Pick<
+  PageDialog,
+  'tabId' | 'kind' | 'site' | 'embedded' | 'message' | 'defaultValue'
+>
+
+/**
+ * The `Notice:` line an agent reads when a dialog on one of its tabs was answered without it –
+ * by a rule of its dialog policy (`browser_dialog_policy`; `rule` names which) or by the
+ * default answer (`default`). Every host's report goes through this one builder (the core's
+ * own answers; what a host that answers dialogs itself sends through
+ * `TabViewEvents.onPageDialogAnswered`), so an agent reads the same words everywhere.
+ */
+export function describeAnsweredDialog(
+  d: AnsweredDialog,
+  answer: AgentDialogAnswer,
+  rule: AgentDialogRuleScope
+): string {
+  const by =
+    rule === 'default' ? '(no policy; browser_dialog_policy sets one)' : 'by your dialog policy'
+  return `Notice: the page in tab ${d.tabId} (${describeFrom(d.site, d.embedded)}) opened ${describeKind(d.kind, d.defaultValue)}: ${JSON.stringify(d.message.slice(0, 500))} – answered ${describeAnswer(answer)} ${by}.`
+}
+
+/** A host's report of a dialog it answered itself, as the Notice builder reads it. */
+export function answeredDialogOf(tabId: string, report: PageDialogAnswered): AnsweredDialog {
+  return {
+    tabId,
+    kind: report.kind,
+    site: dialogSite(report.url),
+    embedded: false,
+    message: report.message,
+    defaultValue: report.kind === 'prompt' ? (report.defaultValue ?? '') : ''
+  }
 }
 
 /** Whether `frameUrl` belongs to another origin than the page's top document. */
@@ -71,6 +141,11 @@ export class PageDialogService {
     return this.pending.some((p) => p.dialog.tabId === tabId)
   }
 
+  /** Whether the user is being asked "Leave site?" (or "Reload site?") about the tab's page. */
+  asksToLeave(tabId: string): boolean {
+    return this.pending.some((p) => p.dialog.tabId === tabId && p.dialog.kind === 'beforeunload')
+  }
+
   /**
    * A page opened a dialog. Resolves once the user answered (an alert counts as accepted when
    * dismissed) or the dialog became moot (its tab went away, or is being checked for unload).
@@ -98,15 +173,24 @@ export class PageDialogService {
   /**
    * A page's `beforeunload` handler objects to the page going away: ask whether to leave. The
    * tab is brought to the front first, as Chrome does, since the dialog is tab-modal. Resolves
-   * true when the user leaves (or the tab is gone), false when the page stays. An agent's page
-   * leaves without a question: the agent asked for the navigation or the close, and its tab is
-   * never brought in front of the user nor its window focused.
+   * true when the user leaves (or the tab is gone), false when the page stays. On an agent's
+   * HIDDEN tab the agent's own navigation (and its page's) is answered by the agent's dialog
+   * policy – `stay` keeps the page, anything else leaves – and reported to the agent
+   * (`AgentService.onLeaveSite`); the tab is never brought in front of the user nor its window
+   * focused. A close the USER makes on an agent's tab, and every "Leave site?" of an agent's
+   * tab in front of the user, is the user's question, policy or not (`takesLeave`); the user's
+   * stay there reaches the agent's navigating call (`AgentService.userStayed`).
    */
   async confirmLeave(tabId: string, reload: boolean): Promise<boolean> {
     const tabs = this.browser.tabs
     const tab = tabs.tab(tabId)
     if (!tab) return true
-    if (this.browser.agents?.takesDialog(tabId)) return true
+    const agents = this.browser.agents
+    if (agents?.takesLeave(tabId)) return agents.onLeaveSite(tabId, reload)
+    // A host without the policy (`HostCapabilities.agentDialogPolicy`) keeps today's answer:
+    // an agent's page leaves without a question, and the agent hears nothing of it.
+    if (agents?.takesDialog(tabId) && !this.browser.platform.capabilities.agentDialogPolicy)
+      return true
     const win = tabs.windowFor(tabId)
     if (tabs.activeTabFor(win)?.id !== tabId) tabs.activateTab(tabId, win)
     if (!win.host.isFocused()) win.host.focus()
@@ -119,6 +203,7 @@ export class PageDialogService {
       message: reload ? 'reload' : 'leave',
       defaultValue: ''
     })
+    if (!answer.accepted) agents?.userStayed(tabId)
     return answer.accepted
   }
 

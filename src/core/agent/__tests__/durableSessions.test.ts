@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AgentSettings } from '../../../shared/types'
+import type { AgentDialogAnswer, AgentDialogRuleScope, AgentSettings } from '../../../shared/types'
 import { PageDialogService } from '../../pageDialogs'
 import type { ZenWindow } from '../../window'
-import type { AgentSession } from '../service'
+import { AgentService, type AgentSession } from '../service'
 import { CLAIMS_FILE } from '../claims'
+import { AGENT_TOOLS } from '../tools'
 import { fakeBrowser, textOf, type FakeBrowser, type FakeBrowserOptions } from './fakeBrowser'
 
 /** The client name a harness introduces itself with – shared by every agent it runs. */
@@ -469,18 +470,22 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     expect(listed(desktop, d)).toContain('browser_handle_dialog')
     expect(desktop.service.instructions(d)).toContain('browser_handle_dialog answers it')
     // The dialogs handed to an agent are alert, confirm and prompt (`PageDialogRequest.kind`);
-    // "Leave site?" never reaches it – an agent's page leaves without a question
-    // (`PageDialogService.confirmLeave`; Android's `UnloadObjection` leaves silently) – so no
-    // text names it among them, and both hosts' instructions say so.
+    // a "Leave site?" is never handed to it: where the host has the dialog policy it is the
+    // policy's leave or stay (`PageDialogService.confirmLeave` → `AgentService.onLeaveSite`),
+    // leave by default; where it has not (Android's `UnloadObjection` leaves silently) the
+    // page leaves without a question. The texts say which.
     const handleDialog = desktop.service
       .listTools(d)
       .find((t) => t.name === 'browser_handle_dialog')
     expect(handleDialog?.description).toContain('(alert, confirm or prompt)')
-    expect(handleDialog?.description).not.toContain('Leave site?')
+    expect(handleDialog?.description).toContain(
+      'a "Leave site?" is never handed to you – your policy\'s leave or stay answers it, leave by default'
+    )
     expect(desktop.service.instructions(d)).toContain(
       'Page dialogs (alert, confirm, prompt) on your tabs'
     )
-    expect(desktop.service.instructions(d)).toContain('your tab leaves without a question')
+    expect(desktop.service.instructions(d)).toContain('"Leave site?" leave or stay')
+    expect(desktop.service.instructions(d)).not.toContain('your tab leaves without a question')
 
     const android = browser({ agentDialogs: false })
     const { s: a } = await named(android, 'Invoice reconciliation')
@@ -583,6 +588,746 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     expect(fake.win.activations.slice(before)).toEqual([])
     expect(focused).toBe(0)
     expect(dialogs.list()).toEqual([])
+  })
+})
+
+describe("the dialog policy: an agent says ahead how its tabs' dialogs are answered", () => {
+  type Request = Parameters<PageDialogService['ask']>[1]
+  const request = (
+    kind: 'alert' | 'confirm' | 'prompt',
+    message: string,
+    defaultValue = '',
+    site = 'https://billing.test/'
+  ): Request => ({ kind, message, defaultValue, frameUrl: site, pageUrl: site })
+  const listed = (fake: FakeBrowser, s: AgentSession): string[] =>
+    fake.service.listTools(s).map((t) => t.name)
+  const policy = (
+    fake: FakeBrowser,
+    s: AgentSession,
+    args: Record<string, unknown>
+  ): Promise<string> => fake.call(s, 'browser_dialog_policy', args).then(textOf)
+  /** The agent's next result: whatever notices queued ride it. */
+  const next = (fake: FakeBrowser, s: AgentSession): Promise<string> =>
+    fake.call(s, 'zen_status').then(textOf)
+  /**
+   * Make the fake's navigations raise "Leave site?" through the real `PageDialogService`
+   * first, as a host does when the page's `beforeunload` handler objects.
+   */
+  const objectingPages = (fake: FakeBrowser): void => {
+    const tabs = fake.browser.tabs as unknown as { navigate(id: string, url: string): void }
+    const real = tabs.navigate.bind(tabs)
+    tabs.navigate = (id, url) => {
+      void fake.browser.pageDialogs.confirmLeave(id, false).then((leave) => {
+        if (leave) real(id, url)
+      })
+    }
+  }
+
+  it('is listed only where the host has the policy, and the instructions say what the host does', async () => {
+    const desktop = browser()
+    const { s: d } = await named(desktop, 'Invoice reconciliation')
+    expect(listed(desktop, d)).toContain('browser_dialog_policy')
+    expect(listed(desktop, d)).toContain('browser_handle_dialog')
+    const instructions = desktop.service.instructions(d)
+    expect(instructions).toContain('Page dialogs (alert, confirm, prompt) on your tabs')
+    expect(instructions).toContain(
+      'browser_dialog_policy says ahead of an action how they are answered on a tab (confirm OK or Cancel, a prompt\'s text, "Leave site?" leave or stay)'
+    )
+    expect(instructions).toContain(
+      'a confirm or prompt no rule covers returns with the call that opened it, and browser_handle_dialog answers it'
+    )
+    expect(instructions).toContain(
+      "A navigation or close the user makes on your tab follows the user's rules, never your policy."
+    )
+    const handle = desktop.service.listTools(d).find((t) => t.name === 'browser_handle_dialog')
+    expect(handle?.description).toContain(
+      '(alert, confirm or prompt) that your dialog policy did not'
+    )
+    expect(handle?.description).toContain(
+      'a "Leave site?" is never handed to you – your policy\'s leave or stay answers it, leave by default'
+    )
+    const prompts = AGENT_TOOLS.find((t) => t.definition.name === 'browser_prompts')
+    expect(prompts?.definition.description).toContain(
+      'A dialog policy you set (browser_dialog_policy) is not listed here'
+    )
+
+    // Android today: neither the dialogs nor the policy – nothing changes until their half lands.
+    const android = browser({ agentDialogs: false })
+    const { s: a } = await named(android, 'Invoice reconciliation')
+    expect(listed(android, a)).not.toContain('browser_dialog_policy')
+    expect(android.service.instructions(a)).toContain('answered by this browser, not by you')
+    expect(android.service.instructions(a)).toContain('your tab leaves without a question')
+    const res = await android.call(a, 'browser_dialog_policy', { confirm: 'accept' })
+    expect(res.isError).toBe(true)
+    expect(textOf(res)).toContain('Unknown tool browser_dialog_policy')
+
+    // Android with their half: the host answers from the policy, nothing is handed over.
+    const later = browser({ agentDialogs: false, agentDialogPolicy: true })
+    const { s: l } = await named(later, 'Invoice reconciliation')
+    expect(listed(later, l)).toContain('browser_dialog_policy')
+    expect(listed(later, l)).not.toContain('browser_handle_dialog')
+    expect(later.service.instructions(l)).toContain(
+      'are answered by this browser, never handed to you – from your dialog policy where you set one'
+    )
+    expect(later.service.instructions(l)).toContain(
+      'else by default: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave'
+    )
+
+    // browser_respond_prompt, asked about a page dialog, names only the tools its host lists
+    // (#766's known gap: Android was told to use browser_handle_dialog, which it does not list).
+    const noPrompt = async (agentDialogs: boolean, agentDialogPolicy: boolean): Promise<string> => {
+      const fake = browser({ agentDialogs, agentDialogPolicy, agentPrompts: ['permission'] })
+      const { s } = await named(fake, 'Invoice reconciliation')
+      await openTab(fake, s, 'https://billing.test')
+      const res = await fake.call(s, 'browser_respond_prompt', { action: 'allow' })
+      expect(res.isError).toBe(true)
+      return textOf(res)
+    }
+    expect(await noPrompt(true, true)).toContain(
+      'A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog, or ahead of time by browser_dialog_policy.'
+    )
+    expect(await noPrompt(true, false)).toContain(
+      'A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog.'
+    )
+    expect(await noPrompt(false, true)).toContain(
+      'answered by this browser – from your dialog policy (browser_dialog_policy) where you set one, else by default – and reported in a "Notice:" line.'
+    )
+    expect(await noPrompt(false, false)).toContain(
+      'A page dialog (alert, confirm, prompt) is answered by this browser, not by you.'
+    )
+  })
+
+  it('set names the policy in force, marks the kinds left to their defaults, and clear says what went', async () => {
+    const fake = browser()
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    expect(await policy(fake, a, { tabId: tab, confirm: 'accept' })).toBe(
+      `Dialog policy for tab ${tab} (billing.test): confirm → OK; prompt → Cancel (default); "Leave site?" → leave (default); alerts → OK. Kinds marked (default) had no word from you. In force until you clear it (action: "clear"), let the tab go or end the session. Every dialog it answers is reported in your next result with the page's words.`
+    )
+    expect(
+      await policy(fake, a, { confirm: 'dismiss', prompt: { text: 'hello' }, beforeunload: 'stay' })
+    ).toBe(
+      `Dialog policy for every tab you own, now and later: confirm → Cancel; prompt → OK with "hello"; "Leave site?" → stay; alerts → OK. In force until you clear it (action: "clear") or end the session. Tab ${tab} keeps its own policy over it. Every dialog it answers is reported in your next result with the page's words.`
+    )
+    // The tab's own rule stands over the session-wide one kind by kind.
+    expect(await policy(fake, a, { tabId: tab, prompt: 'accept', ttl: 120, once: true })).toBe(
+      `Dialog policy for tab ${tab} (billing.test): confirm → Cancel (for every tab); prompt → OK with the page's default; "Leave site?" → stay (for every tab); alerts → OK. Kinds marked (for every tab) follow your policy for every tab you own. In force once per kind – each kind's rule is spent by the first dialog it answers – for 120 s at most, or until you clear it (action: "clear"), let the tab go or end the session. Every dialog it answers is reported in your next result with the page's words.`
+    )
+    expect(await policy(fake, a, { tabId: tab, action: 'clear' })).toBe(
+      `Dropped the dialog policy of tab ${tab} (billing.test); your policy for every tab you own applies to it now.`
+    )
+    expect(await policy(fake, a, { tabId: tab, action: 'clear' })).toBe(
+      `Tab ${tab} (billing.test) had no dialog policy of its own; your policy for every tab you own applies to it.`
+    )
+    expect(await policy(fake, a, { action: 'clear' })).toBe(
+      'Dropped your dialog policy for every tab you own.'
+    )
+    expect(await policy(fake, a, { action: 'clear' })).toBe(
+      'You had no dialog policy for every tab you own.'
+    )
+    expect(await policy(fake, a, { tabId: tab, beforeunload: 'leave', ttl: 30 })).toBe(
+      `Dialog policy for tab ${tab} (billing.test): confirm → Cancel (default); prompt → Cancel (default); "Leave site?" → leave; alerts → OK. Kinds marked (default) had no word from you. In force for 30 s, or until you clear it (action: "clear"), let the tab go or end the session. Every dialog it answers is reported in your next result with the page's words.`
+    )
+    expect(await policy(fake, a, { action: 'clear' })).toBe(
+      `You had no dialog policy for every tab you own; 1 tab keeps a policy of its own: ${tab} (clear those with their tabId).`
+    )
+    for (const bad of [
+      { tabId: tab },
+      { tabId: tab, confirm: 'maybe' },
+      { tabId: tab, prompt: 'hello' },
+      { tabId: tab, beforeunload: 'ask' },
+      { tabId: tab, confirm: 'accept', ttl: 0 },
+      { tabId: tab, confirm: 'accept', action: 'drop' }
+    ]) {
+      const res = await fake.call(a, 'browser_dialog_policy', bad)
+      expect(res.isError, JSON.stringify(bad)).toBe(true)
+    }
+    expect(textOf(await fake.call(a, 'browser_dialog_policy', { tabId: tab }))).toContain(
+      'Say at least one of confirm, prompt or beforeunload'
+    )
+    expect(
+      textOf(await fake.call(a, 'browser_dialog_policy', { tabId: tab, prompt: 'hello' }))
+    ).toContain('a bare string would be ambiguous')
+  })
+
+  it('answers every kind at once from the policy and reports each in the ruled Notice', async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { tabId: tab, confirm: 'accept', prompt: { text: 'INV-42' } })
+    expect(await dialogs.ask(tab, request('confirm', 'Delete invoice 42?'))).toEqual({
+      accepted: true,
+      value: null
+    })
+    expect(await dialogs.ask(tab, request('prompt', 'Invoice number?', 'INV-1'))).toEqual({
+      accepted: true,
+      value: 'INV-42'
+    })
+    expect(await dialogs.ask(tab, request('alert', 'Saved.'))).toEqual({
+      accepted: true,
+      value: null
+    })
+    expect(dialogs.list()).toEqual([])
+    expect(fake.service.pendingDialog(tab)).toBeNull()
+    const result = await next(fake, a)
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a confirm dialog: "Delete invoice 42?" – answered OK by your dialog policy.`
+    )
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a prompt (default "INV-1"): "Invoice number?" – answered with "INV-42" by your dialog policy.`
+    )
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened an alert: "Saved." – answered OK by your dialog policy.`
+    )
+    // Reported once: the next result carries none of them again.
+    expect(await next(fake, a)).not.toContain('Notice: the page in tab')
+
+    await policy(fake, a, { tabId: tab, confirm: 'dismiss', prompt: 'dismiss' })
+    expect(await dialogs.ask(tab, request('confirm', 'Pay now?'))).toEqual({
+      accepted: false,
+      value: null
+    })
+    expect(await dialogs.ask(tab, request('prompt', 'Amount?', '10'))).toEqual({
+      accepted: false,
+      value: null
+    })
+    const again = await next(fake, a)
+    expect(again).toContain(
+      `opened a confirm dialog: "Pay now?" – answered Cancel by your dialog policy.`
+    )
+    expect(again).toContain(
+      `opened a prompt (default "10"): "Amount?" – answered Cancel by your dialog policy.`
+    )
+    // The notices ride whatever call comes next – a set of the policy as well.
+    const set = await policy(fake, a, { tabId: tab, prompt: 'accept' })
+    expect(set).toContain('Dialog policy for tab')
+    expect(await dialogs.ask(tab, request('prompt', 'Amount?', '10'))).toEqual({
+      accepted: true,
+      value: '10'
+    })
+    expect(await next(fake, a)).toContain(
+      `opened a prompt (default "10"): "Amount?" – answered with "10" by your dialog policy.`
+    )
+  })
+
+  it('without a policy an alert gets OK at once and is reported with the tag; confirm and prompt still round-trip', async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    expect(await dialogs.ask(tab, request('alert', 'Hello'))).toEqual({
+      accepted: true,
+      value: null
+    })
+    expect(await next(fake, a)).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened an alert: "Hello" – answered OK (no policy; browser_dialog_policy sets one).`
+    )
+    // The desktop's round-trip for a kind no rule covers, as today.
+    await policy(fake, a, { tabId: tab, prompt: 'accept' })
+    const answer = dialogs.ask(tab, request('confirm', 'Delete invoice 42?'))
+    expect(fake.service.pendingDialog(tab)?.message).toBe('Delete invoice 42?')
+    const blocked = await fake.call(a, 'browser_snapshot', { tabId: tab })
+    expect(blocked.isError).toBe(true)
+    expect(textOf(blocked)).toContain('browser_handle_dialog')
+    const handled = await fake.call(a, 'browser_handle_dialog', { tabId: tab, accept: false })
+    expect(handled.isError, textOf(handled)).toBeFalsy()
+    expect(await answer).toEqual({ accepted: false, value: null })
+    // An alert on a tab with a policy of another kind is the policy's OK.
+    expect(await dialogs.ask(tab, request('alert', 'Bye'))).toEqual({ accepted: true, value: null })
+    expect(await next(fake, a)).toContain(
+      `opened an alert: "Bye" – answered OK by your dialog policy.`
+    )
+  })
+
+  it("a host's own report of an answered dialog becomes the same Notice, default answers tagged", async () => {
+    const fake = browser({ agentDialogs: false, agentDialogPolicy: true })
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { tabId: tab, confirm: 'accept' })
+    // The host got the policy for the tab's view when the agent last acted on it – each kind's
+    // answer with the rule that supplies it, the host's word for its reports.
+    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({
+      confirm: { answer: 'accept', rule: 'tab' }
+    })
+    // The wire: kind, the document's url, the message, a prompt's default, the answer and the
+    // rule – `default` for a kind the handed policy left out.
+    fake.service.onPageDialogAnswered(tab, {
+      kind: 'confirm',
+      url: 'https://billing.test/pay',
+      message: 'Pay now?',
+      answer: 'accept',
+      rule: 'tab'
+    })
+    fake.service.onPageDialogAnswered(tab, {
+      kind: 'prompt',
+      url: 'https://billing.test/pay',
+      message: 'Amount?',
+      defaultValue: '10',
+      answer: 'dismiss',
+      rule: 'default'
+    })
+    fake.service.onPageDialogAnswered(tab, {
+      kind: 'beforeunload',
+      url: 'https://billing.test/pay',
+      message: 'Changes you made may not be saved.',
+      answer: 'leave',
+      rule: 'default'
+    })
+    fake.service.onPageDialogAnswered(tab, {
+      kind: 'alert',
+      url: 'data:text/html,hi',
+      message: 'x'.repeat(600),
+      answer: 'accept',
+      rule: 'tab'
+    })
+    const result = await next(fake, a)
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a confirm dialog: "Pay now?" – answered OK by your dialog policy.`
+    )
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a prompt (default "10"): "Amount?" – answered Cancel (no policy; browser_dialog_policy sets one).`
+    )
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left (no policy; browser_dialog_policy sets one).`
+    )
+    // The message is capped at 500 characters; a page without a site is "the page".
+    expect(result).toContain(
+      `Notice: the page in tab ${tab} (the page) opened an alert: "${'x'.repeat(500)}" – answered OK by your dialog policy.`
+    )
+    expect(result).not.toContain('x'.repeat(501))
+  })
+
+  it("a host's report spends the once rule it names – the tab's, the session's, neither – never one the core would look up itself", async () => {
+    const fake = browser({ agentDialogs: false, agentDialogPolicy: true })
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    const standing = (): Record<string, unknown> => ({
+      own: fake.service.dialogPolicyOf(a).tabs.get(tab)?.policy ?? null,
+      all: fake.service.dialogPolicyOf(a).all?.policy ?? null,
+      view: fake.dialogPolicies.get(tab)?.at(-1)
+    })
+    const report = (rule: AgentDialogRuleScope, answer: AgentDialogAnswer = 'accept'): void =>
+      fake.service.onPageDialogAnswered(tab, {
+        kind: 'confirm',
+        url: 'https://billing.test/pay',
+        message: 'Pay now?',
+        answer,
+        rule
+      })
+    await policy(fake, a, { confirm: 'dismiss', once: true })
+    await policy(fake, a, { tabId: tab, confirm: 'accept', once: true })
+    expect(standing().view).toEqual({ confirm: { answer: 'accept', rule: 'tab' } })
+
+    // `default`: the host answered by default – nothing is spent, whatever stands.
+    report('default')
+    expect(standing()).toMatchObject({ own: { confirm: 'accept' }, all: { confirm: 'dismiss' } })
+
+    // `tab`: the tab's once rule goes and the session's stands – the core's own lookup would
+    // have found the tab's too, but it is the host's word that spends – and the view hears
+    // the policy that is left.
+    report('tab')
+    expect(standing()).toEqual({
+      own: null,
+      all: { confirm: 'dismiss' },
+      view: { confirm: { answer: 'dismiss', rule: 'session' } }
+    })
+
+    // A report of a rule the policy no longer carries spends nothing.
+    report('tab')
+    expect(standing().all).toEqual({ confirm: 'dismiss' })
+
+    // `session`: the session's once rule goes; nothing stands, and the view hears null.
+    report('session', 'dismiss')
+    expect(fake.service.dialogPolicyOf(a)).toEqual({ all: null, tabs: new Map() })
+    expect(standing().view).toBeNull()
+
+    // Every report came back as the Notice, tagged by the rule the host named.
+    const result = await next(fake, a)
+    expect(result).toContain(
+      `opened a confirm dialog: "Pay now?" – answered OK (no policy; browser_dialog_policy sets one).`
+    )
+    expect(result).toContain(
+      `opened a confirm dialog: "Pay now?" – answered OK by your dialog policy.`
+    )
+    expect(result).toContain(
+      `opened a confirm dialog: "Pay now?" – answered Cancel by your dialog policy.`
+    )
+
+    // The reverse: `session` leaves the tab's own rule alone, spends the session's kind only,
+    // and a report of a kind the session's rule no longer carries spends nothing.
+    await policy(fake, a, { confirm: 'dismiss', prompt: 'accept', once: true })
+    await policy(fake, a, { tabId: tab, confirm: 'accept', once: true })
+    report('session', 'dismiss')
+    expect(standing()).toEqual({
+      own: { confirm: 'accept' },
+      all: { prompt: 'accept' },
+      view: {
+        confirm: { answer: 'accept', rule: 'tab' },
+        prompt: { answer: 'accept', rule: 'session' }
+      }
+    })
+    report('session', 'dismiss')
+    expect(standing().all).toEqual({ prompt: 'accept' })
+  })
+
+  it("once spends the per-kind rule of the policy that answered; a tab's once never consumes the session's rule", async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { confirm: 'dismiss' })
+    await policy(fake, a, { tabId: tab, confirm: 'accept', once: true })
+    // The tab's once rule answers the first confirm and is spent by it…
+    expect((await dialogs.ask(tab, request('confirm', 'First?'))).accepted).toBe(true)
+    // …the second falls back to the session-wide standing rule, which stays.
+    expect((await dialogs.ask(tab, request('confirm', 'Second?'))).accepted).toBe(false)
+    expect((await dialogs.ask(tab, request('confirm', 'Third?'))).accepted).toBe(false)
+    expect(fake.service.dialogPolicyOf(a).tabs.has(tab)).toBe(false)
+    expect(fake.service.dialogPolicyOf(a).all?.policy).toEqual({ confirm: 'dismiss' })
+    const result = await next(fake, a)
+    expect(result).toContain('"First?" – answered OK by your dialog policy.')
+    expect(result).toContain('"Second?" – answered Cancel by your dialog policy.')
+
+    // The other way: a once session-wide rule is spent by the tab it answered on; the tab's
+    // own standing rule for another kind is untouched, and the spent kind gets its default.
+    await policy(fake, a, { action: 'clear' })
+    await policy(fake, a, { prompt: { text: 'A' }, once: true })
+    await policy(fake, a, { tabId: tab, confirm: 'accept' })
+    expect(await dialogs.ask(tab, request('prompt', 'Name?'))).toEqual({
+      accepted: true,
+      value: 'A'
+    })
+    expect(fake.service.dialogPolicyOf(a).all).toBeNull()
+    expect(fake.service.dialogPolicyOf(a).tabs.get(tab)?.policy).toEqual({ confirm: 'accept' })
+    const held = dialogs.ask(tab, request('prompt', 'Name again?'))
+    expect(fake.service.pendingDialog(tab)?.message).toBe('Name again?')
+    fake.service.answerDialog(tab, false)
+    expect(await held).toEqual({ accepted: false, value: null })
+    expect((await dialogs.ask(tab, request('confirm', 'Sure?'))).accepted).toBe(true)
+  })
+
+  it('a rule with a ttl drops silently when it runs out, and the next dialog says so', async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    let now = 1_000_000
+    fake.service.clock = () => now
+    await policy(fake, a, { tabId: tab, confirm: 'accept', ttl: 60 })
+    expect((await dialogs.ask(tab, request('confirm', 'Within?'))).accepted).toBe(true)
+    now += 59_000
+    expect((await dialogs.ask(tab, request('confirm', 'Still?'))).accepted).toBe(true)
+    now += 2_000
+    expect(fake.service.dialogPolicyOf(a).tabs.size).toBe(0)
+    const held = dialogs.ask(tab, request('confirm', 'After?'))
+    expect(fake.service.pendingDialog(tab)?.message).toBe('After?')
+    fake.service.answerDialog(tab, true)
+    await held
+    expect(await dialogs.ask(tab, request('alert', 'Gone'))).toEqual({
+      accepted: true,
+      value: null
+    })
+    expect(await next(fake, a)).toContain(
+      `opened an alert: "Gone" – answered OK (no policy; browser_dialog_policy sets one).`
+    )
+  })
+
+  it("a session-wide policy covers tabs opened later from their first call; a ttl runs out by its timer; a tab let go drops its own rule – and the hosts' views hear each", async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const first = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { confirm: 'accept' })
+    const viewOf = (tab: string): unknown => fake.dialogPolicies.get(tab)?.at(-1)
+    expect(viewOf(first)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+
+    // Now and later: a tab opened after the set hears the policy as it is readied for the
+    // agent's first call on it, and its dialogs are answered from it.
+    const later = await openTab(fake, a, 'https://later.test')
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+    expect(
+      (await dialogs.ask(later, request('confirm', 'Later?', '', 'https://later.test/'))).accepted
+    ).toBe(true)
+    expect(await next(fake, a)).toContain(
+      `the page in tab ${later} (later.test) opened a confirm dialog: "Later?" – answered OK by your dialog policy.`
+    )
+
+    // A ttl runs out by its timer, with no dialog or call to notice: the tab's own rule is
+    // gone and its view hears what is left – the session's.
+    await policy(fake, a, { tabId: later, confirm: 'dismiss', prompt: 'accept', ttl: 0.1 })
+    expect(viewOf(later)).toEqual({
+      confirm: { answer: 'dismiss', rule: 'tab' },
+      prompt: { answer: 'accept', rule: 'tab' }
+    })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+    expect(fake.service.dialogPolicyOf(a).tabs.size).toBe(0)
+    // The session-wide rule's ttl the same: every view of the session hears what is left.
+    await policy(fake, a, { tabId: first, prompt: 'accept' })
+    await policy(fake, a, { confirm: 'dismiss', ttl: 0.1 })
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'dismiss', rule: 'session' } })
+    expect(viewOf(first)).toEqual({
+      confirm: { answer: 'dismiss', rule: 'session' },
+      prompt: { answer: 'accept', rule: 'tab' }
+    })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(fake.service.dialogPolicyOf(a).all).toBeNull()
+    expect(viewOf(later)).toBeNull()
+    expect(viewOf(first)).toEqual({ prompt: { answer: 'accept', rule: 'tab' } })
+
+    // The user takes one tab back: its own rule goes with it and its view hears null; the
+    // session-wide rule stands for the rest, and the released tab's dialogs are the user's.
+    await policy(fake, a, { confirm: 'accept' })
+    fake.service.releaseTab(first)
+    expect(fake.service.dialogPolicyOf(a).tabs.has(first)).toBe(false)
+    expect(viewOf(first)).toBeNull()
+    expect(fake.service.takesDialog(first)).toBe(false)
+    expect(fake.service.dialogPolicyOf(a).all?.policy).toEqual({ confirm: 'accept' })
+    expect(viewOf(later)).toEqual({ confirm: { answer: 'accept', rule: 'session' } })
+  })
+
+  it('"Leave site?" under the agent\'s navigation on a hidden tab: stay cancels it and the result says so, leave is reported', async () => {
+    const fake = browser()
+    objectingPages(fake)
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { tabId: tab, beforeunload: 'stay' })
+    const stayed = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(stayed.isError, textOf(stayed)).toBeFalsy()
+    expect(textOf(stayed)).toContain(
+      'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.'
+    )
+    expect(textOf(stayed)).toContain(
+      `Notice: the page in tab ${tab} (billing.test) opened a "Leave site?" dialog: "Changes you made may not be saved." – answered stayed by your dialog policy.`
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://billing.test')
+    expect(fake.browser.pageDialogs.list()).toEqual([])
+
+    await policy(fake, a, { tabId: tab, beforeunload: 'leave' })
+    const left = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(textOf(left)).toContain('Navigated to https://next.test')
+    expect(textOf(left)).toContain(
+      `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left by your dialog policy.`
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+
+    // Without a rule the page leaves, as today – but no longer in silence.
+    await policy(fake, a, { tabId: tab, action: 'clear' })
+    const silent = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://third.test' })
+    expect(textOf(silent)).toContain('Navigated to https://third.test')
+    expect(textOf(silent)).toContain(
+      `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left (no policy; browser_dialog_policy sets one).`
+    )
+  })
+
+  it('a stay is read by the navigation it kept, never a later one; back, forward and reload read it in their words too', async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { tabId: tab, beforeunload: 'stay' })
+    // The page's own navigation on the hidden tab: the policy's stay keeps it, and no call of
+    // the agent was navigating to read so.
+    expect(await dialogs.confirmLeave(tab, false)).toBe(false)
+    // The agent's next navigation, which the page lets go without a word: the normal headline
+    // – the stay that kept the page before is not read against this navigation – and the
+    // Notice of the page's own.
+    const went = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(went.isError, textOf(went)).toBeFalsy()
+    expect(textOf(went)).toContain('Navigated to https://next.test')
+    expect(textOf(went)).not.toContain('Did not navigate')
+    expect(textOf(went)).toContain('– answered stayed by your dialog policy.')
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+
+    // Back, forward and reload meet the page's objection like a navigation: stay keeps the
+    // page and each says so in place of its own headline; leave lets each go ahead.
+    const tabs = fake.browser.tabs as unknown as {
+      goBack(id: string): void
+      goForward(id: string): void
+      reload(id: string, ignoreCache?: boolean): void
+    }
+    const objecting =
+      (reload: boolean) =>
+      (id: string): void => {
+        void dialogs.confirmLeave(id, reload)
+      }
+    tabs.goBack = objecting(false)
+    tabs.goForward = objecting(false)
+    tabs.reload = objecting(true)
+    const view = fake.browser.tabs.view(tab)
+    if (!view) throw new Error('no view')
+    view.canGoBack = () => true
+    view.canGoForward = () => true
+    const moves = [
+      ['browser_navigate_back', 'Went back.'],
+      ['browser_navigate_forward', 'Went forward.'],
+      ['browser_reload', 'Reloaded.']
+    ] as const
+    for (const [tool, headline] of moves) {
+      const kept = await fake.call(a, tool, { tabId: tab })
+      expect(kept.isError, textOf(kept)).toBeFalsy()
+      expect(textOf(kept)).toContain(
+        'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.'
+      )
+      expect(textOf(kept)).not.toContain(headline)
+      expect(textOf(kept)).toContain(
+        `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered stayed by your dialog policy.`
+      )
+    }
+    await policy(fake, a, { tabId: tab, beforeunload: 'leave' })
+    for (const [tool, headline] of moves) {
+      const went = await fake.call(a, tool, { tabId: tab })
+      expect(went.isError, textOf(went)).toBeFalsy()
+      expect(textOf(went)).toContain(headline)
+      expect(textOf(went)).not.toContain('Did not navigate')
+      expect(textOf(went)).toContain(
+        `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left by your dialog policy.`
+      )
+    }
+  })
+
+  it("the user outranks the policy: a hidden tab's \"Leave site?\" is the policy's, a shown tab's is the user's whoever navigates it", async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { beforeunload: 'stay' })
+    // The page's own navigation on the agent's hidden tab: the policy's (the agent's own
+    // navigation there: the test above).
+    expect(fake.service.takesLeave(tab)).toBe(true)
+    expect(await dialogs.confirmLeave(tab, false)).toBe(false)
+    expect(await next(fake, a)).toContain('– answered stayed by your dialog policy.')
+
+    // The user closes the tab (the strip's ×, Ctrl+W: `requestClose` → `unloadingForUser`):
+    // the user's rules – the desktop asks the user, the policy's stay holds nothing.
+    fake.closing.add(tab)
+    expect(fake.service.takesLeave(tab)).toBe(false)
+    expect(fake.service.takesDialog(tab)).toBe(true)
+    expect(await settle(dialogs.confirmLeave(tab, false), 50)).toBe('HUNG')
+    expect(dialogs.list().map((d) => [d.tabId, d.kind])).toEqual([[tab, 'beforeunload']])
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
+    fake.closing.delete(tab)
+    expect(await next(fake, a)).not.toContain('Leave site?')
+
+    // The user brings the tab in front: every "Leave site?" there is the user's question –
+    // the user's navigation while no call acts on the tab…
+    fake.user.activate(tab)
+    expect(fake.service.takesLeave(tab)).toBe(false)
+    expect(await settle(dialogs.confirmLeave(tab, false), 50)).toBe('HUNG')
+    expect(dialogs.list()).toHaveLength(1)
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
+
+    // …and the race the policy must lose: the user navigates the shown tab WHILE a call of
+    // the agent acts on it (the two cannot be told apart mid-call). The user is asked; the
+    // policy's stay holds nothing and reports nothing.
+    const gate = fake.hold(tab)
+    const acting = fake.call(a, 'browser_snapshot', { tabId: tab })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(fake.service.takesLeave(tab)).toBe(false)
+    expect(await settle(dialogs.confirmLeave(tab, false), 50)).toBe('HUNG')
+    expect(dialogs.list().map((d) => [d.tabId, d.kind])).toEqual([[tab, 'beforeunload']])
+    dialogs.respond(dialogs.list()[0].id, { accepted: false, value: null })
+    gate.release()
+    const snap = await acting
+    expect(snap.isError, textOf(snap)).toBeFalsy()
+    expect(textOf(snap)).not.toContain('Leave site?')
+    expect(await next(fake, a)).not.toContain('Leave site?')
+    expect(fake.model.tabs[tab].url).toBe('https://billing.test')
+  })
+
+  it("the agent's own navigation on a tab in front of the user meets the user's rules: the user is asked, and the call reports what the user chose", async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    objectingPages(fake)
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { beforeunload: 'stay' })
+    fake.user.activate(tab)
+    expect(fake.service.takesLeave(tab)).toBe(false)
+    // The real wait: a navigating call waits on the user's answer, within its load timeout.
+    fake.service.waitForLoad = AgentService.prototype.waitForLoad
+    fake.service.loadTimeoutMs = 600
+
+    // The user stays: the user's answer, not the policy's, and the result says whose.
+    const asked = fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(dialogs.list().map((d) => [d.tabId, d.kind])).toEqual([[tab, 'beforeunload']])
+    dialogs.respond(dialogs.list()[0].id, { accepted: false, value: null })
+    const stayed = await asked
+    expect(stayed.isError, textOf(stayed)).toBeFalsy()
+    expect(textOf(stayed)).toContain(
+      'Did not navigate: the page objected ("Leave site?") and the user chose to stay (the tab is in front of the user, so the user\'s rules answered it, not your policy); the tab still shows the page as it was.'
+    )
+    expect(textOf(stayed)).not.toContain('by your dialog policy')
+    expect(fake.model.tabs[tab].url).toBe('https://billing.test')
+    expect(dialogs.list()).toEqual([])
+
+    // The user leaves: the navigation goes ahead, with the normal headline and no Notice.
+    const going = fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(dialogs.list()).toHaveLength(1)
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
+    const left = await going
+    expect(textOf(left)).toContain('Navigated to https://next.test')
+    expect(textOf(left)).not.toContain('Leave site?')
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+
+    // The user has not answered when the call's wait runs out: the result says so, and the
+    // page is still as it was; the user's later answer runs its course.
+    const waiting = await fake.call(a, 'browser_navigate', {
+      tabId: tab,
+      url: 'https://third.test'
+    })
+    expect(textOf(waiting)).toContain(
+      'Did not navigate yet: the page objected ("Leave site?") and the user is being asked (the tab is in front of the user, so the user\'s rules answer it, not your policy); the tab still shows the page as it was. browser_snapshot later shows what the user chose.'
+    )
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+    expect(dialogs.list()).toHaveLength(1)
+    dialogs.respond(dialogs.list()[0].id, { accepted: true, value: null })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(fake.model.tabs[tab].url).toBe('https://third.test')
+    expect(await next(fake, a)).not.toContain('Leave site?')
+  })
+
+  it("the policy goes with the tab (closed, let go) and with the session; a host's view hears of it", async () => {
+    const fake = browser()
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    const other = await openTab(fake, a, 'https://other.test')
+    await policy(fake, a, { confirm: 'dismiss' })
+    await policy(fake, a, { tabId: tab, confirm: 'accept' })
+    await policy(fake, a, { tabId: other, prompt: 'accept' })
+    expect(fake.dialogPolicies.get(tab)?.at(-1)).toEqual({
+      confirm: { answer: 'accept', rule: 'tab' }
+    })
+    expect(fake.dialogPolicies.get(other)?.at(-1)).toEqual({
+      confirm: { answer: 'dismiss', rule: 'session' },
+      prompt: { answer: 'accept', rule: 'tab' }
+    })
+    // The user closes a tab: its own rule goes, the session-wide one stands for the rest.
+    fake.user.closeTab(tab)
+    expect(fake.service.dialogPolicyOf(a).tabs.has(tab)).toBe(false)
+    expect(fake.service.dialogPolicyOf(a).all?.policy).toEqual({ confirm: 'dismiss' })
+    // The session ends: everything goes, and the views that are left hear null.
+    await fake.call(a, 'zen_session', { action: 'end' })
+    expect(fake.service.dialogPolicyOf(a)).toEqual({ all: null, tabs: new Map() })
+    expect(fake.dialogPolicies.get(other)?.at(-1)).toBeNull()
+  })
+
+  it('the skill tells agents about the policy in the ruled words', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const skill = await readFile(
+      join(__dirname, '../../../../resources/skills/zenium-browser/SKILL.md'),
+      'utf8'
+    )
+    expect(skill).toContain(
+      'Where `browser_dialog_policy` is listed you may say ahead of an action how dialogs on a tab are to be answered (confirm OK or Cancel, a prompt\'s text, leave or stay) and the browser answers them at once from your policy - without one: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave - and every dialog it answered comes back in your next result with the page\'s words.'
+    )
+    expect(skill).toContain(
+      'A "Leave site?" is never handed to you on either host: your policy\'s leave or stay answers it, leave by default'
+    )
   })
 })
 

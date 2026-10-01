@@ -2696,20 +2696,31 @@ function LiftGhost({
   if (lift.phase === 'idle' || !lift.ghost || !lift.tabId) return null
   const tab = state.tabs[lift.tabId]
   if (!tab) return null
+  // Two elements (motion spec §0.4): the SEAT follows the finger by a per-frame `translate` –
+  // `left`/`top` per frame laid the page out on every frame – and the CARD inside it carries the
+  // lift's scale, whose 120 ms stylesheet transition would otherwise smear the follow when both
+  // sat on one `transform`. The seat is snapped to the device pixel grid as the layout box was,
+  // so the card's text stays sharp wherever the follow rests.
+  const dpr = window.devicePixelRatio || 1
+  const x = Math.round(lift.ghost.x * dpr) / dpr
+  const y = Math.round(lift.ghost.y * dpr) / dpr
   return (
     <div
-      className="zen-overview-card zen-overview-ghost pointer-events-none fixed z-30 flex flex-col overflow-hidden"
-      data-active={tab.id === activeTabId}
-      data-landing={lift.phase === 'dropping' || undefined}
+      className="zen-overview-ghost-seat pointer-events-none fixed z-30"
       style={{
-        left: lift.ghost.x,
-        top: lift.ghost.y,
         width: lift.ghost.width,
         height: lift.ghost.height,
-        transform: `scale(${lift.scale})`
+        transform: `translate(${x}px, ${y}px)`
       }}
     >
-      <CardBody tab={tab} closable={false} />
+      <div
+        className="zen-overview-card zen-overview-ghost flex h-full w-full flex-col overflow-hidden"
+        data-active={tab.id === activeTabId}
+        data-landing={lift.phase === 'dropping' || undefined}
+        style={{ transform: `scale(${lift.scale})` }}
+      >
+        <CardBody tab={tab} closable={false} />
+      </div>
     </div>
   )
 }

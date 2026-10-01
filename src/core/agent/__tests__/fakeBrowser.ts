@@ -1,6 +1,14 @@
 import { DEFAULT_AGENT_SETTINGS } from '../../../shared/defaults'
-import type { AgentPromptKind, AgentSettings, Folder, Space, Tab } from '../../../shared/types'
+import type {
+  AgentDialogPolicy,
+  AgentPromptKind,
+  AgentSettings,
+  Folder,
+  Space,
+  Tab
+} from '../../../shared/types'
 import type { Browser } from '../../browser'
+import { PageDialogService } from '../../pageDialogs'
 import {
   type Model,
   createSpace,
@@ -52,6 +60,10 @@ export interface FakeBrowser {
   agentDriven: Map<string, boolean[]>
   /** Every `interceptAgentPrompts` a page's view heard, by tab id, in order. */
   intercepts: Map<string, boolean[]>
+  /** Every `setDialogPolicy` a page's view heard, by tab id, in order. */
+  dialogPolicies: Map<string, Array<AgentDialogPolicy | null>>
+  /** Tabs under an unload check the user started (`tabs.unloadingForUser`); tests add and remove them. */
+  closing: Set<string>
   /** Tabs whose agent device picks were forgotten (`permissions.forgetAgentTab`), in order. */
   devicePicksForgotten: string[]
   /** Files set on inputs (`setInputFiles`) or dropped (`dropFiles`), by tab id. */
@@ -106,6 +118,8 @@ export interface FakeBrowserOptions {
   requireName?: boolean
   /** The host routes page dialogs to agents (`HostCapabilities.agentDialogs`); on by default. */
   agentDialogs?: boolean
+  /** The host answers dialogs from an agent's policy (`HostCapabilities.agentDialogPolicy`); follows `agentDialogs`. */
+  agentDialogPolicy?: boolean
   /** The native prompts the host routes to agents (`HostCapabilities.agentPrompts`); none by default. */
   agentPrompts?: AgentPromptKind[]
 }
@@ -161,6 +175,8 @@ export function fakeBrowser(
   const input = new Map<string, AgentInputEvent[]>()
   const agentDriven = new Map<string, boolean[]>()
   const intercepts = new Map<string, boolean[]>()
+  const dialogPolicies = new Map<string, Array<AgentDialogPolicy | null>>()
+  const closing = new Set<string>()
   const devicePicksForgotten: string[] = []
   const uploads: FakeBrowser['uploads'] = new Map()
   const gates = new Map<string, Promise<void>>()
@@ -181,7 +197,8 @@ export function fakeBrowser(
     activations: [],
     activeSpace: () => getSpace(model, win.activeSpaceId) ?? userSpace,
     selectedTabIn: (space: Space) => space.activeTabId,
-    viewRect: () => ({ x: 0, y: 80, width: 1000, height: 800 })
+    viewRect: () => ({ x: 0, y: 80, width: 1000, height: 800 }),
+    host: { isFocused: () => true, focus: () => undefined }
   } as unknown as FakeWindow
 
   const tabOf = (id: string | null | undefined): Tab | undefined =>
@@ -225,6 +242,9 @@ export function fakeBrowser(
       },
       interceptAgentPrompts: (on: boolean) => {
         intercepts.set(tab.id, [...(intercepts.get(tab.id) ?? []), on])
+      },
+      setDialogPolicy: (policy: AgentDialogPolicy | null) => {
+        dialogPolicies.set(tab.id, [...(dialogPolicies.get(tab.id) ?? []), policy])
       },
       setInputFiles: async (selector: string, files: AgentUploadFile[]) => {
         uploads.set(tab.id, [...(uploads.get(tab.id) ?? []), { selector, files }])
@@ -363,6 +383,7 @@ export function fakeBrowser(
       readabilitySource: () => null,
       capabilities: {
         agentDialogs: options.agentDialogs ?? true,
+        agentDialogPolicy: options.agentDialogPolicy ?? options.agentDialogs ?? true,
         ...(options.agentPrompts ? { agentPrompts: options.agentPrompts } : {})
       }
     },
@@ -397,6 +418,7 @@ export function fakeBrowser(
       view: (id: string) => views.get(id),
       activeTabFor: (w: ZenWindow) => tabOf(w.activeSpace().activeTabId),
       windowFor: () => win,
+      unloadingForUser: (id: string) => closing.has(id),
       ensureLoaded,
       isPrivate: () => false,
       createTab,
@@ -435,6 +457,7 @@ export function fakeBrowser(
     handleCommand: () => undefined
   } as unknown as Browser & { agents: AgentService }
 
+  ;(browser as { pageDialogs: PageDialogService }).pageDialogs = new PageDialogService(browser)
   const service = new AgentService(browser)
   service.requireName = options.requireName ?? false
   browser.agents = service
@@ -472,6 +495,8 @@ export function fakeBrowser(
     input,
     agentDriven,
     intercepts,
+    dialogPolicies,
+    closing,
     devicePicksForgotten,
     uploads,
     user,

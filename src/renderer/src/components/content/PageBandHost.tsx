@@ -8,6 +8,7 @@ import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import type { UiState } from '@renderer/lib/ui'
 import { PageEdgeBand, type BandHost } from '../band/PageEdgeBand'
 import { useBandTabs } from '../band/useBandTabs'
+import { PageBandCorners } from './PageBandCorners'
 import { useCrashRestoreBand } from './useCrashRestoreBand'
 import { useDefaultBrowserBand } from './useDefaultBrowserBand'
 
@@ -40,7 +41,9 @@ interface Props {
  * full-frame once, translated from there – keeps covering the frame under it as the mouse
  * takes it up, as Android's host unseats its layer (`lib/band/androidHost.ts`; the Design
  * Lead's ruling on W8-M2b: the two hosts the same, never a bare strip under a dragged band).
- * Tabs closing and documents changing take their bands with them (`useBandTabs`).
+ * Tabs closing and documents changing take their bands with them (`useBandTabs`). With the band
+ * it mounts the two corner masks that ride the same offset (`PageBandCorners`; the Design Lead's
+ * seed D3): the frame's radius at the top corners of a page the chrome draws under the band.
  *
  * Its tenants: the default-browser state (`useDefaultBrowserBand`) and the crash-restore state
  * (`useCrashRestoreBand`). The strips across the frame's top that asked before them
@@ -98,5 +101,10 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
     }),
     []
   )
-  return <PageEdgeBand host={host} />
+  return (
+    <>
+      <PageEdgeBand host={host} />
+      <PageBandCorners />
+    </>
+  )
 }

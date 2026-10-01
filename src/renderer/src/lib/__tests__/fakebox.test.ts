@@ -533,7 +533,9 @@ describe('the layout the morph measures (main.css): no transition under reduced 
       ":root[data-fakebox='opening'] .zen-ntp-fades",
       ":root[data-fakebox='closing'] .zen-ntp-fades"
     ])
-    expect(fade.body).toBe('transition: opacity 120ms var(--zen-ease) !important;')
+    expect(fade.body).toBe(
+      'transition: opacity var(--zen-motion-state) var(--zen-ease) !important;'
+    )
   })
 })
 
@@ -571,6 +573,8 @@ describe('the page under the omnibox (main.css): its visibility cuts under reduc
     expect(fades).toHaveLength(1)
     expect(fades[0].selectors).toContain(":root[data-fakebox='closing'] .zen-ntp-fades")
     expect(fades[0].selectors).toContain(":root[data-fakebox='opening'] .zen-ntp-fades")
-    expect(fades[0].body).toBe('transition: opacity 120ms var(--zen-ease) !important;')
+    expect(fades[0].body).toBe(
+      'transition: opacity var(--zen-motion-state) var(--zen-ease) !important;'
+    )
   })
 })

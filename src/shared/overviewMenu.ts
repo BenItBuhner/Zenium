@@ -11,7 +11,8 @@
  * (N) – only while any; Recently Closed (N) – only while any; a hairline; Close All Tabs (N) /
  * Close Private Tabs (N) in danger ink; Switch Space ▸ with the spaces as rows, the current one
  * checked. Title Case (§9.1), the counts in parentheses as the overview's sheet wrote them.
- * In SELECTION MODE (§5) the menu is Select All, Deselect All, Close Selected (N) instead. The
+ * In SELECTION MODE (§5) the menu is Select All, Deselect All, a hairline, Close Selected (N)
+ * instead – the one hairline before the destructive row, as every sheet here draws it. The
  * sheet is titled as the overview is (`overviewMenuTitle`): "Work · 10 tabs", "Private · 1 tab",
  * "1 selected" – never "Zenium", the app menu's.
  */
@@ -230,6 +231,8 @@ function selectionMenu(selection: OverviewMenuSelection): OverviewMenuEntry[] {
   return [
     { command: 'select-all', label: 'Select All', disabled: selection.selected >= selection.total },
     { command: 'deselect-all', label: 'Deselect All', disabled: selection.selected === 0 },
+    // The one hairline before the destructive row, as every sheet here draws it (§4).
+    { separator: true },
     {
       command: 'close-selected',
       label: counted('Close Selected', selection.selected),
