@@ -3,6 +3,7 @@ import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME, isDefaultGroupName } from '.
 import { newFolderName } from '../formFactor'
 import {
   PROTECTED,
+  S,
   face,
   fill,
   nounFor,
@@ -12,6 +13,7 @@ import {
   tableValues,
   type Entry
 } from '../strings'
+import { ACTIONS } from '../strings/actions'
 import {
   DEFAULT_GROUP_NAME,
   GROUP_NOUN,
@@ -24,7 +26,7 @@ import {
 /**
  * The string table's engine (spec §9 item 10; the D7 proposal §C): `fill()`, `plural()`,
  * `sentence()` with the PROTECTED list, and the faces an entry is read in – by the entry alone,
- * since the scaffold names no act yet (the families land one PR each, §D).
+ * then through `S` for the action tables, the first family to land (§D; the rest one PR each).
  */
 describe('fill(): {name} holes', () => {
   it('fills each hole from the values, as many times as it appears', () => {
@@ -271,9 +273,55 @@ describe('nouns.ts: the words, re-exported where they were', () => {
   })
 })
 
-describe('the merged table (the scaffold)', () => {
-  it('names no act yet: the families land one PR each (§D)', () => {
-    expect(tableEntries()).toEqual([])
-    expect(tableValues().size).toBe(0)
+describe('the merged table', () => {
+  it('holds the action tables (PR-2) and nothing else yet: the families land one PR each (§D)', () => {
+    const ids = tableEntries().map(([id]) => id)
+    expect(ids).toEqual(Object.keys(ACTIONS))
+    expect(ids.length).toBeGreaterThan(120)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(tableValues().get('Copy Link')).toBe('tab.copyUrl')
+    expect(tableValues().get('Copy link')).toBe('tab.copyUrl')
+    expect(tableValues().get('Find in Page…')).toBe('find.open')
+    expect(tableValues().get('Find')).toBe('find.open')
+    expect(tableValues().get('New Tab Below')).toBe('tab.newAfter')
+    expect(tableValues().get('Exit Full Screen')).toBe('page.fullscreen')
+  })
+
+  it('reads the action tables’ faces the Lead ruled', () => {
+    // Q4: the mac bar's standard items take the platform's words; the house label elsewhere.
+    expect(S.menu('settings.open')).toBe('Settings')
+    expect(S.menu('settings.open', { os: 'darwin' })).toBe('Settings…')
+    expect(S.menu('settings.open', { os: 'linux' })).toBe('Settings')
+    expect(S.menu('window.minimize')).toBe('Minimise Window')
+    expect(S.menu('window.minimize', { os: 'darwin' })).toBe('Minimize')
+    expect(S.menu('find.open')).toBe('Find in Page…')
+    expect(S.menu('find.open', { os: 'darwin' })).toBe('Find…')
+    expect(S.title('find.open')).toBe('Find in page')
+    expect(S.menu('nav.reloadSkipCache', { os: 'darwin' })).toBe('Hard Reload')
+    expect(S.menu('urlbar.focus', { os: 'darwin' })).toBe('Open Location…')
+    expect(S.menu('urlbar.focus')).toBe('Focus Address Bar')
+    // Q5: the palette carries the ellipsis; Q9: Bookmark This Tab…; P-10: Search Tabs bare.
+    expect(S.menu('capture.start')).toBe('Screenshot…')
+    expect(S.title('capture.start')).toBe('Open the screenshot overlay')
+    expect(S.menu('bookmark.add')).toBe('Bookmark This Tab…')
+    expect(S.menu('bookmark.add', { state: true })).toBe('Edit Bookmark…')
+    expect(S.row('bookmark.add', { state: false })).toBe('Bookmark this tab…')
+    expect(S.menu('tab.search')).toBe('Search Tabs')
+    // P-22 and P-23: the noun, the state pair where the row knows it.
+    expect(S.menu('page.fullscreen')).toBe('Full Screen')
+    expect(S.menu('page.fullscreen', { state: true })).toBe('Exit Full Screen')
+    expect(S.menu('page.readerMode', { state: false })).toBe('Enter Reader View')
+    expect(S.menu('compact.toggle')).toBe('Compact Mode')
+    expect(S.title('compact.toggle')).toBe('Compact mode')
+    // P-34: the orientation axis.
+    expect(S.menu('tab.closeBefore', { orientation: 'horizontal' })).toBe('Close Tabs to the Left')
+    expect(S.menu('tab.closeBefore', { orientation: 'vertical' })).toBe('Close Tabs Above')
+    expect(S.menu('tab.closeBefore')).toBe('Close Tabs to the Left')
+    // The helper's derived faces (P-45 and §B) and the explicit sentences.
+    expect(S.title('focus.bookmarksBar')).toBe('Focus bookmarks bar')
+    expect(S.title('space.new')).toBe('Create new Space')
+    expect(S.title('space.next')).toBe('Jump to the next Space')
+    expect(S.title('tab.togglePin')).toBe('Pin or unpin tab')
+    expect(S.title('tab.togglePin', { state: true })).toBe('Unpin tab')
   })
 })

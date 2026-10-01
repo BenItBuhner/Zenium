@@ -1,5 +1,6 @@
 import { touchLayout } from '../formFactor'
 import type { FormFactor, Platform } from '../types'
+import { ACTIONS } from './actions'
 import type { ActId } from './acts'
 import type { Noun, NounWords } from './nouns'
 
@@ -258,11 +259,11 @@ export function face(entry: Entry, kind: Face, ctx: Ctx = {}): string {
 }
 
 /**
- * The families merged (§C): each adds its module here as it lands (§D) – `actions.ts` with the
- * four action tables first. `satisfies` over each family proves every key is an act and every
- * value an entry; the keys are disjoint by construction (one family per act).
+ * The families merged (§C): each adds its module here as it lands (§D) – `actions.ts`, the
+ * action tables, first. `satisfies` over each family proves every key is an act and every value
+ * an entry; the keys are disjoint by construction (one family per act).
  */
-const TABLE = {} satisfies Partial<Record<ActId, Entry>>
+const TABLE = { ...ACTIONS } satisfies Partial<Record<ActId, Entry>>
 
 /** The acts the table names so far: `Record<ActId, Entry>` when the last family lands. */
 export type TableId = keyof typeof TABLE
