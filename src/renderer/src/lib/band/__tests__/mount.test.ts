@@ -83,7 +83,7 @@ describe('mountAndroidBand – the host and the door, mounted and unmounted as o
     const band = mountAndroidBand()
     expect(mountedAndroidBand()).toBe(band)
     expect(bandIsTheDoor()).toBe(true)
-    expect(bandStore.get()).toMatchObject({ front: 't1', eligible: true })
+    expect(bandStore.get()).toMatchObject({ front: 't1', ok: true })
 
     const ends: BannerDismissReason[] = []
     const id = postBanner(
@@ -108,7 +108,7 @@ describe('mountAndroidBand – the host and the door, mounted and unmounted as o
     ])
     expect(bandIsTheDoor()).toBe(false)
     expect(mountedAndroidBand()).toBeNull()
-    expect(bandStore.get()).toMatchObject({ front: null, eligible: false })
+    expect(bandStore.get()).toMatchObject({ front: null, ok: false })
 
     const again = postBanner({ title: 'Install?', icon: Info, key: 'install' }, 'offer')
     expect(bandStore.get().entries).toEqual([])

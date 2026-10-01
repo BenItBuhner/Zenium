@@ -102,17 +102,17 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     vi.useRealTimers()
   })
 
-  it('tells the model which tab is in front and whether a band may show there', () => {
+  it('tells the model which tab is in front, whether a band may stand there and what covers it', () => {
     host = createAndroidBandHost()
-    expect(bandStore.get()).toMatchObject({ front: 't1', eligible: true })
+    expect(bandStore.get()).toMatchObject({ front: 't1', ok: true, covered: false })
     uiStore.set({ frameDialogsOpen: 1 })
-    expect(bandStore.get()).toMatchObject({ front: 't1', eligible: false })
+    expect(bandStore.get()).toMatchObject({ front: 't1', ok: true, covered: true })
     uiStore.set({ frameDialogsOpen: 0 })
-    expect(bandStore.get().eligible).toBe(true)
+    expect(bandStore.get().covered).toBe(false)
     browserStore.set({ state: stateWith('ntp') })
-    expect(bandStore.get()).toMatchObject({ front: 'ntp', eligible: false })
+    expect(bandStore.get()).toMatchObject({ front: 'ntp', ok: false })
     browserStore.set({ state: stateWith('t2') })
-    expect(bandStore.get()).toMatchObject({ front: 't2', eligible: true, offers: true })
+    expect(bandStore.get()).toMatchObject({ front: 't2', ok: true, offers: true })
   })
 
   it("a private tab in front withholds offers, not states – the model hears it as the host's word", () => {
@@ -120,7 +120,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     showBand(offer())
     showBand(state())
     browserStore.set({ state: stateWith('p1') })
-    expect(bandStore.get()).toMatchObject({ front: 'p1', eligible: true, offers: false })
+    expect(bandStore.get()).toMatchObject({ front: 'p1', ok: true, offers: false })
     expect(shownBand()?.key).toBe('offline')
     expect(bandStore.get().entries).toHaveLength(2)
     browserStore.set({ state: stateWith('t1') })
@@ -174,7 +174,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     dispatchPullEvent('t1', 'start')
     expect(ends).toEqual(['program'])
     expect(bandStore.get().entries).toEqual([])
-    expect(bandStore.get().eligible).toBe(false)
+    expect(bandStore.get().ok).toBe(false)
     // The page did not move, and the band's last frames cannot move it either.
     expect(written).toEqual([['t1', 76]])
     host.translate(40)
@@ -182,7 +182,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     host.rest(0)
     expect(written).toEqual([['t1', 76]])
     abortPull()
-    expect(bandStore.get().eligible).toBe(true)
+    expect(bandStore.get().ok).toBe(true)
   })
 
   it('a pull on the held page leaves a state standing: it waits, and returns when the pull ends', () => {
@@ -266,9 +266,9 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
       ['t1', 0]
     ])
     expect(heldPageOffset('t1')).toBe(0)
-    expect(bandStore.get()).toMatchObject({ front: null, eligible: false })
+    expect(bandStore.get()).toMatchObject({ front: null, ok: false })
     browserStore.set({ state: stateWith('t2') })
-    expect(bandStore.get()).toMatchObject({ front: null, eligible: false })
+    expect(bandStore.get()).toMatchObject({ front: null, ok: false })
     expect(written).toHaveLength(2)
     host = null
   })

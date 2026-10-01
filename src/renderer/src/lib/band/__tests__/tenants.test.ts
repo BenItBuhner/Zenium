@@ -41,11 +41,10 @@ describe('bandRequestFromBanner', () => {
     expect(request.action?.label).toBe('Add')
     request.action?.pick()
     expect(onPick).toHaveBeenCalledTimes(1)
-    expect(request.secondary).toBeUndefined()
+    expect(request.closeLabel).toBeUndefined()
   })
 
-  it('a state has no clock whatever the banner asked, and may carry a second, dismissing action', () => {
-    const notNow = vi.fn()
+  it("a state has no clock whatever the banner asked, and may name its × (§4's dismissing action)", () => {
     const request = bandRequestFromBanner(
       {
         title: 'Open links in Zenium',
@@ -55,14 +54,12 @@ describe('bandRequestFromBanner', () => {
         duration: 4000
       },
       'state',
-      { secondary: { label: 'Not now', pick: notNow }, tone: 'warn' }
+      { closeLabel: 'Not now', tone: 'warn' }
     )
     expect(request.form).toBe('state')
     expect(request.clock).toBeNull()
     expect(request.action?.label).toBe('Set as default')
-    expect(request.secondary?.label).toBe('Not now')
-    request.secondary?.pick()
-    expect(notNow).toHaveBeenCalledTimes(1)
+    expect(request.closeLabel).toBe('Not now')
     expect(request.tone).toBe('warn')
   })
 
@@ -74,14 +71,14 @@ describe('bandRequestFromBanner', () => {
     expect(request.form).toBe('state')
     expect(request.clock).toBeNull()
     expect(request.action).toBeUndefined()
-    // A second action rides a state only; an offer's one action is the rule.
+    // A tone rides a state only (an offer's glyph is the accent); the ×'s name rides either.
     const offer = bandRequestFromBanner(
       { title: 'Show Reader View?', action: { label: 'Show', onPick: () => undefined } },
       'offer',
-      { secondary: { label: 'Never', pick: () => undefined }, tone: 'warn' }
+      { closeLabel: 'No thanks', tone: 'warn' }
     )
     expect(offer.form).toBe('offer')
-    expect(offer.secondary).toBeUndefined()
+    expect(offer.closeLabel).toBe('No thanks')
     expect(offer.tone).toBeUndefined()
   })
 

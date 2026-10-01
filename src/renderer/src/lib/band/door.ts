@@ -32,9 +32,9 @@ export function tenantReasonOf(reason: BandDismissReason): BandEndReason {
 let anonymous = 0
 
 /**
- * The model's `showBand` options for a tenant's request. A request's `secondary` (the
- * default-browser band's "Not now", §4) has no seat in the model yet – it carries one action –
- * and waits on the shared model for it; the × is the same end meanwhile.
+ * The model's `showBand` options for a tenant's request: the words, glyph, tone, clock and the
+ * one action carry over; the ×'s name (`closeLabel`, the default-browser band's "Not now", §4)
+ * where the tenant gives one, the content component's default otherwise.
  */
 export function bandOptionsOf(request: BandRequest): BandOptions {
   const options: BandOptions = {
@@ -48,6 +48,7 @@ export function bandOptionsOf(request: BandRequest): BandOptions {
   }
   if (request.detail !== undefined) options.detail = request.detail
   if (request.tone !== undefined) options.tone = request.tone
+  if (request.closeLabel !== undefined) options.closeLabel = request.closeLabel
   if (request.action) {
     const action = request.action
     options.action = { label: action.label, onPick: () => action.pick() }

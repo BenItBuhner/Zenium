@@ -1,7 +1,7 @@
-import { bandStore, chooseBand, dismissBand, setBandFront, shownBand } from '@renderer/lib/band'
+import { bandStore, chooseBand, dismissBand, setBandFrame, shownBand } from '@renderer/lib/band'
 import type { BandSeam } from '@renderer/lib/motion/band'
 import { holdPage, setPageHold, type PageHold } from '@renderer/lib/pull'
-import { bandMayShow, subscribeBandSignals } from './signals'
+import { bandFrameOf, subscribeBandSignals } from './signals'
 
 /**
  * The page-edge band's host on Android (motion spec §3.4 Android): the {@link BandSeam} the
@@ -13,7 +13,7 @@ import { bandMayShow, subscribeBandSignals } from './signals'
  * (`lib/pull.ts` → the bridge's `view.setPullOffset` → `Host.kt` → `TabWebView.setPullOffset`),
  * so Kotlin moves the page the same way for both and one source has it at a time: a frame is
  * refused while a pull has the page, and a pull that begins on the held page takes it over
- * where it sits – the model hears the frame is not the band's (`pulling` → not eligible), the
+ * where it sits – the model hears the frame is not the band's (`pulling` → the frame not `ok`), the
  * shown offer is taken down as the chrome's doing (`program`: no tenant counts it as the user's
  * refusal), and a state waits for the pull to end and returns on its own entrance. No per-frame
  * work of the host's own: the driver calls {@link BandSeam.translate} per frame, the stores
@@ -61,16 +61,17 @@ export function createAndroidBandHost(): AndroidBandHost {
       // the user's answer: `program`); a state holds and waits for the pull to end. The pull
       // has already told the model the frame is not the band's, so the band that stood is read
       // as if it were.
-      const stood = chooseBand({ ...bandStore.get(), eligible: true })
+      const stood = chooseBand({ ...bandStore.get(), ok: true })
       if (stood?.form === 'offer') dismissBand(stood.id, 'program')
     }
   }
   setPageHold(hold)
 
   const off = subscribeBandSignals((signals) => {
-    // The model first: it decides whether a band stands on the page coming to the front – and
-    // whether an offer may (not on a private tab, whose offers Chrome withholds too; §3.2).
-    setBandFront(signals.tabId, bandMayShow(signals, 'state'), !signals.privateTab)
+    // The model first: it decides whether a band stands on the page coming to the front, whether
+    // an offer may (not on a private tab, whose offers Chrome withholds too; §3.2) and whether a
+    // cover holds an arriving prompt back.
+    setBandFrame(bandFrameOf(signals))
     if (signals.tabId === front) return
     if (front !== null && held === front) write(front, 0)
     front = signals.tabId
@@ -101,7 +102,7 @@ export function createAndroidBandHost(): AndroidBandHost {
       if (held !== null) write(held, 0)
       off()
       setPageHold(null)
-      setBandFront(null, false)
+      setBandFrame({ front: null, ok: false })
     }
   }
 }

@@ -23,7 +23,7 @@ import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
  */
 export type BandForm = 'offer' | 'state'
 
-/** One of the band's actions: the §9.11 secondary at 40 on touch. */
+/** The band's one action (§9.11's button at 40 on touch). */
 export interface BandAction {
   label: string
   pick(): void
@@ -37,11 +37,16 @@ export interface BandAction {
 export type BandTone = 'ok' | 'warn' | 'danger'
 
 /**
- * What a tenant adds to its banner for the band: a second, dismissing action a state may carry,
- * a state's tone, and what it does when the band is put away UNANSWERED (`onAway`).
+ * What a tenant adds to its banner for the band: the ×'s name where the × is a refusal with a
+ * name of its own, a state's tone, and what it does when the band is put away UNANSWERED
+ * (`onAway`).
  */
 export interface BandExtras {
-  secondary?: BandAction
+  /**
+   * The ×'s accessible name ("Not now" on the default-browser band, §4 – the model's
+   * `closeLabel`, as the desktop's own band names it); the content component's default otherwise.
+   */
+  closeLabel?: string
   tone?: BandTone
   /**
    * The band was put away without an answer – the system Back (the band's Escape, spec §9 item
@@ -83,11 +88,8 @@ export interface BandRequest {
   glyph?: LucideIcon
   /** The band's action, if it has one (offers always do). */
   action?: BandAction
-  /**
-   * A second, dismissing action a state may carry ("Not now" on the default-browser band, §4):
-   * the same end as the × – the content component shows it only where it has room.
-   */
-  secondary?: BandAction
+  /** The ×'s name, where the refusal has one ("Not now" on the default-browser band, §4). */
+  closeLabel?: string
   /** A state's status ink for its glyph (§3.1); none draws it deemphasised. */
   tone?: BandTone
   /** Bands of one `key` do not pile up: a newer one replaces the standing one (§3.2). */
@@ -125,7 +127,7 @@ export function bandRequestFromBanner(
     const action = opts.action
     request.action = { label: action.label, pick: () => action.onPick() }
   }
-  if (extras.secondary && shape === 'state') request.secondary = extras.secondary
+  if (extras.closeLabel !== undefined) request.closeLabel = extras.closeLabel
   if (extras.tone && shape === 'state') request.tone = extras.tone
   if (opts.key !== undefined) request.key = opts.key
   const { onDismiss } = opts

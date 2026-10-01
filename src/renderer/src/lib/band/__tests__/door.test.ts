@@ -1,6 +1,6 @@
 import { BookOpenText, Info } from 'lucide-react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { bandStore, resetBands, setBandFront, shownBand } from '@renderer/lib/band'
+import { bandStore, resetBands, setBandFrame, shownBand } from '@renderer/lib/band'
 import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import { bandOptionsOf, createModelDoor, tenantReasonOf } from '../door'
 import type { BandRequest } from '../tenants'
@@ -8,7 +8,7 @@ import type { BandRequest } from '../tenants'
 beforeEach(() => {
   vi.useFakeTimers()
   resetBands()
-  setBandFront('t1', true)
+  setBandFrame({ front: 't1', ok: true })
 })
 
 afterEach(() => {
@@ -68,6 +68,18 @@ describe('bandOptionsOf', () => {
     expect('tone' in bandOptionsOf({ form: 'state', title: 'T', key: 't', clock: null })).toBe(
       false
     )
+  })
+
+  it("the ×'s name carries over where the tenant gives one, and is left to the content otherwise", () => {
+    const named = bandOptionsOf({
+      form: 'state',
+      title: 'Open links in Zenium',
+      key: 'default-browser',
+      clock: null,
+      closeLabel: 'Not now'
+    })
+    expect(named.closeLabel).toBe('Not now')
+    expect('closeLabel' in bandOptionsOf(offer())).toBe(false)
   })
 
   it('a request without a key stands under one of its own, never the same twice', () => {

@@ -1,5 +1,6 @@
 import type { UIState } from '@shared/types'
 import { isEmptyTabUrl, isInternalUrl } from '@shared/url'
+import type { BandFrame } from '@renderer/lib/band'
 import { KEYBOARD_INSET_MIN } from '@renderer/lib/barHide'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { pullStore, type PullState } from '@renderer/lib/pull'
@@ -24,11 +25,11 @@ export interface BandSignals {
   /** The tab in front is private: its offers are withheld (§3.2); states still show. */
   privateTab: boolean
   /**
-   * A sheet, dialog, menu or other overlay stands over the page: the band WAITS (its clock
-   * paused, its show held back) until the page is in front again (§3.2).
+   * A sheet, dialog, menu or other overlay stands over the page: a prompt arriving WAITS for it
+   * to go; the one standing already stays (§3.2 – the model's `covered`).
    */
   covered: boolean
-  /** The keyboard is up over the page's own field (the chrome's fields count as `covered`). */
+  /** The keyboard is up over the page's own field (the chrome's fields count as `covered`): a cover too. */
   keyboardUp: boolean
   /** A pull-to-refresh has the page: one source of the offset at a time (§3.4 Android). */
   pulling: boolean
@@ -49,13 +50,21 @@ export function readBandSignals(state: UIState | null, ui: UiState, pull: PullSt
 }
 
 /**
- * The page is in front and free: a band may show (an offer's clock runs). Offers need a web page
- * that is not private; states need a page that is in front.
+ * The host's word on the frame for the model (`setBandFrame`), from the signals: the tab in
+ * front; `ok` – a band may stand on what is in front at all: a web page, and not while a pull
+ * has it (one source of the page's offset at a time, §3.4 Android: the band withheld waits and
+ * a state returns on its own entrance when the pull ends); `offers` – not on a private tab;
+ * `covered` – an overlay over the page or the keyboard over its field, under which a prompt
+ * arriving waits and the one standing stays. The scene is the tab's (the model's default): the
+ * touch hosts show one page in the frame and a page's fullscreen hides the chrome with the band.
  */
-export function bandMayShow(signals: BandSignals, form: 'offer' | 'state'): boolean {
-  if (signals.tabId === null || !signals.webPage) return false
-  if (signals.covered || signals.keyboardUp || signals.pulling) return false
-  return form === 'state' || !signals.privateTab
+export function bandFrameOf(signals: BandSignals): BandFrame {
+  return {
+    front: signals.tabId,
+    ok: signals.tabId !== null && signals.webPage && !signals.pulling,
+    offers: !signals.privateTab,
+    covered: signals.covered || signals.keyboardUp
+  }
 }
 
 /** The chrome's own signals right now. */

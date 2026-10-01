@@ -138,7 +138,7 @@ describe('TouchBandLayer – the band on the touch hosts', () => {
     render()
     expect(mountedAndroidBand()).not.toBeNull()
     expect(bandIsTheDoor()).toBe(true)
-    expect(bandStore.get()).toMatchObject({ front: 't1', eligible: true })
+    expect(bandStore.get()).toMatchObject({ front: 't1', ok: true })
     expect(topBackSurface()).toBeNull()
 
     const tenant = postInstall()

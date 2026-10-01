@@ -3,7 +3,7 @@ import { PRIVATE_CONTAINER_ID, type UIState } from '@shared/types'
 import { KEYBOARD_INSET_MIN } from '@renderer/lib/barHide'
 import type { PullState } from '@renderer/lib/pull'
 import { uiStore, type UiState } from '@renderer/lib/ui'
-import { bandMayShow, readBandSignals, type BandSignals } from '../signals'
+import { bandFrameOf, readBandSignals, type BandSignals } from '../signals'
 
 const IDLE: PullState = { tabId: null, phase: 'idle', armed: false }
 
@@ -87,7 +87,7 @@ describe('readBandSignals', () => {
   })
 })
 
-describe('bandMayShow', () => {
+describe('bandFrameOf', () => {
   const free: BandSignals = {
     tabId: 't1',
     webPage: true,
@@ -97,25 +97,25 @@ describe('bandMayShow', () => {
     pulling: false
   }
 
-  it('a web page in front and free shows both forms', () => {
-    expect(bandMayShow(free, 'offer')).toBe(true)
-    expect(bandMayShow(free, 'state')).toBe(true)
+  it('a web page in front and free: the frame is ok, offers may, nothing covers it', () => {
+    expect(bandFrameOf(free)).toEqual({ front: 't1', ok: true, offers: true, covered: false })
   })
 
   it('never on the new tab page or a chrome page, never without a page', () => {
-    expect(bandMayShow({ ...free, webPage: false }, 'offer')).toBe(false)
-    expect(bandMayShow({ ...free, webPage: false }, 'state')).toBe(false)
-    expect(bandMayShow({ ...free, tabId: null }, 'state')).toBe(false)
+    expect(bandFrameOf({ ...free, webPage: false }).ok).toBe(false)
+    expect(bandFrameOf({ ...free, tabId: null })).toMatchObject({ front: null, ok: false })
   })
 
-  it('waits while a sheet stands, the keyboard is up over the page, or a pull has it', () => {
-    expect(bandMayShow({ ...free, covered: true }, 'state')).toBe(false)
-    expect(bandMayShow({ ...free, keyboardUp: true }, 'offer')).toBe(false)
-    expect(bandMayShow({ ...free, pulling: true }, 'offer')).toBe(false)
+  it('a pull on the page withholds the band (one source of the offset at a time)', () => {
+    expect(bandFrameOf({ ...free, pulling: true }).ok).toBe(false)
   })
 
-  it("a private tab's offers are withheld; its states still show", () => {
-    expect(bandMayShow({ ...free, privateTab: true }, 'offer')).toBe(false)
-    expect(bandMayShow({ ...free, privateTab: true }, 'state')).toBe(true)
+  it('a sheet over the page, or the keyboard over its field, is a cover: an arriving prompt waits', () => {
+    expect(bandFrameOf({ ...free, covered: true })).toMatchObject({ ok: true, covered: true })
+    expect(bandFrameOf({ ...free, keyboardUp: true })).toMatchObject({ ok: true, covered: true })
+  })
+
+  it("a private tab's offers are withheld; the frame is still ok for its states", () => {
+    expect(bandFrameOf({ ...free, privateTab: true })).toMatchObject({ ok: true, offers: false })
   })
 })

@@ -196,11 +196,11 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
             finding("  no band: the default-browser act cannot be recorded (prompt=${defaultBrowserPrompt()})")
             return
         }
-        bandGeometry("the default-browser band", TWO_LINE, "state", DEFAULT_TITLE, DEFAULT_DETAIL, listOf(DEFAULT_ACTION))
-        // §4's table gives this band a second, dismissing action; the shared model carries one
-        // action per band today (its × is the "Not now"). Reported, not gated, until it does.
-        val secondary = findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == DEFAULT_SECONDARY } != null
-        finding("  the §4 second action '$DEFAULT_SECONDARY' as a button: $secondary (reported; the model carries one action)")
+        // §4's table gives this band a dismissing action, "Not now": it is the band's × under that
+        // name (the model's `closeLabel`; the shared model carries one action per band), gated
+        // above as the ×. The campaign's only remembered refusal is that button (spec §9 item 6).
+        bandGeometry("the default-browser band", TWO_LINE, "state", DEFAULT_TITLE, DEFAULT_DETAIL, listOf(DEFAULT_ACTION), close = DEFAULT_SECONDARY)
+        finding("  the §4 dismissing action '$DEFAULT_SECONDARY' is the ×'s name (the model's closeLabel); × named '$DISMISS_LABEL' on this band: ${findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == DISMISS_LABEL } != null} (reported)")
         snap("design-default-browser-light")
         beat()
 
@@ -608,10 +608,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
 
     /**
      * The band's shape and words: the page translated by its height (the host's `translationY`,
-     * CSS px), the title and the actions in the tree, the ×; from the document the form, one root,
-     * `role="status"`, the glyph and its place at the frame's top.
+     * CSS px), the title and the actions in the tree, the × under its name ([close]: the content
+     * component's "Dismiss", or the tenant's own – "Not now" on the default-browser band, the
+     * model's `closeLabel`); from the document the form, one root, `role="status"`, the glyph and
+     * its place at the frame's top.
      */
-    private fun bandGeometry(where: String, bandHeight: Float, form: String, title: String, detail: String?, actions: List<String>) {
+    private fun bandGeometry(where: String, bandHeight: Float, form: String, title: String, detail: String?, actions: List<String>, close: String = DISMISS_LABEL) {
         val offset = offsetCss()
         val probe = bandProbe()
         finding("  $where: page offset $offset; $probe")
@@ -619,7 +621,7 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         check("$where: the title '$title' is on screen", findNode { it == title } != null)
         if (detail != null) check("$where: the detail line '$detail' is on screen", findNode { it == detail || it.contains(detail) } != null)
         for (action in actions) check("$where: the action '$action' is a button", findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == action } != null)
-        check("$where: the × ('$DISMISS_LABEL') is a button", findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == DISMISS_LABEL } != null)
+        check("$where: the × ('$close') is a button", findNodeWhere { n -> n.isClickable && (n.text ?: n.contentDescription)?.toString() == close } != null)
         // The root's top in the chrome's document (CSS px) sits at or above the touchable window's
         // top edge: the band is at the frame's top, under the status bar, whichever bar position.
         val top = probe.optInt("top", Int.MAX_VALUE).toFloat() * density
@@ -1041,10 +1043,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
 
         /**
          * THE SEAM'S HOOKS, in one place. The band's words, form, key and action come from the
-         * shared MODEL (`window.__zenStores.band`, Desktop's W8-M2 `lib/band.ts`: the entry
-         * `chooseBand` picks – states before offers, the newest, on the front tab, while the host
-         * says a band may show and, for an offer, that offers may), so no DOM name is read for
-         * them; the document is read only for
+         * shared MODEL (`window.__zenStores.band`, Desktop's W8-M2 `lib/band.ts`): the entry the
+         * model itself says is shown (`BandState.shown`, the id `chooseBand` picked at its last
+         * commit – states before offers, the newest, on the front tab, while the host says a band
+         * may stand (`ok`) and, for an offer, that offers may; under a cover the one that stood
+         * before it), looked up among its entries – no rule re-read here, so no DOM name is read
+         * for the words; the document is read only for
          * the band's ROOT (`.zen-band`) – how many stand, its role, whether it carries a glyph
          * (an `svg`) and where it sits – the one selector to change if the content component
          * names its root otherwise. `count` is the roots'; `standing` the model's entries (shown
@@ -1053,10 +1057,9 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         private const val BAND_ROOT = ".zen-band"
         private const val BAND_PROBE_JS =
             "(function(){var S=window.__zenStores&&window.__zenStores.band;var st=S?S.get():null;var shown=null;" +
-                "if(st&&st.eligible){var c=st.entries.filter(function(e){return (e.tabId===null||e.tabId===st.front)&&(e.form==='state'||st.offers)});" +
-                "shown=c.filter(function(e){return e.form==='state'})[0]||c[0]||null}" +
+                "if(st&&st.shown!==null){shown=st.entries.filter(function(e){return e.id===st.shown})[0]||null}" +
                 "var b=document.querySelectorAll('$BAND_ROOT');var f=b[0];" +
-                "var o={model:!!S,standing:st?st.entries.length:0,eligible:st?st.eligible:false,front:st?st.front:null,count:b.length," +
+                "var o={model:!!S,standing:st?st.entries.length:0,ok:st?st.ok:false,covered:st?st.covered:false,front:st?st.front:null,count:b.length," +
                 "form:shown?shown.form:'',key:shown?shown.key:'',title:shown?shown.title:'',detail:shown&&shown.detail?shown.detail:''," +
                 "actions:shown&&shown.action?[shown.action.label]:[],close:shown?(shown.closeLabel||'Dismiss'):''," +
                 "theme:document.documentElement.getAttribute('data-theme')};" +

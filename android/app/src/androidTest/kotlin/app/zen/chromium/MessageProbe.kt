@@ -31,11 +31,13 @@ object MessageProbe {
     const val DOOR_BAND = "band"
     const val DOOR_BANNER = "banner"
 
-    /** `shown`: the band entry shown now, or null (the model's `chooseBand`, in the page's words). */
+    /**
+     * `shown`: the band entry shown now, or null – the model's own word (`BandState.shown`, the
+     * id `chooseBand` picked at the last commit), looked up among its entries; no rule re-read here.
+     */
     private const val SHOWN_BAND_JS =
         "var S=window.__zenStores&&window.__zenStores.band;var st=S?S.get():null;var shown=null;" +
-            "if(st&&st.eligible){var c=st.entries.filter(function(e){return (e.tabId===null||e.tabId===st.front)&&(e.form==='state'||st.offers)});" +
-            "shown=c.filter(function(e){return e.form==='state'})[0]||c[0]||null}"
+            "if(st&&st.shown!==null){shown=st.entries.filter(function(e){return e.id===st.shown})[0]||null}"
 
     /** `cards`: the banner stack's cards not leaving, from the UI store (what the stack draws). */
     private const val BANNERS_JS =
