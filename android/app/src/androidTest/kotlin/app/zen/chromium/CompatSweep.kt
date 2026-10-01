@@ -8344,6 +8344,108 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("akegecpdcdbkjioddaingaedacjgfjhm", "Knowt: Quizlet Import, AI Notes & Flashcards", "knowt", core = accountGate("Knowt", Regex("knowt\\.com", RegexOption.IGNORE_CASE), page = "src/index.html", gate = "a Knowt account (its click runs `sidePanel.open({tabId})`; the panel signs in at knowt.com; its importer runs on Quizlet, Cram, Wayground and Google Docs)")),
         Row("elfaihghhjjoknimpccccmkioofjjfkf", "StayFree - Website Blocker, Web Usage Stats, Shorts Blocker", "stayfree", core = accountGate("StayFree", Regex("stayfreeapps\\.com|dashboard\\.html", RegexOption.IGNORE_CASE), gate = "its onboarding (a birth year, the terms and the data-collection consent on its dashboard page, `canMonitorUsage`; the popup says \"Get started\" until then)")),
         Row("hmigninkgibhdckiaphhmbgcghochdjc", "Mouse Tooltip Translator - PDF & Netflix Youtube dual subs", "mouse-tooltip-translator", core = domMarker("Mouse Tooltip Translator's tooltip over the Japanese span", "fonts-lang.html?mtt", MTT_TOOLTIP, settleMs = 35_000)),
+        // --- compat round 26 (ranks 661-690 by installs; `.github/scripts/ext-compat/next30-round23.json`) ---
+        // Each core rule read off the unpacked bundle: Auto Clicker - AutoFill's click
+        // (`TabsMessenger.optionsTab()`) opens stable.getautoclicker.com, where its configurations
+        // are made, and its side panel (`html/side_panel.html`) lists them; SwiftRead's click
+        // toggles its in-page menu – `#__swiftread_menu_host__` with an open shadow root holding
+        // `#__swiftread_menu_root__` and "SwiftRead current page"; DXF Viewer's click opens its
+        // viewer page (`tabs.create({url: "/ui/feature.html"})`: `#app`, `#cad-view`, `#empty-state`
+        // with "Open file"); Octotree's content script (github.com) puts its `.octotree-sidebar`
+        // and toggle on a repository page; Tab Manager Plus's popup (`popup.html?popup=true`,
+        // `setupPopup`) lists the windows' tabs as `.tabtitle` rows; Adblock Bear blocks with its
+        // `declarativeNetRequest` rulesets (`ruleset_1` enabled, easylist, easyprivacy and
+        // ublock's shipped disabled); Image Downloader - picture and photos saver's popup
+        // (`src/extension/popup/popup.html`) runs `imageHelper/index.js` in the tab, loads each
+        // URL with `new Image()` and asks its worker `getImagesCT` for the content type its
+        // `webRequest.onCompleted` listener recorded for a request whose `initiator` is the
+        // popup's own origin – an undefined answer adds no item (the response stage for the
+        // extension origin's own loads, R24's work read from the popup side); YouTube Anti
+        // Translate has no background: its content script (www and m.youtube.com) inserts a
+        // page-world `<script type="module" data-ytantitranslatesettings src=getURL("src/global.js")>`
+        // that sets `window.YoutubeAntiTranslate` and reads the watch page's original title;
+        // Auto Clicker's worker makes an "Auto Clicker" context-menu parent (`contexts: ["all"]`)
+        // with "Slot 1 - Start/Stop" to "Slot 3" and "Stop All" under it, `onClicked` sends the
+        // slot's COMMAND to the tab, whose content script (`toggleSlot(slot, "contextMenu")`)
+        // takes the `contextmenu` event it recorded (`lastContextMenuEvent`), caches the event's
+        // target and clicks it (mousedown, mouseup, click, the pointer and touch pairs) on a
+        // `requestAnimationFrame` loop (`clickDelay` 0) with its `.auto-clicker-indicator` ripple at
+        // the point – the long-press menu's drill-in is the way to its item on the phone
+        // ([menuItemEffect], `auto-click.html`'s counted link); Notifier for Gmail's click (no
+        // popup) opens mail.google.com/mail/u/0/ (`smartOpen` picks the account with the newest
+        // unread through its cookies); Just Read's click sends `toggleJustRead` to the tab and,
+        // when no content script answers (`runtime.lastError`), injects its libraries and content
+        // scripts (`scripting.executeScript`), which build the reader in an iframe
+        // `#simple-article`; Eightify's content script (www.youtube.com) mounts its summarize
+        // button and `#eightify-iframe` beside the watch page's `#secondary-inner` (the desktop
+        // layout); Picture in Picture - Floating player's click runs `cnt.js` in the MAIN world
+        // (`scripting.executeScript`, every frame), which calls `requestPictureInPicture()` on the
+        // largest ready video (the `__pip__` attribute; `documentPictureInPicture` for its own
+        // controls) – its rate-us popup window opens every tenth click, not the first; Notepad's
+        // popup is a `<textarea id="notepad">` kept in storage; Quick Javascript Switcher's click
+        // sets `contentSettings.javascript` for the tab's site (`set({primaryPattern, setting:
+        // "block"})`) and reloads it – `chrome.contentSettings` is a namespace the Android runtime
+        // has not (§7); PDF Editor for Chrome's content scripts append a `.pdffiller-button` after
+        // every link whose path ends in `.pdf`, never for a loopback, private-range or single-label
+        // host (`isReachableByUploadApi`): the fixture is served under the nip.io name
+        // (`pdf-links.html`); SEO Minion's click injects its sidebar scripts and `cs-sidebar.js`
+        // mounts `#smin-widget`, an iframe of its `html/sidebar.html`; zkPass TransGate's popup
+        // (`index.html`, React in `#root`) imports or creates an SBT behind a Secret Recovery
+        // Phrase (its attestations run in a sandboxed page with snarkjs WASM and an offscreen
+        // document); Screenity's click mounts its recorder UI in the page (`.screenity-ui` under
+        // the `.screenity-shadow-dom` host) – the capture itself is `getDisplayMedia` and
+        // `tabCapture`, which the WebView has not, as [recorderPopup] grades; Koala Inspector's
+        // click (`$R`) mounts its inspector over the tab (a Shopify store page) or opens its popup
+        // window, signed in through `identity.email` at auth.koala-apps.io; Ibotta's popup
+        // (`browserAction.html`) signs in; ApkOnline's popup (`index.html`: `#runemulx`, `#files`)
+        // runs an APK in its online emulator; AI Content Detector - Copyleaks' popup and side
+        // panel are one `index.html`, its scans through its API signed in; TickTick's click opens
+        // its side panel (`setPanelBehavior({openPanelOnActionClick: true})`, `sidepanel.html`),
+        // which signs in at ticktick.com; Zoom to Fill's content scripts (a MAIN-world
+        // `widevine-sw-fallback.js`, `compat-decision.js`, `content.js`) draw their UI under
+        // `#ztf-panel-root` and the `ztf-` classes over a page's video; Bookmarks clean up's click
+        // opens its page (`tabs.create(getURL("index.html"))`, `#app`: duplicates, broken links,
+        // empty folders); User JavaScript and CSS's popup (`src/popup.html`, `#app`) edits the
+        // current site's scripts and styles, registered through `userScripts`; Google Search Maps
+        // Button has no background: its content script (Google's `/search` pages) clones the
+        // results page's Images tab link as "Maps" pointing at maps.google.com/maps?q=<the query>;
+        // DeepSider's click opens its side panel (`sidePanel.html`), its chats through its service
+        // signed in; Selectext's content script (every page) listens to a video's `pause` and, for
+        // a video over 100,000 CSS px² (`MIN_VIDEO_SIZE`), inserts its overlay and toggle under a
+        // `.selectextShadowHost` – the fixture's clip is enlarged to that size before the pause,
+        // the phone's viewport being under it.
+        Row("iapifmceeokikomajpccajhjpacjmibe", "Auto Clicker - AutoFill", "auto-clicker-autofill", core = accountGate("Auto Clicker - AutoFill", Regex("getautoclicker\\.com", RegexOption.IGNORE_CASE), page = "html/side_panel.html", gate = "a configuration made on its site (its click opens stable.getautoclicker.com, where its configurations are written; its side panel lists them)")),
+        Row("hbfpaeoimiicejdjhmnlhkknclliibbm", "DXF Viewer", "dxf-viewer", core = actionPage("DXF Viewer", Regex("ui/feature\\.html"), DXF_VIEWER_PAGE, listOf("page-a.html?dxf"))),
+        Row("bkhaagjahfmjljalopjnoealnfndnagc", "Octotree - GitHub code tree", "octotree", core = liveMarker("Octotree", "https://github.com/octocat/Hello-World", OCTOTREE_SIDEBAR, settleMs = 45_000)),
+        Row("cnkdjjdmfiffagllbiiilooaoofcoeff", "Tab Manager Plus for Chrome", "tab-manager-plus", core = popupMarker("Tab Manager Plus", TAB_MANAGER_PLUS_POPUP, settleMs = 25_000)),
+        Row("gdiknemhndplpgnnnjjjhphhembfojec", "Adblock Bear - stop invasive ads", "adblock-bear", core = ::adBlocker),
+        Row("cbnhnlbagkabdnaoedjdfpbfmkcofbcl", "Image Downloader - picture and photos saver", "image-downloader-saver", core = imageList("Image Downloader - picture and photos saver", base = PUBLIC_NAME_BASE)),
+        Row("ndpmhjnlfkgfalaieeneneenijondgag", "YouTube Anti Translate", "youtube-anti-translate", core = { row, entry -> youtube(row, entry, YT_ANTI_TRANSLATE, "YouTube Anti Translate's page module on the watch page", settleMs = 45_000) }),
+        Row("cpedeojecpbkcomgcolphimkjdnikbck", "Auto Clicker", "auto-clicker", core = menuItemEffect("Auto Clicker", "auto-click.html?autoclicker", "#target", listOf(Regex("^Auto Clicker$", RegexOption.IGNORE_CASE), Regex("Slot 1", RegexOption.IGNORE_CASE)), AUTO_CLICKER_CLICKS, settleMs = 15_000)),
+        Row("dcjichoefijpinlfnjghokpkojhlhkgl", "Notifier for Gmail™", "notifier-for-gmail", core = accountGate("Notifier for Gmail", Regex("mail\\.google\\.com|accounts\\.google\\.com", RegexOption.IGNORE_CASE), gate = "a Google account (its click opens mail.google.com/mail/u/0/ – the sign-in page here; its unread count is Gmail's feed read through its cookies)")),
+        Row("dgmanlpmmkibanfdgjocnabmcaclkmod", "Just Read", "just-read", core = actionMarker("Just Read", "article.html?justread", JUST_READ_FRAME, settleMs = 30_000)),
+        Row("cdcpabkolgalpgeingbdcebojebfelgb", "Eightify: AI YouTube Summarizer", "eightify", core = { row, entry -> youtube(row, entry, EIGHTIFY_MOUNTED, "Eightify's summarize button and panel frame on the watch page", desktopSite = true, settleMs = 45_000) }),
+        Row("adnielbhikcbmegcfampbclagcacboff", "Picture in Picture - Floating player", "picture-in-picture-floating-player", core = ::pictureInPicture),
+        Row("ffbhefmlcoihbjcmibbfkocmnaiacinp", "Notepad", "notepad", core = popupMarker("Notepad", NOTEPAD_POPUP)),
+        Row("geddoclleiomckbhadiaipdggiiccfje", "Quick Javascript Switcher", "quick-javascript-switcher", core = actionMarker("Quick Javascript Switcher", "page-a.html?qjs", QJS_PAGE_SCRIPTS, settleMs = 12_000)),
+        Row("gphandlahdpffmccakmbngmbjnjiiahp", "PDF Editor for Chrome:Edit, Fill, Sign, Print", "pdf-editor-for-chrome", core = domMarker("PDF Editor for Chrome's button beside the PDF links", "$PUBLIC_NAME_BASE/pdf-links.html?pdffiller", PDFFILLER_BUTTON, settleMs = 25_000)),
+        Row("giihipjfimkajhlcilipnjeohabimjhi", "SEO Minion", "seo-minion", core = actionMarker("SEO Minion", "article.html?seominion", SEO_MINION_WIDGET, settleMs = 30_000)),
+        Row("afkoofjocpbclhnldmmaphappihehpma", "zkPass TransGate", "zkpass-transgate", core = popupMarker("zkPass TransGate", ZKPASS_POPUP, settleMs = 30_000)),
+        Row("mfaedmjlefifhnhpgipjjiiekchaimpk", "Ibotta: Price compare, cashback, item alerts", "ibotta", account = true, core = popupLogin("Ibotta")),
+        Row("lnhnebkkgjmlgomfkkmkoaefbknopmja", "ApkOnline APK manager for Android emulator", "apkonline", core = popupMarker("ApkOnline", APKONLINE_POPUP)),
+        Row("diankknpkndanachmlckaikddgcehkod", "TickTick - Todo & Task List", "ticktick", core = accountGate("TickTick", Regex("ticktick\\.com", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "a TickTick account (its click opens its side panel, `sidepanel.html`, which signs in at ticktick.com)")),
+        Row("adpjimagbfpknkodpofjphpbdlfkeiho", "Zoom to Fill - Ultrawide Video", "zoom-to-fill", core = domMarker("Zoom to Fill's UI over the video fixture", "video.html?ztf", injectedAny("ztf"), settleMs = 30_000)),
+        Row("oncbjlgldmiagjophlhobkogeladjijl", "Bookmarks clean up", "bookmarks-clean-up", core = actionPage("Bookmarks clean up", Regex("index\\.html"), BOOKMARKS_CLEANUP_PAGE, listOf("page-a.html?bookmarks"))),
+        Row("nbhcbdghjpllgmfilhnhkllmkecfmpld", "User JavaScript and CSS", "user-javascript-and-css", core = popupMarker("User JavaScript and CSS", UJC_POPUP, settleMs = 25_000)),
+        Row("edllcgchknhokighleffpipdedmpgiln", "Google Search Maps Button", "google-search-maps-button", core = liveMarker("Google Search Maps Button", "https://www.google.com/search?q=central+park+new+york&hl=en", MAPS_BUTTON, settleMs = 30_000)),
+        Row("gkkdmjjodidppndkbkhhknakbeflbomf", "Selectext: Copy Text from Videos", "selectext", core = domMarker("Selectext's toggle over the paused clip", "video.html?selectext", SELECTEXT_TOGGLE, settleMs = 30_000)),
+        // The five largest bundles last (SwiftRead 13.0 MB, AI Content Detector - Copyleaks 10.9,
+        // Screenity 10.9, DeepSider 9.6, Koala Inspector 8.1), as rounds 19 to 25 ordered their own.
+        Row("ipikiaejjblmdopojhpejjmbedhlibno", "SwiftRead - read faster, learn more", "swiftread", core = actionMarker("SwiftRead", "article.html?swiftread", SWIFTREAD_MENU, settleMs = 30_000)),
+        Row("gplcmncpklkdjiccbknjjkoidpgkcakd", "AI Content Detector - Copyleaks", "ai-content-detector-copyleaks", core = accountGate("AI Content Detector - Copyleaks", Regex("copyleaks\\.com", RegexOption.IGNORE_CASE), page = "index.html", gate = "a Copyleaks account (its popup and side panel are one `index.html`; a scan runs through its API signed in)")),
+        Row("kbbdabhdfibnancpjfhlkhafgdilcnji", "Screenity - Screen Recorder & Annotation Tool", "screenity", core = actionMarker("Screenity", "page-a.html?screenity", SCREENITY_UI, settleMs = 30_000)),
+        Row("dfbnddndcmilnhdfmmaolepiaefacnpo", "DeepSider™:AI Sidebar | DeepSeek, Gemini, Claude, GPT", "deepsider", core = accountGate("DeepSider", Regex("deepsider", RegexOption.IGNORE_CASE), page = "sidePanel.html", gate = "a DeepSider account (its click opens its side panel, `sidePanel.html`; its chats run through its service signed in)")),
+        Row("hjbfbllnfhppnhjdhhbmjabikmkfekgf", "Shopify Spy & Dropshipping - Koala Inspector", "koala-inspector", core = accountGate("Koala Inspector", Regex("koala-apps\\.io|koala-inspector", RegexOption.IGNORE_CASE), injects = "#koala-inspector, [id*='koala-inspector'], [class*='koala-inspector'], [class*='kins-']", gate = "a Koala account and a Shopify store page (its click's `\$R` mounts its inspector over the tab or opens its popup window; `identity.email` signs it in at auth.koala-apps.io)")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -8378,6 +8480,79 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 26 (ranks 661-690 by installs) --------------------------
+
+    /**
+     * An effect a `chrome.contextMenus` item leaves on the fixture page (Auto Clicker's "Slot 1 -
+     * Start/Stop" under its "Auto Clicker" parent: its content script clicks the element under
+     * the `contextmenu` event's point until stopped). The fixture's `selector` is long-pressed
+     * (the phone's menu sheet opens for a link or an image – the fixture's element is a link),
+     * the sheet's rows followed down `path` – a parent with children is a drill-in row of the
+     * sheet, its children the next level ([menuItemOpens] takes a single row) –, the last tapped,
+     * and `expr` polled on the page. Every level's sheet and the row found are recorded; a level
+     * that never shows its row is F with what the sheet listed.
+     */
+    private fun menuItemEffect(label: String, page: String, selector: String, path: List<Regex>, expr: String, settleMs: Long = 20_000): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 2_500)
+        val since = StepEvidence(row)
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", selector)))
+        val point = screenPoint(view, centre)
+        extra.put("element", centre)
+        val levels = JSONArray()
+        var sheet: List<String> = emptyList()
+        var reached = 0
+        if (point != null && onScreen("$label: the long press")) {
+            Finger().apply {
+                down(point.first, point.second)
+                hold(900)
+                up()
+            }
+            for ((depth, item) in path.withIndex()) {
+                var found: android.graphics.Rect? = null
+                poll(scaled(8_000, factor), 400) {
+                    sheet = sheetsPresented()
+                    found = findByLabel { item.containsMatchIn(it) }
+                    if (found != null) true else null
+                }
+                levels.put(JSONObject().put("depth", depth).put("item", item.pattern).put("sheets", JSONArray(sheet)).put("found", found?.toShortString() ?: JSONObject.NULL))
+                val first = found ?: break
+                val screenHeight = app.resources.displayMetrics.heightPixels
+                var last: android.graphics.Rect? = null
+                val settled = poll(scaled(5_000, factor), 250) {
+                    val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
+                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
+                    last = now
+                    if (steady) now else null
+                } ?: first
+                SystemClock.sleep(300)
+                if (depth == path.lastIndex) snap("${entry.optString("slug")}-menu")
+                tap(settled.exactCenterX(), settled.exactCenterY())
+                reached = depth + 1
+                SystemClock.sleep(scaled(600, factor))
+            }
+        }
+        extra.put("levels", levels).put("reached", reached)
+        val found = if (reached == path.size) pollExpr(view, expr, scaled(settleMs, factor)) else JSONObject()
+        if (reached < path.size && (sheet.isNotEmpty() || sheetsPresented().isNotEmpty())) {
+            key(KeyEvent.KEYCODE_BACK)
+            SystemClock.sleep(600)
+        }
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: its item reached through ${path.size} level(s) of the long-press menu and tapped; the page ${found.toString().take(200)}", extra)
+            reached == path.size -> Grade("F", "$label: its item tapped, the page shows no effect within ${scaled(settleMs, factor) / 1000} s: ${found.toString().take(200)}", extra)
+            point == null -> Grade("F", "$label: the fixture's `$selector` has no on-screen centre (driver): ${centre.toString().take(80)}", extra)
+            reached == 0 && sheet.isEmpty() -> Grade("F", "$label: the long press opened no menu sheet (driver: the press was not read as a long press)", extra)
+            else -> Grade("F", "$label: the menu's level $reached is up without `${path[reached].pattern}` (sheets ${sheet.joinToString().take(80)})", extra)
+        }
+    }
 
     // --- the core checks of compat round 25 (ranks 631-660 by installs) --------------------------
 
@@ -16103,6 +16278,138 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SAML_TRACER_LISTED =
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
+
+        // --- the expressions of compat round 26 (ranks 661-690) ---------------------------------
+
+        /**
+         * Auto Clicker's effect on `auto-click.html` after its "Slot 1 - Start/Stop" item: the
+         * fixture counts the clicks its counted link receives (`window.__zenClicks`; five within the
+         * wait pass – the slot's `clickDelay` is 0, a `requestAnimationFrame` loop), its
+         * `.auto-clicker-indicator` ripple, and the `contextmenu` event the fixture recorded at
+         * the long press (`window.__zenContextMenu`: what the content script's
+         * `lastContextMenuEvent` saw – null says the WebView's long press raised none).
+         */
+        private const val AUTO_CLICKER_CLICKS =
+            "(function(){var n=window.__zenClicks||0;var ind=document.querySelectorAll('.auto-clicker-indicator').length;var cm=window.__zenContextMenu||null;" +
+                "return JSON.stringify({pass:n>=5,clicks:n,indicator:ind,contextmenu:cm,shown:(document.getElementById('count')||{}).textContent||null})})()"
+
+        /**
+         * PDF Editor for Chrome's `.pdffiller-button` after the `pdf-links.html` fixture's PDF
+         * links (served under the nip.io name: `isReachableByUploadApi` offers no button for a
+         * loopback, private-range or single-label host). The buttons drawn with a size, the PDF
+         * links counted, the host the page was read on.
+         */
+        private const val PDFFILLER_BUTTON =
+            "(function(){var btns=document.querySelectorAll('.pdffiller-button, [class*=\"pdffiller\"], [data-pdffiller-variant]');var shown=0;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}" +
+                "return JSON.stringify({pass:btns.length>0,buttons:btns.length,visible:shown,links:document.querySelectorAll('a[href*=\".pdf\"]').length,host:location.host})})()"
+
+        /**
+         * SwiftRead's in-page menu after the action click: `#__swiftread_menu_host__` with an open
+         * shadow root holding `#__swiftread_menu_root__` and its "SwiftRead current page" entry.
+         */
+        private const val SWIFTREAD_MENU =
+            "(function(){var host=document.getElementById('__swiftread_menu_host__');var sr=host&&host.shadowRoot;var root=sr?sr.querySelector('#__swiftread_menu_root__'):null;var t=root?(root.innerText||root.textContent||'').replace(/\\s+/g,' ').trim():'';var r=root?root.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:!!root&&/swiftread current page|read/i.test(t),host:!!host,shadow:!!sr,root:!!root,size:r?[Math.round(r.width),Math.round(r.height)]:null,text:t.slice(0,160)})})()"
+
+        /** DXF Viewer's `ui/feature.html` after the action click: `#app` with its empty state ("Open file") or `#cad-view`. */
+        private const val DXF_VIEWER_PAGE =
+            "(function(){var app=document.getElementById('app');var empty=document.getElementById('empty-state');var cad=document.getElementById('cad-view');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!app&&!!(empty||cad)&&/open file|dxf/i.test(t),app:!!app,empty:!!empty,cad:!!cad,title:document.title,text:t.slice(0,160)})})()"
+
+        /** Octotree on a GitHub repository page: its `.octotree-sidebar` or its toggle / bookmark button. */
+        private const val OCTOTREE_SIDEBAR =
+            "(function(){var side=document.querySelector('.octotree-sidebar');var toggle=document.querySelector('.octotree-toggle, .octotree-bookmark-btn, [class*=\"octotree\"]');var t=side?(side.innerText||'').replace(/\\s+/g,' ').trim():'';" +
+                "return JSON.stringify({pass:!!side||!!toggle,sidebar:!!side,toggle:!!toggle,text:t.slice(0,120),title:document.title.slice(0,80),host:location.host})})()"
+
+        /** Tab Manager Plus's popup: its `.tabtitle` rows, one of them the fixture tab ("Probe Page A"). */
+        private const val TAB_MANAGER_PLUS_POPUP =
+            "(function(){var rows=document.querySelectorAll('.tabtitle');var titles=[];for(var i=0;i<rows.length;i++)titles.push((rows[i].innerText||rows[i].textContent||'').trim());var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var all=titles.join(' | ')+' '+t;" +
+                "return JSON.stringify({pass:rows.length>=1&&/probe page a/i.test(all),rows:rows.length,windows:document.querySelectorAll('.windowcontainer, .window').length,titles:titles.slice(0,6),text:t.slice(0,120)})})()"
+
+        /**
+         * YouTube Anti Translate's page-world module on the watch page: the content script's
+         * `<script data-ytantitranslatesettings>` of its `src/global.js` and the
+         * `window.YoutubeAntiTranslate` object it sets; the page's title beside them.
+         */
+        private const val YT_ANTI_TRANSLATE =
+            "(function(){var s=document.querySelector('script[data-ytantitranslatesettings]');var g=window.YoutubeAntiTranslate;var h1=document.querySelector('h1');" +
+                "return JSON.stringify({pass:!!s&&typeof g==='object'&&g!==null,script:!!s,src:s?String(s.src||'').slice(-40):null,global:typeof g,title:h1?(h1.innerText||'').trim().slice(0,80):null,host:location.host,path:location.pathname})})()"
+
+        /** Just Read's reader after the action click: its `#simple-article` iframe drawn over the article fixture with a height. */
+        private const val JUST_READ_FRAME =
+            "(function(){var f=document.getElementById('simple-article');var r=f?f.getBoundingClientRect():null;var inner='';try{inner=f&&f.contentDocument?(f.contentDocument.body.innerText||'').replace(/\\s+/g,' ').trim().slice(0,120):''}catch(e){inner='cross-origin'}" +
+                "return JSON.stringify({pass:!!f&&!!r&&r.height>100,frame:!!f,size:r?[Math.round(r.width),Math.round(r.height)]:null,inner:inner,src:f?String(f.src||'').slice(0,80):null})})()"
+
+        /** Eightify on the desktop watch page: its `#eightify-iframe` or summarize button beside `#secondary-inner`. */
+        private const val EIGHTIFY_MOUNTED =
+            "(function(){var frame=document.getElementById('eightify-iframe');var btn=document.getElementById('eightify-summarize-button');var any=document.querySelectorAll('[id^=\"eightify\"], [class*=\"eightify\"]').length;" +
+                "return JSON.stringify({pass:!!frame||!!btn||any>0,frame:!!frame,button:!!btn,any:any,secondary:!!document.getElementById('secondary-inner'),host:location.host,path:location.pathname})})()"
+
+        /** Notepad's popup: its `<textarea id="notepad">` drawn; a line typed into an empty pad (an `input` event, what it stores). */
+        private const val NOTEPAD_POPUP =
+            "(function(){var ta=document.getElementById('notepad');var r=ta?ta.getBoundingClientRect():null;if(ta&&!ta.value){ta.value='Zenium sweep note';ta.dispatchEvent(new Event('input',{bubbles:true}))}" +
+                "return JSON.stringify({pass:!!ta&&ta.tagName==='TEXTAREA'&&!!r&&r.height>20,textarea:!!ta,size:r?[Math.round(r.width),Math.round(r.height)]:null,value:ta?String(ta.value).slice(0,40):null,placeholder:ta?String(ta.placeholder||'').slice(0,40):null})})()"
+
+        /**
+         * Quick Javascript Switcher's effect on the fixture after the action click: its worker sets
+         * `contentSettings.javascript` to block for the site and reloads the tab, after which the
+         * page runs no script – a reading the page cannot make of itself, so `pass` is never true
+         * from here; the fields say whether the page is still running scripts and whether a reload
+         * came (`navigation`: the Navigation Timing entry's type). The row's expected reading is F
+         * with the worker's `contentSettings` refusal in `bgAtEnd.console` (§7 of round 26's
+         * report: the namespace the Android runtime has not).
+         */
+        private const val QJS_PAGE_SCRIPTS =
+            "(function(){var nav=(performance.getEntriesByType?performance.getEntriesByType('navigation'):[])[0];" +
+                "return JSON.stringify({pass:false,jsRunning:true,navigation:nav?nav.type:null,title:document.title,host:location.host})})()"
+
+        /** SEO Minion's sidebar after the action click: `#smin-widget`, an iframe of its `html/sidebar.html`. */
+        private const val SEO_MINION_WIDGET =
+            "(function(){var w=document.getElementById('smin-widget');var src=w?String(w.src||w.getAttribute('src')||''):'';var r=w?w.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:!!w&&/sidebar\\.html/.test(src),widget:!!w,src:src.slice(-60),size:r?[Math.round(r.width),Math.round(r.height)]:null,own:document.querySelectorAll('[id^=\"smin-\"], [class*=\"smin-\"]').length,bodyClass:String(document.body?document.body.className:'').slice(0,80)})})()"
+
+        /** zkPass TransGate's popup: its React `#root` drawn with its onboarding (text or a control). */
+        private const val ZKPASS_POPUP =
+            "(function(){var root=document.getElementById('root');var t=root?(root.innerText||'').replace(/\\s+/g,' ').trim():'';var buttons=root?root.querySelectorAll('button, [role=button], a').length:0;" +
+                "return JSON.stringify({pass:!!root&&(t.length>20||buttons>=1),root:!!root,buttons:buttons,text:t.slice(0,160)})})()"
+
+        /** Screenity's recorder UI mounted in the page after the action click (its `.screenity-ui` under the shadow host); whether the page offers `getDisplayMedia` beside it. */
+        private const val SCREENITY_UI =
+            "(function(){var own=document.querySelectorAll('.screenity-ui, #screenity-ui, .screenity-shadow-dom, #screenity-shadow-dom, .screenity-root-container');var any=document.querySelectorAll('[class*=\"screenity\"], [id*=\"screenity\"]').length;var md=navigator.mediaDevices;" +
+                "return JSON.stringify({pass:own.length>0||any>0,own:own.length,any:any,displayMedia:!!(md&&md.getDisplayMedia),title:document.title})})()"
+
+        /** ApkOnline's popup: its `#runemulx` run control or `#files` list with text. */
+        private const val APKONLINE_POPUP =
+            "(function(){var run=document.getElementById('runemulx');var files=document.getElementById('files');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!(run||files)&&t.length>10,run:!!run,files:!!files,buttons:document.querySelectorAll('button, input[type=button], input[type=submit], a').length,text:t.slice(0,160)})})()"
+
+        /** Bookmarks clean up's page after the action click: `#app` naming its duplicates, broken links or empty folders with a control. */
+        private const val BOOKMARKS_CLEANUP_PAGE =
+            "(function(){var app=document.getElementById('app');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var controls=document.querySelectorAll('button, a, [role=button]').length;" +
+                "return JSON.stringify({pass:!!app&&/duplicate|broken|empty/i.test(t)&&controls>=1,app:!!app,controls:controls,title:document.title,text:t.slice(0,160)})})()"
+
+        /** User JavaScript and CSS's popup: its `#app` drawn with the current site's editor controls. */
+        private const val UJC_POPUP =
+            "(function(){var app=document.getElementById('app');var t=app?(app.innerText||'').replace(/\\s+/g,' ').trim():'';var buttons=app?app.querySelectorAll('button, [role=button], a').length:0;" +
+                "return JSON.stringify({pass:!!app&&t.length>10&&buttons>=1,app:!!app,buttons:buttons,text:t.slice(0,160)})})()"
+
+        /**
+         * Google Search Maps Button on a results page: an anchor reading "Maps" whose href is
+         * `maps.google.com/maps?q=<the query>` (the Images tab's link cloned); whether the page
+         * showed an Images tab to clone beside it.
+         */
+        private const val MAPS_BUTTON =
+            "(function(){var as=document.querySelectorAll('a');var maps=[];var images=false;for(var i=0;i<as.length;i++){var a=as[i];var t=(a.innerText||a.textContent||'').trim();var h=String(a.href||'');if(/^images$/i.test(t))images=true;if(/^maps$/i.test(t)&&/maps\\.google\\.com\\/maps\\?q=/.test(h))maps.push(h.slice(0,80))}var body=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:maps.length>0,maps:maps.slice(0,2),imagesTab:images,anchors:as.length,title:document.title.slice(0,80),text:body.slice(0,120)})})()"
+
+        /**
+         * Selectext's toggle over the paused clip: the fixture's video is first drawn at 420 px
+         * high with no width cap (its `MIN_VIDEO_SIZE` is 100,000 CSS px², over the phone's clip
+         * at its natural width) and paused, after which its `.selectextShadowHost` is looked for.
+         */
+        private const val SELECTEXT_TOGGLE =
+            "(function(){var v=document.getElementById('clip')||document.querySelector('video');if(v&&v.style.height!=='420px'){v.style.maxWidth='none';v.style.width='100%';v.style.height='420px'}if(v&&!v.paused&&v.readyState>=2){v.pause()}var own=document.querySelectorAll('.selectextShadowHost, [class*=\"selectext\"]');var r=v?v.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:own.length>0,elements:own.length,paused:v?v.paused:null,readyState:v?v.readyState:null,video:r?[Math.round(r.width),Math.round(r.height),Math.round(r.width*r.height)]:null})})()"
 
         // --- the expressions of compat round 25 (ranks 631-660) ---------------------------------
 
