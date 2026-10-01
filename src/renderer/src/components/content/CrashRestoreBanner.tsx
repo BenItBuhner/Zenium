@@ -3,8 +3,9 @@ import type { CrashRestoreOffer } from '@shared/types'
 import { run } from '@renderer/lib/api'
 
 /**
- * "Restore pages?" after a run that did not shut down cleanly (Chrome's bubble): the band the
- * default-browser strip draws (`DefaultBrowserBanner.tsx`, `.zen-frame-strip`) – a window surface
+ * "Restore pages?" after a run that did not shut down cleanly (Chrome's bubble): the frame's
+ * strip (`.zen-frame-strip`; the default-browser strip that shared it, `DefaultBrowserBanner.tsx`,
+ * moved to the page-edge band in W8-M2, `content/PageBandHost.tsx`) – a window surface
  * (v2 §9.29) flush with the content frame under the toolbar, 40 tall around its 32 px buttons
  * (§9.21) with 16 px gutters, the sentence at 15/20 in the full ink, no leading glyph (the words
  * carry the state), §9.7's hairline at its bottom edge. The buttons are the shared v2 button, 8

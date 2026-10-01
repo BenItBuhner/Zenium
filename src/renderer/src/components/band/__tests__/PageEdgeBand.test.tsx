@@ -9,7 +9,9 @@ import type { BandDismissReason, BandEntry } from '@renderer/lib/band'
  * The page-edge band's React content (motion spec §3.1–3.2): `[glyph] Title · detail [Action]
  * [×]` in a `role="status"` region, the page moved through the host's seam on the one clock,
  * the content's opacity written straight to the element, a swap cross-fading over the one
- * before, Escape with focus in the band dismissing it. Host-free: the host here is a trace.
+ * before, Escape with focus in the band dismissing it. It reads the model's choice and the
+ * frame's scene from the one store; the tests drive the model as a host and its tenants would.
+ * Host-free: the host here is a trace.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -17,8 +19,16 @@ import type { BandDismissReason, BandEntry } from '@renderer/lib/band'
 const { PageEdgeBand } = await import('../PageEdgeBand')
 const { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE } = await import('@renderer/lib/motion/band')
 const { framesPending } = await import('@renderer/lib/motion/clock')
-const { bandHeightOf, bandStore, chooseBand, dismissBand, resetBands, setBandFront, showBand } =
-  await import('@renderer/lib/band')
+const {
+  bandHeightOf,
+  bandStore,
+  chooseBand,
+  dismissBand: dismiss,
+  resetBands,
+  setBandFrame,
+  showBand: show
+} = await import('@renderer/lib/band')
+type BandOptions = Parameters<typeof show>[0]
 
 const FRAME_MS = 16
 
@@ -55,15 +65,15 @@ interface HostTrace {
 }
 
 let root: Root | null = null
-let mount: HTMLDivElement | null = null
+let mountEl: HTMLDivElement | null = null
 let host: HostTrace
 let frames: ReturnType<typeof clockedFrames>
 
-function render(entry: BandEntry | null): void {
+/** Mount the band on the trace host; from here the model drives it. */
+function mount(): void {
   act(() => {
     root!.render(
       createElement(PageEdgeBand, {
-        entry,
         host: {
           translate: (o) => host.offsets.push(o),
           rest: (h) => host.rests.push(h),
@@ -72,6 +82,21 @@ function render(entry: BandEntry | null): void {
       })
     )
   })
+}
+
+/** The model's mutations, as the tenants and the host make them, flushed into the band. */
+function showBand(opts: BandOptions): number {
+  let id = 0
+  act(() => {
+    id = show(opts)
+  })
+  return id
+}
+function dismissBand(id: number, reason?: BandDismissReason): void {
+  act(() => dismiss(id, reason))
+}
+function frame(front: string, ok: boolean): void {
+  act(() => setBandFrame({ front, ok }))
 }
 
 /** Run the clock until it goes idle (the spring rested) or `limit` frames pass. */
@@ -85,9 +110,9 @@ function settle(limit = 200): number {
 }
 
 const shown = (): BandEntry | null => chooseBand(bandStore.get())
-const band = (): HTMLElement | null => mount!.querySelector('.zen-band')
+const band = (): HTMLElement | null => mountEl!.querySelector('.zen-band')
 const content = (): HTMLElement | null =>
-  mount!.querySelector('.zen-band-content:not([data-leaving])')
+  mountEl!.querySelector('.zen-band-content:not([data-leaving])')
 
 const defaultBrowser = (onDismiss?: (r: BandDismissReason) => void): number =>
   showBand({
@@ -115,16 +140,16 @@ beforeEach(() => {
   frames = clockedFrames()
   host = { offsets: [], rests: [], departs: [] }
   resetBands()
-  setBandFront('t1', true)
-  mount = document.createElement('div')
-  document.body.appendChild(mount)
-  root = createRoot(mount)
+  setBandFrame({ front: 't1', ok: true })
+  mountEl = document.createElement('div')
+  document.body.appendChild(mountEl)
+  root = createRoot(mountEl)
 })
 
 afterEach(() => {
   act(() => root?.unmount())
   root = null
-  mount?.remove()
+  mountEl?.remove()
   resetBands()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -133,11 +158,10 @@ afterEach(() => {
 
 describe('PageEdgeBand – the band’s content and its seam (motion spec §3)', () => {
   it('draws nothing with no prompt; with one, a role="status" region of the page family carrying the form and the height', () => {
-    render(null)
+    mount()
     expect(band()).toBeNull()
     expect(host.offsets).toEqual([])
     defaultBrowser()
-    render(shown())
     const el = band()!
     expect(el.getAttribute('role')).toBe('status')
     expect(el.dataset.surface).toBe('page')
@@ -154,8 +178,8 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
   })
 
   it('a two-line prompt is the 76 band with its detail; a state’s tone reaches the glyph’s ink; the × says "Dismiss" unless told', () => {
+    mount()
     offline()
-    render(shown())
     const el = band()!
     expect(bandHeightOf(shown()!)).toBe(BAND_HEIGHT_TWO_LINE)
     expect(el.style.getPropertyValue('--zen-band-height')).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
@@ -169,8 +193,8 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
   })
 
   it('opens through the host: depart(height) before the first frame, the page’s offset per frame on the clock, the content from 0 to 1 over the last of the travel, one rest at the height', () => {
+    mount()
     defaultBrowser()
-    render(shown())
     expect(host.departs).toEqual([BAND_HEIGHT_ONE_LINE])
     expect(host.offsets).toEqual([])
     expect(content()!.style.opacity).toBe('0.000')
@@ -186,11 +210,10 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
   })
 
   it('the prompt going: depart(0), the page travels back up, the content fades first, and the band is gone at the rest', () => {
+    mount()
     const id = defaultBrowser()
-    render(shown())
     settle()
     dismissBand(id)
-    render(shown())
     expect(host.departs.at(-1)).toBe(0)
     expect(band()).not.toBeNull()
     frames.tick(8)
@@ -203,13 +226,12 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
   })
 
   it('a new tenant on an open band: the old content leaves (aria-hidden, inert) under the new one’s cross-fade, the height re-targets through the host, and the page never travels twice', () => {
+    mount()
     defaultBrowser()
-    render(shown())
     settle()
     const restsBefore = host.rests.length
     const offsetsBefore = host.offsets.length
     offline()
-    render(shown())
     const el = band()!
     expect(el.dataset.form).toBe('state')
     expect(el.style.getPropertyValue('--zen-band-height')).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
@@ -240,8 +262,8 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
 
   it('the × dismisses on "close", the action on "action" (held through an act that holds); Escape with focus in the band dismisses on "escape"', () => {
     const reasons: BandDismissReason[] = []
+    mount()
     defaultBrowser((r) => reasons.push(r))
-    render(shown())
     settle()
     act(() => {
       band()!.querySelector<HTMLButtonElement>('.zen-band-button')!.click()
@@ -255,13 +277,11 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
     })
     expect(reasons).toEqual(['escape'])
     expect(shown()).toBeNull()
-    render(shown())
     settle()
     expect(band()).toBeNull()
 
     const again: BandDismissReason[] = []
     defaultBrowser((r) => again.push(r))
-    render(shown())
     settle()
     act(() => {
       band()!.querySelector<HTMLButtonElement>('.zen-band-close')!.click()
@@ -269,13 +289,89 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
     expect(again).toEqual(['close'])
   })
 
-  it('unmounting disposes the motion: the clock goes idle and the host hears nothing more', () => {
+  it('the scene changing under the band is a cut, not a travel: the band stands or goes at once, the seam hearing depart, translate, paint, rest in order', () => {
+    // A window-wide state stands on t1; the frame switches to a tab without one (a chrome
+    // page, say): the band is gone at once, the page of the next tab never travelling for it.
+    mount()
     defaultBrowser()
-    render(shown())
+    settle()
+    expect(host.rests).toEqual([BAND_HEIGHT_ONE_LINE])
+    const heard = host.offsets.length
+    frame('t2', false)
+    expect(band()).toBeNull()
+    expect(host.departs.at(-1)).toBe(0)
+    expect(host.offsets.slice(heard)).toEqual([0])
+    expect(host.rests.at(-1)).toBe(0)
+    expect(framesPending()).toBe(0)
+    // Back to t1: the band stands again at once, its content fully present, no travel.
+    frame('t1', true)
+    expect(band()).not.toBeNull()
+    expect(host.departs.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(host.offsets.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(content()!.style.opacity).toBe('1.000')
+    expect(framesPending()).toBe(0)
+    // The same scene, a new tenant: that is a travel again (the re-target through the host).
+    offline()
+    expect(framesPending()).toBeGreaterThan(0)
+    settle()
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+  })
+
+  it('a tab-scoped band goes with its tab and stands again with it at once; a band arriving on the next tab travels in; a window-wide one stays through the switch', () => {
+    mount()
+    const t1 = showBand({
+      key: 'install',
+      form: 'offer',
+      tabId: 't1',
+      icon: Globe,
+      title: 'Install Example'
+    })
+    settle()
+    expect(host.rests).toEqual([BAND_HEIGHT_ONE_LINE])
+    // t2 to the front: t1's offer is cut away, t2 has nothing.
+    frame('t2', true)
+    expect(band()).toBeNull()
+    expect(host.rests.at(-1)).toBe(0)
+    expect(framesPending()).toBe(0)
+    // A prompt arriving on t2 is a travel: this page has not moved for it yet.
+    const t2 = showBand({ key: 'reader', form: 'offer', tabId: 't2', icon: Globe, title: 'Reader' })
+    expect(framesPending()).toBeGreaterThan(0)
+    settle()
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
+    // Back to t1: t1's offer stands again at once (the model keeps it; its scene changed).
+    const heard = host.offsets.length
+    frame('t1', true)
+    expect(chooseBand(bandStore.get())!.id).toBe(t1)
+    expect(content()!.querySelector('.zen-band-title')!.textContent).toBe('Install Example')
+    expect(host.offsets.slice(heard)).toEqual([BAND_HEIGHT_ONE_LINE])
+    expect(framesPending()).toBe(0)
+    // A window-wide state arrives (a travel to 76), then the switch to t2: the same prompt stands
+    // on both – no cut, no travel, nothing heard.
+    offline()
+    settle()
+    const before = { offsets: host.offsets.length, rests: host.rests.length }
+    frame('t2', true)
+    expect(content()!.querySelector('.zen-band-title')!.textContent).toBe('You are offline')
+    expect(host.offsets).toHaveLength(before.offsets)
+    expect(host.rests).toHaveLength(before.rests)
+    expect(framesPending()).toBe(0)
+    // Dismissed here, it leaves with a travel: the page is this one all along.
+    dismissBand(chooseBand(bandStore.get())!.id)
+    expect(framesPending()).toBeGreaterThan(0)
+    settle()
+    // t2's own offer stands again under it – the one travel's rest is its height.
+    expect(chooseBand(bandStore.get())!.id).toBe(t2)
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
+  })
+
+  it('unmounting disposes the motion: the clock goes idle and the host hears nothing more', () => {
+    mount()
+    defaultBrowser()
     frames.tick(2)
     const heard = host.offsets.length
     act(() => root!.unmount())
-    root = createRoot(mount!)
+    root = createRoot(mountEl!)
     expect(framesPending()).toBe(0)
     frames.tick(3)
     expect(host.offsets).toHaveLength(heard)

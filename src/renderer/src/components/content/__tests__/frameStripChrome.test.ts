@@ -3,7 +3,8 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /*
- * The content frame's strips (`DefaultBrowserBanner.tsx`, `CrashRestoreBanner.tsx`; design
+ * The content frame's strip (`CrashRestoreBanner.tsx`; the default-browser strip that shared
+ * the rule, `DefaultBrowserBanner.tsx`, moved to the page-edge band in W8-M2; design
  * language v2 §9.29 on the window tokens): the band paints no fill of its own – its secondary
  * button is `--v2-control-fill`, the window fill on this surface, and a band of the same fill
  * under it stacked the fill on itself (the button's rest a doubled tint over the frame, its

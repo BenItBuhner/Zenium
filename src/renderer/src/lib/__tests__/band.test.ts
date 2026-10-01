@@ -10,7 +10,7 @@ import {
   holdBand,
   pickBandAction,
   resetBands,
-  setBandFront,
+  setBandFrame,
   showBand,
   shownBand,
   type BandDismissReason
@@ -20,7 +20,7 @@ import { BAND_CLOCK_MS } from '../motion/tokens'
 beforeEach(() => {
   vi.useFakeTimers()
   resetBands()
-  setBandFront('t1', true)
+  setBandFrame({ front: 't1', ok: true })
 })
 
 afterEach(() => {
@@ -152,14 +152,14 @@ describe('the band model (motion spec §3.2)', () => {
     const db = defaultBrowser()
     dismissBand(db)
     vi.advanceTimersByTime(4000)
-    setBandFront('t2', true)
+    setBandFrame({ front: 't2', ok: true })
     expect(shownBand()).toBeNull()
     expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS - 4000)
     vi.advanceTimersByTime(60_000)
     expect(bandStore.get().entries.map((e) => e.id)).toEqual([a])
     const wide = offline()
     expect(shownBand()?.id).toBe(wide)
-    setBandFront('t1', true)
+    setBandFrame({ front: 't1', ok: true })
     // The state stands here too; the offer waits beneath it.
     expect(shownBand()?.id).toBe(wide)
     dismissBand(wide)
@@ -204,27 +204,81 @@ describe('the band model (motion spec §3.2)', () => {
   it('the host withholds the band (new tab page, chrome page, a dialog standing, the keyboard up): it waits, clock paused, and shows when allowed', () => {
     const a = install()
     vi.advanceTimersByTime(2500)
-    setBandFront('t1', false)
+    setBandFrame({ front: 't1', ok: false })
     expect(shownBand()).toBeNull()
     expect(chooseBand(bandStore.get())).toBeNull()
     vi.advanceTimersByTime(60_000)
     expect(bandStore.get().entries.map((e) => e.id)).toEqual([a])
-    setBandFront('t1', true)
+    setBandFrame({ front: 't1', ok: true })
     expect(shownBand()?.id).toBe(a)
     expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS - 2500)
+  })
+
+  it('under a cover (a sheet, a dialog, the keyboard) a prompt arriving waits and the one standing stays: it waits, it does not stack', () => {
+    const a = install()
+    expect(shownBand()?.id).toBe(a)
+    // The cover comes over the standing offer: it stays, its clock running on.
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    expect(shownBand()?.id).toBe(a)
+    expect(bandStore.get().shown).toBe(a)
+    expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS)
+    // A state arriving under the cover waits – the offer standing is not swapped out beneath it.
+    const db = defaultBrowser()
+    expect(shownBand()?.id).toBe(a)
+    // The standing one gone, what waits keeps waiting (the frame has nothing until the cover goes).
+    dismissBand(a, 'close')
+    expect(shownBand()).toBeNull()
+    expect(bandStore.get().shown).toBeNull()
+    const off = offline()
+    expect(shownBand()).toBeNull()
+    // The cover goes: the newest state stands.
+    setBandFrame({ front: 't1', ok: true })
+    expect(shownBand()?.id).toBe(off)
+    dismissBand(off)
+    expect(shownBand()?.id).toBe(db)
+  })
+
+  it('under a cover the standing prompt stays only while it is the frame’s: another tab in front, or a private tab for an offer, takes it', () => {
+    const a = install('t1')
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    expect(shownBand()?.id).toBe(a)
+    setBandFrame({ front: 't2', ok: true, covered: true })
+    expect(shownBand()).toBeNull()
+    setBandFrame({ front: 't1', ok: true, covered: true })
+    // Back under the same cover: it was not shown when the frame last changed, so it waits.
+    expect(shownBand()).toBeNull()
+    setBandFrame({ front: 't1', ok: true })
+    expect(shownBand()?.id).toBe(a)
+    setBandFrame({ front: 't1', ok: true, offers: false, covered: true })
+    expect(shownBand()).toBeNull()
+  })
+
+  it('the scene rides with the frame: the tab in front unless the host says more, in the one snapshot the band reads', () => {
+    expect(bandStore.get().scene).toBe('t1')
+    setBandFrame({ front: 't2', ok: true })
+    expect(bandStore.get().scene).toBe('t2')
+    setBandFrame({ front: 't2', ok: false, scene: 't2:fullscreen' })
+    expect(bandStore.get().scene).toBe('t2:fullscreen')
+    expect(shownBand()).toBeNull()
+    // The same word again writes nothing: no listener hears it.
+    const listener = vi.fn()
+    const off = bandStore.subscribe(listener)
+    setBandFrame({ front: 't2', ok: false, scene: 't2:fullscreen' })
+    expect(listener).not.toHaveBeenCalled()
+    off()
   })
 
   it('a private tab withholds offers (they wait, clock paused) and shows states; the offers return with a tab that allows them', () => {
     const a = install()
     vi.advanceTimersByTime(1000)
-    setBandFront('t1', true, false)
+    setBandFrame({ front: 't1', ok: true, offers: false })
     expect(shownBand()).toBeNull()
     vi.advanceTimersByTime(60_000)
     expect(bandStore.get().entries.map((e) => e.id)).toEqual([a])
     const s = offline()
     expect(shownBand()?.id).toBe(s)
     dismissBand(s)
-    setBandFront('t1', true)
+    setBandFrame({ front: 't1', ok: true })
     expect(shownBand()?.id).toBe(a)
     expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS - 1000)
   })

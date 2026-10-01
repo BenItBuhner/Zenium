@@ -1,24 +1,27 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Platform, UIState } from '@shared/types'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { describeDefaultBrowserRequest } from '@renderer/lib/defaultBrowser'
 import { viewportStore } from '@renderer/lib/formFactor'
+import type { BandHost } from '../../band/PageEdgeBand'
 
 /*
- * The desktop's default-browser surfaces on v2 (styling pass 5): the strip under the toolbar –
- * a window surface with no glyph, Not now then the primary Set as default (§9.11, §9.29) – and
- * the prompt its Set as default raises before the OS hand-off (`AskDialog` in
- * DefaultBrowserPrompt.tsx): the §9.23 composition on the frame's dialog host with the app icon
- * at 48 over the title block, one sentence per OS, focus on the primary, Escape closing it and
- * giving focus back to the strip's button, the primary running the request and taking the
- * strip down for this release. Then the phone's campaign promo (`PromoSheet`, the core's
- * `prompt: 'sheet'` on a coarse pointer): the same composition as a sheet – the 48 app icon
- * above the chassis' title block, no glyph on the title (§9.23 as the #264 verdict wrote it;
- * the primitives pass 3, #272) – and its mouse form (`HostedDialog`), the icon over the block.
+ * The desktop's default-browser surfaces on v2: the page-edge band's state (motion spec §3.4;
+ * `content/useDefaultBrowserBand.ts` – the strip under the toolbar before W8-M2) – a page
+ * surface with the Settings section's globe, the sentence, the one action Set as default and
+ * the × named Not now (§3.1, §9.29) – and the prompt its Set as default raises before the OS
+ * hand-off (`AskDialog` in DefaultBrowserPrompt.tsx): the §9.23 composition on the frame's
+ * dialog host with the app icon at 48 over the title block, one sentence per OS, focus on the
+ * primary, Escape closing it and giving focus back to the band's button, the primary running
+ * the request and taking the band down for this release. Then the phone's campaign promo
+ * (`PromoSheet`, the core's `prompt: 'sheet'` on a coarse pointer): the same composition as a
+ * sheet – the 48 app icon above the chassis' title block, no glyph on the title (§9.23 as the
+ * #264 verdict wrote it; the primitives pass 3, #272) – and its mouse form (`HostedDialog`),
+ * the icon over the block.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -31,10 +34,12 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: () => () => undefined
 }))
 
-const { DefaultBrowserBanner } = await import('../../content/DefaultBrowserBanner')
+const { PageEdgeBand } = await import('../../band/PageEdgeBand')
+const { useDefaultBrowserBand } = await import('../../content/useDefaultBrowserBand')
+const { bandStore, chooseBand, resetBands, setBandFrame } = await import('@renderer/lib/band')
 const { DefaultBrowserLayer } = await import('../DefaultBrowserPrompt')
 
-function state(platform: Platform): UIState {
+function state(platform: Platform, dismissed: string | null = null): UIState {
   return {
     platform,
     version: '0.3.77',
@@ -42,11 +47,20 @@ function state(platform: Platform): UIState {
     spaces: [{ id: 's1', activeTabId: null, tabIds: [] }],
     activeSpaceId: 's1',
     essentialTabIds: [],
-    settings: { appIcon: 'indigo', defaultBrowserPromptDismissed: null, onboardingDone: true },
+    settings: { appIcon: 'indigo', defaultBrowserPromptDismissed: dismissed, onboardingDone: true },
     capabilities: { defaultBrowser: true },
     defaultBrowser: { isDefault: false, prompt: null },
     window: { kind: 'normal', fullscreen: false }
   } as unknown as UIState
+}
+
+/** The page under the band stands still here: the seam is the host's business (PageBandHost's tests). */
+const HOST: BandHost = { translate: () => undefined, rest: () => undefined }
+
+/** The band on a desktop page tab: the tenant's hook, then the band standing what the model chose. */
+function Band({ state }: { state: UIState }): JSX.Element {
+  useDefaultBrowserBand(state)
+  return <PageEdgeBand host={HOST} />
 }
 
 let container: HTMLDivElement
@@ -87,17 +101,31 @@ const escape = (): void => {
 const view = (s: UIState): ReactElement => (
   <>
     <FrameDialogHost frame />
-    <DefaultBrowserBanner state={s} />
+    <Band state={s} />
     <DefaultBrowserLayer />
   </>
 )
+
+/** The band standing in the frame, its action and its ×. */
+const band = (): HTMLElement => container.querySelector<HTMLElement>('.zen-band')!
+const setDefaultButton = (): HTMLButtonElement =>
+  band().querySelector<HTMLButtonElement>('.zen-band-button')!
+const notNowButton = (): HTMLButtonElement =>
+  band().querySelector<HTMLButtonElement>('.zen-band-close')!
 
 beforeEach(() => {
   run.mockClear()
   cmd.mockReset()
   cmd.mockResolvedValue(true)
+  // The band's travel is the clock's; nothing here paints a frame, so the band stands where it
+  // mounted (its content's opacity is the driver's, not what these tests read).
+  vi.stubGlobal('requestAnimationFrame', () => 1)
+  vi.stubGlobal('cancelAnimationFrame', () => undefined)
   uiStore.set({ defaultBrowserAsk: null, defaultBrowserPrompt: false })
   browserStore.set({ state: state('linux') })
+  resetBands()
+  // A page tab in front, a band welcome on it.
+  setBandFrame({ front: 't1', ok: true })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -106,44 +134,59 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  resetBands()
+  vi.unstubAllGlobals()
   uiStore.set({ defaultBrowserAsk: null, defaultBrowserPrompt: false })
 })
 
-describe('the default-browser strip', () => {
-  it('is a window surface with the sentence, no glyph, and Not now before the primary Set as default (§9.29: the one name for the act)', () => {
+describe('the default-browser band (the strip under the toolbar until W8-M2)', () => {
+  it('is the page-edge band’s state: a page surface with the globe, the sentence, the one action Set as default and the × named Not now (§3.1, §9.29: the one name for the act)', () => {
     render(view(state('linux')))
-    const strip = container.querySelector<HTMLElement>('.zen-frame-strip')!
-    expect(strip.getAttribute('data-surface')).toBe('window')
-    expect(strip.getAttribute('role')).toBe('status')
-    expect(strip.querySelector('svg')).toBeNull()
-    expect(strip.querySelector('.zen-frame-strip-text')!.textContent).toBe(
+    const el = band()
+    expect(el).not.toBeNull()
+    expect(el.getAttribute('data-surface')).toBe('page')
+    expect(el.getAttribute('role')).toBe('status')
+    expect(el.dataset.form).toBe('state')
+    // No alarm: the glyph keeps the deemphasised ink (no tone), and it is the Settings section's globe.
+    expect(el.dataset.tone).toBeUndefined()
+    expect(el.querySelector('.zen-band-glyph')).not.toBeNull()
+    expect(el.querySelector('.zen-band-title')!.textContent).toBe(
       'Make Zenium your default browser'
     )
-    const [notNow, setDefault] = buttons(strip)
-    expect(buttons(strip)).toHaveLength(2)
-    expect(notNow.textContent).toBe('Not now')
-    expect(notNow.classList.contains('zen-v2-button')).toBe(true)
-    expect(notNow.hasAttribute('data-primary')).toBe(false)
-    expect(setDefault.textContent).toBe('Set as default')
-    expect(setDefault.classList.contains('zen-v2-button')).toBe(true)
-    expect(setDefault.hasAttribute('data-primary')).toBe(true)
+    expect(el.querySelector('.zen-band-detail')).toBeNull()
+    expect(buttons(el)).toHaveLength(2)
+    expect(setDefaultButton().textContent).toBe('Set as default')
+    expect(notNowButton().getAttribute('aria-label')).toBe('Not now')
+    // Nothing of the strip remains in the frame.
+    expect(container.querySelector('.zen-frame-strip')).toBeNull()
   })
 
-  it('remembers Not now for this feature release and asks nothing of the OS', () => {
+  it('remembers Not now (the ×) for this feature release and asks nothing of the OS', () => {
     render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[0])
+    click(notNowButton())
     expect(run).toHaveBeenCalledWith('settings.update', {
       defaultBrowserPromptDismissed: '0.3.77'
     })
     expect(cmd).not.toHaveBeenCalled()
     expect(uiStore.get().defaultBrowserAsk).toBeNull()
+    // The prompt is gone from the model: the band is on its way out.
+    expect(chooseBand(bandStore.get())).toBeNull()
   })
 
-  it('raises the prompt on Set as default instead of handing off blind', () => {
+  it('stands again once the answer is for an older release, and not while it is this one’s', () => {
+    render(view(state('linux', '0.3.77')))
+    expect(container.querySelector('.zen-band')).toBeNull()
+    expect(chooseBand(bandStore.get())).toBeNull()
+    render(view(state('linux', '0.2.9')))
+    expect(band()).not.toBeNull()
+  })
+
+  it('raises the prompt on Set as default instead of handing off blind, and holds through it', () => {
     render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
+    click(setDefaultButton())
     expect(uiStore.get().defaultBrowserAsk).toBe('banner')
     expect(cmd).not.toHaveBeenCalledWith('defaultBrowser.request', expect.anything())
+    expect(chooseBand(bandStore.get())).not.toBeNull()
   })
 })
 
@@ -159,7 +202,7 @@ describe('the desktop prompt', () => {
   it('is the §9.23 composition on the dialog host: app icon, title block with the OS sentence, Not now then the primary, focus on the primary', async () => {
     browserStore.set({ state: state('win32') })
     render(view(state('win32')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
+    click(setDefaultButton())
     await settle()
     const d = dialog()!
     expect(d).not.toBeNull()
@@ -184,7 +227,7 @@ describe('the desktop prompt', () => {
     const [notNow, setDefault] = buttons(d)
     expect(buttons(d)).toHaveLength(2)
     expect(notNow.textContent).toBe('Not now')
-    // The strip's word again (§9.29): one flow, one name for the act.
+    // The band's word again (§9.29): one flow, one name for the act.
     expect(setDefault.textContent).toBe('Set as default')
     expect(setDefault.hasAttribute('data-primary')).toBe(true)
     expect(document.activeElement).toBe(setDefault)
@@ -192,16 +235,18 @@ describe('the desktop prompt', () => {
     expect(uiStore.get().defaultBrowserPrompt).toBe(true)
   })
 
-  it('closes on Escape without asking the OS, and focus goes back to the strip’s button once the chrome is back', async () => {
+  it('closes on Escape without asking the OS, and focus goes back to the band’s button once the frame is back', async () => {
     render(view(state('linux')))
-    const strip = container.querySelector<HTMLElement>('.zen-frame-strip')!
-    const opener = buttons(strip)[1]
+    const opener = setDefaultButton()
     act(() => opener.focus())
     click(opener)
     await settle()
     expect(dialog()).not.toBeNull()
-    // The strip is window chrome: inert under the dialog (§9.5, §9.22).
-    expect(strip.hasAttribute('inert')).toBe(true)
+    // The band is in the frame behind the dialog host: covered with the rest of the frame
+    // (a11y-32, `holdFrameInert`) – no press, focus or Tab reaches it while the prompt stands
+    // – and it stands through the prompt (the state holds).
+    expect(band().hasAttribute('inert')).toBe(true)
+    expect(chooseBand(bandStore.get())).not.toBeNull()
     escape()
     await settle()
     expect(dialog()).toBeNull()
@@ -210,39 +255,40 @@ describe('the desktop prompt', () => {
     expect(cmd).not.toHaveBeenCalledWith('defaultBrowser.request', expect.anything())
     expect(run).not.toHaveBeenCalledWith('settings.update', expect.anything())
     // The host keeps the panel through its pop exit, inert and hidden from assistive technology,
-    // and the chrome stays inert with it (#188): the strip cannot take the focus back yet.
+    // and the frame stays covered with it (#188): the band cannot take the focus back yet.
     const panel = leaving()!
     expect(panel).not.toBeNull()
     expect(panel.hasAttribute('inert')).toBe(true)
     expect(panel.getAttribute('aria-hidden')).toBe('true')
-    expect(strip.hasAttribute('inert')).toBe(true)
+    expect(band().hasAttribute('inert')).toBe(true)
     expect(document.activeElement).toBe(document.body)
-    // The exit ends: the panel goes, the chrome comes back and the opener takes the focus.
+    // The exit ends: the panel goes, the frame comes back and the opener takes the focus.
     await act(async () => {
       panel.dispatchEvent(new Event('animationend'))
       await Promise.resolve()
     })
     await settle()
     expect(leaving()).toBeNull()
-    expect(strip.hasAttribute('inert')).toBe(false)
+    expect(band().hasAttribute('inert')).toBe(false)
     expect(document.activeElement).toBe(opener)
   })
 
-  it('closes on Not now and leaves the strip up', async () => {
+  it('closes on Not now and leaves the band up', async () => {
     render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
+    click(setDefaultButton())
     await settle()
     click(buttons(dialog()!)[0])
     await settle()
     expect(dialog()).toBeNull()
     expect(cmd).not.toHaveBeenCalledWith('defaultBrowser.request', expect.anything())
     expect(run).not.toHaveBeenCalledWith('settings.update', expect.anything())
-    expect(container.querySelector('.zen-frame-strip')).not.toBeNull()
+    expect(container.querySelector('.zen-band')).not.toBeNull()
+    expect(chooseBand(bandStore.get())).not.toBeNull()
   })
 
-  it('runs the request from the strip and takes the strip down for this release on Set as default', async () => {
+  it('runs the request from the band and takes the band down for this release on Set as default', async () => {
     render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
+    click(setDefaultButton())
     await settle()
     click(buttons(dialog()!)[1])
     await settle()
@@ -253,6 +299,9 @@ describe('the desktop prompt', () => {
     expect(dialog()).toBeNull()
     expect(uiStore.get().defaultBrowserAsk).toBeNull()
     expect(uiStore.get().defaultBrowserPrompt).toBe(false)
+    // The settings come back with the answer: the state ends, and with it the band.
+    render(view(state('linux', '0.3.77')))
+    expect(chooseBand(bandStore.get())).toBeNull()
   })
 })
 

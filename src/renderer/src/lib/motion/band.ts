@@ -149,7 +149,7 @@ export class BandMotion {
         return
       }
       if (this.spring.running) this.spring.retarget(height)
-      else this.spring.start(this.offset_, this.spring.current.v, height)
+      else this.spring.start(this.offset_, 0, height)
       return
     }
     if (this.offset_ === height && !this.spring.running) {
@@ -168,6 +168,24 @@ export class BandMotion {
     this.endFade()
     if (this.phase_ === 'dragging') this.spring.stop()
     this.leave(this.spring.running ? this.spring.current.v : 0)
+  }
+
+  /**
+   * The frame's page changed under the band (a tab switch, a page's fullscreen): the band stands
+   * at `height` (0 shut) at once, no travel – the page in the frame is another document, and a
+   * travel would say it moved. The seam hears the whole of it in order: depart, translate, paint,
+   * rest.
+   */
+  jump(height: number): void {
+    this.endFade()
+    this.spring.stop()
+    this.height_ = height
+    this.phase_ = height > 0 ? 'open' : 'closed'
+    this.seam.depart?.(height)
+    this.offset_ = height
+    this.seam.translate(height)
+    this.paint(height > 0 ? 1 : 0)
+    this.seam.rest(height)
   }
 
   /** A finger has the band: the motion stops where it is and the page follows the finger. */
