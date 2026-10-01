@@ -336,3 +336,67 @@ describe('CertificateExceptions: the certificates proceeded past this session', 
     ).toBe(true)
   })
 })
+
+describe("SecurityPromptService: an AI agent's tab", () => {
+  /** Tab `agent` is an agent's; its prompts wait in `routed` for the test to answer. */
+  function withAgent(): {
+    s: SecurityPromptService
+    routed: Array<{ kind: string; answer(value: unknown): void }>
+  } {
+    const routed: Array<{ kind: string; answer(value: unknown): void }> = []
+    const browser = {
+      state: { commitVolatile: () => undefined },
+      agents: {
+        takesPrompt: (tabId: string) => tabId === 'agent',
+        routePrompt: (spec: { kind: string; tabId: string }) => {
+          if (spec.tabId !== 'agent') return null
+          let answer: (value: unknown) => void = () => undefined
+          const result = new Promise((r) => {
+            answer = r
+          })
+          routed.push({ kind: spec.kind, answer })
+          return {
+            id: `p${routed.length}`,
+            result,
+            update: () => undefined,
+            close: () => undefined
+          }
+        }
+      }
+    } as unknown as Browser
+    return { s: new SecurityPromptService(browser, new SessionHttpCredentialStore()), routed }
+  }
+
+  it('asks the agent, shows the user nothing, and keeps the user out of its wait', async () => {
+    const { s, routed } = withAgent()
+    const theirs = s.httpAuth(BASIC, 'agent')
+    const mine = s.httpAuth(BASIC, 'user')
+    await settle()
+    expect(routed.map((r) => r.kind)).toEqual(['http-auth'])
+    expect(s.list().map((p) => p.tabId)).toEqual(['user'])
+    s.respond(s.list()[0].id, null)
+    expect(await mine).toBeNull()
+    routed[0].answer({ username: 'bot', password: 'pw' })
+    expect(await theirs).toEqual({ username: 'bot', password: 'pw' })
+    // Not remembered: the user's next request behind the realm asks the user again.
+    const next = s.httpAuth(BASIC, 'user')
+    await settle()
+    expect(s.list()).toHaveLength(1)
+    s.respond(s.list()[0].id, null)
+    await next
+  })
+
+  it("an agent's certificate pick holds for its request alone", async () => {
+    const { s, routed } = withAgent()
+    const certs = [cert('aa', 'Me'), cert('bb', 'Other')]
+    const theirs = s.clientCertificate('mtls.example', certs, 'agent')
+    await settle()
+    routed[0].answer(1)
+    expect(await theirs).toBe(1)
+    const mine = s.clientCertificate('mtls.example', certs, 'user')
+    await settle()
+    expect(s.list().map((p) => p.kind)).toEqual(['client-certificate'])
+    s.respond(s.list()[0].id, null)
+    expect(await mine).toBeNull()
+  })
+})

@@ -1129,3 +1129,67 @@ describe('PermissionService: private windows leave no trace', () => {
     expect(changes[1]).not.toHaveProperty('container')
   })
 })
+
+describe("PermissionService: an AI agent's tab", () => {
+  /** Tab `agent` is an agent's: its prompts go to `answers` (null leaves them to the chrome). */
+  function agentSide(answer: PermissionPromptAnswer | null): {
+    asked: PermissionPrompt[]
+    release(): void
+    takes(tabId: string): boolean
+    ask(request: PermissionPrompt): Promise<PermissionPromptAnswer | null> | null
+  } {
+    let release = (): void => undefined
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const side = {
+      asked: [] as PermissionPrompt[],
+      release: () => release(),
+      takes: (tabId: string) => tabId === 'agent',
+      ask: (request: PermissionPrompt) => {
+        if (request.tabId !== 'agent') return null
+        side.asked.push(request)
+        return gate.then(() => answer)
+      }
+    }
+    return side
+  }
+
+  it("asks the agent instead of the chrome, and remembers nothing of the agent's allow", async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    const agent = agentSide('allow-once')
+    p.agentPrompts = agent
+    const granted = p.decide('geolocation', PAGE, { tabId: 'agent' })
+    await Promise.resolve()
+    agent.release()
+    expect(await granted).toBe(true)
+    expect(agent.asked).toHaveLength(1)
+    expect(d.asked).toEqual([])
+    expect(p.rules()).toEqual([])
+    expect(p.check('geolocation', 'https://example.com')).toBe(false)
+  })
+
+  it("never lets a user's tab wait on, or take, the agent's answer to the same question", async () => {
+    const d = prompts(false)
+    const p = new PermissionService(fakeIo(), d)
+    const agent = agentSide('allow-once')
+    p.agentPrompts = agent
+    const theirs = p.decide('camera', PAGE, { tabId: 'agent' })
+    const mine = p.decide('camera', PAGE, { tabId: 'user' })
+    expect(await mine).toBe(false)
+    expect(d.asked).toHaveLength(1)
+    agent.release()
+    expect(await theirs).toBe(true)
+  })
+
+  it("an agent's refusal is not a block for the site", async () => {
+    const p = new PermissionService(fakeIo(), prompts(true))
+    const agent = agentSide(null)
+    agent.release()
+    p.agentPrompts = { ...agent, ask: (r) => (r.tabId === 'agent' ? Promise.resolve(null) : null) }
+    expect(await p.decide('notifications', PAGE, { tabId: 'agent' })).toBe(false)
+    expect(p.get('notifications', 'https://example.com')).toBeUndefined()
+    expect(await p.decide('notifications', PAGE, { tabId: 'user' })).toBe(true)
+  })
+})

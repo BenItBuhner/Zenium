@@ -221,5 +221,9 @@ export function describePrompt(p: AgentPrompt, now: number): string {
     .map(([name, what]) => `"${name}" – ${what}`)
     .join('; ')
   const left = Math.max(0, p.expiresAt - now)
-  return `Prompt ${p.id} on tab ${p.tabId} (${p.kind}${p.blocking ? ', the page waits on it' : ''}): ${p.summary} Answer with browser_respond_prompt {"id":"${p.id}","action":…}: ${actions}. Unanswered, "${p.defaultAction}" applies in ${describeWait(left)}.`
+  const how =
+    p.kind === 'file-chooser'
+      ? `browser_file_upload {"promptId":"${p.id}","paths":[…]} (or "files"), or browser_respond_prompt {"promptId":"${p.id}","action":"cancel"}`
+      : `browser_respond_prompt {"promptId":"${p.id}","action":…}`
+  return `Prompt ${p.id} on tab ${p.tabId} (${p.kind}${p.blocking ? ', the page waits on it' : ''}): ${p.summary} Answer with ${how}: ${actions}. Unanswered, "${p.defaultAction}" applies in ${describeWait(left)}.`
 }

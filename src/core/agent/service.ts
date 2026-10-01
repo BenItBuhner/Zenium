@@ -2885,11 +2885,6 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   /**
-   * A file chooser the page of an agent's tab opened (`TabViewEvents.onFileChooser`): the agent
-   * answers it with `browser_respond_prompt` or `browser_file_upload`. A tab that is not an
-   * agent's gets the system's chooser from its host.
-   */
-  /**
    * "Ask where to save each file" (the setting, the caller's `saveAs`, a "Save As…") for a download
    * an agent's tab started: the agent names the file, which stays in the Downloads folder. Null
    * when the tab is not an agent's: the host shows its save dialog.
@@ -2902,6 +2897,11 @@ export class AgentService implements SessionStore, McpHandlers {
     return this.routePrompt(downloadSpec(tabId, download))?.result ?? null
   }
 
+  /**
+   * A file chooser the page of an agent's tab opened (`TabViewEvents.onFileChooser`): the agent
+   * answers it with `browser_respond_prompt` or `browser_file_upload`. A tab that is not an
+   * agent's gets the system's chooser from its host.
+   */
   onFileChooser(tabId: string, request: FileChooserRequest): Promise<FileChooserAnswer> {
     const handle = this.routePrompt(fileChooserSpec(tabId, request))
     return handle ? handle.result : Promise.resolve({ kind: 'user' })

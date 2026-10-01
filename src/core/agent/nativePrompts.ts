@@ -102,7 +102,7 @@ export function fileChooserSpec(
     kind: 'file-chooser',
     tabId,
     summary: `The page opened a file chooser for ${what}${accept}.`,
-    details: { mode: request.mode, accept: request.accept },
+    details: { mode: request.mode, accept: request.accept, source: request.source },
     actions: {
       upload:
         request.mode === 'folder'

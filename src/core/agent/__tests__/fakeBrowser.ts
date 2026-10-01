@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_SETTINGS } from '../../../shared/defaults'
-import type { AgentSettings, Folder, Space, Tab } from '../../../shared/types'
+import type { AgentPromptKind, AgentSettings, Folder, Space, Tab } from '../../../shared/types'
 import type { Browser } from '../../browser'
 import {
   type Model,
@@ -13,7 +13,7 @@ import {
   removeTabFromLists,
   sectionIndexOf
 } from '../../model'
-import type { AgentInputEvent, AgentTransport, TabView } from '../../platform'
+import type { AgentInputEvent, AgentTransport, AgentUploadFile, TabView } from '../../platform'
 import type { ZenWindow } from '../../window'
 import type { ToolResult } from '../protocol'
 import { AgentService, type AgentSession } from '../service'
@@ -50,6 +50,13 @@ export interface FakeBrowser {
   input: Map<string, AgentInputEvent[]>
   /** Every `setAgentDriven` a page's view heard, by tab id, in order. */
   agentDriven: Map<string, boolean[]>
+  /** Every `interceptAgentPrompts` a page's view heard, by tab id, in order. */
+  intercepts: Map<string, boolean[]>
+  /** Files set on inputs (`setInputFiles`) or dropped (`dropFiles`), by tab id. */
+  uploads: Map<
+    string,
+    Array<{ selector?: string; x?: number; y?: number; files: AgentUploadFile[] }>
+  >
   /** What the user does from the chrome. */
   user: {
     openTab(url: string, opts?: { essential?: boolean; pinned?: boolean; folderId?: string }): Tab
@@ -97,6 +104,8 @@ export interface FakeBrowserOptions {
   requireName?: boolean
   /** The host routes page dialogs to agents (`HostCapabilities.agentDialogs`); on by default. */
   agentDialogs?: boolean
+  /** The native prompts the host routes to agents (`HostCapabilities.agentPrompts`); none by default. */
+  agentPrompts?: AgentPromptKind[]
 }
 
 export function textOf(result: ToolResult): string {
@@ -149,6 +158,8 @@ export function fakeBrowser(
   const views = new Map<string, TabView>()
   const input = new Map<string, AgentInputEvent[]>()
   const agentDriven = new Map<string, boolean[]>()
+  const intercepts = new Map<string, boolean[]>()
+  const uploads: FakeBrowser['uploads'] = new Map()
   const gates = new Map<string, Promise<void>>()
   const files = options.files ?? new Map<string, string>()
   const reloads: string[] = []
@@ -208,6 +219,15 @@ export function fakeBrowser(
       setBackgroundThrottling: () => undefined,
       setAgentDriven: (on: boolean) => {
         driven.push(on)
+      },
+      interceptAgentPrompts: (on: boolean) => {
+        intercepts.set(tab.id, [...(intercepts.get(tab.id) ?? []), on])
+      },
+      setInputFiles: async (selector: string, files: AgentUploadFile[]) => {
+        uploads.set(tab.id, [...(uploads.get(tab.id) ?? []), { selector, files }])
+      },
+      dropFiles: async (x: number, y: number, files: AgentUploadFile[]) => {
+        uploads.set(tab.id, [...(uploads.get(tab.id) ?? []), { x, y, files }])
       },
       snapshot: async () => null
     } as unknown as TabView
@@ -338,7 +358,10 @@ export function fakeBrowser(
       createAgentTransport: () => transport,
       dialogs: { confirm: async () => false },
       readabilitySource: () => null,
-      capabilities: { agentDialogs: options.agentDialogs ?? true }
+      capabilities: {
+        agentDialogs: options.agentDialogs ?? true,
+        ...(options.agentPrompts ? { agentPrompts: options.agentPrompts } : {})
+      }
     },
     state: {
       model,
@@ -444,6 +467,8 @@ export function fakeBrowser(
     pages,
     input,
     agentDriven,
+    intercepts,
+    uploads,
     user,
     hold: (tabId) => {
       let release = (): void => undefined
