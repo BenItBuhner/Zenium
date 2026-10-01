@@ -30,6 +30,12 @@ import kotlin.math.roundToInt
  * of its end: the gesture starts no hide there from the short layout ([BarHideScrollFilter],
  * [BarHideShare]), and a page in its last band keeps its bar, laid out short, with all of it
  * reachable.
+ *
+ * A page-edge band standing over the page (`lib/band/androidHost.ts`, [TabHost.setBandSeat])
+ * SEATS the view under it at rest: `seatPx` is a second inset on the placed rect's top – the
+ * view a seat lower and a seat shorter than the bar's placement alone has it, its translation
+ * the band's offset less the seat ([PageSeat]) – never a replacement of the placement's `top`
+ * or `height`, so the bar's slide and clip compose with it unchanged.
  */
 class BarHidePlacement(val top: Int, val bottom: Int, val shiftPx: Float, val clipPx: Int) {
     val height: Int get() = (bottom - top).coerceAtLeast(0)
@@ -47,11 +53,13 @@ class BarHidePlacement(val top: Int, val bottom: Int, val shiftPx: Float, val cl
          * `frame` (null: the bar may not hide, and the chrome's layout stands). `held`: the view
          * fills the window (picture-in-picture, [TabHost.fillWindow]) and is laid out by nobody
          * else until it is put back – null, nothing to write; the same call with `held` false
-         * once it is put back gives the layout it takes then.
+         * once it is put back gives the layout it takes then. `seatPx`: the band's seat (device
+         * px, 0 with no band seated), taken off the top of whatever the bar's placement is.
          */
-        fun of(reportedTop: Int, reportedBottom: Int, frame: BarHideFrame?, held: Boolean = false): BarHidePlacement? {
+        fun of(reportedTop: Int, reportedBottom: Int, frame: BarHideFrame?, held: Boolean = false, seatPx: Int = 0): BarHidePlacement? {
             if (held) return null
-            if (frame == null) return BarHidePlacement(reportedTop, reportedBottom, 0f, 0)
+            val seat = seatPx.coerceAtLeast(0)
+            if (frame == null) return BarHidePlacement(reportedTop + seat, reportedBottom, 0f, 0)
             val t = frame.travelPx
             val o = frame.offsetPx
             var top = reportedTop
@@ -82,7 +90,7 @@ class BarHidePlacement(val top: Int, val bottom: Int, val shiftPx: Float, val cl
                     if (tall && o < t) clip = (t - o).roundToInt()
                 }
             }
-            return BarHidePlacement(top, bottom, shift, clip)
+            return BarHidePlacement(top + seat, bottom, shift, clip)
         }
     }
 }
