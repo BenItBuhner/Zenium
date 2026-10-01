@@ -103,13 +103,15 @@ type Ending = 'cancel' | 'dismiss' | 'install'
  * Chrome's install prompt in Chrome's form: a 320 popover (§9.20) hung from the pill's Install
  * chip, which keeps its pressed fill while the popover is up – the title block "Install <name>?"
  * (the app's name from its manifest, as the chip's own name is), the app's identity row (§9.23:
- * the tile beside the name and the origin) and the §9.11 footer, hugging and right-aligned,
- * Cancel then the one primary, Install. No scrim: the popover is light-dismissed (§9.20) – a
- * press outside it, a scroll away, Escape – and every dismissal, Cancel included, folds the
- * popover back into the chip (the pop reversed, as a prompt beside its chip leaves); the chip
- * stays, to open it again. Install runs the install path of old – `webapp.pin` with the app's
- * name – busy while the core has the host write the launcher and leaving on the spring once the
- * request has settled (the core toasts "Installed <name>", or the failure).
+ * the tile beside the name and the origin – the whole body, Chrome's simple bubble, nothing of
+ * the manifest's description or screenshots; the phone's sheet keeps its strip of shots) and
+ * the §9.11 footer, hugging and right-aligned, Cancel then the one primary, Install (the order
+ * the Design Lead's gate on #754 confirmed, §10). No scrim: the popover is light-dismissed
+ * (§9.20) – a press outside it, a scroll away, Escape – and every dismissal, Cancel included,
+ * folds the popover back into the chip (the pop reversed, as a prompt beside its chip leaves);
+ * the chip stays, to open it again. Install runs the install path of old – `webapp.pin` with
+ * the app's name – busy while the core has the host write the launcher and leaving on the
+ * spring once the request has settled (the core toasts "Installed <name>", or the failure).
  *
  * What the core hears is the subject's. For the user's prompt every dismissal, Cancel included,
  * is a cancelled install (`webapp.cancelInstall`). For the core's offer the popover is the
