@@ -5,9 +5,10 @@
  * a transition could not carry it. `SpringAnimation` jumps under the same preference; a surface
  * whose spring carried its arrival runs this instead.
  */
+import { MOTION_STATE_MS } from './tokens'
 
-/** How long the fade takes. */
-export const REDUCED_FADE_MS = 120
+/** How long the fade takes: the state change's length (motion spec §0.5, §1). */
+export const REDUCED_FADE_MS = MOTION_STATE_MS
 
 /**
  * Fade `el` from its present inline opacity (or the far end when it has none) to `to`, then run

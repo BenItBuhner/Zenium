@@ -8,6 +8,7 @@ import {
   type SpringConfig,
   type SpringState
 } from '../motion/spring'
+import { SPRING_FOLLOW } from '../motion/tokens'
 import { activeTab } from '../selectors'
 import { createStore } from '../store'
 import { captureThumbnail } from '../thumbnails'
@@ -82,14 +83,8 @@ export function cssPx(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback
 }
 
-/** The pill tracks the finger through a stiff spring: a hair of lag and weight, no rubbery drag. */
-export const SPRING_FOLLOW: SpringConfig = {
-  stiffness: 1200,
-  damping: 68,
-  mass: 1,
-  restDelta: 0.2,
-  restSpeed: 4
-}
+// The pill tracks the finger through §1's follow spring (`SPRING_FOLLOW`, the tokens'): a hair
+// of lag and weight, no rubbery drag.
 
 /** Flying into a slot after release: the overview's gentle spring, a whisper of overshoot. */
 export const SPRING_DOCK: SpringConfig = SPRING_GENTLE

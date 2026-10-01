@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { groupColorVars } from '@renderer/lib/groups'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
+import { ZEN_EASE } from '@renderer/lib/motion/tokens'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { GroupGlyph } from '../GroupGlyph'
 import {
@@ -21,8 +22,6 @@ import { CARD_ASPECT, CardBody, NewTabFace } from './OverviewCard'
 
 /** How long an exit waits for the browser to show the close before it runs regardless. */
 export const EXIT_WAIT_MS = 900
-/** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
 /**
  * The cards leaving the grid, each collapsing out where it stood while the grid closes the gap
@@ -138,7 +137,7 @@ function Exit({
     if (reducedMotion()) {
       const fade = el?.animate?.([{ opacity: 1 }, { opacity: 0 }], {
         duration: REDUCED_FADE_MS,
-        easing: EASE,
+        easing: ZEN_EASE,
         fill: 'forwards'
       })
       if (fade) fade.onfinish = rest

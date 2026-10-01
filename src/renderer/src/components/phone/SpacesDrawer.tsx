@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Palette, Plus } from 'lucide-react'
 import type { Space, Tab, UIState } from '@shared/types'
@@ -14,12 +14,14 @@ import {
 } from '@renderer/lib/gestures/drawer'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { LIFT_SCALE } from '@renderer/lib/motion/tokens'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { activeSpace, activeTab, essentialsFor, tabTitle, tabsOf } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { useFlip } from './useFlip'
 import { useLongPress } from './useLongPress'
 
 /** Movement (px) before a touch on the drawer is a swipe rather than a tap. */
@@ -49,6 +51,7 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
   const active = activeTab(state)
   const essentials = essentialsFor(state, space)
   const panelRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     const width = panelRef.current?.offsetWidth
@@ -177,10 +180,11 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
           </button>
         </header>
         <div
+          ref={scrollerRef}
           className="min-h-0 flex-1 overflow-y-auto px-2 pt-1"
           style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
         >
-          <SpaceList state={state} isDark={isDark} onPick={pickSpace} />
+          <SpaceList state={state} isDark={isDark} scroller={scrollerRef} onPick={pickSpace} />
           {essentials.length > 0 && (
             <section className="pt-4">
               <h3 className="px-2 pb-2 text-[14px] font-semibold text-[var(--zen-fg)]">
@@ -212,6 +216,12 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
 const HOLD_MS = 380
 /** Movement (px) that turns a held row into a reorder drag, or a touch into a scroll. */
 const ROW_SLOP = 8
+/**
+ * How long a dropped row keeps its new slot waiting for the browser's order to show it there.
+ * Not a motion: the reorder's round trip takes a few ms; a reorder the browser would not make
+ * (none does today) leaves the rows in the order it has once this is up.
+ */
+const REORDER_GRACE_MS = 800
 
 interface Held {
   spaceId: string
@@ -223,23 +233,64 @@ interface Held {
   dragging: boolean
 }
 
+/** A dropped row, shown in the slot it was dropped in until the browser's order has it there. */
+interface Pending {
+  spaceId: string
+  to: number
+}
+
+/** `spaces` with the row `spaceId` moved to slot `to` – the order the finger is making. */
+function previewOrder(spaces: readonly Space[], spaceId: string, to: number): readonly Space[] {
+  const from = spaces.findIndex((s) => s.id === spaceId)
+  if (from < 0 || from === to) return spaces
+  const next = spaces.filter((s) => s.id !== spaceId)
+  next.splice(to, 0, spaces[from]!)
+  return next
+}
+
 /**
  * The spaces as rows. Tap switches; hold picks the row up (the same hold as a tab card in the
  * overview) – drag it to reorder, or let go in place for the space's options (edit, theme,
- * delete). The other rows step aside as the held row passes them.
+ * delete). The other rows step aside as the held row passes them: the rows are rendered in the
+ * order the finger is making, and the ones that change slot glide there on the grid's FLIP
+ * (`useFlip`, §1's `SPRING_SNAPPY`) – the row in the hand is drawn under the finger by its own
+ * transform and is no cell of the set. The order stands after the drop until the browser's own
+ * order shows the row where it was dropped, so nothing jumps back and forth meanwhile.
  */
 function SpaceList({
   state,
   isDark,
+  scroller,
   onPick
 }: {
   state: UIState
   isDark: boolean
+  /** The drawer's scroll container, the FLIP set's root. */
+  scroller: RefObject<HTMLElement | null>
   onPick: (spaceId: string) => void
 }): JSX.Element {
   const [held, setHeld] = useState<Held | null>(null)
+  const [pending, setPending] = useState<Pending | null>(null)
   // After a drop the moved row springs the last stretch into its new slot.
   const [landing, setLanding] = useState<{ spaceId: string; offset: number } | null>(null)
+  // Counts the holds: each takes a fresh baseline for the FLIP (nothing glides on the lift).
+  const [gesture, setGesture] = useState(0)
+  const spaces = state.spaces
+  // A drop still waiting for the browser's order; one the order already shows is done with.
+  const waiting =
+    pending && spaces.findIndex((s) => s.id === pending.spaceId) !== pending.to ? pending : null
+  const reorder = held ?? waiting
+  // Measured only while a reorder is on: the drawer re-renders as it slides, and a layout read
+  // per row per frame would slow the slide for nothing. (The panel's slide is an inline
+  // transform the tracker's `frame` hold would strip, so none is given: a reorder runs on a
+  // drawer at rest, and a drawer held still by the same finger measures the same every commit.)
+  useFlip(scroller, reorder !== null || landing !== null, { epoch: String(gesture) })
+  // A drop the browser's order never shows (none today) is let go of after the grace.
+  useEffect(() => {
+    if (!pending) return undefined
+    const timer = setTimeout(() => setPending(null), REORDER_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [pending])
   const landingSpring = useMemo(
     () =>
       new SpringAnimation(
@@ -271,12 +322,13 @@ function SpaceList({
     []
   )
 
-  const spaces = state.spaces
   const slotFor = (index: number, dy: number): number =>
     Math.max(0, Math.min(spaces.length - 1, Math.round(index + dy / ROW_HEIGHT)))
 
   const hold = (e: ReactPointerEvent<HTMLElement>, space: Space, index: number): boolean => {
-    if (e.button !== 0 || held) return false
+    // Not while a row is in the hand, nor while a drop waits for the browser's order: the slots
+    // the finger would count are the order the browser has.
+    if (e.button !== 0 || held || waiting) return false
     const el = e.currentTarget
     const pointerId = e.pointerId
     const x0 = e.clientX
@@ -288,6 +340,7 @@ function SpaceList({
       lifted = true
       landingSpring.stop()
       setLanding(null)
+      setGesture((g) => g + 1)
       setHeld({ spaceId: space.id, from: index, dy: 0, to: index, dragging: false })
       try {
         capturePointer(el, pointerId)
@@ -320,8 +373,12 @@ function SpaceList({
     const settle = (dy: number): void => {
       const to = slotFor(index, dy)
       setHeld(null)
-      if (to !== index) run('space.reorder', { spaceId: space.id, index: to })
-      // The row is drawn where the finger left it; its slot is `to` rows away from home.
+      if (to !== index) {
+        run('space.reorder', { spaceId: space.id, index: to })
+        // The rows keep the order the finger made until the browser's order arrives.
+        setPending({ spaceId: space.id, to })
+      }
+      // The row is drawn where the finger left it: this far from the slot it was dropped in.
       const remaining = dy - (to - index) * ROW_HEIGHT
       if (remaining !== 0) {
         setLanding({ spaceId: space.id, offset: remaining })
@@ -355,18 +412,18 @@ function SpaceList({
     return true
   }
 
+  // The rows in the order the finger is making (the browser's until a row is picked up).
+  const order = reorder ? previewOrder(spaces, reorder.spaceId, reorder.to) : spaces
   return (
     <ul className="flex flex-col" aria-label="Spaces">
-      {spaces.map((space, index) => {
+      {order.map((space, index) => {
+        const isHeld = held?.spaceId === space.id
+        const isLanding = landing?.spaceId === space.id
         let offset = 0
-        let isHeld = false
-        if (held) {
-          if (held.spaceId === space.id) {
-            offset = held.dy
-            isHeld = true
-          } else if (held.from < index && index <= held.to) offset = -ROW_HEIGHT
-          else if (held.to <= index && index < held.from) offset = ROW_HEIGHT
-        } else if (landing?.spaceId === space.id) offset = landing.offset
+        // The row in the hand is rendered in the slot it would land in and drawn under the
+        // finger: its travel from home, less the slots it has moved by.
+        if (held && isHeld) offset = held.dy - (held.to - held.from) * ROW_HEIGHT
+        else if (landing && isLanding) offset = landing.offset
         return (
           <SpaceRow
             key={space.id}
@@ -375,7 +432,7 @@ function SpaceList({
             isDark={isDark}
             active={space.id === state.activeSpaceId}
             held={isHeld}
-            stepping={Boolean(held) && !isHeld}
+            cell={!isHeld && !isLanding}
             offset={offset}
             onPick={() => onPick(space.id)}
             onHold={(e) => hold(e, space, index)}
@@ -398,7 +455,7 @@ function SpaceRow({
   isDark,
   active,
   held,
-  stepping,
+  cell,
   offset,
   onPick,
   onHold,
@@ -410,8 +467,11 @@ function SpaceRow({
   active: boolean
   /** In the hand: lifted off the list, following the finger. */
   held: boolean
-  /** Another row is in the hand: this one steps aside with a transition. */
-  stepping: boolean
+  /**
+   * A cell of the list's FLIP set (`data-cell`): the tracker glides it to a new slot. The row
+   * in the hand and the row landing from one are drawn by their own transform and are none.
+   */
+  cell: boolean
   offset: number
   onPick: () => void
   /** Pointer down on the row; returns true when the touch is being watched for a hold. */
@@ -423,8 +483,8 @@ function SpaceRow({
   const swatch = space.theme ? rgbToHex(resolveTheme(space.theme, isDark).accent) : null
   const wasHeld = useRef(false)
   const style: CSSProperties = {
-    transform: offset || held ? `translateY(${offset}px)${held ? ' scale(1.02)' : ''}` : undefined,
-    transition: stepping ? 'transform 220ms var(--zen-ease)' : undefined,
+    transform:
+      offset || held ? `translateY(${offset}px)${held ? ` scale(${LIFT_SCALE})` : ''}` : undefined,
     zIndex: held ? 1 : undefined
   }
   return (
@@ -432,6 +492,7 @@ function SpaceRow({
       className="zen-space-row relative flex h-12 items-center gap-3 rounded-[10px] pl-2 pr-3"
       data-active={active}
       data-held={held || undefined}
+      data-cell={cell ? space.id : undefined}
       style={style}
       role="button"
       tabIndex={0}

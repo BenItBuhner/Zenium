@@ -48,6 +48,7 @@ import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 import {
   URLBAR_KEYBOARD_EVENT,
   URLBAR_LEAVE_EVENT,
@@ -1965,7 +1966,7 @@ function fieldGrowFrom(layout: PhoneBarLayout): React.CSSProperties {
  * or favicon of a still-loading page arriving, the tab navigating under the open bar (v2 §11.4:
  * on opacity, in the same slot, no slide and no cut; the same fade under reduced motion).
  */
-export const HEADER_SWAP_FADE_MS = 120
+export const HEADER_SWAP_FADE_MS = MOTION_STATE_MS
 
 /**
  * The page row's face (glyph, title, address) cross-fades when what it draws changes while the
