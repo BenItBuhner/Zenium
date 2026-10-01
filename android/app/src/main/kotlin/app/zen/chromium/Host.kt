@@ -29,6 +29,7 @@ import android.view.HapticFeedbackConstants
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
@@ -731,6 +732,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         Log.i(TAG, "memory pressure ${level.wire}${if (background) ", window away" else ""} ($why)")
         chrome.hostEvent("memoryPressure", json("level" to level.wire, "background" to background))
         restoredPictures.releaseAll("memory pressure")
+        // A page view built ahead of a wake is memory spent on a guess: given back first.
+        if (tabs.dropSpare()) Log.d(TAG, "spare page view dropped under memory pressure")
     }
 
     override fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? {
@@ -2633,6 +2636,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tabs.get(tabId)?.let {
             it.captureThumbnail()
             it.refreshHostState()
+            // The user has left the page for the chrome: the next thing they may do is wake a tab.
+            warmSpareLater(it.containerId)
         }
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
@@ -2643,6 +2648,69 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 if (pageVisibility.complete(ticket)) main.removeCallbacks(deadline)
             }
         })
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The spare page view (W6-S26-b): built on an idle moment with the pages covered
+    // ---------------------------------------------------------------------------------------------
+
+    /** The container the next spare is for, while a warm is pending; null with none. */
+    private var spareWarmFor: String? = null
+    /** The pending quiet check ([warmSpareLater]); null with none. */
+    private var spareWatch: Runnable? = null
+    /** When the window last began a traversal, while a warm is pending. */
+    private var lastTraversal = 0L
+    private val traversalListener = ViewTreeObserver.OnPreDrawListener {
+        lastTraversal = SystemClock.uptimeMillis()
+        true
+    }
+
+    /**
+     * Have [TabHost.warm] build the page view for the next wake, once the screen is still: a page
+     * was just hidden under the chrome (the overview opening, a sheet), so the user may tap a
+     * sleeping tab's card next, and the view's construction (some fifteen milliseconds of UI
+     * thread) is better spent now than inside the morph's first frames. Not before the core is
+     * up with the window showing (never on the boot path), not while a spare stands, and never
+     * inside an animation: the build waits until the window has drawn nothing for
+     * [SPARE_QUIET_MS] – the overview's spring at rest, the finger lifted – and then for the
+     * looper's next idle moment. One container at a time: the latest hide's.
+     */
+    private fun warmSpareLater(containerId: String) {
+        if (!coreUp || !windowUp() || tabs.hasSpare) return
+        spareWarmFor = containerId
+        if (spareWatch != null) return
+        lastTraversal = SystemClock.uptimeMillis()
+        root.viewTreeObserver.takeIf { it.isAlive }?.addOnPreDrawListener(traversalListener)
+        val check = object : Runnable {
+            override fun run() {
+                val forContainer = spareWarmFor
+                if (forContainer == null || !coreUp || !windowUp() || tabs.hasSpare) {
+                    endSpareWatch()
+                    return
+                }
+                if (SystemClock.uptimeMillis() - lastTraversal < SPARE_QUIET_MS) {
+                    main.postDelayed(this, SPARE_QUIET_MS)
+                    return
+                }
+                endSpareWatch()
+                Looper.myQueue().addIdleHandler {
+                    if (coreUp && windowUp() && !tabs.hasSpare) {
+                        val started = SystemClock.uptimeMillis()
+                        if (tabs.warm(forContainer)) Log.d(TAG, "spare page view built for $forContainer in ${SystemClock.uptimeMillis() - started} ms")
+                    }
+                    false
+                }
+            }
+        }
+        spareWatch = check
+        main.postDelayed(check, SPARE_QUIET_MS)
+    }
+
+    private fun endSpareWatch() {
+        spareWatch?.let(main::removeCallbacks)
+        spareWatch = null
+        spareWarmFor = null
+        root.viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(traversalListener)
     }
 
     /**
@@ -2978,6 +3046,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private const val STORAGE_TAG = "ZenStorage"
         /** The one visual-state request of the boot hold ([releaseBootHoldAfterReadyFrame]: the FULLY DRAWN frame); the id is the callback's, nothing reads it. */
         private const val BOOT_HOLD_FRAME = 2L
+        /**
+         * How long the window has to have drawn nothing, after a page was hidden under the chrome,
+         * before the spare page view is built ([warmSpareLater]): longer than any gap between the
+         * frames of a running spring, on the emulator's software GPU included, so the build never
+         * lands inside one.
+         */
+        const val SPARE_QUIET_MS = 600L
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"
