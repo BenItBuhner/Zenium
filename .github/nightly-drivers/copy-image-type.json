@@ -1,0 +1,10 @@
+{
+  "id": "copy-image-type",
+  "order": 21,
+  "class": "CopyImageTypeDemo",
+  "shard": "api33",
+  "mirrors": "android-background-video-demo.yml",
+  "dir": "media-demo",
+  "estimate": 4,
+  "note": "Copy Image keeps the image's real type end to end (PUI-38, W6-S26-f): the menu's bridge method (clipboard.writeImage -> Host.copyImage) copies a JPEG, a WebP, a GIF and a PNG from the loopback server; after each the clip's MIME types, the content:// file's name, the resolver's getType and the first bytes are read off the system (before the fix every copy was image-<ts>.png and image/png, whatever the bytes), then a finger focuses a contenteditable, the toolbar's Paste (Ctrl+V when it offers none) pastes, and the page's paste event reports clipboardData.files[0]'s type against its first bytes – the two must agree. Then the lies the sniff sees through (a JPEG served as .png with an image/png header; a data URL declaring image/png over JPEG bytes; a percent-encoded data URL whose SVG root sits past the sniff's window, where the declared type stands in), an HTML page copied as an image (the copy fails, the clipboard untouched) and the cache pruned to its last eight files. Stills w6-s26f-copy-image-type-*. Runs through the media demo wrapper's script with DEMO_CLASS on this class; no workflow of its own. On api33 for the room (7 of its 68 minutes before it; every phone-a..g shard stood at 58 to 65) and for its Google WebView 145 – the paste reads the clip through Chromium's ClipboardImpl.getPng, which on a current WebView decodes a non-PNG type and hands PNG bytes over; the WebView's own copy-defence from 151 on (ClipboardConfusedDeputyDefenseImages) is noted in the lane's report."
+}
