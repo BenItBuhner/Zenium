@@ -101,6 +101,7 @@ function sidebar(tabs: Tab[]): void {
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     mods: [],

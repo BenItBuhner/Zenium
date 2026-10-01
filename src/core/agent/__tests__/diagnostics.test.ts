@@ -14,7 +14,7 @@ describe('Diagnostics', () => {
     now += 5
     end()
     const snap = d.snapshot({ live: 2, parked: 1 })
-    expect(snap.calls).toEqual({ total: 101, errors: 10, inFlight: 0 })
+    expect(snap.calls).toEqual({ total: 101, errors: 10, inFlight: 0, timedOut: 0 })
     expect(snap.tools.browser_snapshot.calls).toBe(100)
     expect(snap.tools.browser_snapshot.errors).toBe(10)
     expect(snap.tools.browser_snapshot.p50Ms).toBe(50)
@@ -44,7 +44,7 @@ describe('Diagnostics', () => {
     end()
     end('again')
     const snap = d.snapshot({ live: 0, parked: 0 })
-    expect(snap.calls).toEqual({ total: 1, errors: 0, inFlight: 0 })
+    expect(snap.calls).toEqual({ total: 1, errors: 0, inFlight: 0, timedOut: 0 })
   })
 
   it('summarizes in one line', () => {
@@ -58,7 +58,7 @@ describe('Diagnostics', () => {
     now = 125_000
     const line = summarize(d.snapshot({ live: 2, parked: 1 }))
     expect(line).toBe(
-      'up 2 min; sessions 2 live (1 parked), 3 created, 1 ended, 0 resumed after loss, 0 unknown; calls 1 (0 errors, 0 running); slowest: browser_navigate p95 2500 ms'
+      'up 2 min; sessions 2 live (1 parked), 3 created, 1 ended, 0 resumed after loss, 0 unknown; calls 1 (0 errors, 0 timed out, 0 running); slowest: browser_navigate p95 2500 ms'
     )
     expect(formatDuration(59_000)).toBe('59 s')
     expect(formatDuration(3_600_000 * 2 + 60_000 * 5)).toBe('2 h 5 min')

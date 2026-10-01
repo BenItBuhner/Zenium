@@ -26,6 +26,7 @@ import { useSheetRelayout } from './sheetContext'
 export function SyncPassphraseForm({
   folder,
   webdav,
+  account,
   deviceName,
   scope,
   close
@@ -33,6 +34,8 @@ export function SyncPassphraseForm({
   folder: string
   /** The WebDAV server and its app password (ID-32): setup goes through the server, not a folder. */
   webdav?: WebDavSyncCredentials
+  /** Setup goes through the Zenium account this device signed in to; `folder` is not read. */
+  account?: boolean
   deviceName: string
   scope: SyncScope
   close: () => void
@@ -71,7 +74,11 @@ export function SyncPassphraseForm({
     }
     setBusy(true)
     setError(null)
-    const target = webdav ? { folder: '', transport: 'webdav' as const, webdav } : { folder }
+    const target = account
+      ? { folder: '', transport: 'account' as const }
+      : webdav
+        ? { folder: '', transport: 'webdav' as const, webdav }
+        : { folder }
     void turnOnSync({ ...target, passphrase, deviceName, scope }).then((refusal) => {
       if (refusal === null) {
         clearSyncSetup()
@@ -178,14 +185,21 @@ export function SyncMergeForm({ close }: { close: () => void }): JSX.Element {
 /**
  * Turn off sync (§9.23): the prompt's one choice – also removing this device's file from the
  * folder – is a checkbox row (the shared `.zen-v2-checkbox`, 20 on a phone) submitted with the
- * destructive action, never a switch: nothing happens until Turn off.
+ * destructive action, never a switch: nothing happens until Turn off. Through the Zenium account
+ * the checkbox names the account rather than a folder.
  */
-export function SyncDisconnectForm({ close }: { close: () => void }): JSX.Element {
+export function SyncDisconnectForm({
+  close,
+  account
+}: {
+  close: () => void
+  account?: boolean
+}): JSX.Element {
   const [wipeRemote, setWipeRemote] = useState(false)
   return (
     <div className="zen-settings-form" data-testid="sync-disconnect-form">
       <V2CheckRow
-        label={SYNC_COPY.wipeRemote}
+        label={account ? SYNC_COPY.wipeRemoteAccount : SYNC_COPY.wipeRemote}
         description={SYNC_COPY.wipeRemoteHint}
         checked={wipeRemote}
         onChange={setWipeRemote}

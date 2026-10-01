@@ -36,6 +36,7 @@ import type {
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
+import type { ShareChooser } from './shareTarget'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrCodeRequest, QrEvent, QrStartOutcome } from './qrScan'
@@ -361,6 +362,12 @@ export interface HostCapabilities {
    * today.
    */
   placementAnswered: boolean
+  /**
+   * Page dialogs (alert, confirm, prompt, "Leave site?") on an AI agent's tabs reach the core's
+   * PageDialogService, so the agent answers them (`browser_handle_dialog` is listed). Off where
+   * the host's own dialog handling never hands them over (Android's WebChromeClient today).
+   */
+  agentDialogs: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1423,11 +1430,12 @@ export interface SyncStatus {
   lastSyncAt: number | null
   lastError: string | null
   /**
-   * The class of `lastError` when the WebDAV transport raised it (ID-32), for the chrome to say
-   * in its own words (§9.33: no method or status in a sentence); null for the folder transport's
+   * The class of `lastError` when the WebDAV or the account transport raised it (ID-32), for the
+   * chrome to say in its own words (§9.33: no method or status in a sentence) – read as a
+   * `WebDavErrorKind` or an `AccountErrorKind` by `transport`; null for the folder transport's
    * sentences and when there is no error.
    */
-  lastErrorKind: WebDavErrorKind | null
+  lastErrorKind: WebDavErrorKind | AccountErrorKind | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
   devices: SyncDevice[]
@@ -1454,10 +1462,61 @@ export interface SyncStatus {
    * waits for a new one (`sync.setWebDavPassword`). Never set by the folder transport.
    */
   authRefused: boolean
+  /**
+   * The host can reach the Zenium account service and keep the device's sign-in (a fetch and a
+   * secret store, as for a WebDAV server): the setup may offer the account.
+   */
+  accountAvailable: boolean
+  /**
+   * The Zenium account this device is signed in to: before setup once the sign-in in the browser
+   * was approved (the passphrase step follows), and while sync runs through it. Kept while the
+   * service has signed the device out (`accountSignedOut`), so the chrome can name it; null
+   * otherwise.
+   */
+  account: { email: string } | null
+  /**
+   * A sign-in under way (`sync.accountSignIn`): the code the new tab shows for the user to check,
+   * the page it opened, and when the code stops working. Null when none runs.
+   */
+  accountLink: SyncAccountLink | null
+  /** Why the last sign-in did not finish (the code expired, the service could not be reached…); null after a new one starts. */
+  accountLinkFailure: SyncAccountLinkFailure | null
+  /**
+   * The account service ended this device's sign-in (signed out from the website, the account
+   * deleted, a refresh refused): sync stays configured, nothing more is sent, and the engine
+   * waits for the user to sign in again (`sync.accountSignIn`) – the account's `authRefused`.
+   */
+  accountSignedOut: boolean
 }
 
-/** How a device reaches the shared folder: a folder of the host's (`folder`), or a WebDAV server (`webdav`). */
-export type SyncTransportKind = 'folder' | 'webdav'
+/**
+ * How a device reaches the shared folder: a folder of the host's (`folder`), a WebDAV server
+ * (`webdav`), or the user's Zenium account (`account`).
+ */
+export type SyncTransportKind = 'account' | 'folder' | 'webdav'
+
+/** A sign-in to the Zenium account under way: the code to check against the new tab, its page, its expiry (ms). */
+export interface SyncAccountLink {
+  userCode: string
+  verificationUrl: string
+  expiresAt: number
+}
+
+/**
+ * Why a sign-in did not finish: the code `expired` before it was approved, the service was
+ * `unavailable` or `rate-limited`, or the host's secret store could not keep the sign-in (`secrets`).
+ */
+export type SyncAccountLinkFailure = 'expired' | 'unavailable' | 'rate-limited' | 'secrets'
+
+/**
+ * How the Zenium account service answered, as the account transport classes it
+ * (`core/sync/account.ts`): `signed-out` (the device's sign-in is gone – revoked, the account
+ * deleted, a refresh refused), `quota` (the account's sync storage is full), `too-large` (one
+ * document past the service's size), `rate-limited` (too many requests for now), `unavailable`
+ * (a network failure, a timeout, a 5xx), `refused` (any other refusal).
+ */
+export type AccountErrorKind =
+  'signed-out' | 'quota' | 'too-large' | 'rate-limited' | 'unavailable' | 'refused'
 
 /**
  * A WebDAV server as the sync folder's home (ID-32): the DAV root the account's files live under
@@ -1493,13 +1552,16 @@ export type WebDavErrorKind =
 export type WebDavProbe = { ok: true } | { ok: false; kind: WebDavErrorKind; status: number }
 
 /**
- * Why `sync.setup` or `sync.setWebDavPassword` did not do what was asked with a WebDAV server,
- * for the chrome to say in its own words (§9.33): the server's answer as the transport classed
- * it, or the host's secret store not keeping the app password. Null when it did. The folder
- * transport's refusals are as before ID-32: a toast the setup form takes as its line.
+ * Why `sync.setup` or `sync.setWebDavPassword` did not do what was asked with a WebDAV server or
+ * the Zenium account, for the chrome to say in its own words (§9.33): the server's answer as the
+ * transport classed it, the account service's, or the host's secret store not keeping the app
+ * password. Null when it did. The folder transport's refusals are as before ID-32: a toast the
+ * setup form takes as its line.
  */
 export type SyncSetupRefusal =
-  { reason: 'server'; kind: WebDavErrorKind; status: number } | { reason: 'secrets' }
+  | { reason: 'server'; kind: WebDavErrorKind; status: number }
+  | { reason: 'account'; kind: AccountErrorKind }
+  | { reason: 'secrets' }
 
 // ---------------------------------------------------------------------------
 // Passwords (the encrypted credential vault)
@@ -2179,7 +2241,8 @@ export interface BookmarkImportResult {
 // Import from other browsers (Chrome's "Import bookmarks and settings", ID-23)
 // ---------------------------------------------------------------------------
 
-export type ImportKind = 'bookmarks' | 'history' | 'passwords'
+/** `addresses` (ID-57): the saved addresses of a Chromium browser's `Web Data`, into the vault. */
+export type ImportKind = 'bookmarks' | 'history' | 'passwords' | 'addresses'
 
 /** `file`: a Netscape bookmarks HTML or a passwords CSV the user picks (every host). */
 export type ImportBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | 'safari' | 'file'
@@ -3983,6 +4046,21 @@ export interface AgentInfo {
   calls: number
 }
 
+/**
+ * A named agent that is not connected but still holds its tab groups (a durable session from
+ * `zen_session start`): they stay its own until it resumes or ends, or the user releases them.
+ */
+export interface AwayAgentInfo {
+  claimId: string
+  name: string
+  color: string
+  /** Its groups that still exist. */
+  groupIds: string[]
+  /** The tabs in those groups. */
+  tabIds: string[]
+  lastSeenAt: number
+}
+
 export interface AgentServerStatus {
   running: boolean
   /** Loopback endpoint, e.g. `http://127.0.0.1:41735/mcp`. */
@@ -5016,6 +5094,8 @@ export interface UIState {
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
+  /** Named agents that are not connected but still hold their tab groups. */
+  awayAgents: AwayAgentInfo[]
   agentServer: AgentServerStatus
   /** The `zenium-browser` Agent Skill's install state per harness (`capabilities.agentSkills`). */
   agentSkills: AgentSkillStatus
@@ -5066,6 +5146,15 @@ export interface UIState {
   screenCaptureRequests: ScreenCaptureRequest[]
   /** Shares waiting on this window's share sheet, oldest first. */
   shareRequests: ShareRequest[]
+  /**
+   * The share another app sent that waits on this window's chooser (MW-63): an installed web
+   * app declares a target for it, so the chrome draws the chooser and answers with
+   * `share.chooserPick` or `share.chooserCancel`. Part of the snapshot, not an event: a share
+   * that cold-starts the app reaches the core before the chrome has subscribed to anything, and
+   * the chooser must still be up once the chrome draws. One at a time – a newer share takes it
+   * over – and null while none waits (always null on hosts without a share intake).
+   */
+  shareChooser: ShareChooser | null
   /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
   crashRestore: CrashRestoreOffer | null
   /** In-page autofill: save prompts, the account / address / card picker, entry counts. */
@@ -5424,6 +5513,15 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number; cover?: ContentCover } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /**
+   * Set with `contentHidden` when what covers the pages is the tab overview, open or on its way
+   * open (the gesture stage's `overviewInteractive`, on the phone and on the tablet): the hide
+   * is a switch away from the pages under it, not a sheet or a field over them, and the host
+   * tells those pages so (OS-39, the Android op `view.setVisible { tabId, visible, switched?:
+   * true }` → `BackgroundTabRule`). Absent otherwise – on every desktop report, where no
+   * overview exists.
+   */
+  switchedAway?: boolean
   /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
   sidePanel?: Rect | null
 }
@@ -5447,6 +5545,13 @@ export interface Commands {
    * `share.panel` event): where the held share goes. Nothing on hosts without the panel.
    */
   'share.panelAction': { args: SharePanelAction; result: void }
+  /**
+   * The share chooser's pick (MW-63; the chooser is `UIState.shareChooser`): the installed app
+   * the share goes to, or null for the house route – a new tab for a link, a search for text.
+   */
+  'share.chooserPick': { args: { requestId: string; appId: string | null }; result: void }
+  /** The share chooser was dismissed: the share goes nowhere. */
+  'share.chooserCancel': { args: { requestId: string }; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**
@@ -7003,7 +7108,8 @@ export interface Commands {
   /**
    * Turn sync on. `transport` names the folder's home (the folder of `folder` when absent, as
    * before ID-32); with `webdav` the server's settings and app password come in `webdav` and
-   * `folder` is not read.
+   * `folder` is not read; with `account` the account signed in to (`sync.accountSignIn`) is the
+   * home and neither is read.
    */
   'sync.setup': {
     args: {
@@ -7024,6 +7130,19 @@ export interface Commands {
    * sync runs again with it. The secret store not keeping it is the typed refusal, never a rejection.
    */
   'sync.setWebDavPassword': { args: { password: string }; result: SyncSetupRefusal | null }
+  /**
+   * Sign this device in to the Zenium account: the sign-in page opens in a new tab and the code
+   * it must show lands in `SyncStatus.accountLink`; the engine waits for the approval in the
+   * background. Resolves once the code is shown (or the start failed: `accountLinkFailure`).
+   */
+  'sync.accountSignIn': { args: void; result: void }
+  /** Stop waiting for the sign-in under way; nothing is kept. */
+  'sync.accountCancel': { args: void; result: void }
+  /**
+   * Sign this device out of the Zenium account: the service forgets its sign-in, the secret store
+   * forgets it here, and sync turns off (this device keeps what it has).
+   */
+  'sync.accountSignOut': { args: void; result: void }
   'sync.setScope': { args: Partial<SyncScope>; result: void }
   'sync.setDeviceName': { args: { name: string }; result: void }
   /**
@@ -7047,6 +7166,11 @@ export interface Commands {
 
   /** End an agent's session and release its tabs. */
   'agent.disconnect': { args: { id: string }; result: void }
+  /**
+   * Release a disconnected agent's tab groups: they stay open, orphaned for any agent to adopt,
+   * and the agent can no longer resume them.
+   */
+  'agent.release': { args: { claimId: string }; result: void }
   'agent.setMode': { args: { id: string; mode: AgentMode }; result: void }
   /** Take a tab back from the agent driving it. */
   'agent.releaseTab': { args: { tabId: string }; result: void }
@@ -7640,6 +7764,8 @@ export interface Events {
    * `unpack: false` when the user confirms. A folder with nothing in it is deleted without asking.
    */
   'folder.confirmDelete': { folderId: string }
+  /** The folder menu's "Release from <agent>…": ask before releasing that agent's groups. */
+  'agent.confirmRelease': { claimId: string; folderId: string }
   /**
    * Close the group's tabs with Undo on the toast (the touch hosts' group menu's "Close Group (N
    * Tabs)", TAB-16): the chrome runs `folder.close` through its one close-with-undo

@@ -99,6 +99,7 @@ function fixture(tabs: Tab[], activeTabId = tabs[0]?.id ?? null): { state: UISta
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     boosts: [],

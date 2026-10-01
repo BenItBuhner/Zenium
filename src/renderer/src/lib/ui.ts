@@ -500,6 +500,12 @@ export interface UiState {
    */
   folderDeleteConfirm: { folderId: string; keyboard: boolean } | null
   /**
+   * "Release <agent>'s groups?" (the folder menu's Release from <agent>…): a §9.23 frame dialog
+   * over the page, asked before a disconnected agent's groups are handed back. `keyboard`: the
+   * folder's header had the keyboard, so Cancel hands it back there.
+   */
+  agentReleaseConfirm: { claimId: string; folderId: string; keyboard: boolean } | null
+  /**
    * "Delete search history?" (the desktop omnibox row menu's Delete Search History; §10.5's
    * bulk case, pr-434 ruling 3): a §9.23 destructive frame dialog over the open bar and the
    * page's picture, asked before every remembered search goes.
@@ -774,6 +780,7 @@ export const uiStore = createStore<UiState>(
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     folderDeleteConfirm: null,
+    agentReleaseConfirm: null,
     deleteSearchHistoryOpen: false,
     barMenuOpen: false,
     permissionPromptOpen: false,
@@ -1360,6 +1367,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !shareChooserUp() &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -1398,6 +1406,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.agentReleaseConfirm &&
     !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui)
   )
@@ -1432,6 +1441,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !shareChooserUp() &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -1471,6 +1481,7 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.agentReleaseConfirm &&
     !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
@@ -2409,6 +2420,33 @@ export function answerExternalProtocol(requestId: string, allow: boolean, always
   returnFocusToPage()
 }
 
+// ---------------------------------------------------------------------------
+// The share chooser (MW-63): a share another app sent, offered to the installed apps
+// ---------------------------------------------------------------------------
+
+/**
+ * The chooser is the core's to put up and take down: it rides the window's snapshot
+ * (`UIState.shareChooser`; `components/share/ShareChooserSheet.tsx` draws it from there), so
+ * the surface predicates read the browser state for it, not this store.
+ */
+function shareChooserUp(): boolean {
+  return (browserStore.get().state?.shareChooser ?? null) !== null
+}
+
+/**
+ * The chooser's pick – an installed app's id, or null for the house route – or its dismissal
+ * (`cancel`), for the chooser the snapshot carries (an answer to one it no longer does is
+ * nothing). The core routes or drops the share and clears the chooser from the snapshot; the
+ * sheet leaves on that, and lets the page's picture and the focus go once it is down
+ * (`ShareChooserSheet.tsx`, which also sees that a share is answered once).
+ */
+export function answerShareChooser(requestId: string, appId: string | null | 'cancel'): void {
+  const current = browserStore.get().state?.shareChooser ?? null
+  if (!current || current.requestId !== requestId) return
+  if (appId === 'cancel') run('share.chooserCancel', { requestId })
+  else run('share.chooserPick', { requestId, appId })
+}
+
 /** The core withdrew the question (its tab closed, a newer one took over). */
 export function cancelExternalProtocol(requestId: string): void {
   if (uiStore.get().externalProtocol?.requestId !== requestId) {
@@ -2661,6 +2699,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.folderDeleteConfirm !== null ||
+    ui.agentReleaseConfirm !== null ||
     ui.deleteSearchHistoryOpen ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
@@ -2753,6 +2792,26 @@ export async function openFolderDeleteConfirm(
 export function closeFolderDeleteConfirm(toChrome = false): void {
   if (!uiStore.get().folderDeleteConfirm) return
   uiStore.set({ folderDeleteConfirm: null })
+  invalidateSnapshot()
+  if (!toChrome) returnFocusToPage()
+}
+
+/** "Release <agent>'s groups?" over the page, as `openFolderDeleteConfirm` asks its question. */
+export async function openAgentReleaseConfirm(
+  claimId: string,
+  folderId: string,
+  activeTabId: string | null,
+  keyboard: boolean
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ agentReleaseConfirm: { claimId, folderId, keyboard }, groupEditor: null })
+}
+
+/** Put the release prompt away; `toChrome` keeps the keyboard in the chrome. */
+export function closeAgentReleaseConfirm(toChrome = false): void {
+  if (!uiStore.get().agentReleaseConfirm) return
+  uiStore.set({ agentReleaseConfirm: null })
   invalidateSnapshot()
   if (!toChrome) returnFocusToPage()
 }
