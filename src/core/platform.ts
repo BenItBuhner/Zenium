@@ -119,6 +119,7 @@ import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
 import type { BackgroundWorkerHandle } from './background/work'
 import type { RuleSet } from './blocking/rules'
 import type { StartupOverride } from './startup'
+import type { ExtensionSyncSource, SyncedExtensionData } from './sync/records'
 
 export interface PlatformInfo {
   os: PlatformOs
@@ -2255,10 +2256,38 @@ export interface Governor {
   memoryOf?(tabId: string): number | null
 }
 
+/**
+ * One `extension` record as the sync engine hands it to the host (ID-44): the extension's id,
+ * the record read (`readExtensionData`) with both switch clocks filled in – an absent clock
+ * read as 0, older than any written one (`syncedExtensionData`) – or null for a tombstone, the
+ * extension removed on `from` – and the device whose file carried the record, as that device
+ * names itself (`SyncStatus.devices`' name), null when the engine cannot say.
+ */
+export interface SyncedExtensionChange {
+  id: string
+  data: SyncedExtensionData | null
+  from: string | null
+}
+
 /** Browser extensions (Chromium extension API); Electron only. */
 export interface ExtensionHost {
   start(): Promise<void>
   list(): ExtensionInfo[]
+  /**
+   * What the sync engine collects of the installed extensions (ID-44), from the registry alone
+   * – id, source, the two synced switches with their clocks, `pendingApproval` – without the
+   * manifest reads `list()` does for an extension that is not loaded. The engine falls back to
+   * `list()` on a host without it.
+   */
+  syncSources?(): readonly ExtensionSyncSource[]
+  /**
+   * The extensions whose winning `extension` record is with the applier and not committed yet
+   * (`applySyncedExtensions` handed over, the host's registry not yet changed for it). The
+   * engine leaves them out of the round's re-snapshot, so the copy the record found here is
+   * never published under the winner's time; the applier's commit is the edit that publishes
+   * the applied state.
+   */
+  syncedExtensionsInFlight?(): ReadonlySet<string>
   /** Load an unpacked folder picked in a native dialog. */
   addFromDialog(win: ZenWindow): Promise<void>
   /** Install a `.crx` or `.zip` picked in a native dialog. */
@@ -2289,6 +2318,28 @@ export interface ExtensionHost {
    * Hosts without it (the phone) never let an extension set the startup.
    */
   startupPagesOverride?(): StartupOverride | null
+  /**
+   * The `extension` records other devices published, as they win or stand outstanding
+   * (`SyncEngine.run` → `applyRemote`; services pass 16, ID-44): a live record for an extension
+   * this host lacks is installed from its store and lands TURNED OFF, waiting for the user's
+   * approval of its permissions (`ExtensionInfo.pendingApproval`), its toolbar switch and the
+   * clocks as the record carries them; one for an extension it holds is merged SWITCH BY SWITCH
+   * through the ordinary paths – each of `enabled` and `toolbarPinned` taken from the record
+   * only when the record's clock for that switch is not older than the host's own (ties take
+   * the record's), the other kept – and `enabled: true` lands only once the user approved the
+   * install here; a tombstone uninstalls, with a toast naming the device the removal came from
+   * and Undo. Serialised per id; every path – install, switch, tombstone – waits for the
+   * extension host's startup attach and for the id's own busy work (an install or update in
+   * flight) to finish, so a tombstone that arrives during an update lands after it rather than
+   * being undone by it; never during the extension layer's startup hold; one console line and
+   * a per-id back-off for a store that will not hand the extension over; the same records again
+   * do nothing more (the engine hands the outstanding ones over every round,
+   * `pendingExtensionRequests`). Hosts without it (the phone) publish their store installs and
+   * apply nothing – and the engine never re-publishes, under a winner's stamp, a copy such a
+   * host could not change: an id whose record lost a round there is left out of its file until
+   * the host's own registry changes for it (`SyncEngine.sources`).
+   */
+  applySyncedExtensions?(changes: readonly SyncedExtensionChange[]): void
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */

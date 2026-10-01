@@ -386,4 +386,192 @@ describe('migrateRegistry', () => {
       pendingWarnings: ['Read your browsing history']
     })
   })
+
+  it('keeps a synced landing’s `pendingApproval` (ID-44) only as a literal `true` on a record that is off – an approved or enabled one carries none', () => {
+    const migrated = migrateRegistry(
+      {
+        version: 2,
+        extensions: [
+          {
+            id: 'pending',
+            path: '/p',
+            source: 'chrome-web-store',
+            enabled: false,
+            pendingApproval: true
+          },
+          {
+            id: 'enabled',
+            path: '/e',
+            source: 'chrome-web-store',
+            enabled: true,
+            pendingApproval: true
+          },
+          {
+            id: 'stringly',
+            path: '/s',
+            source: 'edge-add-ons',
+            enabled: false,
+            pendingApproval: 'yes'
+          },
+          { id: 'plain', path: '/q', source: 'edge-add-ons', enabled: false }
+        ]
+      },
+      helpers,
+      NOW
+    )
+    expect(migrated.extensions.map((r) => [r.id, r.pendingApproval ?? null])).toEqual([
+      ['pending', true],
+      ['enabled', null],
+      ['stringly', null],
+      ['plain', null]
+    ])
+    expect(migrated.extensions[0]).toMatchObject({ enabled: false, pendingApproval: true })
+    expect(Object.keys(migrated.extensions[3]!)).not.toContain('pendingApproval')
+    // A well-formed record with the flag passes through unchanged.
+    const doc = {
+      version: 2,
+      extensions: [{ ...record(), enabled: false, pendingApproval: true }],
+      lastUpdateCheck: null
+    }
+    expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
+  })
+
+  it('keeps a switch’s clock (`enabledAt`, `toolbarPinnedAt`, ID-44 round 2) as a finite positive number and drops anything else; a record from before the clocks carries none', () => {
+    const migrated = migrateRegistry(
+      {
+        version: 2,
+        extensions: [
+          {
+            id: 'clocked',
+            path: '/c',
+            source: 'chrome-web-store',
+            enabled: true,
+            enabledAt: 1500,
+            toolbarPinnedAt: 1200
+          },
+          {
+            id: 'half',
+            path: '/h',
+            source: 'chrome-web-store',
+            enabled: false,
+            enabledAt: 1500
+          },
+          {
+            id: 'damaged',
+            path: '/d',
+            source: 'edge-add-ons',
+            enabled: true,
+            enabledAt: '1500',
+            toolbarPinnedAt: Number.NaN
+          },
+          {
+            id: 'zeroed',
+            path: '/z',
+            source: 'edge-add-ons',
+            enabled: true,
+            enabledAt: 0,
+            toolbarPinnedAt: -1
+          },
+          { id: 'before', path: '/b', source: 'edge-add-ons', enabled: true }
+        ]
+      },
+      helpers,
+      NOW
+    )
+    const clocks = (r: (typeof migrated.extensions)[number]): unknown[] => [
+      r.id,
+      'enabledAt' in r ? r.enabledAt : 'absent',
+      'toolbarPinnedAt' in r ? r.toolbarPinnedAt : 'absent'
+    ]
+    expect(migrated.extensions.map(clocks)).toEqual([
+      ['clocked', 1500, 1200],
+      ['half', 1500, 'absent'],
+      ['damaged', 'absent', 'absent'],
+      ['zeroed', 'absent', 'absent'],
+      ['before', 'absent', 'absent']
+    ])
+    // A well-formed record with the clocks passes through unchanged.
+    const doc = {
+      version: 2,
+      extensions: [{ ...record(), enabledAt: 1500, toolbarPinnedAt: 1200 }],
+      lastUpdateCheck: null
+    }
+    expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
+    // `newRecord` (the shared builder; the phone's installs) sets none: the desktop stamps at
+    // its install (`ExtensionService.installPackage`), the phone at its flips alone.
+    expect(record()).not.toHaveProperty('enabledAt')
+    expect(record()).not.toHaveProperty('toolbarPinnedAt')
+  })
+
+  it('keeps the install time a synced landing publishes (`syncedInstalledAt`, ID-44 round 5) as a finite number of 0 or more – 0 being "the record carried none" – and drops anything else; an install made by hand carries none, `newRecord` sets none', () => {
+    const migrated = migrateRegistry(
+      {
+        version: 2,
+        extensions: [
+          {
+            id: 'landed',
+            path: '/l',
+            source: 'chrome-web-store',
+            enabled: false,
+            pendingApproval: true,
+            syncedInstalledAt: 1000
+          },
+          {
+            id: 'landedFromBefore',
+            path: '/lb',
+            source: 'chrome-web-store',
+            enabled: true,
+            syncedInstalledAt: 0
+          },
+          {
+            id: 'damaged',
+            path: '/d',
+            source: 'edge-add-ons',
+            enabled: true,
+            syncedInstalledAt: '1000'
+          },
+          {
+            id: 'negative',
+            path: '/n',
+            source: 'edge-add-ons',
+            enabled: true,
+            syncedInstalledAt: -1
+          },
+          {
+            id: 'infinite',
+            path: '/i',
+            source: 'edge-add-ons',
+            enabled: true,
+            syncedInstalledAt: Number.POSITIVE_INFINITY
+          },
+          { id: 'byHand', path: '/h', source: 'edge-add-ons', enabled: true }
+        ]
+      },
+      helpers,
+      NOW
+    )
+    expect(
+      migrated.extensions.map((r) => [
+        r.id,
+        'syncedInstalledAt' in r ? r.syncedInstalledAt : 'absent'
+      ])
+    ).toEqual([
+      ['landed', 1000],
+      ['landedFromBefore', 0],
+      ['damaged', 'absent'],
+      ['negative', 'absent'],
+      ['infinite', 'absent'],
+      ['byHand', 'absent']
+    ])
+    // The record's own `installedAt` is untouched by it: the landing's time stands beside.
+    expect(migrated.extensions[0]!.installedAt).toBe(NOW)
+    // A well-formed landing passes through unchanged.
+    const doc = {
+      version: 2,
+      extensions: [{ ...record(), enabled: false, pendingApproval: true, syncedInstalledAt: 1000 }],
+      lastUpdateCheck: null
+    }
+    expect(migrateRegistry(JSON.parse(JSON.stringify(doc)), helpers, NOW)).toEqual(doc)
+    expect(record()).not.toHaveProperty('syncedInstalledAt')
+  })
 })
