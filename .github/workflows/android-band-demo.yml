@@ -34,6 +34,8 @@ name: Android band demo
 # and the demo it runs.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/android-page-band-layer-9271]
 
 permissions:
   contents: read
