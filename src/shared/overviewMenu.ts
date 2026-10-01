@@ -137,6 +137,39 @@ export function otherOverviewView(view: OverviewView): OverviewView {
   return view === 'private' ? 'tabs' : 'private'
 }
 
+/** "2 Tabs", "1 Tab": a row's count with its unit, capitalised with the row (v2 §9.1). */
+export function tabsUnit(n: number): string {
+  return `${n} ${n === 1 ? 'Tab' : 'Tabs'}`
+}
+
+/**
+ * The overview's other words, in ONE place beside the menu's (the Lead's §9 item 10: every
+ * label once, British, an ellipsis only where a sheet or an editor follows) so the move into
+ * the string table is mechanical: the title's, the Spaces sheet's, the group cards' and their
+ * sheets' (§1, §2, §3). The chrome imports them; nothing of the chrome spells them again.
+ */
+export const OVERVIEW_LABELS = {
+  /** The private view's title (§3): the session has no space's name. */
+  privateTitle: 'Private',
+  /** The Spaces sheet's title (§1). */
+  spaces: 'Spaces',
+  /** The Spaces sheet's last row: the space editor follows. */
+  newSpace: 'New Space…',
+  /** The open group header's ⋯ (§2), its accessible name. */
+  groupOptions: 'Group options',
+  /** The group sheets' rows (§2). */
+  rename: 'Rename',
+  newTabInGroup: 'New Tab in Group',
+  ungroup: 'Ungroup',
+  deleteGroup: 'Delete Group',
+  /** An open group's card from its sheet: the grid scrolls to it, unfolded. */
+  showInTabs: 'Show in Tabs',
+  /** "Close Group (2 Tabs)": its tabs close, the group stays saved with their pages (TAB-16). */
+  closeGroup: (count: number): string => `Close Group (${tabsUnit(count)})`,
+  /** The saved card's "Open (2 Tabs)": its pages come back as tabs. */
+  openGroup: (count: number): string => `Open (${tabsUnit(count)})`
+} as const
+
 /**
  * The row that switches views, or none: from the regular view "Private Tabs (N)" while private
  * tabs exist (and the host has them); from the private view "Tabs (N)" always – the way back

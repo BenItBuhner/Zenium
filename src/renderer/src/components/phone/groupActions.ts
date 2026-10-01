@@ -1,4 +1,5 @@
 import type { Folder } from '@shared/types'
+import { OVERVIEW_LABELS } from '@shared/overviewMenu'
 import { run } from '@renderer/lib/api'
 import { uiStore } from '@renderer/lib/ui'
 
@@ -43,29 +44,29 @@ export function groupActions(
   return [
     {
       id: 'rename',
-      label: 'Rename',
+      label: OVERVIEW_LABELS.rename,
       run: () => uiStore.set({ renamingFolderId: folder.id })
     },
     {
       id: 'new-tab',
-      label: 'New Tab in Group',
+      label: OVERVIEW_LABELS.newTabInGroup,
       run: () => on.newTabInGroup(folder)
     },
     {
       id: 'ungroup',
-      label: 'Ungroup',
+      label: OVERVIEW_LABELS.ungroup,
       run: () => run('folder.delete', { folderId: folder.id, unpack: true })
     },
     // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
     // ink, as on the saved card's sheet and the tablet's menu; Delete Group alone is danger.
     {
       id: 'close',
-      label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
+      label: OVERVIEW_LABELS.closeGroup(count),
       run: () => on.closeGroup(folder)
     },
     {
       id: 'delete',
-      label: 'Delete Group',
+      label: OVERVIEW_LABELS.deleteGroup,
       destructive: true,
       run: () => on.deleteGroup(folder)
     }

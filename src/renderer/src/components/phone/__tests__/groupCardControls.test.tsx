@@ -20,7 +20,8 @@ const invoke = vi.fn(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { GroupCard, GROUP_OPTIONS_LABEL } = await import('../GroupCard')
+const { GroupCard } = await import('../GroupCard')
+const { OVERVIEW_LABELS } = await import('@shared/overviewMenu')
 const { groupActions, groupCardControls } = await import('../groupActions')
 const { DEFAULT_FOLDER_ICON } = await import('@renderer/lib/groups')
 const { applyAccessibilityState, resetAccessibilityState } =
@@ -141,7 +142,7 @@ describe('the group card under touch exploration (A11Y-10)', () => {
     // The open group's ⋯ (the cleanup spec §2) is a real, visible button beside the header,
     // named for the sheet it opens; it is the card's only button.
     const buttons = [...el.querySelectorAll<HTMLButtonElement>('button')]
-    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([GROUP_OPTIONS_LABEL])
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([OVERVIEW_LABELS.groupOptions])
     expect(buttons[0].dataset.testid).toBe('group-card-options')
     expect(buttons[0].classList.contains('sr-only')).toBe(false)
     expect(header(el).getAttribute('role')).toBe('button')

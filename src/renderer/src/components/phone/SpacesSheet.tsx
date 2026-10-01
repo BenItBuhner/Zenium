@@ -1,15 +1,13 @@
 import type { JSX } from 'react'
 import { Plus } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { OVERVIEW_LABELS } from '@shared/overviewMenu'
 import { run } from '@renderer/lib/api'
 import { overviewTabCount, spaceSwatch, tabsWord } from '@renderer/lib/overviewHeader'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay } from '@renderer/lib/ui'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
-
-export const SPACES_SHEET_TITLE = 'Spaces'
-export const NEW_SPACE_LABEL = 'New Space…'
 
 interface Props {
   state: UIState
@@ -40,10 +38,10 @@ export function SpacesSheet({ state, isDark, onClose }: Props): JSX.Element {
   }))
   actions.push({
     id: 'new-space',
-    label: NEW_SPACE_LABEL,
+    label: OVERVIEW_LABELS.newSpace,
     icon: <Plus className="h-5 w-5" aria-hidden />,
     testId: 'spaces-sheet-new',
     onPick: () => void openOverlay('space-editor', active?.id ?? null, null)
   })
-  return <OverviewSheet title={SPACES_SHEET_TITLE} actions={actions} onClose={onClose} />
+  return <OverviewSheet title={OVERVIEW_LABELS.spaces} actions={actions} onClose={onClose} />
 }

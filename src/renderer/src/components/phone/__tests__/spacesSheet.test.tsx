@@ -18,7 +18,8 @@ vi.mock(import('@renderer/lib/ui'), async (importOriginal) => {
 
 import { run } from '@renderer/lib/api'
 import { openOverlay } from '@renderer/lib/ui'
-import { NEW_SPACE_LABEL, SPACES_SHEET_TITLE, SpacesSheet } from '../SpacesSheet'
+import { OVERVIEW_LABELS } from '@shared/overviewMenu'
+import { SpacesSheet } from '../SpacesSheet'
 
 /*
  * The Spaces sheet (tab overview cleanup spec §1): the overview's title opens the Spaces
@@ -159,12 +160,12 @@ function sheet(state: UIState): void {
 describe('the Spaces sheet (§1)', () => {
   it('lists the spaces with their dots, names and the overview’s counts, the current one checked, New Space… last', () => {
     sheet(stateOf('work'))
-    expect(q('.zen-sheet .zen-sheet-title')?.textContent).toBe(SPACES_SHEET_TITLE)
+    expect(q('.zen-sheet .zen-sheet-title')?.textContent).toBe(OVERVIEW_LABELS.spaces)
     const items = rows()
     expect(items.map((r) => r.querySelector('.flex-1')?.textContent)).toEqual([
       'Work',
       'Home',
-      NEW_SPACE_LABEL
+      OVERVIEW_LABELS.newSpace
     ])
     // The counts are the header's: Home's private tab is not among its cards (TAB-02).
     expect(items.map((r) => r.querySelector('.tabular-nums')?.textContent ?? '')).toEqual([

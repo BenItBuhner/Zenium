@@ -2,6 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useRef } from 'react'
 import { Trash2 } from 'lucide-react'
 import type { Folder } from '@shared/types'
+import { OVERVIEW_LABELS } from '@shared/overviewMenu'
 import { run } from '@renderer/lib/api'
 import { folderDeleteWords } from '@renderer/lib/folderDelete'
 import { GROUP_PALETTE, groupColorVars } from '@renderer/lib/groups'
@@ -77,26 +78,25 @@ export function GroupRowSheet({
   onDelete: (row: GroupRow) => void
 }): JSX.Element {
   const { folder, kind, count } = row
-  const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
   const actions: SheetAction[] = []
   if (kind === 'open')
-    actions.push({ id: 'show', label: 'Show in Tabs', onPick: () => onOpen(row) })
+    actions.push({ id: 'show', label: OVERVIEW_LABELS.showInTabs, onPick: () => onOpen(row) })
   if (kind === 'saved')
-    actions.push({ id: 'open', label: `Open (${tabs})`, onPick: () => onOpen(row) })
+    actions.push({ id: 'open', label: OVERVIEW_LABELS.openGroup(count), onPick: () => onOpen(row) })
   actions.push({
     id: 'rename',
-    label: 'Rename',
+    label: OVERVIEW_LABELS.rename,
     onPick: () => uiStore.set({ renamingFolderId: folder.id })
   })
   if (kind === 'open')
     actions.push({
       id: 'close',
-      label: `Close Group (${tabs})`,
+      label: OVERVIEW_LABELS.closeGroup(count),
       onPick: () => onCloseGroup(folder)
     })
   actions.push({
     id: 'delete',
-    label: 'Delete Group',
+    label: OVERVIEW_LABELS.deleteGroup,
     destructive: true,
     onPick: () => onDelete(row)
   })

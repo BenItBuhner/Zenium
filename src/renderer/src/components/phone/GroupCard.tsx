@@ -2,6 +2,7 @@ import type { CSSProperties, JSX, RefObject } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Ellipsis } from 'lucide-react'
 import type { Folder, Tab } from '@shared/types'
+import { OVERVIEW_LABELS } from '@shared/overviewMenu'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { accessibilityStore } from '@renderer/lib/accessibilityState'
 import { run } from '@renderer/lib/api'
@@ -22,9 +23,6 @@ import { useLongPress } from './useLongPress'
 
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
 export const GROUP_PAD = 6
-
-/** The accessible name of the open group's ⋯ (its options sheet: Rename, Colour, Ungroup, Close, Delete). */
-export const GROUP_OPTIONS_LABEL = 'Group options'
 
 /**
  * How far past the grid's edges the folded card's mosaic counts as on screen (`useOnScreen`,
@@ -337,7 +335,7 @@ export function GroupCard({
         <button
           type="button"
           className="zen-toolbar-button zen-group-options absolute right-1 top-0 h-11 w-11 rounded-[10px]"
-          aria-label={GROUP_OPTIONS_LABEL}
+          aria-label={OVERVIEW_LABELS.groupOptions}
           aria-haspopup="dialog"
           data-testid="group-card-options"
           onClick={(e) => {

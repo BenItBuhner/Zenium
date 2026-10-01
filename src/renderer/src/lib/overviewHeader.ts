@@ -1,5 +1,5 @@
 import type { Space, UIState } from '@shared/types'
-import type { OverviewView } from '@shared/overviewMenu'
+import { OVERVIEW_LABELS, type OverviewView } from '@shared/overviewMenu'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { privateTabsOf, tabsOnPane } from './privateTabs'
 import { essentialsFor, pinnedOf, regularOf } from './selectors'
@@ -11,7 +11,7 @@ import { essentialsFor, pinnedOf, regularOf } from './selectors'
  */
 
 /** The private view's title (§3): the session has no space's name. */
-export const PRIVATE_TITLE = 'Private'
+export const PRIVATE_TITLE = OVERVIEW_LABELS.privateTitle
 
 /** "3 tabs", "1 tab". */
 export function tabsWord(n: number): string {
