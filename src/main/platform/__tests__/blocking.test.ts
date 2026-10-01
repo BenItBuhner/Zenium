@@ -706,7 +706,7 @@ describe('GhosteryTextMatcher', () => {
     const deserialise = vi.spyOn(DocumentFilters, 'deserialize')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     matcher.rebuild()
-    await new Promise((r) => setTimeout(r, 20))
+    await settled(matcher)
     expect(matcher.ready).toBe(true)
     expect(matcher.compiledInBackground).toBe(1)
     // The worker parsed (inline here, as the mock runs the task in-process); the adopt did not.
