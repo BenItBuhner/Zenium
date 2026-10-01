@@ -120,8 +120,11 @@ function harness(
       }
     },
     allWindows: () => windows,
-    openAppWindow: (url: string) => {
-      const record = service.pinnedFor(url)
+    // `Browser.openAppWindow`'s rule for the window's record: the one named, else the one a
+    // launcher's URL is of; a shortcut's window is bounded by the origin.
+    openAppWindow: (url: string, opts: { appId?: string } = {}) => {
+      const record =
+        opts.appId === undefined ? service.appForLaunch(url) : service.pinnedById(opts.appId)
       const appWin = {
         id: `app${appWindows.length + 1}`,
         isPrivate: false,
@@ -132,7 +135,7 @@ function harness(
           ? {
               name: record.name,
               icon: record.icon ?? null,
-              scope: record.scope,
+              scope: record.kind === 'shortcut' ? new URL(url).origin + '/' : record.scope,
               appId: record.id,
               startUrl: record.startUrl
             }
@@ -508,22 +511,220 @@ describe('WebAppService', () => {
     expect(h.createdTabs).toEqual([])
   })
 
-  it('a page without a manifest pinned on the desktop is a shortcut, not an install: the core toasts "Shortcut created" itself and sends the chrome no `webapp.pinned`, whichever way the box stood', async () => {
+  it('a page without a manifest pinned on the desktop with "Open as window" on is a shortcut on record (seed D5): `kind` shortcut, the page’s URL its id, start URL and scope, the host’s icon and the box’s mode; the core’s own "Shortcut created" with no `webapp.pinned`; and the tab moves into the shortcut’s window, bounded by the origin', async () => {
     const h = harness({ desktop: true })
     await h.service.pin(h.tab.id, 'Sketch', h.win, true)
     h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    // Not an install: no "Installed <name>", no Open action (Chrome offers none for a
+    // shortcut, and the page is in its window already).
     expect(h.toasts).toEqual(['Shortcut created'])
     expect(h.events.filter((e) => e.name === 'webapp.pinned')).toEqual([])
-    // No record to open, no app window, the tab where it was.
+    const record = h.service.pinnedById(DOCUMENT_URL)
+    expect(record).toEqual({
+      id: DOCUMENT_URL,
+      kind: 'shortcut',
+      name: 'Sketch',
+      startUrl: DOCUMENT_URL,
+      scope: DOCUMENT_URL,
+      pinnedAt: h.now.value,
+      icon: 'file:///icons/sketch.png',
+      bounds: null,
+      openAsWindow: true
+    })
+    // No manifest, so no share target on the record – not even a null one.
+    expect('shareTarget' in record!).toBe(false)
+    // It claims no page: the page is still no app's (the chip and Create Shortcut… stand).
     expect(h.service.pinnedFor(DOCUMENT_URL)).toBeNull()
-    expect(h.appWindows).toEqual([])
-    expect(h.closedTabs).toEqual([])
+    // Chrome moves the page into the new window: the shortcut's own – its name, icon and id on
+    // the frame – bounded by the origin as any `--app=` window of no app is; the tab closes.
+    expect(h.appWindows.map((w) => w.url)).toEqual([DOCUMENT_URL])
+    expect(h.appWindows[0].shown).toBe(1)
+    expect(h.appWindows[0].win.app).toEqual({
+      name: 'Sketch',
+      icon: 'file:///icons/sketch.png',
+      scope: 'https://app.example/',
+      appId: DOCUMENT_URL,
+      startUrl: DOCUMENT_URL
+    })
+    expect(h.closedTabs).toEqual(['t1'])
     // The page still hears the launcher took it, as before.
     expect(h.pageMessages.at(-1)).toEqual({ type: 'webapp', action: 'installed' })
+    // Listed with its one window (Settings › Apps, as chrome://apps lists shortcuts too).
+    expect(h.service.installed()).toEqual([{ ...record, windows: 1 }])
+  })
+
+  it('a shortcut’s Open and Uninstall are an app’s: its window comes forward, or opens again once that one is going; uninstall removes the launcher and the record and closes its windows', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id)
+    expect(h.appWindows).toHaveLength(1)
+    h.service.launch(DOCUMENT_URL, h.win)
+    expect(h.appWindows).toHaveLength(1)
+    expect(h.appWindows[0].shown).toBe(2)
+    ;(h.appWindows[0].win as { isClosing: boolean }).isClosing = true
+    h.service.launch(DOCUMENT_URL, h.win)
+    expect(h.appWindows).toHaveLength(2)
+    expect(h.appWindows[1].win.app?.appId).toBe(DOCUMENT_URL)
+    ;(h.appWindows[0].win as { isClosing: boolean }).isClosing = false
+    expect(h.service.installed()[0].windows).toBe(2)
+    await h.service.uninstall(DOCUMENT_URL)
+    expect(h.unpins).toEqual([DOCUMENT_URL])
+    expect(h.service.pinnedById(DOCUMENT_URL)).toBeNull()
+    expect(h.service.installed()).toEqual([])
+    expect(h.appWindows.map((w) => w.win.isClosing)).toEqual([true, true])
+    expect(h.appWindows.map((w) => w.win.closeApproved)).toEqual([true, true])
+  })
+
+  it('a shortcut made with "Open as window" off: the tab stays where it is and no window opens, as Chrome leaves it; the record keeps the mode and its Open opens a tab – inside the page the tab goes to it, elsewhere a tab opens', async () => {
+    const h = harness({ desktop: true })
     await h.service.pin(h.tab.id, 'Sketch', h.win, false)
-    h.service.onPinned(h.pins[1].id)
-    expect(h.toasts).toEqual(['Shortcut created', 'Shortcut created'])
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    expect(h.toasts).toEqual(['Shortcut created'])
     expect(h.events.filter((e) => e.name === 'webapp.pinned')).toEqual([])
+    expect(h.appWindows).toEqual([])
+    expect(h.closedTabs).toEqual([])
+    expect(h.service.pinnedById(DOCUMENT_URL)).toMatchObject({
+      kind: 'shortcut',
+      icon: 'file:///icons/sketch.png',
+      openAsWindow: false
+    })
+    expect(h.service.installed()).toEqual([
+      expect.objectContaining({ id: DOCUMENT_URL, kind: 'shortcut', windows: 0 })
+    ])
+    h.service.launch(DOCUMENT_URL, h.win)
+    expect(h.navigations).toEqual([{ tabId: 't1', url: DOCUMENT_URL }])
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.launch(DOCUMENT_URL, h.win)
+    expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
+    expect(h.appWindows).toEqual([])
+  })
+
+  it('the shortcut’s record outlives the run with its kind; a record from before the kind – no `kind` key – reads whole and as an app, as every file before it did', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    h.service.flushSync()
+    const doc = JSON.parse(h.files.get('webapps.json') ?? '{}') as { pinned: unknown[] }
+    expect(doc.pinned).toEqual([
+      expect.objectContaining({
+        id: DOCUMENT_URL,
+        kind: 'shortcut',
+        scope: DOCUMENT_URL,
+        openAsWindow: true
+      })
+    ])
+    const readOnly = (files: Map<string, string>): StoreIO =>
+      ({
+        readSync: (name: string) => files.get(name) ?? null,
+        write: async () => {},
+        writeSync: () => {}
+      }) as unknown as StoreIO
+    const reloaded = new WebAppService(h.browser, readOnly(h.files), { now: () => h.now.value })
+    expect(reloaded.pinnedById(DOCUMENT_URL)).toEqual(h.service.pinnedById(DOCUMENT_URL))
+    expect(reloaded.pinnedFor(DOCUMENT_URL)).toBeNull()
+    expect(reloaded.appForLaunch(DOCUMENT_URL)?.kind).toBe('shortcut')
+
+    // An app's record as #761 and before wrote it: no `kind`, and the loader adds none.
+    const before = {
+      id: MANIFEST_ID,
+      name: 'Sketch',
+      startUrl: DOCUMENT_URL,
+      scope: 'https://app.example/',
+      pinnedAt: 1,
+      icon: 'file:///icons/old.png',
+      bounds: null,
+      shareTarget: null
+    }
+    const files = new Map([
+      ['webapps.json', JSON.stringify({ version: 1, pinned: [before], engagement: {} })]
+    ])
+    const plain = harness({ desktop: true })
+    const old = new WebAppService(plain.browser, readOnly(files), { now: () => h.now.value })
+    expect(old.pinnedById(MANIFEST_ID)).toEqual(before)
+    expect(old.pinnedFor('https://app.example/deep/page')).toEqual(before)
+    expect(old.appForLaunch(DOCUMENT_URL)).toEqual(before)
+    expect(old.installed()).toEqual([{ ...before, windows: 0 }])
+  })
+
+  it('a shortcut claims no page: the page is still no app’s (`pinnedFor`); a second Create updates the record under the same id, the new mode and name on it and the host’s icon kept; and an install of the page’s app, once it has a manifest, takes the id over as an app', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    expect(h.service.pinnedFor(DOCUMENT_URL)).toBeNull()
+    expect(h.service.pinnedFor('https://app.example/deep/page')).toBeNull()
+    // Create again, the box on this time: one record, the launcher's new mode on it, the host's
+    // icon kept where it sent none, and the tab moves now.
+    await h.service.pin(h.tab.id, 'Sketch Pad', h.win, true)
+    h.service.onPinned(h.pins[1].id)
+    expect(
+      h.service.installed().map((a) => [a.id, a.name, a.kind, a.openAsWindow, a.icon])
+    ).toEqual([[DOCUMENT_URL, 'Sketch Pad', 'shortcut', true, 'file:///icons/sketch.png']])
+    expect(h.appWindows.map((w) => w.url)).toEqual([DOCUMENT_URL])
+    expect(h.closedTabs).toEqual(['t1'])
+    expect(h.toasts).toEqual(['Shortcut created', 'Shortcut created'])
+    // The page gains a manifest whose id is its start URL, as the shortcut's is: the install
+    // replaces the shortcut with the app's record, which claims the app's scope.
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[2].id)
+    const app = h.service.pinnedById(MANIFEST_ID)!
+    expect(app.kind).toBeUndefined()
+    expect(app).toMatchObject({ name: 'Sketch', scope: 'https://app.example/', shareTarget: null })
+    expect(h.service.installed()).toHaveLength(1)
+    expect(h.service.pinnedFor('https://app.example/deep/page')?.id).toBe(MANIFEST_ID)
+    expect(h.events.filter((e) => e.name === 'webapp.pinned').map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL, surface: 'desktop', appId: MANIFEST_ID }
+    ])
+  })
+
+  it('the launcher’s `--app=<url>` is the shortcut’s by its exact URL (`appForLaunch`), ahead of an app whose scope merely holds it; another URL of the origin is no one’s until an app claims it', async () => {
+    const h = harness({ desktop: true })
+    h.tab.url = 'https://app.example/notes'
+    await h.service.pin(h.tab.id, 'Notes', h.win, true)
+    h.service.onPinned(h.pins[0].id)
+    expect(h.service.appForLaunch('https://app.example/notes')?.kind).toBe('shortcut')
+    expect(h.service.appForLaunch('https://app.example/notes/today')).toBeNull()
+    expect(h.service.appForLaunch(DOCUMENT_URL)).toBeNull()
+    // The origin's app, installed after: its scope holds the shortcut's URL, so any other URL
+    // of the origin launches as the app's – the shortcut's launcher still the shortcut's.
+    h.tab.url = DOCUMENT_URL
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[1].id)
+    expect(h.service.appForLaunch('https://app.example/notes')?.kind).toBe('shortcut')
+    expect(h.service.appForLaunch('https://app.example/notes/today')?.id).toBe(MANIFEST_ID)
+    expect(h.service.appForLaunch(DOCUMENT_URL)?.id).toBe(MANIFEST_ID)
+    // The page's app is the one with the manifest, the shortcut claiming no page.
+    expect(h.service.pinnedFor('https://app.example/notes')?.id).toBe(MANIFEST_ID)
+  })
+
+  it('a shortcut is no share target: no manifest, so no row in the chooser and nothing for `launchShare` to do', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id)
+    expect(h.service.shareTargetsFor('url')).toEqual([])
+    expect(h.service.shareTargetsFor('text')).toEqual([])
+    const share = { title: null, text: null, url: 'https://news.example/story?id=7' }
+    expect(h.service.launchShare(DOCUMENT_URL, share, h.win)).toBe(false)
+    expect(h.appWindows).toHaveLength(1)
+    expect(h.createdTabs).toEqual([])
+  })
+
+  it('the phone keeps no record of a plain page: its tile is the launcher’s own, the chrome toasts "Added <name> to Home screen" as before, and nothing is listed, launched or written', async () => {
+    const h = harness()
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[0].id)
+    expect(h.toasts).toEqual([])
+    expect(h.events.filter((e) => e.name === 'webapp.pinned').map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL, surface: 'homeScreen', appId: null }
+    ])
+    expect(h.service.pinnedById(DOCUMENT_URL)).toBeNull()
+    expect(h.service.installed()).toEqual([])
+    h.service.launch(DOCUMENT_URL, h.win)
+    expect(h.createdTabs).toEqual([])
+    expect(h.navigations).toEqual([])
+    h.service.flushSync()
+    expect(h.files.has('webapps.json')).toBe(false)
   })
 
   it('a page with a manifest leaves the toast to the chrome through `webapp.pinned` – "Installed <name>" on the desktop, "Added <name> to Home screen" on the phone, where a plain page reads the same', async () => {
@@ -923,6 +1124,31 @@ describe('WebAppService badges (MW-51)', () => {
     close(h.win)
     h.service.onWindowClosed(h.appWindows[1].win)
     expect(h.changes).toHaveLength(2)
+  })
+
+  it('a page in a shortcut’s window badges the shortcut – the window is its record’s, bounded by the origin – as any installed app’s window does, and the badge goes with the record', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id)
+    const appWin = h.appWindows[0].win
+    expect(appWin.app?.appId).toBe(DOCUMENT_URL)
+    showIn(h, appWin)
+    const changes: Array<[string, AppBadge | null]> = []
+    h.service.onBadgeChange((appId, badge) => changes.push([appId, badge]))
+    const post = (badge: unknown): void =>
+      h.service.handleMessage(h.tab.id, { type: 'webapp', webapp: 'badge', badge })
+    h.tab.url = 'https://app.example/inbox'
+    post(count(2))
+    expect(changes).toEqual([[DOCUMENT_URL, count(2)]])
+    // Out of the origin – a page the window hands to a browser tab anyway – no badge.
+    h.tab.url = 'https://elsewhere.example/'
+    post(count(5))
+    expect(changes).toHaveLength(1)
+    await h.service.uninstall(DOCUMENT_URL)
+    expect(changes).toEqual([
+      [DOCUMENT_URL, count(2)],
+      [DOCUMENT_URL, null]
+    ])
   })
 
   it('clears the badge with the record on uninstall, and takes none for an app that is not installed', async () => {
