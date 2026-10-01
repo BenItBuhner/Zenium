@@ -889,6 +889,17 @@ abstract class DemoHarness(
         return null
     }
 
+    /**
+     * The tab overview is up: its root is one named landmark (`role="region"` named
+     * [OVERVIEW_LABEL] – the cleanup spec's §1 took the header's controls away, so a driver reads
+     * the overview's presence off the landmark, never off a button of the header's); its bounds,
+     * or null when it has not come within `timeoutMs`.
+     */
+    protected fun awaitOverview(timeoutMs: Long = 5_000): Rect? = waitFor(OVERVIEW_LABEL, timeoutMs)
+
+    /** The overview has gone (its landmark unmounts with it); false when it still stands after `timeoutMs`. */
+    protected fun awaitOverviewGone(timeoutMs: Long = 5_000): Boolean = waitForGone(OVERVIEW_LABEL, timeoutMs)
+
     /** Poll until nothing on screen reads `label`, for up to `timeoutMs`; false when it is still there. */
     protected fun waitForGone(label: String, timeoutMs: Long = 5_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -3267,6 +3278,8 @@ abstract class DemoHarness(
         const val LOCKED_PILL_LABEL = "Private tab locked, unlock"
         /** The bar's Tabs button's name up to its count: "Tabs (N)" ([tabsButton]). */
         const val TABS_LABEL_PREFIX = "Tabs ("
+        /** The tab overview's landmark (`OVERVIEW_LABELS.region`, shared/overviewMenu.ts). */
+        const val OVERVIEW_LABEL = "Tab overview"
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"

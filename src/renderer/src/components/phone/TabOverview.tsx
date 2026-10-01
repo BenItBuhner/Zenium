@@ -13,7 +13,11 @@ import type {
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { TOUCH_GROUP_DEFAULT_NAME } from '@shared/groupNames'
-import { otherOverviewView, type OverviewChromeCommand } from '@shared/overviewMenu'
+import {
+  otherOverviewView,
+  OVERVIEW_LABELS,
+  type OverviewChromeCommand
+} from '@shared/overviewMenu'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
 import { isEmptyTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -2193,6 +2197,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           className="zen-overview absolute inset-0 flex flex-col"
           // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
           data-surface="window"
+          // One named landmark while the overview stands (it unmounts with it): TalkBack says
+          // "Tab overview" once on entry, and the harness waits on the name (`awaitOverview`)
+          // rather than on a control of the header's, which §1 took away.
+          role="region"
+          aria-label={OVERVIEW_LABELS.region}
           // The tablet's mount (TABLET-14): the layer is opaque – it slides over the page – in
           // the window's own tone, its gradient laid at the window's size and offset so that at
           // rest it is the window's, seamless at the toolbar's edge (the geometry effect writes

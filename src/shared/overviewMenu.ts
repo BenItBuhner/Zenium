@@ -149,6 +149,8 @@ export function tabsUnit(n: number): string {
  * sheets' (§1, §2, §3). The chrome imports them; nothing of the chrome spells them again.
  */
 export const OVERVIEW_LABELS = {
+  /** The overview's one landmark, named for TalkBack and the harness. */
+  region: 'Tab overview',
   /** The private view's title (§3): the session has no space's name. */
   privateTitle: 'Private',
   /** The Spaces sheet's title (§1). */

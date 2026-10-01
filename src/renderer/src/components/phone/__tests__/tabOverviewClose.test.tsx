@@ -369,6 +369,12 @@ describe("the ⋯ menu is the bar's", () => {
     expect(
       document.querySelector('[data-testid="overview-title"]')?.getAttribute('data-view')
     ).toBe('tabs')
+    // The overview is one named landmark while it stands – "Tab overview", said once on entry
+    // and the harness's word for the overview's presence (`awaitOverview`) – and no other
+    // region of the chrome's shares the name.
+    const regions = [...document.querySelectorAll('[role="region"]')]
+    expect(regions.map((el) => el.getAttribute('aria-label'))).toEqual(['Tab overview'])
+    expect(regions[0]!.classList.contains('zen-overview')).toBe(true)
     // The bar's ⋯ asks the core for the overview's menu with this view (the rows – Select Tabs,
     // Recently Closed (N), Close All Tabs (N), … – are the core's template).
     expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
