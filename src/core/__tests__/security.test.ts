@@ -336,3 +336,98 @@ describe('CertificateExceptions: the certificates proceeded past this session', 
     ).toBe(true)
   })
 })
+
+describe("SecurityPromptService: an AI agent's tab", () => {
+  /** Tab `agent` is an agent's; its prompts wait in `routed` for the test to answer. */
+  function withAgent(now: () => number = Date.now): {
+    s: SecurityPromptService
+    routed: Array<{ kind: string; answer(value: unknown): void }>
+  } {
+    const routed: Array<{ kind: string; answer(value: unknown): void }> = []
+    const browser = {
+      state: { commitVolatile: () => undefined },
+      agents: {
+        takesPrompt: (tabId: string) => tabId === 'agent',
+        routePrompt: (spec: { kind: string; tabId: string }) => {
+          if (spec.tabId !== 'agent') return null
+          let answer: (value: unknown) => void = () => undefined
+          const result = new Promise((r) => {
+            answer = r
+          })
+          routed.push({ kind: spec.kind, answer })
+          return {
+            id: `p${routed.length}`,
+            result,
+            update: () => undefined,
+            close: () => undefined
+          }
+        }
+      }
+    } as unknown as Browser
+    return { s: new SecurityPromptService(browser, new SessionHttpCredentialStore(), now), routed }
+  }
+
+  it('asks the agent, shows the user nothing, and keeps the user out of its wait', async () => {
+    const { s, routed } = withAgent()
+    const theirs = s.httpAuth(BASIC, 'agent')
+    const mine = s.httpAuth(BASIC, 'user')
+    await settle()
+    expect(routed.map((r) => r.kind)).toEqual(['http-auth'])
+    expect(s.list().map((p) => p.tabId)).toEqual(['user'])
+    s.respond(s.list()[0].id, null)
+    expect(await mine).toBeNull()
+    routed[0].answer({ username: 'bot', password: 'pw' })
+    expect(await theirs).toEqual({ username: 'bot', password: 'pw' })
+    // Not remembered: the user's next request behind the realm asks the user again.
+    const next = s.httpAuth(BASIC, 'user')
+    await settle()
+    expect(s.list()).toHaveLength(1)
+    s.respond(s.list()[0].id, null)
+    await next
+  })
+
+  it("keeps an agent's sign-in out of the user's retry bookkeeping, and the user's out of the agent's", async () => {
+    let clock = 0
+    const { s, routed } = withAgent(() => clock)
+    const theirs = s.httpAuth(BASIC, 'agent')
+    await settle()
+    routed[0].answer({ username: 'bot', password: 'pw' })
+    await theirs
+    // The user's challenge right after is a first ask: no "failed before", no agent's name.
+    const mine = s.httpAuth(BASIC, 'user')
+    await settle()
+    expect(s.list()[0]).toMatchObject({ failedBefore: false, username: '' })
+    s.respond(s.list()[0].id, { kind: 'http-auth', username: 'me', password: 'x', remember: true })
+    await mine
+    // Later, the agent's tab sends the user's saved sign-in; refused, it asks the agent again and
+    // leaves the saved sign-in for the user to keep or forget.
+    clock += 60_000
+    const again = s.httpAuth(BASIC, 'agent')
+    await settle()
+    expect(routed).toHaveLength(1)
+    expect(await again).toEqual({ username: 'me', password: 'x' })
+    const retry = s.httpAuth(BASIC, 'agent')
+    await settle()
+    expect(routed).toHaveLength(2)
+    expect(s.credentials.get(httpAuthKey(BASIC))).toEqual({ username: 'me', password: 'x' })
+    routed[1].answer(null)
+    expect(await retry).toBeNull()
+    // The user's own window was not moved by the agent's tab: their saved sign-in goes unasked.
+    expect(await s.httpAuth(BASIC, 'user')).toEqual({ username: 'me', password: 'x' })
+    expect(s.list()).toEqual([])
+  })
+
+  it("an agent's certificate pick holds for its request alone", async () => {
+    const { s, routed } = withAgent()
+    const certs = [cert('aa', 'Me'), cert('bb', 'Other')]
+    const theirs = s.clientCertificate('mtls.example', certs, 'agent')
+    await settle()
+    routed[0].answer(1)
+    expect(await theirs).toBe(1)
+    const mine = s.clientCertificate('mtls.example', certs, 'user')
+    await settle()
+    expect(s.list().map((p) => p.kind)).toEqual(['client-certificate'])
+    s.respond(s.list()[0].id, null)
+    expect(await mine).toBeNull()
+  })
+})

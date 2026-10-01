@@ -1655,7 +1655,9 @@ export class TabManager {
         if (!leave) this.stayedOnPage(tabId)
         return leave
       },
-      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action)
+      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action),
+      onFileChooser: (request) => this.browser.agents.onFileChooser(tabId, request),
+      onPagePrompt: (prompt) => this.browser.agents.onPagePrompt(tabId, prompt)
     }
   }
 

@@ -680,6 +680,19 @@ export class AndroidTabView implements TabView {
     this.bridge.send('view.setDarkening', { tabId: this.tabId, on })
   }
 
+  /**
+   * The agent's word on driving this page while the layout hides it (`TabView.setAgentDriven`;
+   * the agent service says it before each action and takes it back when it lets the tab go).
+   * Kotlin keeps the flag on the `TabWebView` (OS-40): a page an agent drives never puts its
+   * "Leave site?" sheet over the page the user is looking at – the navigation goes on, the
+   * question the agent's to answer. Kotlin clears it when the tab is shown (a tab brought in
+   * front is the user's again), and the flag is sent as it is said, so a view shown or replaced
+   * meanwhile (a renderer swap) hears it again at the agent's next action.
+   */
+  setAgentDriven(driven: boolean): void {
+    this.bridge.send('view.setAgentDriven', { tabId: this.tabId, driven })
+  }
+
   findInPage(text: string, forward: boolean, newSession: boolean): void {
     this.bridge.send('view.find', { tabId: this.tabId, text, forward, newSession })
   }
