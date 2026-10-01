@@ -154,8 +154,9 @@ describe('the manifest directory', () => {
     // 0abc7784 (the file this directory replaced; the same bytes at b360293e, v0.4.82, and at
     // bd47e39a, v0.4.83, where the file last stood - the matrix is the shards' alone, and the
     // driver #523 added there changed no shard), regenerated once since for the seventh phone
-    // shard (phone-g, W6-H: one row more, the rows before it byte for byte the same). A shard
-    // change regenerates it, on purpose.
+    // shard (phone-g, W6-H: one row more, the rows before it byte for byte the same) and once
+    // for the eighth (phone-h, W6-S24c-b: one row more after phone-g's, the rows around it byte
+    // for byte the same). A shard change regenerates it, on purpose.
     const golden = readFileSync(
       join(REPO_ROOT, '.github', 'scripts', 'fixtures', 'android-nightly-drivers-matrix.json'),
       'utf8'
