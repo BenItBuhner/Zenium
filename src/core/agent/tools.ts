@@ -1816,7 +1816,6 @@ const browserRespondPrompt: AgentTool = {
         },
         sourceId: { type: 'string', description: 'share (screen capture): which tab' },
         deviceId: { type: 'string', description: 'connect (device chooser): which device' },
-        pin: { type: 'string', description: 'confirm (Bluetooth pairing): the PIN' },
         paths: {
           type: 'array',
           items: { type: 'string' },

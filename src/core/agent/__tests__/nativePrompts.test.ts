@@ -197,6 +197,7 @@ describe("native prompts on an agent's tab are the agent's", () => {
       await fake.service.onFileChooser(mine.id, { mode: 'single', accept: [], source: 'input' })
     ).toEqual({ kind: 'user' })
     expect(fake.service.onPagePrompt(mine.id, { kind: 'print' })).toBe('user')
+    expect(fake.service.refusePairing(mine.id, 'Heart Strap')).toBe(false)
     expect(fake.service.routePrompt(permissionSpec(camera(mine.id)))).toBeNull()
     expect(fake.service.downloadDestination(mine.id, download())).toBeNull()
   })
@@ -278,6 +279,18 @@ describe("native prompts on an agent's tab are the agent's", () => {
     const status = textOf(await fake.call(s, 'zen_status'))
     expect(status).toContain('called window.print(); nothing was printed')
     expect(status).toContain('save-file picker (File System Access)')
+  })
+
+  it("refuses Bluetooth pairing on an agent tab and tells the agent it is the user's step", async () => {
+    const fake = browser()
+    const s = await fake.connect('wearables')
+    const tab = await openTab(fake, s, 'https://fit.test')
+    expect(fake.service.refusePairing(tab, 'Heart Strap')).toBe(true)
+    expect(fake.service.promptsOf(s)).toEqual([])
+    const status = textOf(await fake.call(s, 'zen_status'))
+    expect(status).toContain('asked to pair the Bluetooth device "Heart Strap"')
+    expect(status).toContain("Pairing is the user's step")
+    expect(status).toContain('already paired can be picked')
   })
 })
 

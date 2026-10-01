@@ -2,8 +2,6 @@ import type {
   ClientCertificateInfo,
   DeviceCandidate,
   DeviceKind,
-  DevicePairingPrompt,
-  DevicePairingResponse,
   HttpAuthPrompt,
   PermissionPrompt,
   PermissionPromptAnswer,
@@ -328,41 +326,6 @@ export function deviceChooserSpec(
       const id = text(answer, 'deviceId')
       if (!current().some((c) => c.id === id)) bad(`No device ${JSON.stringify(id)} is on the list`)
       return id
-    }
-  }
-}
-
-/** The OS asks to confirm a Bluetooth pairing (compare or type a PIN). */
-export function devicePairingSpec(
-  prompt: DevicePairingPrompt & { tabId: string }
-): NativePromptSpec<DevicePairingResponse | null> {
-  const ask =
-    prompt.kind === 'providePin'
-      ? 'asks for its PIN'
-      : prompt.kind === 'confirmPin'
-        ? `shows PIN ${prompt.pin} to compare`
-        : 'asks to pair'
-  return {
-    kind: 'device-pairing',
-    tabId: prompt.tabId,
-    summary: `Bluetooth device ${JSON.stringify(prompt.deviceName)} ${ask}.`,
-    details: {
-      deviceId: prompt.deviceId,
-      deviceName: prompt.deviceName,
-      mode: prompt.kind,
-      pin: prompt.pin
-    },
-    actions: {
-      confirm: `${prompt.kind === 'providePin' ? 'pair with {"pin":"…"}' : 'pair'} – nothing is saved in the browser, but the operating system keeps the pairing; pair only when the task asks for it`,
-      cancel: 'do not pair'
-    },
-    defaultAction: 'cancel',
-    dismissAction: 'cancel',
-    decide: (answer) => {
-      if (answer.action === 'cancel') return null
-      return prompt.kind === 'providePin'
-        ? { confirmed: true, pin: text(answer, 'pin') }
-        : { confirmed: true }
     }
   }
 }

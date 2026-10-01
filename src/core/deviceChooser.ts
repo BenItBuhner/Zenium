@@ -1,7 +1,7 @@
 import type { Browser } from './browser'
 import { permissionSite } from './permissions'
 import { newId } from '../shared/ids'
-import { deviceChooserSpec, devicePairingSpec } from './agent/nativePrompts'
+import { deviceChooserSpec } from './agent/nativePrompts'
 import type {
   DeviceCandidate,
   DeviceChooser,
@@ -180,11 +180,8 @@ export class DeviceChooserService {
       kind: details.kind,
       pin: details.pin ?? ''
     }
-    const tabId = details.tabId
-    const agent = tabId
-      ? this.browser.agents?.routePrompt(devicePairingSpec({ ...prompt, tabId }))
-      : null
-    if (agent) return agent.result
+    if (details.tabId && this.browser.agents?.refusePairing(details.tabId, prompt.deviceName))
+      return Promise.resolve(null)
     return new Promise((resolve) => {
       this.pairings.push({ prompt, resolve })
       this.browser.state.commitVolatile()

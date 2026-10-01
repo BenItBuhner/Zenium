@@ -2931,6 +2931,20 @@ export class AgentService implements SessionStore, McpHandlers {
     return 'agent'
   }
 
+  /**
+   * A Bluetooth pairing on an agent's tab is refused: pairing bonds the device to the computer
+   * beyond the tab, which is the user's step. The agent hears of it; a device the user already
+   * paired is still the agent's to pick.
+   */
+  refusePairing(tabId: string, deviceName: string): boolean {
+    if (!this.takesPrompt(tabId, 'device-pairing')) return false
+    this.driver(tabId)?.notices.push(
+      `Notice: the page in tab ${tabId} asked to pair the Bluetooth device ${JSON.stringify(deviceName)}; agents never pair devices, so it was refused. Pairing is the user's step: ask them to pair it in the system's Bluetooth settings first, then pick it again – a device they already paired can be picked.`
+    )
+    this.log(`tab ${tabId}: Bluetooth pairing with ${deviceName} refused for the agent`)
+    return true
+  }
+
   private onPromptOpened(p: AgentPrompt): void {
     this.log(`prompt ${p.id} (${p.kind}) on tab ${p.tabId}: ${p.summary}`)
     this.browser.state.commitVolatile()
