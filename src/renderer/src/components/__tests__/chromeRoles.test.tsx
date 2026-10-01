@@ -29,6 +29,7 @@ vi.mock('@renderer/lib/api', () => ({
 const { run } = await import('@renderer/lib/api')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { Sidebar } = await import('../sidebar/Sidebar')
 const { SidebarBottom } = await import('../sidebar/SidebarBottom')
@@ -426,9 +427,20 @@ describe('live regions and dialogs (a11y-02, a11y-32)', () => {
       canRemember: true
     }
     uiStore.set({ externalProtocol: request })
-    render(<ExternalProtocolLayer />)
+    // The dialog mounts in the frame's dialog host (as every §9.20 dialog does; TabDialogs
+    // mounts the host), so the host renders beside the layer here.
+    render(
+      <>
+        <FrameDialogHost frame />
+        <ExternalProtocolLayer />
+      </>
+    )
     const dialog = q('[role="dialog"]')
     expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(dialog.getAttribute('aria-label')).toBe('Open in Mail?')
+    // Named by its question through `aria-labelledby`, as the v2 dialogs are (the title block's
+    // heading is the name's source).
+    const heading = document.getElementById(dialog.getAttribute('aria-labelledby') ?? '')
+    expect(heading?.textContent).toBe('Open in Mail?')
+    expect(dialog.contains(heading)).toBe(true)
   })
 })

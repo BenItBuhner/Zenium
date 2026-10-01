@@ -11,6 +11,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { run } from '@renderer/lib/api'
+import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import {
   readerTranslateError,
@@ -61,6 +62,9 @@ const desktop = (): void =>
   viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
 const phone = (): void =>
   viewportStore.set({ ...viewportStore.get(), formFactor: 'phone', coarse: true })
+/** The tablet layout – a finger, or DeX's mouse (`coarse` false). */
+const tablet = (coarse: boolean): void =>
+  viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet', coarse })
 
 const TRANSLATE: TranslateUIState = {
   available: true,
@@ -378,6 +382,37 @@ describe('the Translate row', () => {
     expect(checked[0].textContent).toContain('French')
     expect(radios.map((r) => r.textContent?.includes('Deutsch')).filter(Boolean).length).toBe(1)
   })
+
+  it.each([
+    ['a tablet’s finger', true],
+    ['DeX (a tablet with a mouse)', false]
+  ])(
+    'on %s the picker is the anchored listbox, never the sheet (§9.36 as amended on #750), and the system back closes it alone',
+    async (_host, coarse) => {
+      tablet(coarse)
+      const el = render(<TranslateRow tabId="t1" translate={TRANSLATE} translation={null} />)
+      const translate = row(el, 'translate')
+      expect(translate.getAttribute('aria-haspopup')).toBe('listbox')
+      expect(topBackSurface()).toBeNull()
+      await open(translate)
+      expect(listbox()).not.toBeNull()
+      expect(listbox()!.classList.contains('zen-v2-menulist-popup')).toBe(true)
+      expect(document.querySelector('[role="radiogroup"]')).toBeNull()
+      expect(document.querySelector('.zen-sheet')).toBeNull()
+      expect(optionLabel(checkedOption()!)).toBe('French')
+      // The open list is the back registry's top surface, as the sheet it replaces was: a back
+      // commit closes the list and nothing else – no pick, no translation asked for.
+      expect(topBackSurface()?.name).toBe('menulist')
+      expect(dispatchBackEvent('commit')).toBe(true)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(listbox()).toBeNull()
+      expect(translate.getAttribute('aria-expanded')).toBe('false')
+      expect(run).not.toHaveBeenCalled()
+      expect(topBackSurface()).toBeNull()
+    }
+  )
 
   it('no language the models reach: the row disabled', () => {
     desktop()

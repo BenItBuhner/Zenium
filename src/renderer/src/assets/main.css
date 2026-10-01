@@ -11983,6 +11983,15 @@
   white-space: nowrap;
   transition: background 120ms var(--zen-ease);
 }
+/*
+ * On a tablet the list is the same anchored popover with the coarse pointer's rows (§9.36 as
+ * amended on #750: an anchored panel that fits is the desktop popover with 44 rows): the row's
+ * floor is the form factor's menu row token – 44 at the body line, as the tablet's menus are –
+ * the 28 above being the mouse's. The token is the form factor's, so DeX keeps it.
+ */
+:root[data-form-factor='tablet'] .zen-v2-menulist-option {
+  min-height: var(--v2-menu-row);
+}
 .zen-v2-menulist-option:focus,
 .zen-v2-menulist-option:active {
   background: var(--v2-fill);

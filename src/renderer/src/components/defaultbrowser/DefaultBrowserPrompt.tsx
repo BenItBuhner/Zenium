@@ -124,7 +124,7 @@ function CampaignLayer(): JSX.Element | null {
     returnFocusToPage()
   }
   if (!up) return null
-  return viewport.coarse ? (
+  return viewport.coarse && viewport.formFactor !== 'tablet' ? (
     <PromoSheet due={due} onGone={gone} />
   ) : (
     <PromoDialog due={due} onGone={gone} />
@@ -235,8 +235,10 @@ function PromoDialog(props: PromoProps): JSX.Element {
  * A `--v2-dialog` at the form width (§9.20) over the host's §9.5 scrim: the 48 px app icon
  * above the title block (§9.23, the sheet's composition for a mouse), then the buttons hugging
  * and right-aligned (§9.11), 16 from the block and 16 to the edge. Escape, the
- * scrim and "Not now" dismiss it, so there is no X; focus starts on the primary and Tab wraps
- * (§9.22). Under reduced motion the pop keeps only its fade (§11.3, the shared `zen-animate-pop`).
+ * scrim and "Not now" dismiss it, so there is no X. The prompt arrives on its own, so the first
+ * focus is the dialog itself (§5.7): there is no default button, Enter on the container does
+ * nothing, and the first Tab reaches "Not now" before "Set as default"; Tab wraps (§9.22).
+ * Under reduced motion the pop keeps only its fade (§11.3, the shared `zen-animate-pop`).
  */
 function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -265,17 +267,14 @@ function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
   }
   useFrameDialog({ onScrimPress: leave })
   useBackSurface({ name: 'default-browser', onCommit: leave })
-  usePopover(ref, {
-    onClose: leave,
-    initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
-    returnTo: null
-  })
+  usePopover(ref, { onClose: leave, initial: 'container', returnTo: null })
   return (
     <div
       ref={ref}
       role="dialog"
       aria-modal="true"
       aria-labelledby="zen-default-browser-title"
+      tabIndex={-1}
       className="zen-v2 zen-v2-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
       style={{ width: POPOVER_WIDTH.form }}
     >
@@ -285,7 +284,7 @@ function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
         <V2Button disabled={busy} onClick={leave}>
           Not now
         </V2Button>
-        <V2Button variant="primary" data-accept busy={busy} onClick={() => void setDefault()}>
+        <V2Button variant="primary" busy={busy} onClick={() => void setDefault()}>
           Set as default
         </V2Button>
       </div>
