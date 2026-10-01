@@ -620,6 +620,137 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.fromCache).toBe(true)
     expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
   })
+
+  it('forgets the text a list update left behind once a build has read it, or has no use for it', async () => {
+    const s = source()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0)
+    const stop = matcher.start()
+    s.engine.setRuleSet(textSet('a', '||a.example^'))
+    expect(matcher.pendingSets).toBe(1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.pendingSets).toBe(0)
+
+    // A list update while the master switch has every list off: the build that follows parses
+    // nothing, and drops the text rather than holding it until the switch turns on – the store
+    // has it by then, and the switch on reads it from there.
+    s.engine.setEnabled('a', false)
+    await new Promise((r) => setTimeout(r, 20))
+    s.engine.setRuleSet(textSet('a', '||a.example^\n||a2.example^', false))
+    expect(matcher.pendingSets).toBe(1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.pendingSets).toBe(0)
+    expect(matcher.match(ctx('https://a2.example/'))).toBeNull()
+    s.engine.setEnabled('a', true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.match(ctx('https://a2.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.pendingSets).toBe(0)
+    stop()
+  })
+
+  it('compiles a matcher of its own for a partition a text set names and answers that partition from it (PS-49)', () => {
+    const cacheDir = join(tempDir(), 'cache')
+    const s = source()
+    const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0)
+    s.engine.setRuleSet(textSet('easylist', '||ads.example^'))
+    // The strict-only list, as the service enables it for private windows alone.
+    s.engine.setRuleSet({
+      ...textSet('ubo-privacy', '||fingerprint.example^'),
+      partitions: ['private']
+    })
+    matcher.rebuild()
+    expect(matcher.ready).toBe(true)
+    expect(matcher.builds).toBe(1)
+    expect(matcher.scopedPartitions).toEqual(['private'])
+    const from = (url: string, partition?: string): RequestContext =>
+      ctx(url, partition ? { partition, isPrivate: partition === 'private' } : {})
+    const fp = 'https://fingerprint.example/fp.js'
+    const ad = 'https://ads.example/a.js'
+    // The private partition's matcher holds both lists; every other request meets EasyList alone.
+    expect(matcher.match(from(fp, 'private'))).toMatchObject({
+      action: 'block',
+      filter: '||fingerprint.example^'
+    })
+    expect(matcher.match(from(fp, 'default'))).toBeNull()
+    expect(matcher.match(from(fp, 'work'))).toBeNull()
+    expect(matcher.match(from(fp))).toBeNull()
+    expect(matcher.match(from(ad, 'private'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(from(ad, 'default'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(from(ad))).toMatchObject({ action: 'block' })
+    // Each scope's serialised form under its own name, fingerprinted by the sets it holds.
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual({
+      fingerprint: 'easylist:1000:1',
+      version: 'v1'
+    })
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.private.json'), 'utf8'))).toEqual({
+      fingerprint: 'easylist:1000:1|ubo-privacy:1000:1',
+      version: 'v1'
+    })
+    expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
+    expect(existsSync(join(cacheDir, 'documents.private.txt'))).toBe(true)
+
+    // Wired into the core engine: the private window's request is the list's, the normal one's the default allow.
+    s.engine.setTextMatcher(matcher)
+    expect(s.engine.decide(from(fp, 'private'))).toMatchObject({
+      action: 'block',
+      matched: { setId: TEXT_MATCH_SET_ID }
+    })
+    expect(s.engine.decide(from(fp, 'default'))).toEqual({ action: 'allow' })
+
+    // The switch off (the list disabled and unscoped): the private matcher goes, and a private
+    // window's requests answer from the unscoped one again.
+    s.engine.setEnabled('ubo-privacy', false)
+    s.engine.setPartitions('ubo-privacy', undefined)
+    matcher.rebuild()
+    expect(matcher.scopedPartitions).toEqual([])
+    expect(matcher.match(from(fp, 'private'))).toBeNull()
+    expect(matcher.match(from(ad, 'private'))).toMatchObject({ action: 'block' })
+    expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
+
+    // The next start with the switch on and the text on disk only: both scopes deserialise.
+    const s2 = source()
+    s2.engine.setRuleSet(
+      { id: 'easylist', source: 'filter-list', priority: 1, enabled: true, updatedAt: 1000 },
+      { persisted: true, hasFilterText: true, filterCount: 1 }
+    )
+    s2.engine.setRuleSet(
+      {
+        id: 'ubo-privacy',
+        source: 'filter-list',
+        priority: 1,
+        enabled: true,
+        updatedAt: 1000,
+        partitions: ['private']
+      },
+      { persisted: true, hasFilterText: true, filterCount: 1 }
+    )
+    const second = new GhosteryTextMatcher(s2, cacheDir, 'v1', 0)
+    second.rebuild()
+    expect(second.fromCache).toBe(true)
+    expect(second.scopedPartitions).toEqual(['private'])
+    expect(second.match(from(fp, 'private'))).toMatchObject({ action: 'block' })
+    expect(second.match(from(fp, 'default'))).toBeNull()
+    expect(second.match(from(ad, 'default'))).toMatchObject({ action: 'block' })
+  })
+
+  it('keeps a partition an enabled text set stands aside from out of that set (PS-49)', () => {
+    const s = source()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0)
+    s.engine.setRuleSet(textSet('easylist', '||ads.example^'))
+    s.engine.setRuleSet({
+      ...textSet('custom', '||custom.example^'),
+      excludedPartitions: ['banking']
+    })
+    matcher.rebuild()
+    expect(matcher.scopedPartitions).toEqual(['banking'])
+    const custom = 'https://custom.example/c.js'
+    expect(matcher.match(ctx(custom, { partition: 'banking' }))).toBeNull()
+    expect(matcher.match(ctx(custom, { partition: 'default' }))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx(custom))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://ads.example/a.js', { partition: 'banking' }))).toMatchObject({
+      action: 'block'
+    })
+  })
 })
 
 describe('ElectronBundledLists', () => {

@@ -1406,8 +1406,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // The URL bar's clipboard row: the peek reads the clip's description only (no Android 12+
             // toast); the read takes the content once, on the user's reveal or pick; markUsed
             // remembers the clip the user opened through the row, so it is not offered again.
+            // `clipboard.read` with `image: true` is a page's `navigator.clipboard.read()` (MW-38):
+            // the same read, answered as `{text, image?}` with the clip's image beside the text.
             "clipboard.peek" -> reply(ClipboardPeek.peek(activity))
-            "clipboard.read" -> reply(ClipboardPeek.read(activity))
+            "clipboard.read" -> if (args.bool("image")) readClipboardItems(reply) else reply(ClipboardPeek.read(activity))
             "clipboard.markUsed" -> { ClipboardPeek.markUsed(activity); reply(null) }
 
             // --- autofill: the system framework's status, and which provider owns the pages -----------
@@ -2451,6 +2453,29 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 }
         }
     }.getOrNull()
+
+    /**
+     * `clipboard.read` with `image: true` – a page's `navigator.clipboard.read()` behind the
+     * core's `clipboard-read` decision (MW-38; the plain call is the URL bar's text read, which
+     * never asks for the image): the primary clip read ONCE, here on the main thread as the text
+     * read is (one Android 12+ toast), and answered as `{text, image?: {png, width, height}}` –
+     * the image, when the clip carries one, decoded and PNG-encoded on the io executor within
+     * `ClipboardPeek`'s bounds (the longer edge 2048 px, the PNG 8 MiB; a bigger clip scaled
+     * down). A clip without an image, or one whose image will not decode, answers the text alone;
+     * nothing thrown past the text.
+     */
+    private fun readClipboardItems(reply: (Any?) -> Unit) {
+        val clip = ClipboardPeek.readClip(activity)
+        val uri = clip.imageUri
+        if (uri == null) {
+            reply(json("text" to clip.text))
+            return
+        }
+        io.execute {
+            val image = ClipboardPeek.encodeImage(activity, uri)
+            main.post { reply(json("text" to clip.text).apply { if (image != null) put("image", image) }) }
+        }
+    }
 
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {

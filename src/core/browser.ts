@@ -167,6 +167,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { sanitizeGameBestScore } from '../shared/game/bridge'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
+import { newFolderName } from '../shared/formFactor'
 import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
@@ -1451,6 +1452,7 @@ export class Browser {
     this.fullscreen.onWindowClosed(win)
     this.mediaSession.onWindowClosed(win)
     this.newTab.onWindowClosed(win)
+    this.webApps.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     const pageId = this.pageWindowIdOf(win)
@@ -2277,7 +2279,7 @@ export class Browser {
     const folder = createFolder(
       this.state.model,
       space.id,
-      node.title || 'New Folder',
+      node.title || newFolderName(win.formFactor),
       '📁',
       nextFolderColor(this.state.model, space.id)
     )
@@ -2405,12 +2407,16 @@ export class Browser {
     this.state.afterBroadcast(() => this.emit('folder.edit', { folderId }, win))
   }
 
-  /** Chrome's "Add tab to new group": a new folder around the tab, its editor open. */
+  /**
+   * Chrome's "Add tab to new group": a new folder around the tab, its editor open. Named for the
+   * host the window draws – the desktop's "New Folder", a touch host's "Group" (§6); with no
+   * window, the desktop's.
+   */
   newFolderWithTab(spaceId: string, tabId: string, win?: ZenWindow): void {
     const folder = createFolder(
       this.state.model,
       spaceId,
-      'New Folder',
+      newFolderName(win?.formFactor),
       '📁',
       nextFolderColor(this.state.model, spaceId)
     )

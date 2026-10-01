@@ -1,0 +1,92 @@
+{
+  "note": "The `extension` records (services pass 16, ID-44) as the build that introduced the type first wrote them: three store extensions under a scope with the type alone on, next to a crx, a zip and an unpacked install and a landing waiting for approval, none of which publish. Written once by that build; never re-made – compat.test.ts pins this build against these bytes.",
+  "now": 1759100000000,
+  "scope": {
+    "spaces": false,
+    "folders": false,
+    "pinnedTabs": false,
+    "essentials": false,
+    "openTabs": false,
+    "containers": false,
+    "bookmarks": false,
+    "settings": false,
+    "shortcuts": false,
+    "boosts": false,
+    "passwords": false,
+    "history": false,
+    "readingList": false,
+    "mods": false,
+    "extensions": true
+  },
+  "extensions": [
+    {
+      "id": "abcdefghijklmnopabcdefghijklmnop",
+      "source": "chrome-web-store",
+      "enabled": true,
+      "toolbarPinned": true
+    },
+    {
+      "id": "ppppoooonnnnmmmmllllkkkkjjjjiiii",
+      "source": "edge-add-ons",
+      "enabled": false,
+      "toolbarPinned": false
+    },
+    {
+      "id": "bhgcbgkfglbhjgdlchndpgjmgeeekaee",
+      "source": "chrome-web-store",
+      "enabled": true,
+      "toolbarPinned": false
+    },
+    {
+      "id": "cccccccccccccccccccccccccccccccc",
+      "source": "crx",
+      "enabled": true,
+      "toolbarPinned": true
+    },
+    {
+      "id": "dddddddddddddddddddddddddddddddd",
+      "source": "zip",
+      "enabled": true,
+      "toolbarPinned": true
+    },
+    {
+      "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "source": "unpacked",
+      "enabled": true,
+      "toolbarPinned": true
+    },
+    {
+      "id": "ffffffffffffffffffffffffffffffff",
+      "source": "chrome-web-store",
+      "enabled": false,
+      "toolbarPinned": true,
+      "pendingApproval": true
+    }
+  ],
+  "plaintext": "{\"v\":1,\"records\":[{\"id\":\"abcdefghijklmnopabcdefghijklmnop\",\"type\":\"extension\",\"modified\":0,\"deleted\":false,\"data\":{\"store\":\"chrome-web-store\",\"enabled\":true,\"toolbarPinned\":true}},{\"id\":\"ppppoooonnnnmmmmllllkkkkjjjjiiii\",\"type\":\"extension\",\"modified\":0,\"deleted\":false,\"data\":{\"store\":\"edge-add-ons\",\"enabled\":false,\"toolbarPinned\":false}},{\"id\":\"bhgcbgkfglbhjgdlchndpgjmgeeekaee\",\"type\":\"extension\",\"modified\":0,\"deleted\":false,\"data\":{\"store\":\"chrome-web-store\",\"enabled\":true,\"toolbarPinned\":false}}]}",
+  "hashes": {
+    "abcdefghijklmnopabcdefghijklmnop": "287a88e2b487ebf183157fd2c00cab27fc194938",
+    "ppppoooonnnnmmmmllllkkkkjjjjiiii": "6c5d8a77b4e2591e0059da2958138a2d75be4cf6",
+    "bhgcbgkfglbhjgdlchndpgjmgeeekaee": "7ac58475908d596307a2dc2f74be45583684d394"
+  },
+  "meta": {
+    "abcdefghijklmnopabcdefghijklmnop": {
+      "type": "extension",
+      "hash": "287a88e2b487ebf183157fd2c00cab27fc194938",
+      "modified": 0,
+      "deleted": false
+    },
+    "ppppoooonnnnmmmmllllkkkkjjjjiiii": {
+      "type": "extension",
+      "hash": "6c5d8a77b4e2591e0059da2958138a2d75be4cf6",
+      "modified": 0,
+      "deleted": false
+    },
+    "bhgcbgkfglbhjgdlchndpgjmgeeekaee": {
+      "type": "extension",
+      "hash": "7ac58475908d596307a2dc2f74be45583684d394",
+      "modified": 0,
+      "deleted": false
+    }
+  }
+}

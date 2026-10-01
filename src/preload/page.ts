@@ -14,6 +14,7 @@ import {
   type PageScriptMessage
 } from '../shared/pageScript'
 import { installInstallPromptShim } from '../shared/installPrompt'
+import { installAppBadgeShim } from '../shared/appBadge'
 import { DISPLAY_MODE_EVENT, installDisplayModeShim } from '../shared/displayMode'
 import {
   DOCUMENT_START_CHANNEL,
@@ -245,6 +246,10 @@ if (process.isMainFrame) {
         listener({ type: 'webapp', action: message.action, outcome: message.outcome })
       ),
     installInstallPromptShim: (events) => inMainWorld(installInstallPromptShim, [events]),
+    // The Badging API (MW-51): `navigator.setAppBadge` / `clearAppBadge` in the page's world,
+    // relayed here while the page is an installed app's; the desktop draws the badge on the
+    // app window's taskbar button and the dock icon.
+    installAppBadgeShim: (eventName) => inMainWorld(installAppBadgeShim, [eventName]),
     // A page's OpenSearch description (`<link rel="search">`) makes it a "Recently visited"
     // engine in Settings > Search (settings-42), as the Android host's pages do.
     discoverSearchEngines: true,
