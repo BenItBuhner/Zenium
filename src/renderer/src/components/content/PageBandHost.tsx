@@ -41,6 +41,9 @@ interface Props {
  * full-frame once, translated from there – keeps covering the frame under it as the mouse
  * takes it up, as Android's host unseats its layer (`lib/band/androidHost.ts`; the Design
  * Lead's ruling on W8-M2b: the two hosts the same, never a bare strip under a dragged band).
+ * A drag that grabs the band mid-travel – after a `depart`, before its `rest` – is announced
+ * by `BandSeam.dragStart`, which ends the travel for the seam: its frames are the drag's, and
+ * the first below the seat unseats the same way (the Design Lead's seed D8 on W8-M2b).
  * Tabs closing and documents changing take their bands with them (`useBandTabs`). With the band
  * it mounts the two corner masks that ride the same offset (`PageBandCorners`; the Design Lead's
  * seed D3): the frame's radius at the top corners of a page the chrome draws under the band.
@@ -76,12 +79,15 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
   useLayoutEffect(() => {
     setBandFrame({ front, scene, ok, offers, covered })
   }, [front, scene, ok, offers, covered])
-  /** A `depart` was heard and no `rest` yet: the frames are a travel's, not a drag's. */
+  /**
+   * A `depart` was heard and no `rest` or `dragStart` yet: the frames are a travel's, not a
+   * drag's.
+   */
   const travelling = useRef(false)
   const host = useMemo<BandHost>(
     () => ({
       translate: (x) => {
-        // A frame below the seat with no travel announced is a drag's: the band is unseated
+        // A frame below the seat with no travel under way is a drag's: the band is unseated
         // for it – the one relayout the drag costs, the page full-frame and moved by the offset
         // from here on – so the page keeps covering the frame under it instead of riding up
         // seated and baring a strip. A frame at or past the seat (a drag pulling the band down
@@ -97,6 +103,13 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
       depart: (to) => {
         travelling.current = true
         seatBand(Math.min(bandSeat(), to))
+      },
+      dragStart: () => {
+        // A hand took the band – mid-travel too, after a `depart` and before its `rest`: the
+        // frames from here are the drag's, whatever the travel announced, so the first below
+        // the seat unseats as on a band at rest. The seat itself is left to that frame: a drag
+        // may go down to the band's rest and never pass under it.
+        travelling.current = false
       }
     }),
     []
