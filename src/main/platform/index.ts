@@ -70,6 +70,11 @@ import {
   sanitizeDialogCall,
   type PageDialogAnswer
 } from '../../shared/pageDialogIpc'
+import {
+  PAGE_PROMPT_CHANNEL,
+  sanitizePromptCall,
+  type PagePromptAnswer
+} from '../../shared/pagePromptIpc'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
@@ -225,7 +230,22 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // hide side, #299 F1), the answer would be `ElectronTabView`'s, from the view's
   // `paint`/`did-frame-finish-load`-class signal, and this flag turns the chrome's waits on.
   placementAnswered: false,
-  agentDialogs: true
+  agentDialogs: true,
+  // An agent's tab keeps its native prompts from the user (`AgentService.routePrompt`): file
+  // choosers over the DevTools protocol and the preload's `print` / File System Access shims
+  // (`ElectronTabView.interceptAgentPrompts`), the rest through the core's own prompts.
+  agentPrompts: [
+    'file-chooser',
+    'download',
+    'http-auth',
+    'client-certificate',
+    'permission',
+    'screen-capture',
+    'device-chooser',
+    'device-pairing',
+    'external-protocol',
+    'print'
+  ]
 }
 
 /**
@@ -665,7 +685,9 @@ export class ElectronPlatform implements Platform {
       stopNavigation: (tabId) => {
         const view = this.views.viewForTab(tabId)
         if (view && !view.isDestroyed()) view.stop()
-      }
+      },
+      agentDestination: (sourceTabId, download) =>
+        browser.agents.downloadDestination(sourceTabId, download)
     })
     const webstore = new WebstoreBridge(browser.extensions as ExtensionService, (wc) => {
       const tabId = this.views.tabIdForWebContents(wc)
@@ -957,8 +979,10 @@ export class ElectronPlatform implements Platform {
       // engine's stead – no site prompt whose Allow the system would not honour, and nothing
       // remembered against the site. Off macOS the gate lets every request through.
       if (permission === 'media' && request.mediaTypes && request.mediaTypes.length > 0) {
+        // An agent's tab never puts the system's dialog in front of the user.
+        const agentTab = Boolean(tabId && this.browser.agents.takesPrompt(tabId, 'permission'))
         void this.mediaAccess
-          .allows(request.mediaTypes)
+          .allows(request.mediaTypes, { ask: !agentTab })
           .then((systemAllows) =>
             systemAllows ? permissions.decide(permission, url, request) : false
           )
@@ -1027,6 +1051,23 @@ export class ElectronPlatform implements Platform {
       view
         .askDialog(call, event.senderFrame?.url ?? '')
         .then(answer, () => answer(DISMISSED_ANSWER))
+    })
+    // A page's `window.print()` or File System Access picker (`preload/pagePrompts.ts`): whose it
+    // is – an agent's tab keeps it from the user. Answered at once; every path sets the value.
+    ipcMain.on(PAGE_PROMPT_CHANNEL, (event, raw: unknown) => {
+      const view = this.views.viewForWebContents(event.sender)
+      const call = sanitizePromptCall(raw)
+      let answer: PagePromptAnswer = 'user'
+      try {
+        if (view && call) answer = view.askPagePrompt(call)
+      } catch {
+        answer = 'user'
+      }
+      try {
+        event.returnValue = answer
+      } catch {
+        // The page went away meanwhile.
+      }
     })
     // The new tab page: its preload fetches the first state synchronously (before the first
     // paint) and sends actions. Only the main frame of a tab view showing `zen://newtab` is heard.

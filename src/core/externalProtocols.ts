@@ -3,6 +3,7 @@ import { classifyExternalUrl, intentFallbackUrl, intentPackage } from '../shared
 import { getHost } from '../shared/url'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
+import { externalProtocolSpec } from './agent/nativePrompts'
 
 /** What the host knows about a navigation that would leave the browser. */
 export interface HostExternalRequest {
@@ -60,6 +61,21 @@ export class ExternalProtocolService {
     // A remembered scheme still needs a tap behind it: a page must not dial on load.
     if (remembered && request.userGesture) {
       this.answer(request.requestId, true)
+      return
+    }
+    // An agent's tab: its agent answers, this once – nothing is remembered for the user.
+    const agent = request.tabId
+      ? this.browser.agents?.routePrompt(
+          externalProtocolSpec(request.tabId, {
+            url,
+            scheme,
+            appName: request.appName,
+            site: this.siteOf(request.tabId)
+          })
+        )
+      : null
+    if (agent) {
+      void agent.result.then((allow) => this.answer(request.requestId, allow))
       return
     }
     // One question per tab: a newer request from the same page takes the sheet over.

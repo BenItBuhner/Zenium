@@ -95,7 +95,13 @@ describe('tool definitions', () => {
     const pageTools = AGENT_TOOLS.filter(
       (t) =>
         t.definition.name.startsWith('browser_') &&
-        !['browser_tabs', 'browser_navigate', 'browser_handle_dialog'].includes(t.definition.name)
+        ![
+          'browser_tabs',
+          'browser_navigate',
+          'browser_handle_dialog',
+          'browser_prompts',
+          'browser_respond_prompt'
+        ].includes(t.definition.name)
     )
     expect(pageTools.length).toBeGreaterThan(10)
     for (const { definition } of pageTools) {

@@ -1,11 +1,14 @@
 import type {
   CrashReason,
+  FileChooserAnswer,
+  FileChooserRequest,
   FindResultInfo,
   KeyEventInput,
   LoadDetails,
   PageContextParams,
   PageDialogRequest,
   PageMessage,
+  PagePromptRequest,
   TabView,
   TabViewEvents,
   WindowOpenDisposition,
@@ -206,6 +209,12 @@ export class ForwardingEvents implements TabViewEvents {
   }
   onNewTabAction(action: NewTabPageAction): void {
     this.target?.onNewTabAction(action)
+  }
+  onFileChooser(request: FileChooserRequest): Promise<FileChooserAnswer> {
+    return this.target?.onFileChooser?.(request) ?? Promise.resolve({ kind: 'user' })
+  }
+  onPagePrompt(prompt: PagePromptRequest): 'agent' | 'user' {
+    return this.target?.onPagePrompt?.(prompt) ?? 'user'
   }
 }
 
