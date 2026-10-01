@@ -2853,12 +2853,12 @@ export class Menus {
    * Chrome's frame menu (`SystemMenuModelBuilder`) ends: Task manager after a separator, then
    * the window's Close. The window rows are a windowed host's alone (`capabilities.windows`):
    * the phone has one window, no task manager window and no Close for it, so its sheet ends at
-   * Close Unpinned Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's rows inside it, so
-   * the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize –
-   * and the OS's Close ends the menu; Move and Size stay out, Electron having no way into the
-   * OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's "Use system title bar
-   * and borders" stays out too: the browser window is frameless by design, the toggle would
-   * have nothing to switch.
+   * Close Unpinned Tabs. On Windows, Chrome's strip shows the OS's system menu with Chrome's
+   * rows inside it, so the frameless window's system items lead in the OS's words – Restore,
+   * Minimize, Maximize – and the OS's Close ends the menu; Move and Size stay out, Electron
+   * having no way into the OS's keyboard move and size modes (no `SC_MOVE` / `SC_SIZE`). Linux's
+   * "Use system title bar and borders" stays out too: the browser window is frameless by
+   * design, the toggle would have nothing to switch.
    */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
