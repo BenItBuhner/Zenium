@@ -17,8 +17,8 @@ import { BLANK_URL } from '@shared/url'
  * (`layout.pageOffset`), the seat for the layout reporter at the lesser of the seat and the
  * destination on a departure and at the height at the rest (`lib/pageBand.ts`), and a cut – no
  * travel – when the frame's page changes; and what the tabs tell the model (a tab closing, a
- * document changing). Its default-browser tenant: the state stands while the OS names another
- * browser.
+ * document changing). Its tenants: the default-browser state stands while the OS names another
+ * browser; the crash-restore state while the session holds the last run's pages for an answer.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -89,7 +89,7 @@ interface Scene {
   tabs?: Record<string, Tab>
 }
 
-/** A desktop window on a page tab; the default-browser tenant quiet unless a scene asks for it. */
+/** A desktop window on a page tab; the state tenants quiet unless a scene asks for one. */
 function state({
   front = 'page',
   fullscreen = false,
@@ -100,6 +100,7 @@ function state({
   return {
     platform: 'linux',
     version: '0.3.77',
+    crashRestore: null,
     tabs,
     spaces: [
       {
@@ -479,5 +480,30 @@ describe('PageBandHost – the default-browser tenant', () => {
     settle()
     expect(band()).toBeNull()
     expect(remembered()).toHaveLength(1)
+  })
+})
+
+describe('PageBandHost – the crash-restore tenant', () => {
+  it('stands the two-line state while the session holds the last run’s pages, before the default-browser state (the newest state shows), and ends it with the answer', () => {
+    const held = { ...state(), crashRestore: { tabCount: 2, windowCount: 1 } } as UIState
+    render(held)
+    expect(chooseBand(bandStore.get())!.key).toBe('crash-restore')
+    expect(band()!.dataset.key).toBe('crash-restore')
+    expect(band()!.querySelector('.zen-band-title')!.textContent).toBe('Restore 2 pages?')
+    expect(band()!.querySelector('.zen-band-detail')!.textContent).toBe(
+      'Zenium did not shut down correctly.'
+    )
+    expect(band()!.querySelector('.zen-band-button')!.textContent).toBe('Restore')
+    expect(band()!.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Dismiss')
+    settle()
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+    // Restore answers the core; the offer clears with the answer and the band is gone at the rest.
+    act(() => band()!.querySelector<HTMLButtonElement>('.zen-band-button')!.click())
+    expect(run).toHaveBeenCalledWith('session.crashRestore', { restore: true })
+    render({ ...held, crashRestore: null } as UIState)
+    expect(chooseBand(bandStore.get())).toBeNull()
+    settle()
+    expect(band()).toBeNull()
+    expect(bandSeat()).toBe(0)
   })
 })

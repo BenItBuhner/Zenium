@@ -10,6 +10,7 @@ import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import type { UiState } from '@renderer/lib/ui'
 import { PageEdgeBand, type BandHost } from '../band/PageEdgeBand'
 import { useBandTabs } from '../band/useBandTabs'
+import { useCrashRestoreBand } from './useCrashRestoreBand'
 import { useDefaultBrowserBand } from './useDefaultBrowserBand'
 
 interface Props {
@@ -35,11 +36,13 @@ interface Props {
  * reporter lays the page out under the seat – once per travel (`lib/pageBand.ts`). Tabs closing
  * and documents changing take their bands with them (`useBandTabs`).
  *
- * Its tenants: the default-browser state (`useDefaultBrowserBand`). The strip across the
- * frame's top that asked before it (`DefaultBrowserBanner.tsx`) retired here.
+ * Its tenants: the default-browser state (`useDefaultBrowserBand`) and the crash-restore state
+ * (`useCrashRestoreBand`). The strips across the frame's top that asked before them
+ * (`DefaultBrowserBanner.tsx` in W8-M2, `CrashRestoreBanner.tsx` in W8-M3) retired here.
  */
 export function PageBandHost({ state, ui }: Props): JSX.Element {
   useDefaultBrowserBand(state)
+  useCrashRestoreBand(state)
   useBandTabs(state)
   const tab = activeTab(state)
   const front = tab?.id ?? null

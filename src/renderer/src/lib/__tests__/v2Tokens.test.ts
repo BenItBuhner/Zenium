@@ -137,13 +137,13 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // overlays/ProtectionSection.tsx, overlays/protection/*): what they add under their own
   // `.zen-protection-*` names to the pane's vocabulary above them. The block sits between the
   // pane's and the Default Browser range, so it is cut out before the pane's, which ends there.
-  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * The frame\'s strip – "Restore pages?"'],
+  ['.zen-privacy + .zen-privacy.zen-protection {', "/*\n * The default-browser promo's icon"],
   // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
   // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
   // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
-  ['.zen-privacy {', '/*\n * The frame\'s strip – "Restore pages?"'],
+  ['.zen-privacy {', "/*\n * The default-browser promo's icon"],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
-  ['.zen-find-bar {', '/*\n * The frame\'s strip – "Restore pages?"'],
+  ['.zen-find-bar {', "/*\n * The default-browser promo's icon"],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
   // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
   // reduced-motion rules, so it is cut out before the Default Browser range that ends there.
@@ -151,12 +151,12 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The page-edge band (components/band/PageEdgeBand.tsx; motion spec §3.1): the page surface
   // with the frame's radius, the glyph's status and accent inks, the title and detail on the
   // scale, its §9.11 secondary action and the message close in the page family. Its block sits
-  // inside the strip's range below, so it is cut out first.
+  // inside the promo icon's range below, so it is cut out first.
   ['.zen-band {', '/*\n * The desktop URL bar on design language v2'],
-  // The frame's strip (content/CrashRestoreBanner.tsx; the default-browser strip that stood
-  // beside it moved to the page-edge band): the window-family band, its hairline and text, and
-  // the default-browser prompt's icon.
-  ['  .zen-frame-strips[data-under-overlay] {', '\n@media (prefers-reduced-motion: reduce) {'],
+  // The default-browser promo's mouse dialog icon (defaultbrowser/DefaultBrowserPrompt.tsx), on
+  // the block's rhythm. The frame's strips that stood here – "Make Zenium your default browser",
+  // "Restore pages?" – retired to the page-edge band (W8-M2, W8-M3).
+  ['  .zen-default-browser-prompt-icon {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
   // The tab overview's select-tabs mode (components/phone/TabOverview.tsx, OverviewCard.tsx,

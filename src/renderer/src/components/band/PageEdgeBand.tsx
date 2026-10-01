@@ -52,7 +52,8 @@ const sceneOf = (s: { scene: string | null }): string | null => s.scene
  * leaving the front, a page's fullscreen – is a cut, not a travel. A band goes with its page at
  * once and stands again at once when the page comes back; the page of the next tab never
  * travels for the last tab's prompt, and a prompt the page never showed travels in as on any
- * page.
+ * page. The root names its tenant (`data-key`) for the drives that look for one band in
+ * particular; nothing of the chrome reads it.
  */
 export function PageEdgeBand({ host }: Props): JSX.Element | null {
   const entry = bandStore.use(chooseBand)
@@ -170,6 +171,7 @@ export function PageEdgeBand({ host }: Props): JSX.Element | null {
       className="zen-band"
       role="status"
       data-surface="page"
+      data-key={showing.key}
       data-form={showing.form}
       data-tone={showing.form === 'state' ? showing.tone : undefined}
       data-detail={showing.detail ? '' : undefined}
