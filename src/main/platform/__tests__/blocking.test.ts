@@ -18,10 +18,13 @@ vi.mock('electron', () => ({
 
 const {
   BlockingHandler,
+  DESERIALISE_IDLE_CAP_MS,
   ElectronBundledLists,
   GhosteryTextMatcher,
+  IDLE_PROBE_MS,
   LIST_SETTLE_CAP_MS,
-  LIST_SETTLE_MS
+  LIST_SETTLE_MS,
+  idleSlot
 } = await import('../blocking')
 const { GHOSTERY_COMPILE_TASK } = await import('../blockingCompile')
 
@@ -1099,6 +1102,51 @@ describe('GhosteryTextMatcher', () => {
       expect(matcher.builds).toBe(6)
       expect(blocks(matcher, 'mine.example')).toBe(true)
       stop()
+    })
+  })
+
+  describe('the idle slot', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('runs when a probe fires on time, and at the cap regardless when the loop stays busy', () => {
+      vi.useFakeTimers()
+      const now = (): number => Date.now()
+      const idle = idleSlot({ busy: () => false, now })
+      const ran: number[] = []
+      const start = Date.now()
+      idle(() => ran.push(Date.now() - start), DESERIALISE_IDLE_CAP_MS)
+      vi.advanceTimersByTime(3)
+      expect(ran).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(ran).toEqual([4])
+
+      const busy = idleSlot({ busy: () => true, now })
+      busy(() => ran.push(Date.now() - start), DESERIALISE_IDLE_CAP_MS)
+      vi.advanceTimersByTime(DESERIALISE_IDLE_CAP_MS - 1)
+      expect(ran).toEqual([4])
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran.length).toBe(2)
+      expect(ran[1]! - 4).toBeGreaterThanOrEqual(DESERIALISE_IDLE_CAP_MS)
+      expect(ran[1]! - 4).toBeLessThan(DESERIALISE_IDLE_CAP_MS + IDLE_PROBE_MS)
+
+      // Cancelled: never runs.
+      const cancel = busy(() => ran.push(-1), DESERIALISE_IDLE_CAP_MS)
+      cancel()
+      vi.advanceTimersByTime(DESERIALISE_IDLE_CAP_MS * 2)
+      expect(ran.length).toBe(2)
+    })
+
+    it('runs within a few milliseconds on an idle loop', async () => {
+      vi.useRealTimers()
+      const idle = idleSlot()
+      const ran: number[] = []
+      const start = performance.now()
+      idle(() => ran.push(performance.now() - start), DESERIALISE_IDLE_CAP_MS)
+      await new Promise((r) => setTimeout(r, 40))
+      expect(ran.length).toBe(1)
+      expect(ran[0]!).toBeLessThan(DESERIALISE_IDLE_CAP_MS)
     })
   })
 
