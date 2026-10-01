@@ -311,26 +311,35 @@ export function createCloseUndo({
   }
 }
 
+let appCloseUndo: CloseUndo | null = null
+
 /**
  * The app's undo, over the chrome's bridge to the core and the message cards. Its toast offers
  * Undo, so it stands §9.33's Undo clock (`TOAST_UNDO_MS`, 8 s) – the one shared constant, never
  * the action default by omission – for the whole close family: "Closed <title>", "N tabs closed",
  * "<Name> tab group closed and saved".
+ *
+ * Built on the first close, not at import: `lib/back.ts` brings this module into every surface's
+ * module graph, and the bridge is wanted only once a close goes through (the undo's own
+ * subscriptions start on that first close as well).
  */
-export const closeUndo: CloseUndo = createCloseUndo({
-  invoke: cmd,
-  on: onEvent,
-  toast: (message, action) => pushToast(message, 'info', { action, duration: TOAST_UNDO_MS }),
-  now: () => Date.now(),
-  activeTabId: () => {
-    const state = browserStore.get().state
-    return state ? (activeTab(state)?.id ?? null) : null
-  },
-  closingTabIds: () => browserStore.get().state?.closingTabIds ?? [],
-  onState: (listener) => browserStore.subscribe(listener)
-})
+function closeUndo(): CloseUndo {
+  appCloseUndo ??= createCloseUndo({
+    invoke: cmd,
+    on: onEvent,
+    toast: (message, action) => pushToast(message, 'info', { action, duration: TOAST_UNDO_MS }),
+    now: () => Date.now(),
+    activeTabId: () => {
+      const state = browserStore.get().state
+      return state ? (activeTab(state)?.id ?? null) : null
+    },
+    closingTabIds: () => browserStore.get().state?.closingTabIds ?? [],
+    onState: (listener) => browserStore.subscribe(listener)
+  })
+  return appCloseUndo
+}
 
 /** Close `request.tabs` through `request.close` with Undo on the toast (see the module note). */
 export function closeWithUndo(request: CloseRequest): void {
-  closeUndo.close(request)
+  closeUndo().close(request)
 }
