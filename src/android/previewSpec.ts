@@ -87,6 +87,9 @@ export type PreviewIphBubble = (typeof PREVIEW_IPH_BUBBLES)[number]
 export const PREVIEW_SCREENSHOT_SURFACES = ['flash', 'card', 'editor'] as const
 export type PreviewScreenshotSurface = (typeof PREVIEW_SCREENSHOT_SURFACES)[number]
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
+/** What another app shares into the share-target chooser (MW-63): a link, or text with no link in it. */
+export const PREVIEW_SHARE_TARGET_KINDS = ['link', 'text'] as const
+export type PreviewShareTargetKind = (typeof PREVIEW_SHARE_TARGET_KINDS)[number]
 
 /**
  * The read-aloud player's scripted states (`readAloud=<status>`): the model's `ReadAloudStatus`
@@ -608,6 +611,14 @@ export type PreviewState =
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
   | {
       /**
+       * The share-target chooser (MW-63) over the active page: two apps declaring share targets
+       * are installed from it, then another app's share of a link or of text arrives.
+       */
+      kind: 'shareTarget'
+      shared: PreviewShareTargetKind
+    }
+  | {
+      /**
        * A page's media as one of PREVIEW_MEDIA; `player` opens the in-app player (the media
        * sheet) on it – `&player`, not `sheet=`, which names the chrome's own sheets.
        */
@@ -872,7 +883,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * handle mid-drag that far down), any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
- * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
+ * Home screen"), `shareTarget=<link|text>` for the share-target chooser over the active page,
+ * two installed apps declaring share targets (MW-63), `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>` – with `retrying=<n>` for a network failure the stand-in downloader retries on
  * its own n more times, the row counting down to each attempt – `deleted` for a finished file
@@ -903,7 +915,7 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `network` over `crash`, `crash` over
  * `unresponsive`, `unresponsive` over `error`, `error` over `screenshot`, `screenshot` over
  * the messages, the messages over
- * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `qr`, `qr` over
+ * `webapp`, `webapp` over `shareTarget`, `shareTarget` over `media`, `media` over `download`, `download` over `qr`, `qr` over
  * `popups`, `popups` over the security `prompt`, that over `voice`, `voice` over `overview`,
  * and `overview` over `urlbar`. A leading `#` (the URL hash as read) is ignored.
  */
@@ -1168,6 +1180,13 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const webapp = params.get('webapp')
   if (webapp !== null && (PREVIEW_WEBAPP_SURFACES as readonly string[]).includes(webapp)) {
     return { kind: 'webapp', surface: webapp as PreviewWebAppSurface }
+  }
+  const shareTarget = params.get('shareTarget')
+  if (
+    shareTarget !== null &&
+    (PREVIEW_SHARE_TARGET_KINDS as readonly string[]).includes(shareTarget)
+  ) {
+    return { kind: 'shareTarget', shared: shareTarget as PreviewShareTargetKind }
   }
   const media = params.get('media')
   if (media !== null && (PREVIEW_MEDIA as readonly string[]).includes(media)) {

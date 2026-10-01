@@ -358,6 +358,7 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Passwords',
       'Security',
       '|',
+      'Account',
       'Sync',
       'Import',
       'Accessibility',

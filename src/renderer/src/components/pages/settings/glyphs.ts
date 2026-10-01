@@ -26,6 +26,7 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  UserRound,
   Waypoints,
   Zap
 } from 'lucide-react'
@@ -57,6 +58,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   agents: Bot,
   passwords: KeyRound,
   security: ShieldCheck,
+  account: UserRound,
   sync: RefreshCw,
   import: Import,
   shortcuts: Keyboard,

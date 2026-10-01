@@ -25,6 +25,7 @@ import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle, normalizeWindowName } from '../shared/windowTitle'
 import { isToolbarControl } from '../shared/toolbarPins'
 import { captionDoubleClickEffect } from './captionDoubleClick'
+import { COVER_REPORT_CEILING_MS } from './tabs'
 import {
   CHROME_MENU_TARGETS,
   type ChromeContextParams,
@@ -41,6 +42,35 @@ export type PopupSurfaceOwner = 'autofill' | 'selectionMenu'
 
 /** The owners front to back: the surface stands where the first one with a place asks. */
 export const POPUP_SURFACE_OWNERS: readonly PopupSurfaceOwner[] = ['autofill', 'selectionMenu']
+
+/**
+ * A page shown on the activate commit (`ZenWindow.showOnCommit`, W8-P0): the tab switched to or
+ * woken, shown at the frame's last reported rect the moment the core commits the activation,
+ * under the page the window had in front – the stand-in of design language v2 §11, held over it
+ * until the shown page's word that it has painted (`TabView.shownPainted`) or the failure
+ * ceiling (`COVER_REPORT_CEILING_MS`), then hidden: the reveal.
+ */
+interface EarlyShow {
+  /** The tab shown early. */
+  readonly tabId: string
+  /** The tab left in front, standing over the shown page until the reveal; null with none. */
+  readonly standInTabId: string | null
+  /**
+   * The first layout report placing the shown page has arrived: it counted the page among the
+   * views it showed (`layout.applied`'s `shown`), as the report that showed it would have.
+   */
+  reported: boolean
+  /** A layout report wanted the stand-in down meanwhile: its hide waits for the reveal. */
+  hideDeferred: boolean
+  /**
+   * The reveal has happened (the word came or the ceiling passed): the stand-in is no longer
+   * held, and a report that wants it down takes it down. The hold stands on, if at all, only
+   * until the first report placing the shown page has counted it shown.
+   */
+  revealed: boolean
+  /** Stop waiting for the word (the ceiling's timer). */
+  cancel: () => void
+}
 
 /**
  * The room an owner's document asks for a tooltip's moment (`PopupSurfaceRoom`), out of its
@@ -216,8 +246,14 @@ export class ZenWindow {
    * moves.
    */
   private pageShift = 0
-  /** Where the content area last put a page (the size a page preloaded off screen lays out at). */
+  /**
+   * Where the content area last put a page alone (the size a page preloaded off screen lays
+   * out at; the frame's last reported rect a page shown on the activate commit takes,
+   * `showOnCommit`). Written where the layout report arrives, from its one placement.
+   */
   private lastContentRect: Rect | null = null
+  /** The page shown on the activate commit, under the page it replaces (`showOnCommit`). */
+  private earlyShow: EarlyShow | null = null
   private pendingContentFocus = false
   private closing = false
   private chromeReadyOnce = false
@@ -465,6 +501,7 @@ export class ZenWindow {
   }
 
   onClosed(): void {
+    this.dropEarlyShow()
     this.browser.onWindowClosed(this)
   }
 
@@ -552,13 +589,42 @@ export class ZenWindow {
     // The views this report takes down or brings back: told to the chrome once they are placed.
     const hid: string[] = []
     const shown: string[] = []
+    // The page-edge band's travel: the views stand `offset - seat` below their laid-out rects
+    // (`LayoutBand`); 0 at rest, where the seat is the offset.
+    const shift = bandShift(report)
+    this.pageShift = shift
+    const wanted = new Map<string, { rect: Rect; radius: number; cover: ContentCover }>()
+    if (!report.contentHidden) {
+      for (const p of report.placements)
+        wanted.set(p.tabId, {
+          rect: shifted(p.rect, shift),
+          radius: p.radius,
+          cover: p.cover ?? NO_COVER
+        })
+    }
+    const glance = report.glance
+    // A page shown on the activate commit (`showOnCommit`) stands as this report would have
+    // shown it only while the report places it alone, the page it replaced not among them: a
+    // report that wants the page down, the stand-in back, or the frame otherwise (the chrome
+    // over the content, a glance, an element fullscreen) is the layout's as before, this very
+    // report placing and hiding what it says, the early show over without a reveal of its own.
+    const early = this.earlyShow
+    if (
+      early &&
+      (!wanted.has(early.tabId) ||
+        (early.standInTabId !== null && wanted.has(early.standInTabId)) ||
+        glance !== null ||
+        (fullscreenTabId !== null && owned.has(fullscreenTabId)))
+    )
+      this.dropEarlyShow()
     /**
      * Place the tab's views at `rect` and show them, bottom to top (`TabManager.viewsOf`: the
      * page, and the reader's cover over it while the two are laid out together – before the
      * cover's first frame, and after the cover is taken down until the page's). A view shown
      * from elsewhere joins the window on top (a page an agent held on its stage): the ones over
      * it in the tab's order are raised over it again; `raise` orders them all over the rest.
-     * True when the view the layout owns (`viewsOwnedBy`) was hidden until now.
+     * True when the view the layout owns (`viewsOwnedBy`) was hidden until now – or shown on
+     * the activate commit ahead of this, the first report placing it (`EarlyShow.reported`).
      */
     const place = (
       tabId: string,
@@ -575,7 +641,15 @@ export class ZenWindow {
         v.setBounds(rect)
         v.setBorderRadius(radius)
         v.setCover?.(cover)
-        if (v.isVisible()) continue
+        if (v.isVisible()) {
+          const held = this.earlyShow
+          if (v === view && held && held.tabId === tabId && !held.reported) {
+            held.reported = true
+            shownNow = true
+            if (held.revealed) this.dropEarlyShow()
+          }
+          continue
+        }
         v.setVisible(true)
         if (v === view) shownNow = true
         reorder = true
@@ -585,9 +659,17 @@ export class ZenWindow {
     /**
      * Hide the tab's views. The page beneath a cover goes with the cover, the cover taken down
      * with the page: left shown, either would stand at the tab's place – over whatever this
-     * report shows there, where it is the younger view – until its handshake ends.
+     * report shows there, where it is the younger view – until its handshake ends. The stand-in
+     * over a page shown on the activate commit is counted down here, as the report says, and
+     * taken down at the reveal (`EarlyShow.hideDeferred`): hidden now, the ground – the shown
+     * page's background before its first paint – would show where it stood.
      */
     const hide = (tabId: string): void => {
+      const held = this.earlyShow
+      if (held && held.standInTabId === tabId && !held.revealed) {
+        held.hideDeferred = true
+        return
+      }
       for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setVisible(false)
     }
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
@@ -614,21 +696,7 @@ export class ZenWindow {
       this,
       report.contentHidden ? null : (report.sidePanel ?? null)
     )
-    // The page-edge band's travel: the views stand `offset - seat` below their laid-out rects
-    // (`LayoutBand`); 0 at rest, where the seat is the offset.
-    const shift = bandShift(report)
-    this.pageShift = shift
-    const wanted = new Map<string, { rect: Rect; radius: number; cover: ContentCover }>()
-    if (!report.contentHidden) {
-      for (const p of report.placements)
-        wanted.set(p.tabId, {
-          rect: shifted(p.rect, shift),
-          radius: p.radius,
-          cover: p.cover ?? NO_COVER
-        })
-    }
     if (report.placements.length === 1) this.lastContentRect = roundRect(report.placements[0].rect)
-    const glance = report.glance
     // Whether a page that was showing goes away under this report – under the chrome, which is
     // over the content (`contentHidden`; the reader's cover is another thing, `TabManager.cover`)
     // – and whether one of those pages held the keyboard as it went.
@@ -736,6 +804,123 @@ export class ZenWindow {
     }
     for (const p of layout.placements) if (p.tabId !== layout.glance?.tabId) move(p.tabId, p.rect)
     if (layout.glance) move(layout.glance.tabId, layout.glance.rect)
+  }
+
+  /**
+   * Show the page of `tabId` – the tab switched to or woken – on the activate commit, at the
+   * frame's last reported rect, under the page the window has in front (W8-P0, the Design
+   * Lead's ruling on the jank audit's finding G). The layout has shown a switched or woken view
+   * only once the chrome's report arrived – the state to the chrome, its layout, the report back:
+   * two round trips after the commit, 5 ms at 1x and 20 ms at 4x CPU throttle behind the state,
+   * and a woken page's first paint 60–70 ms later than it could be. Shown here, the page starts
+   * painting on the commit; the report still arrives and still sets the bounds (`applyLayout`),
+   * nothing else of the chrome's order changes.
+   *
+   * At the FRAME's last reported rect (`lastContentRect`: the one placement of the last report,
+   * the rect `setBounds` received), never the view's own last box – a view hidden while the
+   * window was resized or the sidebar folded, or parked, has a stale one; and only while that
+   * rect is the frame's now: the last report placed one page, alone, not under the chrome
+   * (`contentHidden`), no glance, no element fullscreen, and the tab is such a page too (not a
+   * split's member, whose pane the report alone knows; one view, no reader's cover). Anything
+   * else is shown by the report as before.
+   *
+   * The stand-in (design language v2 §11's cover rule; #587's mirror): the page the window had
+   * in front stays OVER the shown page – raised above it – from this commit until the shown
+   * page's word that it has painted (`TabView.shownPainted`: a frame drawn and the document's
+   * first paint) or the failure ceiling `COVER_REPORT_CEILING_MS`, whichever comes first, then
+   * the stand-in is hidden: the reveal. The user never sees the shown view's ground – its
+   * background colour before the first frame, a woken page's white – or a stale frame. The
+   * layout report that arrives meanwhile counts the stand-in down as it always did
+   * (`layout.applied`'s `hid`), and the engine's hide waits for the reveal. Under reduced
+   * motion as otherwise the reveal is a cut, as the cover rule's swap is: no motion of its own.
+   * Only on a host that shows on the commit (`TabViewHost.showsOnCommit`, the desktop's) and
+   * for a view that gives the word (`shownPainted`); the rest keep the report's show.
+   */
+  showOnCommit(tabId: string): void {
+    // A hold still standing (the user switched again within the frame): revealed now – its
+    // stand-in's deferred hide applied – before the page in front takes the stand-in's part.
+    this.revealEarlyShow()
+    if (!this.alive || this.browser.platform.views.showsOnCommit !== true) return
+    const layout = this.lastLayout
+    const rect = this.lastContentRect
+    if (!layout || !rect || layout.contentHidden || layout.glance || this.htmlFullscreenTabId)
+      return
+    if (layout.placements.length !== 1 || rect.width <= 0 || rect.height <= 0) return
+    const front = layout.placements[0]
+    if (front.tabId === tabId) return
+    const tabs = this.browser.tabs
+    const tab = tabs.tab(tabId)
+    if (!tab || tab.splitGroupId) return
+    const views = tabs.viewsOf(tabId)
+    const view = views.length === 1 ? views[0] : undefined
+    if (
+      !view ||
+      view.isDestroyed() ||
+      !view.shownPainted ||
+      tabs.ownerOf(tabId) !== this ||
+      view.isVisible()
+    )
+      return
+    const standIn = tabs.viewsOwnedBy(this).get(front.tabId)
+    const standInTabId =
+      standIn && !standIn.isDestroyed() && standIn.isVisible() ? front.tabId : null
+    view.setBounds(rect)
+    view.setBorderRadius(Math.round(front.radius))
+    view.setCover?.(front.cover ?? NO_COVER)
+    view.setVisible(true)
+    // The page left in front over the shown one: the younger view draws over the older, so it
+    // is raised above the shown page explicitly.
+    if (standInTabId)
+      for (const v of tabs.viewsOf(standInTabId)) if (v.isVisible()) v.bringToFront()
+    let done = false
+    const ceiling = setTimeout(() => this.revealEarlyShow(hold), COVER_REPORT_CEILING_MS)
+    const hold: EarlyShow = {
+      tabId,
+      standInTabId,
+      reported: false,
+      hideDeferred: false,
+      revealed: false,
+      cancel: () => {
+        done = true
+        clearTimeout(ceiling)
+      }
+    }
+    // A revealed hold still waiting on its report gives way: the report that comes places this
+    // page, not that one.
+    this.dropEarlyShow()
+    this.earlyShow = hold
+    view.shownPainted().then(
+      () => {
+        if (!done) this.revealEarlyShow(hold)
+      },
+      // A rejection (the page gone) is no word: the ceiling stands.
+      () => undefined
+    )
+  }
+
+  /**
+   * The reveal: the early show's word came, its ceiling passed, or another early show takes its
+   * place. The stand-in goes down where a layout report asked for that meanwhile
+   * (`hideDeferred`); one no report has taken down yet stays until the report that does. The
+   * hold itself stands on until the first report placing the shown page has counted it shown
+   * (`layout.applied`'s `shown`, as the report that showed it would have), then is dropped.
+   */
+  private revealEarlyShow(hold: EarlyShow | null = this.earlyShow): void {
+    if (!hold || this.earlyShow !== hold || hold.revealed) return
+    hold.revealed = true
+    hold.cancel()
+    if (hold.reported) this.earlyShow = null
+    if (!hold.hideDeferred || !hold.standInTabId || !this.alive) return
+    for (const v of this.browser.tabs.viewsOf(hold.standInTabId))
+      if (!v.isDestroyed() && v.isVisible()) v.setVisible(false)
+  }
+
+  /** The early show is over: no word waited for, no hide deferred (the layout owns the views). */
+  private dropEarlyShow(): void {
+    const hold = this.earlyShow
+    if (!hold) return
+    this.earlyShow = null
+    hold.cancel()
   }
 
   /**
