@@ -3,7 +3,11 @@ import type { WebAppBanner } from '@shared/types'
 import { BANNER_TIMEOUT_MS } from '@shared/webApp'
 import { run } from '@renderer/lib/api'
 import { dismissPosted, postBanner, postedUp } from '@renderer/lib/band/post'
-import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
+import {
+  bannerSurfaceMounted,
+  type BannerDismissReason,
+  type BannerOptions
+} from '@renderer/lib/ui'
 
 /**
  * The ambient "Add <app> to Home screen" prompt (PWA-03) behind one seam. The core raises and
@@ -12,6 +16,12 @@ import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
  * (motion spec §4; `lib/band/post.ts` is the door): the phone glyph on the title, the app's
  * origin as the detail, one "Add" that opens the install sheet through the core like the menu
  * item, the card's own swipe, close and clock. One banner at a time under the `install` key.
+ * The card drawn is the core's word to start the app's cooldown (`webapp.bannerShown`): it
+ * goes the moment the card is posted with a surface mounted that draws banners (the phone's
+ * and the tablet's `MessageLayer`, under which the band is the door – so the word goes as the
+ * offer is posted, a wait under a cover included), so the phone's timing is the store's own;
+ * where no surface draws banners (the desktop's sidebar, #740) no word goes and the core,
+ * hearing none inside its grace, counts the prompt as undrawn and takes it back.
  */
 
 /** The banner card up for each tab, by the id the door gave it. */
@@ -52,6 +62,7 @@ export function presentInstallBanner(banner: WebAppBanner): void {
     }
   )
   shown.set(banner.tabId, id)
+  if (bannerSurfaceMounted()) run('webapp.bannerShown', { tabId: banner.tabId })
 }
 
 /**

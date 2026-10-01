@@ -2,7 +2,7 @@
   "id": "media",
   "order": 106,
   "class": "MediaDemo",
-  "shard": "webview",
+  "shard": "webview-b",
   "mirrors": "android-media-demo.yml",
   "dir": "media-demo",
   "env": {
@@ -10,5 +10,5 @@
   },
   "timeout": 1200,
   "estimate": 8,
-  "note": "POST_NOTIFICATIONS revoked before the driver, granted back after: the quiet ask's first grant meets Android 13's prompt for real (NOT-03); the capture card and the Updates channel read from the shade (NOT-13, NOT-17)."
+  "note": "POST_NOTIFICATIONS revoked before the driver, granted back after: the quiet ask's first grant meets Android 13's prompt for real (NOT-03); the capture card and the Updates channel read from the shade (NOT-13, NOT-17). Moved from webview (67.0 of its 68 minutes, past the headroom line) to webview-b when that shard opened (services pass 17, seed #36), with media-ui, pip and fullscreen – the four drivers on the media-demo handshake – and a11y-chrome-private; webview at 34.0 without the five. First on webview-b by its order: the shared script's prepare step swaps the snapshot WebView in on this boot (the shard's WEBVIEW_APK). The same image and swap, no setup step of its own."
 }

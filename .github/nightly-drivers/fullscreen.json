@@ -2,7 +2,7 @@
   "id": "fullscreen",
   "order": 109,
   "class": "FullscreenDemo",
-  "shard": "webview",
+  "shard": "webview-b",
   "mirrors": "android-fullscreen-demo.yml",
   "dir": "media-demo",
   "env": {
@@ -10,5 +10,5 @@
   },
   "timeout": 1200,
   "estimate": 8,
-  "note": "CAMERA revoked before the driver, granted back after. Thirteen scenes with the exit hint's touch, the chrome's motion pair and rotate-to-fullscreen's eight turns of the screen (MOT-32, MED-02, MED-03)."
+  "note": "CAMERA revoked before the driver, granted back after. Thirteen scenes with the exit hint's touch, the chrome's motion pair and rotate-to-fullscreen's eight turns of the screen (MOT-32, MED-02, MED-03). Moved from webview (67.0 of its 68 minutes, past the headroom line) to webview-b when that shard opened (services pass 17, seed #36), with media, media-ui and pip – the four drivers on the media-demo handshake – and a11y-chrome-private: see media for the choice. webview-b boots with -camera-back emulated as webview does, for this demo."
 }

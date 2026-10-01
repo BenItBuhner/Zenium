@@ -2,9 +2,10 @@
   "id": "media-ui",
   "order": 107,
   "class": "MediaUiDemo",
-  "shard": "webview",
+  "shard": "webview-b",
   "mirrors": "android-media-demo.yml:driver=ui",
   "dir": "media-demo",
   "timeout": 900,
-  "estimate": 5
+  "estimate": 5,
+  "note": "Moved from webview (67.0 of its 68 minutes, past the headroom line) to webview-b when that shard opened (services pass 17, seed #36), with media, pip and fullscreen – the four drivers on the media-demo handshake – and a11y-chrome-private: see media for the choice."
 }

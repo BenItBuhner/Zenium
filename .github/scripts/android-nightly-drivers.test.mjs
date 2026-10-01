@@ -154,9 +154,12 @@ describe('the manifest directory', () => {
     // 0abc7784 (the file this directory replaced; the same bytes at b360293e, v0.4.82, and at
     // bd47e39a, v0.4.83, where the file last stood - the matrix is the shards' alone, and the
     // driver #523 added there changed no shard), regenerated once since for the seventh phone
-    // shard (phone-g, W6-H: one row more, the rows before it byte for byte the same) and once
+    // shard (phone-g, W6-H: one row more, the rows before it byte for byte the same), once
     // for the eighth (phone-h, W6-S24c-b: one row more after phone-g's, the rows around it byte
-    // for byte the same). A shard change regenerates it, on purpose.
+    // for byte the same) and once for the second API 35 and snapshot-WebView phone shards
+    // (api35-b after api35's row, webview-b after webview's; services pass 17, seed #36: two rows
+    // more, the rows around them byte for byte the same). A shard change regenerates it, on
+    // purpose.
     const golden = readFileSync(
       join(REPO_ROOT, '.github', 'scripts', 'fixtures', 'android-nightly-drivers-matrix.json'),
       'utf8'
@@ -497,9 +500,62 @@ describe('the plan', () => {
 
   it('collects the setup steps a shard needs, each once', () => {
     expect(setupSteps(manifest, 'webview')).toEqual(['webview-snapshot'])
+    expect(setupSteps(manifest, 'webview-b')).toEqual(['webview-snapshot'])
     expect(setupSteps(manifest, 'api35')).toEqual(['ffmpeg', 'perfetto-python'])
+    expect(setupSteps(manifest, 'api35-b')).toEqual(['ffmpeg', 'perfetto-python'])
     const phoneA = setupSteps(manifest, 'phone-a')
     expect(new Set(phoneA).size).toBe(phoneA.length)
+  })
+
+  it("boots a second shard of an image on the first one's recipe, the drivers split between the two", () => {
+    // api35-b and webview-b (services pass 17, seed #36) took half of api35's and webview's
+    // drivers, both past the headroom line and both bound to their images: the same image,
+    // options, GPU, display, budget, setup steps and shard environment, so a driver reads the
+    // same on either; only the title and the note differ. Every driver of the pair's image sits
+    // on one of the two, and each of the two has drivers.
+    for (const [first, second] of [
+      ['api35', 'api35-b'],
+      ['webview', 'webview-b']
+    ]) {
+      const recipe = (shard) =>
+        Object.fromEntries(
+          Object.entries(shard).filter(([key]) => key !== 'title' && key !== 'note')
+        )
+      expect(recipe(manifest.shards[second]), second).toEqual(recipe(manifest.shards[first]))
+      expect(manifest.shards[second].title).not.toBe(manifest.shards[first].title)
+      expect(driversOf(manifest, first).length, first).toBeGreaterThan(0)
+      expect(driversOf(manifest, second).length, second).toBeGreaterThan(0)
+      for (const name of [first, second])
+        expect(shardMinutes(manifest, name), name).toBeLessThanOrEqual(
+          headroomLine(manifest.shards[name])
+        )
+    }
+    // The split by the estimates: the two profiling drivers alone on api35-b, the media drivers
+    // and the accessibility demo's private scene on webview-b.
+    expect(driversOf(manifest, 'api35-b').map((d) => d.id)).toEqual(['motion-perf', 'menu-perf'])
+    expect(driversOf(manifest, 'webview-b').map((d) => d.id)).toEqual([
+      'media',
+      'media-ui',
+      'pip',
+      'fullscreen',
+      'a11y-chrome-private'
+    ])
+  })
+
+  it('swaps the snapshot WebView in through the first driver of every shard that runs on it', () => {
+    // The swap is the shared script's prepare step on the first driver of the boot (DEMO_PREPARED
+    // unset, WEBVIEW_APK from the shard's env); a driver that blanks WEBVIEW_APK for itself
+    // (ntp-morph-private: its wrapper would swap again) must therefore never run first.
+    const snapshotShards = shardNames(manifest).filter(
+      (name) => manifest.shards[name].env?.WEBVIEW_APK
+    )
+    expect(snapshotShards).toEqual(['webview', 'webview-b', 'tablet-webview'])
+    for (const name of snapshotShards) {
+      const [first] = driversOf(manifest, name)
+      expect(environmentOf(manifest, first).WEBVIEW_APK, `${name}: ${first.id} runs first`).toBe(
+        'artifacts/webview/SystemWebView.apk'
+      )
+    }
   })
 })
 

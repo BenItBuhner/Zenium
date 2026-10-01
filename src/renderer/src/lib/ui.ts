@@ -888,6 +888,28 @@ function onCards(): boolean {
   return cardHosts.size > 0
 }
 
+/**
+ * The surface that draws `banners` (`components/messages/MessageLayer`: the phone's and the
+ * tablet's) claims so while mounted. A banner shown with no claim standing sits in the store
+ * undrawn – the desktop today, whose sidebar draws toasts alone – and a caller that accounts
+ * for a drawn card asks first (the install prompt's word to the core, `lib/installBanner.ts`).
+ */
+const bannerSurfaces = new Set<symbol>()
+
+/** Say that banners are drawn from now on; call the return value when the surface unmounts. */
+export function claimBannerSurface(): () => void {
+  const token = Symbol('banner surface')
+  bannerSurfaces.add(token)
+  return () => {
+    bannerSurfaces.delete(token)
+  }
+}
+
+/** Whether a surface that draws `banners` is mounted right now. */
+export function bannerSurfaceMounted(): boolean {
+  return bannerSurfaces.size > 0
+}
+
 let messageSeq = 0
 /** Per-message auto-dismiss clocks: the timer, and the time left when a finger held it. */
 const clocks = new Map<number, { timer: ReturnType<typeof setTimeout>; due: number }>()
