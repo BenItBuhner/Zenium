@@ -70,7 +70,7 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab, isEmptySplitPane, regularOf } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { closeWithUndo } from '@renderer/lib/closeUndo'
+import { closeUndoable, closeWithUndo } from '@renderer/lib/closeUndo'
 import { requestAgentRelease } from '@renderer/lib/agentRelease'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { tabsOnPane } from '@renderer/lib/privateTabs'
@@ -113,23 +113,6 @@ function closeGroupUndoable(folderId: string): void {
     activeTabId: activeTab(state)?.id ?? null,
     close: () => run('folder.close', { folderId }),
     group: folder
-  })
-}
-
-/**
- * Close the row's other tabs with Undo on the toast (`tab.closeOthersUndoable`, the touch hosts'
- * tab menu's "Close Other Tabs"; OS-40 part B, §9.23): the tabs are the ones the core's own rule
- * closes, named in the event, the close the core's `tab.closeOthers`, the toast "N tabs closed".
- */
-function closeOthersUndoable(tabId: string, tabIds: readonly string[]): void {
-  const state: UIState | null = browserStore.get().state
-  if (!state) return
-  const tabs = tabIds.flatMap((id) => state.tabs[id] ?? [])
-  closeWithUndo({
-    tabs,
-    settings: state.settings,
-    activeTabId: activeTab(state)?.id ?? null,
-    close: () => run('tab.closeOthers', { tabId })
   })
 }
 
@@ -446,9 +429,11 @@ export function useMainEvents(): void {
       // saved", whose Undo brings them back into the group. Inert on the desktop, whose folder
       // menu never emits it (`showFolderContextMenu` calls the core's `closeFolder` itself).
       onEvent('folder.closeUndoable', ({ folderId }) => closeGroupUndoable(folderId)),
-      // The touch hosts' tab menu's Close Other Tabs, the same way (§9.23): the desktop's row
-      // closes them in the core and never emits it.
-      onEvent('tab.closeOthersUndoable', ({ tabId, tabIds }) => closeOthersUndoable(tabId, tabIds)),
+      // The touch hosts' tab menus' close rows, the same way (§9.23: Close Tab, Remove Tab, the
+      // directed and other closes, the selection's Close N Tabs – the tabs the close takes and the
+      // core command that closes them, `lib/closeUndo.ts`); the desktop's rows close in the core
+      // and never emit it.
+      onEvent('tab.closeUndoable', ({ tabIds, close }) => closeUndoable(tabIds, close)),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {

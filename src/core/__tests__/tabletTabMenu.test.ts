@@ -40,14 +40,27 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(deepItem(h.shown(), 'Close Tabs Above').enabled).toBe(false)
   })
 
-  it("Close Other Tabs closes nothing itself on the tablet: it emits tab.closeOthersUndoable with the tabs the core's rule closes, for the chrome's close-with-undo (§9.23, OS-40 part B)", () => {
+  /*
+   * §9.23, OS-40 part B: on a touch host, closing a tab never asks and can always be undone.
+   * The tablet menu's close rows close nothing in the core themselves: each emits
+   * `tab.closeUndoable` with the tabs the close takes, as the core's own rule reads them, and
+   * the core command that closes them; the chrome runs that command through its one
+   * close-with-undo (`lib/closeUndo.ts`, pinned in `hooks/__tests__/closeUndoable.test.tsx`).
+   */
+  const emitted = (emit: ReturnType<typeof vi.spyOn>): unknown[] =>
+    emit.mock.calls.map(([name, payload]) => [name, payload])
+
+  it("Close Other Tabs closes nothing itself on the tablet: it emits tab.closeUndoable with the tabs the core's rule closes and the core's tab.closeOthers (§9.23, OS-40 part B)", () => {
     const h = tablet()
     const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
     const emit = vi.spyOn(h.browser, 'emit')
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     deepItem(h.shown(), 'Close Other Tabs').click?.()
-    expect(emit.mock.calls.map(([name, payload]) => [name, payload])).toEqual([
-      ['tab.closeOthersUndoable', { tabId: h.tabId, tabIds: [other] }]
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [other], close: { command: 'tab.closeOthers', tabId: h.tabId } }
+      ]
     ])
     expect(h.browser.tabs.tab(other)).toBeDefined()
     // The chrome answers with the core's own close, once its undo is armed.
@@ -56,15 +69,106 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
   })
 
-  it("the desktop's Close Other Tabs closes them in the core itself and emits nothing (its path is as it was)", () => {
-    const h = pageHarness(DESKTOP)
-    h.browser.tabs.createTab({ url: 'https://example.org/second', active: false }, h.win)
+  it('Close Tabs Above and Close Tabs Below emit the directed close the same way, with the tabs on that side of the row', () => {
+    const h = tablet()
     const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
     const emit = vi.spyOn(h.browser, 'emit')
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
-    deepItem(h.shown(), 'Close Other Tabs').click?.()
+    deepItem(h.shown(), 'Close Tabs Below').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [other], close: { command: 'tab.closeBelow', tabId: h.tabId } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+    emit.mockClear()
+    // From the second row, the first is the one above.
+    h.browser.menus.showTabContextMenu(other, h.win)
+    deepItem(h.shown(), 'Close Tabs Above').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.closeAbove', tabId: other } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+    h.browser.handleCommand(h.win, 'tab.closeAbove', { tabId: other })
+    expect(h.browser.tabs.tab(h.tabId)).toBeUndefined()
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+  })
+
+  it("Close Tab emits the row's own close (tab.close, not forced) and closes nothing until the chrome runs it", async () => {
+    const h = tablet()
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Tab').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.close', tabId: h.tabId, force: false } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+    // The chrome answers with the core's own close (its page's unload check heard first).
+    h.browser.handleCommand(h.win, 'tab.close', { tabId: h.tabId, force: false })
+    await vi.waitFor(() => expect(h.browser.tabs.tab(h.tabId)).toBeUndefined())
+  })
+
+  it("a pinned row's Close Tab (keep pinned) and Remove Tab emit tab.close unforced and forced in turn", () => {
+    const h = tablet()
+    h.browser.tabs.togglePin(h.tabId, h.win)
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    expect(labels(h.shown())).toEqual(
+      expect.arrayContaining(['Close Tab (keep pinned)', 'Remove Tab'])
+    )
+    deepItem(h.shown(), 'Close Tab (keep pinned)').click?.()
+    deepItem(h.shown(), 'Remove Tab').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.close', tabId: h.tabId, force: false } }
+      ],
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId], close: { command: 'tab.close', tabId: h.tabId, force: true } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+  })
+
+  it("the selection menu's Close N Tabs emits the selection with the core's tab.closeMany", () => {
+    const h = tablet()
+    const other = h.win.activeSpace().tabIds.find((id) => id !== h.tabId)!
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showSelectionContextMenu([h.tabId, other], h.win)
+    deepItem(h.shown(), 'Close 2 Tabs').click?.()
+    expect(emitted(emit)).toEqual([
+      [
+        'tab.closeUndoable',
+        { tabIds: [h.tabId, other], close: { command: 'tab.closeMany', tabIds: [h.tabId, other] } }
+      ]
+    ])
+    expect(h.browser.tabs.tab(h.tabId)).toBeDefined()
+    expect(h.browser.tabs.tab(other)).toBeDefined()
+  })
+
+  it("the desktop's close rows close in the core themselves and emit nothing (their paths are as they were)", () => {
+    const h = pageHarness(DESKTOP)
+    h.browser.tabs.createTab({ url: 'https://example.org/second', active: false }, h.win)
+    h.browser.tabs.createTab({ url: 'https://example.org/third', active: false }, h.win)
+    const [other, third] = h.win.activeSpace().tabIds.filter((id) => id !== h.tabId)
+    const emit = vi.spyOn(h.browser, 'emit')
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Tabs Below').click?.()
     expect(h.browser.tabs.tab(other)).toBeUndefined()
-    expect(emit.mock.calls.map(([name]) => name)).not.toContain('tab.closeOthersUndoable')
+    expect(h.browser.tabs.tab(third)).toBeUndefined()
+    h.browser.tabs.createTab({ url: 'https://example.org/fourth', active: false }, h.win)
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    deepItem(h.shown(), 'Close Other Tabs').click?.()
+    expect(h.win.activeSpace().tabIds).toEqual([h.tabId])
+    expect(emit.mock.calls.map(([name]) => name)).not.toContain('tab.closeUndoable')
   })
 
   it('opens a new tab below the row (Chrome\'s "New tab below" for a vertical strip)', () => {

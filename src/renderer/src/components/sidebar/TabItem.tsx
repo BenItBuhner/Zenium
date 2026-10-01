@@ -24,9 +24,9 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { tabAlertTooltip, type TabAlert } from '@shared/captureState'
 import { run } from '@renderer/lib/api'
-import { closeWithUndo } from '@renderer/lib/closeUndo'
+import { closeTabFromChrome } from '@renderer/lib/closeUndo'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow, useHoverCardUp } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
@@ -220,10 +220,11 @@ export const TabItem = memo(function TabItem({
     run('tab.contextMenu', { tabId: tab.id, ...anchor })
   }
 
+  // The middle-click closes as the × does: with Undo on the toast on a touch layout (§9.23).
   const onAuxClick = (e: React.MouseEvent): void => {
     if (e.button === 1) {
       e.preventDefault()
-      run('tab.close', { tabId: tab.id })
+      closeTabFromChrome(tab.id)
     }
   }
 
@@ -560,31 +561,13 @@ function CloseButton({ tab }: { tab: Tab }): JSX.Element {
     <RowControl
       className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
       title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
-      onClick={() => closeTab(tab)}
+      // On a touch layout (the tablet's strip) with Undo on the toast, as the overview's cards'
+      // closes (lib/closeUndo.ts, §9.23); the desktop's close as it was, its page free to ask.
+      onClick={() => closeTabFromChrome(tab.id)}
     >
       <X className={V2_TRAILING_GLYPH} />
     </RowControl>
   )
-}
-
-/**
- * The ×'s close. On a touch layout (the tablet's strip) it comes with Undo on the toast
- * (lib/closeUndo.ts, §9.33; OS-40 part B, §9.23: a page objecting under a close is let go, and
- * the toast's Undo is the protection "Leave site?" was), as the overview's cards' closes do.
- * The desktop's close is as it was: its page may still ask.
- */
-function closeTab(tab: Tab): void {
-  const state = browserStore.get().state
-  if (!isTouchLayout() || !state) {
-    run('tab.close', { tabId: tab.id })
-    return
-  }
-  closeWithUndo({
-    tabs: [tab],
-    settings: state.settings,
-    activeTabId: activeTab(state)?.id ?? null,
-    close: () => run('tab.close', { tabId: tab.id })
-  })
 }
 
 /** A pinned tab that has left its pinned page: the arrow that takes it back, in the ×'s place. */
