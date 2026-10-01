@@ -26,7 +26,7 @@ class WakeFramesTest {
 
     @Test
     fun summaryCountsTheLongFrames() {
-        val s = WakeFrames.summarize(listOf(8.0, 12.0, 16.7, 17.0, 33.0, 120.0))
+        val s = WakeFrames.summarise(listOf(8.0, 12.0, 16.7, 17.0, 33.0, 120.0))
         assertEquals(6, s.frames)
         assertEquals(3, s.over16)
         assertEquals(2, s.over32)
@@ -34,7 +34,7 @@ class WakeFramesTest {
         assertEquals(16.7, s.p50, 0.0)
         assertEquals(120.0, s.p95, 0.0)
         assertEquals(2.0 / 6, s.over32Share, 1e-9)
-        assertEquals(WakeFrames.Summary.EMPTY, WakeFrames.summarize(emptyList()))
+        assertEquals(WakeFrames.Summary.EMPTY, WakeFrames.summarise(emptyList()))
     }
 
     @Test
@@ -69,9 +69,9 @@ class WakeFramesTest {
 
     @Test
     fun theBarIsAbsoluteWhereTheControlHoldsSixtyFpsAndAFactWhereItCannot() {
-        val smooth = WakeFrames.summarize(List(60) { 12.0 })
+        val smooth = WakeFrames.summarise(List(60) { 12.0 })
         assertEquals(WakeFrames.Bar.Absolute, WakeFrames.bar(smooth, 14.0))
-        val emulator = WakeFrames.summarize(List(20) { 300.0 } + 554.0)
+        val emulator = WakeFrames.summarise(List(20) { 300.0 } + 554.0)
         val bar = WakeFrames.bar(emulator, 310.0)
         assertTrue(bar is WakeFrames.Bar.Fact)
         // The denominator is the lane's stall size: the control's longest frame or the run's p95 over every frame, whichever is more.
@@ -83,10 +83,10 @@ class WakeFramesTest {
 
     @Test
     fun aFactLineReadsTheWindowAgainstTheDenominatorAndNeverFails() {
-        val control = WakeFrames.summarize(List(7) { 213.0 } + List(3) { 10.0 } + 294.0)
+        val control = WakeFrames.summarise(List(7) { 213.0 } + List(3) { 10.0 } + 294.0)
         val bar = WakeFrames.Bar.Fact(controlLongest = 294.0, runP95 = 300.0)
         // The retry's switch window: a 606 ms frame against a 294 ms control – a reading, not a failure.
-        val sleeping = WakeFrames.summarize(List(11) { 176.0 } + 606.0 + 10.0)
+        val sleeping = WakeFrames.summarise(List(11) { 176.0 } + 606.0 + 10.0)
         val fact = WakeFrames.judge("wake-tap switch sleeping", sleeping, control, bar)
         assertTrue(fact.fact)
         assertTrue(fact.pass)
@@ -124,6 +124,17 @@ class WakeFramesTest {
     }
 
     @Test
+    fun theSwitchClaimWantsNoBuildInAnyScene() {
+        val clean = WakeFrames.judgeNoBuilds("switch", linkedMapOf("wake-tap-warm" to 0, "wake-tap-sleeping" to 0, "wake-pull-out-cold" to 0))
+        assertTrue(clean.pass)
+        assertEquals(listOf("3 scene(s), none built one"), clean.reasons)
+        val inside = WakeFrames.judgeNoBuilds("switch", linkedMapOf("wake-tap-warm" to 1, "wake-tap-sleeping" to 0, "wake-pull-out-warm" to 2))
+        assertTrue(inside.failed)
+        assertEquals("FAIL switch: a spare was built inside the switch of wake-tap-warm (1), wake-pull-out-warm (2)", inside.line())
+        assertEquals(listOf("no scene was recorded"), WakeFrames.judgeNoBuilds("switch", emptyMap()).reasons)
+    }
+
+    @Test
     fun theSpareMemoryClaimBoundsThePssDelta() {
         assertTrue(WakeFrames.judgeSpareMemory("memory", true, 1_796, 8_192).pass)
         assertTrue(WakeFrames.judgeSpareMemory("memory", true, -40, 8_192).pass)
@@ -133,20 +144,20 @@ class WakeFramesTest {
 
     @Test
     fun absoluteBarPassesAndFails() {
-        val control = WakeFrames.summarize(List(60) { 12.0 })
-        val good = WakeFrames.summarize(List(60) { 15.0 })
+        val control = WakeFrames.summarise(List(60) { 12.0 })
+        val good = WakeFrames.summarise(List(60) { 15.0 })
         assertTrue(WakeFrames.judge("switch", good, control, WakeFrames.Bar.Absolute).pass)
-        val hitch = WakeFrames.summarize(List(59) { 12.0 } + 40.0)
+        val hitch = WakeFrames.summarise(List(59) { 12.0 } + 40.0)
         val verdict = WakeFrames.judge("switch", hitch, control, WakeFrames.Bar.Absolute)
         assertFalse(verdict.pass)
         assertTrue(verdict.line(), verdict.line().startsWith("FAIL switch: 1 frame(s) over 32 ms"))
-        val slow = WakeFrames.summarize(List(60) { 20.0 })
+        val slow = WakeFrames.summarise(List(60) { 20.0 })
         assertTrue(WakeFrames.judge("switch", slow, control, WakeFrames.Bar.Absolute).reasons.first().startsWith("p95 20.0 ms over 16.7"))
     }
 
     @Test
     fun anEmptyWindowFailsTheAbsoluteBar() {
-        val control = WakeFrames.summarize(List(10) { 10.0 })
+        val control = WakeFrames.summarise(List(10) { 10.0 })
         val verdict = WakeFrames.judge("switch", WakeFrames.Summary.EMPTY, control, WakeFrames.Bar.Absolute)
         assertTrue(verdict.failed)
         assertEquals("FAIL switch: no frame was recorded in the window", verdict.line())
@@ -168,7 +179,7 @@ class WakeFramesTest {
 
     @Test
     fun tableRendersRows() {
-        val table = WakeFrames.table(listOf("a" to WakeFrames.summarize(listOf(10.0, 40.0))))
+        val table = WakeFrames.table(listOf("a" to WakeFrames.summarise(listOf(10.0, 40.0))))
         assertTrue(table, table.contains("| a | 2 | 10.0 | 40.0 | 40.0 | 40.0 | 1 | 1 |"))
     }
 }

@@ -98,6 +98,13 @@ import kotlin.math.roundToInt
  *  - `spare` (PASS / FAIL): every sleeping wake took the spare view, and [TabHost.create] held
  *    the UI thread no longer than [CREATE_CAP_MS] (the cold wakes' construction time is written
  *    beside it, and the Perfetto trace reads the same slices: `android-tab-wake-spans.py`);
+ *  - `switch` (PASS / FAIL): no spare was built between the tap and the page view's show in any
+ *    scene of any state – the host's spare count read in the same main-thread hop that first saw
+ *    the view shown. The warm control waits for the overview's spare like the sleeping scenes
+ *    do, so the hide's build has happened before its tap and never inside its window (a worse
+ *    control would flatter the fix), and a build inside the morph is the one thing the quiet
+ *    gate exists to prevent; the builds inside the way out's window are written beside the scene
+ *    (they follow the spring's rest, by design, inside that window or just after it);
  *  - `spare lifecycle` (PASS / FAIL, exercised off the record after the scenes): a spare that
  *    stood is dropped by a memory trim ([Host.onTrimMemory], `RUNNING_MODERATE`) and, stood
  *    again, by its renderer going ([TabHost.replaceCrashed] on the spare);
@@ -135,6 +142,8 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
     private val moments = LinkedHashMap<String, Double>()
     /** Every frame recorded in every scene: the run's own p95 per reading is read over these. */
     private val allFrames = ArrayList<WakeFrames.Frame>()
+    /** Per scene, the spares the host built between the tap and the page view's show – zero, by construction, in every state. */
+    private val buildsInSwitch = LinkedHashMap<String, Int>()
     private val spareWakes = ArrayList<WakeFrames.Wake>()
     private val coldWakes = ArrayList<WakeFrames.Wake>()
     private var perfettoOn = false
@@ -315,7 +324,9 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             finding("[$name] the overview did not open; skipped")
             return
         }
-        val spareBefore = if (state == State.SLEEPING) awaitSpare(SPARE_WAIT_MS) else hasSpare()
+        // The warm control taps with a spare standing too, as the user's wake does (and so the
+        // overview's hide has had its build, never inside the control's window).
+        val spareBefore = if (state == State.COLD) hasSpare() else awaitSpare(SPARE_WAIT_MS)
         val card = cardRect(heavyTab)
         if (card == null) {
             finding("[$name] no card for $heavyTab in the grid; skipped")
@@ -354,12 +365,15 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         moments["$name/shown"] = msOr(marks.shownNs - tapNs, marks.shownNs > 0)
         moments["$name/paint"] = msOr(marks.paintedNs - tapNs, marks.paintedNs > 0)
         moments["$name/load"] = msOr(marks.loadedNs - tapNs, marks.loadedNs > 0)
+        // The builds between the tap and the show (the whole scene's when the show was not seen).
+        buildsInSwitch[name] = (if (marks.sparesAtShown >= 0) marks.sparesAtShown else sparesBuilt()) - sparesBefore
         val json = sceneJson(name, result, all)
             .put("tapNs", tapNs).put("shownNs", marks.shownNs).put("paintedNs", marks.paintedNs).put("loadedNs", marks.loadedNs)
             .put("toShowMs", moments["$name/shown"])
             .put("toFirstPaintMs", moments["$name/paint"])
             .put("toLoadMs", moments["$name/load"])
             .put("sparesBuiltInScene", sparesBuilt() - sparesBefore)
+            .put("sparesBuiltInSwitch", buildsInSwitch[name])
             .put("switch", windowJson(switchWindow))
             .put("land", windowJson(landWindow))
             .put("load", windowJson(loadWindow))
@@ -401,7 +415,7 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             finding("[$name] the overview did not open; skipped")
             return
         }
-        val spareBefore = if (state == State.SLEEPING) awaitSpare(SPARE_WAIT_MS) else hasSpare()
+        val spareBefore = if (state == State.COLD) hasSpare() else awaitSpare(SPARE_WAIT_MS)
         val card = cardRect(heavyTab)
         if (card == null) {
             finding("[$name] no card for $heavyTab in the grid; skipped")
@@ -409,12 +423,14 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             return
         }
         var tapNs = 0L
-        var shownNs = 0L
+        var shown: Shown? = null
         var outNs = 0L
         var startBoot = 0L
         var endBoot = 0L
         var loadingAtOut = false
         var canGoBackAtOut = false
+        var sparesAtOut = 0
+        var sparesAtOutEnd = 0
         val sparesBefore = sparesBuilt()
         frames.start()
         val result = traceFrames(name, JankBudget.Kind.GESTURE) {
@@ -423,13 +439,18 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             startBoot = capture.nowBoot()
             tapNs = System.nanoTime()
             Finger().tap(card.exactCenterX(), card.exactCenterY())
-            shownNs = awaitShown(heavyTab, SHOW_WAIT_MS)
+            shown = awaitShown(heavyTab, SHOW_WAIT_MS)
             SystemClock.sleep(OUT_AFTER_SHOW_MS)
             if (back) canGoBackAtOut = awaitCanGoBack(heavyTab, BACK_READY_MS)
-            loadingAtOut = !loaded(heavyTab)
+            val atOut = viewState(heavyTab)
+            loadingAtOut = !atOut.loaded
+            sparesAtOut = atOut.sparesBuilt
             outNs = System.nanoTime()
             if (back) backOut() else pullOut()
-            SystemClock.sleep(CLOSE_SETTLE_MS)
+            // The spare count at the out window's end (one hop at its last moment), then the settle.
+            SystemClock.sleep((OUT_WINDOW_MS - (System.nanoTime() - outNs) / 1_000_000).coerceAtLeast(0))
+            sparesAtOutEnd = sparesBuilt()
+            SystemClock.sleep((CLOSE_SETTLE_MS - (System.nanoTime() - outNs) / 1_000_000).coerceAtLeast(0))
             endBoot = capture.nowBoot()
             capture.sceneEnd(name, cookie)
         }
@@ -437,15 +458,22 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         allFrames += all
         sceneWindows.append("$name $startBoot $endBoot\n")
         val wake = if (state.sleeping) recordWake(state, name, spareBefore) else null
+        val shownNs = shown?.ns ?: 0L
         val outEnd = outNs + OUT_WINDOW_MS * 1_000_000
+        measuredWindows.append("$name switch $startBoot ${startBoot + ((if (shownNs > 0) shownNs else tapNs + SWITCH_CAP_MS * 1_000_000) - tapNs)}\n")
         measuredWindows.append("$name out ${startBoot + (outNs - tapNs)} ${startBoot + (outEnd - tapNs)}\n")
         val outWindow = WakeFrames.window(all, outNs, outEnd)
         moments["$name/shown"] = msOr(shownNs - tapNs, shownNs > 0)
+        // The builds between the tap and the show (up to the way out when the show was not seen), and inside the out window.
+        buildsInSwitch[name] = (shown?.sparesBuilt ?: sparesAtOut) - sparesBefore
+        val buildsInOut = sparesAtOutEnd - sparesAtOut
         val json = sceneJson(name, result, all)
             .put("tapNs", tapNs).put("shownNs", shownNs).put("outNs", outNs)
             .put("toShowMs", moments["$name/shown"])
             .put("loadingAtOut", loadingAtOut).put("canGoBackAtOut", canGoBackAtOut)
             .put("sparesBuiltInScene", sparesBuilt() - sparesBefore)
+            .put("sparesBuiltInSwitch", buildsInSwitch[name])
+            .put("sparesBuiltInOut", buildsInOut)
             .put("out", windowJson(outWindow))
         wake?.let { json.put("spare", JSONObject().put("before", spareBefore).put("took", it.tookSpare).put("createMs", r1(it.createMs))) }
         scenes.put(json)
@@ -454,6 +482,7 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             "[$name] shown ${ms(shownNs - tapNs, shownNs > 0)} after the tap; the page was ${if (loadingAtOut) "still loading" else "LOADED already"} at the ${if (back) "back" else "pull"}" +
                 (if (back) " (history behind it: $canGoBackAtOut)" else "") + "; " +
                 (wake?.let { "create ${if (it.tookSpare) "took the spare" else "BUILT the view"} in ${r1(it.createMs)} ms; " } ?: "") +
+                "spares built between the tap and the show ${buildsInSwitch[name]}, inside the out window $buildsInOut (after the spring's rest, by design); " +
                 "out (${OUT_WINDOW_MS} ms): own ${summaries["$name/out own"]?.line()}; ui ${summaries["$name/out ui"]?.line()}; total ${summaries["$name/out total"]?.line()}; " +
                 "dominant ${WakeFrames.dominantStage(outWindow) ?: "none"}; ${describeLong(outWindow)}; ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}"
         )
@@ -471,9 +500,9 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
     }
 
     private fun summarise(prefix: String, window: List<WakeFrames.Frame>) {
-        summaries["$prefix own"] = WakeFrames.summarize(window.map { it.ownMs })
-        summaries["$prefix ui"] = WakeFrames.summarize(window.map { it.uiMs })
-        summaries["$prefix total"] = WakeFrames.summarize(window.map { it.totalMs })
+        summaries["$prefix own"] = WakeFrames.summarise(window.map { it.ownMs })
+        summaries["$prefix ui"] = WakeFrames.summarise(window.map { it.uiMs })
+        summaries["$prefix total"] = WakeFrames.summarise(window.map { it.totalMs })
     }
 
     /** What the host saw of the wake that just happened: the spare taken or not, and `create`'s time. */
@@ -508,6 +537,7 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
                     (spareWakes.takeIf { it.isNotEmpty() }?.let { " – with the spare: " + it.joinToString(", ") { w -> r1(w.createMs).toString() } + " ms" } ?: "")
             )
         }
+        verdicts += WakeFrames.judgeNoBuilds("switch: no spare built between the tap and the page view's show in any scene (the warm control's window protected, the morph free of the build)", buildsInSwitch)
         val runP95 = READINGS.associateWith { reading -> WakeFrames.percentile(allFrames.map { readingOf(it, reading) }, 95.0) }
         finding("the run's p95 over every frame recorded (${allFrames.size} frames): " + READINGS.joinToString(", ") { "$it ${r1(runP95.getValue(it))}" } + " ms – the denominator's second term where the lane cannot hold 60 fps")
         val gestures = listOf("wake-tap" to "switch", "wake-pull-out" to "out", "wake-back-out" to "out").filter { gestural || it.first != "wake-back-out" }
@@ -662,11 +692,15 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         return exists to url
     }
 
-    /** The view's state read on the main thread, one short hop: up, shown, painted, and the heavy page loaded (its done title, at its url). */
-    private class ViewState(val exists: Boolean, val shown: Boolean, val painted: Boolean, val loaded: Boolean, val canGoBack: Boolean)
+    /**
+     * The view's state read on the main thread, one short hop: up, shown, painted, the heavy page
+     * loaded (its done title, at its url), and how many spares the host has built so far (read in
+     * the same hop, so the count at the show is the show's).
+     */
+    private class ViewState(val exists: Boolean, val shown: Boolean, val painted: Boolean, val loaded: Boolean, val canGoBack: Boolean, val sparesBuilt: Int)
 
     private fun viewState(tabId: String): ViewState {
-        var state = ViewState(false, false, false, false, false)
+        var state = ViewState(false, false, false, false, false, 0)
         instrumentation.runOnMainSync {
             val view = host.tabs.get(tabId)
             state = ViewState(
@@ -674,7 +708,8 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
                 shown = view?.visibility == View.VISIBLE,
                 painted = view?.hasPaintedDocument == true,
                 loaded = view != null && view.progress == 100 && view.url == "$ORIGIN$HEAVY_PATH" && view.title == DONE_TITLE,
-                canGoBack = view?.canGoBack() == true
+                canGoBack = view?.canGoBack() == true,
+                sparesBuilt = host.tabs.sparesBuilt
             )
         }
         return state
@@ -682,8 +717,11 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
 
     private fun loaded(tabId: String): Boolean = viewState(tabId).loaded
 
-    /** The times (`System.nanoTime()`) a wake's moments were first seen at; 0 when not seen. */
-    private class WakeMarks(var shownNs: Long = 0L, var paintedNs: Long = 0L, var loadedNs: Long = 0L)
+    /**
+     * The times (`System.nanoTime()`) a wake's moments were first seen at, 0 when not seen; and
+     * the host's spare count at the show (-1 when the show was not seen).
+     */
+    private class WakeMarks(var shownNs: Long = 0L, var paintedNs: Long = 0L, var loadedNs: Long = 0L, var sparesAtShown: Int = -1)
 
     /**
      * Poll the view (every [POLL_MS], one short main-thread hop each) from the tap until the heavy
@@ -697,7 +735,10 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         while (SystemClock.uptimeMillis() < deadline) {
             val state = viewState(tabId)
             val now = System.nanoTime()
-            if (state.shown && marks.shownNs == 0L) marks.shownNs = now
+            if (state.shown && marks.shownNs == 0L) {
+                marks.shownNs = now
+                marks.sparesAtShown = state.sparesBuilt
+            }
             if (state.shown && state.painted && marks.paintedNs == 0L) marks.paintedNs = now
             if (state.shown && state.loaded) {
                 marks.loadedNs = now
@@ -708,14 +749,18 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
         return marks
     }
 
-    /** Poll until the view is shown; the time it was first seen so, else 0 after `timeoutMs`. */
-    private fun awaitShown(tabId: String, timeoutMs: Long): Long {
+    /** The view first seen shown: when (`System.nanoTime()`), and the host's spare count then. */
+    private class Shown(val ns: Long, val sparesBuilt: Int)
+
+    /** Poll until the view is shown; null after `timeoutMs`. */
+    private fun awaitShown(tabId: String, timeoutMs: Long): Shown? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (viewState(tabId).shown) return System.nanoTime()
+            val state = viewState(tabId)
+            if (state.shown) return Shown(System.nanoTime(), state.sparesBuilt)
             SystemClock.sleep(POLL_MS)
         }
-        return 0L
+        return null
     }
 
     private fun awaitCanGoBack(tabId: String, timeoutMs: Long): Boolean {
@@ -949,9 +994,9 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
             )
         }
         return JSONObject()
-            .put("own", summaryJson(WakeFrames.summarize(window.map { it.ownMs })))
-            .put("ui", summaryJson(WakeFrames.summarize(window.map { it.uiMs })))
-            .put("total", summaryJson(WakeFrames.summarize(window.map { it.totalMs })))
+            .put("own", summaryJson(WakeFrames.summarise(window.map { it.ownMs })))
+            .put("ui", summaryJson(WakeFrames.summarise(window.map { it.uiMs })))
+            .put("total", summaryJson(WakeFrames.summarise(window.map { it.totalMs })))
             .put("dominant", WakeFrames.dominantStage(window) ?: JSONObject.NULL)
             .put("stages", stages)
             .put("frames", list)

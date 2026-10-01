@@ -19,11 +19,13 @@ import java.util.Locale
  * and layout, and the draw (the display list's recording). `ownMs` is `uiMs` without the
  * animation stage: inside that stage the chrome's WebView waits for the renderer's compositor to
  * answer its frame (the synchronous compositor's handshake), so with the one renderer every page
- * shares, a loading page's tiles stretch it for the chrome – a wait, not the host's work. The
- * host's own work on the UI thread – what a WebView built or a history restored inside the morph
- * moves, and what carries over to a phone – is `ownMs`, so that is the reading the bar is read on
- * when the recipe cannot hold 60 fps on the whole frame even for the warm control; the other two
- * are reported beside it.
+ * shares, a loading page's tiles stretch it for the chrome – a wait, not the host's work. What a
+ * WebView built or a history restored inside the morph moves is `ownMs`, so that is the reading
+ * the bar is read on where a lane holds 60 fps; but `ownMs` keeps the `delay` stage, and on the
+ * emulator's software GPU that stage is mostly the host GL pipe's backpressure on the UI thread
+ * (the lane's 600 ms frames are `delay` with a few milliseconds of input, layout and draw), not
+ * the host's work either – which is why no reading is asserted there ([Bar.Fact]). The three
+ * readings are reported side by side; the stages of every long frame are written beside them.
  */
 object WakeFrames {
     /** One vsync's budget at 60 Hz, in ms. */
@@ -109,7 +111,7 @@ object WakeFrames {
         return sorted[rank - 1]
     }
 
-    fun summarize(values: List<Double>): Summary {
+    fun summarise(values: List<Double>): Summary {
         if (values.isEmpty()) return Summary.EMPTY
         return Summary(
             frames = values.size,
@@ -259,6 +261,18 @@ object WakeFrames {
         if (!built) reasons += "no spare was built to measure"
         else if (deltaKb > capKb) reasons += "PSS grew $deltaKb KB, cap $capKb"
         return Verdict(scene, reasons.isEmpty(), reasons)
+    }
+
+    /**
+     * The claim that no spare was built inside any scene's switch (`builds`: per scene, the
+     * host's spare count at the show less the count at the tap) – every state's, the warm
+     * control's included. No scene at all fails too (the claim was not exercised).
+     */
+    fun judgeNoBuilds(scene: String, builds: Map<String, Int>): Verdict {
+        if (builds.isEmpty()) return Verdict(scene, false, listOf("no scene was recorded"))
+        val inside = builds.filter { it.value != 0 }
+        if (inside.isEmpty()) return Verdict(scene, true, listOf("${builds.size} scene(s), none built one"))
+        return Verdict(scene, false, listOf("a spare was built inside the switch of " + inside.entries.joinToString(", ") { "${it.key} (${it.value})" }))
     }
 
     /** One wake of a sleeping tab as the host saw it: whether `TabHost.create` took the spare view, and how long it held the UI thread. */
