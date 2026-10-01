@@ -1,4 +1,4 @@
-import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME } from './groupNames'
+import { NEW_FOLDER_NAME, TOUCH_GROUP_DEFAULT_NAME } from './strings/nouns'
 import type { FormFactor } from './types'
 
 /**
@@ -52,10 +52,11 @@ export function touchLayout(formFactor: FormFactor): boolean {
 
 /**
  * The desktop's name for a group made with no name of its own: the desktop says Folder (§6). The
- * word lives in `groupNames.ts` beside the touch hosts' (that module imports nothing, so no
- * cycle); re-exported here for the callers that read it with `newFolderName`.
+ * word lives in the string table's `strings/nouns.ts` beside the touch hosts' (that module
+ * imports nothing, so no cycle); re-exported here for the callers that read it with
+ * `newFolderName`.
  */
-export { NEW_FOLDER_NAME } from './groupNames'
+export { NEW_FOLDER_NAME } from './strings/nouns'
 
 /**
  * What a group made with no name of its own is called on the host `formFactor` draws – the
