@@ -2883,6 +2883,13 @@ describe('the section model', () => {
     expect(findRow(desktop.groups, 'bookmarks-bar')?.kind).toBe('value')
   })
 
+  it('heads the bar’s group "Address bar" on every shell – "URL bar" is the code’s name alone (design lead, seed #37)', () => {
+    for (const layout of ['desktop', 'tablet', 'phone'] as const) {
+      const look = buildSection(PAGE.sections[0], { ...context().ctx, formFactor: layout })
+      expect(look.groups.find((g) => g.id === 'url-bar')?.heading, layout).toBe('Address bar')
+    }
+  })
+
   it('gates compact mode’s Hide top toolbar on the layout having a top toolbar (§10.4): off in Only sidebar and Collapsed sidebar, live in the other two', () => {
     const hide = (layout: ToolbarLayout): Row =>
       row(section('compact', state({}, { toolbarLayout: layout })), 'compact-hide-toolbar')
@@ -4683,7 +4690,7 @@ describe('what a row does', () => {
       if (deactivate.kind !== 'action') throw new Error('not an action')
       expect(deactivate.disabled).toBeFalsy()
       expect(deactivate.description).toBe(
-        'Keeps Wiki in the list but out of the URL bar until you activate it.'
+        'Keeps Wiki in the list but out of the address bar until you activate it.'
       )
       deactivate.onPress?.()
       expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
@@ -4703,7 +4710,7 @@ describe('what a row does', () => {
       ])
       const activate = row(model, 'search-engine:discovered:forum.example:activate')
       if (activate.kind !== 'action') throw new Error('not an action')
-      expect(activate.description).toBe('@forum works in the URL bar again.')
+      expect(activate.description).toBe('@forum works in the address bar again.')
       activate.onPress?.()
       expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
         id: forum.id,
@@ -4716,6 +4723,25 @@ describe('what a row does', () => {
         'search-engine:custom:wiki:deactivate',
         'search-engine:custom:wiki:remove'
       ])
+    })
+
+    it('says "address bar" in Make default’s and Remove’s sentences as the row descriptions do (design lead, seed #37)', () => {
+      const { model } = searchOn('desktop')
+      const makeDefault = row(model, 'search-engine:custom:wiki:default')
+      if (makeDefault.kind !== 'action') throw new Error('not an action')
+      expect(makeDefault.description).toBe('Searches from the address bar use Wiki.')
+      // Removing the default engine: the confirm says where searches go; another engine's
+      // confirm says nothing.
+      const removeDefault = row(model, 'search-engine:custom:mine:remove')
+      if (removeDefault.kind !== 'action') throw new Error('not an action')
+      expect(removeDefault.confirm).toMatchObject({
+        title: 'Remove Mine?',
+        description: 'The address bar goes back to the default engine.',
+        action: 'Remove'
+      })
+      const removeOther = row(model, 'search-engine:custom:wiki:remove')
+      if (removeOther.kind !== 'action') throw new Error('not an action')
+      expect(removeOther.confirm?.description).toBeUndefined()
     })
 
     it('the phone and tablet shells list a deactivated engine under Inactive as the desktop does, its sheet offering Activate and an active engine’s Deactivate (SET-10)', () => {
@@ -4773,7 +4799,7 @@ describe('what a row does', () => {
         if (activate?.kind !== 'action') throw new Error('not an action')
         expect(activate).toMatchObject({
           label: 'Activate',
-          description: '@forum works in the URL bar again.'
+          description: '@forum works in the address bar again.'
         })
         expect(activate.layouts).toBeUndefined()
         activate.onPress?.()
@@ -4785,7 +4811,7 @@ describe('what a row does', () => {
         if (deactivate?.kind !== 'action') throw new Error('not an action')
         expect(deactivate).toMatchObject({
           label: 'Deactivate',
-          description: 'Keeps Wiki in the list but out of the URL bar until you activate it.'
+          description: 'Keeps Wiki in the list but out of the address bar until you activate it.'
         })
         expect(deactivate.layouts).toBeUndefined()
         expect(deactivate.disabled).toBeFalsy()
