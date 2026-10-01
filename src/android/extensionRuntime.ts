@@ -2664,8 +2664,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // A document's server redirect reaches the runtime only as its follow-up, stamped with the
     // URL before it: the hop is told first, as `onBeforeRedirect` of the tab's open main-frame
     // request at that URL, and the follow-up then continues under the hop's id.
-    if (this.observingResponses && event.mainFrame && typeof event.redirectedFrom === 'string')
-      this.documentRedirected(tab, tabId, event.redirectedFrom, event.url, now)
+    if (event.mainFrame && typeof event.redirectedFrom === 'string') {
+      if (this.observingResponses)
+        this.documentRedirected(tab, tabId, event.redirectedFrom, event.url, now)
+      else if (this.debug)
+        console.info(
+          `[zen] extensions: redirect pair ${event.redirectedFrom} -> ${event.url} (tab ${tab}) made no onBeforeRedirect: the response stage is not observed`
+        )
+    }
     // While the response stage is observed the request is remembered for it (the observer's
     // pairing, its initiator), and a redirect target continues under the hop's id (§7.3: WebView
     // followed the redirect itself and the target came through the intercept as a new request).
@@ -2723,7 +2729,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     now: number
   ): void {
     const from = this.ledger.openMainFrame(tab, redirectedFrom, now)
-    if (!from) return
+    if (!from) {
+      if (this.debug)
+        console.info(
+          `[zen] extensions: redirect pair ${redirectedFrom} -> ${targetUrl} (tab ${tab}) made no onBeforeRedirect: the tab's latest open main_frame request is ${this.ledger.latestMainFrameUrl(tab) ?? 'none'}`
+        )
+      return
+    }
+    if (this.debug)
+      console.info(
+        `[zen] extensions: onBeforeRedirect ${from.url} -> ${targetUrl} (tab ${tab}, request ${from.requestId}) emitted`
+      )
     const details: RequestDetails = {
       requestId: from.requestId,
       url: from.url,

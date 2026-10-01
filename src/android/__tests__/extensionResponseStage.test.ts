@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtRequestEvent, ExtResponseEvent } from '../extensionRuntime'
+import { RequestLedger } from '../extensionRequestLedger'
 import type { RequestObservation } from '../requestObserver'
 import {
   backgroundUp,
@@ -698,5 +699,21 @@ describe("the page script's observer of a fetch / XHR (ext-observation → webRe
       observation({ url: first, finalUrl: final, at: 'complete' }) as never
     )
     expect(heard(h, 'bg1', 'onCompleted')[0].requestId).not.toBe('51')
+  })
+})
+
+describe("the ledger's word for the trace of a redirect pair that found no match (compat round 26, R26-1)", () => {
+  it("names the tab's latest main-frame request still remembered, a subresource after it not counting; null for a tab without one", () => {
+    const ledger = new RequestLedger()
+    expect(ledger.latestMainFrameUrl('t1')).toBeNull()
+    ledger.noted('t1', '1', 'https://a.test/first', 'GET', 'main_frame', undefined, 1_000)
+    ledger.noted('t1', '2', 'https://a.test/second', 'GET', 'main_frame', undefined, 1_100)
+    ledger.noted('t1', '3', 'https://a.test/clip.mp4', 'GET', 'media', 'https://a.test', 1_200)
+    expect(ledger.latestMainFrameUrl('t1')).toBe('https://a.test/second')
+    expect(ledger.latestMainFrameUrl('t2')).toBeNull()
+    expect(ledger.latestMainFrameUrl(null)).toBeNull()
+    // The pairing itself stays exact: the latest main-frame URL alone pairs.
+    expect(ledger.openMainFrame('t1', 'https://a.test/first', 1_300)).toBeNull()
+    expect(ledger.openMainFrame('t1', 'https://a.test/second', 1_300)?.requestId).toBe('2')
   })
 })

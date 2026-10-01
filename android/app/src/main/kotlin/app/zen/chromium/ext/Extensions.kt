@@ -2100,6 +2100,11 @@ class Extensions(private val host: Host) {
             decisions.addLast("$action $type ${micros}us ${cpuMicros ?: "?"}cpu ${request.url}")
         }
         val extensionRule = decision.matchedSet?.startsWith(EXT_SET_PREFIX) == true
+        // A document's decision while `debug`, with the redirect pair the navigation hook stamped
+        // on it (#707) or its absence, and whether it reaches the runtime: the trace of a
+        // `webRequest.onBeforeRedirect` that never formed (compat round 26, R26-1).
+        if (debug && request.type == ResourceType.MAIN_FRAME)
+            Log.i(TAG, "ext.request document tab=${tab.tabId} url=${request.url.take(160)} redirectedFrom=${request.redirectedFrom?.take(160)} action=$action observe=$observeRequests rule=$extensionRule${if (!extensionRule && !observeRequests) " (not reported)" else ""}")
         if (!extensionRule && !observeRequests) return
         // The id rides on the request: a media response relayed for this request is reported
         // under it (onResponse, contract 7.4). A document the header stage decides again is

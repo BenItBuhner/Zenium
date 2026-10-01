@@ -161,6 +161,20 @@ export class RequestLedger {
     return null
   }
 
+  /**
+   * The URL of the tab's latest main-frame request still remembered, for the runtime's trace of
+   * a redirect pair [openMainFrame] found no match for; null when none is.
+   */
+  latestMainFrameUrl(tab: string | null): string | null {
+    const list = this.byTab.get(tab ?? NO_TAB)
+    if (!list) return null
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const entry = list[i]
+      if (entry.type === 'main_frame') return entry.url
+    }
+    return null
+  }
+
   /** The id a response report of the request with `ext.request` id `requestId` runs under. */
   chainIdOf(requestId: string): string {
     return this.byId.get(requestId)?.requestId ?? requestId

@@ -4354,6 +4354,52 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
     }
 
+    /**
+     * Redirect Path's core (compat round 26, R26-1): the row's bridge from BEFORE the redirected
+     * fixture loads (`/redirect?to=/page-a.html`, a 302) to the popup's close goes to
+     * `bridge-redirect-path.txt` – the hop's `webRequest.onBeforeRedirect` delivery to the
+     * worker, or its absence, read against the runtime's own lines in logcat (`ext.request
+     * document … redirectedFrom=` on the Kotlin side, `[zen] extensions: onBeforeRedirect …` /
+     * `redirect pair … made no onBeforeRedirect` on the core's) –, the popup's `.pathItem` chain
+     * read as [REDIRECT_PATH_CHAIN], and the worker's `chrome.storage.session` dumped from the
+     * popup at the end (its `path`, and the `serverClientSyncPath` halves `onCompleted` and
+     * `onCommitted` fill). The grade's ceiling is PARTIAL by design: the landing item needs a
+     * main-frame `webRequest.onCompleted`, which the phone never emits for a document, so the
+     * hop item alone (`server_redirect` with the stated 302) is PARTIAL; F when no hop item shows.
+     */
+    private fun redirectPathCore(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val since = StepEvidence(row)
+        fixture("redirect?to=/page-a.html&redirectpath=1", factor, 1_500)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup == null) extra.put("popupAtTimeout", popupAtTimeout())
+        else {
+            found = pollExpr(popup, REDIRECT_PATH_CHAIN, scaled(25_000, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            extra.put("session", probe(popup, REDIRECT_PATH_SESSION, "__zenRedirectPathSession", scaled(10_000, factor)))
+        }
+        extra.put("popup", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-popup-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        since.record(extra, "atEnd")
+        val trace = since.trace()
+        File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+        extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size)
+            .put("redirectEvents", trace.count { it.contains("event webRequest.onBeforeRedirect") })
+            .put("completedEvents", trace.count { it.contains("event webRequest.onCompleted") })
+            .put("committedEvents", trace.count { it.contains("event webNavigation.onCommitted") })
+        val hop = found.optBoolean("hop")
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
+            hop -> Grade("PARTIAL", "$label: the hop item alone (${found.optJSONArray("urls")?.optString(0)?.take(80)} – ${found.optJSONArray("heads")?.optString(0)?.take(60)}); the landing item needs a main-frame webRequest.onCompleted, which the phone never emits for a document (the row's ceiling by design)", extra)
+            else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else "shows no hop item: ${found.toString().take(240)}"}; ${extra.optInt("redirectEvents")} onBeforeRedirect event(s) on the bridge", extra)
+        }
+    }
+
     /** The status of a CORS-proxy log line ("id METHOD status url"), null for a line of another shape (a failure, a redirect or a refusal in words). */
     private fun proxyStatus(line: String): Int? = line.split(' ').getOrNull(2)?.toIntOrNull()
 
@@ -8076,7 +8122,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ocfjjghignicohbjammlhhoeimpfnlhc", "Flash Player Enable - flash emulator swf", "flash-player-enable", core = domMarker("Flash Player Enable's run control over the fixture's Flash tags", "flash.html?flashenable", FLASH_ENABLER_CONTROLS, settleMs = 30_000)),
         Row("eifflpmocdbdmepbjaopkkhbfmdgijcc", "JSON Viewer Pro", "json-viewer-pro", core = domMarker("JSON Viewer Pro's viewer over the JSON document", "data.json?jsonviewerpro", JSON_VIEWER_PRO, settleMs = 25_000)),
         Row("fpkbnjejghdcncegfglnapabnljcimdc", "Ad Block Wonder", "ad-block-wonder", core = ::adBlocker),
-        Row("aomidfkchockcldhbkggjokdkkebmdll", "Redirect Path", "redirect-path", core = popupMarker("Redirect Path", REDIRECT_PATH_CHAIN, page = "redirect?to=/page-a.html&redirectpath=1", settleMs = 25_000)),
+        Row("aomidfkchockcldhbkggjokdkkebmdll", "Redirect Path", "redirect-path", core = redirectPathCore("Redirect Path")),
         Row("ienfalfjdbdpebioblfackkekamfmbnh", "Angular DevTools", "angular-devtools", core = popupMarker("Angular DevTools", ANGULAR_DEVTOOLS_POPUP, page = "angular.html?ngdevtools", settleMs = 25_000, fixtureSettleMs = 3_000)),
         Row("oodfdmglhbbkkcngodjjagblikmoegpa", "Url Shortener", "url-shortener", core = popupMarker("Url Shortener", URL_SHORTENER_RESULT, page = "page-a.html?tly", settleMs = 25_000, notMeasurable = Regex("had an error|error|failed|try again|unavailable", RegexOption.IGNORE_CASE), gate = "t.ly's shortening API (api.t.ly, asked for the runner's own address)", apiHost = "api.t.ly")),
         Row("gkeojjjcdcopjkbelgbcpckplegclfeg", "AdGuard Extra", "adguard-extra", core = domMarker("AdGuard Extra's userscript.js handed to the page world", "page-a.html?adguardextra", ADGUARD_EXTRA_SCRIPT, settleMs = 25_000, onMiss = { view, row, factor -> adguardExtraProbe(view, row, factor) })),
@@ -16318,11 +16364,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * to `page-a.html`): its `.pathItem` clones (the `.template` left out) – two or more, one
          * naming the redirect address in its `h2`, one whose `h3` carries a 3xx status – from
          * the hops its worker kept off `webRequest.onBeforeRedirect` / `onCompleted`
-         * (`frameType == "outermost_frame"`) and `webNavigation.onCommitted`.
+         * (`frameType == "outermost_frame"`) and `webNavigation.onCommitted`. `hop`: the hop
+         * item alone – an item naming the redirect address with a 3xx head (`server_redirect`
+         * off `onBeforeRedirect`), the landing item (`onCompleted` + `onCommitted`) missing –
+         * the phone's ceiling ([redirectPathCore]).
          */
         private const val REDIRECT_PATH_CHAIN =
             "(function(){var items=[].slice.call(document.querySelectorAll('.pathItem')).filter(function(e){return !e.classList.contains('template')});var urls=items.map(function(e){return ((e.querySelector('h2')||{}).textContent||'').slice(0,80)});var heads=items.map(function(e){return ((e.querySelector('h3')||{}).textContent||'').slice(0,60)});" +
-                "return JSON.stringify({pass:items.length>=2&&urls.some(function(u){return /redirect\\?to=/.test(u)})&&heads.some(function(h){return /30[12378]/.test(h)}),items:items.length,urls:urls.slice(0,4),heads:heads.slice(0,4),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+                "var hop=items.some(function(e){return /redirect\\?to=/.test(((e.querySelector('h2')||{}).textContent||''))&&/30[12378]/.test(((e.querySelector('h3')||{}).textContent||''))});" +
+                "return JSON.stringify({pass:items.length>=2&&hop,hop:hop,items:items.length,urls:urls.slice(0,4),heads:heads.slice(0,4),text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /**
+         * Redirect Path's worker state, read from its popup ([redirectPathCore]): the whole of
+         * `chrome.storage.session` – per tab its `path` (the items' `type`, `status_code`, `url`),
+         * and the `serverClientSyncPath` halves (`server`: the URLs `webRequest.onCompleted`
+         * reported; `client`: the URLs `webNavigation.onCommitted` did) – on
+         * `window.__zenRedirectPathSession` with `done: true`.
+         */
+        private const val REDIRECT_PATH_SESSION =
+            "(function(){window.__zenRedirectPathSession={done:false};try{chrome.storage.session.get(null,function(items){var out={};Object.keys(items||{}).forEach(function(k){var t=items[k]||{};out[k]={path:(t.path||[]).map(function(p){return {type:p.type,status:p.status_code,url:String(p.url||'').slice(0,100),redirectUrl:p.redirect_url?String(p.redirect_url).slice(0,100):null}}),server:Object.keys((t.serverClientSyncPath||{}).server||{}).map(function(u){return u.slice(0,100)}),client:Object.keys((t.serverClientSyncPath||{}).client||{}).map(function(u){return u.slice(0,100)})}});" +
+                "window.__zenRedirectPathSession={done:true,tabs:out,error:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenRedirectPathSession={done:true,error:String(e)}}})()"
 
         /** Angular DevTools' popup over the Angular fixture: the tab's popup swapped to `popups/supported.html` ("Angular application running development mode."), its path and text read. */
         private const val ANGULAR_DEVTOOLS_POPUP =
