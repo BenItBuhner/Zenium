@@ -315,6 +315,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun setVisible(tabId: String, visible: Boolean) {
         val view = views[tabId] ?: return
+        // A tab brought in front is the user's again, sheet and all (§9.23): the agent's word
+        // on driving it hidden ends with the show, whoever asked for the show.
+        if (visible) view.agentDriven = false
         val held = filled?.takeIf { it.tabId == tabId }
         if (held != null) {
             held.visible = visible

@@ -310,8 +310,9 @@ class TabWebView(
      * The page's `beforeunload` objection is then the agent's question, not the user's
      * ([UnloadObjection]): the agent's input is trusted input, so a page it drives may raise
      * one. Hidden, the view runs as any hidden one does (nothing pauses a GONE WebView;
-     * [TabHost.setVisible]). Cleared when the view is bound to another tab ([TabHost.bind],
-     * [TabHost.adopt]).
+     * [TabHost.setVisible]). A show clears it: a tab brought in front is the user's again, sheet
+     * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
+     * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
      *
      * TODO(OS-40 part B): route `alert` / `confirm` / `prompt` of an agent-driven page to the
      * agent (a `view.pageDialog` host event) once PR #742's `PageDialogService` is on main.
