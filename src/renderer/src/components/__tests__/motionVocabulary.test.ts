@@ -77,11 +77,6 @@ const S_IN_STRING = /(^|[\s,(])\d*\.?\d+s(?![\w-])/
  * one struck from its file fails here until its count is lowered.
  */
 const LEFT: Record<string, { count: number; why: string }> = {
-  // Two waits for the onboarding overlay to leave before Settings opens behind it.
-  'components/overlays/Onboarding.tsx': {
-    count: 2,
-    why: 'a 400 ms wait for the overlay’s exit, not a motion’s length'
-  },
   // A keystroke debounce before the history is queried.
   'components/phone/PhoneHistoryPanel.tsx': { count: 1, why: 'an 80 ms debounce, not a motion' },
   // A Space row stepping between slots while another is held: 220 ms, no token's length.
