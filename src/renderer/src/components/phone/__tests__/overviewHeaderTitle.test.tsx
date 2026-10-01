@@ -197,7 +197,7 @@ describe('the title control (§1)', () => {
     const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
     const rest = css.match(/\.zen-overview-title-chevron \{([^}]*)\}/)![1]!
     expect(rest).toMatch(/color: var\(--zen-muted\);/)
-    expect(rest).toMatch(/transition: transform 120ms var\(--zen-ease\);/)
+    expect(rest).toMatch(/transition: transform var\(--zen-motion-state\) var\(--zen-ease\);/)
     const turned = css.match(
       /\.zen-overview-title\[aria-expanded='true'\] > \.zen-overview-title-chevron \{([^}]*)\}/
     )![1]!

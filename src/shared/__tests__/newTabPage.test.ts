@@ -117,9 +117,12 @@ describe('zen://newtab tokens', () => {
     const pageCss = shared + NEW_TAB_PAGE_STYLE
     expect(declared(shared).size).toBe(0)
     for (const name of read(pageCss)) expect(provided, name).toContain(name)
-    // And every token the page reads it reads from the v2 set or the theme, never a v1 surface colour.
+    // And every token the page reads it reads from the v2 set, the theme or the motion face
+    // (`--zen-ease` and the three durations beside it), never a v1 surface colour.
     for (const name of read(pageCss))
-      expect(name, name).toMatch(/^--(v2-|zen-(fg|fg-rgb|ease|shadow-2)$)/)
+      expect(name, name).toMatch(
+        /^--(v2-|zen-(fg|fg-rgb|ease|motion-(state|pop|message)|shadow-2)$)/
+      )
   })
 
   it('serves the tokens, then the shared rules, then the page rules in one inline stylesheet', () => {
