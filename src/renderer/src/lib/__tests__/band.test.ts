@@ -358,18 +358,20 @@ describe('the band model (motion spec §3.2)', () => {
   })
 })
 
-describe('the pages a band may stand on (§3.2’s never-on list, by address)', () => {
-  it('a document of the web, a file, an extension page: yes', () => {
+describe('page or chrome, by address (§3.2 / §10 – the Design Lead’s allow-list, #754 item 9): offers stand on a page alone, states on either', () => {
+  it('http:, https:, file: and chrome-extension: are pages', () => {
     for (const url of [
       'https://example.com/',
       'http://localhost:3000/app#top',
+      // Chromium writes the scheme in lower case; a scheme in capitals is the same scheme.
+      'HTTPS://Example.com/',
       'file:///home/me/notes.html',
       'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html'
     ])
       expect(isBandPageUrl(url), url).toBe(true)
   })
 
-  it('the empty frame, the blank page and the new tab page (with the slash a load adds): no', () => {
+  it('the empty frame, the new tab page and the blank page (with the slash a load adds) are chrome', () => {
     for (const url of [
       null,
       undefined,
@@ -384,7 +386,7 @@ describe('the pages a band may stand on (§3.2’s never-on list, by address)', 
       expect(isBandPageUrl(url), String(url)).toBe(false)
   })
 
-  it('every zen:// page, the documents the chrome serves included – the version page, the game, an error page, the reader, the PDF viewer – is a chrome page to the band (the Design Lead’s ruling on #740)', () => {
+  it('every zen:// page – the chrome’s own and the documents it serves: the version page, the game, an error page, the reader, the PDF viewer – is chrome', () => {
     for (const url of [
       'zen://settings',
       'zen://settings/privacy',
@@ -396,6 +398,31 @@ describe('the pages a band may stand on (§3.2’s never-on list, by address)', 
       'zen://error?code=-106&description=ERR_INTERNET_DISCONNECTED&url=https%3A%2F%2Fa.example%2F',
       'zen://reader?id=1&url=https%3A%2F%2Fa.example%2Farticle',
       'zen://pdf?id=abc'
+    ])
+      expect(isBandPageUrl(url), url).toBe(false)
+  })
+
+  it('about:, chrome:// and devtools:// are chrome', () => {
+    for (const url of [
+      'about:srcdoc',
+      'about:version',
+      'chrome://version',
+      'chrome://newtab/',
+      'chrome://settings/privacy',
+      'devtools://devtools/bundled/inspector.html?ws=localhost:9222'
+    ])
+      expect(isBandPageUrl(url), url).toBe(false)
+  })
+
+  it('an allow-list: a scheme not named is chrome too, and so is an address with none', () => {
+    for (const url of [
+      'data:text/html,<p>hi</p>',
+      'blob:https://example.com/0b6d9c1e',
+      'javascript:void 0',
+      'view-source:https://example.com/',
+      'ftp://files.example/',
+      'zenium://settings',
+      'example.com/path'
     ])
       expect(isBandPageUrl(url), url).toBe(false)
   })
