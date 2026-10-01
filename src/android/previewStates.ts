@@ -88,6 +88,7 @@ import {
   openZoom,
   pushToast,
   showBanner,
+  showExternalProtocol,
   uiStore,
   type UiState
 } from '@renderer/lib/ui'
@@ -362,6 +363,9 @@ function apply(browser: Browser, spec: string): void {
       sendTabSheet: null,
       barEditorOpen: false,
       bookmarkAllTabs: null,
+      // The external-protocol confirm a `sheet=external-protocol` state raised (no answer: the
+      // preview's core keeps no remembered choice to spoil).
+      externalProtocol: null,
       // A share panel a `share=` state put up goes with it (its stand-in host holds nothing), and
       // a hand-off to the code sheet still under way (`qrcode=panel`) with the panel.
       sharePanel: null,
@@ -1321,6 +1325,30 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       if (then.length === 0) afterFrames(2, finish)
       else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
+  } else if (target.kind === 'sheet' && target.sheet === 'external-protocol' && tab) {
+    // The active page asks to open a phone number in another app, as the core's
+    // `externalProtocol.request` reaches the chrome: the layer captures the page and puts the
+    // request up – the sheet on the phone, the dialog on a tablet and under a mouse; the state
+    // is reached once the request is in the store and the surface has had its frames.
+    seed()
+    const then = target.then ?? []
+    const unsubscribe = uiStore.subscribe(() => {
+      if (!uiStore.get().externalProtocol) return
+      unsubscribe()
+      if (then.length === 0) afterFrames(2, finish)
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
+    void showExternalProtocol(
+      {
+        requestId: 'preview-external-protocol',
+        url: 'tel:%2B1%20555%200100',
+        scheme: 'tel',
+        appName: 'Phone',
+        site: 'example.com',
+        canRemember: true
+      },
+      tab.id
+    )
   } else if (target.kind === 'sheet' && target.sheet === 'bookmark-all-tabs') {
     // The app menu's "Bookmark All Tabs…", through the core as the item goes: the core answers
     // with `bookmark.allTabs`, the chrome captures the page and raises the request; the state
