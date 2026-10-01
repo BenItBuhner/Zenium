@@ -1,9 +1,11 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Rect, UIState, WebAppInstallPrompt } from '@shared/types'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { cmd, run } from '@renderer/lib/api'
+import { BAND_CLOCK_RESUME_FLOOR_MS } from '@renderer/lib/band'
 import { closeInstallOffer } from '@renderer/lib/installOffer'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import { POPOVER_WIDTH, toRect } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { barOf } from '@renderer/lib/surfaces'
@@ -99,6 +101,91 @@ function cardOf(
 /** How the popover went by the user's hand: Cancel, a light dismissal (the tab leaving too), Install. */
 type Ending = 'cancel' | 'dismiss' | 'install'
 
+/** The popover's root in the chrome layer (`data-install-popover`), while one is up. */
+const ROOT = '[data-install-popover]'
+
+/** Whether the pointer rests on `el` already as its clock arms (a popover opening under it). */
+function hovered(el: Element): boolean {
+  try {
+    return el.matches(':hover')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The offer's clock (motion spec §3.2, §10 – the Lead's Q10 as amended): the popover the core's
+ * offer opened stands `BAND_CLOCK_MS`, the page-edge band's one offer clock, kept here in the
+ * host. Armed at the show; paused while the pointer is over the popover or the keyboard is
+ * inside it – the user is reading it or acting on it – and resumed with what was left once both
+ * have gone, at least the band's moment (`BAND_CLOCK_RESUME_FLOOR_MS`, the house's rule for a
+ * message let go); run out, `expire` – the light dismissal's leave. The popover the user opened
+ * has no clock (`armed` false): it stays until the focus leaves it. The core's own clock behind
+ * `webapp.bannerHide` retires with #735; until it does it may still take a popover down.
+ */
+function useOfferClock(armed: boolean, expire: () => void): void {
+  const latest = useRef(expire)
+  useLayoutEffect(() => {
+    latest.current = expire
+  })
+  useEffect(() => {
+    if (!armed) return
+    const el = document.querySelector<HTMLElement>(ROOT)
+    if (!el) return
+    let left = BAND_CLOCK_MS
+    let started = false
+    let due = 0
+    let timer: number | null = null
+    let over = hovered(el)
+    let focused = el.contains(document.activeElement)
+    const sync = (): void => {
+      if (over || focused) {
+        if (timer === null) return
+        window.clearTimeout(timer)
+        timer = null
+        left = Math.max(0, due - Date.now())
+        return
+      }
+      if (timer !== null) return
+      const ms = started ? Math.max(left, BAND_CLOCK_RESUME_FLOOR_MS) : left
+      started = true
+      due = Date.now() + ms
+      timer = window.setTimeout(() => {
+        timer = null
+        latest.current()
+      }, ms)
+    }
+    const enter = (): void => {
+      over = true
+      sync()
+    }
+    const leave = (): void => {
+      over = false
+      sync()
+    }
+    const focusIn = (): void => {
+      focused = true
+      sync()
+    }
+    const focusOut = (event: FocusEvent): void => {
+      focused = event.relatedTarget instanceof Node && el.contains(event.relatedTarget)
+      sync()
+    }
+    el.addEventListener('pointerenter', enter)
+    el.addEventListener('pointerleave', leave)
+    el.addEventListener('focusin', focusIn)
+    el.addEventListener('focusout', focusOut)
+    sync()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+      el.removeEventListener('pointerenter', enter)
+      el.removeEventListener('pointerleave', leave)
+      el.removeEventListener('focusin', focusIn)
+      el.removeEventListener('focusout', focusOut)
+    }
+  }, [armed])
+}
+
 /**
  * Chrome's install prompt in Chrome's form: a 320 popover (§9.20) hung from the pill's Install
  * chip, which keeps its pressed fill while the popover is up – the title block "Install <name>?"
@@ -117,9 +204,13 @@ type Ending = 'cancel' | 'dismiss' | 'install'
  * is a cancelled install (`webapp.cancelInstall`). For the core's offer the popover is the
  * banner's card, and it answers as the phone's does: Cancel is the card's swipe
  * (`webapp.dismissBanner` 'swipe' – the refusal, whose cooldown is the longer one); a light
- * dismissal, Escape, the tab leaving, and the popover's leave after Install are the clock
- * running out ('timeout' – the stamp stands, nothing refused); the core's own take-down
- * (`retired`, `webapp.bannerHide`) sends nothing back.
+ * dismissal, Escape, the tab leaving, the popover's leave after Install, and its own clock
+ * running out are the clock running out ('timeout' – the stamp stands, nothing refused); the
+ * core's own take-down (`retired`, `webapp.bannerHide`: the page left the app's scope or
+ * changed document, the install opened through the menu, the app installed, a card undrawn)
+ * sends nothing back. The offer's clock is the band's (`useOfferClock`: `BAND_CLOCK_MS`, armed
+ * at the show, waiting under the pointer and the keyboard, resuming with the time left), and
+ * the user's prompt has none.
  *
  * The keyboard (§9.22, §5.7): a popover the user opened – the chip, the app menu – focuses
  * Install, the primary – the user's act was the intent and Enter completes it, as Chrome does –
@@ -170,6 +261,9 @@ function InstallPopover({ subject, state }: { subject: Subject; state: UIState }
   }
   const cancel = (): void => leave('cancel')
   const dismiss = (): void => leave('dismiss')
+  // The offer's clock runs while the popover stands for the offer and nothing has ended it:
+  // Install pressed, the core's take-down or a leave under way stop it.
+  useOfferClock(offered && !busy && !closing && !retired, dismiss)
   const install = async (): Promise<void> => {
     if (accepted.current) return
     accepted.current = true

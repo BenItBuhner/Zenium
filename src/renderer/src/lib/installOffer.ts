@@ -20,8 +20,10 @@ import {
  * card is drawn goes at once (`webapp.bannerShown`, which stamps the app's cooldown; a surface
  * mounted to draw it, `bannerSurfaceMounted`, is the condition there as here), its Cancel is
  * the card's swipe (`webapp.dismissBanner` 'swipe': the refusal's longer interval), and a
- * light dismiss, Escape or the tab leaving is the card's clock running out ('timeout': the
- * stamp stands, no refusal). Install runs the install path of old (`webapp.pin`). The memory is
+ * light dismiss, Escape, the tab leaving or the popover's own clock – the band's offer clock,
+ * `BAND_CLOCK_MS`, kept in the popover: it waits under the pointer and the keyboard (motion
+ * spec §10) – running out is the card's clock running out ('timeout': the stamp stands, no
+ * refusal). Install runs the install path of old (`webapp.pin`). The memory is
  * the core's, none of this surface's own: an offer that cannot open – something stands over the
  * page already – sends no word, so the core's grace counts the prompt as undrawn and the site
  * keeps its turn. A popover that opened this way takes no focus (§9.22's notice rule: the user

@@ -12,7 +12,9 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { cmd, run } from '@renderer/lib/api'
+import { BAND_CLOCK_RESUME_FLOOR_MS } from '@renderer/lib/band'
 import { autoOpenInstall, resetInstallOffers, retireInstallOffer } from '@renderer/lib/installOffer'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import { FrameDialogHost, closeAllPopovers } from '@renderer/lib/portals'
 import { bannerSurfaceMounted, uiStore } from '@renderer/lib/ui'
 import { InstallPopoverLayer } from '../InstallPopover'
@@ -34,9 +36,11 @@ import { InstallPopoverLayer } from '../InstallPopover'
  * Services' seed #42, the cooldown through the core): the layer claims the banner surface while
  * mounted, the popover opens on `webapp.banner` of its own accord – taking no focus – and the
  * core hears the card drawn in the same tick (`webapp.bannerShown`); its Cancel is the card's
- * swipe, a light dismissal or the tab leaving its clock running out (`webapp.dismissBanner`),
+ * swipe, a light dismissal, the tab leaving or its own clock – the band's offer clock,
+ * `BAND_CLOCK_MS`, armed at the show and waiting while the pointer or the keyboard is in the
+ * popover (motion spec §10) – running out is its clock running out (`webapp.dismissBanner`),
  * Install the install path of old, and the core's own take-down sends nothing back. The prompt
- * the user asks for sends no such word.
+ * the user asks for sends no such word, and has no clock.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -581,6 +585,177 @@ describe('the popover as the core’s install banner (seed #42: the cooldown thr
     expect(dialog.hasAttribute('data-offered')).toBe(false)
     expect(document.activeElement).toBe(dialog.querySelector('[data-accept]'))
     expect(uiStore.get().installOffer).toBeNull()
+  })
+})
+
+describe('the offer’s clock (motion spec §3.2, §10: the band’s offer clock, kept in the popover)', () => {
+  /** The offer's capture back and its popover painted, on the fake clock. */
+  async function openedOnClock(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  }
+  /** Time passing on the fake clock, React drawing what it brings. */
+  async function pass(ms: number): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  }
+  const pointer = (el: HTMLElement, type: 'pointerenter' | 'pointerleave'): void => {
+    act(() => {
+      el.dispatchEvent(new PointerEvent(type, { bubbles: false }))
+    })
+  }
+  const timedOut = (): boolean =>
+    calls().some(
+      ([name, args]) =>
+        name === 'webapp.dismissBanner' && (args as { reason: string }).reason === 'timeout'
+    )
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('arms on the auto-open: BAND_CLOCK_MS after the show the popover leaves like a light dismiss – dismissBanner "timeout", folding into the chip – and not a moment before', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await openedOnClock()
+    const dialog = popover()!
+    expect(dialog.hasAttribute('data-offered')).toBe(true)
+    vi.mocked(run).mockClear()
+    await pass(BAND_CLOCK_MS - 1)
+    expect(timedOut()).toBe(false)
+    expect(dialog.hasAttribute('data-collapsing')).toBe(false)
+    await pass(1)
+    expect(calls()).toEqual([['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }]])
+    expect(dialog.hasAttribute('data-collapsing')).toBe(true)
+    act(() => {
+      dialog.dispatchEvent(new Event('transitionend'))
+    })
+    expect(uiStore.get().installOffer).toBeNull()
+    expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+  })
+
+  it('does not arm on the user’s open: the prompt’s popover stands past the clock, until the user or the focus leaves it', async () => {
+    uiStore.set({ install: APP_PROMPT })
+    render(layer(stateWith('t1')))
+    await settle()
+    const dialog = popover()!
+    expect(dialog.hasAttribute('data-offered')).toBe(false)
+    vi.mocked(run).mockClear()
+    await pass(BAND_CLOCK_MS * 3)
+    expect(popover()).toBe(dialog)
+    expect(dialog.hasAttribute('data-collapsing')).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('webapp.dismissBanner', expect.anything())
+    expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+  })
+
+  it('pauses while the pointer is over the popover and resumes with the time left', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await openedOnClock()
+    const dialog = popover()!
+    vi.mocked(run).mockClear()
+    await pass(4000)
+    pointer(dialog, 'pointerenter')
+    // The pointer rests on it: the clock waits, however long.
+    await pass(BAND_CLOCK_MS * 2)
+    expect(timedOut()).toBe(false)
+    expect(popover()).toBe(dialog)
+    pointer(dialog, 'pointerleave')
+    // What was left – 6 000 – runs from here, not the whole clock again.
+    await pass(6000 - 1)
+    expect(timedOut()).toBe(false)
+    await pass(1)
+    expect(timedOut()).toBe(true)
+    expect(dialog.hasAttribute('data-collapsing')).toBe(true)
+  })
+
+  it('pauses while the focus is inside the popover and resumes with the time left when it goes', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await openedOnClock()
+    const dialog = popover()!
+    vi.mocked(run).mockClear()
+    await pass(2500)
+    // The user tabs in: the keyboard is in the popover.
+    const cancel = cancelButton(dialog)
+    act(() => cancel.focus())
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    await pass(BAND_CLOCK_MS * 2)
+    expect(timedOut()).toBe(false)
+    // The focus leaves for the page: the 7 500 left runs out from here.
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    act(() => outside.focus())
+    expect(dialog.contains(document.activeElement)).toBe(false)
+    await pass(7500 - 1)
+    expect(timedOut()).toBe(false)
+    await pass(1)
+    expect(timedOut()).toBe(true)
+    outside.remove()
+  })
+
+  it('a clock resumed with less than the band’s moment left gets that moment (the house’s rule for a message let go)', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await openedOnClock()
+    const dialog = popover()!
+    vi.mocked(run).mockClear()
+    await pass(BAND_CLOCK_MS - 200)
+    pointer(dialog, 'pointerenter')
+    await pass(5000)
+    pointer(dialog, 'pointerleave')
+    await pass(200)
+    expect(timedOut()).toBe(false)
+    await pass(BAND_CLOCK_RESUME_FLOOR_MS - 200)
+    expect(timedOut()).toBe(true)
+  })
+
+  it('the core’s take-down (`webapp.bannerHide`) still retires the popover with no report, and the clock goes with it', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await openedOnClock()
+    vi.mocked(run).mockClear()
+    await pass(3000)
+    act(() => retireInstallOffer('t1'))
+    await pass(BAND_CLOCK_MS * 2)
+    expect(run).not.toHaveBeenCalledWith('webapp.dismissBanner', expect.anything())
+    expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+  })
+
+  it('Install stops the clock: a pin out past the clock’s end is not a timeout of the user’s install', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await openedOnClock()
+    const dialog = popover()!
+    vi.mocked(run).mockClear()
+    vi.mocked(cmd).mockClear()
+    let settlePin: (() => void) | null = null
+    vi.mocked(cmd).mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          settlePin = () => resolve(null)
+        }) as never
+    )
+    await pass(9000)
+    const primary = dialog.querySelector<HTMLButtonElement>('[data-accept]')!
+    click(primary)
+    expect(cmd).toHaveBeenCalledWith('webapp.pin', { tabId: 't1', title: 'Example App' })
+    await pass(BAND_CLOCK_MS)
+    // Still up, busy, nothing reported: the clock stopped at Install.
+    expect(popover()).toBe(dialog)
+    expect(dialog.hasAttribute('data-collapsing')).toBe(false)
+    expect(calls()).toEqual([])
+    settlePin!()
+    await settle()
+    // The install's own leave: on the spring, the card gone by its clock as the phone reports it.
+    expect(dialog.hasAttribute('data-collapsing')).toBe(false)
+    expect(calls()).toContainEqual(['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }])
   })
 })
 
