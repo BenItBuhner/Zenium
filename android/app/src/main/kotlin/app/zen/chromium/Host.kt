@@ -1224,6 +1224,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
+            // The agent's word on driving the page while the layout hides it (OS-40; `TabWebView.agentDriven`).
+            "view.setAgentDriven" -> { tab?.agentDriven = args.bool("driven"); reply(null) }
             // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
             // one as the self-submitting form document the core built (`ImagePostNavigation`).
             "view.post" -> {

@@ -522,7 +522,7 @@ describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () =>
   it("routes Kotlin's held file chooser to the core's onFileChooser and answers Kotlin with the files, the cancel or the user's chooser", async () => {
     const { bridge, calls } = fakeBridge()
     const asked: unknown[] = []
-    let answer: TabViewEvents['onFileChooser'] = async (request) => {
+    let answer: NonNullable<TabViewEvents['onFileChooser']> = async (request) => {
       asked.push(request)
       return {
         kind: 'files',
@@ -614,5 +614,20 @@ describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () =>
     await expect(view.setInputFiles('input', [{ name: 'a.txt', base64: 'YQ==' }])).rejects.toThrow(
       'did not answer'
     )
+  })
+})
+
+describe('AndroidTabView.setAgentDriven', () => {
+  it("carries the agent's word on driving the hidden page to Kotlin, as said (OS-40)", () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.setAgentDriven(true)
+    view.setAgentDriven(true)
+    view.setAgentDriven(false)
+    expect(calls).toEqual([
+      { method: 'view.setAgentDriven', args: { tabId: 'tab_1', driven: true } },
+      { method: 'view.setAgentDriven', args: { tabId: 'tab_1', driven: true } },
+      { method: 'view.setAgentDriven', args: { tabId: 'tab_1', driven: false } }
+    ])
   })
 })
