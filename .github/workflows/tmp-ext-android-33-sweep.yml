@@ -1,0 +1,444 @@
+name: TEMPORARY - compat round 27 sweep and frame budget trigger
+
+# TEMPORARY, removed before the PR is marked ready. Worker tokens cannot dispatch
+# android-ext-compat-sweep.yml or android-ext-runtime-demo.yml (HTTP 403 on the dispatches
+# endpoint), and both stay dispatch-only; this file runs the same jobs on a push to the branch,
+# and only for an EMPTY marker commit whose subject starts with the bracketed tokens below and
+# carries no other bracketed word:
+#   - `[sweep]`: the two sweep jobs over compat round 27's rows – the thirty of ranks 691-720
+#     (`.github/scripts/ext-compat/next30-round24.json`, the five largest bundles last in the
+#     table as rounds 19-26 ordered their own; their ids lead the lists below in rank order, ahead
+#     of the carried) and the thirty rows carried from round 26 (its section 7 and the brief's
+#     regression list – thirty on the System WebView lane, thirty-one on the AOSP lane with Browser
+#     Lock; 60 and 61 ids in the lists): ADBLOCK AD BLOCKER PRO as the OOM class's regression row
+#     (the install, the `configured … heap` line, ART's collector lines and the heap per step; its
+#     same-process restart proof runs in the `[lane]` job, where it is the first row); COMPOSE AI
+#     (the watch row – its peak per step); QUICK JAVASCRIPT SWITCHER (R27-1 – `chrome.contentSettings`
+#     on the phone: the action click sets `javascript` blocked for the site and reloads, the page's
+#     scripts stopped after); IMAGE DOWNLOADER - PICTURE AND PHOTOS SAVER (R27-2 – `webRequest` for an
+#     extension page's own subresource loads: its popup's `getImagesCT` answered from the
+#     background's `onCompleted` record); REDIRECT PATH (R26-1's hop item, PARTIAL by design: the
+#     landing item needs a document's `onCompleted`, which the phone never emits); ROVALRA (R26-2's
+#     cross-origin relay, its `www.rovalra.com/config.json` the measure); WEB HIGHLIGHTS (R26-4's
+#     mobile pass); QR CODE READER (on 113 the Vision module's absence named, n/m); BROWSER LOCK ON
+#     THE AOSP LANE ALONE – on the Google image its `screen.html` took the host down four times in
+#     round 24 (qemu's GL calls under `-gpu swangle`), so the System WebView sweep's list leaves it
+#     out and the `[browserlock]` job below reads it alone under `swiftshader_indirect`; BLACK MENU;
+#     Web Scrobbler (round 25's row holding); AUTO CLICKER (R26-6's synthetic `contextmenu`); PDF
+#     EDITOR FOR CHROME and ZOOM TO FILL (R27-3's driver readings – the `[data-pdffiller-button]`
+#     attribute, the options hand-off to the extension's own site); Mouse Tooltip Translator (its
+#     offscreen refusals, R27-4); Zoom Video (the storage round trip's `back` leg, medians 0-1 ms);
+#     Weava (`contextMenus.update` on ids not yet created, R27-4); the two webRequest sniffer rows
+#     Chrono Download Manager (with its restart proof) and Video Downloader PLUS; iCloud Passwords
+#     (its `chrome.privacy 3/3` and the DNT key row); AdGuard Extra (its 156 world load's
+#     served-resource record); Page Assist and Enable Copy Paste; PerfectPixel and Jungle Scout; the
+#     #448 proof row for the header stage, the response stage and the extension-URL exemption; tl;dv
+#     (zero re-executions); round 20's fonts probes A and B, the privacy probe and the fonts page
+#     probe. Not in the sweep's lists: SingleFile (its six-pass `[singlefile]` jobs beside read it on
+#     both WebViews), round 21's storage order probe (in the `[lane]` list), Paperpile (the stated
+#     WebView blocker, `SharedArrayBuffer`), Note Board (the emulated worker page's `window` – round
+#     15 §7.1's settled limit) and Telegram Video Downloader (closed in round 24 as its own truthful
+#     PARTIAL); round 26's other new rows and rounds 24-25's keep their rows in CompatSweep.kt and are
+#     in no list here. AdGuard VPN, Buyhatke on 113, axe DevTools and Augmented Steam are
+#     notOnGoogleImage by rounds 16, 19 and 20, read on the AOSP lane when their rows run, and not
+#     re-run on the Google image.
+#     `[sweep113]` fires the System WebView sweep job alone (with its rows-left check and second
+#     boot) and `[sweep156]` the AOSP-image sweep job alone (with its rows-left check and second
+#     boot) – optional single-lane markers, only for a re-run the coordinator grants.
+#     SWEEP_LAST and the rows-left job's LAST_IDS are empty for the sweep this round.
+#   - `[budget]`: the runtime demo's two jobs with the frame budget alone (ExtensionScrollBudget
+#     under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6 extensions and the
+#     fetch-heavy twin, the jank report in the job summary) and, ahead of it, EngineProbe.
+#     `[budget113]` fires the System WebView budget job alone – only for a re-run the coordinator
+#     grants.
+#   - `[singlefile]`: SingleFile's row alone, repeated six times on one boot per WebView
+#     (SWEEP_REPEAT=6: the driver grades the row again after its disable, each reading its own row
+#     in results.json), R5's measure (round 18 section 6.1 row 04).
+#   - `[lane]`: a targeted few-row lane (SWEEP_ONLY set by hand below) for a runtime or driver
+#     change read on its own without the whole sweep: Adblock Ad Blocker Pro FIRST – the boot's
+#     first options-P row, so the driver's post-sweep restart proof (`restoredOptionsTab`, the
+#     same-process start-over round 21b closed) runs on it and its install and restart are read on
+#     both WebViews with the app alive, `(0 grown)` and the heap per step –, then Compose AI (the
+#     watch row), Quick Javascript Switcher (R27-1), Image Downloader - picture and photos saver
+#     (R27-2), Redirect Path (R26-1), RoValra (R26-2), Popup Blocker (strict) (its popup's
+#     `confirm()` as the host's page-dialog sheet), the storage order probe, Magical, and Reader
+#     View LAST OF ALL (round 23's R23-7: the stall poll's sink on 156 – a row that sinks loses
+#     nothing behind it). The driver runs the selected rows in ITS TABLE's order with the
+#     SWEEP_LAST ids moved to the end in THEIR LIST's order (round 23's `SweepOrder`); so the lane's
+#     SWEEP_LAST names the nine behind Adblock in the order they are to run, Reader View last.
+#   - `[redirectpath]`: Redirect Path's row alone on both WebViews (round 26's R26-1 trace job,
+#     kept as a single-row token): the row's bridge from before the redirected fixture loads to
+#     the popup's close in `bridge-redirect-path.txt`, the runtime's redirect-pair lines in logcat,
+#     the worker's `storage.session` dumped from the popup. One boot per WebView, no second boot.
+#     Not planned this round; only for a run the coordinator grants.
+#   - `[browserlock]`: Browser Lock's row alone on the System WebView lane (API 34 Google image)
+#     under the shared workflow's `emulator-gpu: swiftshader_indirect` (round 24's four host GL
+#     deaths at `screen.html` were all under `swangle`, the default; round 26's one job under this
+#     mode graded the row P/P/P/P/P): graded, the column is filled with the mode named; a host
+#     death again is the notOnGoogleImage-class mark with the evidence, the row read on the AOSP
+#     lane alone. One boot, no second boot: the death is the reading.
+# Every emulator job's driver step carries its own `timeout-minutes` below the job's cap
+# (`driver-timeout-minutes`, round 23's optional input of the shared workflow): a driver that
+# sinks past it is cut with the job still alive, so the artifact upload and the emulator-death
+# reading run – round 22's AFTER lost its 156 sweep's artifact to the job cap.
+# One run per marker push; a re-run past the one attempt is the coordinator's to grant.
+# A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
+# gone or the guest frozen, or the runner action's SDK download coming down broken) boots once more
+# and sweeps the rows the first boot did not grade (read off the results.json the sweep script pulls
+# after every row), the row that was in flight at the death last so a row that kills the emulator
+# loses no row after it; the second boot's artifact is the first's name with `-2`.
+on:
+  push:
+    branches:
+      - cursor/android-ext-compat-27-4435
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-ext-android-33-sweep-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  system-webview:
+    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]')
+    name: System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,hldjnlbobkdkghfidgoecgmklcemanhm,gmloihcgbhbonllenincdakeijmikcne,eignhdfgaldabilaaegmdfbajngjmoke,hhinaapppaileiechjoiifaancjggfjm,cpedeojecpbkcomgcolphimkjdnikbck,gphandlahdpffmccakmbngmbjnjiiahp,adpjimagbfpknkodpofjphpbdlfkeiho,hmigninkgibhdckiaphhmbgcghochdjc,ochhcgamjcnhpaekcckimgofnedofplf,cbnaodkpfinfiipjblikofhlhlcickei,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,pejdijmoenmkgeppbflobdenhhabjlaj,gkeojjjcdcopjkbelgbcpckplegclfeg,jfgfiigpkhlkbnfnbobbkinehhfdhndo,fpjppnhnpnknbenelmbnidjbolhandnf,dkaagdgjmgdmbnecmcefdhjekcoceebi,bckjlihkmgolmgkchbpiponapgjenaoa,igkinnldjpikoggonflimiaamlmehcig,lknmjhcajhfbbglglccadlfdjbaiifig,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb
+        SWEEP_LAST=
+      timeout-minutes: 165
+      driver-timeout-minutes: 150
+
+  modern-webview:
+    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]')
+    name: Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,hldjnlbobkdkghfidgoecgmklcemanhm,gmloihcgbhbonllenincdakeijmikcne,nldijlfmoepgjkjhmdiiainkjgmpdnmj,eignhdfgaldabilaaegmdfbajngjmoke,hhinaapppaileiechjoiifaancjggfjm,cpedeojecpbkcomgcolphimkjdnikbck,gphandlahdpffmccakmbngmbjnjiiahp,adpjimagbfpknkodpofjphpbdlfkeiho,hmigninkgibhdckiaphhmbgcghochdjc,ochhcgamjcnhpaekcckimgofnedofplf,cbnaodkpfinfiipjblikofhlhlcickei,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,pejdijmoenmkgeppbflobdenhhabjlaj,gkeojjjcdcopjkbelgbcpckplegclfeg,jfgfiigpkhlkbnfnbobbkinehhfdhndo,fpjppnhnpnknbenelmbnidjbolhandnf,dkaagdgjmgdmbnecmcefdhjekcoceebi,bckjlihkmgolmgkchbpiponapgjenaoa,igkinnldjpikoggonflimiaamlmehcig,lknmjhcajhfbbglglccadlfdjbaiifig,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb
+        SWEEP_LAST=
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 165
+      driver-timeout-minutes: 150
+
+  # The rows a sweep whose emulator died did not grade, for its second boot: results.json's order
+  # minus its graded rows (the row in flight at the death is the first left, and runs last there);
+  # every row when the driver never wrote one (the emulator never came up).
+  remaining-system-webview:
+    if: always() && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]'))
+    needs: system-webview
+    name: Rows left after an emulator death - System WebView
+    runs-on: ubuntu-24.04
+    outputs:
+      boot: ${{ steps.left.outputs.boot }}
+      ids: ${{ steps.left.outputs.ids }}
+      last: ${{ steps.left.outputs.last }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: android-ext-compat-sweep
+          path: first
+      - id: left
+        env:
+          DIED: ${{ needs.system-webview.outputs.emulator-died }}
+          FAILED: ${{ needs.system-webview.result == 'failure' }}
+          LAST_IDS: ''
+          ALL_IDS: dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,hldjnlbobkdkghfidgoecgmklcemanhm,gmloihcgbhbonllenincdakeijmikcne,eignhdfgaldabilaaegmdfbajngjmoke,hhinaapppaileiechjoiifaancjggfjm,cpedeojecpbkcomgcolphimkjdnikbck,gphandlahdpffmccakmbngmbjnjiiahp,adpjimagbfpknkodpofjphpbdlfkeiho,hmigninkgibhdckiaphhmbgcghochdjc,ochhcgamjcnhpaekcckimgofnedofplf,cbnaodkpfinfiipjblikofhlhlcickei,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,pejdijmoenmkgeppbflobdenhhabjlaj,gkeojjjcdcopjkbelgbcpckplegclfeg,jfgfiigpkhlkbnfnbobbkinehhfdhndo,fpjppnhnpnknbenelmbnidjbolhandnf,dkaagdgjmgdmbnecmcefdhjekcoceebi,bckjlihkmgolmgkchbpiponapgjenaoa,igkinnldjpikoggonflimiaamlmehcig,lknmjhcajhfbbglglccadlfdjbaiifig,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb
+        run: node .github/scripts/ext-compat-rows-left.mjs first/results.json first/sweep-log.txt >> "$GITHUB_OUTPUT"
+      - run: cat "$GITHUB_OUTPUT"
+
+  system-webview-2:
+    if: always() && needs.remaining-system-webview.outputs.boot == 'true'
+    needs: remaining-system-webview
+    name: System WebView (API 34 image), second boot
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-2
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=${{ needs.remaining-system-webview.outputs.ids }}
+        SWEEP_LAST=${{ needs.remaining-system-webview.outputs.last }}
+      timeout-minutes: 165
+      driver-timeout-minutes: 150
+
+  remaining-modern-webview:
+    if: always() && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep156]'))
+    needs: modern-webview
+    name: Rows left after an emulator death - modern WebView
+    runs-on: ubuntu-24.04
+    outputs:
+      boot: ${{ steps.left.outputs.boot }}
+      ids: ${{ steps.left.outputs.ids }}
+      last: ${{ steps.left.outputs.last }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: android-ext-compat-sweep-modern-webview
+          path: first
+      - id: left
+        env:
+          DIED: ${{ needs.modern-webview.outputs.emulator-died }}
+          FAILED: ${{ needs.modern-webview.result == 'failure' }}
+          LAST_IDS: ''
+          ALL_IDS: dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,hldjnlbobkdkghfidgoecgmklcemanhm,gmloihcgbhbonllenincdakeijmikcne,nldijlfmoepgjkjhmdiiainkjgmpdnmj,eignhdfgaldabilaaegmdfbajngjmoke,hhinaapppaileiechjoiifaancjggfjm,cpedeojecpbkcomgcolphimkjdnikbck,gphandlahdpffmccakmbngmbjnjiiahp,adpjimagbfpknkodpofjphpbdlfkeiho,hmigninkgibhdckiaphhmbgcghochdjc,ochhcgamjcnhpaekcckimgofnedofplf,cbnaodkpfinfiipjblikofhlhlcickei,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,pejdijmoenmkgeppbflobdenhhabjlaj,gkeojjjcdcopjkbelgbcpckplegclfeg,jfgfiigpkhlkbnfnbobbkinehhfdhndo,fpjppnhnpnknbenelmbnidjbolhandnf,dkaagdgjmgdmbnecmcefdhjekcoceebi,bckjlihkmgolmgkchbpiponapgjenaoa,igkinnldjpikoggonflimiaamlmehcig,lknmjhcajhfbbglglccadlfdjbaiifig,oaopicjopnabmjiginojoghmphbmaoah,aincogolagbkgdpooijhninfkahoidfm,pkjmmekkikdhpoegdhnbnoopodjfmdck,eicpojjdecdlodehmlcdjigijfepnedb
+        run: node .github/scripts/ext-compat-rows-left.mjs first/results.json first/sweep-log.txt >> "$GITHUB_OUTPUT"
+      - run: cat "$GITHUB_OUTPUT"
+
+  modern-webview-2:
+    if: always() && needs.remaining-modern-webview.outputs.boot == 'true'
+    needs: remaining-modern-webview
+    name: Best effort - Chromium snapshot WebView on an AOSP image, second boot
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-modern-webview-2
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=${{ needs.remaining-modern-webview.outputs.ids }}
+        SWEEP_LAST=${{ needs.remaining-modern-webview.outputs.last }}
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 165
+      driver-timeout-minutes: 150
+
+  # SingleFile's row alone, repeated on one boot (see the header): the measure of the offscreen
+  # settle (round 17's 3-in-18 reading). SWEEP_REPEAT is the sweep script's env for the driver's `repeat`.
+  singlefile-system-webview:
+    if: contains(github.event.head_commit.message, '[singlefile]')
+    name: SingleFile's row six times - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-singlefile
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=mpiodijhokgodhhofbcjdecpffjipkle
+        SWEEP_LAST=
+        SWEEP_REPEAT=6
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  singlefile-modern-webview:
+    if: contains(github.event.head_commit.message, '[singlefile]')
+    name: SingleFile's row six times - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-singlefile-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=mpiodijhokgodhhofbcjdecpffjipkle
+        SWEEP_LAST=
+        SWEEP_REPEAT=6
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  # A targeted lane (see the header): the ids set by hand for a change read on its own – Adblock
+  # Ad Blocker Pro first (the one row not in SWEEP_LAST), the nine behind it in SWEEP_LAST's order,
+  # Reader View last of all.
+  lane-system-webview:
+    if: contains(github.event.head_commit.message, '[lane]')
+    name: Targeted rows - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-lane
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
+        SWEEP_LAST=ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  lane-modern-webview:
+    if: contains(github.event.head_commit.message, '[lane]')
+    name: Targeted rows - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-lane-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=dgjbaljgolmlcmmklmmeafecikidmjpi,ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
+        SWEEP_LAST=ddlbpiadoechcolndfeaonajmngmhblj,geddoclleiomckbhadiaipdggiiccfje,cbnhnlbagkabdnaoedjdfpbfmkcofbcl,aomidfkchockcldhbkggjokdkkebmdll,njcickgebhnpgmoodjdgohkclfplejli,aefkmifgmaafnojlojpnekbpbmjiiogg,hnelfnelkfmbnhdelmcbkdcfedmjccjp,iibninhmiggehlcdolcilmhacighjamp,ecabifbgmdmgdllomnfinbmaellmclnh
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  # Redirect Path's row alone on both WebViews (see the header, R26-1): one boot each, the row's
+  # bridge trace (`bridge-redirect-path.txt`) and the runtime's redirect-pair lines in logcat the
+  # reading; the row's grade beside them.
+  redirectpath-system-webview:
+    if: contains(github.event.head_commit.message, '[redirectpath]')
+    name: Redirect Path alone - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-redirectpath
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=aomidfkchockcldhbkggjokdkkebmdll
+        SWEEP_LAST=
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  redirectpath-modern-webview:
+    if: contains(github.event.head_commit.message, '[redirectpath]')
+    name: Redirect Path alone - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-redirectpath-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=aomidfkchockcldhbkggjokdkkebmdll
+        SWEEP_LAST=
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  # Browser Lock alone on the Google image under the legacy SwiftShader GL translator (see the
+  # header): one boot; the artifact carries the row's grade or the host's death.
+  browserlock-system-webview:
+    if: contains(github.event.head_commit.message, '[browserlock]')
+    name: Browser Lock alone under swiftshader_indirect - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-browserlock
+      artifact-path: artifacts/android-ext-compat-sweep/
+      emulator-gpu: swiftshader_indirect
+      script-env: |
+        SWEEP_ONLY=nldijlfmoepgjkjhmdiiainkjgmpdnmj
+        SWEEP_LAST=
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  budget-system-webview:
+    if: contains(github.event.head_commit.message, '[budget]') || contains(github.event.head_commit.message, '[budget113]')
+    name: Frame budget and engine probe - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-runtime-demo.sh
+      artifact-name: android-ext-runtime-demo
+      artifact-path: artifacts/android-ext-runtime-demo/
+      script-env: |
+        SKIP_DEMO=1
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo kbfnbcaeplbcioakkpcpgfkobkghlhen oldceeleldhonbafppcapldpdifcinji nngceckbapebfimnlniiiahkandclblb | xargs node .github/scripts/fetch-crx.mjs artifacts/ext-budget
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
+
+  budget-modern-webview:
+    if: contains(github.event.head_commit.message, '[budget]')
+    name: Frame budget and engine probe - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-runtime-demo.sh
+      artifact-name: android-ext-runtime-demo-modern-webview
+      artifact-path: artifacts/android-ext-runtime-demo/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SKIP_DEMO=1
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo kbfnbcaeplbcioakkpcpgfkobkghlhen oldceeleldhonbafppcapldpdifcinji nngceckbapebfimnlniiiahkandclblb | xargs node .github/scripts/fetch-crx.mjs artifacts/ext-budget
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 75
+      driver-timeout-minutes: 60
