@@ -593,6 +593,7 @@ describe('a paused session lingering in the hub (W7-5)', () => {
       capabilities: { windowControls: false, pictureInPicture: true },
       window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
       agents: [],
+      awayAgents: [],
       settings: { sidebarExpanded: true, sidebarSide: 'left', toolbarLayout: 'single' }
     } as unknown as UIState
   }

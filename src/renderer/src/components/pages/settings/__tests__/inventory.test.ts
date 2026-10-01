@@ -296,6 +296,7 @@ function desktopState(): UIState {
     },
     agents: [],
     agentServer: {
+    awayAgents: [],
       running: true,
       url: 'http://127.0.0.1:8765/mcp',
       lanUrls: [],

@@ -3989,6 +3989,21 @@ export interface AgentServerStatus {
   url: string | null
   /** Endpoints reachable from other devices (only when `lan` is on). */
   lanUrls: string[]
+/**
+ * A named agent that is not connected but still holds its tab groups (a durable session from
+ * `zen_session start`): they stay its own until it resumes or ends, or the user releases them.
+ */
+export interface AwayAgentInfo {
+  claimId: string
+  name: string
+  color: string
+  /** Its groups that still exist. */
+  groupIds: string[]
+  /** The tabs in those groups. */
+  tabIds: string[]
+  lastSeenAt: number
+}
+
   /** Bearer token that lets an agent skip the approval prompt. */
   token: string
   error: string | null
@@ -5022,6 +5037,8 @@ export interface UIState {
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
   updates: UpdateStatus
   /** The password vault: lock state, protection, counts and the last checkup (never secrets). */
+  /** Named agents that are not connected but still hold their tab groups. */
+  awayAgents: AwayAgentInfo[]
   passwords: PasswordsStatus
   /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
   defaultBrowser: DefaultBrowserStatus
@@ -7053,6 +7070,11 @@ export interface Commands {
   /** Forget a previously approved agent name. */
   'agent.forget': { args: { name: string }; result: void }
   /** Issue a new token (existing HTTP sessions stay valid until they end). */
+  /**
+   * Release a disconnected agent's tab groups: they stay open, orphaned for any agent to adopt,
+   * and the agent can no longer resume them.
+   */
+  'agent.release': { args: { claimId: string }; result: void }
   'agent.regenerateToken': { args: void; result: string }
   /**
    * Install the `zenium-browser` Agent Skill into the named harnesses' skills directories
@@ -7646,6 +7668,8 @@ export interface Events {
    * (`lib/closeUndo.ts`) so the toast reads "<Name> tab group closed and saved" and Undo brings
    * the tabs back into the group, which re-opens. The desktop's folder menu never emits it: its
    * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
+  /** The folder menu's "Release from <agent>…": ask before releasing that agent's groups. */
+  'agent.confirmRelease': { claimId: string; folderId: string }
    */
   'folder.closeUndoable': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */

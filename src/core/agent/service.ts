@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  AwayAgentInfo,
   AgentMode,
   AgentServerStatus,
   AgentSettings,
@@ -687,6 +688,39 @@ export class AgentService implements SessionStore, McpHandlers {
     this.claims.delete(claimId)
     this.log(`claim ${claimId} (${claim.name}) released by the user`)
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * The folder menu's and Settings' Release: the same release, but only while the agent is away –
+   * a request made from a stale menu or row never cuts off an agent that has come back meanwhile.
+   */
+  releaseAway(claimId: string): void {
+    const claim = this.claims.get(claimId)
+    if (!claim || this.boundSession(claim)) return
+    this.releaseClaim(claimId)
+  }
+
+  /** Named agents that are not connected but hold groups that still exist, oldest first. */
+  away(): AwayAgentInfo[] {
+    const { folders, tabs } = this.browser.state.model
+    const out: AwayAgentInfo[] = []
+    for (const c of this.claims.all()) {
+      if (this.boundSession(c)) continue
+      const groupIds = c.groupIds.filter((g) => folders[g])
+      if (!groupIds.length) continue
+      const held = new Set(groupIds)
+      out.push({
+        claimId: c.id,
+        name: c.name,
+        color: c.color,
+        groupIds,
+        tabIds: Object.values(tabs)
+          .filter((t) => t.folderId !== null && t.folderId !== undefined && held.has(t.folderId))
+          .map((t) => t.id),
+        lastSeenAt: c.lastSeenAt
+      })
+    }
+    return out.sort((a, b) => a.lastSeenAt - b.lastSeenAt)
   }
 
   setMode(id: string, mode: AgentMode): void {

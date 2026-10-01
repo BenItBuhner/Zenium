@@ -109,6 +109,7 @@ function panelRenaming(): void {
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     settings: { showTabSeparator: false }

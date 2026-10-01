@@ -664,6 +664,7 @@ export class Browser {
       webApps: this.webApps.installed(),
       sync: this.sync.status(),
       agents: this.agents.list(),
+      awayAgents: this.agents.away(),
       agentServer: this.agents.serverStatus(),
       agentSkills: this.agents.skillStatus(),
       updates: this.updates.status(),
@@ -4299,6 +4300,7 @@ export class Browser {
       'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 
       'agent.disconnect': ({ id }) => this.agents.disconnect(id),
+      'agent.release': ({ claimId }) => this.agents.releaseAway(claimId),
       'agent.setMode': ({ id, mode }) => this.agents.setMode(id, mode),
       'agent.releaseTab': ({ tabId }) => this.agents.releaseTab(tabId),
       'agent.forget': ({ name }) => this.agents.forget(name),

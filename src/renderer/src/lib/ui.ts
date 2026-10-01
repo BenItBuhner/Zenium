@@ -500,6 +500,12 @@ export interface UiState {
    */
   folderDeleteConfirm: { folderId: string; keyboard: boolean } | null
   /**
+   * "Release <agent>'s groups?" (the folder menu's Release from <agent>…): a §9.23 frame dialog
+   * over the page, asked before a disconnected agent's groups are handed back. `keyboard`: the
+   * folder's header had the keyboard, so Cancel hands it back there.
+   */
+  agentReleaseConfirm: { claimId: string; folderId: string; keyboard: boolean } | null
+  /**
    * "Delete search history?" (the desktop omnibox row menu's Delete Search History; §10.5's
    * bulk case, pr-434 ruling 3): a §9.23 destructive frame dialog over the open bar and the
    * page's picture, asked before every remembered search goes.
@@ -774,6 +780,7 @@ export const uiStore = createStore<UiState>(
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     folderDeleteConfirm: null,
+    agentReleaseConfirm: null,
     deleteSearchHistoryOpen: false,
     barMenuOpen: false,
     permissionPromptOpen: false,
@@ -1393,6 +1400,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.agentReleaseConfirm &&
     !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui)
   )
@@ -1466,6 +1474,7 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.agentReleaseConfirm &&
     !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
@@ -2656,6 +2665,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.folderDeleteConfirm !== null ||
+    ui.agentReleaseConfirm !== null ||
     ui.deleteSearchHistoryOpen ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
@@ -2748,6 +2758,26 @@ export async function openFolderDeleteConfirm(
 export function closeFolderDeleteConfirm(toChrome = false): void {
   if (!uiStore.get().folderDeleteConfirm) return
   uiStore.set({ folderDeleteConfirm: null })
+  invalidateSnapshot()
+  if (!toChrome) returnFocusToPage()
+}
+
+/** "Release <agent>'s groups?" over the page, as `openFolderDeleteConfirm` asks its question. */
+export async function openAgentReleaseConfirm(
+  claimId: string,
+  folderId: string,
+  activeTabId: string | null,
+  keyboard: boolean
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ agentReleaseConfirm: { claimId, folderId, keyboard }, groupEditor: null })
+}
+
+/** Put the release prompt away; `toChrome` keeps the keyboard in the chrome. */
+export function closeAgentReleaseConfirm(toChrome = false): void {
+  if (!uiStore.get().agentReleaseConfirm) return
+  uiStore.set({ agentReleaseConfirm: null })
   invalidateSnapshot()
   if (!toChrome) returnFocusToPage()
 }

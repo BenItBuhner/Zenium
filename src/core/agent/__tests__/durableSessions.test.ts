@@ -309,6 +309,37 @@ describe('a named agent owns its groups until it ends its session', () => {
     expect(fake.service.isOrphan(bHome)).toBe(true)
   })
 
+  it('the user sees away agents with their groups and can release them, never a connected one', async () => {
+    const fake = browser()
+    const { s: a, key } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    const home = a.homeGroupId!
+    const claim = fake.service.claimOf(a)!
+    expect(fake.service.away()).toEqual([])
+    fake.service.releaseAway(claim.id)
+    expect(fake.service.claimOf(a)).toBeDefined()
+    expect(fake.service.isOrphan(home)).toBe(false)
+
+    fake.service.close(a.id)
+    const [away, ...rest] = fake.service.away()
+    expect(rest).toEqual([])
+    expect(away).toMatchObject({
+      claimId: claim.id,
+      name: 'Invoice reconciliation',
+      groupIds: [home],
+      tabIds: [tab]
+    })
+    expect(away!.lastSeenAt).toBeGreaterThan(0)
+
+    fake.service.releaseAway(claim.id)
+    expect(fake.service.away()).toEqual([])
+    expect(fake.service.isOrphan(home)).toBe(true)
+    expect(fake.model.tabs[tab]).toBeDefined()
+    const a2 = await reconnect(fake)
+    expect((await fake.call(a2, 'zen_session', { action: 'resume', key })).isError).toBe(true)
+    fake.service.releaseAway(claim.id)
+  })
+
   it('what the user does around the agent never changes what it owns', async () => {
     const fake = browser()
     const { s: a } = await named(fake, 'Invoice reconciliation')

@@ -313,6 +313,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    awayAgents: [],
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
     passwords: emptyPasswordsStatus(),
@@ -9921,5 +9922,43 @@ describe('Settings › Default browser: the row’s button says Set as default (
         query
       ).toContain('default-browser')
     }
+  })
+})
+
+describe('AI Agents › Disconnected agents', () => {
+  const away: UIState['awayAgents'] = [
+    {
+      claimId: 'claim-1',
+      name: 'Invoice reconciliation',
+      color: '#3b82f6',
+      groupIds: ['f1'],
+      tabIds: ['t1', 't2'],
+      lastSeenAt: Date.now() - 60_000
+    }
+  ]
+
+  it('has no group while no agent is away', () => {
+    expect(section('agents').groups.some((g) => g.id === 'away')).toBe(false)
+  })
+
+  it('lists each away agent with a plain, confirmed Release that runs agent.release', () => {
+    const model = section('agents', state({ awayAgents: away }))
+    const group = model.groups.find((g) => g.id === 'away')
+    expect(group?.heading).toBe('Disconnected agents')
+    const r = row(model, 'away:claim-1')
+    if (r.kind !== 'item') throw new Error('not an item')
+    expect(r.label).toBe('Invoice reconciliation')
+    expect(r.description).toMatch(/^1 group · 2 tabs · last seen /)
+    const release = findRow(sheetOf(r), 'away:claim-1:release')
+    if (release?.kind !== 'action') throw new Error('not an action')
+    expect(release.destructive).toBeFalsy()
+    expect(release.confirm).toEqual({
+      title: 'Release Invoice reconciliation’s tabs?',
+      description: 'Its 1 group and 2 tabs stay open, but the agent can’t get them back.',
+      action: 'Release',
+      verbTone: 'plain'
+    })
+    release.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('agent.release', { claimId: 'claim-1' })
   })
 })
