@@ -53,11 +53,16 @@ export type BandPhase =
  * move under a finger) with the page's offset from the frame's top edge: 0 with the band shut,
  * the band's height with it open. `rest` arrives when a motion ends, at the height it ended at:
  * the band's height once open, 0 once shut – where the desktop lays the page out once (§3.1) and
- * the band's content is let go. `paint` arrives with the content's opacity whenever it changes.
+ * the band's content is let go. `depart` arrives as a travel toward `to` begins (0 for a leave),
+ * before its first frame: the desktop, which can only clip the page by laying it out, seats the
+ * band at the lesser of its seat and the destination there, so the page's bottom rides past the
+ * frame's edge during a travel and never leaves it bare (§3.4). A finger's drag announces no
+ * destination. `paint` arrives with the content's opacity whenever it changes.
  */
 export interface BandSeam {
   translate(offset: number): void
   rest(height: number): void
+  depart?(to: number): void
   paint(opacity: number): void
 }
 
@@ -136,6 +141,7 @@ export class BandMotion {
     if (entering) {
       this.endFade()
       this.phase_ = 'opening'
+      this.seam.depart?.(height)
       if (reducedMotion()) {
         // §3.2: the page jumps to the open height and the band fades in 120 ms.
         this.spring.start(this.offset_, 0, height)
@@ -152,6 +158,7 @@ export class BandMotion {
     }
     this.phase_ = 'resizing'
     this.paint(1)
+    this.seam.depart?.(height)
     this.spring.retarget(height)
   }
 
@@ -191,6 +198,7 @@ export class BandMotion {
       if (reducedMotion()) {
         // A release's outcome is at once (as a card's): gone.
         this.phase_ = 'closing'
+        this.seam.depart?.(0)
         this.spring.start(this.offset_, 0, 0)
         return
       }
@@ -198,6 +206,7 @@ export class BandMotion {
       return
     }
     this.phase_ = 'returning'
+    this.seam.depart?.(this.height_)
     this.spring.start(this.offset_, velocity, this.height_)
   }
 
@@ -210,6 +219,7 @@ export class BandMotion {
   private leave(velocity: number): void {
     this.phase_ = 'closing'
     this.closingFrom = this.opacity_
+    this.seam.depart?.(0)
     if (reducedMotion()) {
       // §3.2: leaving fades out, then jumps.
       this.fade(0, () => this.spring.start(this.offset_, 0, 0))

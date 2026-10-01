@@ -214,6 +214,21 @@ describe('the band model (motion spec §3.2)', () => {
     expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS - 2500)
   })
 
+  it('a private tab withholds offers (they wait, clock paused) and shows states; the offers return with a tab that allows them', () => {
+    const a = install()
+    vi.advanceTimersByTime(1000)
+    setBandFront('t1', true, false)
+    expect(shownBand()).toBeNull()
+    vi.advanceTimersByTime(60_000)
+    expect(bandStore.get().entries.map((e) => e.id)).toEqual([a])
+    const s = offline()
+    expect(shownBand()?.id).toBe(s)
+    dismissBand(s)
+    setBandFront('t1', true)
+    expect(shownBand()?.id).toBe(a)
+    expect(bandClockLeft(a)).toBe(BAND_CLOCK_MS - 1000)
+  })
+
   it('the action performs and the band leaves on "action"; an act that holds keeps the band standing', () => {
     const picked = vi.fn()
     const heard: BandDismissReason[] = []
