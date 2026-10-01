@@ -396,8 +396,9 @@ export class DocumentFilters {
     if (!Array.isArray(parsed) || parsed.length === 0)
       throw new Error('document filters: not a serialised form')
     if (parsed[0] !== DOCUMENT_FILTERS_FORMAT)
+      // JSON, so a string `"1"` shows as one and is not mistaken for this build's number.
       throw new Error(
-        `document filters: format ${String(parsed[0])}, this build reads ${DOCUMENT_FILTERS_FORMAT}`
+        `document filters: format ${JSON.stringify(parsed[0])}, this build reads ${DOCUMENT_FILTERS_FORMAT}`
       )
     const malformed = (): Error => new Error('document filters: malformed form')
     const [, lines, flags, patternEnds, hostLengths, domainOptions] = parsed as unknown[]

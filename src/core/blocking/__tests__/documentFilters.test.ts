@@ -299,6 +299,11 @@ describe('the serialised form', () => {
       `document filters: format ${DOCUMENT_FILTERS_FORMAT + 1}, this build reads ${DOCUMENT_FILTERS_FORMAT}`
     )
     expect(() => DocumentFilters.deserialize(encode([0, []]))).toThrow(/format 0/)
+    // A string where the number goes is named as one.
+    expect(() => DocumentFilters.deserialize(encode(['1', [], [], [], [], []]))).toThrow(
+      'document filters: format "1", this build reads 1'
+    )
+    expect(() => DocumentFilters.deserialize(encode([null, []]))).toThrow(/format null/)
     expect(() => DocumentFilters.deserialize(encode({ v: 1 }))).toThrow('not a serialised form')
     expect(() => DocumentFilters.deserialize(encode([]))).toThrow('not a serialised form')
     expect(() => DocumentFilters.deserialize(encode([1]))).toThrow('malformed form')
