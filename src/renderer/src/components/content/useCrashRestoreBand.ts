@@ -28,7 +28,14 @@ export function crashRestoreQuestion(offer: CrashRestoreOffer): string {
  * the session waits on, with nothing remembered beyond it (the next unclean exit asks again),
  * and a band put away unanswered would leave the frame empty and held with no way to the
  * question but another window. The band going for any other reason (the window closing, the
- * offer answered elsewhere) answers nothing: the state stands for the next window.
+ * offer answered elsewhere) answers nothing: the state stands for the next window. Confirmed
+ * by the Design Lead's gate on #754 (§10): the title and detail split and order, the counted
+ * title, the alert glyph in the warn ink on the frame's own fill, and the put-aways as the ×.
+ *
+ * DESKTOP-GATED. This tenant is mounted by the desktop's `PageBandHost` alone and never by
+ * Android's band host (#735): the hold is the desktop's – Android's runs end by a kill, their
+ * pages just come back, and the core raises no offer there (`platform !== 'android'` in the
+ * startup path). It is not to be lifted into a shared tenant without a Lead ruling.
  *
  * The strip across the frame's top (`.zen-frame-strip`, `CrashRestoreBanner.tsx`) retired to
  * this band in W8-M3; the ask / always / never setting still decides whether there is an offer.
