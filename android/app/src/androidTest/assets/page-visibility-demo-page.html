@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PV</title>
+<style>
+  html, body { margin: 0; min-height: 100%; font-family: sans-serif; background: #fff; color: #15141a; }
+  body { padding: 20px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  p.lead { font-size: 16px; color: #5b5b66; margin: 0 0 16px; }
+  button.big { display: block; width: 100%; margin: 12px 0; padding: 18px; font-size: 24px; font-weight: 600; border: 0;
+    border-radius: 16px; background: #1b4332; color: #fff; }
+  video, audio { display: block; width: 100%; margin: 10px 0; }
+  video { background: #000; aspect-ratio: 16 / 9; }
+  pre { font-size: 15px; line-height: 1.45; background: #f3f3f6; border-radius: 12px; padding: 12px; white-space: pre-wrap; }
+  .other { background: #e8f0ff; min-height: 80vh; border-radius: 16px; padding: 24px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<h1 id="heading"></h1>
+<p class="lead" id="lead"></p>
+<div id="controls"></div>
+<pre id="state"></pre>
+<script>
+(function () {
+  // Page visibility on a tab switch (OS-39): one page, five kinds by `?kind=`: `video` (the WebM
+  // clip with sound), `muted` (the same clip muted), `audio` (the two-minute track), `timers`
+  // (no media) and `other` (the tab switched to). Every kind runs a 100 ms interval and a
+  // requestAnimationFrame loop and counts what the document hears of its own visibility; the
+  // media kinds count the element's play and pause events, whoever caused them, and install
+  // Media Session metadata the way a player does. The title carries the slow fields
+  // (`PV|kind:video|vis:visible|hidden:0|vc:0|state:playing|t:3|pauses:0|plays:1`), read by the
+  // driver from the core's state; `window.__pv()` hands the driver everything at once, the
+  // counters included, so a rate can be taken between two reads.
+  var params = new URLSearchParams(location.search);
+  var kind = params.get('kind') || 'timers';
+  var state = { kind: kind };
+  var media = null;
+  var changes = [];
+  var ticks = 0;
+  var frames = 0;
+  var lastTick = 0;
+  var maxTickGap = 0;
+  var lastFrame = 0;
+  var maxFrameGap = 0;
+  var $ = function (id) { return document.getElementById(id); };
+  var render = function () {
+    var parts = ['PV'];
+    Object.keys(state).forEach(function (k) { parts.push(k + ':' + state[k]); });
+    document.title = parts.join('|');
+    $('state').textContent = parts.join('\n') + '\nticks:' + ticks + ' frames:' + frames;
+  };
+  var visibility = function () {
+    state.vis = document.visibilityState;
+    state.hidden = document.hidden ? 1 : 0;
+  };
+  state.vc = 0;
+  visibility();
+  document.addEventListener('visibilitychange', function () {
+    state.vc += 1;
+    changes.push({ at: Math.round(performance.now()), vis: document.visibilityState });
+    visibility();
+    render();
+  });
+  setInterval(function () {
+    var now = performance.now();
+    if (lastTick) maxTickGap = Math.max(maxTickGap, now - lastTick);
+    lastTick = now;
+    ticks += 1;
+  }, 100);
+  var frame = function () {
+    var now = performance.now();
+    if (lastFrame) maxFrameGap = Math.max(maxFrameGap, now - lastFrame);
+    lastFrame = now;
+    frames += 1;
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+
+  if (kind === 'other') {
+    $('heading').textContent = 'The other tab';
+    $('lead').textContent = 'A plain page: the tab the demo switches to.';
+    var box = document.createElement('div');
+    box.className = 'other';
+    box.textContent = 'Nothing plays here.';
+    $('controls').appendChild(box);
+  } else if (kind === 'timers') {
+    $('heading').textContent = 'Timers only';
+    $('lead').textContent = 'No media: a 100 ms interval and an animation frame loop, counted.';
+  } else {
+    var isAudio = kind === 'audio';
+    media = document.createElement(isAudio ? 'audio' : 'video');
+    media.id = 'media';
+    media.src = isAudio ? '/tone.wav' : '/clip.webm';
+    media.loop = true;
+    media.controls = true;
+    media.preload = 'auto';
+    if (!isAudio) media.setAttribute('playsinline', '');
+    if (kind === 'muted') { media.muted = true; media.setAttribute('muted', ''); }
+    $('heading').textContent = kind === 'audio' ? 'Audio' : kind === 'muted' ? 'Muted video' : 'Video with sound';
+    $('lead').textContent = kind === 'audio'
+      ? 'A looping track with sound and no script that reacts to being hidden.'
+      : kind === 'muted'
+        ? 'A looping clip with its sound off and no script that reacts to being hidden.'
+        : 'A looping clip with sound and no script that reacts to being hidden.';
+    $('controls').appendChild(media);
+    var play = document.createElement('button');
+    play.id = 'play';
+    play.className = 'big';
+    play.textContent = 'Play';
+    $('controls').appendChild(play);
+    state.state = 'paused';
+    state.t = 0;
+    state.pauses = 0;
+    state.plays = 0;
+    state.muted = media.muted ? 1 : 0;
+    var update = function () {
+      state.state = media.paused ? 'paused' : 'playing';
+      state.t = Math.floor(media.currentTime || 0);
+      state.muted = media.muted ? 1 : 0;
+      render();
+    };
+    ['playing', 'ended', 'seeked', 'timeupdate', 'loadedmetadata', 'volumechange'].forEach(function (e) {
+      media.addEventListener(e, update);
+    });
+    media.addEventListener('pause', function () { state.pauses += 1; play.textContent = 'Play'; update(); });
+    media.addEventListener('play', function () { state.plays += 1; play.textContent = 'Pause'; update(); });
+    media.addEventListener('error', function () { state.error = media.error ? media.error.code : 'unknown'; render(); });
+    play.addEventListener('click', function () {
+      if (media.paused) {
+        media.play().catch(function (e) { state.error = 'play:' + e.name; render(); });
+      } else {
+        media.pause();
+      }
+    });
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'Zenium visibility ' + kind,
+        artist: 'The Zenium demo studio',
+        artwork: [{ src: '/art.png', sizes: '256x256', type: 'image/png' }]
+      });
+      state.session = 'set';
+    }
+  }
+  render();
+
+  window.__pv = function () {
+    return {
+      now: Math.round(performance.now()),
+      kind: kind,
+      vis: document.visibilityState,
+      hidden: document.hidden,
+      vc: state.vc,
+      changes: changes,
+      ticks: ticks,
+      maxTickGap: Math.round(maxTickGap),
+      frames: frames,
+      maxFrameGap: Math.round(maxFrameGap),
+      paused: media ? media.paused : null,
+      t: media ? Math.round(media.currentTime * 1000) : null,
+      muted: media ? media.muted : null,
+      pauses: media ? state.pauses : null,
+      plays: media ? state.plays : null
+    };
+  };
+  window.__pvResetGaps = function () { maxTickGap = 0; maxFrameGap = 0; };
+})();
+</script>
+</body>
+</html>
