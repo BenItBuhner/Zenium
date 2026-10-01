@@ -54,6 +54,8 @@ export interface IndexEntry {
   attribution?: RuleSetAttribution
   /** Session partitions the set is scoped to (see `RuleSet.partitions`); absent: every one. */
   partitions?: string[]
+  /** Session partitions the set never applies to (see `RuleSet.excludedPartitions`); absent: none. */
+  excludedPartitions?: string[]
   /** Structured rules in the set's document; 0 when it has none (and no document). */
   ruleCount: number
   /** Document under `blocking/` with the set's rules (`sets/<name>.json`), present when `ruleCount > 0`. */
@@ -133,7 +135,15 @@ interface LegacyEntry extends Omit<IndexEntry, 'ruleCount' | 'document' | 'tag'>
 /** A set's metadata: an entry without its content bookkeeping. */
 type Summary = Pick<
   IndexEntry,
-  'id' | 'source' | 'priority' | 'enabled' | 'version' | 'updatedAt' | 'attribution' | 'partitions'
+  | 'id'
+  | 'source'
+  | 'priority'
+  | 'enabled'
+  | 'version'
+  | 'updatedAt'
+  | 'attribution'
+  | 'partitions'
+  | 'excludedPartitions'
 >
 
 /** The metadata of a set, in the key order every entry is written in. */
@@ -146,6 +156,7 @@ function summaryOf(set: {
   updatedAt?: number
   attribution?: RuleSetAttribution
   partitions?: readonly string[]
+  excludedPartitions?: readonly string[]
 }): Summary {
   const summary: Summary = {
     id: set.id,
@@ -157,6 +168,7 @@ function summaryOf(set: {
   if (set.updatedAt !== undefined) summary.updatedAt = set.updatedAt
   if (set.attribution) summary.attribution = { ...set.attribution }
   if (set.partitions) summary.partitions = [...set.partitions]
+  if (set.excludedPartitions) summary.excludedPartitions = [...set.excludedPartitions]
   return summary
 }
 
@@ -614,6 +626,7 @@ export class RuleSetStore implements RuleDocumentSource {
     if (entry.updatedAt !== undefined) set.updatedAt = entry.updatedAt
     if (entry.attribution) set.attribution = entry.attribution
     if (entry.partitions) set.partitions = [...entry.partitions]
+    if (entry.excludedPartitions) set.excludedPartitions = [...entry.excludedPartitions]
     return set
   }
 }
@@ -644,6 +657,11 @@ function parseEntry(raw: unknown): { entry: IndexEntry; inlineRules?: Rule[] } |
   if (legacy.attribution) entry.attribution = legacy.attribution
   if (Array.isArray(legacy.partitions)) {
     entry.partitions = legacy.partitions.filter((p): p is string => typeof p === 'string')
+  }
+  if (Array.isArray(legacy.excludedPartitions)) {
+    entry.excludedPartitions = legacy.excludedPartitions.filter(
+      (p): p is string => typeof p === 'string'
+    )
   }
   if (typeof legacy.document === 'string' && legacy.document.length > 0)
     entry.document = legacy.document
