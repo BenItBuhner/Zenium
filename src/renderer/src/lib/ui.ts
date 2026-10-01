@@ -629,8 +629,8 @@ export interface UiState {
    */
   capture: { tabId: string; viewport: PageViewport | null; seq: number } | null
   /**
-   * The desktop's default-browser prompt has been asked for – "Set as default" on the strip –
-   * and says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
+   * The desktop's default-browser prompt has been asked for – "Set as default" on the page-edge
+   * band – and says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
    * asked from, or null. `defaultBrowserPrompt` goes true once it is up over the page's picture.
    */
   defaultBrowserAsk: DefaultBrowserRequestSource | null

@@ -304,7 +304,8 @@ const describeFound = (f: Found): string => `${f.file}:${f.line} [${f.kind}] ${f
 describe('the chrome’s sources: one motion vocabulary (motion spec §1)', () => {
   it('the walk reaches the components and the motion library, and leaves the owners out', () => {
     const rels = files.map(rel)
-    expect(rels).toContain('components/content/DefaultBrowserBanner.tsx')
+    expect(rels).toContain('components/content/PageBandHost.tsx')
+    expect(rels).toContain('components/band/PageEdgeBand.tsx')
     expect(rels).toContain('components/messages/useMessageMotion.ts')
     expect(rels).toContain('lib/motion/fade.ts')
     expect(rels).toContain('lib/motion/flip.ts')
