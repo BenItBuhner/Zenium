@@ -30,6 +30,8 @@ const {
   ElectronBundledLists,
   GhosteryTextMatcher,
   IDLE_PROBE_MS,
+  IDLE_QUIET_MS,
+  IDLE_WAIT_CAP_MS,
   LIST_SETTLE_CAP_MS,
   LIST_SETTLE_MS,
   idleSlot
@@ -61,6 +63,12 @@ function expectedMeta(
     engine: cacheDigest(readFileSync(join(cacheDir, `engine${tag}.bin`))),
     documents: cacheDigest(readFileSync(join(cacheDir, `documents${tag}.txt`)))
   }
+}
+
+/** Wait (real timers) until `matcher.ready` – the idle slot's quiet wait is a real-time wait. */
+async function settled(matcher: { ready: boolean }): Promise<void> {
+  const deadline = Date.now() + IDLE_WAIT_CAP_MS + 1000
+  while (!matcher.ready && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
 }
 
 function memoryIo(): StoreIO & { files: Map<string, string> } {
@@ -588,6 +596,10 @@ describe('GhosteryTextMatcher', () => {
     gates.shift()!()
     await new Promise((r) => setTimeout(r, 20))
     expect(matcher.builds).toBe(2)
+    // The scope has a list compiled now: its bytes wait for the loop to be quiet a while.
+    expect(matcher.ready).toBe(false)
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    await settled(matcher)
     expect(matcher.ready).toBe(true)
     expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
     expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
@@ -789,6 +801,8 @@ describe('GhosteryTextMatcher', () => {
     slot: IdleSlot
     fireSlot(): void
     slots: number
+    /** The cap and quiet wait each slot was asked for, in order. */
+    asked: Array<{ capMs: number; quietMs: number | undefined }>
   } {
     const gates: Array<() => void> = []
     const compile = vi.fn(async (scopes: GhosteryCompileScope[]) => {
@@ -807,18 +821,21 @@ describe('GhosteryTextMatcher', () => {
         await new Promise((r) => setTimeout(r, 0))
         await new Promise((r) => setImmediate(r))
       },
-      slot: ((fn: () => void) => {
+      slot: ((fn: () => void, capMs: number, quietMs?: number) => {
         pending.push(fn)
         state.slots++
+        state.asked.push({ capMs, quietMs })
         return () => {
           const at = pending.indexOf(fn)
           if (at >= 0) pending.splice(at, 1)
         }
       }) as IdleSlot,
+      // Fires the slots pending now; a slot asked for by one of them waits for the next call.
       fireSlot: (): void => {
         for (const fn of pending.splice(0)) fn()
       },
-      slots: 0
+      slots: 0,
+      asked: []
     }
     return state
   }
@@ -882,13 +899,33 @@ describe('GhosteryTextMatcher', () => {
     ])
     await h.release(0)
     expect(matcher.waitingScopes).toBe(2)
+    // One scope per slot (W8-P1b): the unscoped matcher's bytes first – no list is compiled
+    // yet, so its slot is the urgent one – then the private partition's in a slot of its own,
+    // asked for once the first has adopted; the private window answers from the unscoped
+    // matcher between the two.
+    expect(h.slots).toBe(1)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(1)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(matcher.scopedPartitions).toEqual([])
+    expect(matcher.match(ctx('https://ads.example/', { partition: 'private' }))).toMatchObject({
+      action: 'block'
+    })
+    expect(matcher.match(ctx('https://fp.example/', { partition: 'private' }))).toBeNull()
+    expect(h.slots).toBe(2)
+    expect(h.asked).toEqual([
+      { capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 },
+      { capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS }
+    ])
     h.fireSlot()
     expect(matcher.compiledInBackground).toBe(2)
+    expect(matcher.waitingScopes).toBe(0)
     expect(matcher.scopedPartitions).toEqual(['private'])
     expect(matcher.match(ctx('https://fp.example/', { partition: 'private' }))).toMatchObject({
       action: 'block'
     })
     expect(matcher.match(ctx('https://fp.example/', { partition: 'default' }))).toBeNull()
+    expect(matcher.ready).toBe(true)
   })
 
   it('folds N flips during a compile into one follow-up build of the final state; a flip back to a cached state adopts nothing new (W8-P1 pins)', async () => {
