@@ -603,6 +603,12 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
                 if (!toast && findNode { it == BACK_ONLINE_TOAST } != null) toast = true
                 !bandUp()
             }
+            // The toast runs the §9.33 clock (TOAST_SHOW_MS, 2.8 s) from the word's turn and its
+            // node reaches the tree a beat after the band's leave, which can be done in a second;
+            // the scene's trace pull takes longer than the toast lives, so it is watched out here,
+            // not after the scene (the fold's run under the StripTouchRule fix saw it drawn in the
+            // recording and missed by a look that came too late).
+            if (!toast) toast = waitFor(BACK_ONLINE_TOAST, 3_500) != null
             SystemClock.sleep(900)
         }
         finding("  the radios back: band gone=$gone; ${describeSamples(sampler.stop())}; page offset ${offsetCss()}")
