@@ -96,7 +96,7 @@ function browserGroup({ tab, importSources }: SectionContext): RowGroup {
       {
         kind: 'action',
         id: 'import-browser',
-        label: 'Bookmarks, history and passwords',
+        label: 'Bookmarks, history, passwords and addresses',
         description: 'From Google Chrome, Chromium, Microsoft Edge, Firefox or Safari',
         keywords: [...BROWSER_KEYWORDS, 'history', 'passwords', 'transfer', 'migrate'],
         button: 'Import…',

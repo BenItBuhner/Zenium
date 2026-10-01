@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "url": "http://127.0.0.1:18194/",
+      "title": "Zero-suggest demo",
+      "visitCount": 12,
+      "lastVisit": "{{now-60m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.1:18194/search?q=weather%20tomorrow",
+      "title": "Notes: weather tomorrow",
+      "visitCount": 1,
+      "lastVisit": "{{now-50m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.1:18194/search?q=pasta%20recipes",
+      "title": "Notes: pasta recipes",
+      "visitCount": 1,
+      "lastVisit": "{{now-120m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.2:18194/",
+      "title": "Weather radar",
+      "visitCount": 9,
+      "lastVisit": "{{now-140m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.2:18194/forecast.html",
+      "title": "Ten-day forecast",
+      "visitCount": 1,
+      "lastVisit": "{{now-55m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.3:18194/",
+      "title": "Recipes",
+      "visitCount": 8,
+      "lastVisit": "{{now-180m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.3:18194/lasagne.html",
+      "title": "Lasagne al forno",
+      "visitCount": 1,
+      "lastVisit": "{{now-130m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.4:18194/",
+      "title": "Cycling club",
+      "visitCount": 7,
+      "lastVisit": "{{now-240m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.5:18194/",
+      "title": "Library catalogue",
+      "visitCount": 6,
+      "lastVisit": "{{now-300m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.6:18194/",
+      "title": "Transit map",
+      "visitCount": 5,
+      "lastVisit": "{{now-360m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.7:18194/",
+      "title": "Garden notes",
+      "visitCount": 4,
+      "lastVisit": "{{now-420m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.8:18194/",
+      "title": "Film club",
+      "visitCount": 3,
+      "lastVisit": "{{now-480m}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.9:18194/",
+      "title": "Ninth site",
+      "visitCount": 1,
+      "lastVisit": "{{now-1800m}}",
+      "favicon": null
+    }
+  ]
+}

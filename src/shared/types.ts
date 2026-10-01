@@ -36,6 +36,7 @@ import type {
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
+import type { ShareChooser } from './shareTarget'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrCodeRequest, QrEvent, QrStartOutcome } from './qrScan'
@@ -2185,7 +2186,8 @@ export interface BookmarkImportResult {
 // Import from other browsers (Chrome's "Import bookmarks and settings", ID-23)
 // ---------------------------------------------------------------------------
 
-export type ImportKind = 'bookmarks' | 'history' | 'passwords'
+/** `addresses` (ID-57): the saved addresses of a Chromium browser's `Web Data`, into the vault. */
+export type ImportKind = 'bookmarks' | 'history' | 'passwords' | 'addresses'
 
 /** `file`: a Netscape bookmarks HTML or a passwords CSV the user picks (every host). */
 export type ImportBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | 'safari' | 'file'
@@ -5089,6 +5091,15 @@ export interface UIState {
   screenCaptureRequests: ScreenCaptureRequest[]
   /** Shares waiting on this window's share sheet, oldest first. */
   shareRequests: ShareRequest[]
+  /**
+   * The share another app sent that waits on this window's chooser (MW-63): an installed web
+   * app declares a target for it, so the chrome draws the chooser and answers with
+   * `share.chooserPick` or `share.chooserCancel`. Part of the snapshot, not an event: a share
+   * that cold-starts the app reaches the core before the chrome has subscribed to anything, and
+   * the chooser must still be up once the chrome draws. One at a time – a newer share takes it
+   * over – and null while none waits (always null on hosts without a share intake).
+   */
+  shareChooser: ShareChooser | null
   /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
   crashRestore: CrashRestoreOffer | null
   /** In-page autofill: save prompts, the account / address / card picker, entry counts. */
@@ -5470,6 +5481,13 @@ export interface Commands {
    * `share.panel` event): where the held share goes. Nothing on hosts without the panel.
    */
   'share.panelAction': { args: SharePanelAction; result: void }
+  /**
+   * The share chooser's pick (MW-63; the chooser is `UIState.shareChooser`): the installed app
+   * the share goes to, or null for the house route – a new tab for a link, a search for text.
+   */
+  'share.chooserPick': { args: { requestId: string; appId: string | null }; result: void }
+  /** The share chooser was dismissed: the share goes nowhere. */
+  'share.chooserCancel': { args: { requestId: string }; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**

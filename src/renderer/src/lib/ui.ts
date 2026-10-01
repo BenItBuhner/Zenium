@@ -1362,6 +1362,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !shareChooserUp() &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -1435,6 +1436,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !shareChooserUp() &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -2411,6 +2413,33 @@ export function answerExternalProtocol(requestId: string, allow: boolean, always
   run('externalProtocol.respond', { requestId, allow, always })
   invalidateSnapshot()
   returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The share chooser (MW-63): a share another app sent, offered to the installed apps
+// ---------------------------------------------------------------------------
+
+/**
+ * The chooser is the core's to put up and take down: it rides the window's snapshot
+ * (`UIState.shareChooser`; `components/share/ShareChooserSheet.tsx` draws it from there), so
+ * the surface predicates read the browser state for it, not this store.
+ */
+function shareChooserUp(): boolean {
+  return (browserStore.get().state?.shareChooser ?? null) !== null
+}
+
+/**
+ * The chooser's pick – an installed app's id, or null for the house route – or its dismissal
+ * (`cancel`), for the chooser the snapshot carries (an answer to one it no longer does is
+ * nothing). The core routes or drops the share and clears the chooser from the snapshot; the
+ * sheet leaves on that, and lets the page's picture and the focus go once it is down
+ * (`ShareChooserSheet.tsx`, which also sees that a share is answered once).
+ */
+export function answerShareChooser(requestId: string, appId: string | null | 'cancel'): void {
+  const current = browserStore.get().state?.shareChooser ?? null
+  if (!current || current.requestId !== requestId) return
+  if (appId === 'cancel') run('share.chooserCancel', { requestId })
+  else run('share.chooserPick', { requestId, appId })
 }
 
 /** The core withdrew the question (its tab closed, a newer one took over). */
