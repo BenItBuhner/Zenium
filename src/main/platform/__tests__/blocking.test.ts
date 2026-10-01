@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1147,6 +1155,88 @@ describe('GhosteryTextMatcher', () => {
       await new Promise((r) => setTimeout(r, 40))
       expect(ran.length).toBe(1)
       expect(ran[0]!).toBeLessThan(DESERIALISE_IDLE_CAP_MS)
+    })
+  })
+
+  describe("the worker's cache write", () => {
+    it('lands atomically after the answer, and a failing write is logged once and never delays the adopt (condition 1)', async () => {
+      const { resetGhosteryCacheWarnings, writeGhosteryCache } = await import('../blockingCompile')
+      resetGhosteryCacheWarnings()
+      const cacheDir = join(tempDir(), 'cache')
+      const target = {
+        bin: join(cacheDir, 'engine.bin'),
+        meta: join(cacheDir, 'engine.json'),
+        documents: join(cacheDir, 'documents.txt'),
+        fingerprint: 'a:1:1',
+        version: 'v1'
+      }
+      const output = GHOSTERY_COMPILE_TASK.run({
+        scopes: [{ partition: null, parts: ['||a.example^\n||phish.example^$all'], cache: target }]
+      })
+      // Answered first: nothing is on disk until the worker's next turn.
+      expect(existsSync(cacheDir)).toBe(false)
+      const bytes = Buffer.from(output.scopes[0]!.engine)
+      await new Promise((r) => setImmediate(r))
+      expect(Buffer.from(readFileSync(target.bin))).toEqual(bytes)
+      expect(readFileSync(target.documents, 'utf8')).toBe('||phish.example^$all')
+      expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual({
+        fingerprint: 'a:1:1',
+        version: 'v1'
+      })
+      expect(readdirSync(cacheDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+
+      // Temp file + rename: the bytes go to `engine.bin.<pid>.tmp` first. With that path taken
+      // by a directory the write fails before `engine.bin` is touched – it keeps the old bytes –
+      // and the failure is logged once for the path, not once per build.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const tmp = `${target.bin}.${process.pid}.tmp`
+      mkdirSync(tmp)
+      expect(
+        writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([9]), 'x')
+      ).toBe(false)
+      expect(
+        writeGhosteryCache({ ...target, fingerprint: 'b:2:2' }, new Uint8Array([9]), 'x')
+      ).toBe(false)
+      expect(Buffer.from(readFileSync(target.bin))).toEqual(bytes)
+      expect(JSON.parse(readFileSync(target.meta, 'utf8')).fingerprint).toBe('a:1:1')
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not written')
+      rmSync(tmp, { recursive: true })
+      // A failure after the bytes landed (the documents path is a directory): the bytes are in
+      // place whole, the metadata – written last – still names the old fingerprint, so a reader
+      // of the new one misses rather than pairing new bytes with old filters.
+      const other = { ...target, documents: join(cacheDir, 'docs-dir'), fingerprint: 'c:3:3' }
+      mkdirSync(other.documents)
+      expect(writeGhosteryCache(other, new Uint8Array([7, 7]), 'x')).toBe(false)
+      expect(Buffer.from(readFileSync(target.bin))).toEqual(Buffer.from([7, 7]))
+      expect(JSON.parse(readFileSync(target.meta, 'utf8')).fingerprint).toBe('a:1:1')
+      expect(readdirSync(cacheDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      warn.mockRestore()
+
+      // The matcher adopts whether or not the write landed – here every cache path is under a
+      // file, so none can – and the next start finds no cache and recompiles.
+      const quiet = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const blocked = join(tempDir(), 'not-a-dir')
+      writeFileSync(blocked, 'x')
+      const brokenCache = join(blocked, 'cache')
+      const s = source()
+      const compile = vi.fn((scopes: GhosteryCompileScope[]) =>
+        Promise.resolve(GHOSTERY_COMPILE_TASK.run({ scopes }))
+      )
+      const matcher = new GhosteryTextMatcher(s, brokenCache, 'v1', 0, compile)
+      s.engine.setRuleSet(textSet('a', '||a.example^'))
+      matcher.rebuild()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(matcher.ready).toBe(true)
+      expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+      expect(compile).toHaveBeenCalledTimes(1)
+      const next = new GhosteryTextMatcher(s, brokenCache, 'v1', 0, compile)
+      next.rebuild()
+      expect(compile).toHaveBeenCalledTimes(2)
+      await new Promise((r) => setTimeout(r, 20))
+      expect(next.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+      expect(quiet).toHaveBeenCalledTimes(1)
+      quiet.mockRestore()
     })
   })
 
