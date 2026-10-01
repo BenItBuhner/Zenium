@@ -49,7 +49,10 @@
     var parts = ['PV'];
     Object.keys(state).forEach(function (k) { parts.push(k + ':' + state[k]); });
     document.title = parts.join('|');
-    $('state').textContent = parts.join('\n') + '\nticks:' + ticks + ' frames:' + frames;
+    var heard = changes.length
+      ? changes.map(function (c) { return c.vis + ' at ' + (c.at / 1000).toFixed(1) + ' s'; }).join(', ')
+      : 'no visibilitychange yet';
+    $('state').textContent = parts.join('\n') + '\nticks:' + ticks + ' frames:' + frames + '\nheard: ' + heard;
   };
   var visibility = function () {
     state.vis = document.visibilityState;

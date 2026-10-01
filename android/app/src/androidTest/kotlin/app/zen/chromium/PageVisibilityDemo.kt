@@ -19,8 +19,8 @@ import java.net.URL
 /**
  * Page visibility on a tab switch (OS-39): what a page in the tab LEFT BEHIND hears of its own
  * visibility, and what happens to its media and its timers, when the user switches to another tab
- * with the app in front – against what the same page hears when the whole app goes to Home (the
- * control; MED-08's fact a).
+ * with the app in front – held to what Chrome does for the tab a switch leaves, and against what
+ * the same page hears when the whole app goes to Home (the control; MED-08's fact a).
  *
  * The loopback `/visibility` page comes in kinds (`?kind=`): a `<video>` with sound, the same clip
  * muted, an `<audio>` track, and timers only; every kind runs a 100 ms interval and a
@@ -29,11 +29,19 @@ import java.net.URL
  * the switch to the other tab through the core's `tab.activate` – the relayout path every switch
  * takes – two reads three seconds apart while it sits behind (`document.visibilityState`, the
  * events heard, `paused` and `currentTime`, the interval's and the frame loop's cadence), then
- * the switch back and one more read. Then the control, Home with the clip with sound; then the
- * OS-08 case, the site allowed `background-video`, playing, switched away.
+ * the switch back and one more read. Chrome's rule for the tab left behind, which the checks
+ * hold the page to ([BackgroundTabRule]): the page reads `hidden` and hears one `visibilitychange`;
+ * the engine pauses an audible or a muted `<video>` and resumes it on the return; an `<audio>`
+ * plays on; frame callbacks stop; timers align to one-second wake-ups unless the page was audible
+ * within the last 30 s (`kRecentAudioDelay`), which is why the cadence is a check for the muted
+ * and the timers pages and a fact for the two with sound. Then the control, Home with the clip
+ * with sound (unchanged by OS-39); then the OS-08 case, the site allowed `background-video`,
+ * playing, switched away – held from the hide as it is held from Home's, the page visible to
+ * itself and the clip playing on.
  *
- * What the page saw goes to the notes as `FACT` lines; a `check` that did not hold fails the run
- * at its end. Every touch injected has an assertion on what it did (the rule in [DemoHarness]).
+ * A `check` that did not hold fails the run at its end; what is measured but not held to goes to
+ * the notes as a `FACT`. Every touch injected has an assertion on what it did (the rule in
+ * [DemoHarness]).
  */
 @RunWith(AndroidJUnit4::class)
 class PageVisibilityDemo : MediaDemoBase(PREFIX) {
@@ -128,7 +136,7 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         val before = read() ?: run { check("$kind: the page answers before the switch", false); return }
         note("  in front: ${before.line()}; view ${viewState(TAB)}")
         check("$kind: in front the page is visible to itself${if (hasMedia) " and playing" else ""}", before.vis == "visible" && before.vc == 0 && (!hasMedia || before.paused == false))
-        if (kind == "video") shot("video-foreground-light-phone")
+        if (kind == "video") shot("video-in-front-playing-light-phone")
         val away = switchTo(OTHER)
         check("$kind: tab.activate puts the other tab in front and the probe's view out of the layout (GONE)", away)
         resetGaps()
@@ -139,17 +147,35 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         note("  behind, +1 s: ${a.line()}; view ${viewState(TAB)}")
         note("  behind, +4 s: ${b.line()}")
         note("  behind, cadence ${rates(a, b)}")
-        fact(kind, "behind another tab the page reads document.visibilityState \"${b.vis}\" and heard ${b.vc} visibilitychange event(s) (${b.changes})")
-        if (hasMedia) fact(kind, "behind another tab the ${if (kind == "audio") "track" else "clip"} is ${if (b.paused == true) "PAUSED" else "PLAYING"}: currentTime ${a.t} -> ${b.t} ms (${if (advancing(a, b)) "advancing" else "still"}), pause events ${b.pauses}, play events ${b.plays}")
-        fact(kind, "behind another tab the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms) and requestAnimationFrame at ${"%.1f".format(frameHz(a, b))}/s (max gap ${b.maxFrameGap} ms)")
+        check("$kind: behind another tab the page reads document.visibilityState \"hidden\" and heard one visibilitychange (read \"${b.vis}\", ${b.vc} event(s): ${b.changes})", b.vis == "hidden" && b.vc == 1)
+        check("$kind: the host has the tab behind another (backgroundTab) and the hold forwarded the hide to the engine (not holding)", behind() && !holding())
+        when (kind) {
+            "video", "muted" -> check("$kind: behind another tab the engine paused the clip, as Chrome's does (paused ${b.paused}, pause events ${b.pauses}, currentTime ${a.t} -> ${b.t} ms)", b.paused == true && b.pauses == 1 && !advancing(a, b))
+            "audio" -> check("audio: behind another tab the track keeps playing, as Chrome's does (paused ${b.paused}, currentTime ${a.t} -> ${b.t} ms)", b.paused == false && advancing(a, b))
+        }
+        check("$kind: behind another tab requestAnimationFrame stops (${"%.1f".format(frameHz(a, b))} frames/s)", frameHz(a, b) < 1.0)
+        val cadence = "the 100 ms interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms)"
+        when (kind) {
+            "timers", "muted" -> check("$kind: behind another tab the timers align to one-second wake-ups ($cadence)", tickHz(a, b) <= 3.0)
+            else -> fact(kind, "behind another tab $cadence – the page was audible up to the switch, and Chrome keeps a recently audible page un-throttled for 30 s")
+        }
         if (kind == "video") shot("other-tab-in-front-light-phone")
         val back = switchTo(TAB)
         check("$kind: tab.activate brings the probe's tab back (VISIBLE)", back)
         SystemClock.sleep(2_000)
         val c = read() ?: run { check("$kind: the page answers after the return", false); return }
         note("  back: ${c.line()}; view ${viewState(TAB)}")
-        fact(kind, "back in front the page reads \"${c.vis}\", ${c.vc} visibilitychange event(s) in all${if (hasMedia) "; the media is ${if (c.paused == true) "paused" else "playing"} (pauses ${c.pauses}, plays ${c.plays})" else ""}")
-        shot("$kind-returned-light-phone")
+        check("$kind: back in front the page reads \"visible\" and heard the second visibilitychange (read \"${c.vis}\", ${c.vc} event(s) in all)", c.vis == "visible" && c.vc == 2 && !behind())
+        when (kind) {
+            "video", "muted" -> check("$kind: back in front the engine resumed the clip it paused (paused ${c.paused}, play events ${c.plays})", c.paused == false && c.plays == 2)
+            "audio" -> check("audio: back in front the track is still playing (paused ${c.paused}, plays ${c.plays})", c.paused == false && c.plays == 1)
+        }
+        shot(
+            when (kind) {
+                "audio" -> "audio-returned-heard-hidden-then-visible-kept-playing-light-phone"
+                else -> "$kind-returned-heard-hidden-then-visible-light-phone"
+            }
+        )
         if (hasMedia) pause()
     }
 
@@ -171,13 +197,15 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         note("  Home, +4 s: ${b.line()}")
         note("  Home, cadence ${rates(a, b)}")
         check("home (MED-08 fact a): behind the launcher the page is hidden to itself, one visibilitychange, the clip paused by the engine", b.vis == "hidden" && b.vc == 1 && b.paused == true && b.pauses == 1)
-        fact("home", "behind the launcher the interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms), rAF at ${"%.1f".format(frameHz(a, b))}/s")
+        check("home: the window's hide is the window's, not a switch's (the tab is not behind another)", !behind())
+        check("home: behind the launcher requestAnimationFrame stops (${"%.1f".format(frameHz(a, b))} frames/s)", frameHz(a, b) < 1.0)
+        fact("home", "behind the launcher the interval ran at ${"%.1f".format(tickHz(a, b))}/s (max gap ${b.maxTickGap} ms) – the page was audible up to the hide (Chrome's 30 s recently-audible rule)")
         returnToApp()
         SystemClock.sleep(2_500)
         val c = read() ?: run { check("home: the page answers after the return", false); return }
         note("  back: ${c.line()}; view ${viewState(TAB)}; lifecycle ${lifecycleState()}")
         check("home: back from the launcher the page is visible, two changes in all, the clip resumed by the engine", c.vis == "visible" && c.vc == 2 && c.paused == false)
-        shot("home-returned-light-phone")
+        shot("home-returned-heard-hidden-then-visible-light-phone")
         pause()
     }
 
@@ -201,15 +229,19 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         val b = read() ?: run { check("allowed: the page behind answers a second time", false); return }
         note("  behind, +1 s: ${a.line()}; view ${viewState(TAB)}")
         note("  behind, +4 s: ${b.line()}; cadence ${rates(a, b)}")
-        fact("allowed", "the site allowed and playing, behind another tab the page reads \"${b.vis}\" (${b.vc} change(s)) and the clip is ${if (b.paused == true) "PAUSED" else "PLAYING"} (currentTime ${a.t} -> ${b.t} ms)")
+        check("allowed: the site allowed and playing, behind another tab the switch's hide is held from the engine as Home's is (behind, holding)", behind() && holding())
+        check("allowed: the page stays visible to itself and hears nothing (read \"${b.vis}\", ${b.vc} change(s))", b.vis == "visible" && b.vc == 0)
+        check("allowed: the clip plays on behind the other tab (paused ${b.paused}, currentTime ${a.t} -> ${b.t} ms)", b.paused == false && advancing(a, b))
         val back = switchTo(TAB)
         check("allowed: the return takes", back)
         SystemClock.sleep(2_000)
         val c = read() ?: run { check("allowed: the page answers after the return", false); return }
         note("  back: ${c.line()}; view ${viewState(TAB)}")
-        fact("allowed", "back in front: \"${c.vis}\", ${c.vc} change(s), the clip ${if (c.paused == true) "paused" else "playing"}")
-        shot("allowed-returned-light-phone")
+        check("allowed: back in front the page heard nothing of the switch and the clip is playing (read \"${c.vis}\", ${c.vc} change(s), paused ${c.paused})", c.vis == "visible" && c.vc == 0 && c.paused == false && !holding() && !behind())
+        shot("allowed-site-returned-heard-nothing-kept-playing-light-phone")
         pause()
+        // The site's allow is forgotten, so the tab stands as the others do from here.
+        coreInvoke("permissions.set", """{"origin":${JSONObject.quote(ORIGIN)},"permission":"background-video","decision":null}""")
     }
 
     // --- helpers ------------------------------------------------------------------------------------
@@ -258,7 +290,7 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
         var s = "no view"
         instrumentation.runOnMainSync {
             val v = host.tabs.get(tabId) ?: return@runOnMainSync
-            s = "visibility=${name(v.visibility)} windowVisibility=${name(v.windowVisibility)} shown=${v.isShown} attached=${v.isAttachedToWindow} keeps=${v.keepsVideoInBackground} holding=${v.holdingWindowHide}"
+            s = "visibility=${name(v.visibility)} windowVisibility=${name(v.windowVisibility)} shown=${v.isShown} attached=${v.isAttachedToWindow} behind=${v.backgroundTab} keeps=${v.keepsVideoInBackground} holding=${v.holdingWindowHide}"
         }
         return s
     }
@@ -325,6 +357,20 @@ class PageVisibilityDemo : MediaDemoBase(PREFIX) {
     private fun keeps(): Boolean {
         var v = false
         instrumentation.runOnMainSync { v = host.tabs.get(TAB)?.keepsVideoInBackground == true }
+        return v
+    }
+
+    /** The tab host has the demo tab behind another tab on screen ([TabWebView.backgroundTab]). */
+    private fun behind(): Boolean {
+        var v = false
+        instrumentation.runOnMainSync { v = host.tabs.get(TAB)?.backgroundTab == true }
+        return v
+    }
+
+    /** A hide – the window's or a switch's – is held from the engine for the demo tab's video. */
+    private fun holding(): Boolean {
+        var v = false
+        instrumentation.runOnMainSync { v = host.tabs.get(TAB)?.holdingWindowHide == true }
         return v
     }
 
