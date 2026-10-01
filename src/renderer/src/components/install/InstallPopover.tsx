@@ -119,10 +119,11 @@ type Ending = 'cancel' | 'dismiss' | 'install'
  * running out ('timeout' – the stamp stands, nothing refused); the core's own take-down
  * (`retired`, `webapp.bannerHide`) sends nothing back.
  *
- * The keyboard (§9.22): a popover the user opened – the chip, the app menu – takes the first
- * control, and Escape hands the keyboard back to the chip it hung from; the popover the core's
- * offer opened of its own accord takes no focus, as a prompt raised beside a chip does while the
- * user is reading the page (§9.6), and leaves the keyboard where it was when it goes. The
+ * The keyboard (§9.22, §5.7): a popover the user opened – the chip, the app menu – focuses
+ * Install, the primary – the user's act was the intent and Enter completes it, as Chrome does –
+ * and Escape hands the keyboard back to the chip it hung from; the popover the core's offer
+ * opened of its own accord takes no focus, as a prompt raised beside a chip does while the user
+ * is reading the page (§9.6), and leaves the keyboard where it was when it goes. The
  * popover belongs to the tab it was asked for and goes with it, cancelling an install not yet
  * taken.
  */
@@ -201,7 +202,7 @@ function InstallPopover({ subject, state }: { subject: Subject; state: UIState }
         offered ? closeInstallOffer(tabId) : closeInstallSheet(tabId, { keepFocus: byKey })
       }
       onDismiss={dismiss}
-      focus={offered ? 'none' : 'first'}
+      focus={offered ? 'none' : 'primary'}
       follow
       anchorElement={chip}
       data-install-popover=""

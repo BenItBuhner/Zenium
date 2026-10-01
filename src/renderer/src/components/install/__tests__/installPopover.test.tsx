@@ -22,8 +22,9 @@ import { InstallPopoverLayer } from '../InstallPopover'
  * ruling on W8-M3's item 3): the install surface of a host with windows – registered through
  * `ui.surface` there and never on a one-window host – is the 320 popover hung from the pill's
  * Install chip for a page with an installable manifest: "Install <name>?" over the app's
- * identity row, Cancel then Install, no scrim. Opened by the user it takes the first control and
- * Escape hands the keyboard back to the chip; Install goes busy while `webapp.pin` is out and
+ * identity row, Cancel then Install, no scrim. Opened by the user it focuses Install (§5.7, the
+ * Lead's gate on #754) and Escape hands the keyboard back to the chip; Install goes busy while
+ * `webapp.pin` is out and
  * the popover leaves once it has settled; Cancel, Escape and a press outside report a cancelled
  * install and fold the popover back into the chip; the popover goes with its tab, cancelling an
  * install not yet taken. A page without an installable manifest keeps the "Create shortcut"
@@ -308,10 +309,12 @@ describe('the install popover', () => {
     expect(primary.textContent).toBe('Install')
     expect(primary.hasAttribute('data-primary')).toBe(true)
     expect(dialog.querySelectorAll('[data-primary]')).toHaveLength(1)
-    // Opened by the user (the chip, the app menu): the keyboard lands on the first control, and
-    // no word of a drawn card goes to the core – the prompt is the user's, not the banner's.
+    // Opened by the user (the chip, the app menu): the keyboard lands on Install, the primary –
+    // the open was the intent and Enter completes it (§5.7; the Lead's gate on #754) – and no
+    // word of a drawn card goes to the core: the prompt is the user's, not the banner's.
     expect(dialog.hasAttribute('data-offered')).toBe(false)
-    expect(document.activeElement).toBe(dialog.querySelector('button'))
+    expect(document.activeElement).toBe(primary)
+    expect(document.activeElement).not.toBe(dialog.querySelector('button'))
     expect(run).not.toHaveBeenCalledWith('webapp.bannerShown', expect.anything())
   })
 
@@ -565,7 +568,7 @@ describe('the popover as the core’s install banner (seed #42: the cooldown thr
     expect(calls()).toContainEqual(['focus.content', undefined])
   })
 
-  it('gives way to the prompt the user asks for: the chip’s own open shows the user’s popover, which takes the first control', async () => {
+  it('gives way to the prompt the user asks for: the chip’s own open shows the user’s popover, which focuses Install', async () => {
     render(layer(stateWith('t1')))
     act(() => autoOpenInstall(OFFER))
     await opened()
@@ -576,7 +579,7 @@ describe('the popover as the core’s install banner (seed #42: the cooldown thr
     await settle()
     const dialog = popover()!
     expect(dialog.hasAttribute('data-offered')).toBe(false)
-    expect(document.activeElement).toBe(dialog.querySelector('button'))
+    expect(document.activeElement).toBe(dialog.querySelector('[data-accept]'))
     expect(uiStore.get().installOffer).toBeNull()
   })
 })

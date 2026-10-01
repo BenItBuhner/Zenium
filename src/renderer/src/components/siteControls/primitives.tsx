@@ -97,10 +97,15 @@ export interface PopoverApi {
   close: () => void
 }
 
-/** Where the keyboard goes as a popover opens (§9.22). */
+/** Where the keyboard goes as a popover opens (§9.22, §5.7). */
 export type PopoverFocus =
   /** The first row or button: a surface the user opened. */
   | 'first'
+  /**
+   * The primary button (`data-primary`): a prompt the user opened, whose act was the intent –
+   * Enter completes it, as Chrome does (§5.7); the first control when the prompt has no primary.
+   */
+  | 'primary'
   /** The container itself: a title-and-notice panel that is the only affordance, no button armed. */
   | 'container'
   /** Nowhere: a prompt raised by a page event beside a chip in the pill, which stays with the page. */
@@ -181,7 +186,8 @@ export function DesktopPopover({
       byKey.current = true
       dismiss()
     },
-    initial: focus,
+    initial:
+      focus === 'primary' ? (root) => root.querySelector<HTMLElement>('[data-primary]') : focus,
     // A popover that took no focus of its own hands nothing back; the others return to the
     // element that opened them (the site chip for a popover under the pill).
     returnTo: focus === 'none' ? null : (anchorElement?.() ?? undefined)
