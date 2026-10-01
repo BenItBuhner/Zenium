@@ -313,6 +313,14 @@ describe('the merged table', () => {
     expect(S.menu('page.readerMode', { state: false })).toBe('Enter Reader View')
     expect(S.menu('compact.toggle')).toBe('Compact Mode')
     expect(S.title('compact.toggle')).toBe('Compact mode')
+    // The Lead's re-word of P-23's "Sidebar": the state pair, the act's side; the stateless
+    // face is the key table's, and an entry without a pair ignores the state asked.
+    expect(S.menu('sidebar.toggle')).toBe('Expand Sidebar')
+    expect(S.menu('sidebar.toggle', { state: false })).toBe('Expand Sidebar')
+    expect(S.menu('sidebar.toggle', { state: true })).toBe('Collapse Sidebar')
+    expect(S.title('sidebar.toggle')).toBe('Expand sidebar')
+    expect(S.title('sidebar.toggle', { state: true })).toBe('Collapse sidebar')
+    expect(S.menu('nav.reload', { state: true })).toBe('Reload')
     // P-34: the orientation axis.
     expect(S.menu('tab.closeBefore', { orientation: 'horizontal' })).toBe('Close Tabs to the Left')
     expect(S.menu('tab.closeBefore', { orientation: 'vertical' })).toBe('Close Tabs Above')

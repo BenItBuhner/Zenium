@@ -25,9 +25,14 @@ export const ACTIONS = {
   // --- Compact mode and the sidebar (P-23: the noun, no "Toggle") -------------------------------
   'compact.toggle': { menu: 'Compact Mode' },
   'compact.toggleSidebar': { menu: 'Floating Sidebar' },
-  // P-23 names "Sidebar" for the key table and the mac bar and "Sidebar Width" for the palette's
-  // row: one act, one label – the two sites' word.
-  'sidebar.toggle': { menu: 'Sidebar' },
+  // The Lead's re-word of P-23's "Sidebar": a bare "Sidebar" reads as show / hide, but the act
+  // changes the width – so the state pair. `on` is the sidebar expanded (the act collapses it),
+  // `off` the rail (the act expands it); a row that knows no state – the key table's – reads the
+  // `menu` face, "Expand Sidebar".
+  'sidebar.toggle': {
+    menu: 'Expand Sidebar',
+    state: { on: 'Collapse Sidebar', off: 'Expand Sidebar' }
+  },
 
   // --- Spaces -----------------------------------------------------------------------------------
   'space.switch1': { menu: 'Switch to Space 1' },

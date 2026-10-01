@@ -35,6 +35,7 @@ import {
 } from '../shared/url'
 import { foldForMatch, matchableUrl, queryTerms } from '../shared/wordMatch'
 import { touchLayout } from '../shared/formFactor'
+import { forcesRail } from '../shared/toolbarLayout'
 import {
   MOST_VISITED_GROUP,
   RECENT_SEARCHES_GROUP,
@@ -514,7 +515,9 @@ export class SuggestionService {
     const state = this.browser.state
     return searchCommands(query, {
       capabilities: state.capabilities,
-      formFactor: win.formFactor
+      formFactor: win.formFactor,
+      // The sidebar as drawn: a layout that fixes the rail shows it collapsed whatever the setting.
+      sidebarExpanded: state.settings.sidebarExpanded && !forcesRail(state.settings.toolbarLayout)
     }).map((cmd, i) => ({
       id: `cmd:${cmd.id}`,
       kind: 'command' as const,

@@ -38,6 +38,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   },
   {
     id: 'sidebar',
+    // The stateless face; `searchCommands` reads the state pair where the host knows the state.
     label: S.menu('sidebar.toggle'),
     keywords: ['sidebar', 'width', 'collapse', 'expand', 'toggle'],
     action: 'sidebar.toggle',
@@ -437,16 +438,30 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   }
 ]
 
-/** Where a URL bar is: what its host can do and the layout its chrome is in. */
+/**
+ * Where a URL bar is: what its host can do, the layout its chrome is in and – when the host knows
+ * it – whether the sidebar is expanded, the state the Expand / Collapse Sidebar row names.
+ */
 export interface CommandContext {
   capabilities: HostCapabilities
   formFactor: FormFactor
+  sidebarExpanded?: boolean
 }
 
 /** Whether the command would do anything on this host, in this layout. */
 export function commandAvailable(cmd: CommandDescriptor, ctx: CommandContext): boolean {
   if (cmd.layouts && !cmd.layouts.includes(ctx.formFactor)) return false
   return cmd.requires === undefined || ctx.capabilities[cmd.requires] === true
+}
+
+/**
+ * The row's label where the palette is. The sidebar row names the side its act would take –
+ * Collapse Sidebar while the sidebar is expanded, Expand Sidebar at the rail – when the context
+ * knows the state, the stateless face when it does not; every other row's label is fixed.
+ */
+function labelled(cmd: CommandDescriptor, ctx?: CommandContext): CommandDescriptor {
+  if (cmd.action !== 'sidebar.toggle' || ctx?.sidebarExpanded === undefined) return cmd
+  return { ...cmd, label: S.menu(cmd.action, { state: ctx.sidebarExpanded }) }
 }
 
 /**
@@ -458,6 +473,7 @@ export function searchCommands(query: string, ctx?: CommandContext): CommandDesc
   if (!q) return []
   const offered = ctx ? URLBAR_COMMANDS.filter((c) => commandAvailable(c, ctx)) : URLBAR_COMMANDS
   return offered
+    .map((c) => labelled(c, ctx))
     .filter((c) => {
       const label = c.label.toLowerCase()
       if (label.includes(q)) return true

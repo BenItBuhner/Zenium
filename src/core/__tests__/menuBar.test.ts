@@ -325,6 +325,51 @@ describe('the macOS menu bar', () => {
     }
   })
 
+  it('reflects the front window: the sidebar row is a plain row reading the side its act would take – Collapse Sidebar while the sidebar is expanded, Expand Sidebar at the rail – greyed under a layout that fixes the rail', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = harness()
+      const view = (): MenuItemTemplate[] => submenu(last(h), 'View')
+      const labels = (): string[] => view().map((i) => i.label ?? '')
+      const settle = async (): Promise<void> => {
+        await vi.advanceTimersByTimeAsync(MENU_BAR_SETTLE_MS)
+      }
+      // Expanded by default, so the act would collapse it: a plain row, not a checkbox.
+      const collapse = item(view(), 'Collapse Sidebar')
+      expect(collapse.type).toBeUndefined()
+      expect(collapse.checked).toBeUndefined()
+      expect(collapse.action).toBe('sidebar.toggle')
+      expect(collapse.enabled).toBe(true)
+      expect(labels()).not.toContain('Expand Sidebar')
+      h.browser.handleCommand(h.win, 'sidebar.toggleExpanded', undefined)
+      await settle()
+      const expand = item(view(), 'Expand Sidebar')
+      expect(expand.type).toBeUndefined()
+      expect(expand.action).toBe('sidebar.toggle')
+      expect(expand.enabled).toBe(true)
+      expect(labels()).not.toContain('Collapse Sidebar')
+      h.browser.handleCommand(h.win, 'sidebar.toggleExpanded', undefined)
+      await settle()
+      expect(item(view(), 'Collapse Sidebar').enabled).toBe(true)
+      // The Collapsed sidebar and horizontal layouts fix the rail whatever the setting says: the
+      // sidebar is at the rail, and the act would change nothing, so the row greys.
+      for (const layout of ['collapsed', 'horizontal'] as const) {
+        h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: layout })
+        await settle()
+        const fixed = item(view(), 'Expand Sidebar')
+        expect(fixed.enabled, layout).toBe(false)
+        expect(fixed.type).toBeUndefined()
+        expect(labels()).not.toContain('Collapse Sidebar')
+      }
+      // A layout that gives the width back: the setting still says expanded.
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarLayout: 'single' })
+      await settle()
+      expect(item(view(), 'Collapse Sidebar').enabled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('is never built for hosts without a menu bar', () => {
     vi.useFakeTimers()
     try {

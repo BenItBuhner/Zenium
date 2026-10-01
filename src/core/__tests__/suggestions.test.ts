@@ -697,6 +697,21 @@ describe('SuggestionService: rows and limits', () => {
     const scoped = await suggestions.suggest('@tabs new', null, win)
     expect(scoped.filter((r) => r.kind === 'tab').map((r) => r.targetId)).toEqual(['tab_real'])
   })
+
+  it('titles the sidebar command for the side its act would take, the sidebar as drawn', async () => {
+    const { suggestions, state, win } = setup()
+    const title = async (): Promise<string | undefined> =>
+      (await suggestions.suggest('sidebar', null, win)).find((r) => r.targetId === 'sidebar.toggle')
+        ?.title
+    expect(state.settings.sidebarExpanded).toBe(true)
+    expect(await title()).toBe('Collapse Sidebar')
+    state.settings.sidebarExpanded = false
+    expect(await title()).toBe('Expand Sidebar')
+    // A layout that fixes the rail draws the sidebar collapsed whatever the setting says.
+    state.settings.sidebarExpanded = true
+    state.settings.toolbarLayout = 'horizontal'
+    expect(await title()).toBe('Expand Sidebar')
+  })
 })
 
 /*

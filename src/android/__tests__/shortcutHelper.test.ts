@@ -208,7 +208,7 @@ describe('helperShortcuts (TABLET-20)', () => {
     }
     // A label already in the register carries none: a coined sense or a hyphenated name with its
     // capitals, and the ten Switch to Space rows, whose label reads as the sheet would print it.
-    for (const action of ['glance.expand', 'page.pip', 'sidebar.toggle', 'space.switch3']) {
+    for (const action of ['glance.expand', 'page.pip', 'space.switch3']) {
       expect(words(action), action).toBeUndefined()
     }
     expect(label('space.switch3')).toBe('Switch to Space 3')
@@ -216,6 +216,10 @@ describe('helperShortcuts (TABLET-20)', () => {
     expect(words('page.readerMode')).toBe('Reader view')
     expect(words('compact.toggle')).toBe('Compact mode')
     expect(label('compact.toggle')).toBe('Compact Mode')
+    // The sidebar row knows no state here, so it reads the pair's stateless face (the Lead's
+    // re-word of P-23's "Sidebar").
+    expect(label('sidebar.toggle')).toBe('Expand Sidebar')
+    expect(words('sidebar.toggle')).toBe('Expand sidebar')
     expect(isSentenceForm('Reader view')).toBe(true)
     expect(isSentenceForm('Toggle Reader View')).toBe(false)
     expect(isSentenceForm('Duplicate Tab')).toBe(false)

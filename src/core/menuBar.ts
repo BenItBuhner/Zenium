@@ -140,7 +140,8 @@ export function runFromMenuBar(browser: Browser, action: ShortcutAction): void {
  * label – Open Location…, Actual Size, Show Full History, Inspect Element, Downloads, Select
  * Next Tab); Zenium's own acts keep the house label, and View says "Hard Reload". A row that
  * knows its state reads the state pair (Enter / Exit Full Screen, Enter / Exit Reader View,
- * Bookmark This Tab… / Edit Bookmark…) or is a checkbox (Sidebar, Compact Mode).
+ * Expand / Collapse Sidebar, Bookmark This Tab… / Edit Bookmark…) or is a checkbox (Compact
+ * Mode).
  */
 export function applicationMenu(browser: Browser): Template {
   const { state, tabs } = browser
@@ -273,6 +274,8 @@ export function applicationMenu(browser: Browser): Template {
     { mode: 'never', label: 'Never' }
   ]
   const fullScreen = Boolean(win?.host.isFullScreen())
+  const railFixed = forcesRail(state.settings.toolbarLayout)
+  const sidebarExpanded = state.settings.sidebarExpanded && !railFixed
   const view: MenuItemTemplate = {
     label: 'View',
     submenu: [
@@ -285,14 +288,13 @@ export function applicationMenu(browser: Browser): Template {
           click: withWindow((w) => browser.setBookmarksBarMode(mode, w))
         }))
       },
-      // The sidebar's width (P-23): a checkbox reading the expanded sidebar, which a layout that
-      // fixes the rail (`forcesRail`) never shows; the toggle itself is the key's.
+      // The sidebar's width: the state pair's side the act would take – Collapse Sidebar while
+      // it is expanded, Expand Sidebar at the rail. A layout that fixes the rail (`forcesRail`)
+      // leaves the act nothing to change, so the row greys there.
       {
-        label: S.menu('sidebar.toggle'),
-        type: 'checkbox',
+        label: S.menu('sidebar.toggle', { state: sidebarExpanded }),
         action: 'sidebar.toggle',
-        checked: state.settings.sidebarExpanded && !forcesRail(state.settings.toolbarLayout),
-        enabled: Boolean(win)
+        enabled: Boolean(win) && !railFixed
       },
       {
         label: S.menu('compact.toggle'),
