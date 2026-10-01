@@ -12,9 +12,6 @@ name: Android tab close demo
 # cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY (#775's one run; the builder's VM has no emulator): comes off before READY.
-  push:
-    branches: [cursor/android-close-all-undo-9271]
 
 permissions:
   contents: read
