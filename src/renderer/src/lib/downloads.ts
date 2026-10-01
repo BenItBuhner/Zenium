@@ -11,6 +11,7 @@ import {
 } from './downloadsEngine'
 import { isPhone } from './formFactor'
 import { reducedMotion } from './motion/spring'
+import { MOTION_POP_MS } from './motion/tokens'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import {
@@ -29,8 +30,8 @@ import {
 
 /** How long the toolbar button (and the auto-opened bubble) stay once everything finished. */
 export const DOWNLOAD_LINGER_MS = 5000
-/** The bubble's pop animation, played forwards on open and backwards on close. */
-export const BUBBLE_POP_MS = 180
+/** The bubble's pop animation (the pop token, motion spec §1), played forwards on open and backwards on close. */
+export const BUBBLE_POP_MS = MOTION_POP_MS
 
 export interface DownloadsUi {
   /** The bubble is up (or playing its exit while `closing`). */

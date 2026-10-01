@@ -20,6 +20,7 @@ import {
 } from '../insertionCaret'
 import { SlideMotion } from '../motion/slide'
 import { SPRING_STEP_CLAMP_MS } from '../motion/spring'
+import { MOTION_STATE_MS } from '../motion/tokens'
 import { browserStore, uiStore } from '../ui'
 
 vi.mock('@renderer/lib/api', () => ({
@@ -473,7 +474,7 @@ describe('under reduced motion', () => {
     expect(drops()).toEqual([{ tabId: 'b', key: 'tab:e:after' }])
   })
 
-  it('the release lands at once: the gentle spring jumps, only the ghost\u2019s 100 ms fade remains', () => {
+  it('the release lands at once: the gentle spring jumps, only the ghost\u2019s state-length fade remains', () => {
     const h = lift('b')
     h.move(120, SCROLLER_TOP + ROW * 3.75, now)
     frames = []
@@ -481,7 +482,9 @@ describe('under reduced motion', () => {
     // No glide frames are asked for; the drag is settling and ends with the fade's timer.
     expect(frames.length).toBe(0)
     expect(uiStore.get().drag).toMatchObject({ tabId: 'b', settling: true })
-    vi.advanceTimersByTime(100)
+    vi.advanceTimersByTime(MOTION_STATE_MS - 1)
+    expect(uiStore.get().drag).toMatchObject({ tabId: 'b', settling: true })
+    vi.advanceTimersByTime(1)
     expect(uiStore.get().drag).toBeNull()
   })
 
