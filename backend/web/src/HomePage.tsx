@@ -52,7 +52,13 @@ export function HomePage() {
           </dd>
           <dt>Synced data</dt>
           <dd>
-            <div className="meter" role="progressbar" aria-valuenow={Math.round(usedShare)} aria-valuemin={0} aria-valuemax={100}>
+            <div
+              className="meter"
+              role="progressbar"
+              aria-valuenow={Math.round(usedShare)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <span style={{ width: `${Math.max(usedShare, 1)}%` }} />
             </div>
             <span className="muted small">
@@ -71,7 +77,13 @@ export function HomePage() {
         ) : (
           <ul className="devices">
             {devices.map((d) => (
-              <DeviceRow key={d.id} id={d.id} name={d.name} kind={d.kind} lastSeenAt={d.lastSeenAt} />
+              <DeviceRow
+                key={d.id}
+                id={d.id}
+                name={d.name}
+                kind={d.kind}
+                lastSeenAt={d.lastSeenAt}
+              />
             ))}
           </ul>
         )}
@@ -82,7 +94,12 @@ export function HomePage() {
   )
 }
 
-function DeviceRow(props: { id: Id<'deviceSessions'>; name: string; kind: string; lastSeenAt: number }) {
+function DeviceRow(props: {
+  id: Id<'deviceSessions'>
+  name: string
+  kind: string
+  lastSeenAt: number
+}) {
   const revoke = useMutation(api.devices.revoke)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -126,7 +143,8 @@ function DangerZone() {
     <section className="card danger">
       <h2>Delete account</h2>
       <p className="muted">
-        Signs out every device and erases your synced data from our servers. Data on your devices stays.
+        Signs out every device and erases your synced data from our servers. Data on your devices
+        stays.
       </p>
       {!open ? (
         <button

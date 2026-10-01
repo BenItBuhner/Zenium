@@ -6,19 +6,30 @@ const CLOUD = process.env['ZENIUM_CLOUD'] ?? ''
 const CLERK_SECRET = process.env['ZENIUM_CLERK_SECRET_KEY'] ?? ''
 const live = Boolean(SITE && CLOUD && CLERK_SECRET.startsWith('sk_test_'))
 
-type Result = { status: 'success'; value: unknown } | { status: 'error'; errorMessage: string; errorData?: { code?: string } }
+type Result =
+  | { status: 'success'; value: unknown }
+  | { status: 'error'; errorMessage: string; errorData?: { code?: string } }
 
-async function convex(kind: 'query' | 'mutation' | 'action', path: string, args: object, token?: string) {
+async function convex(
+  kind: 'query' | 'mutation' | 'action',
+  path: string,
+  args: object,
+  token?: string
+) {
   const res = await fetch(`${CLOUD}/api/${kind}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
     body: JSON.stringify({ path, args, format: 'json' })
   })
   return (await res.json()) as Result
 }
 
 function value(result: Result): unknown {
-  if (result.status !== 'success') throw new Error(`${result.errorMessage} ${JSON.stringify(result.errorData)}`)
+  if (result.status !== 'success')
+    throw new Error(`${result.errorMessage} ${JSON.stringify(result.errorData)}`)
   return result.value
 }
 
@@ -41,7 +52,8 @@ async function clerk(method: string, path: string, body?: object) {
     headers: { Authorization: `Bearer ${CLERK_SECRET}`, 'Content-Type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {})
   })
-  if (!res.ok && res.status !== 404) throw new Error(`Clerk ${path}: ${res.status} ${await res.text()}`)
+  if (!res.ok && res.status !== 404)
+    throw new Error(`Clerk ${path}: ${res.status} ${await res.text()}`)
   return (await res.json()) as Record<string, unknown>
 }
 
@@ -83,7 +95,10 @@ describe.skipIf(!live)('live deployment', () => {
   let deleted = false
 
   beforeAll(async () => {
-    const user = await clerk('POST', '/users', { email_address: [email], skip_password_requirement: true })
+    const user = await clerk('POST', '/users', {
+      email_address: [email],
+      skip_password_requirement: true
+    })
     userId = String(user['id'])
     const session = await clerk('POST', '/sessions', { user_id: userId })
     const token = await clerk('POST', `/sessions/${String(session['id'])}/tokens/convex`)
@@ -106,17 +121,30 @@ describe.skipIf(!live)('live deployment', () => {
 
     const a = await linkDevice(webToken, 'Integration A')
     const b = await linkDevice(webToken, 'Integration B')
-    expect(value(await convex('query', 'devices:current', {}, a.accessToken))).toMatchObject({ email })
+    expect(value(await convex('query', 'devices:current', {}, a.accessToken))).toMatchObject({
+      email
+    })
 
     const v0 = value(await convex('query', 'sync:version', {}, b.accessToken)) as number
-    value(await convex('mutation', 'sync:write', { name: 'device-a.json', text: 'ciphertext-a' }, a.accessToken))
+    value(
+      await convex(
+        'mutation',
+        'sync:write',
+        { name: 'device-a.json', text: 'ciphertext-a' },
+        a.accessToken
+      )
+    )
     expect(value(await convex('query', 'sync:version', {}, b.accessToken))).toBeGreaterThan(v0)
     expect(value(await convex('query', 'sync:list', {}, b.accessToken))).toEqual(['device-a.json'])
-    expect(value(await convex('query', 'sync:read', { name: 'device-a.json' }, b.accessToken))).toBe('ciphertext-a')
+    expect(
+      value(await convex('query', 'sync:read', { name: 'device-a.json' }, b.accessToken))
+    ).toBe('ciphertext-a')
     const big = 'x'.repeat(700_000)
     value(await convex('mutation', 'sync:write', { name: 'big.json', text: big }, a.accessToken))
     expect(value(await convex('query', 'sync:read', { name: 'big.json' }, b.accessToken))).toBe(big)
-    expect(code(await convex('mutation', 'sync:write', { name: '../x', text: 'x' }, a.accessToken))).toBe('bad-name')
+    expect(
+      code(await convex('mutation', 'sync:write', { name: '../x', text: 'x' }, a.accessToken))
+    ).toBe('bad-name')
 
     const devices = value(await convex('query', 'devices:list', {}, webToken)) as { name: string }[]
     expect(devices.map((d) => d.name).sort()).toEqual(['Integration A', 'Integration B'])
@@ -141,7 +169,9 @@ describe.skipIf(!live)('live deployment', () => {
 
   it('deletes the account and its data', async () => {
     const c = await linkDevice(webToken, 'Integration C')
-    value(await convex('mutation', 'sync:write', { name: 'device-c.json', text: 'c' }, c.accessToken))
+    value(
+      await convex('mutation', 'sync:write', { name: 'device-c.json', text: 'c' }, c.accessToken)
+    )
     value(await convex('action', 'account:deleteAccount', {}, webToken))
     deleted = true
     expect(code(await convex('query', 'sync:list', {}, c.accessToken))).toBe('revoked')

@@ -28,15 +28,20 @@ describe('documents', () => {
 
     await d.mutation(api.sync.write, { name: 'zenium-sync.json', text: '{"v":1}' })
     await d.mutation(api.sync.write, { name: 'device-abc.json', text: 'ciphertext' })
-    expect((await d.query(api.sync.list, {})).sort()).toEqual(['device-abc.json', 'zenium-sync.json'])
-    expect(await d.query(api.sync.readMany, { names: ['device-abc.json', 'missing.json'] })).toEqual([
-      'ciphertext',
-      null
+    expect((await d.query(api.sync.list, {})).sort()).toEqual([
+      'device-abc.json',
+      'zenium-sync.json'
     ])
+    expect(
+      await d.query(api.sync.readMany, { names: ['device-abc.json', 'missing.json'] })
+    ).toEqual(['ciphertext', null])
 
     await d.mutation(api.sync.write, { name: 'device-abc.json', text: 'newer' })
     expect(await d.query(api.sync.read, { name: 'device-abc.json' })).toBe('newer')
-    expect(await usage(t)).toEqual({ bytesUsed: '{"v":1}'.length + 'newer'.length, documentCount: 2 })
+    expect(await usage(t)).toEqual({
+      bytesUsed: '{"v":1}'.length + 'newer'.length,
+      documentCount: 2
+    })
   })
 
   it('round-trips a document larger than one chunk exactly', async () => {
@@ -64,7 +69,9 @@ describe('documents', () => {
   it('refuses bad names and oversized reads', async () => {
     const t = makeT()
     const d = await device(t)
-    expect(await refusal(d.mutation(api.sync.write, { name: '../escape', text: 'x' }))).toBe('bad-name')
+    expect(await refusal(d.mutation(api.sync.write, { name: '../escape', text: 'x' }))).toBe(
+      'bad-name'
+    )
     expect(await refusal(d.mutation(api.sync.write, { name: '', text: 'x' }))).toBe('bad-name')
     const names = Array.from({ length: 65 }, (_, i) => `d${i}.json`)
     expect(await refusal(d.query(api.sync.readMany, { names }))).toBe('too-large')
@@ -78,13 +85,16 @@ describe('documents', () => {
       const user = await ctx.db.query('users').first()
       if (user) await ctx.db.patch('users', user._id, { bytesUsed: MAX_BYTES - 2 })
     })
-    expect(await refusal(d.mutation(api.sync.write, { name: 'b.json', text: 'too much' }))).toBe('quota')
+    expect(await refusal(d.mutation(api.sync.write, { name: 'b.json', text: 'too much' }))).toBe(
+      'quota'
+    )
     // Replacing a document counts only the difference.
     await d.mutation(api.sync.write, { name: 'a.json', text: 'hi' })
 
     await t.run(async (ctx) => {
       const user = await ctx.db.query('users').first()
-      if (user) await ctx.db.patch('users', user._id, { bytesUsed: 0, documentCount: MAX_DOCUMENTS })
+      if (user)
+        await ctx.db.patch('users', user._id, { bytesUsed: 0, documentCount: MAX_DOCUMENTS })
     })
     expect(await refusal(d.mutation(api.sync.write, { name: 'c.json', text: 'x' }))).toBe('quota')
   })

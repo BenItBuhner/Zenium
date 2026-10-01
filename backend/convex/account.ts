@@ -70,7 +70,8 @@ export const upsertFromClerk = internalMutation({
       .withIndex('by_clerk_id', (q) => q.eq('clerkUserId', clerkUserId))
       .unique()
     if (user) {
-      if (user.deletedAt === undefined) await ctx.db.patch('users', user._id, { email, authMethods })
+      if (user.deletedAt === undefined)
+        await ctx.db.patch('users', user._id, { email, authMethods })
       return null
     }
     const id = await ctx.db.insert('users', {

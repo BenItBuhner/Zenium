@@ -12,7 +12,12 @@
   --ok: #2f9e6b;
   --radius: 14px;
   --shadow: 0 1px 2px rgb(20 20 40 / 4%), 0 8px 24px rgb(20 20 40 / 6%);
-  font-family: Inter, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family:
+    Inter,
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    sans-serif;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;

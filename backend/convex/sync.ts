@@ -173,7 +173,8 @@ export const removeAll = deviceMutation({
   handler: async (ctx) => {
     const more = await deleteDocumentBatch(ctx, ctx.user._id)
     await bumpVersion(ctx, ctx.user._id)
-    if (more) await ctx.scheduler.runAfter(0, internal.sync.removeAllContinue, { userId: ctx.user._id })
+    if (more)
+      await ctx.scheduler.runAfter(0, internal.sync.removeAllContinue, { userId: ctx.user._id })
     return null
   }
 })

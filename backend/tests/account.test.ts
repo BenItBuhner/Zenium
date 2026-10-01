@@ -1,14 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from '../convex/_generated/api'
 import { authMethodsOf } from '../convex/http'
-import { asClerkUser, asDevice, linkDevice, makeT, postJson, refusal, WEBHOOK_SECRET } from './harness'
+import {
+  asClerkUser,
+  asDevice,
+  linkDevice,
+  makeT,
+  postJson,
+  refusal,
+  WEBHOOK_SECRET
+} from './harness'
 import type { T } from './harness'
 
 async function svixHeaders(body: string, timestamp = Math.floor(Date.now() / 1000)) {
   const raw = Uint8Array.from(atob(WEBHOOK_SECRET.replace(/^whsec_/, '')), (c) => c.charCodeAt(0))
-  const key = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const key = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign'
+  ])
   const id = 'msg_test'
-  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}.${timestamp}.${body}`))
+  const mac = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`${id}.${timestamp}.${body}`)
+  )
   return {
     'svix-id': id,
     'svix-timestamp': String(timestamp),
@@ -51,7 +65,13 @@ describe('account', () => {
     expect(
       authMethodsOf({
         id: 'u',
-        email_addresses: [{ id: 'e', email_address: 'g@example.com', verification: { strategy: 'from_oauth_google' } }],
+        email_addresses: [
+          {
+            id: 'e',
+            email_address: 'g@example.com',
+            verification: { strategy: 'from_oauth_google' }
+          }
+        ],
         external_accounts: [{ provider: 'oauth_google' }]
       })
     ).toEqual(['oauth_google'])
@@ -70,14 +90,20 @@ describe('Clerk webhook', () => {
     expect(
       await webhook(t, { type: 'user.updated', data: { ...clerkUser, password_enabled: false } })
     ).toBe(200)
-    expect(await web.query(api.account.me, {})).toMatchObject({ authMethods: ['email_code', 'email_link'] })
+    expect(await web.query(api.account.me, {})).toMatchObject({
+      authMethods: ['email_code', 'email_link']
+    })
   })
 
   it('rejects bad and stale signatures', async () => {
     const t = makeT()
     const event = { type: 'user.created', data: clerkUser }
     expect(
-      await webhook(t, event, { 'svix-id': 'x', 'svix-timestamp': String(Math.floor(Date.now() / 1000)), 'svix-signature': 'v1,AAAA' })
+      await webhook(t, event, {
+        'svix-id': 'x',
+        'svix-timestamp': String(Math.floor(Date.now() / 1000)),
+        'svix-signature': 'v1,AAAA'
+      })
     ).toBe(401)
     const stale = await svixHeaders(JSON.stringify(event), Math.floor(Date.now() / 1000) - 3600)
     expect(await webhook(t, event, stale)).toBe(401)
@@ -99,9 +125,13 @@ describe('account deletion', () => {
     const d = asDevice(t, 'user_a', linked.sessionId)
     await d.mutation(api.sync.write, { name: 'device-a.json', text: 'ciphertext' })
 
-    expect(await webhook(t, { type: 'user.deleted', data: { id: 'user_a', deleted: true } })).toBe(200)
+    expect(await webhook(t, { type: 'user.deleted', data: { id: 'user_a', deleted: true } })).toBe(
+      200
+    )
     expect(await refusal(d.query(api.sync.list, {}))).toBe('revoked')
-    expect((await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })).status).toBe(401)
+    expect((await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })).status).toBe(
+      401
+    )
     expect(await asClerkUser(t, 'user_a').query(api.account.me, {})).toBeNull()
 
     await t.finishAllScheduledFunctions(() => vi.runAllTimers())
@@ -121,7 +151,9 @@ describe('account deletion', () => {
     await asClerkUser(t, 'user_a').mutation(api.account.ensure, {})
     await t.mutation(internal.account.beginDeletion, { clerkUserId: 'user_a' })
     await t.mutation(internal.account.beginDeletion, { clerkUserId: 'user_a' })
-    expect(await refusal(asClerkUser(t, 'user_a').mutation(api.account.ensure, {}))).toBe('account-deleted')
+    expect(await refusal(asClerkUser(t, 'user_a').mutation(api.account.ensure, {}))).toBe(
+      'account-deleted'
+    )
   })
 })
 

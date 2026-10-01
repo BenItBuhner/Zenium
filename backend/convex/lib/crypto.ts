@@ -137,7 +137,10 @@ export async function verifySvix(
   return signature
     .split(' ')
     .map((part) => part.split(',', 2))
-    .some(([version, value]) => version === 'v1' && value !== undefined && timingSafeEqual(value, expected))
+    .some(
+      ([version, value]) =>
+        version === 'v1' && value !== undefined && timingSafeEqual(value, expected)
+    )
 }
 
 function timingSafeEqual(a: string, b: string): boolean {

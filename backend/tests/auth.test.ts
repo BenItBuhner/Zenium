@@ -46,12 +46,14 @@ describe('device linking', () => {
     expect((await postJson(t, '/auth/device/token', poll)).body).toEqual({ status: 'pending' })
 
     const web = asClerkUser(t, 'user_a')
-    expect(await web.query(api.links.describe, { userCode: userCode.toLowerCase() })).toMatchObject({
-      deviceName: 'Work laptop',
-      kind: 'laptop',
-      status: 'pending',
-      approvedHere: false
-    })
+    expect(await web.query(api.links.describe, { userCode: userCode.toLowerCase() })).toMatchObject(
+      {
+        deviceName: 'Work laptop',
+        kind: 'laptop',
+        status: 'pending',
+        approvedHere: false
+      }
+    )
     await web.mutation(api.links.approve, { userCode })
 
     const token = await postJson(t, '/auth/device/token', poll)
@@ -90,15 +92,19 @@ describe('device linking', () => {
 
   it('rejects malformed start requests', async () => {
     const t = makeT()
-    const res = await postJson(t, '/auth/device/start', { secretHash: 'nope', deviceName: 'x', kind: 'car' })
+    const res = await postJson(t, '/auth/device/start', {
+      secretHash: 'nope',
+      deviceName: 'x',
+      kind: 'car'
+    })
     expect(res.status).toBe(400)
   })
 
   it('refuses unknown, used and expired codes', async () => {
     const t = makeT()
-    expect(await refusal(asClerkUser(t, 'user_a').mutation(api.links.approve, { userCode: 'AAAA-BBBB' }))).toBe(
-      'link-not-found'
-    )
+    expect(
+      await refusal(asClerkUser(t, 'user_a').mutation(api.links.approve, { userCode: 'AAAA-BBBB' }))
+    ).toBe('link-not-found')
 
     const start = await postJson(t, '/auth/device/start', {
       secretHash: await sha256Hex(randomSecret()),
@@ -109,7 +115,9 @@ describe('device linking', () => {
     await asClerkUser(t, 'user_a').mutation(api.links.approve, { userCode })
     // Approving again from the same account is harmless; from another it is refused.
     await asClerkUser(t, 'user_a').mutation(api.links.approve, { userCode })
-    expect(await refusal(asClerkUser(t, 'user_b').mutation(api.links.approve, { userCode }))).toBe('link-used')
+    expect(await refusal(asClerkUser(t, 'user_b').mutation(api.links.approve, { userCode }))).toBe(
+      'link-used'
+    )
     // Another account cannot even see which device asked.
     expect(await asClerkUser(t, 'user_b').query(api.links.describe, { userCode })).toBeNull()
 
@@ -127,7 +135,9 @@ describe('device linking', () => {
     })
     expect(
       await refusal(
-        asClerkUser(t, 'user_a').mutation(api.links.approve, { userCode: String(late.body['userCode']) })
+        asClerkUser(t, 'user_a').mutation(api.links.approve, {
+          userCode: String(late.body['userCode'])
+        })
       )
     ).toBe('link-expired')
   })
@@ -152,9 +162,13 @@ describe('refresh tokens', () => {
     const replay = await postJson(t, '/auth/refresh', { refreshToken: linked.refreshToken })
     expect(replay).toEqual({ status: 401, body: { error: 'reused' } })
     // Both copies are now dead, including the legitimate latest one.
-    const latest = await postJson(t, '/auth/refresh', { refreshToken: rotated.body['refreshToken'] })
+    const latest = await postJson(t, '/auth/refresh', {
+      refreshToken: rotated.body['refreshToken']
+    })
     expect(latest).toEqual({ status: 401, body: { error: 'invalid' } })
-    expect(await refusal(asDevice(t, 'user_a', linked.sessionId).query(api.sync.list, {}))).toBe('revoked')
+    expect(await refusal(asDevice(t, 'user_a', linked.sessionId).query(api.sync.list, {}))).toBe(
+      'revoked'
+    )
   })
 
   it('refuses unknown tokens', async () => {
@@ -190,7 +204,10 @@ describe('devices', () => {
     const laptop = await linkDevice(t, 'user_a', 'Laptop')
     const phone = await linkDevice(t, 'user_a', 'Phone')
     const web = asClerkUser(t, 'user_a')
-    expect((await web.query(api.devices.list, {})).map((d) => d.name).sort()).toEqual(['Laptop', 'Phone'])
+    expect((await web.query(api.devices.list, {})).map((d) => d.name).sort()).toEqual([
+      'Laptop',
+      'Phone'
+    ])
 
     await asDevice(t, 'user_a', phone.sessionId).mutation(api.devices.rename, { name: '  Pixel  ' })
     expect(await asDevice(t, 'user_a', phone.sessionId).query(api.devices.current, {})).toEqual({
@@ -200,7 +217,9 @@ describe('devices', () => {
     })
 
     await web.mutation(api.devices.revoke, { sessionId: laptop.sessionId })
-    expect(await refusal(asDevice(t, 'user_a', laptop.sessionId).query(api.sync.version, {}))).toBe('revoked')
+    expect(await refusal(asDevice(t, 'user_a', laptop.sessionId).query(api.sync.version, {}))).toBe(
+      'revoked'
+    )
     expect((await web.query(api.devices.list, {})).map((d) => d.name)).toEqual(['Pixel'])
     const refresh = await postJson(t, '/auth/refresh', { refreshToken: laptop.refreshToken })
     expect(refresh.status).toBe(401)
@@ -211,7 +230,9 @@ describe('devices', () => {
     const theirs = await linkDevice(t, 'user_a')
     await asClerkUser(t, 'user_b').mutation(api.account.ensure, {})
     expect(
-      await refusal(asClerkUser(t, 'user_b').mutation(api.devices.revoke, { sessionId: theirs.sessionId }))
+      await refusal(
+        asClerkUser(t, 'user_b').mutation(api.devices.revoke, { sessionId: theirs.sessionId })
+      )
     ).toBe('forbidden')
   })
 

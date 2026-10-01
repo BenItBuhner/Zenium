@@ -18,7 +18,9 @@ function Layout({ children, signedIn }: { children: ReactNode; signedIn: boolean
         {signedIn && <UserButton />}
       </header>
       <main className="content">{children}</main>
-      <footer className="foot">Your synced data is end-to-end encrypted. We never see your passphrase.</footer>
+      <footer className="foot">
+        Your synced data is end-to-end encrypted. We never see your passphrase.
+      </footer>
     </div>
   )
 }

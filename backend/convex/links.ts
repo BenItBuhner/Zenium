@@ -78,7 +78,12 @@ export const exchange = internalMutation({
       lastSeenAt: now
     })
     await ctx.db.patch('deviceLinks', link._id, { status: 'consumed' })
-    return { status: 'approved' as const, sessionId, clerkUserId: user.clerkUserId, email: user.email }
+    return {
+      status: 'approved' as const,
+      sessionId,
+      clerkUserId: user.clerkUserId,
+      email: user.email
+    }
   }
 })
 

@@ -3,7 +3,12 @@ import { useState } from 'react'
 import { api } from '../../convex/_generated/api'
 import { describeError } from './errors'
 
-const KIND_LABEL = { desktop: 'Desktop', laptop: 'Laptop', phone: 'Phone', tablet: 'Tablet' } as const
+const KIND_LABEL = {
+  desktop: 'Desktop',
+  laptop: 'Laptop',
+  phone: 'Phone',
+  tablet: 'Tablet'
+} as const
 
 function codeFromUrl(): string {
   return new URLSearchParams(window.location.search).get('code')?.trim().toUpperCase() ?? ''
@@ -67,7 +72,8 @@ function Confirm({ code, onReset }: { code: string; onReset: () => void }) {
       <section className="card">
         <h1>Code not found</h1>
         <p className="muted">
-          <span className="code">{code}</span> isn’t a valid code. It may have expired, or been typed wrongly.
+          <span className="code">{code}</span> isn’t a valid code. It may have expired, or been
+          typed wrongly.
         </p>
         <button className="secondary" onClick={onReset}>
           Enter another code

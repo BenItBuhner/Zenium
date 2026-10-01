@@ -77,7 +77,8 @@ export async function linkDevice(
     linkId: start.body['linkId'],
     deviceSecret: secret
   })
-  if (token.body['status'] !== 'approved') throw new Error(`exchange failed: ${JSON.stringify(token.body)}`)
+  if (token.body['status'] !== 'approved')
+    throw new Error(`exchange failed: ${JSON.stringify(token.body)}`)
   const account = token.body['account'] as { email: string }
   return {
     refreshToken: String(token.body['refreshToken']),
