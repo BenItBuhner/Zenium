@@ -29,6 +29,7 @@ import type {
   WebAppInstallPrompt
 } from '@shared/types'
 import { isEmptyTabUrl } from '@shared/url'
+import { isInstallable } from '@shared/webApp'
 import { TOAST_DURATION } from './motion/tokens'
 import { isZoomed } from '@renderer/components/zoom/bubble'
 import type { Anchor } from './anchor'
@@ -1673,6 +1674,24 @@ export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<voi
 }
 
 /**
+ * Whether the install prompt up is the pill's popover: the desktop's form for an app with an
+ * installable manifest (Chrome's, the Design Lead's ruling on W8-M3's item 3;
+ * `install/InstallPopover.tsx`), a popover with no scrim, where a page without one takes the
+ * "Create shortcut" frame dialog and the phone its sheet, each with a scrim of its own. The one
+ * reading the popover's layer and the content's dim share, so the page under the popover stays
+ * undimmed as under every other popover (§9.5, §9.20).
+ */
+export function installPopoverUp(ui: Pick<UiState, 'install'>): boolean {
+  const prompt = ui.install
+  return (
+    prompt !== null &&
+    prompt.surface === 'desktop' &&
+    prompt.info !== null &&
+    isInstallable(prompt.info)
+  )
+}
+
+/**
  * The prompt's surface has left. Focus goes back to the page unless the caller keeps it in the
  * chrome (`keepFocus`: Escape on the desktop popover hands it to the chip it hung from, §9.22).
  */
@@ -2995,7 +3014,8 @@ export function closePrintPreview(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
- * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
+ * blocked pop-ups popover, an autofill prompt in its popover form, the pill's "Install <app>?"
+ * popover (`installPopoverUp`), a menu the renderer draws,
  * the collapsed rail's flyout (`useRailFlyout` – the sidebar itself, §9.20's cascade beside
  * the rail), the compact sidebar's or the hidden toolbar's hover reveal (`compactHover`,
  * `toolbarHover`: chrome out over the page's picture, no dialog – #411 ruling 4), or a sign-in
@@ -3014,6 +3034,7 @@ export function closePrintPreview(): void {
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   const popover = ui.autofillPrompt === 'popover'
+  const installPopover = installPopoverUp(ui)
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
@@ -3048,6 +3069,11 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // chrome's twin of the notice, a status block with no scrim as the page-drawn one has
       // none – the page under the notice looks as it did.
       ui.quitHoldCover ||
+      // The pill's "Install <app>?" popover is a popover like the zoom bubble (the Design Lead's
+      // ruling on W8-M3's item 3: Chrome's form, no scrim); the "Create shortcut" dialog the
+      // same entry stands for on a page without an installable manifest is a frame dialog, with
+      // the host's scrim for its one dim.
+      installPopover ||
       popover) &&
     !overlayCoversContent({
       ...ui,
@@ -3066,6 +3092,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       menu: null,
       floatingChrome: 0,
       quitHoldCover: false,
+      install: installPopover ? null : ui.install,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )

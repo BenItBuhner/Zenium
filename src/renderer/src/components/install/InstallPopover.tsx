@@ -1,14 +1,13 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { Rect, UIState, WebAppInstallPrompt } from '@shared/types'
-import { isInstallable } from '@shared/webApp'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { cmd, run } from '@renderer/lib/api'
 import { takeOfferedInstall } from '@renderer/lib/installOffer'
 import { POPOVER_WIDTH, toRect } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { barOf } from '@renderer/lib/surfaces'
-import { closeInstallSheet, uiStore } from '@renderer/lib/ui'
+import { closeInstallSheet, installPopoverUp, uiStore } from '@renderer/lib/ui'
 import { AppIcon } from '../phone/InstallSheet'
 import { BusyButton, DesktopPopover, Footer, TitleBlock } from '../siteControls/primitives'
 import { V2Button } from '../v2/controls'
@@ -38,15 +37,16 @@ function chipRects(): { anchor: Rect | null; bar: Rect | null } {
  * chip, the app menu's "Install <app>…", the core's own offer – knows a surface is mounted to
  * take the prompt, and never on a one-window host, whose surface is the phone sheet
  * (`InstallLayer`). A page with an installable manifest gets Chrome's form, the popover under the
- * chip; a page without one keeps the "Create shortcut" dialog (`ShortcutDialog.tsx`) until the
- * Lead rules on it.
+ * chip (`installPopoverUp`, the reading the content's dim shares: no scrim under a popover); a
+ * page without one keeps the "Create shortcut" dialog (`ShortcutDialog.tsx`) until the Lead
+ * rules on it.
  */
 export function InstallPopoverLayer({ state }: { state: UIState }): JSX.Element | null {
   const desktop = state.capabilities.windows === true
   useChromeSurface('install', desktop)
   const prompt = uiStore.use((s) => s.install)
   if (!desktop || !prompt) return null
-  return prompt.info && isInstallable(prompt.info) ? (
+  return installPopoverUp({ install: prompt }) ? (
     <InstallPopover key={prompt.tabId} prompt={prompt} state={state} />
   ) : (
     <ShortcutDialog key={prompt.tabId} prompt={prompt} state={state} />
