@@ -1,10 +1,8 @@
 import type { JSX } from 'react'
 import { useLayoutEffect, useMemo } from 'react'
 import type { UIState } from '@shared/types'
-import { isEmptyTabUrl } from '@shared/url'
-import { setBandFrame } from '@renderer/lib/band'
+import { isBandPageUrl, setBandFrame } from '@renderer/lib/band'
 import { bandSeat, movePage, seatBand } from '@renderer/lib/pageBand'
-import { isPageTab } from '@renderer/lib/pages'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import type { UiState } from '@renderer/lib/ui'
@@ -23,8 +21,9 @@ interface Props {
  * rect the chrome reports. The host tells the model what the frame shows (`setBandFrame`): the
  * tab in front and the scene that is (the tab, a page's fullscreen, the window's, a page shown
  * in another window – a standing that changes with any of these is a cut, not a travel); whether
- * a band may stand on it (§3.2's never-on list: not on the empty frame, the new tab page or the
- * blank page – `isEmptyTabUrl`, with the slash a load adds – or a chrome page, not on a page
+ * a band may stand on it (§3.2's never-on list: not on the empty frame, the new tab page, the
+ * blank page or any `zen://` page – `isBandPageUrl`; the chrome's own pages and the documents it
+ * serves, the version page and the game, are chrome pages to the band alike – not on a page
  * shown in another window, not in a fullscreen); whether offers may
  * (not on a private tab); and what covers the page – a chrome overlay, a frame dialog, the URL
  * bar, Web capture, the gesture stage – under which a prompt arriving waits and one standing
@@ -47,12 +46,7 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
   const pageFullscreen = state.window.htmlFullscreenTabId !== null
   const windowFullscreen = state.window.fullscreen
   const ok =
-    tab !== null &&
-    !isPageTab(tab) &&
-    !isEmptyTabUrl(tab.url) &&
-    !foreign &&
-    !windowFullscreen &&
-    !pageFullscreen
+    tab !== null && isBandPageUrl(tab.url) && !foreign && !windowFullscreen && !pageFullscreen
   const covered =
     ui.overlay !== 'none' ||
     ui.frameDialogsOpen > 0 ||

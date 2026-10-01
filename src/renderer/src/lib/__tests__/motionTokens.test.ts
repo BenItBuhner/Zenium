@@ -13,6 +13,7 @@ import {
   MOTION_POP_MS,
   MOTION_STATE_MS,
   PRESS_SCALE,
+  SPRING_FOLLOW,
   SPRING_GENTLE,
   SPRING_SNAPPY,
   SPRING_STEP_CLAMP_MS,
@@ -24,11 +25,14 @@ import { SPRING_STEP_CLAMP_MS as SPRING_CLAMP } from '../motion/spring'
 
 /*
  * The motion tokens (motion-and-interaction-spec §1, W8-M1): the module exports exactly the
- * table, the springs are the shared ones at the table's k / c, and the one curve is main.css's
- * `--zen-ease`. A number that drifts from the spec fails here before a surface can inherit it.
+ * table, the springs are the shared ones at the table's k / c (and the follow spring the lead
+ * added on #734, the dock's value), and the one curve is main.css's `--zen-ease`. A number that
+ * drifts from the spec fails here before a surface can inherit it.
  */
 
-const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.meta.url)), 'utf8')
+const read = (path: string): string =>
+  readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8')
+const css = read('../../assets/main.css')
 
 describe('motion tokens (§1)', () => {
   it('the four durations and the cap', () => {
@@ -48,6 +52,23 @@ describe('motion tokens (§1)', () => {
       s.damping / (2 * Math.sqrt(s.stiffness * s.mass))
     expect(zeta(SPRING_SNAPPY)).toBeCloseTo(0.976, 2)
     expect(zeta(SPRING_GENTLE)).toBeCloseTo(0.895, 2)
+  })
+
+  it('the follow spring is the dock’s value (k 1200, c 68), and the dock and the card lift read it', () => {
+    expect(SPRING_FOLLOW).toMatchObject({ stiffness: 1200, damping: 68, mass: 1 })
+    expect(SPRING_FOLLOW).toMatchObject({ restDelta: 0.2, restSpeed: 4 })
+    const zeta =
+      SPRING_FOLLOW.damping / (2 * Math.sqrt(SPRING_FOLLOW.stiffness * SPRING_FOLLOW.mass))
+    expect(zeta).toBeCloseTo(0.981, 2)
+    // Neither reader writes a follow spring of its own any more: the dock (outside the
+    // vocabulary pin's walk) imports the token, and so does the overview's card in the hand.
+    const dock = read('../gestures/dock.ts')
+    expect(dock).toMatch(/import \{ SPRING_FOLLOW \} from '\.\.\/motion\/tokens'/)
+    expect(dock).not.toMatch(/const SPRING_FOLLOW\b/)
+    expect(dock).not.toMatch(/stiffness: 1200/)
+    const lift = read('../../components/phone/useCardLift.ts')
+    expect(lift).toMatch(/SPRING_FOLLOW \} from '@renderer\/lib\/motion\/tokens'/)
+    expect(lift).not.toMatch(/const SPRING_FOLLOW\b/)
   })
 
   it('the stepped motion clamp is the spring module’s one figure', () => {
@@ -86,6 +107,15 @@ describe('motion tokens (§1)', () => {
     expect(ghost).toContain(`opacity: ${LIFT_OPACITY}`)
     expect(ghost).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
     expect(ghost).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    // The overview's card in the hand (`.zen-overview-ghost`, stepped by `useCardLift`): the
+    // same rise, no scale spring (the lead's call on #734).
+    const card = css.match(/\.zen-overview-ghost\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(card).toContain(`opacity: ${LIFT_OPACITY}`)
+    expect(card).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
+    expect(card).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    const cardLift = read('../../components/phone/useCardLift.ts')
+    expect(cardLift).not.toMatch(/scaleSpring/)
+    expect(cardLift).toMatch(/scale: reduced \? LIFT_SCALE : 1/)
   })
 
   it('exports exactly §1’s names', async () => {
@@ -101,6 +131,7 @@ describe('motion tokens (§1)', () => {
         'MOTION_POP_MS',
         'MOTION_STATE_MS',
         'PRESS_SCALE',
+        'SPRING_FOLLOW',
         'SPRING_GENTLE',
         'SPRING_SNAPPY',
         'SPRING_STEP_CLAMP_MS',

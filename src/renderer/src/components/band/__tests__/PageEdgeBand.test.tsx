@@ -121,7 +121,6 @@ const defaultBrowser = (onDismiss?: (r: BandDismissReason) => void): number =>
     icon: Globe,
     title: 'Make Zenium your default browser',
     action: { label: 'Set as default', onPick: () => undefined, holds: true },
-    closeLabel: 'Not now',
     onDismiss
   })
 
@@ -173,11 +172,12 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
     )
     expect(el.querySelector('.zen-band-detail')).toBeNull()
     expect(el.querySelector('.zen-band-button')!.textContent).toBe('Set as default')
-    expect(el.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Not now')
+    // The × is "Dismiss" on every band, a prompt's too (the lead's ruling on #740).
+    expect(el.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Dismiss')
     expect(el.querySelector('.zen-band-glyph')!.getAttribute('aria-hidden')).toBe('true')
   })
 
-  it('a two-line prompt is the 76 band with its detail; a state’s tone reaches the glyph’s ink; the × says "Dismiss" unless told', () => {
+  it('a two-line prompt is the 76 band with its detail; a state’s tone reaches the glyph’s ink; the × says "Dismiss", as on every band', () => {
     mount()
     offline()
     const el = band()!

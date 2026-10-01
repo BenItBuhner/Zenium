@@ -290,6 +290,52 @@ describe('a switched tab shown on the activate commit (W8-P0)', () => {
     expect(s.b.page.calls).toContain('setVisible(true)')
   })
 
+  it('takes the frame’s last rect where the page-edge band has it: the band’s offset included while it travels, the laid-out rect at rest', () => {
+    const s = scene()
+    const down = (dy: number, rect = RECT): typeof RECT => ({ ...rect, y: rect.y + dy })
+    // The band travels (W8-M2, §3.4): the host's frames carry the page in front 20 below the
+    // rect it was laid out with.
+    s.win.setPageOffset(20)
+    expect(s.a.page.calls).toEqual([`setBounds(${JSON.stringify(down(20))})`])
+    s.a.page.calls.length = 0
+    // Switched to on that frame, B is shown where A stands – 20 down – not at the laid-out rect.
+    s.browser.tabs.activateTab(s.b.id, s.win)
+    expect(s.b.page.calls).toEqual([
+      `setBounds(${JSON.stringify(down(20))})`,
+      'setBorderRadius(0)',
+      'setVisible(true)',
+      'shownPainted()'
+    ])
+    expect(s.a.page.calls).toEqual(['bringToFront()'])
+    // The report of the travel's moment places B where the page is then; the frames carry it on.
+    s.b.page.calls.length = 0
+    s.browser.handleCommand(s.win, 'layout.report', {
+      placements: [{ tabId: s.b.id, rect: RECT, radius: 0 }],
+      glance: null,
+      contentHidden: false,
+      band: { seat: 0, offset: 32 }
+    })
+    expect(s.b.page.calls).toEqual([`setBounds(${JSON.stringify(down(32))})`, 'setBorderRadius(0)'])
+    s.b.page.calls.length = 0
+    s.win.setPageOffset(56)
+    expect(s.b.page.calls).toEqual([`setBounds(${JSON.stringify(down(56))})`])
+    // At rest the band is seated and the page laid out under it: the last rect is that one,
+    // and a switch back shows A there, nothing added.
+    const seated = { ...RECT, y: RECT.y + 56, height: RECT.height - 56 }
+    s.browser.handleCommand(s.win, 'layout.report', {
+      placements: [{ tabId: s.b.id, rect: seated, radius: 0 }],
+      glance: null,
+      contentHidden: false,
+      band: { seat: 56, offset: 56 }
+    })
+    s.a.page.calls.length = 0
+    s.browser.tabs.activateTab(s.a.id, s.win)
+    expect(s.a.page.calls.filter((c) => c.startsWith('setBounds'))).toEqual([
+      `setBounds(${JSON.stringify(seated)})`
+    ])
+    expect(s.a.page.visible).toBe(true)
+  })
+
   it('reveals on the shown page’s word: the stand-in goes down then, not before', async () => {
     const s = scene()
     s.browser.tabs.activateTab(s.b.id, s.win)

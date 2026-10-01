@@ -8,6 +8,7 @@ import {
   dismissBandByKey,
   dismissTabBands,
   holdBand,
+  isBandPageUrl,
   pickBandAction,
   resetBands,
   setBandFrame,
@@ -57,7 +58,6 @@ const defaultBrowser = (onDismiss?: (r: BandDismissReason) => void): number =>
     icon: Globe,
     title: 'Make Zenium your default browser',
     action: { label: 'Set as default', onPick: () => undefined, holds: true },
-    closeLabel: 'Not now',
     onDismiss
   })
 
@@ -355,5 +355,48 @@ describe('the band model (motion spec §3.2)', () => {
     })
     vi.advanceTimersByTime(BAND_CLOCK_MS * 3)
     expect(shownBand()?.id).toBe(standing)
+  })
+})
+
+describe('the pages a band may stand on (§3.2’s never-on list, by address)', () => {
+  it('a document of the web, a file, an extension page: yes', () => {
+    for (const url of [
+      'https://example.com/',
+      'http://localhost:3000/app#top',
+      'file:///home/me/notes.html',
+      'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html'
+    ])
+      expect(isBandPageUrl(url), url).toBe(true)
+  })
+
+  it('the empty frame, the blank page and the new tab page (with the slash a load adds): no', () => {
+    for (const url of [
+      null,
+      undefined,
+      '',
+      'zen://blank',
+      'zen://blank/',
+      'zen://newtab',
+      'zen://newtab/',
+      'about:blank',
+      'about:newtab'
+    ])
+      expect(isBandPageUrl(url), String(url)).toBe(false)
+  })
+
+  it('every zen:// page, the documents the chrome serves included – the version page, the game, an error page, the reader, the PDF viewer – is a chrome page to the band (the Design Lead’s ruling on #740)', () => {
+    for (const url of [
+      'zen://settings',
+      'zen://settings/privacy',
+      'zen://history',
+      'zen://bookmarks',
+      'zen://downloads',
+      'zen://version',
+      'zen://game',
+      'zen://error?code=-106&description=ERR_INTERNET_DISCONNECTED&url=https%3A%2F%2Fa.example%2F',
+      'zen://reader?id=1&url=https%3A%2F%2Fa.example%2Farticle',
+      'zen://pdf?id=abc'
+    ])
+      expect(isBandPageUrl(url), url).toBe(false)
   })
 })

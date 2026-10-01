@@ -57,6 +57,14 @@ interface Fixture {
   openPage: (url: string) => RecordedView
 }
 
+interface FixtureOptions {
+  /**
+   * The host shows a switched tab's page on the activate commit (`TabViewHost.showsOnCommit`,
+   * W8-P0, the desktop's); left out, the report alone shows it.
+   */
+  showsOnCommit?: boolean
+}
+
 const AREA: Rect = { x: 260, y: 48, width: 1000, height: 740 }
 
 /** The page laid out under a seat: the frame's rect less the seat at its top. */
@@ -78,7 +86,7 @@ const report = (
   ...(band ? { band } : {})
 })
 
-function fixture(): Fixture {
+function fixture({ showsOnCommit = false }: FixtureOptions = {}): Fixture {
   const views: RecordedView[] = []
   const capabilities = stub<HostCapabilities>({
     windows: true,
@@ -103,6 +111,7 @@ function fixture(): Fixture {
         })
     },
     views: stub<TabViewHost>({
+      ...(showsOnCommit ? { showsOnCommit: true } : {}),
       createView: (tab: Tab) => {
         const recorded: RecordedView = {
           tabId: tab.id,
@@ -120,6 +129,9 @@ function fixture(): Fixture {
             recorded.visibility.push(visible)
             recorded.visible = visible
           },
+          // The word that the page has painted (`showOnCommit`'s reveal): given, never said
+          // here – the hold stands through a test, and nothing of the band waits on it.
+          shownPainted: () => new Promise<number>(() => undefined),
           setBounds: (rect: Rect) => {
             recorded.bounds.push({ ...rect })
           },
@@ -312,5 +324,62 @@ describe('the page-edge band’s seam (ZenWindow.applyLayout with a band, ZenWin
     const other = f.browser.createWindow({ kind: 'unsynced', from: f.win })!
     expect(() => other.setPageOffset(10)).not.toThrow()
     expect(page.bounds).toEqual([])
+  })
+
+  /*
+   * A tab switched to while the band travels (W8-P0's show on the activate commit meeting the
+   * band, §3.4): the page is shown at the frame's last reported rect WHERE THE FRAME HAS IT at
+   * that moment – the laid-out rect `offset - seat` down, as the stand-in over it stands – and
+   * the report of the travel's moment, then the frames, carry it on from there; at rest the
+   * last rect is the laid-out one itself.
+   */
+  it('a tab switched to during the travel is shown on the commit where the frame has the page: the last rect, the band’s offset included', () => {
+    const f = fixture({ showsOnCommit: true })
+    const a = f.openPage('https://a.example')
+    const b = f.openPage('https://b.example')
+    // The chrome over the pages and away again: B alone in front, A down, no hold standing
+    // from B's own arrival (its stand-in was A).
+    f.win.applyLayout(report([b.tabId], undefined, AREA, true))
+    f.win.applyLayout(report([b.tabId]))
+    expect(a.visible).toBe(false)
+    expect(b.visible).toBe(true)
+    clear(a)
+    clear(b)
+    // The band's frames: the page in front rides 20 down against the rects it was laid out with.
+    f.win.setPageOffset(20)
+    expect(b.bounds).toEqual([{ ...AREA, y: AREA.y + 20 }])
+    // The switch to A on this frame: shown at once, 20 down like the page it is shown under,
+    // not at the laid-out rect; B stands over it until the reveal.
+    f.browser.tabs.activateTab(a.tabId, f.win)
+    expect(a.visible).toBe(true)
+    expect(a.bounds).toEqual([{ ...AREA, y: AREA.y + 20 }])
+    expect(b.visible).toBe(true)
+    // The report of the travel's moment places A where the page is then, and the frames carry
+    // it on – A is the layout's now.
+    clear(a)
+    f.win.applyLayout(report([a.tabId], { seat: 0, offset: 32 }))
+    expect(a.bounds).toEqual([{ ...AREA, y: AREA.y + 32 }])
+    clear(a)
+    f.win.setPageOffset(56)
+    expect(a.bounds).toEqual([{ ...AREA, y: AREA.y + 56 }])
+    // At rest – the band seated, the page laid out under it – the last rect is the laid-out
+    // one itself: a switch back shows B there, nothing added.
+    f.win.applyLayout(report([a.tabId], { seat: 56, offset: 56 }, under(56)))
+    clear(b)
+    f.browser.tabs.activateTab(b.tabId, f.win)
+    expect(b.bounds).toEqual([under(56)])
+  })
+
+  it('a host that does not show on the commit keeps the report’s show, the frames moving the page in front alone', () => {
+    const f = fixture()
+    const a = f.openPage('https://a.example')
+    const b = f.openPage('https://b.example')
+    clear(a)
+    clear(b)
+    f.win.setPageOffset(20)
+    f.browser.tabs.activateTab(a.tabId, f.win)
+    expect(a.visible).toBe(false)
+    expect(a.bounds).toEqual([])
+    expect(b.bounds).toEqual([{ ...AREA, y: AREA.y + 20 }])
   })
 })

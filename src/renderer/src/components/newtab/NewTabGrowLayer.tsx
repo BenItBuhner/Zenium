@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { Rect, Tab } from '@shared/types'
 import { cssPx } from '@renderer/lib/gestures/dock'
-import { SpringAnimation } from '@renderer/lib/motion/spring'
+import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import {
   arriveNewTabGrow,
   finishNewTabGrow,
@@ -12,8 +12,7 @@ import {
   growProgress,
   growSurfaceOpacity,
   growTravel,
-  newTabGrowStore,
-  SPRING_GROW
+  newTabGrowStore
 } from '@renderer/lib/newtab'
 import { browserStore, contentAreaStore } from '@renderer/lib/ui'
 import { TabPreview } from '../phone/TabPreview'
@@ -72,8 +71,10 @@ function GrowSurface({
       growProgress(progress)
     }
     apply(0)
+    // The house spring (§1): the run from the bar to the frame on the same `SPRING_SNAPPY` as
+    // every card and sheet, paced by its travel so a short grow and a tall one feel alike.
     const spring = new SpringAnimation(
-      SPRING_GROW,
+      SPRING_SNAPPY,
       (x) => apply(x / travel),
       () => {
         apply(1)

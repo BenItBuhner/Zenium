@@ -1786,6 +1786,12 @@ export class TabManager {
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
+    // A new document in the frame (not a `pushState` or a fragment, which keep the document
+    // under another address): the tab's document generation counts up, the one word the chrome
+    // has for "the document changed" apart from the URL (`Tab.documentGeneration`; the page-edge
+    // band's dismissal on navigation reads it). Every document counts, the error and crash pages
+    // included – the band is not Quick Delete, and a crash page is a new document in the frame.
+    if (!inPage) tab.documentGeneration = (tab.documentGeneration ?? 0) + 1
     // The main frame committed – a document or a same-document move alike, as Chrome Android
     // stamps `lastNavigationCommittedTimestampMillis` on either (`TabWebContentsObserver.java`
     // `didFinishNavigationInPrimaryMainFrame` :307–327: `hasCommitted` :318, then

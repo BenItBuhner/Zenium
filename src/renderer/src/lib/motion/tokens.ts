@@ -12,6 +12,7 @@
  * their owners (`@shared/spring`, `@shared/toastCard`, `./spring`) are re-exported, not moved.
  */
 import { TOAST_SHOW_MS } from '@shared/toastCard'
+import type { SpringConfig } from './spring'
 
 // ---------------------------------------------------------------------------------------------
 // Durations (ms)
@@ -49,6 +50,22 @@ export const MOTION_CAP_MS = 300
  * frame. The k / c values are pinned to §1's by `lib/__tests__/motionTokens.test.ts`.
  */
 export { SPRING_GENTLE, SPRING_SNAPPY, SPRING_STEP_CLAMP_MS } from './spring'
+
+/**
+ * `SPRING_FOLLOW` (k 1200, c 68: ζ ≈ .98, a hair of lag and weight, no rubbery drag) for what
+ * is in the hand and tracks the finger – the address bar's pill carried to the other edge
+ * (`lib/gestures/dock.ts`), the overview's card in the hand (`components/phone/useCardLift.ts`).
+ * Let go, the thing flies home on `SPRING_SNAPPY` or `SPRING_GENTLE`, never on this one: a
+ * follow spring is for the finger's own motion. Rest at .2 px / 4 px/s – a follow that rested
+ * on the grid's looser thresholds would stop a hair short of the finger.
+ */
+export const SPRING_FOLLOW: SpringConfig = {
+  stiffness: 1200,
+  damping: 68,
+  mass: 1,
+  restDelta: 0.2,
+  restSpeed: 4
+}
 
 // ---------------------------------------------------------------------------------------------
 // Clocks (ms)

@@ -13,7 +13,7 @@ import type { BandHost } from '../../band/PageEdgeBand'
  * The desktop's default-browser surfaces on v2: the page-edge band's state (motion spec §3.4;
  * `content/useDefaultBrowserBand.ts` – the strip under the toolbar before W8-M2) – a page
  * surface with the Settings section's globe, the sentence, the one action Set as default and
- * the × named Not now (§3.1, §9.29) – and the prompt its Set as default raises before the OS
+ * the × named Dismiss as on every band (§3.1, §9.29; the Lead's ruling on #740) – and the prompt its Set as default raises before the OS
  * hand-off (`AskDialog` in DefaultBrowserPrompt.tsx): the §9.23 composition on the frame's
  * dialog host with the app icon at 48 over the title block, one sentence per OS, focus on the
  * primary, Escape closing it and giving focus back to the band's button, the primary running
@@ -110,7 +110,8 @@ const view = (s: UIState): ReactElement => (
 const band = (): HTMLElement => container.querySelector<HTMLElement>('.zen-band')!
 const setDefaultButton = (): HTMLButtonElement =>
   band().querySelector<HTMLButtonElement>('.zen-band-button')!
-const notNowButton = (): HTMLButtonElement =>
+/** The band's ×: "Dismiss" on every band (the Lead's ruling on #740), the one refusal remembered. */
+const dismissButton = (): HTMLButtonElement =>
   band().querySelector<HTMLButtonElement>('.zen-band-close')!
 
 beforeEach(() => {
@@ -140,7 +141,7 @@ afterEach(() => {
 })
 
 describe('the default-browser band (the strip under the toolbar until W8-M2)', () => {
-  it('is the page-edge band’s state: a page surface with the globe, the sentence, the one action Set as default and the × named Not now (§3.1, §9.29: the one name for the act)', () => {
+  it('is the page-edge band’s state: a page surface with the globe, the sentence, the one action Set as default and the × named Dismiss, as on every band (§3.1, §9.29: the one name for the act)', () => {
     render(view(state('linux')))
     const el = band()
     expect(el).not.toBeNull()
@@ -156,14 +157,14 @@ describe('the default-browser band (the strip under the toolbar until W8-M2)', (
     expect(el.querySelector('.zen-band-detail')).toBeNull()
     expect(buttons(el)).toHaveLength(2)
     expect(setDefaultButton().textContent).toBe('Set as default')
-    expect(notNowButton().getAttribute('aria-label')).toBe('Not now')
+    expect(dismissButton().getAttribute('aria-label')).toBe('Dismiss')
     // Nothing of the strip remains in the frame.
     expect(container.querySelector('.zen-frame-strip')).toBeNull()
   })
 
-  it('remembers Not now (the ×) for this feature release and asks nothing of the OS', () => {
+  it('remembers the × (Dismiss) for this feature release and asks nothing of the OS', () => {
     render(view(state('linux')))
-    click(notNowButton())
+    click(dismissButton())
     expect(run).toHaveBeenCalledWith('settings.update', {
       defaultBrowserPromptDismissed: '0.3.77'
     })
@@ -176,7 +177,7 @@ describe('the default-browser band (the strip under the toolbar until W8-M2)', (
   it('Escape with focus in the band puts it away for now and remembers nothing (the Lead’s ruling, §3.2 / §9.6): the × alone is the refusal kept', () => {
     render(view(state('linux')))
     act(() => {
-      const close = notNowButton()
+      const close = dismissButton()
       close.focus()
       close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })

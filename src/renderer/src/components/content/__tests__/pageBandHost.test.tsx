@@ -78,6 +78,9 @@ const TABS: Record<string, Tab> = {
   ntp: tab('ntp', 'zen://newtab/'),
   loadedBlank: tab('loadedBlank', `${BLANK_URL}/`),
   settings: tab('settings', 'zen://settings'),
+  // The documents the chrome serves in the frame: chrome pages to the band all the same.
+  version: tab('version', 'zen://version'),
+  game: tab('game', 'zen://game'),
   secret: tab('secret', 'https://secret.example/', 'private')
 }
 
@@ -207,7 +210,7 @@ afterEach(() => {
 })
 
 describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
-  it('a page tab in front welcomes a band; the empty frame, the blank page, the new tab page, a chrome page, a page shown in another window and a fullscreen do not – each a scene of its own', () => {
+  it('a page tab in front welcomes a band; the empty frame, the blank page, the new tab page, a chrome page – every zen:// page, the version page and the game included – a page shown in another window and a fullscreen do not – each a scene of its own', () => {
     render(state())
     expect(model()).toEqual({
       front: 'page',
@@ -229,6 +232,13 @@ describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
     expect(model()).toMatchObject({ front: 'loadedBlank', ok: false })
     render(state({ front: 'settings' }))
     expect(model()).toMatchObject({ front: 'settings', ok: false })
+    // Every `zen://` page is a chrome page to the band (the Design Lead's ruling on #740): the
+    // version page and the game are documents the chrome serves in the frame, and the band
+    // stands on neither – the host read them as documents of the web before.
+    render(state({ front: 'version' }))
+    expect(model()).toMatchObject({ front: 'version', ok: false })
+    render(state({ front: 'game' }))
+    expect(model()).toMatchObject({ front: 'game', ok: false })
     render(state({ foreign: ['page'] }))
     expect(model()).toMatchObject({ scene: 'page:::foreign', ok: false })
     render(state({ fullscreen: true }))
@@ -278,27 +288,47 @@ describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
 })
 
 describe('PageBandHost – what the tabs tell the model (motion spec §3.2)', () => {
-  it('a tab closing takes its bands; a document changing dismisses them on "navigation"; a fragment’s move and another tab’s change do not', () => {
+  it('a tab closing takes its bands; a new document committing dismisses them on "navigation"; a same-document navigation – a pushState to another path, a hash change – and another tab’s change do not (the Design Lead’s ruling on #740)', () => {
     const heard: Array<[string, BandDismissReason]> = []
-    render(state())
+    /** The page tab as the core shows it after `generation` documents committed, at `url`. */
+    const pageAt = (url: string, generation: number): Tab => ({
+      ...tab('page', url),
+      documentGeneration: generation
+    })
+    const tabs = { ...TABS, page: pageAt('https://example.com/', 1) }
+    render(state({ tabs }))
     offer('page', (r) => heard.push(['page', r]))
     offer('other', (r) => heard.push(['other', r]))
     offline()
     expect(standing()).toBe('connectivity')
     // The fragment moves: the same document.
-    render(state({ tabs: { ...TABS, page: tab('page', 'https://example.com/#section') } }))
+    render(state({ tabs: { ...tabs, page: pageAt('https://example.com/#section', 1) } }))
+    expect(heard).toEqual([])
+    // A `pushState` to another path: the address is another, the document the same – the host
+    // reported a same-document commit, and the core left the generation where it was. The band
+    // stands (a feed rewriting its address as it scrolls is the very case).
+    render(state({ tabs: { ...tabs, page: pageAt('https://example.com/feed/page-2', 1) } }))
     expect(heard).toEqual([])
     // The other tab's progress and title change under the same URL: nothing.
-    render(state({ tabs: { ...TABS, other: { ...TABS.other, loading: true, title: 'Other' } } }))
+    render(state({ tabs: { ...tabs, other: { ...TABS.other, loading: true, title: 'Other' } } }))
     expect(heard).toEqual([])
-    // The page navigates to another document: its offer goes; the window-wide state stands.
-    render(state({ tabs: { ...TABS, page: tab('page', 'https://example.com/next') } }))
+    // A new document commits – the page reloaded at its own address, as the host reports it:
+    // the offer goes on `navigation`; the window-wide state stands.
+    render(state({ tabs: { ...tabs, page: pageAt('https://example.com/feed/page-2', 2) } }))
     expect(heard).toEqual([['page', 'navigation']])
     expect(standing()).toBe('connectivity')
+    // And a new document at another address, the plain navigation, the same way.
+    offer('page', (r) => heard.push(['page', r]))
+    render(state({ tabs: { ...tabs, page: pageAt('https://example.com/next', 3) } }))
+    expect(heard).toEqual([
+      ['page', 'navigation'],
+      ['page', 'navigation']
+    ])
     // The other tab closes: its band goes with it, not the user's doing.
-    const rest = Object.fromEntries(Object.entries(TABS).filter(([id]) => id !== 'other'))
+    const rest = Object.fromEntries(Object.entries(tabs).filter(([id]) => id !== 'other'))
     render(state({ tabs: rest }))
     expect(heard).toEqual([
+      ['page', 'navigation'],
       ['page', 'navigation'],
       ['other', 'program']
     ])
@@ -405,7 +435,7 @@ describe('PageBandHost – the default-browser tenant', () => {
       'Make Zenium your default browser'
     )
     expect(band()!.querySelector('.zen-band-button')!.textContent).toBe('Set as default')
-    expect(band()!.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Not now')
+    expect(band()!.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Dismiss')
     settle()
     expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
     render({ ...asking, defaultBrowser: { isDefault: true, prompt: null } } as UIState)

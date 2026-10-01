@@ -876,6 +876,19 @@ export interface Tab {
    * this way; absent on records older than the field and read as null – in no bounded range.
    */
   lastNavigatedAt?: number | null
+  /**
+   * The tab's document generation: counts up at every committed navigation of a NEW document
+   * in the main frame – a load, a reload, a link followed, back to another page, an error page
+   * committing – as the host reports the commit (`TabViewEvents.onNavigated` with `inPage`
+   * false), and never at a same-document navigation – a `pushState`, a `replaceState`, a
+   * fragment – which moves the URL and `lastNavigatedAt` but keeps the document. The page-edge
+   * band reads it for its dismissal on navigation (motion spec §3.2; the Design Lead's ruling on
+   * #740: a same-document navigation does not dismiss the band, a new document does), since the
+   * URL alone cannot tell a `pushState` to another path from a document. A session's own (not
+   * persisted, never synced); absent on a tab that committed no document this session and on
+   * records older than the field, and read as 0.
+   */
+  documentGeneration?: number
   /** Set when a navigation failed – rendered by the zen://error page. */
   errorCode: number | null
   /**

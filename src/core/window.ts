@@ -249,7 +249,8 @@ export class ZenWindow {
   /**
    * Where the content area last put a page alone (the size a page preloaded off screen lays
    * out at; the frame's last reported rect a page shown on the activate commit takes,
-   * `showOnCommit`). Written where the layout report arrives, from its one placement.
+   * `showOnCommit` – `pageShift` below it, where the band has the page). Written where the
+   * layout report arrives, from its one placement, as laid out: the band's travel is not in it.
    */
   private lastContentRect: Rect | null = null
   /** The page shown on the activate commit, under the page it replaces (`showOnCommit`). */
@@ -834,7 +835,10 @@ export class ZenWindow {
    * rect is the frame's now: the last report placed one page, alone, not under the chrome
    * (`contentHidden`), no glance, no element fullscreen, and the tab is such a page too (not a
    * split's member, whose pane the report alone knows; one view, no reader's cover). Anything
-   * else is shown by the report as before.
+   * else is shown by the report as before. The rect is taken where the frame has the page at
+   * this moment: `pageShift` below the laid-out rect while the page-edge band travels
+   * (`setPageOffset`, motion spec §3.4), as the stand-in over it stands, and the laid-out rect
+   * itself at rest.
    *
    * The stand-in (design language v2 §11's cover rule; #587's mirror): the page the window had
    * in front stays OVER the shown page – raised above it – from this commit until the shown
@@ -876,7 +880,7 @@ export class ZenWindow {
     const standIn = tabs.viewsOwnedBy(this).get(front.tabId)
     const standInTabId =
       standIn && !standIn.isDestroyed() && standIn.isVisible() ? front.tabId : null
-    view.setBounds(rect)
+    view.setBounds(roundRect(shifted(rect, this.pageShift)))
     view.setBorderRadius(Math.round(front.radius))
     view.setCover?.(front.cover ?? NO_COVER)
     view.setVisible(true)

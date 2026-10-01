@@ -216,10 +216,12 @@ function BandContent({ entry, inert }: { entry: BandEntry; inert?: boolean }): J
             {entry.action.label}
           </button>
         )}
+        {/* The × is "Dismiss" on every band, a prompt's included (the lead's ruling on #740): the
+            message close's name, never a tenant's. On a prompt it is the one refusal remembered. */}
         <button
           type="button"
           className="zen-band-close"
-          aria-label={entry.closeLabel ?? 'Dismiss'}
+          aria-label="Dismiss"
           tabIndex={inert ? -1 : undefined}
           onClick={() => dismissBand(entry.id, 'close')}
         >
