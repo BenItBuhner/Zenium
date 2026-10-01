@@ -1,9 +1,8 @@
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from './spring'
+import { MOTION_STATE_MS, ZEN_EASE } from './tokens'
 
 /** Length of the opacity fade that stands in for a glide under reduced motion (v2 §11.3). */
-export const REDUCED_FADE_MS = 120
-/** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+export const REDUCED_FADE_MS = MOTION_STATE_MS
 
 /**
  * A layout animation in flight – a group card running its height on a spring – by the owner's
@@ -492,5 +491,5 @@ export class FlipTracker {
 
 /** The 120 ms fade that stands in for a glide under reduced motion. */
 function fadeIn(el: HTMLElement): void {
-  el.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_FADE_MS, easing: EASE })
+  el.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_FADE_MS, easing: ZEN_EASE })
 }

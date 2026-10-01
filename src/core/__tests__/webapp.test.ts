@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { WebAppService } from '../webapp'
+import { BANNER_SHOWN_GRACE_MS, WebAppService } from '../webapp'
 import type { Browser } from '../browser'
 import type { PageHostMessage, ShortcutRequest, StoreIO } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
-import { MIN_VISIT_GAP_MS } from '../../shared/webApp'
+import { MIN_VISIT_GAP_MS, type EngagementRecord } from '../../shared/webApp'
 import type { AppBadge } from '../../shared/appBadge'
 
 const DOCUMENT_URL = 'https://app.example/'
@@ -37,6 +37,8 @@ interface Harness {
   createdTabs: Array<{ url: string }>
   navigations: Array<{ tabId: string; url: string }>
   now: { value: number }
+  /** The store's files by name (`webapps.json` holds the engagement records). */
+  files: Map<string, string>
 }
 
 function harness(
@@ -171,7 +173,8 @@ function harness(
     closedTabs,
     createdTabs,
     navigations,
-    now
+    now,
+    files
   }
 }
 
@@ -193,6 +196,19 @@ function revisit(h: Harness): void {
 
 const bannerEvents = (h: Harness): unknown[] =>
   h.events.filter((e) => e.name === 'webapp.banner').map((e) => e.payload)
+const bannerHides = (h: Harness): unknown[] =>
+  h.events.filter((e) => e.name === 'webapp.bannerHide').map((e) => e.payload)
+
+/** The app's engagement record as the store holds it (`flushSync` writes the pending save). */
+function engagement(h: Harness): EngagementRecord {
+  h.service.flushSync()
+  const doc = JSON.parse(h.files.get('webapps.json') ?? '{}') as {
+    engagement?: Record<string, EngagementRecord>
+  }
+  const record = doc.engagement?.[MANIFEST_ID]
+  if (!record) throw new Error('no engagement record for the app')
+  return record
+}
 
 describe('WebAppService', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -467,6 +483,106 @@ describe('WebAppService', () => {
     h.service.launch(MANIFEST_ID, h.win)
     expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
     expect(h.service.installed().map((a) => [a.id, a.windows])).toEqual([[MANIFEST_ID, 0]])
+  })
+
+  it('raises the ambient banner on the desktop as on the phone, now that its chrome draws it as the pill’s popover (#740, seed #42): the word stamps, and a window with no word is the grace’s case', () => {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    // The desktop's launcher name, the full one.
+    expect(bannerEvents(h)).toEqual([
+      expect.objectContaining({ tabId: 't1', name: 'Sketch Studio', origin: 'app.example' })
+    ])
+    expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+    // The chrome's word – the popover opened – stamps the cooldown, as the phone's card does,
+    // and the grace running out after it takes nothing back.
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBe(h.now.value)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    // A desktop window whose chrome gave no word – nothing drew the offer – is the grace's case
+    // as anywhere: the banner withdrawn, the cooldown unspent, the record still counting.
+    const quiet = harness({ desktop: true })
+    postManifest(quiet)
+    revisit(quiet)
+    vi.advanceTimersByTime(1200 + BANNER_SHOWN_GRACE_MS)
+    expect(bannerEvents(quiet)).toHaveLength(1)
+    expect(bannerHides(quiet)).toEqual([{ tabId: 't1' }])
+    expect(engagement(quiet)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+  })
+
+  it('stamps the cooldown on the chrome’s word that the card is drawn, not on the emit; the core runs no clock of its own – the band’s running out, reported by the chrome, records no dismissal and the day’s stamp holds', () => {
+    const h = harness()
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+    // Emitted, not yet shown as far as the core knows: nothing stamped.
+    expect(engagement(h).promptedAt).toBeNull()
+    h.service.bannerShown(h.tab.id)
+    const stampedAt = h.now.value
+    expect(engagement(h).promptedAt).toBe(stampedAt)
+    // The grace running out after the word takes nothing back; a second word stamps nothing more.
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    h.now.value += 5000
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBe(stampedAt)
+    // One offer, one clock (the Design Lead's ruling): the clock is the band's, in the chrome.
+    // The core runs none – a minute on with no word, the prompt still stands as far as it knows.
+    vi.advanceTimersByTime(60_000)
+    expect(bannerHides(h)).toEqual([])
+    // The band's clock ran out and the chrome says so: no dismissal is recorded, and the core,
+    // which took nothing down itself, emits no take-down...
+    h.service.dismissBanner(h.tab.id, 'timeout')
+    expect(bannerHides(h)).toEqual([])
+    expect(engagement(h).dismissedAt).toBeNull()
+    // ...and the stamp keeps the prompt away for the rest of the day.
+    postManifest(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+  })
+
+  it('counts a prompt no chrome drew as undrawn when the grace runs out: no stamp, the banner withdrawn, the record still counting', () => {
+    const h = harness()
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1200)
+    expect(bannerEvents(h)).toHaveLength(1)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS - 1)
+    expect(bannerHides(h)).toEqual([])
+    vi.advanceTimersByTime(1)
+    // The chrome hears the take-down, so a surface mounting late never shows the card.
+    expect(bannerHides(h)).toEqual([{ tabId: 't1' }])
+    expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+    // A late word, or a dismissal report for a card the core has let go of, changes nothing.
+    h.service.bannerShown(h.tab.id)
+    h.service.dismissBanner(h.tab.id, 'swipe')
+    expect(engagement(h)).toMatchObject({ promptedAt: null, dismissedAt: null })
+    // Nothing of the banner is left ticking in the core (it runs no clock of its own): a minute
+    // on, no second take-down.
+    vi.advanceTimersByTime(60_000)
+    expect(bannerHides(h)).toHaveLength(1)
+    // The engagement record kept counting: the next visit offers the prompt again.
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(2)
+    expect(engagement(h).visits).toBe(3)
+  })
+
+  it('a tab closing inside the grace leaves no timer and no stamp behind', () => {
+    const h = harness()
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+    h.service.onTabRemoved(h.tab.id)
+    // The grace's timer went with the tab: it never counts the prompt undrawn.
+    vi.advanceTimersByTime(60_000)
+    expect(bannerHides(h)).toEqual([])
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBeNull()
   })
 
   it('swiping the banner away starts the cooldown; a timeout does not', () => {

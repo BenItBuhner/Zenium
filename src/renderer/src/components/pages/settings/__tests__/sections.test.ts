@@ -167,7 +167,8 @@ const ANDROID: HostCapabilities = {
   pageLanguages: false,
   genericFontFamilies: false,
   caretBrowsing: false,
-  placementAnswered: true
+  placementAnswered: true,
+  agentDialogs: false
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
@@ -312,6 +313,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     mods: [],
     webApps: [],
     agents: [],
+    awayAgents: [],
     agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
@@ -2881,6 +2883,13 @@ describe('the section model', () => {
     expect(findRow(desktop.groups, 'bookmarks-bar')?.kind).toBe('value')
   })
 
+  it('heads the bar’s group "Address bar" on every shell – "URL bar" is the code’s name alone (design lead, seed #37)', () => {
+    for (const layout of ['desktop', 'tablet', 'phone'] as const) {
+      const look = buildSection(PAGE.sections[0], { ...context().ctx, formFactor: layout })
+      expect(look.groups.find((g) => g.id === 'url-bar')?.heading, layout).toBe('Address bar')
+    }
+  })
+
   it('gates compact mode’s Hide top toolbar on the layout having a top toolbar (§10.4): off in Only sidebar and Collapsed sidebar, live in the other two', () => {
     const hide = (layout: ToolbarLayout): Row =>
       row(section('compact', state({}, { toolbarLayout: layout })), 'compact-hide-toolbar')
@@ -4681,7 +4690,7 @@ describe('what a row does', () => {
       if (deactivate.kind !== 'action') throw new Error('not an action')
       expect(deactivate.disabled).toBeFalsy()
       expect(deactivate.description).toBe(
-        'Keeps Wiki in the list but out of the URL bar until you activate it.'
+        'Keeps Wiki in the list but out of the address bar until you activate it.'
       )
       deactivate.onPress?.()
       expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
@@ -4701,7 +4710,7 @@ describe('what a row does', () => {
       ])
       const activate = row(model, 'search-engine:discovered:forum.example:activate')
       if (activate.kind !== 'action') throw new Error('not an action')
-      expect(activate.description).toBe('@forum works in the URL bar again.')
+      expect(activate.description).toBe('@forum works in the address bar again.')
       activate.onPress?.()
       expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
         id: forum.id,
@@ -4714,6 +4723,25 @@ describe('what a row does', () => {
         'search-engine:custom:wiki:deactivate',
         'search-engine:custom:wiki:remove'
       ])
+    })
+
+    it('says "address bar" in Make default’s and Remove’s sentences as the row descriptions do (design lead, seed #37)', () => {
+      const { model } = searchOn('desktop')
+      const makeDefault = row(model, 'search-engine:custom:wiki:default')
+      if (makeDefault.kind !== 'action') throw new Error('not an action')
+      expect(makeDefault.description).toBe('Searches from the address bar use Wiki.')
+      // Removing the default engine: the confirm says where searches go; another engine's
+      // confirm says nothing.
+      const removeDefault = row(model, 'search-engine:custom:mine:remove')
+      if (removeDefault.kind !== 'action') throw new Error('not an action')
+      expect(removeDefault.confirm).toMatchObject({
+        title: 'Remove Mine?',
+        description: 'The address bar goes back to the default engine.',
+        action: 'Remove'
+      })
+      const removeOther = row(model, 'search-engine:custom:wiki:remove')
+      if (removeOther.kind !== 'action') throw new Error('not an action')
+      expect(removeOther.confirm?.description).toBeUndefined()
     })
 
     it('the phone and tablet shells list a deactivated engine under Inactive as the desktop does, its sheet offering Activate and an active engine’s Deactivate (SET-10)', () => {
@@ -4771,7 +4799,7 @@ describe('what a row does', () => {
         if (activate?.kind !== 'action') throw new Error('not an action')
         expect(activate).toMatchObject({
           label: 'Activate',
-          description: '@forum works in the URL bar again.'
+          description: '@forum works in the address bar again.'
         })
         expect(activate.layouts).toBeUndefined()
         activate.onPress?.()
@@ -4783,7 +4811,7 @@ describe('what a row does', () => {
         if (deactivate?.kind !== 'action') throw new Error('not an action')
         expect(deactivate).toMatchObject({
           label: 'Deactivate',
-          description: 'Keeps Wiki in the list but out of the URL bar until you activate it.'
+          description: 'Keeps Wiki in the list but out of the address bar until you activate it.'
         })
         expect(deactivate.layouts).toBeUndefined()
         expect(deactivate.disabled).toBeFalsy()
@@ -5231,7 +5259,7 @@ describe('what a row does', () => {
     ])
     expect(row(idle, 'import-browser')).toMatchObject({
       kind: 'action',
-      label: 'Bookmarks, history and passwords',
+      label: 'Bookmarks, history, passwords and addresses',
       description: 'From Google Chrome, Chromium, Microsoft Edge, Firefox or Safari',
       button: 'Import…'
     })
@@ -7643,6 +7671,11 @@ describe('ID-08’s Sync category on a phone', () => {
       webdav: null,
       webdavAvailable: false,
       authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false,
       ...patch
     }
   }
@@ -8943,10 +8976,10 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(searchRows(on, 'webdav server').map((h) => h.row.id)).toContain('sync-server')
   })
 
-  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder by its name, Zenium, no test asked – and is cleared whole, the typed app password with it', () => {
+  it('ID-32: the draft starts empty – no transport picked (the host’s default), the engine’s default folder by its name, Zenium, no test asked – and is cleared whole, the typed app password with it', () => {
     expect(emptySyncSetup()).toEqual({
       folder: null,
-      transport: 'folder',
+      transport: null,
       webdav: { url: '', username: '', password: '', folder: 'Zenium' },
       probe: { state: 'idle' }
     })
@@ -8959,6 +8992,549 @@ describe('ID-08’s Sync category on a phone', () => {
     })
     clearSyncSetup()
     expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+  })
+
+  // The Zenium account (the third transport): offered first, and picked, where the host reaches
+  // the service (`accountAvailable`: the same fetch and secret store as a WebDAV server).
+  const EMAIL = 'ada@example.com'
+  const ACCOUNT_INTRO =
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Sign in to your Zenium account – or pick a folder that your cloud drive keeps in sync, or a WebDAV server such as Nextcloud – and choose a passphrase: everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.'
+  const LINK = {
+    userCode: 'WXYZ-2345',
+    verificationUrl: 'https://zenium.techlitnow.com/link?code=WXYZ-2345',
+    expiresAt: Date.now() + 600_000
+  }
+
+  function withAccount(patch: Partial<SyncStatus> = {}): UIState {
+    return syncState(syncStatus({ webdavAvailable: true, accountAvailable: true, ...patch }))
+  }
+
+  function onAccount(patch: Partial<SyncStatus> = {}): SyncStatus {
+    return connected({
+      transport: 'account',
+      webdavAvailable: true,
+      accountAvailable: true,
+      account: { email: EMAIL },
+      folder: 'https://accounts.example.convex.cloud',
+      folderName: EMAIL,
+      ...patch
+    })
+  }
+
+  it('the Zenium account: a host that reaches the service opens Sync through with the account first, picked and recommended, then the folder and the server; Sign in is the setup’s one row and Turn on sync waits for it', () => {
+    invoke.mockClear()
+    const model = section('sync', withAccount())
+    expect(model.groups[0]?.description).toBe(ACCOUNT_INTRO)
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-account-sign-in',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const transport = row(model, 'sync-transport')
+    if (transport.kind !== 'value') throw new Error('not a value row')
+    expect(transport.value).toBe('account')
+    expect(transport.options).toEqual([
+      {
+        value: 'account',
+        label: 'Zenium account',
+        description: 'Recommended – nothing else to set up'
+      },
+      {
+        value: 'folder',
+        label: 'A folder on this device',
+        description: 'Shared through your own cloud drive'
+      },
+      { value: 'webdav', label: 'A WebDAV server', description: 'Nextcloud and others' }
+    ])
+    const signIn = actionRow(model, 'sync-account-sign-in')
+    expect(signIn).toMatchObject({
+      label: 'Sign in',
+      description: 'Opens the sign-in page in a new tab.',
+      button: 'Sign in'
+    })
+    expect(signIn.tone).toBeUndefined()
+    signIn.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignIn', undefined)
+    const turnOn = actionRow(model, 'sync-turn-on')
+    expect(turnOn.disabled).toBe(true)
+    expect(turnOn.description).toBe('Sign in to your Zenium account first.')
+    expect(turnOn.form?.render(() => undefined)).toBeNull()
+    expect(desktopButtons(withAccount())).toEqual([
+      ['sync-account-sign-in', 'Sign in'],
+      ['sync-turn-on', 'Turn on…']
+    ])
+
+    // The other two stay a pick away, their rows as before.
+    transport.onChange('folder')
+    expect(section('sync', withAccount()).groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-folder',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    transport.onChange('webdav')
+    expect(findRow(section('sync', withAccount()).groups, 'sync-webdav-url')).not.toBeNull()
+    expect(findRow(section('sync', withAccount()).groups, 'sync-account-sign-in')).toBeNull()
+
+    // A host that cannot reach the service never offers it, whatever the draft says.
+    syncSetupStore.set({ transport: 'account' })
+    const serverOnly = section('sync', withServer())
+    expect(serverOnly.groups[0]?.description).toBe(SERVER_INTRO)
+    const choices = row(serverOnly, 'sync-transport')
+    if (choices.kind !== 'value') throw new Error('not a value row')
+    expect(choices.value).toBe('folder')
+    expect(choices.options.map((o) => o.value)).toEqual(['folder', 'webdav'])
+  })
+
+  it('the Zenium account: while the new tab waits, its code stands with “Waiting for the sign-in to finish in the new tab…” over Cancel sign-in; leaving the account for another transport cancels it; a sign-in that did not finish says why in the page’s words', () => {
+    invoke.mockClear()
+    const waiting = section('sync', withAccount({ accountLink: LINK }))
+    expect(waiting.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-account-code',
+      'sync-account-cancel',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(row(waiting, 'sync-account-code')).toMatchObject({
+      kind: 'info',
+      label: 'WXYZ-2345',
+      description: 'Waiting for the sign-in to finish in the new tab…'
+    })
+    const cancel = actionRow(waiting, 'sync-account-cancel')
+    expect(cancel).toMatchObject({ label: 'Cancel sign-in', button: 'Cancel' })
+    cancel.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountCancel', undefined)
+    invoke.mockClear()
+    const transport = row(waiting, 'sync-transport')
+    if (transport.kind !== 'value') throw new Error('not a value row')
+    transport.onChange('folder')
+    expect(invoke).toHaveBeenCalledWith('sync.accountCancel', undefined)
+    clearSyncSetup()
+
+    const lines: Array<[NonNullable<SyncStatus['accountLinkFailure']>, string]> = [
+      ['expired', 'The code expired before the sign-in finished.'],
+      ['unavailable', 'Your Zenium account could not be reached.'],
+      ['rate-limited', 'Too many requests to your Zenium account. Try again in a moment.'],
+      ['secrets', 'The sign-in could not be kept on this device.']
+    ]
+    for (const [failure, line] of lines) {
+      const signIn = actionRow(
+        section('sync', withAccount({ accountLinkFailure: failure })),
+        'sync-account-sign-in'
+      )
+      expect(signIn.description).toBe(line)
+      expect(signIn.tone).toBe('danger')
+      expect(signIn.description).not.toMatch(/\d{3}|sync:|devices:|auth\//)
+    }
+  })
+
+  it('the Zenium account: approved, the setup names the account by its email with Sign out, and Turn on sync opens the passphrase form for the account', () => {
+    invoke.mockClear()
+    const model = section('sync', withAccount({ account: { email: EMAIL } }))
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(row(model, 'sync-account')).toMatchObject({
+      kind: 'info',
+      label: 'Zenium account',
+      description: EMAIL
+    })
+    const signOut = actionRow(model, 'sync-account-sign-out')
+    expect(signOut).toMatchObject({
+      label: 'Sign out',
+      description: 'This device forgets the sign-in.',
+      button: 'Sign out…',
+      confirm: {
+        title: 'Sign out of your Zenium account?',
+        description: 'This device forgets the sign-in.',
+        action: 'Sign out',
+        verbTone: 'plain'
+      }
+    })
+    expect(signOut.destructive).toBeUndefined()
+    signOut.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
+    const turnOn = actionRow(model, 'sync-turn-on')
+    expect(turnOn.disabled).toBe(false)
+    expect(turnOn.description).toBe('Create the passphrase every device will share.')
+    const form = turnOn.form?.render(() => undefined)
+    if (!isValidElement<{ folder: string; account?: boolean; webdav?: unknown }>(form))
+      throw new Error('no form')
+    expect(form.props).toMatchObject({ folder: '', account: true })
+    expect(form.props.webdav).toBeUndefined()
+    expect(searchRows(phoneSections(withAccount()), 'zenium account').map((h) => h.row.id)).toEqual(
+      expect.arrayContaining(['sync-transport', 'sync-account-sign-in'])
+    )
+  })
+
+  it('the Zenium account, connected: Account and device names the email, Sign out confirms first and turns sync off, the empty devices line and the merge and Turn off prompts name the account; the account’s errors are the page’s sentences', () => {
+    invoke.mockClear()
+    const model = section('sync', syncState(onAccount()))
+    const where = model.groups.find((g) => g.id === 'sync-where')
+    expect(where?.heading).toBe('Account and device')
+    expect(where?.rows.map((r) => r.id)).toEqual([
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name'
+    ])
+    expect(row(model, 'sync-account').description).toBe(EMAIL)
+    const signOut = actionRow(model, 'sync-account-sign-out')
+    expect(signOut).toMatchObject({
+      description: 'This device stops syncing and keeps what it has.',
+      confirm: {
+        title: 'Sign out of your Zenium account?',
+        description:
+          'This device stops syncing and keeps what it has. Your other devices keep syncing.',
+        action: 'Sign out',
+        verbTone: 'plain'
+      }
+    })
+    expect(signOut.destructive).toBeUndefined()
+    syncSetupStore.set({ transport: 'webdav' })
+    signOut.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
+    expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+    expect(desktopButtons(syncState(onAccount()))).toEqual([
+      ['sync-now', 'Sync now'],
+      ['sync-account-sign-out', 'Sign out…'],
+      ['sync-disconnect', 'Turn off…']
+    ])
+
+    const alone = section('sync', syncState(onAccount({ devices: [] })))
+    expect(alone.groups.find((g) => g.id === 'sync-devices')?.empty).toBe(
+      'No other device has synced to this account yet'
+    )
+    const merge = actionRow(
+      section('sync', syncState(onAccount({ pendingMerge: true }))),
+      'sync-merge'
+    )
+    expect(merge.label).toBe('Your Zenium account already has synced data')
+    expect(merge.form?.title).toBe('Combine with the data in your account?')
+    const off = actionRow(model, 'sync-disconnect').form?.render(() => undefined)
+    if (!isValidElement<{ account?: boolean }>(off)) throw new Error('no form')
+    expect(off.props.account).toBe(true)
+
+    const lines: Array<[NonNullable<SyncStatus['lastErrorKind']>, string]> = [
+      ['quota', 'Your Zenium account’s sync storage is full.'],
+      ['too-large', 'Some of this device’s data is too large to sync.'],
+      ['unavailable', 'Your Zenium account could not be reached.'],
+      ['refused', 'Your Zenium account did not accept the request.']
+    ]
+    for (const [kind, line] of lines) {
+      const now = actionRow(
+        section(
+          'sync',
+          syncState(onAccount({ lastError: 'sync:write quota (HTTP 200)', lastErrorKind: kind }))
+        ),
+        'sync-now'
+      )
+      expect(now.description).toBe(line)
+      expect(now.tone).toBe('danger')
+    }
+  })
+
+  it('the Zenium account, signed out by the service: the §9.33 message row, Sync now waiting and saying nothing twice, and Sign in again first under it – the code and Cancel while it waits', () => {
+    invoke.mockClear()
+    const model = section(
+      'sync',
+      syncState(
+        onAccount({
+          accountSignedOut: true,
+          lastError: 'You were signed out of your Zenium account.',
+          lastErrorKind: 'signed-out'
+        })
+      )
+    )
+    const status = model.groups.find((g) => g.id === 'sync-status')
+    expect(status?.rows.map((r) => r.id)).toEqual(['sync-account-signed-out', 'sync-now'])
+    expect(row(model, 'sync-account-signed-out')).toMatchObject({
+      kind: 'info',
+      label: 'You were signed out of your Zenium account',
+      description: 'Sign in again to keep syncing.',
+      tone: 'danger'
+    })
+    const now = actionRow(model, 'sync-now')
+    expect(now.disabled).toBe(true)
+    expect(now.tone).toBeUndefined()
+    expect(model.groups.find((g) => g.id === 'sync-where')?.rows.map((r) => r.id)).toEqual([
+      'sync-account-sign-in',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name'
+    ])
+    const again = actionRow(model, 'sync-account-sign-in')
+    expect(again).toMatchObject({ label: 'Sign in again', button: 'Sign in again' })
+    again.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignIn', undefined)
+
+    const waiting = section(
+      'sync',
+      syncState(onAccount({ accountSignedOut: true, accountLink: LINK }))
+    )
+    expect(waiting.groups.find((g) => g.id === 'sync-where')?.rows.map((r) => r.id)).toEqual([
+      'sync-account-code',
+      'sync-account-cancel',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name'
+    ])
+    // A folder device's page never shows the account's rows, whatever an older status carries.
+    expect(
+      findRow(
+        section('sync', syncState(connected({ accountSignedOut: true }))).groups,
+        'sync-account-signed-out'
+      )
+    ).toBeNull()
+  })
+
+  // -------------------------------------------------------------------------
+  // Settings › Account: the Zenium account on a page of its own (the P0 after v0.5.58: no
+  // Account anywhere in Settings on the released phone), on every host that syncs.
+  // -------------------------------------------------------------------------
+
+  describe('the Account page', () => {
+    const ACCOUNT_INTRO_LINE =
+      'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.'
+
+    it('is listed behind the `sync` capability right before Sync, on the phone and the desktop, and builds in every state with unique ids', () => {
+      expect(phoneSections().map((m) => m.section.id)).not.toContain('account')
+      const phone = phoneSections(withAccount()).map((m) => m.section.id)
+      expect(phone.indexOf('sync')).toBe(phone.indexOf('account') + 1)
+      const desktop = availableSections(PAGE, withAccount().capabilities, 'desktop', 'linux').map(
+        (s) => s.id
+      )
+      expect(desktop.indexOf('sync')).toBe(desktop.indexOf('account') + 1)
+      for (const s of [
+        withAccount(),
+        withAccount({ accountLink: LINK }),
+        withAccount({ accountLinkFailure: 'expired' }),
+        withAccount({ account: { email: EMAIL } }),
+        syncState(onAccount()),
+        syncState(onAccount({ pendingMerge: true })),
+        syncState(onAccount({ accountSignedOut: true })),
+        syncState(connected({ accountAvailable: true, account: { email: EMAIL } })),
+        syncState(syncStatus())
+      ]) {
+        const model = section('account', s)
+        expect(model.groups.length).toBeGreaterThan(0)
+        if (s.sync.accountAvailable) expect(model.groups[0]?.description).toBe(ACCOUNT_INTRO_LINE)
+        expect(model.groups.every(groupShows)).toBe(true)
+        const ids = allRows(model.groups).map((r) => r.id)
+        expect(new Set(ids).size).toBe(ids.length)
+        for (const r of allRows(model.groups)) expect(r.label, r.id).not.toBe('')
+      }
+    })
+
+    it('signed out: the paragraph and Sign in, which opens the sign-in page; while the tab waits, the code and Cancel; a sign-in that failed says why', () => {
+      invoke.mockClear()
+      const model = section('account', withAccount())
+      expect(model.groups.map((g) => g.id)).toEqual(['account'])
+      expect(model.groups[0]).toMatchObject({
+        heading: 'Zenium account',
+        description: ACCOUNT_INTRO_LINE
+      })
+      expect(model.groups[0]?.rows.map((r) => r.id)).toEqual(['account-sign-in'])
+      const signIn = row(model, 'account-sign-in')
+      if (signIn.kind !== 'action') throw new Error('not an action')
+      expect(signIn).toMatchObject({
+        label: 'Sign in',
+        description: 'Opens the sign-in page in a new tab.',
+        button: 'Sign in'
+      })
+      signIn.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('sync.accountSignIn', undefined)
+
+      const waiting = section('account', withAccount({ accountLink: LINK }))
+      expect(waiting.groups[0]?.rows.map((r) => r.id)).toEqual(['account-code', 'account-cancel'])
+      expect(row(waiting, 'account-code')).toMatchObject({
+        kind: 'info',
+        label: 'WXYZ-2345',
+        description: 'Waiting for the sign-in to finish in the new tab…'
+      })
+
+      const failed = section('account', withAccount({ accountLinkFailure: 'expired' }))
+      expect(row(failed, 'account-sign-in')).toMatchObject({
+        tone: 'danger',
+        description: 'The code expired before the sign-in finished.'
+      })
+    })
+
+    it('signed in, sync off: who, Turn on sync with the passphrase form, the way to Sync, the devices the sync will list, and Sign out that confirms', () => {
+      invoke.mockClear()
+      const model = section('account', withAccount({ account: { email: EMAIL } }))
+      expect(model.groups.map((g) => g.id)).toEqual([
+        'account',
+        'account-devices',
+        'account-sign-out'
+      ])
+      expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+        'account-email',
+        'account-sync-turn-on',
+        'account-sync-settings'
+      ])
+      expect(row(model, 'account-email')).toMatchObject({
+        kind: 'info',
+        label: 'Signed in as',
+        description: EMAIL
+      })
+      const turnOn = row(model, 'account-sync-turn-on')
+      if (turnOn.kind !== 'action') throw new Error('not an action')
+      expect(turnOn).toMatchObject({ label: 'Turn on sync', button: 'Turn on…' })
+      expect(turnOn.disabled).toBeFalsy()
+      expect(turnOn.form?.title).toBe('Create a passphrase')
+      expect(turnOn.form?.render(() => undefined)).not.toBeNull()
+      const settings = row(model, 'account-sync-settings')
+      if (settings.kind !== 'action') throw new Error('not an action')
+      expect(settings).toMatchObject({ label: 'Sync settings', button: 'Open' })
+
+      const devices = model.groups[1]!
+      expect(devices).toMatchObject({
+        heading: 'Devices',
+        rows: [],
+        empty: 'Turn on sync to see your other devices'
+      })
+      expect(devices.aside).toBeUndefined()
+
+      const signOut = row(model, 'account-sign-out')
+      if (signOut.kind !== 'action') throw new Error('not an action')
+      expect(signOut).toMatchObject({
+        label: 'Sign out',
+        description: 'This device forgets the sign-in.',
+        button: 'Sign out…',
+        confirm: {
+          title: 'Sign out of your Zenium account?',
+          description: 'This device forgets the sign-in.',
+          action: 'Sign out',
+          verbTone: 'plain'
+        }
+      })
+      expect(signOut.destructive).toBeUndefined()
+      signOut.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
+    })
+
+    it('signed in and syncing through the account: Sync now with the status line, the other devices with their count, and Sign out that also turns sync off', () => {
+      invoke.mockClear()
+      const model = section('account', syncState(onAccount()))
+      expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+        'account-email',
+        'account-sync-now',
+        'account-sync-settings'
+      ])
+      const syncNow = row(model, 'account-sync-now')
+      if (syncNow.kind !== 'action') throw new Error('not an action')
+      expect(syncNow).toMatchObject({ label: 'Sync now', button: 'Sync now' })
+      expect(syncNow.description).toMatch(/^Last synced /)
+      expect(syncNow.disabled).toBeFalsy()
+      syncNow.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('sync.now', undefined)
+
+      const devices = model.groups[1]!
+      expect(devices.aside).toBe('2')
+      expect(devices.rows.map((r) => r.id)).toEqual([
+        'account-device:dev-3',
+        'account-device:dev-2'
+      ])
+      expect(devices.empty).toBe('No other device has synced to this account yet')
+
+      const signOut = row(model, 'account-sign-out')
+      if (signOut.kind !== 'action') throw new Error('not an action')
+      expect(signOut.description).toBe('This device stops syncing and keeps what it has.')
+      expect(signOut.confirm).toMatchObject({
+        description:
+          'This device stops syncing and keeps what it has. Your other devices keep syncing.',
+        verbTone: 'plain'
+      })
+      expect(signOut.destructive).toBeUndefined()
+
+      // The merge question first while the first sync waits on it; Sync now waits too.
+      const merging = section('account', syncState(onAccount({ pendingMerge: true })))
+      expect(merging.groups[0]?.rows.map((r) => r.id)).toEqual([
+        'account-email',
+        'account-merge',
+        'account-sync-now',
+        'account-sync-settings'
+      ])
+      const merge = row(merging, 'account-merge')
+      if (merge.kind !== 'action') throw new Error('not an action')
+      expect(merge.form?.title).toBe('Combine with the data in your account?')
+      expect(row(merging, 'account-sync-now')).toMatchObject({ disabled: true })
+
+      // An error the engine keeps is the §9.33 sentence under Sync now, in the danger ink.
+      const failing = section(
+        'account',
+        syncState(onAccount({ lastError: 'x', lastErrorKind: 'quota' }))
+      )
+      expect(row(failing, 'account-sync-now')).toMatchObject({
+        tone: 'danger',
+        description: 'Your Zenium account’s sync storage is full.'
+      })
+    })
+
+    it('signed out by the service: the message row over Sign in again; syncing another way: a fact and the way to Sync; no service: one row', () => {
+      const signedOut = section('account', syncState(onAccount({ accountSignedOut: true })))
+      expect(signedOut.groups.map((g) => g.id)).toEqual(['account'])
+      expect(signedOut.groups[0]?.rows.map((r) => r.id)).toEqual([
+        'account-signed-out',
+        'account-sign-in'
+      ])
+      expect(row(signedOut, 'account-signed-out')).toMatchObject({
+        kind: 'info',
+        tone: 'danger',
+        label: 'You were signed out of your Zenium account'
+      })
+      expect(row(signedOut, 'account-sign-in')).toMatchObject({ label: 'Sign in again' })
+
+      const folder = section(
+        'account',
+        syncState(connected({ accountAvailable: true, account: { email: EMAIL } }))
+      )
+      expect(folder.groups[0]?.rows.map((r) => r.id)).toEqual([
+        'account-email',
+        'account-sync-elsewhere',
+        'account-sync-settings'
+      ])
+      expect(row(folder, 'account-sync-elsewhere')).toMatchObject({
+        kind: 'info',
+        label: 'Sync',
+        description:
+          'This device syncs through a folder, not your account. Turn off sync under Sync to sync through your account instead.'
+      })
+      expect(folder.groups[1]).toMatchObject({ rows: [] })
+      expect(folder.groups[1]?.aside).toBeUndefined()
+      const folderSignOut = row(folder, 'account-sign-out')
+      if (folderSignOut.kind !== 'action') throw new Error('not an action')
+      expect(folderSignOut.description).toBe('This device forgets the sign-in.')
+      expect(folderSignOut.confirm?.description).toBe('This device forgets the sign-in.')
+
+      const none = section('account', syncState(syncStatus()))
+      expect(none.groups.map((g) => g.id)).toEqual(['account'])
+      expect(none.groups[0]?.rows.map((r) => r.id)).toEqual(['account-unavailable'])
+      expect(row(none, 'account-unavailable')).toMatchObject({
+        label: 'Not available on this device'
+      })
+    })
+
+    it('the desktop page draws the same rows with their buttons (§10.5)', () => {
+      const def = PAGE.sections.find((x) => x.id === 'account')!
+      const model = buildSection(def, {
+        ...context(syncState(onAccount())).ctx,
+        formFactor: 'desktop'
+      })
+      expect(
+        allRows(model.groups).flatMap((r) => (r.kind === 'action' ? [[r.id, r.button]] : []))
+      ).toEqual([
+        ['account-sync-now', 'Sync now'],
+        ['account-sync-settings', 'Open'],
+        ['account-sign-out', 'Sign out…']
+      ])
+    })
   })
 })
 
@@ -9921,5 +10497,43 @@ describe('Settings › Default browser: the row’s button says Set as default (
         query
       ).toContain('default-browser')
     }
+  })
+})
+
+describe('AI Agents › Disconnected agents', () => {
+  const away: UIState['awayAgents'] = [
+    {
+      claimId: 'claim-1',
+      name: 'Invoice reconciliation',
+      color: '#3b82f6',
+      groupIds: ['f1'],
+      tabIds: ['t1', 't2'],
+      lastSeenAt: Date.now() - 60_000
+    }
+  ]
+
+  it('has no group while no agent is away', () => {
+    expect(section('agents').groups.some((g) => g.id === 'away')).toBe(false)
+  })
+
+  it('lists each away agent with a plain, confirmed Release that runs agent.release', () => {
+    const model = section('agents', state({ awayAgents: away }))
+    const group = model.groups.find((g) => g.id === 'away')
+    expect(group?.heading).toBe('Disconnected agents')
+    const r = row(model, 'away:claim-1')
+    if (r.kind !== 'item') throw new Error('not an item')
+    expect(r.label).toBe('Invoice reconciliation')
+    expect(r.description).toMatch(/^1 group · 2 tabs · last seen /)
+    const release = findRow(sheetOf(r), 'away:claim-1:release')
+    if (release?.kind !== 'action') throw new Error('not an action')
+    expect(release.destructive).toBeFalsy()
+    expect(release.confirm).toEqual({
+      title: 'Release Invoice reconciliation’s tabs?',
+      description: 'Its 1 group and 2 tabs stay open, but the agent cannot resume them.',
+      action: 'Release',
+      verbTone: 'plain'
+    })
+    release.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('agent.release', { claimId: 'claim-1' })
   })
 })

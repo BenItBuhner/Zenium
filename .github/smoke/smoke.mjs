@@ -44,7 +44,7 @@
 //                at the hold's 1.5 s, with no tab-count question) that leaves `cleanExit: true`
 //                in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
-//                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
+//                "Restore pages?" band (skipped, like `crash`, when boot's launch or onboarding
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
 //                the accessibility tree of the resting window, the open app menu, the open URL
@@ -382,11 +382,13 @@ import {
   QUIT_HOLD_MS,
   QUIT_TRACE_EVERY_MS,
   exitWithin,
+  formatHoldRead,
   formatQuitTrace,
   holdReleaseRedrives,
   judgeHoldRelease,
   mainProcessState,
   probeOutcome,
+  readHold,
   unlessNoWindow,
   unlessTargetClosed
 } from './quit.mjs'
@@ -430,6 +432,10 @@ const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
 // overlay for it, a modal dialog over the content frame (components/capture/CaptureOverlay.tsx).
 const CAPTURE_COMBO = `${ACCEL}+Shift+s`
 const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Screenshot"]'
+// "Restore pages?" after an unclean exit: the page-edge band's crash-restore tenant (W8-M3;
+// components/content/useCrashRestoreBand.ts – the strip above the frame before it), the band's
+// root naming its tenant.
+const CRASH_RESTORE_BAND = '.zen-band[data-key="crash-restore"]'
 
 const opts = parseArgs(process.argv.slice(2))
 if (!opts.exe || !opts.label || !opts.out) {
@@ -486,7 +492,7 @@ const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 15000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
 // Budget for a click on a button the chrome has just painted for the first time (the
-// crash-restore bar). Playwright waits for the button to be actionable; on a busy runner that
+// crash-restore band). Playwright waits for the button to be actionable; on a busy runner that
 // took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check. What the
 // wait is for: the button has to hold still across two animation frames, and a chrome page whose
 // window has no frames yet runs none (see Session.waitForFrames). The onboarding's clicks, on the
@@ -1834,8 +1840,14 @@ class Session {
    * names the chord and the duration), and they come up again only once the app has exited or
    * the hold has had its time and a margin (a downloads question or a slow teardown can keep
    * the app alive past it; a hold that ran its time quits whatever the keys do after). Returns
-   * what was seen: the hold's state, whether the exit came within the hold, and `downAt`, the
-   * key down's moment on the app's clock.
+   * what was seen: the hold's state, whether the exit came within the hold, `downAt`, the key
+   * down's moment on the app's clock, and `polls`, every read of the state.
+   *
+   * The reads are bounded (`readHold`, W8-H6): one that has not answered within
+   * HOLD_READ_BOUND_MS counts as stalled and the next goes out, so a slow round trip cannot
+   * swallow the whole hold. It did – macos-x64, run 36816729301, `visibility`: the one read in
+   * flight hung from the key down until the quit closed its target, 2.5 s later, and its
+   * closed-target fallback read as "no hold" although the hold had armed, run and quit the app.
    *
    * No exit by then is read BEFORE the keys come up (W8-F9): the chrome's `window.quitHold` and
    * the main process, one `sampleQuit` into `trace` – a hold still up says the hold's timer never
@@ -1845,11 +1857,10 @@ class Session {
    * the chord and the forced close).
    */
   async holdQuitChord(trace = []) {
+    const sentAt = Date.now()
     const down = await Promise.race([unlessTargetClosed(this.holdKeys(QUIT_COMBO)), delay(3000)])
-    const panel = await unlessTargetClosed(
-      waitFor(async () => (await this.appState()).window.quitHold, 2000, 'the hold armed', 50),
-      null
-    ).catch((e) => ({ error: String(e && e.message ? e.message : e) }))
+    const read = () => this.appState().then((st) => st.window.quitHold)
+    const { panel, polls } = await readHold(read, { since: sentAt })
     // The screen while the keys are down: "Hold ⌘Q to quit" over the page, as the Mac draws it
     // (no bring-to-front or settle first – the hold has 1500 ms, and a screencapture takes
     // most of a second of it on a runner).
@@ -1874,8 +1885,25 @@ class Session {
       panel,
       shot,
       exitedDuringHold: Boolean(exit),
-      downAt: down && typeof down === 'object' ? (down.at ?? null) : null
+      downAt: down && typeof down === 'object' ? (down.at ?? null) : null,
+      polls
     }
+  }
+
+  /**
+   * The hold's reading for a failure message (`formatHoldRead`): what `hold`, one
+   * `holdQuitChord`, polled, and the span from the key down to the first before-quit the hook
+   * recorded, measured on the app's clock from `downAt` or, when that was not read, on the
+   * harness's from `chordAt`.
+   */
+  describeHoldRead(hold, chordAt) {
+    const first = this.readEvents().find((e) => e.type === 'before-quit')
+    return formatHoldRead({
+      polls: hold.polls,
+      beforeQuitAt: first && typeof first.t === 'number' ? first.t : null,
+      downAt: hold.downAt,
+      chordAt
+    })
   }
 
   /**
@@ -2667,7 +2695,7 @@ class Session {
         )
         await this.forceClose()
         const err = new Error(
-          `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; before-quit ${beforeQuit.length ? beforeQuit.join(', ') : 'none'}; hold ${hold ? JSON.stringify(hold.panel) : 'n/a'}; trace ${formatQuitTrace(trace, chordAt)}; still ${stuck.ok ? stuck.file : 'none'}; exit after forceClose ${JSON.stringify(this.exit)})`
+          `app did not exit within ${budgetMs} ms after ${QUIT_COMBO}${asked ? ' and Quit' : ''} (main process ${main}; prompt ${JSON.stringify(late)}; before-quit ${beforeQuit.length ? beforeQuit.join(', ') : 'none'}; hold ${hold ? `${JSON.stringify(hold.panel)} (${this.describeHoldRead(hold, chordAt)})` : 'n/a'}; trace ${formatQuitTrace(trace, chordAt)}; still ${stuck.ok ? stuck.file : 'none'}; exit after forceClose ${JSON.stringify(this.exit)})`
         )
         err.detail = { trace, beforeQuit, hold, prompt: late, still: stuck.ok ? stuck.file : null }
         throw err
@@ -2685,7 +2713,11 @@ class Session {
         // the Mac's chord and Chrome's 1500 ms; and the quit must have come from the hold's end,
         // not before it (a quit at the press is the hold not running).
         if (!hold.panel || hold.panel.error || hold.panel.chord !== QUIT_HOLD_CHORD) {
-          throw new Error(`the quit chord held showed no hold: ${JSON.stringify(hold.panel)}`)
+          const err = new Error(
+            `the quit chord held showed no hold: ${JSON.stringify(hold.panel)}; ${this.describeHoldRead(hold, chordAt)}`
+          )
+          err.detail = { hold, trace }
+          throw err
         }
         if (hold.panel.durationMs !== QUIT_HOLD_MS) {
           throw new Error(`the hold runs ${hold.panel.durationMs} ms, not ${QUIT_HOLD_MS}`)
@@ -3825,7 +3857,7 @@ async function scenarioBoot() {
 
 /**
  * The profile from `boot` comes back after its graceful quit: the fixture's tab, no onboarding
- * and no "Restore pages?" bar (the clean-exit marker was written, #129).
+ * and no "Restore pages?" band (the clean-exit marker was written, #129).
  */
 async function scenarioRestore() {
   const userData = path.join(profileRoot, 'profile')
@@ -3848,7 +3880,7 @@ async function scenarioRestore() {
       // The page is loaded, not merely listed (after a crash it would be held back).
       const tab = await s.waitForTab(page.url, 30000)
       await s.settle()
-      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      const restoreBar = await s.chrome.locator(CRASH_RESTORE_BAND).count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
       await s.shot('01-restored')
       return {
@@ -5537,7 +5569,7 @@ async function scenarioWalkthrough() {
  * backup – the document the app's own reader takes at the next launch. The steps log which
  * file answered. A backup from that window is the write before the kill's, and every write of
  * the run from the first (the one `running-marker` waits for) carries `cleanExit: false`, so
- * the marker's assertions read the same on it; and the restore bar counts the tabs of the very
+ * the marker's assertions read the same on it; and the restore band counts the tabs of the very
  * document the smoke read, whichever file it was.
  */
 async function scenarioCrash() {
@@ -5604,18 +5636,18 @@ async function scenarioCrash() {
           `profile not marked as crashed in ${stateSource(before)}: ${JSON.stringify(before)}`
         )
       }
-      const bar = s.chrome.locator('[data-crash-restore]').first()
+      const bar = s.chrome.locator(CRASH_RESTORE_BAND).first()
       await bar.waitFor({ state: 'visible', timeout: 15000 })
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await s.settle()
       const text = ((await bar.textContent()) ?? '').replace(/\s+/g, ' ').trim()
       const m = /Restore (\d+) pages?/.exec(text)
-      if (!m) throw new Error(`restore bar reads "${text}"`)
+      if (!m) throw new Error(`restore band reads "${text}"`)
       const offered = Number(m[1])
       const persisted = before.tabs.length
       if (offered !== persisted) {
         throw new Error(
-          `bar offers ${offered} pages, ${stateSource(before)} lists ${persisted} tabs: "${text}"`
+          `band offers ${offered} pages, ${stateSource(before)} lists ${persisted} tabs: "${text}"`
         )
       }
       // Held back: the tabs are listed, no page of theirs is loaded yet.
@@ -5627,7 +5659,7 @@ async function scenarioCrash() {
       return { text, offered, persisted, file: before.file }
     })
     await s.step('restore', async () => {
-      const bar = s.chrome.locator('[data-crash-restore]').first()
+      const bar = s.chrome.locator(CRASH_RESTORE_BAND).first()
       await bar
         .getByRole('button', { name: 'Restore', exact: true })
         .click({ timeout: FIRST_PAINT_CLICK_MS })
@@ -5728,7 +5760,7 @@ async function setFixtureCookie(s, fixture, shotName) {
 }
 
 /**
- * The tab restored on `/cookie.html` (loaded, no "Restore pages?" bar) and the three readings
+ * The tab restored on `/cookie.html` (loaded, no "Restore pages?" band) and the three readings
  * from the launch's watermark `from`, which have to find the cookie gone. The step's detail.
  */
 async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
@@ -5745,7 +5777,7 @@ async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
     throw e
   }
   await s.settle()
-  const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+  const restoreBar = await s.chrome.locator(CRASH_RESTORE_BAND).count()
   if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
   const readings = await cookieReadings(s, fixture, tab, from)
   await s.shot(shotName)
@@ -7002,7 +7034,7 @@ async function scenarioSplit() {
       if (!group.tabIds.includes(state.activeTabId)) {
         throw new Error(`the active tab ${state.activeTabId} is not a pane of the restored split`)
       }
-      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      const restoreBar = await s.chrome.locator(CRASH_RESTORE_BAND).count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a clean quit')
       await s.settle()
       await s.shot('07-restored-split')

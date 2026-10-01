@@ -136,4 +136,9 @@ export class AndroidSyncHost implements SyncPlatformHost {
   foreground(): boolean {
     return this.signal.focused
   }
+
+  /** The activity's resumes, for the Zenium account's version poll (the folder transport has its own). */
+  onForeground(listener: () => void): () => void {
+    return this.signal.subscribe(listener)
+  }
 }

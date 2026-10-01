@@ -33,7 +33,14 @@ export interface SessionInit {
   token: string | null
   remoteAddress: string
   userAgent: string
+  /**
+   * On an initialize: the session a renewing client replaces (`Mcp-Resume-Session`), so the
+   * agent's durable session carries over; trusted only with the token.
+   */
+  resumeFrom?: string | null
 }
+
+export const RESUME_SESSION_HEADER = 'mcp-resume-session'
 
 /** What the transport needs from the browser's agent service. */
 export interface SessionStore {
@@ -105,7 +112,8 @@ export class StreamableHttp {
     let session: McpSession | undefined
     let fresh = false
     if (isInitialize(message)) {
-      session = this.sessions.create(init)
+      const resumeFrom = req.headers[RESUME_SESSION_HEADER]?.trim()
+      session = this.sessions.create(resumeFrom ? { ...init, resumeFrom } : init)
       fresh = true
     } else if (sessionId) {
       session =

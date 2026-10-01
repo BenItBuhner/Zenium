@@ -1655,7 +1655,9 @@ export class TabManager {
         if (!leave) this.stayedOnPage(tabId)
         return leave
       },
-      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action)
+      onNewTabAction: (action) => this.browser.newTab.handleAction(tabId, action),
+      onFileChooser: (request) => this.browser.agents.onFileChooser(tabId, request),
+      onPagePrompt: (prompt) => this.browser.agents.onPagePrompt(tabId, prompt)
     }
   }
 
@@ -1784,6 +1786,12 @@ export class TabManager {
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
+    // A new document in the frame (not a `pushState` or a fragment, which keep the document
+    // under another address): the tab's document generation counts up, the one word the chrome
+    // has for "the document changed" apart from the URL (`Tab.documentGeneration`; the page-edge
+    // band's dismissal on navigation reads it). Every document counts, the error and crash pages
+    // included – the band is not Quick Delete, and a crash page is a new document in the frame.
+    if (!inPage) tab.documentGeneration = (tab.documentGeneration ?? 0) + 1
     // The main frame committed – a document or a same-document move alike, as Chrome Android
     // stamps `lastNavigationCommittedTimestampMillis` on either (`TabWebContentsObserver.java`
     // `didFinishNavigationInPrimaryMainFrame` :307–327: `hasCommitted` :318, then
@@ -2801,6 +2809,9 @@ export class TabManager {
     // An offline error page that came back online while hidden reloads on its turn on screen.
     this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
+    // The page shown on this commit, at the frame's last reported rect, under the page it
+    // replaces until its first paint (W8-P0); the layout report still places it.
+    win.showOnCommit(tab.id)
     this.browser.state.commit()
     if (!opts.keepFocus) win.focusContent()
   }
@@ -2846,6 +2857,9 @@ export class TabManager {
     this.browser.mediaSession.onVisibleTabsChanged(win)
     this.browser.selectionMenu.onVisibleTabsChanged()
     win.findResult = null
+    // The space's page shown on this commit, under the page it replaces (W8-P0).
+    const front = win.selectedTabIn(space)
+    if (front) win.showOnCommit(front)
     this.browser.emit('space.switched', { fromIndex, toIndex }, win)
     this.browser.state.commit()
   }

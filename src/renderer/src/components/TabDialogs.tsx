@@ -28,7 +28,7 @@ import { Input } from './ui/input'
 import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
 import { CaptureLayer } from './capture/CaptureOverlay'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
-import { InstallDialogLayer } from './install/InstallDialog'
+import { InstallPopoverLayer } from './install/InstallPopover'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
@@ -39,6 +39,7 @@ import { MediaLayer } from './phone/MediaSheet'
 import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
 import { DeviceChooserLayer } from './devices/DeviceChooserDialog'
 import { ShareLayer } from './share/SharePopover'
+import { AgentReleaseDialog } from './sidebar/AgentReleaseDialog'
 import { FolderDeleteDialog } from './sidebar/FolderDeleteDialog'
 import { DeleteSearchHistoryDialog } from './urlbar/DeleteSearchHistoryDialog'
 import { NameWindowDialog } from './windowName/NameWindowDialog'
@@ -73,7 +74,7 @@ const TAB_ICONS = [
  * renderer stopped answering (`UnresponsiveDialog`), the questions asked before a window closes or
  * Zenium quits, Chrome's Name window prompt, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Delete site data?" confirmation, the
- * sidebar's "Delete <folder>?" prompt, the omnibox row menu's "Delete search history?" prompt, the Delete browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
+ * sidebar's "Delete <folder>?" and "Release <agent>'s tabs?" prompts, the omnibox row menu's "Delete search history?" prompt, the Delete browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
  * password", `LeakWarnings`), the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
@@ -103,6 +104,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
   const folderDelete = uiStore.use((s) => s.folderDeleteConfirm)
+  const agentRelease = uiStore.use((s) => s.agentReleaseConfirm)
   const deleteSearchHistory = uiStore.use((s) => s.deleteSearchHistoryOpen)
   const phone = useViewport().formFactor === 'phone'
   const popups = uiStore.use((s) => s.blockedPopupsPanel)
@@ -124,6 +126,9 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       )}
       {folderDelete && (
         <FolderDeleteDialog key={folderDelete.folderId} state={state} request={folderDelete} />
+      )}
+      {agentRelease && (
+        <AgentReleaseDialog key={agentRelease.claimId} state={state} request={agentRelease} />
       )}
       {deleteSearchHistory && <DeleteSearchHistoryDialog />}
       {popups && <BlockedPopupsPanel state={state} panel={popups} />}
@@ -147,7 +152,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <InstallLayer state={state} />
       {phone && <MediaLayer state={state} />}
       <LongScreenshotLayer />
-      <InstallDialogLayer state={state} />
+      <InstallPopoverLayer state={state} />
       <ScreenPickerLayer state={state} />
       <DeviceChooserLayer state={state} />
       <CaptureLayer />

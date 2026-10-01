@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
@@ -29,6 +30,7 @@ import android.view.HapticFeedbackConstants
 import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
@@ -731,6 +733,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         Log.i(TAG, "memory pressure ${level.wire}${if (background) ", window away" else ""} ($why)")
         chrome.hostEvent("memoryPressure", json("level" to level.wire, "background" to background))
         restoredPictures.releaseAll("memory pressure")
+        // A page view built ahead of a wake is memory spent on a guess: given back first.
+        if (tabs.dropSpare()) Log.d(TAG, "spare page view dropped under memory pressure")
     }
 
     override fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? {
@@ -1220,6 +1224,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
+            // The agent's word on driving the page while the layout hides it (OS-40; `TabWebView.agentDriven`).
+            "view.setAgentDriven" -> { tab?.agentDriven = args.bool("driven"); reply(null) }
             // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
             // one as the self-submitting form document the core built (`ImagePostNavigation`).
             "view.post" -> {
@@ -1260,6 +1266,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
+            // An AI agent's native prompts (AgentPrompts.kt): while on, the page's file choosers
+            // and the view's client-certificate requests are held for the core's answer.
+            "view.interceptAgentPrompts" -> { tab?.setInterceptAgentPrompts(args.bool("on")); reply(null) }
+            "view.fileChooserAnswer" -> { tab?.answerFileChooser(args.str("requestId"), args); reply(null) }
             "view.postMessage" -> { tab?.postToPage(args.obj("message").toString()); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
@@ -1271,7 +1281,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
-            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible"), args.bool("switched")); reply(null) }
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
             "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
@@ -1442,8 +1452,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> {
-                security.forgetCertificates(args.str("containerId"))
-                Profiles.clear(activity, args.str("containerId")) { reply(null) }
+                val containerId = args.str("containerId")
+                security.forgetCertificates(containerId)
+                // A spare page view built for the container still uses its profile, and the
+                // profile cannot be deleted under a live WebView: the spare goes first.
+                if (tabs.spareContainerId == containerId && tabs.dropSpare()) Log.d(TAG, "spare page view dropped with the profile of $containerId")
+                Profiles.clear(activity, containerId) { reply(null) }
             }
             // Clear browsing data: the engine's kinds (cookies, storage, cache) per container, and the
             // preview's counts. A live tab of a container clears its cache; otherwise a throwaway view.
@@ -1465,6 +1479,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))
                 reply(null)
             }
+            "certificate.respond" -> { security.respondClientCertificate(args.str("requestId"), args); reply(null) }
             "security.forgetSession" -> { security.forgetSession(); reply(null) }
             "security.allowCertificate" -> {
                 security.allowCertificate(args.str("containerId"), args.str("url"), args.str("fingerprint"))
@@ -2477,22 +2492,41 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
     }
 
+    /**
+     * `clipboard.writeImage` (the Copy Image row, a shared picture's Copy image, a capture's
+     * copy): the image's bytes – fetched, or a `data:` URL's – onto the system clipboard as a
+     * `content://` URI of the app's `FileProvider` over `cacheDir/clipboard`. The file is named
+     * and the clip typed by what the BYTES are (`ImageBytes.sniff`, the declared type the
+     * fallback; PUI-38): WebView's `ClipboardImpl.getPng()` hands a `content://` image to
+     * Blink's paste as the bytes it finds when `ContentResolver.getType` says `image/png` and
+     * decodes and PNG-encodes it when it says anything else, so the real type on the file (the
+     * provider types by extension) is what makes the page's `image/png` promise true, and
+     * every other reader of the clipboard gets the bytes as they are with an honest type. The
+     * clip's description carries the sniffed type itself rather than the provider's, which an
+     * older release's `MimeTypeMap` may not know (`avif` before API 31). Bytes that are no
+     * image – a hot-link protected server's HTML page, an empty body behind an image type –
+     * fail the copy (false: the chrome's "Could not copy image") before anything is written,
+     * instead of going on the clipboard as a picture. The cache dir keeps the newest
+     * `ImageBytes.CACHE_KEPT` copies.
+     */
     private fun copyImage(url: String, reply: (Any?) -> Unit) {
         io.execute {
             val ok = runCatching {
-                val bytes = if (url.startsWith("data:")) {
-                    val comma = url.indexOf(',')
-                    android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
+                val (bytes, declared) = if (url.startsWith("data:", ignoreCase = true)) {
+                    val data = ImageBytes.decodeDataUrl(url) ?: return@runCatching false
+                    data.bytes to data.mediaType
                 } else {
-                    (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 8000 }
-                        .inputStream.use { it.readBytes() }
+                    val connection = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 8000 }
+                    connection.inputStream.use { it.readBytes() } to connection.contentType
                 }
+                val type = ImageBytes.decide(bytes, declared) ?: return@runCatching false
                 val dir = File(activity.cacheDir, "clipboard").apply { mkdirs() }
-                val file = File(dir, "image-${System.currentTimeMillis()}.png")
+                val file = File(dir, "image-${System.currentTimeMillis()}.${type.extension}")
                 file.writeBytes(bytes)
+                ImageBytes.prune(dir)
                 val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newUri(activity.contentResolver, "Image", uri))
+                cm.setPrimaryClip(ClipData(ClipDescription("Image", arrayOf(type.mime)), ClipData.Item(uri)))
                 true
             }.getOrDefault(false)
             main.post { reply(ok) }
@@ -2606,8 +2640,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * ([PrivateLock.refusesShow]), so the release brings it back; the chrome's cover is over it
      * meanwhile, and the guard stays up. The chrome's own hide of such a view is the same word as
      * the host's.
+     *
+     * `switched` is the core's reason for a hide: the tab overview over the page, a switch away
+     * from it (`LayoutReport.switchedAway`, OS-39) rather than a sheet or a field over it. It
+     * goes to the views ahead of the hide, which waits for the chrome's frame ([TabHost.switched]).
      */
-    private fun setTabVisible(tabId: String, visible: Boolean) {
+    private fun setTabVisible(tabId: String, visible: Boolean, switched: Boolean = false) {
         val view = tabs.get(tabId)
         if (visible && view != null && privateLock.refusesShow(tabId, Profiles.isPrivate(view.containerId))) {
             Log.d(TAG, "show of private $tabId refused under the lock")
@@ -2621,6 +2659,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (privateLock.forget(tabId)) refreshGuard()
         // Another tab coming on screen under the picture-in-picture window ends it (Chrome's NEW_TAB).
         if (visible) media.onTabShown(tabId)
+        // The hide's reason, recorded now: the hide itself waits for the frame, and may be one
+        // the core sends again for the reason alone, to a view that is gone already.
+        if (!visible) tabs.switched(tabId, switched)
         val ticket = pageVisibility.request(tabId, visible) ?: return
         // What covers the page is up in the chrome already: out of a screen reader's tree from
         // the ask, not from the frame the hide waits for (A11Y-03, [TabHost.hideRequested]).
@@ -2633,6 +2674,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tabs.get(tabId)?.let {
             it.captureThumbnail()
             it.refreshHostState()
+            // The user has left the page for the chrome: the next thing they may do is wake a tab.
+            warmSpareLater(it.containerId)
         }
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
@@ -2643,6 +2686,86 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 if (pageVisibility.complete(ticket)) main.removeCallbacks(deadline)
             }
         })
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The spare page view (W6-S26-b): built on an idle moment with the pages covered
+    // ---------------------------------------------------------------------------------------------
+
+    /** The container the next spare is for, while a warm is pending; null with none. */
+    private var spareWarmFor: String? = null
+    /** The pending quiet check ([warmSpareLater]); null with none. */
+    private var spareWatch: Runnable? = null
+    /** When the window last began a traversal, while a warm is pending. */
+    private var lastTraversal = 0L
+    private val traversalListener = ViewTreeObserver.OnPreDrawListener {
+        lastTraversal = SystemClock.uptimeMillis()
+        true
+    }
+
+    /**
+     * Have [TabHost.warm] build the page view for the next wake, once the screen is still: a page
+     * was just hidden under the chrome (any hide the core asks for – the overview opening, a
+     * sheet, a swipe between tabs), so the user may tap a sleeping tab's card next, and the view's
+     * construction (some fifteen milliseconds of UI thread) is better spent now than inside the
+     * morph's first frames. Not before the core is up with the window showing (never on the boot
+     * path); not while a spare for this container stands – one of another container's counts as
+     * none and is dropped as this one is built, so a session that has moved on (a private page's
+     * spare after the private tabs closed, another space's) never pins the old one and turns the
+     * next wakes cold; and never inside an animation: the build waits until the window has drawn
+     * nothing for [SPARE_QUIET_MS] – the overview's spring at rest – and then for the looper's
+     * next idle moment, where the quiet is read once more before the build, the pre-draw
+     * listener kept until then, because an idle moment falls between the frames of a running
+     * animation too. One container at a time: the latest hide's.
+     */
+    private fun warmSpareLater(containerId: String) {
+        if (!coreUp || !windowUp() || tabs.spareContainerId == containerId) return
+        spareWarmFor = containerId
+        if (spareWatch != null) return
+        lastTraversal = SystemClock.uptimeMillis()
+        root.viewTreeObserver.takeIf { it.isAlive }?.addOnPreDrawListener(traversalListener)
+        val check = object : Runnable {
+            override fun run() {
+                val watch = this
+                val forContainer = spareWarmFor
+                if (forContainer == null || !coreUp || !windowUp() || tabs.spareContainerId == forContainer) {
+                    endSpareWatch()
+                    return
+                }
+                if (SystemClock.uptimeMillis() - lastTraversal < SPARE_QUIET_MS) {
+                    main.postDelayed(watch, SPARE_QUIET_MS)
+                    return
+                }
+                Looper.myQueue().addIdleHandler {
+                    // The watch ended meanwhile (a teardown): nothing to build.
+                    if (spareWatch !== watch) return@addIdleHandler false
+                    val target = spareWarmFor
+                    if (target == null || !coreUp || !windowUp() || tabs.spareContainerId == target) {
+                        endSpareWatch()
+                        return@addIdleHandler false
+                    }
+                    // An animation began between the check and this idle: back to waiting.
+                    if (SystemClock.uptimeMillis() - lastTraversal < SPARE_QUIET_MS) {
+                        main.postDelayed(watch, SPARE_QUIET_MS)
+                        return@addIdleHandler false
+                    }
+                    endSpareWatch()
+                    if (tabs.dropSpare()) Log.d(TAG, "spare page view of another container dropped for $target")
+                    val started = SystemClock.uptimeMillis()
+                    if (tabs.warm(target)) Log.d(TAG, "spare page view built for $target in ${SystemClock.uptimeMillis() - started} ms")
+                    false
+                }
+            }
+        }
+        spareWatch = check
+        main.postDelayed(check, SPARE_QUIET_MS)
+    }
+
+    private fun endSpareWatch() {
+        spareWatch?.let(main::removeCallbacks)
+        spareWatch = null
+        spareWarmFor = null
+        root.viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(traversalListener)
     }
 
     /**
@@ -2957,6 +3080,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // new core is booting from (#344 finding 5). `teardown` tells it first, and last: its
         // views die with the host, and it writes nothing more.
         chrome.hostEvent("teardown", null)
+        // A spare's pending quiet check or idle build would keep this host reachable: ended with its views.
+        endSpareWatch()
         tabs.dropAll()
         orientationSensor.follow(false)
         // Not the request engine: it is the process's, and a custom tab may still be using it.
@@ -2978,6 +3103,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private const val STORAGE_TAG = "ZenStorage"
         /** The one visual-state request of the boot hold ([releaseBootHoldAfterReadyFrame]: the FULLY DRAWN frame); the id is the callback's, nothing reads it. */
         private const val BOOT_HOLD_FRAME = 2L
+        /**
+         * How long the window has to have drawn nothing, after a page was hidden under the chrome,
+         * before the spare page view is built ([warmSpareLater]): longer than any gap between the
+         * frames of a running spring, on the emulator's software GPU included, so the build never
+         * lands inside one.
+         */
+        const val SPARE_QUIET_MS = 600L
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"

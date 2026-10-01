@@ -88,7 +88,7 @@ import { IMAGE_THUMBNAIL_WORLD_ID } from '../../shared/privateWorld'
 import { PrivateWorldRelay } from './privateWorld'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
-import { awaitFirstPaint, frameDrawn, hasPainted } from './firstPaint'
+import { awaitFirstPaint, frameDrawn, hasPainted, shownPainted } from './firstPaint'
 import {
   emulatedColorScheme,
   emulatedMediaParams,
@@ -98,6 +98,7 @@ import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  AgentUploadFile,
   ScreenshotOptions,
   AgentFrame,
   AgentInputEvent,
@@ -110,6 +111,7 @@ import type {
   PageFlags,
   PageHostMessage,
   PageMessage,
+  PagePromptRequest,
   TabView,
   TabViewEvents,
   TabViewHost,
@@ -120,6 +122,17 @@ import type {
 import type { SessionManager } from './sessions'
 import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
+import {
+  answerFileChooser,
+  armFrameChoosers,
+  ATTACH_FRAMES,
+  DETACH_FRAMES,
+  dropFiles,
+  INTERCEPT_FILE_CHOOSERS,
+  setInputFiles,
+  type FileChooserOpened,
+  type FrameAttached
+} from './agentPrompts'
 import { savePageDialogOptions, savePageTarget } from './savePage'
 import { StartupHold } from './startupHold'
 import { uniquePath } from './uniquePath'
@@ -310,14 +323,25 @@ function fontsKey(fonts: EffectiveFonts): string {
  * The emulation overrides a page view keeps on the page's shared session
  * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, the Appearance
  * setting's `prefers-color-scheme` where the engine does not carry it to pages itself, and the
- * JavaScript site setting's switch (`refreshScripts`).
+ * JavaScript site setting's switch (`refreshScripts`), and an AI agent's hold on the page's file
+ * choosers (`interceptAgentPrompts`).
  */
-type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts'
+type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts' | 'fileChooser'
 
 /** A DevTools protocol command as the view sends it. */
 interface CdpCommand {
   method: string
   params: Record<string, unknown>
+  /** Sent first on every session the command goes on (a domain it needs enabled). */
+  before?: readonly CdpCommand[]
+}
+
+/** The page's file choosers, its cross-site frames' included, come to the session. */
+const FILE_CHOOSERS_INTERCEPTED: CdpCommand = { ...ATTACH_FRAMES, before: INTERCEPT_FILE_CHOOSERS }
+
+async function sendCdp(dbg: Electron.Debugger, command: CdpCommand): Promise<void> {
+  for (const first of command.before ?? []) await dbg.sendCommand(first.method, first.params)
+  await dbg.sendCommand(command.method, command.params)
 }
 
 const AUTO_DARK_MODE_ON: CdpCommand = {
@@ -341,7 +365,11 @@ const SCRIPTS_OFF: CdpCommand = {
 const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
   autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
   colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) },
-  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } }
+  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } },
+  fileChooser: {
+    ...DETACH_FRAMES,
+    before: [{ method: 'Page.setInterceptFileChooserDialog', params: { enabled: false } }]
+  }
 }
 
 function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
@@ -606,9 +634,19 @@ export class ElectronTabView implements TabView {
       this.pausedByDebugger = false
       this.sessionDetached()
     })
-    this.wc.debugger?.on?.('message', (_e, method: string) => {
-      if (method === 'Debugger.paused') this.pausedByDebugger = true
-      else if (method === 'Debugger.resumed') this.pausedByDebugger = false
+    this.wc.debugger?.on?.('message', (_e, method: string, params: unknown, sessionId?: string) => {
+      if (method === 'Debugger.paused' && !sessionId) this.pausedByDebugger = true
+      else if (method === 'Debugger.resumed' && !sessionId) this.pausedByDebugger = false
+      else if (method === 'Target.attachedToTarget' && this.emulationApplied.has('fileChooser'))
+        void armFrameChoosers(this.wc.debugger, (params ?? {}) as FrameAttached).catch(() => {})
+      else if (method === 'Page.fileChooserOpened' && this.emulationApplied.has('fileChooser'))
+        void answerFileChooser(
+          (fn) => this.withDebugger(fn),
+          (params ?? {}) as FileChooserOpened,
+          this.events?.onFileChooser?.bind(this.events),
+          () => this.win,
+          sessionId || undefined
+        ).catch(() => {})
     })
     this.wc.on('blur', () => {
       this.keyboardAsked = false
@@ -913,6 +951,28 @@ export class ElectronTabView implements TabView {
     this.events.onLookalikeNavigation?.(url, verdict)
   }
 
+  // --- an AI agent's native prompts -----------------------------------------
+
+  interceptAgentPrompts(on: boolean): void {
+    this.setEmulation('fileChooser', on ? FILE_CHOOSERS_INTERCEPTED : null)
+  }
+
+  async setInputFiles(selector: string, files: AgentUploadFile[]): Promise<void> {
+    if (this.wc.isDestroyed()) throw new Error('the page is gone')
+    await this.withDebugger((dbg) => setInputFiles(dbg, selector, files))
+  }
+
+  async dropFiles(x: number, y: number, files: AgentUploadFile[]): Promise<void> {
+    if (this.wc.isDestroyed()) throw new Error('the page is gone')
+    await this.withDebugger((dbg) => dropFiles(dbg, x, y, files))
+  }
+
+  /** The page's preload asks whose its `window.print()` or File System Access picker is. */
+  askPagePrompt(prompt: PagePromptRequest): 'agent' | 'user' {
+    if (this.wc.isDestroyed()) return 'user'
+    return this.events?.onPagePrompt?.(prompt) ?? 'user'
+  }
+
   // --- dialogs and beforeunload ----------------------------------------------
 
   /**
@@ -922,8 +982,9 @@ export class ElectronTabView implements TabView {
   async askDialog(call: PageDialogCall, frameUrl: string): Promise<PageDialogAnswer> {
     if (this.wc.isDestroyed()) return DISMISSED_ANSWER
     // A dialog in a window the user is not in flashes its taskbar button until they come
-    // (os-19); the window in front is left alone.
-    if (this.host) flashUntilFocused(this.host.win)
+    // (os-19); the window in front is left alone. A page an agent drives off screen asks the
+    // agent, never the user.
+    if (this.host && !this.agentDriven) flashUntilFocused(this.host.win)
     const response: PageDialogResponse = await this.events.onDialog({
       kind: call.kind,
       message: call.message,
@@ -963,8 +1024,8 @@ export class ElectronTabView implements TabView {
     const reload = !check && (host ? host.reload : page?.navigationType === 'reload')
     // The question is a dialog too: a background window flashes for it (os-19). The core brings
     // the window to the front for the tab-modal question; where the OS refuses the focus, the
-    // flash stands until the user comes.
-    if (this.host) flashUntilFocused(this.host.win)
+    // flash stands until the user comes. An agent's page leaves without asking anyone.
+    if (this.host && !this.agentDriven) flashUntilFocused(this.host.win)
     void this.events.onLeaveSite(reload).then((leave) => {
       if (check) {
         check.settle(leave)
@@ -2360,6 +2421,18 @@ export class ElectronTabView implements TabView {
     return frameDrawn(this.wc)
   }
 
+  /**
+   * The page's word that the document it is to show has a frame on screen (`TabView.
+   * shownPainted`; `firstPaint.ts`): the frame word and the document's first `paint` entry
+   * together, asked of the committed document now or of the one a woken tab's load commits
+   * next. Offered, the core shows a tab switched to or woken on the activate commit at the
+   * frame's last reported rect, the page left in front standing over it until this word or the
+   * ceiling (`ZenWindow.showOnCommit`, W8-P0).
+   */
+  shownPainted(): Promise<number> {
+    return shownPainted(this.wc)
+  }
+
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
   executeIsolatedJavaScript(code: string): Promise<unknown> {
     return this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }], true)
@@ -2556,8 +2629,7 @@ export class ElectronTabView implements TabView {
     // Attached already: by this view's own `sessionDetached` (the hold's, `cdpAttachedHere`
     // stands) or by the governor putting an override back (its own; it detaches it when that
     // goes, and a hold of this view's attaches again then).
-    for (const command of this.emulationApplied.values())
-      await dbg.sendCommand(command.method, command.params)
+    for (const command of this.emulationApplied.values()) await sendCdp(dbg, command)
   }
 
   /**
@@ -2584,7 +2656,7 @@ export class ElectronTabView implements TabView {
     }
     this.cdpAttachedHere = true
     for (const [override, command] of this.emulationApplied) {
-      void dbg.sendCommand(command.method, command.params).catch(() => {
+      void sendCdp(dbg, command).catch(() => {
         if (this.emulationApplied.get(override) === command) this.emulationApplied.delete(override)
         this.releaseEmulationHold()
       })
@@ -2638,7 +2710,7 @@ export class ElectronTabView implements TabView {
         this.emulationHold = true
       }
       try {
-        await dbg.sendCommand(command.method, command.params)
+        await sendCdp(dbg, command)
       } catch {
         /* the page went away, or the debugger is not ours: release the hold, retry on the next change */
         if (this.emulationApplied.get(override) === command) this.emulationApplied.delete(override)
@@ -2646,7 +2718,7 @@ export class ElectronTabView implements TabView {
     } else {
       const release = EMULATION_RELEASE[override]
       try {
-        if (dbg.isAttached()) await dbg.sendCommand(release.method, release.params)
+        if (dbg.isAttached()) await sendCdp(dbg, release)
       } catch {
         /* already gone */
       }
@@ -3453,6 +3525,15 @@ export interface SaveAsDownloads {
 
 /** Creates `WebContentsView`s and maps their web contents back to tabs. */
 export class ElectronTabViewHost implements TabViewHost {
+  /**
+   * The core shows a tab switched to or woken on the activate commit, at the frame's last
+   * reported rect, under the page it replaces until the shown page's word that it has painted
+   * (`ElectronTabView.shownPainted`) or the ceiling (`ZenWindow.showOnCommit`, W8-P0). The
+   * desktop's views bear it: they composite above the chrome in the window's z-order, the page
+   * left in front raised over the shown one is exactly the stand-in, and nothing of the chrome's
+   * own cover protocol stands between a view's show and its frame.
+   */
+  readonly showsOnCommit = true
   private readonly byWebContentsId = new Map<number, ElectronTabView>()
   private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()

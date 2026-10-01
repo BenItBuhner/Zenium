@@ -128,6 +128,7 @@ function state(extra: SearchEngine[] = []): UIState {
     mods: [],
     webApps: [],
     agents: [],
+    awayAgents: [],
     agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.4.27-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
@@ -565,7 +566,7 @@ describe('Search › an engine’s Edit on the phone: the second sheet over the 
     if (!deactivate) throw new Error('no Deactivate row')
     expect(deactivate.textContent).toContain('Deactivate')
     expect(deactivate.textContent).toContain(
-      'Keeps Wiki in the list but out of the URL bar until you activate it.'
+      'Keeps Wiki in the list but out of the address bar until you activate it.'
     )
     expect(deactivate.getAttribute('aria-disabled')).toBeNull()
     act(() => deactivate.click())
@@ -589,7 +590,7 @@ describe('Search › an engine’s Edit on the phone: the second sheet over the 
     )
     if (!activate) throw new Error('no Activate row')
     expect(activate.textContent).toContain('Activate')
-    expect(activate.textContent).toContain('@forum works in the URL bar again.')
+    expect(activate.textContent).toContain('@forum works in the address bar again.')
     act(() => activate.click())
     expect(invoke).toHaveBeenCalledWith('search.setEngineActive', { id: FORUM.id, active: true })
     expect(invoke).toHaveBeenCalledTimes(1)

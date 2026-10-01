@@ -30,6 +30,35 @@ export interface WebAppScreenshot {
   label: string | null
 }
 
+export type WebAppShareMethod = 'GET' | 'POST'
+
+export type WebAppShareEnctype = 'application/x-www-form-urlencoded' | 'multipart/form-data'
+
+/** A `share_target.params.files` entry: the form field that takes files and what it accepts. */
+export interface WebAppShareFile {
+  name: string
+  /** MIME types or extensions (`image/*`, `.txt`), as declared. */
+  accept: string[]
+}
+
+/**
+ * The manifest's `share_target` (W3C Web Share Target): where a share the app accepts goes and
+ * the names of the fields it reads it from. `action` is absolute and inside the app's scope; a
+ * GET sends the fields as the action's query, a POST as a form body of `enctype`. A param the
+ * app does not take is null; `files` is kept as declared but no file share is served yet.
+ */
+export interface WebAppShareTarget {
+  action: string
+  method: WebAppShareMethod
+  enctype: WebAppShareEnctype
+  params: {
+    title: string | null
+    text: string | null
+    url: string | null
+    files: WebAppShareFile[]
+  }
+}
+
 /** What the browser keeps about a page's web app manifest (`tab.webApp`). */
 export interface WebAppInfo {
   manifestUrl: string
@@ -49,6 +78,8 @@ export interface WebAppInfo {
   backgroundColor: string | null
   icons: WebAppIcon[]
   screenshots: WebAppScreenshot[]
+  /** The app's share target (MW-63), null when the manifest declares none it could serve. */
+  shareTarget: WebAppShareTarget | null
 }
 
 /** The fields the page script lifts out of a manifest before posting it (raw, unresolved). */
@@ -64,6 +95,7 @@ export interface RawWebAppManifest {
   background_color?: unknown
   icons?: unknown
   screenshots?: unknown
+  share_target?: unknown
 }
 
 /**
@@ -77,12 +109,15 @@ export interface PinnedWebApp {
   scope: string
   pinnedAt: number
   /**
-   * The app's icon as the host kept it (a `file:` or data URL), for the app window's frame and
-   * the installed-apps list; hosts whose launcher owns the tile (Android) leave it out.
+   * The app's icon for the app window's frame, the installed-apps list and the share chooser's
+   * row: as the host kept it (a `file:` or data URL) or, where the launcher owns the tile and
+   * the host kept none (Android), the manifest's own icon address.
    */
   icon?: string | null
   /** Where the app's window last stood (desktop); the next launch opens it there. */
   bounds?: Rect | null
+  /** The app's share target as its manifest declared it at install (MW-63); absent for none. */
+  shareTarget?: WebAppShareTarget | null
 }
 
 /**
@@ -119,12 +154,25 @@ export const MANIFEST_FIELDS: Array<keyof RawWebAppManifest> = [
   'theme_color',
   'background_color',
   'icons',
-  'screenshots'
+  'screenshots',
+  'share_target'
 ]
 
 const MAX_ICONS = 32
 const MAX_SCREENSHOTS = 8
 const MAX_TEXT = 512
+/**
+ * `share_target.params.files` entries kept, and `accept` tokens per entry. Shared with the page
+ * script's `manifestSubset`, which bounds the target the same way before it crosses the bridge.
+ */
+export const MAX_SHARE_FILES = 8
+export const MAX_SHARE_ACCEPT = 16
+/** A share target's field name (`params.title` …), as Chromium caps a manifest string. */
+export const MAX_SHARE_PARAM = 128
+const SHARE_ENCTYPES: WebAppShareEnctype[] = [
+  'application/x-www-form-urlencoded',
+  'multipart/form-data'
+]
 const DISPLAY_MODES: WebAppDisplay[] = ['fullscreen', 'standalone', 'minimal-ui', 'browser']
 const PURPOSES: WebAppIconPurpose[] = ['any', 'maskable', 'monochrome']
 
@@ -209,6 +257,72 @@ function parseScreenshots(value: unknown, base: string): WebAppScreenshot[] {
   return shots
 }
 
+function parseShareFiles(value: unknown): WebAppShareFile[] | null {
+  if (value === undefined || value === null) return []
+  // The spec allows one entry or a list of them.
+  const entries = Array.isArray(value) ? value : [value]
+  const files: WebAppShareFile[] = []
+  for (const entry of entries) {
+    if (files.length >= MAX_SHARE_FILES) break
+    if (!entry || typeof entry !== 'object') return null
+    const e = entry as Record<string, unknown>
+    const name = text(e.name, MAX_SHARE_PARAM)
+    const acceptRaw = Array.isArray(e.accept) ? e.accept : [e.accept]
+    const accept = acceptRaw
+      .map((a) => text(a, 64)?.toLowerCase() ?? null)
+      .filter((a): a is string => a !== null)
+      .slice(0, MAX_SHARE_ACCEPT)
+    if (!name || !accept.length) return null
+    files.push({ name, accept })
+  }
+  return files
+}
+
+/**
+ * The manifest's `share_target`, following Chromium's processing (`ManifestParser::
+ * ParseShareTarget`): the action resolves against the manifest and must lie inside the app's
+ * scope; `method` is GET (the default) or POST; `enctype` defaults to urlencoded and
+ * `multipart/form-data` needs a POST; `params` is required, its fields optional; file params
+ * need a multipart POST. Anything else makes the whole target invalid – null, as if the
+ * manifest declared none – rather than a target the app would not recognise.
+ */
+export function parseShareTarget(
+  value: unknown,
+  manifestBase: string,
+  scope: string
+): WebAppShareTarget | null {
+  if (!value || typeof value !== 'object') return null
+  const t = value as Record<string, unknown>
+  const action = resolveUrl(t.action, manifestBase)
+  if (!action || !isWithinScope(action, scope)) return null
+  const methodRaw = t.method === undefined ? 'GET' : text(t.method, 8)?.toUpperCase()
+  if (methodRaw !== 'GET' && methodRaw !== 'POST') return null
+  const method: WebAppShareMethod = methodRaw
+  const enctypeRaw =
+    t.enctype === undefined ? SHARE_ENCTYPES[0] : text(t.enctype, 64)?.toLowerCase()
+  if (!(SHARE_ENCTYPES as string[]).includes(enctypeRaw ?? '')) return null
+  const enctype = enctypeRaw as WebAppShareEnctype
+  if (method === 'GET' && enctype !== 'application/x-www-form-urlencoded') return null
+  // `params` is a dictionary of field names: an array (or null) is malformed, not a target
+  // with no fields – a target with none would never be offered anyway.
+  if (!t.params || typeof t.params !== 'object' || Array.isArray(t.params)) return null
+  const p = t.params as Record<string, unknown>
+  const files = parseShareFiles(p.files)
+  if (!files) return null
+  if (files.length && (method !== 'POST' || enctype !== 'multipart/form-data')) return null
+  return {
+    action,
+    method,
+    enctype,
+    params: {
+      title: text(p.title, MAX_SHARE_PARAM),
+      text: text(p.text, MAX_SHARE_PARAM),
+      url: text(p.url, MAX_SHARE_PARAM),
+      files
+    }
+  }
+}
+
 /** CSS colours are passed through as written but capped; the chrome only paints with them. */
 function color(value: unknown): string | null {
   const t = text(value, 64)
@@ -273,7 +387,8 @@ export function parseWebAppManifest(
     themeColor: color(m.theme_color),
     backgroundColor: color(m.background_color),
     icons: parseIcons(m.icons, manifestBase),
-    screenshots: parseScreenshots(m.screenshots, manifestBase)
+    screenshots: parseScreenshots(m.screenshots, manifestBase),
+    shareTarget: parseShareTarget(m.share_target, manifestBase, scope)
   }
 }
 
@@ -444,13 +559,12 @@ export const MIN_VISIT_GAP_MS = 5 * 60 * 1000
 export const PROMPT_AFTER_VISITS = 2
 /** Swiping the prompt away silences it for this long. */
 export const DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000
-/** Ignoring the prompt (letting it time out) keeps it away for a day. */
-export const PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000
 /**
- * The ambient banner leaves on its own after this long (an ignored prompt is not a dismissal).
- * The core's clock and the chrome's banner card both run on it.
+ * Ignoring the prompt (letting it time out) keeps it away for a day. The prompt's clock is the
+ * chrome's – the page-edge band's one offer clock (`BAND_CLOCK_MS`, the Design Lead's ruling:
+ * one offer, one clock); the core runs none and hears `dismissBanner('timeout')` when it ran out.
  */
-export const BANNER_TIMEOUT_MS = 12_000
+export const PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 /** Count a page load as a visit when it is far enough from the previous one. */
 export function recordVisit(record: EngagementRecord | undefined, now: number): EngagementRecord {

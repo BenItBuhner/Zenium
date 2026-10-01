@@ -1,7 +1,6 @@
 import type { Rect, Tab, WebAppBanner, WebAppInstallPrompt } from '../shared/types'
 import { resolveTheme, rgbToHex } from '../shared/theme'
 import {
-  BANNER_TIMEOUT_MS,
   displayIcon,
   fallbackShortcutTitle,
   installFailedMessage,
@@ -23,6 +22,13 @@ import {
   type WebAppInfo
 } from '../shared/webApp'
 import { appBadgeOf, sameAppBadge, type AppBadge } from '../shared/appBadge'
+import {
+  shareTargetAccepts,
+  shareTargetLaunch,
+  type ShareChooserApp,
+  type ShareKind,
+  type SharedFields
+} from '../shared/shareTarget'
 import type { Browser } from './browser'
 import { getSpace } from './model'
 import type { PageMessage, ShortcutRequest, StoreIO } from './platform'
@@ -46,6 +52,12 @@ const MAX_ENGAGEMENT = 200
  * event synchronously; its `deferred` message needs one round trip to arrive.
  */
 const DEFER_GRACE_MS = 1200
+/**
+ * After `webapp.banner` is emitted, the chrome's word that the card is drawn
+ * (`webapp.bannerShown`) is due within this long; a surface that draws banners mounts the card
+ * at once and reports in the same turn. Without the word the prompt counts as undrawn (#740).
+ */
+export const BANNER_SHOWN_GRACE_MS = 1000
 /** Fetching a manifest the page could not (CSP) goes through the host with this budget. */
 const MANIFEST_FETCH_TIMEOUT_MS = 8000
 const MAX_MANIFEST_BYTES = 256 * 1024
@@ -190,6 +202,48 @@ export class WebAppService {
     if (active && isWithinScope(active.url, app.scope))
       this.browser.tabs.navigate(active.id, app.startUrl)
     else this.browser.tabs.createTab({ url: app.startUrl, active: true }, win)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Share targets (MW-63)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The installed apps a share of `kind` can go to – those whose manifest declared a
+   * `share_target` with a field for it – as the chooser's rows, in the order of installing.
+   */
+  shareTargetsFor(kind: ShareKind): ShareChooserApp[] {
+    return this.pinned
+      .filter((app) => app.shareTarget && shareTargetAccepts(app.shareTarget, kind))
+      .map((app) => ({ id: app.id, name: app.name, icon: app.icon ?? null }))
+  }
+
+  /**
+   * Hand a share to an installed app: its target's launch – a GET of the action with the
+   * fields as the query, or a POST with them as the form body – opened the way the app's
+   * launcher opens it (`launch`): an app window of its own on hosts with windows, a tab
+   * another app sent (`fromIntent`) elsewhere. An id that is no app's, or an app whose target
+   * takes none of the share, does nothing and says so.
+   */
+  launchShare(appId: string, fields: SharedFields, win?: ZenWindow): boolean {
+    const app = this.pinnedById(appId)
+    // The share's kind as the chooser offered it: a link when it carries one, text otherwise.
+    // The chooser only offers apps that take the kind, so this guard is the comment's word.
+    const kind: ShareKind = fields.url !== null ? 'url' : 'text'
+    if (!app?.shareTarget || !shareTargetAccepts(app.shareTarget, kind)) return false
+    const launch = shareTargetLaunch(app.shareTarget, fields)
+    const post = launch.method === 'POST' ? launch.post : undefined
+    if (this.surface === 'desktop') {
+      const opened = this.browser.openAppWindow(launch.url, { from: win, post })
+      opened?.host.show()
+      opened?.host.focus()
+      return true
+    }
+    const target = win ?? this.browser.focusedWindow()
+    this.browser.tabs.createTab({ url: launch.url, active: true, fromIntent: true, post }, target)
+    target.host.show()
+    target.host.focus()
+    return true
   }
 
   /**
@@ -393,6 +447,9 @@ export class WebAppService {
     this.trimEngagement()
     this.save()
     if (!shouldPrompt(record, now)) return
+    // Every surface is offered: the phone draws the banner as its card, the desktop as the
+    // pill's "Install <app>?" popover (#754). A window whose chrome draws neither gives no word
+    // inside the grace, and the cooldown is not spent on it (`bannerUndrawn`, seed #42).
     this.schedule(`banner:${tabId}`, DEFER_GRACE_MS, () => {
       const current = this.browser.tabs.tab(tabId)
       if (!current || current.webApp?.id !== info.id || this.deferred.has(tabId)) return
@@ -439,7 +496,7 @@ export class WebAppService {
     this.installOpen.delete(tabId)
     this.banners.delete(tabId)
     this.clear(`banner:${tabId}`)
-    this.clear(`banner-timeout:${tabId}`)
+    this.clear(`banner-shown:${tabId}`)
   }
 
   // ---------------------------------------------------------------------------
@@ -449,10 +506,6 @@ export class WebAppService {
   private showBanner(tabId: string, tab: Tab, info: WebAppInfo): void {
     const win = this.browser.tabs.windowFor(tabId)
     if (this.browser.tabs.activeTabFor(win)?.id !== tabId) return
-    const now = this.now()
-    const record = this.engagement[info.id]
-    if (record) this.engagement[info.id] = markPrompted(record, now)
-    this.save()
     this.banners.set(tabId, info.id)
     const banner: WebAppBanner = {
       tabId,
@@ -462,16 +515,53 @@ export class WebAppService {
       tint: this.tileColorFor(info, tab)
     }
     this.browser.emit('webapp.banner', banner, win)
-    this.schedule(`banner-timeout:${tabId}`, BANNER_TIMEOUT_MS, () =>
-      this.hideBanner(tabId, 'timeout')
-    )
+    // The cooldown is stamped on the chrome's word that the card is drawn (`bannerShown`), not
+    // here: a card no surface drew would spend it on a prompt nobody saw (#740, seed #42). The
+    // prompt's clock is the chrome's too – the page-edge band's one offer clock (the Design
+    // Lead's ruling: one offer, one clock) – so the core runs none: it hears the clock ran out
+    // as `dismissBanner('timeout')`, which records no dismissal.
+    this.schedule(`banner-shown:${tabId}`, BANNER_SHOWN_GRACE_MS, () => this.bannerUndrawn(tabId))
   }
 
-  /** The chrome reports the banner went away (or the core takes it down itself). */
+  /**
+   * The chrome's word that the banner's card is mounted on a surface that draws banners: the
+   * prompt counts as shown from now, so the app's `promptedAt` is stamped (the day's interval
+   * before the next offer; a swipe later lengthens it to the dismissal's). One stamp per banner;
+   * a word for a tab with no banner awaiting one – none up, the grace already run out, or the
+   * preview host's card, which the core never raised – changes nothing.
+   */
+  bannerShown(tabId: string): void {
+    if (!this.timers.has(`banner-shown:${tabId}`)) return
+    this.clear(`banner-shown:${tabId}`)
+    const appId = this.banners.get(tabId)
+    const record = appId ? this.engagement[appId] : undefined
+    if (!appId || !record) return
+    this.engagement[appId] = markPrompted(record, this.now())
+    this.save()
+  }
+
+  /**
+   * The grace ran out with no word of the card: the window's chrome drew nothing within it –
+   * no surface that draws banners is mounted there, or the one mounted could not open the card.
+   * Nobody saw the prompt, so the cooldown is not spent and the engagement record keeps
+   * counting; the tab leaves `banners` and the chrome hears `bannerHide`, so a surface mounting
+   * late never shows a card the core has let go of.
+   */
+  private bannerUndrawn(tabId: string): void {
+    if (!this.banners.has(tabId)) return
+    this.banners.delete(tabId)
+    this.browser.emit('webapp.bannerHide', { tabId }, this.browser.tabs.windowFor(tabId))
+  }
+
+  /**
+   * The chrome reports the banner went away – the user sent it off (`swipe`: the cooldown
+   * starts) or its clock ran out (`timeout`: nothing is recorded; the day's stamp holds) – or
+   * the core takes it down itself.
+   */
   dismissBanner(tabId: string, reason: 'swipe' | 'timeout'): void {
     const appId = this.banners.get(tabId)
     this.banners.delete(tabId)
-    this.clear(`banner-timeout:${tabId}`)
+    this.clear(`banner-shown:${tabId}`)
     if (!appId) return
     const record = this.engagement[appId]
     if (record && reason === 'swipe') {
@@ -597,8 +687,11 @@ export class WebAppService {
         startUrl: info.startUrl,
         scope: info.scope,
         pinnedAt: this.now(),
-        icon: details.icon ?? previous?.icon ?? null,
-        bounds: previous?.bounds ?? null
+        // The host's kept icon first; where the launcher owns the tile and the host keeps
+        // none (Android), the manifest's own icon address, so the record can be drawn.
+        icon: details.icon ?? previous?.icon ?? displayIcon(info),
+        bounds: previous?.bounds ?? null,
+        shareTarget: info.shareTarget ?? null
       })
       this.save()
     }

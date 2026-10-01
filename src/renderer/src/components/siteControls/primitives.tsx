@@ -28,6 +28,7 @@ import {
 } from '@renderer/lib/portals'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/fade'
 import { SPRING_GENTLE, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
+import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
 import { usePhone, type DataAttributes } from '@renderer/lib/surfaces'
 import { contentAreaStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -96,10 +97,15 @@ export interface PopoverApi {
   close: () => void
 }
 
-/** Where the keyboard goes as a popover opens (§9.22). */
+/** Where the keyboard goes as a popover opens (§9.22, §5.7). */
 export type PopoverFocus =
   /** The first row or button: a surface the user opened. */
   | 'first'
+  /**
+   * The primary button (`data-primary`): a prompt the user opened, whose act was the intent –
+   * Enter completes it, as Chrome does (§5.7); the first control when the prompt has no primary.
+   */
+  | 'primary'
   /** The container itself: a title-and-notice panel that is the only affordance, no button armed. */
   | 'container'
   /** Nowhere: a prompt raised by a page event beside a chip in the pill, which stays with the page. */
@@ -180,7 +186,8 @@ export function DesktopPopover({
       byKey.current = true
       dismiss()
     },
-    initial: focus,
+    initial:
+      focus === 'primary' ? (root) => root.querySelector<HTMLElement>('[data-primary]') : focus,
     // A popover that took no focus of its own hands nothing back; the others return to the
     // element that opened them (the site chip for a popover under the pill).
     returnTo: focus === 'none' ? null : (anchorElement?.() ?? undefined)
@@ -213,8 +220,8 @@ export function DesktopPopover({
         if (event.target === el) done()
       }
       el.addEventListener('transitionend', onEnd)
-      // A compositor that never fires: the fallback lands a frame later.
-      const timer = window.setTimeout(done, 240)
+      // A compositor that never fires: the fallback lands a few frames after the pop would have.
+      const timer = window.setTimeout(done, MOTION_POP_MS + 60)
       return () => {
         window.clearTimeout(timer)
         el.removeEventListener('transitionend', onEnd)
@@ -258,7 +265,7 @@ export function DesktopPopover({
           opacity: 0,
           transform: 'scale(0.94) translateY(0px)',
           transformOrigin: origin,
-          transition: 'opacity 180ms var(--zen-ease), transform 180ms var(--zen-ease)',
+          transition: `opacity ${MOTION_POP_MS}ms var(--zen-ease), transform ${MOTION_POP_MS}ms var(--zen-ease)`,
           pointerEvents: 'none'
         }
       : collapsing === 'fade'
@@ -1029,7 +1036,7 @@ export function ListRow({
       <button
         type="button"
         className={cn(
-          'outline-none transition-colors duration-[120ms] hover:bg-[var(--v2-fill)] active:bg-[var(--v2-fill-hover)] disabled:pointer-events-none disabled:opacity-40',
+          'outline-none transition-colors duration-[var(--zen-motion-state)] hover:bg-[var(--v2-fill)] active:bg-[var(--v2-fill-hover)] disabled:pointer-events-none disabled:opacity-40',
           layout
         )}
         disabled={disabled}

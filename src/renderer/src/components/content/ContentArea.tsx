@@ -6,10 +6,11 @@ import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { devtoolsDockOf, devtoolsDockedInFrame } from '@renderer/lib/contentRadius'
 import { coverPrimed, hideFollowsCover } from '@renderer/lib/cover'
-import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
+import { MOTION_POP_MS } from '@renderer/lib/motion/tokens'
+import { bandSeatStore } from '@renderer/lib/pageBand'
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
@@ -43,13 +44,13 @@ import { PdfViewerBar } from '../pdf/PdfViewerBar'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
 import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
-import { CrashRestoreBanner } from './CrashRestoreBanner'
-import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { EmptyPane } from './EmptyPane'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { HistoryNavBubble } from './HistoryNavBubble'
 import { LoadProgress } from './LoadProgress'
+import { PageBandHost } from './PageBandHost'
+import { PageBandLayer } from './PageBandLayer'
 import { PullIndicator } from './PullIndicator'
 import { ReadAloudPanel } from './ReadAloudPanel'
 import { ReaderCrossing } from './ReaderCrossing'
@@ -119,9 +120,10 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
     void captureActiveTab(glanceParentId).then(() => {
       if (cancelled) return
       uiStore.set({ glanceActive: true })
+      // The card's pop (`zen-animate-pop`) and a two-frame margin, then the view shows.
       setTimeout(() => {
         if (!cancelled) uiStore.set({ glanceReady: true })
-      }, 210)
+      }, MOTION_POP_MS + 30)
     })
     return () => {
       cancelled = true
@@ -136,7 +138,17 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
     ui,
     glanceActive
   )
-  const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
+  // The page-edge band's seat (motion spec §3.4, `lib/pageBand.ts`): the page's rect is the
+  // viewport's less the band's seated height at its top – the reporter lays the views out under
+  // it, and the frame's own chrome over the page (the split gutters, the glance frame, the
+  // floating URL bar, the page's picture) keeps to the same rect. 0 wherever no band stands.
+  const seat = Math.min(
+    bandSeatStore.use((s) => s.seat),
+    area?.height ?? 0
+  )
+  const local: Rect | null = area
+    ? { x: 0, y: seat, width: area.width, height: area.height - seat }
+    : null
   // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
   const { formFactor, coarse } = useViewport()
   const phone = formFactor === 'phone'
@@ -163,11 +175,13 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
   const foreign = isForeignTab(state, tab?.id)
-  // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
-  // inside the frame, so the layout reporter's viewport (and the tab view under it) shrink by
-  // their height. A fullscreen window shows the page alone (Chrome hides its infobars there too).
-  const banner = !phone && !state.window.fullscreen && wantsDefaultBrowserBanner(state)
-  const crashRestore = !phone ? state.crashRestore : null
+  // The page-edge band's host is the desktop's: Android lays its band over the WebView itself.
+  // "Make Zenium your default browser" and "Restore pages?" stood above the page as strips
+  // inside the frame (`DefaultBrowserBanner.tsx`, `CrashRestoreBanner.tsx`), the layout
+  // reporter's viewport shrinking by their height, until W8-M2 and W8-M3 retired them to the
+  // band (`PageBandHost`, motion spec §3.4): the one prompt about the page at the frame's top
+  // edge, in the page's surface, the page travelling down to make room.
+  const pageBand = !phone && state.platform !== 'android'
   // The phone draws a new tab page in the frame where the blank page would be (the desktop
   // keeps Zen's bare frame). Its view is never placed there – see `useLayoutReporter`.
   const newTabPage = phone && tab !== null && tab.url === BLANK_URL && !foreign
@@ -289,27 +303,27 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
         // nothing focusable is left behind; A11Y-01: TalkBack's order is the visual order).
         inert={phone && ui.overlay !== 'none' ? true : undefined}
       >
-        {(crashRestore || banner) && (
-          // Under a desktop overlay panel the strips keep their height (the viewport under them
-          // does not jump) but are not painted or reachable: the panel's 12 px margin showed the
-          // strip's top edge and its accent button above every overlay (services' #92 pass).
-          <div
-            className="zen-frame-strips contents"
-            data-under-overlay={ui.overlay !== 'none' || undefined}
-          >
-            {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
-            {banner && <DefaultBrowserBanner state={state} />}
-          </div>
-        )}
         {showTranslateBar && <TranslateBar state={state} tab={translateBar} />}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
+            {/* The page-edge band at the frame's top edge (§3.4); the page's rect under it is `local`. */}
+            {pageBand && <PageBandHost state={state} ui={ui} />}
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {/* Idle it draws nothing; only a touch host in 3-button navigation mode ever starts it (GN-04). */}
             <HistoryNavBubble />
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
-            {tab && pageTab && <InternalPageHost state={state} tab={tab} hidden={staged} />}
+            {tab &&
+              pageTab &&
+              // A chrome page has no view for the core to move under the band: where the band
+              // is hosted it rides on the band's seat and offset as the views do (§3.4, §10).
+              (pageBand ? (
+                <PageBandLayer>
+                  <InternalPageHost state={state} tab={tab} hidden={staged} />
+                </PageBandLayer>
+              ) : (
+                <InternalPageHost state={state} tab={tab} hidden={staged} />
+              ))}
             {newTabPage && (
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
               // just not painted, so the page is there the moment they leave.
@@ -323,7 +337,8 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
               <ForeignTabPreview tabId={tab.id} />
             )}
             {showSnapshot && (
-              <div className="absolute inset-0">
+              // The page's picture stands where the page is laid out: under the band's seat.
+              <div className="absolute inset-0" style={seat ? { top: seat } : undefined}>
                 {ui.snapshot &&
                 ui.snapshotTabId &&
                 ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (

@@ -416,6 +416,32 @@ describe('the page for the bar’s edge (NTP-29)', () => {
     expect(gear.style.bottom).toBe('')
   })
 
+  it('a tile’s icon is the phone page’s 24 square (§9.29) – the site’s icon, or its letter in the same box', async () => {
+    // Docs is open in a tab whose icon is inline (handed to the `<img>` as it is): the pin
+    // borrows it, as the page's `composeTiles` has a pin do; News has no icon anywhere.
+    const ICON = 'data:image/png;base64,iVBORw0KGgo='
+    render(tab('r', 'default'), {
+      ...withDock('top'),
+      tabs: { d: { ...tab('d', 'default'), url: 'https://docs.example/', favicon: ICON } }
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const grid = host!.querySelector<HTMLElement>('[aria-label="Most visited"]')!
+    const tiles = Array.from(grid.querySelectorAll<HTMLButtonElement>('button'))
+    expect(tiles.map((t) => t.getAttribute('aria-label'))).toEqual(['Docs', 'News'])
+    const icon = tiles[0].querySelector<HTMLImageElement>('img.zen-ntp-icon')!
+    expect(icon.getAttribute('src')).toBe(ICON)
+    expect([icon.getAttribute('width'), icon.getAttribute('height')]).toEqual(['24', '24'])
+    expect(icon.className).toContain('h-6 w-6')
+    expect(icon.className).not.toContain('h-8 w-8')
+    const letter = tiles[1].querySelector<HTMLElement>('.zen-ntp-letter')!
+    expect(letter.textContent).toBe('N')
+    expect(letter.className).toContain('h-6 w-6')
+    expect(tiles[1].querySelector('img')).toBeNull()
+  })
+
   it('with the bar at the top the layout is the one it was: the field first, the tiles under it, the gear low', async () => {
     const page = await renderAt('top')
     expect(page.dataset.dock).toBe('top')

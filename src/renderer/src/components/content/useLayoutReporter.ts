@@ -14,6 +14,7 @@ import {
 } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { landingStore, notePlacements } from '@renderer/lib/fullscreenLanding'
+import { overviewInteractive, stageStore } from '@renderer/lib/gestures/stage'
 import { phoneOnboardingCovers } from '@renderer/lib/onboarding'
 import {
   glanceRect,
@@ -24,6 +25,7 @@ import {
 } from '@renderer/lib/layout'
 import { layoutRectUnder } from '@renderer/lib/layoutRect'
 import { subscribePageRecede } from '@renderer/lib/motion/recede'
+import { bandSeatStore, layoutBand, pageRectUnderBand } from '@renderer/lib/pageBand'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { readerCrossingHolds, readerCrossingStore } from '@renderer/lib/readerTransition'
@@ -184,8 +186,17 @@ export function useLayoutReporter(
   const tourUp = formFactor === 'phone' && phoneOnboardingCovers(state)
   const contentHidden =
     pageHidden(ui) || lockCover || crossingHolds || firstRunCovers(state) || tourUp
+  // Whether what covers the pages is the tab overview, open or on its way open (the phone's and
+  // the tablet's, one stage): the hide is then a switch away from them, and the host tells the
+  // pages so (`LayoutReport.switchedAway`, OS-39). The desktop never opens one: the overview
+  // stays `closed` there and the report never carries the flag.
+  const overviewOpen = stageStore.use((s) => overviewInteractive(s.overview))
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
+  // The page-edge band's seat (motion spec §3.4, `lib/pageBand.ts`): the page is laid out under
+  // it, once per travel; 0 where no band stands (and always on Android, whose band host moves
+  // the WebView itself).
+  const seat = bandSeatStore.use((s) => s.seat)
   // The live page is swapped for its cover, so the hide follows the cover's paint on every host
   // (`hideFollowsCover`: on Electron too, the view composites above the chrome and its hide is
   // not ordered after the chrome's frame carrying the picture).
@@ -259,8 +270,10 @@ export function useLayoutReporter(
       // the read found the stylesheet's default, and the views' first frame was rounded
       // differently from the frame around them.
       const radius = contentRadius(state, formFactor)
-      let placements = placementsFor(area, visibleTabIds(state), group, radius, gap).map((p) => {
-        const c = viewCover(area, p.rect, band)
+      // The page's rect: the viewport less the page-edge band's seat at its top.
+      const page = pageRectUnderBand(area, seat)
+      let placements = placementsFor(page, visibleTabIds(state), group, radius, gap).map((p) => {
+        const c = viewCover(page, p.rect, band)
         return c ? { ...p, cover: c } : p
       })
       // The phone draws its new tab page in the chrome (`NewTabPage`); the blank page's view
@@ -280,17 +293,22 @@ export function useLayoutReporter(
               p.tabId !== state.glance!.parentTabId && !(group && group.tabIds.includes(p.tabId))
           )
           if (ui.glanceReady) {
-            const rect = glanceRect(area)
-            const c = viewCover(area, rect, band)
+            const rect = glanceRect(page)
+            const c = viewCover(page, rect, band)
             glance = { tabId: state.glance.tabId, rect, radius: 12, ...(c ? { cover: c } : {}) }
           }
         }
       }
+      // The band's seat these rects were laid out under and where the page is now (§3.4): the
+      // host places the views by their difference. Nothing is said where nothing stands.
+      const edge = layoutBand()
       const report: LayoutReport = {
         placements,
         glance,
         contentHidden: hidden,
-        sidePanel: panelOpen ? panelArea : null
+        ...(hidden && overviewOpen ? { switchedAway: true } : {}),
+        sidePanel: panelOpen ? panelArea : null,
+        ...(edge ? { band: edge } : {})
       }
       const key = JSON.stringify(report)
       if (key === lastSent.current) return
@@ -314,9 +332,11 @@ export function useLayoutReporter(
     ui.glanceReady,
     glanceActive,
     contentHidden,
+    overviewOpen,
     lockCover,
     gap,
     band,
+    seat,
     waitsForCover,
     formFactor,
     fullscreenTabId

@@ -1,8 +1,9 @@
-import type { AgentMode, Folder, Space, Tab } from '../../shared/types'
+import type { AgentMode, AgentPromptKind, Folder, Space, Tab } from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
 import { folderTabs } from '../model'
+import { describeDialog } from '../pageDialogs'
 import type { AgentCapture, InputModifier, TabView } from '../platform'
 import {
   deepSnapshot,
@@ -15,13 +16,15 @@ import {
 } from './frames'
 import { summarize } from './diagnostics'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
-import { pageCall, type PageLocation } from './page'
+import { NAME_YOURSELF } from './naming'
+import { uploadFiles } from './nativePrompts'
+import { pageCall, type PageLocation, type PageUploadMark } from './page'
+import type { AgentPrompt, AgentPromptAnswer } from './prompts'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
 import {
   describeIdle,
   FOREGROUND_LEASE_MS,
-  GHOST_IDLE_MS,
   looksLikeStatements,
   sleep,
   textError,
@@ -58,6 +61,11 @@ export interface AgentTool {
   definition: ToolDefinition
   /** Runs arbitrary JavaScript – hidden when scripts are disabled in Settings. */
   scripting?: boolean
+  /**
+   * Listed only where the host has this: page dialogs for agents, native prompts for agents (any
+   * `HostCapabilities.agentPrompts`), or file choosers among them.
+   */
+  needs?: 'agentDialogs' | 'agentPrompts' | 'fileUpload'
   run(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult>
 }
 
@@ -97,7 +105,9 @@ export const ARG_ALIASES: Record<string, string[]> = {
   textGone: ['text_gone', 'gone', 'disappears'],
   ignoreCache: ['hard', 'ignore_cache', 'bypassCache'],
   background: ['inBackground', 'hidden'],
-  submit: ['enter', 'pressEnter']
+  submit: ['enter', 'pressEnter'],
+  accept: ['accepted', 'ok', 'confirm'],
+  promptText: ['prompt_text', 'answer', 'response', 'reply']
 }
 
 /** The first present value among an argument's own name and its aliases. */
@@ -535,6 +545,29 @@ export async function routeInput(
 }
 
 /** The tool's headline plus the synthetic-input warning line when the input was not real. */
+/**
+ * Why a click on a drop-down `<select>`, a colour or a date field is refused: a real click opens a
+ * popup window outside the page (the system's, on some platforms) that the user would see and the
+ * agent could not. What sets the value instead.
+ */
+function popupRefusal(loc: Located, target: string | null): string {
+  const t = JSON.stringify(target ?? `${loc.x},${loc.y}`)
+  const how =
+    loc.popup === 'select'
+      ? `browser_select_option {"target":${t},"values":["…"]} picks its option`
+      : `browser_type {"target":${t},"text":"${POPUP_FORMATS[loc.popup ?? ''] ?? '…'}"} sets its value`
+  return `${describeElement(loc)} opens a picker outside the page when clicked, which you could not see and the user would; nothing was clicked. ${how}.`
+}
+
+const POPUP_FORMATS: Record<string, string> = {
+  color: '#rrggbb',
+  date: 'YYYY-MM-DD',
+  'datetime-local': 'YYYY-MM-DDThh:mm',
+  month: 'YYYY-MM',
+  week: 'YYYY-Www',
+  time: 'hh:mm'
+}
+
 function withInputNote(headline: string, routing: InputRouting): string {
   return routing.trusted || !routing.note ? headline : `${headline}\n${routing.note}`
 }
@@ -670,7 +703,7 @@ function tabLine(ctx: ToolContext, t: Tab, scope: 'own' | 'all'): string {
   if (scope === 'all') {
     const owner = ctx.agents.describeOwner(ctx.session, t)
     if (owner) flags.push(owner)
-    if (ctx.browser.tabs.activeTabFor(ctx.agents.agentWindow())?.id === t.id)
+    if (ctx.browser.tabs.activeTabFor(ctx.browser.tabs.windowFor(t.id))?.id === t.id)
       flags.push("user's active tab")
   }
   return `- ${t.id} ${JSON.stringify(titleOf(t).slice(0, 80))} ${t.url}${flags.length ? ` [${flags.join(', ')}]` : ''}`
@@ -683,6 +716,8 @@ function groupOwnerLabel(ctx: ToolContext, g: Folder): string | null {
     return owner.id === ctx.session.id
       ? 'yours'
       : `owned by ${JSON.stringify(owner.name)}${ctx.agents.ghostLabel(owner)}`
+  const held = ctx.agents.heldBy(g.id)
+  if (held) return `owned by ${JSON.stringify(held.name)}, away – kept for it`
   if (ctx.agents.isOrphan(g.id)) {
     const was = ctx.agents.orphanWas(g.id)
     return was ? `orphaned, was ${JSON.stringify(was)}` : 'orphaned'
@@ -804,6 +839,24 @@ function ownOrphansLine(ctx: ToolContext): string[] {
 // Tools: status, session, groups
 // ---------------------------------------------------------------------------
 
+/** Whether the agent named itself, and how it gets its session back after a lost connection. */
+function sessionLine(ctx: ToolContext): string {
+  const claim = ctx.agents.claimOf(ctx.session)
+  if (claim)
+    return `Your session ${JSON.stringify(claim.name)} is durable: your groups and tabs stay yours across reconnects, restarts and dropped connections until you end it with zen_session {"action":"end"}. Your session key is ${claim.key} – if a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"${claim.key}"} brings them back.`
+  return ctx.agents.requireName
+    ? `You have not started your session yet: ${NAME_YOURSELF}`
+    : 'Your session is not named: zen_session {"action":"start","name":"…"} makes it durable.'
+}
+
+/** ", quiet 5 min – its groups are adoptable" for an unnamed agent gone quiet; empty otherwise. */
+function ghostNote(ctx: ToolContext, sessionId: string): string {
+  const o = ctx.agents.session(sessionId)
+  return o && ctx.agents.isGhost(o)
+    ? `, quiet ${describeIdle(ctx.agents.idleFor(o))} – its groups are adoptable`
+    : ''
+}
+
 function statusText(ctx: ToolContext): string {
   const s = ctx.session
   const others = ctx.agents.list().filter((a) => a.id !== s.id)
@@ -812,6 +865,7 @@ function statusText(ctx: ToolContext): string {
   const groups = ctx.agents.groupsOf(s).length
   return [
     `You are ${JSON.stringify(s.name)} (session ${s.id}, colour ${s.color}) in ${s.mode} mode. ${leaseLine(ctx)}`,
+    sessionLine(ctx),
     '',
     `Your groups (${groups}) and tabs (${own}) – id "title" url [flags]:`,
     listOwnTabs(ctx),
@@ -821,7 +875,7 @@ function statusText(ctx: ToolContext): string {
     ...(others.length
       ? others.map(
           (a) =>
-            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}${Date.now() - a.lastActiveAt >= GHOST_IDLE_MS ? `, quiet ${describeIdle(Date.now() - a.lastActiveAt)} – its groups are adoptable` : ''}`
+            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}${ghostNote(ctx, a.id)}`
         )
       : ['(none)']),
     '',
@@ -846,9 +900,20 @@ const zenStatus: AgentTool = {
   }
 }
 
-const SESSION_ACTIONS = ['status', 'end', 'rename'] as const
+const SESSION_ACTIONS = ['start', 'resume', 'status', 'end', 'rename'] as const
 type SessionAction = (typeof SESSION_ACTIONS)[number]
 const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
+  start: 'start',
+  begin: 'start',
+  new: 'start',
+  create: 'start',
+  open: 'start',
+  register: 'start',
+  resume: 'resume',
+  reclaim: 'resume',
+  restore: 'resume',
+  reattach: 'resume',
+  reconnect: 'resume',
   status: 'status',
   info: 'status',
   whoami: 'status',
@@ -869,16 +934,21 @@ const zenSession: AgentTool = {
     name: 'zen_session',
     title: 'Your session',
     description:
-      'Your session in this browser. action "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt (zen_groups adopt). "rename": change the name shown on your cursor, badges and home group (name).',
+      'Your session in this browser. Call {"action":"start","name":"…"} first: name yourself after the task you are doing (e.g. "Invoice reconciliation", "PR 741 review") – generic names such as "Agent", "Claude" or "Cursor" are refused, and nothing but zen_status works until you have started. A started session is durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections, and no other agent can adopt them, until you end it; the answer gives your session key. "resume" {key}: carry your session over to this connection after a reconnect that lost it (the key from start or zen_status). "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt. "rename" {name}: change your name (the same rules as start).',
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...SESSION_ACTIONS] },
+        name: {
+          type: 'string',
+          description:
+            'start, rename: a specific, descriptive name for what you are doing (6–48 characters)'
+        },
+        key: { type: 'string', description: 'resume: your session key ("zk_…")' },
         closeTabs: {
           type: 'boolean',
           description:
             'end: close your groups and their tabs (default: leave them as orphaned groups)'
-        },
-        name: { type: 'string', description: 'rename: your new name' }
+        }
       },
       ['action']
     ),
@@ -894,8 +964,20 @@ const zenSession: AgentTool = {
       )
     const s = ctx.session
     if (action === 'status') return text(statusText(ctx))
+    if (action === 'start') {
+      const claim = ctx.agents.startClaim(s, str(args, 'name') ?? '')
+      return text(
+        `Session started as ${JSON.stringify(claim.name)}. Your groups and tabs are yours until you end the session with zen_session {"action":"end"} – reconnects, browser restarts and dropped connections do not change that, and no other agent can take them. Your session key is ${claim.key}: keep it for the whole task. If a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"${claim.key}"} brings them back – never start a new session instead.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      )
+    }
+    if (action === 'resume') {
+      const claim = ctx.agents.resumeClaim(s, str(args, 'key'))
+      return text(
+        `Resumed your session ${JSON.stringify(claim.name)} on this connection. Refs from before are stale: browser_snapshot before acting.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      )
+    }
     if (action === 'rename') {
-      const name = need(args, 'name', 'the new name, e.g. "Research bot"')
+      const name = need(args, 'name', 'the new name, e.g. "Invoice reconciliation"')
       const before = s.name
       ctx.agents.rename(s, name)
       const home = s.homeGroupId ? ctx.browser.state.model.folders[s.homeGroupId] : undefined
@@ -906,8 +988,9 @@ const zenSession: AgentTool = {
     const closeTabs = bool(args, 'closeTabs')
     const groups = ctx.agents.groupsOf(s)
     const { groups: n, tabs } = ctx.agents.endSession(s, closeTabs)
-    const stays =
-      'Your connection stays open: the next call starts a fresh session under the same id (a new home group on first use), so there is nothing to reconnect.'
+    const stays = ctx.agents.requireName
+      ? 'Your connection stays open: zen_session {"action":"start","name":"…"} starts a new session on it when you have more to do.'
+      : 'Your connection stays open: the next call starts a fresh session under the same id (a new home group on first use), so there is nothing to reconnect.'
     if (!n) return text(`Session ended. You had no groups; nothing was left behind. ${stays}`)
     return text(
       closeTabs
@@ -946,7 +1029,7 @@ const zenGroups: AgentTool = {
   definition: {
     name: 'zen_groups',
     title: 'Your tab groups',
-    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent is gone) with all its tabs – also a group of an agent quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min (its client dropped, most likely), and with force: true any other agent's group when the user asked you to take it over (that agent is told); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
+    description: `Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user's folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user's spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent ended its session and left it) with all its tabs – a named agent's groups are never adoptable, not even while it is away or with force (force only applies to an unnamed legacy session's group, when the user asked); adopt without groupId takes back every orphaned group a session with your name left. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.`,
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...GROUP_ACTIONS] },
@@ -1595,6 +1678,281 @@ const browserReload: AgentTool = {
   }
 }
 
+const browserHandleDialog: AgentTool = {
+  needs: 'agentDialogs',
+  definition: {
+    name: 'browser_handle_dialog',
+    title: 'Answer a page dialog',
+    description:
+      'Answer the dialog a page opened on one of your tabs (alert, confirm, prompt or "Leave site?"): the page is blocked until it is answered, so a call that runs into one returns with it, and page tools refuse the tab until then. accept: true presses OK (default), false Cancel; promptText is what a prompt receives. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Returns a snapshot of the page afterwards.',
+    inputSchema: schema(
+      {
+        tabId: TAB_ID,
+        accept: { type: 'boolean', description: 'OK (true, default) or Cancel (false)' },
+        promptText: { type: 'string', description: 'prompt: the text to answer with' }
+      },
+      []
+    ),
+    annotations: { openWorldHint: true }
+  },
+  async run(ctx, args) {
+    const tab = targetTab(ctx, args)
+    const raw = pick(args, 'accept')
+    const accept = raw === undefined ? true : bool(args, 'accept')
+    const answered = ctx.agents.answerDialog(tab.id, accept, str(args, 'promptText'))
+    await sleep(150)
+    const said = `Answered the ${answered.kind === 'beforeunload' ? '"Leave site?"' : answered.kind} dialog (${JSON.stringify(answered.message.slice(0, 120))}) with ${accept ? 'OK' : 'Cancel'}.`
+    const next = ctx.agents.pendingDialog(tab.id)
+    if (next) return text(`${said} The page opened another one: ${describeDialog(next)}.`)
+    const view = await ctx.agents.prepare(ctx.session, tab.id, { activate: false })
+    return pageResult(ctx, tab, view, said)
+  }
+}
+
+/** The prompt `browser_respond_prompt` / `browser_file_upload` answer: the named one, or the tab's only one. */
+function promptToAnswer(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+  kind?: AgentPromptKind
+): AgentPrompt | null {
+  const id = str(args, 'promptId')
+  const waiting = ctx.agents.promptsOf(ctx.session).filter((p) => !kind || p.kind === kind)
+  if (id) {
+    const p = waiting.find((w) => w.id === id || w.id.startsWith(id))
+    if (!p)
+      throw new RpcError(
+        -32002,
+        `No ${kind ? `${kind} ` : ''}prompt ${id} is waiting on your tabs (answered, timed out or withdrawn). browser_prompts lists what waits.`
+      )
+    return p
+  }
+  const raw = pick(args, 'tabId')
+  const tabId = raw !== undefined ? targetTab(ctx, args).id : null
+  const mine = tabId ? waiting.filter((p) => p.tabId === tabId) : waiting
+  if (mine.length > 1)
+    throw new RpcError(
+      -32602,
+      `${mine.length} prompts wait${tabId ? ` on tab ${tabId}` : ''}: name one by "promptId" – ${mine.map((p) => `${p.id} (${p.kind}, tab ${p.tabId})`).join(', ')}`
+    )
+  return mine[0] ?? null
+}
+
+const PROMPT_ID = {
+  type: 'string',
+  description:
+    'The prompt: its id from browser_prompts or the notice that announced it ("prompt_…")'
+}
+
+const browserPrompts: AgentTool = {
+  needs: 'agentPrompts',
+  definition: {
+    name: 'browser_prompts',
+    title: 'List waiting prompts',
+    description:
+      'List what your tabs wait for you to answer instead of showing the user: file choosers, downloads asking where to save, sign-ins (HTTP authentication), client certificates, permission requests (camera, microphone, location, notifications, clipboard…), screen sharing, Bluetooth/USB/serial/HID device pickers, links to other apps – and page dialogs (alert, confirm, prompt, "Leave site?"). Each comes with its details, the actions it takes and the default it gets when you leave it: answer with browser_respond_prompt (browser_file_upload for files, browser_handle_dialog for page dialogs). Never use OS automation for these: they are never on screen.',
+    inputSchema: schema({ tabId: TAB_ID }),
+    annotations: { readOnlyHint: true, openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const tabId = pick(args, 'tabId') !== undefined ? targetTab(ctx, args).id : undefined
+    const now = Date.now()
+    const prompts = ctx.agents.promptsOf(ctx.session, tabId).map((p) => ({
+      id: p.id,
+      tabId: p.tabId,
+      kind: p.kind,
+      summary: p.summary,
+      details: p.details,
+      actions: p.actions,
+      defaultAction: p.defaultAction,
+      secondsLeft: Math.max(0, Math.round((p.expiresAt - now) / 1000)),
+      pageWaits: p.blocking
+    }))
+    const dialogs = ctx.agents
+      .ownedTabs(ctx.session)
+      .filter((t) => tabId === undefined || t.id === tabId)
+      .flatMap((t) => {
+        const d = ctx.agents.pendingDialog(t.id)
+        return d
+          ? [
+              {
+                tabId: t.id,
+                kind: d.kind,
+                summary: describeDialog(d),
+                answer: `browser_handle_dialog {"tabId":"${t.id}","accept":true} (or false)`
+              }
+            ]
+          : []
+      })
+    const kinds = ctx.agents.promptKinds()
+    if (!prompts.length && !dialogs.length)
+      return text(
+        `Nothing waits for you${tabId ? ` on tab ${tabId}` : ''}. These come to you instead of the user here: ${kinds.join(', ')} prompts and page dialogs.`
+      )
+    return text(JSON.stringify({ prompts, dialogs }, null, 2))
+  }
+}
+
+const browserRespondPrompt: AgentTool = {
+  needs: 'agentPrompts',
+  definition: {
+    name: 'browser_respond_prompt',
+    title: 'Answer a prompt',
+    description:
+      'Answer a prompt one of your tabs waits on (browser_prompts lists them; every result names those still waiting): its id (or tabId when the tab has only one) and one of its actions, with the arguments that action reads – e.g. {"promptId":"prompt_…","action":"allow"}, {"action":"sign-in","username":"…","password":"…"}, {"action":"select","index":0}, {"action":"save","filename":"report.pdf"}, {"action":"upload","paths":["/tmp/a.png"]}. Nothing you answer is remembered for the user: a permission lasts until the tab leaves the site, a device while the tab is yours, a sign-in or certificate goes with that one request. Returns a snapshot of the page afterwards.',
+    inputSchema: schema(
+      {
+        promptId: PROMPT_ID,
+        tabId: TAB_ID,
+        action: {
+          type: 'string',
+          description: 'One of the prompt\'s actions ("allow", "deny", "cancel", "sign-in"…)'
+        },
+        username: { type: 'string', description: 'sign-in: the user name' },
+        password: { type: 'string', description: 'sign-in: the password' },
+        index: { type: 'number', description: 'select (client certificate): which certificate' },
+        filename: {
+          type: 'string',
+          description: 'save (download): the file name in the Downloads folder'
+        },
+        sourceId: { type: 'string', description: 'share (screen capture): which tab' },
+        deviceId: { type: 'string', description: 'connect (device chooser): which device' },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'upload: files on this computer'
+        },
+        files: {
+          type: 'array',
+          items: { type: 'object' },
+          description: 'upload: files sent inline, [{"name","base64","mimeType"?}]'
+        }
+      },
+      ['action']
+    ),
+    annotations: { openWorldHint: true }
+  },
+  async run(ctx, args) {
+    const prompt = promptToAnswer(ctx, args)
+    if (!prompt)
+      return textError(
+        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, "Leave site?") is answered with browser_handle_dialog.`
+      )
+    const action = need(args, 'action', `one of ${Object.keys(prompt.actions).join(', ')}`)
+    const answer: AgentPromptAnswer = { ...args, action }
+    delete answer.promptId
+    delete answer.tabId
+    ctx.agents.answerPrompt(ctx.session, prompt.id, answer)
+    const said = `Answered the ${prompt.kind} prompt ${prompt.id} with "${action}".`
+    return afterPrompt(ctx, prompt.tabId, said)
+  }
+}
+
+/** A snapshot of the tab once a prompt is answered (the page may be loading what it waited for). */
+async function afterPrompt(ctx: ToolContext, tabId: string, said: string): Promise<ToolResult> {
+  const tab = ctx.browser.tabs.tab(tabId)
+  if (!tab) return text(said)
+  await settle(ctx, tabId)
+  if (ctx.agents.pendingDialog(tabId)) return text(said)
+  const view = ctx.browser.tabs.view(tabId)
+  if (!view || view.isDestroyed()) return text(said)
+  return pageResult(ctx, tab, view, said)
+}
+
+const browserFileUpload: AgentTool = {
+  needs: 'fileUpload',
+  definition: {
+    name: 'browser_file_upload',
+    title: 'Upload files',
+    description:
+      'Hand a page files – never through the system file dialog, which agents do not get. Three ways: (1) a file chooser the page opened (clicking an upload button sends it to you as a prompt) – answer it with paths or files, promptId or tabId naming it; (2) target an <input type=file> (or its label) and the files are set without any click or chooser; (3) target a drop zone with drop: true and the files are dropped on it as from the file manager. paths are files on this computer (only for an agent running on it); from another machine send files: [{"name":"a.pdf","base64":"…","mimeType":"application/pdf"}]. A folder input takes one folder path. Returns a snapshot afterwards. ' +
+      PAGE_CHANGED,
+    inputSchema: pageSchema({
+      promptId: PROMPT_ID,
+      target: TARGET,
+      drop: {
+        type: 'boolean',
+        description: 'Drop the files on the target (a drop zone) instead of setting an input'
+      },
+      paths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Absolute paths of files (or one folder) on this computer'
+      },
+      files: {
+        type: 'array',
+        items: { type: 'object' },
+        description:
+          'Files sent inline: [{"name":"report.pdf","base64":"…","mimeType":"application/pdf"}]'
+      }
+    }),
+    annotations: { openWorldHint: true }
+  },
+  async run(ctx, args) {
+    const target = str(args, 'target')
+    const local = ctx.agents.isLocal(ctx.session)
+    const filesArgs = { paths: args.paths ?? args.path, files: args.files }
+    if (!target) {
+      const prompt = promptToAnswer(ctx, args, 'file-chooser')
+      if (!prompt)
+        return textError(
+          "No file chooser waits on your tabs. Click the page's upload button (its chooser comes to you as a prompt), or pass the <input type=file> as target to set the files directly."
+        )
+      ctx.agents.answerPrompt(ctx.session, prompt.id, { action: 'upload', ...filesArgs })
+      const n = countFiles(filesArgs)
+      return afterPrompt(ctx, prompt.tabId, `Handed the page's file chooser ${n}.`)
+    }
+    const { tab, view, page } = await actOn(ctx, args)
+    const loc = await locate(page, target)
+    if (bool(args, 'drop')) {
+      if (!view.dropFiles) return textError('This browser cannot drop files on a page')
+      const files = uploadFiles(filesArgs, { local, mode: 'multiple' })
+      await view.dropFiles(loc.x, loc.y, files)
+      await settle(ctx, tab.id)
+      return pageResult(
+        ctx,
+        tab,
+        ctx.browser.tabs.view(tab.id) ?? view,
+        `Dropped ${countFiles(filesArgs)} on ${describeElement(loc)}.`
+      )
+    }
+    if (!view.setInputFiles) return textError('This browser cannot set the files of an input')
+    const token = `u${Math.random().toString(36).slice(2, 10)}`
+    const mark = (await page.eval(
+      loc.frameId,
+      pageCall('markUpload', ctx.session.id, target, token)
+    )) as PageUploadMark | null
+    if (!mark || !mark.ok)
+      return textError(
+        `${describeElement(loc)}: ${mark?.error ?? 'the page did not answer'}.${mark && !mark.ok && mark.notFileInput ? ' Target the <input type=file> itself (it is often hidden: browser_snapshot {"filter":"file"} or a CSS selector like "input[type=file]" finds it), click the upload button and answer its chooser, or pass drop: true to drop the files on this element.' : ''}`
+      )
+    const files = uploadFiles(filesArgs, { local, mode: mark.mode })
+    try {
+      await view.setInputFiles(`[data-zen-upload="${token}"]`, files)
+    } catch (error) {
+      return textError(
+        `Could not set the files of ${describeElement(loc)}: ${(error as Error).message}. If the input sits in a frame of another site, click its upload button instead – the chooser comes to you.`
+      )
+    }
+    await settle(ctx, tab.id)
+    return pageResult(
+      ctx,
+      tab,
+      ctx.browser.tabs.view(tab.id) ?? view,
+      `Set ${countFiles(filesArgs)} on ${describeElement(loc)}${mark.accept.length ? ` (it accepts ${mark.accept.join(', ')})` : ''}.`
+    )
+  }
+}
+
+function countFiles(args: { paths?: unknown; files?: unknown }): string {
+  const paths = Array.isArray(args.paths)
+    ? args.paths.length
+    : typeof args.paths === 'string'
+      ? 1
+      : 0
+  const n = paths + (Array.isArray(args.files) ? args.files.length : 0)
+  return `${n} file${n === 1 ? '' : 's'}`
+}
+
 const browserSnapshot: AgentTool = {
   definition: {
     name: 'browser_snapshot',
@@ -1648,6 +2006,7 @@ const browserClick: AgentTool = {
     const { loc, target } = await locateArg(page, args, 'browser_click')
     if (loc.disabled)
       return textError(`${describeElement(loc)} is disabled, so it cannot be clicked`)
+    if (loc.popup) return textError(popupRefusal(loc, target ?? loc.ref))
     const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 260 : 30)
@@ -1729,7 +2088,8 @@ const browserType: AgentTool = {
     const value = typeof raw === 'string' ? raw : raw === undefined ? '' : String(raw)
     const { tab, view, page } = await actOn(ctx, args)
     const loc = await locate(page, target)
-    if (!loc.editable)
+    if (loc.popup === 'select') return textError(popupRefusal(loc, target))
+    if (!loc.editable && !loc.popup)
       return textError(
         `${describeElement(loc)} is not an editable field${loc.role === 'combobox' ? ' – use browser_select_option to choose an option' : loc.role === 'checkbox' || loc.role === 'radio' ? ' – use browser_click to toggle it' : ''}`
       )
@@ -1737,15 +2097,18 @@ const browserType: AgentTool = {
     const routing = await routeInput(ctx, tab.id, view, loc)
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'move')
     await sleep(ctx.agents.settings.showCursor ? 220 : 20)
-    // Focus the way a person would, so focus handlers and autocomplete popups behave.
-    await clickAt(
-      page,
-      view,
-      loc,
-      target,
-      { button: 'left', count: 1, modifiers: [] },
-      routing.trusted
-    )
+    // Focus the way a person would, so focus handlers and autocomplete popups behave – except
+    // on a colour or date field, whose click opens a picker window outside the page: the fill
+    // below sets its value as the picker would.
+    if (!loc.popup)
+      await clickAt(
+        page,
+        view,
+        loc,
+        target,
+        { button: 'left', count: 1, modifiers: [] },
+        routing.trusted
+      )
     await ctx.agents.cursor(ctx.session, tab.id, view, loc.x, loc.y, 'click')
     await sleep(60)
     // The field's own frame runs the fill: that is where the ref (and the element) lives.
@@ -2282,6 +2645,10 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserTakeScreenshot,
   browserReadPage,
   browserEvaluate,
+  browserHandleDialog,
+  browserPrompts,
+  browserRespondPrompt,
+  browserFileUpload,
   zenGroups,
   zenSession,
   zenSpaces,
@@ -2289,22 +2656,50 @@ export const AGENT_TOOLS: AgentTool[] = [
   zenHistory
 ]
 
+const ALL_PROMPT_KINDS: readonly AgentPromptKind[] = [
+  'file-chooser',
+  'download',
+  'http-auth',
+  'client-certificate',
+  'permission',
+  'screen-capture',
+  'device-chooser',
+  'device-pairing',
+  'external-protocol',
+  'print'
+]
+
+/** The instructions' line on the native prompts this host hands to agents. */
+function nativePromptsLine(kinds: readonly AgentPromptKind[]): string {
+  const kept = ALL_PROMPT_KINDS.filter((k) => !kinds.includes(k))
+  return `- Native prompts on your tabs come to you, never to the user and never on screen: ${kinds.join(', ')}. A "Notice:" or a "Waiting for your answer" block names each (every result repeats the ones still waiting), browser_prompts lists them, browser_respond_prompt answers, browser_file_upload hands a page files (a chooser it opened, an <input type=file>, or a drop zone). Never reach for OS automation (xdotool, AppleScript, clicking system dialogs in screenshots): there is nothing on screen to automate. Unanswered, a prompt gets its default after two minutes – the refusal; a download is saved to Downloads. A drop-down <select>, colour or date field is set with browser_select_option / browser_type, not clicked.${kept.length ? ` This browser does not hand you: ${kept.join(', ')}.` : ''}`
+}
+
 /**
  * The server's `instructions`: how to behave in a browser the user and other agents share. `others`
  * is how many other agents are connected right now – with any, background mode is the
  * recommendation.
  */
-export function agentInstructions(mode: AgentMode, allowScripts: boolean, others = 0): string {
+export function agentInstructions(
+  mode: AgentMode,
+  allowScripts: boolean,
+  others = 0,
+  agentDialogs = true,
+  promptKinds: readonly AgentPromptKind[] = []
+): string {
   const company =
     others > 0
       ? `${others} other agent${others === 1 ? ' is' : 's are'} connected right now`
       : 'no other agent is connected right now, but one may join at any time'
   return [
     "You are controlling the user's Zenium browser (Chromium) through its built-in MCP server. The user and other agents share this browser, and every agent works in tab groups of its own, so:",
+    `- Name yourself first. zen_session {"action":"start","name":"…"} with a specific name for your task (e.g. "Invoice reconciliation", "PR 741 review"; "Agent", "Claude" or your client's name are refused) – nothing but zen_status works before. Your session is then durable: your groups and tabs stay yours across reconnects, browser restarts and dropped connections until you end it. Keep the session key the answer gives you for the whole task; if a reconnect ever leaves you without your groups, zen_session {"action":"resume","key":"…"} brings them back – never start a new session instead.`,
     '- Address everything by id. Every page tool takes tabId – a tab id from browser_tabs (a unique prefix is enough); there is no current tab, and list positions are refused because they shift whenever another agent or the user opens or closes a tab. Only while you own exactly one tab may you omit tabId.',
     '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
-    `- Never close, move or navigate what you did not create. A group whose agent is gone is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} if you are continuing that work, otherwise leave it. zen_groups {"action":"adopt"} without a groupId takes back every orphaned group a session with your name left (after a reconnect or an end without closeTabs). An agent quiet for over ${Math.round(GHOST_IDLE_MS / 60_000)} min counts as gone; a working agent's group is taken only with force: true, when the user asked you to.`,
+    `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
+    `${agentDialogs ? '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
+    ...(promptKinds.length ? [nativePromptsLine(promptKinds)] : []),
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',

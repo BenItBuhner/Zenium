@@ -1,24 +1,28 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Platform, UIState } from '@shared/types'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
-import { describeDefaultBrowserRequest } from '@renderer/lib/defaultBrowser'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { BAND_HEIGHT_ONE_LINE } from '@renderer/lib/motion/band'
+import type { BandHost } from '../../band/PageEdgeBand'
 
 /*
- * The desktop's default-browser surfaces on v2 (styling pass 5): the strip under the toolbar –
- * a window surface with no glyph, Not now then the primary Set as default (§9.11, §9.29) – and
- * the prompt its Set as default raises before the OS hand-off (`AskDialog` in
- * DefaultBrowserPrompt.tsx): the §9.23 composition on the frame's dialog host with the app icon
- * at 48 over the title block, one sentence per OS, focus on the primary, Escape closing it and
- * giving focus back to the strip's button, the primary running the request and taking the
- * strip down for this release. Then the phone's campaign promo (`PromoSheet`, the core's
- * `prompt: 'sheet'` on a coarse pointer): the same composition as a sheet – the 48 app icon
- * above the chassis' title block, no glyph on the title (§9.23 as the #264 verdict wrote it;
- * the primitives pass 3, #272) – and its mouse form (`HostedDialog`), the icon over the block.
+ * The desktop's default-browser surfaces on v2: the page-edge band's state (motion spec §3.4;
+ * `content/useDefaultBrowserBand.ts` – the strip under the toolbar before W8-M2) – a page
+ * surface with the Settings section's globe, the sentence, the one action Set as default and
+ * the × named Dismiss as on every band (§3.1, §9.29; the Lead's ruling on #740) – whose Set as
+ * default asks the OS directly and holds (the Design Lead's ruling on the band's tenants, W8-M3:
+ * the dialog the desktop raised before the hand-off is dropped); on Windows, where the hand-off
+ * opens Windows Settings, the band re-words itself in place – Open Windows Settings its action,
+ * the hand-off again (the Lead's gate on #754, §10) – and leaves when the role is confirmed or
+ * on ×, which there remembers nothing. Then the phone's campaign promo (`PromoSheet`, the core's `prompt: 'sheet'` on a
+ * coarse pointer): the §9.23 composition as a
+ * sheet – the 48 app icon above the chassis' title block, no glyph on the title (§9.23 as the
+ * #264 verdict wrote it; the primitives pass 3, #272) – and its mouse form (`HostedDialog`),
+ * the icon over the block.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -31,10 +35,12 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: () => () => undefined
 }))
 
-const { DefaultBrowserBanner } = await import('../../content/DefaultBrowserBanner')
+const { PageEdgeBand } = await import('../../band/PageEdgeBand')
+const { useDefaultBrowserBand } = await import('../../content/useDefaultBrowserBand')
+const { bandStore, chooseBand, resetBands, setBandFrame } = await import('@renderer/lib/band')
 const { DefaultBrowserLayer } = await import('../DefaultBrowserPrompt')
 
-function state(platform: Platform): UIState {
+function state(platform: Platform, dismissed: string | null = null): UIState {
   return {
     platform,
     version: '0.3.77',
@@ -42,11 +48,25 @@ function state(platform: Platform): UIState {
     spaces: [{ id: 's1', activeTabId: null, tabIds: [] }],
     activeSpaceId: 's1',
     essentialTabIds: [],
-    settings: { appIcon: 'indigo', defaultBrowserPromptDismissed: null, onboardingDone: true },
+    settings: { appIcon: 'indigo', defaultBrowserPromptDismissed: dismissed, onboardingDone: true },
     capabilities: { defaultBrowser: true },
     defaultBrowser: { isDefault: false, prompt: null },
     window: { kind: 'normal', fullscreen: false }
   } as unknown as UIState
+}
+
+/** The same window once the OS names Zenium: the state the band stands for has ended. */
+function confirmed(platform: Platform): UIState {
+  return { ...state(platform), defaultBrowser: { isDefault: true, prompt: null } } as UIState
+}
+
+/** The page under the band stands still here: the seam is the host's business (PageBandHost's tests). */
+const HOST: BandHost = { translate: () => undefined, rest: () => undefined }
+
+/** The band on a desktop page tab: the tenant's hook, then the band standing what the model chose. */
+function Band({ state }: { state: UIState }): JSX.Element {
+  useDefaultBrowserBand(state)
+  return <PageEdgeBand host={HOST} />
 }
 
 let container: HTMLDivElement
@@ -56,7 +76,7 @@ function render(el: ReactElement): void {
   act(() => root.render(el))
 }
 
-/** Let the prompt's wait for the page's picture resolve (at once with no page) and it come up. */
+/** Let a request's promise settle through the tenant's `then`. */
 async function settle(): Promise<void> {
   await act(async () => {
     await Promise.resolve()
@@ -67,8 +87,6 @@ async function settle(): Promise<void> {
 /** The prompt while it is open; a closed one the host keeps through its exit is `data-leaving` (#188). */
 const dialog = (): HTMLElement | null =>
   document.querySelector<HTMLElement>('[role="dialog"]:not([data-leaving])')
-const leaving = (): HTMLElement | null =>
-  document.querySelector<HTMLElement>('[role="dialog"][data-leaving]')
 const buttons = (scope: ParentNode): HTMLButtonElement[] => [
   ...scope.querySelectorAll<HTMLButtonElement>('button')
 ]
@@ -77,27 +95,44 @@ const click = (el: Element | null): void => {
     el!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   })
 }
-const escape = (): void => {
-  act(() => {
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-  })
-}
 
 const view = (s: UIState): ReactElement => (
   <>
     <FrameDialogHost frame />
-    <DefaultBrowserBanner state={s} />
+    <Band state={s} />
     <DefaultBrowserLayer />
   </>
 )
+
+/** The band standing in the frame, its action and its ×. */
+const band = (): HTMLElement => container.querySelector<HTMLElement>('.zen-band')!
+/** The band's content that is current: not the tenant fading out after a re-wording. */
+const content = (): HTMLElement =>
+  band().querySelector<HTMLElement>('.zen-band-content:not([data-leaving])')!
+const title = (): string => content().querySelector('.zen-band-title')!.textContent ?? ''
+const setDefaultButton = (): HTMLButtonElement | null =>
+  content().querySelector<HTMLButtonElement>('.zen-band-button')
+/** The band's ×: "Dismiss" on every band (the Lead's ruling on #740), the one refusal remembered. */
+const dismissButton = (): HTMLButtonElement =>
+  content().querySelector<HTMLButtonElement>('.zen-band-close')!
+/** What the tenant asked of the core: the requests out, the refusal remembered. */
+const requests = (): unknown[][] =>
+  cmd.mock.calls.filter(([name]) => name === 'defaultBrowser.request')
+const remembered = (): unknown[][] => run.mock.calls.filter(([c]) => c === 'settings.update')
 
 beforeEach(() => {
   run.mockClear()
   cmd.mockReset()
   cmd.mockResolvedValue(true)
-  uiStore.set({ defaultBrowserAsk: null, defaultBrowserPrompt: false })
+  // The band's travel is the clock's; nothing here paints a frame, so the band stands where it
+  // mounted (its content's opacity is the driver's, not what these tests read).
+  vi.stubGlobal('requestAnimationFrame', () => 1)
+  vi.stubGlobal('cancelAnimationFrame', () => undefined)
+  uiStore.set({ defaultBrowserPrompt: false })
   browserStore.set({ state: state('linux') })
+  resetBands()
+  // A page tab in front, a band welcome on it.
+  setBandFrame({ front: 't1', ok: true })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -106,153 +141,226 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
-  uiStore.set({ defaultBrowserAsk: null, defaultBrowserPrompt: false })
+  resetBands()
+  vi.unstubAllGlobals()
+  uiStore.set({ defaultBrowserPrompt: false })
 })
 
-describe('the default-browser strip', () => {
-  it('is a window surface with the sentence, no glyph, and Not now before the primary Set as default (§9.29: the one name for the act)', () => {
+describe('the default-browser band (the strip under the toolbar until W8-M2)', () => {
+  it('is the page-edge band’s state: a page surface with the globe, the sentence, the one action Set as default and the × named Dismiss, as on every band (§3.1, §9.29: the one name for the act)', () => {
     render(view(state('linux')))
-    const strip = container.querySelector<HTMLElement>('.zen-frame-strip')!
-    expect(strip.getAttribute('data-surface')).toBe('window')
-    expect(strip.getAttribute('role')).toBe('status')
-    expect(strip.querySelector('svg')).toBeNull()
-    expect(strip.querySelector('.zen-frame-strip-text')!.textContent).toBe(
-      'Make Zenium your default browser'
-    )
-    const [notNow, setDefault] = buttons(strip)
-    expect(buttons(strip)).toHaveLength(2)
-    expect(notNow.textContent).toBe('Not now')
-    expect(notNow.classList.contains('zen-v2-button')).toBe(true)
-    expect(notNow.hasAttribute('data-primary')).toBe(false)
-    expect(setDefault.textContent).toBe('Set as default')
-    expect(setDefault.classList.contains('zen-v2-button')).toBe(true)
-    expect(setDefault.hasAttribute('data-primary')).toBe(true)
+    const el = band()
+    expect(el).not.toBeNull()
+    expect(el.getAttribute('data-surface')).toBe('page')
+    expect(el.getAttribute('role')).toBe('status')
+    expect(el.dataset.form).toBe('state')
+    // No alarm: the glyph keeps the deemphasised ink (no tone), and it is the Settings section's globe.
+    expect(el.dataset.tone).toBeUndefined()
+    expect(el.querySelector('.zen-band-glyph')).not.toBeNull()
+    expect(title()).toBe('Make Zenium your default browser')
+    expect(el.querySelector('.zen-band-detail')).toBeNull()
+    expect(buttons(el)).toHaveLength(2)
+    expect(setDefaultButton()!.textContent).toBe('Set as default')
+    // The × is every band's "Dismiss": no "Not now" on the band (the Lead's ruling on #740).
+    expect(dismissButton().getAttribute('aria-label')).toBe('Dismiss')
+    // Nothing of the strip remains in the frame.
+    expect(container.querySelector('.zen-frame-strip')).toBeNull()
   })
 
-  it('remembers Not now for this feature release and asks nothing of the OS', () => {
+  it('remembers the × (Dismiss) for this feature release and asks nothing of the OS', () => {
     render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[0])
-    expect(run).toHaveBeenCalledWith('settings.update', {
-      defaultBrowserPromptDismissed: '0.3.77'
-    })
+    click(dismissButton())
+    expect(remembered()).toEqual([['settings.update', { defaultBrowserPromptDismissed: '0.3.77' }]])
     expect(cmd).not.toHaveBeenCalled()
-    expect(uiStore.get().defaultBrowserAsk).toBeNull()
+    // The prompt is gone from the model: the band is on its way out.
+    expect(chooseBand(bandStore.get())).toBeNull()
   })
 
-  it('raises the prompt on Set as default instead of handing off blind', () => {
+  it('Escape with focus in the band puts it away for now and remembers nothing (the Lead’s ruling, §3.2 / §9.6): the × alone is the refusal kept', () => {
     render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
-    expect(uiStore.get().defaultBrowserAsk).toBe('banner')
-    expect(cmd).not.toHaveBeenCalledWith('defaultBrowser.request', expect.anything())
+    act(() => {
+      const close = dismissButton()
+      close.focus()
+      close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(chooseBand(bandStore.get())).toBeNull()
+    expect(remembered()).toEqual([])
+    expect(cmd).not.toHaveBeenCalled()
+    // Nothing kept against it: the band stands again at the next eligible moment – here the
+    // hook mounting again on the same window state (the next window, the next launch).
+    act(() => root.render(null))
+    render(view(state('linux')))
+    expect(band()).not.toBeNull()
+    expect(chooseBand(bandStore.get())).not.toBeNull()
+  })
+
+  it('stands again once the answer is for an older release, and not while it is this one’s', () => {
+    render(view(state('linux', '0.3.77')))
+    expect(container.querySelector('.zen-band')).toBeNull()
+    expect(chooseBand(bandStore.get())).toBeNull()
+    render(view(state('linux', '0.2.9')))
+    expect(band()).not.toBeNull()
+  })
+
+  it('asks the OS directly on Set as default – no prompt before the hand-off, nothing over the page – and holds through the request', async () => {
+    // The OS has not answered within the host's poll window: the role is unknown for now.
+    cmd.mockResolvedValue(null)
+    render(view(state('linux')))
+    click(setDefaultButton())
+    expect(requests()).toEqual([['defaultBrowser.request', { source: 'banner' }]])
+    await settle()
+    expect(dialog()).toBeNull()
+    expect(uiStore.get().defaultBrowserPrompt).toBe(false)
+    // A state, not an answer: the band stands as it was, its words unchanged off Windows, and
+    // nothing is remembered – the role ends the state, or the ×.
+    expect(chooseBand(bandStore.get())!.key).toBe('default-browser')
+    expect(title()).toBe('Make Zenium your default browser')
+    expect(setDefaultButton()).not.toBeNull()
+    expect(remembered()).toEqual([])
+  })
+
+  it('leaves when the role is confirmed, remembering nothing: the settings keep no answer the OS gave', () => {
+    render(view(state('darwin')))
+    click(setDefaultButton())
+    render(view(confirmed('darwin')))
+    expect(chooseBand(bandStore.get())).toBeNull()
+    expect(remembered()).toEqual([])
+    // The role lost again later (another browser took it): the band stands again – nothing was kept.
+    render(view(state('darwin')))
+    expect(chooseBand(bandStore.get())!.key).toBe('default-browser')
+  })
+
+  it('a second Set as default is a second request: the band is a state, not a one-shot button', () => {
+    cmd.mockResolvedValue(null)
+    render(view(state('darwin')))
+    click(setDefaultButton())
+    click(setDefaultButton())
+    expect(requests()).toHaveLength(2)
+    expect(chooseBand(bandStore.get())!.key).toBe('default-browser')
   })
 })
 
-describe('the desktop prompt', () => {
-  it.each<[Platform, string]>([
-    ['win32', 'Windows will open Default apps, where you can choose Zenium.'],
-    ['darwin', 'macOS will ask you to confirm.'],
-    ['linux', 'Zenium will register itself with your desktop.']
-  ])('says in one sentence what %s does once the user says yes', (platform, sentence) => {
-    expect(describeDefaultBrowserRequest(platform)).toBe(sentence)
-  })
-
-  it('is the §9.23 composition on the dialog host: app icon, title block with the OS sentence, Not now then the primary, focus on the primary', async () => {
-    browserStore.set({ state: state('win32') })
+describe('the band on Windows, where the hand-off opens Windows Settings', () => {
+  it('re-words itself in place on Set as default – the same band, its content cross-fading to "Press Set default in Windows Settings" with Open Windows Settings and the × – and stands so while the user has not decided', async () => {
+    cmd.mockResolvedValue(null)
     render(view(state('win32')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
-    await settle()
-    const d = dialog()!
-    expect(d).not.toBeNull()
-    expect(d.classList.contains('zen-v2-dialog')).toBe(true)
-    expect(d.style.width).toBe('400px')
-    expect(d.getAttribute('aria-modal')).toBe('true')
-    // The app icon at the top of the block, then the title block – nothing else before them.
-    const [icon, block] = [...d.children]
-    expect(icon.tagName.toLowerCase()).toBe('svg')
-    expect(icon.classList.contains('zen-default-browser-prompt-icon')).toBe(true)
-    expect(block.classList.contains('zen-v2-title-block')).toBe(true)
-    expect(block.querySelector('.zen-v2-title-block-title')!.textContent).toBe(
+    const before = chooseBand(bandStore.get())!
+    click(setDefaultButton())
+    // The request went out as on any OS; the band did not leave for it.
+    expect(requests()).toEqual([['defaultBrowser.request', { source: 'banner' }]])
+    const after = chooseBand(bandStore.get())!
+    expect(after.key).toBe('default-browser')
+    expect(after.id).not.toBe(before.id)
+    // One band, re-targeted: no second `.zen-band`, the ask's words fading out over the
+    // instruction coming in (the band's 120 ms swap), the height one line still.
+    expect(container.querySelectorAll('.zen-band')).toHaveLength(1)
+    const leaving = band().querySelector<HTMLElement>('.zen-band-content[data-leaving]')!
+    expect(leaving).not.toBeNull()
+    expect(leaving.querySelector('.zen-band-title')!.textContent).toBe(
       'Make Zenium your default browser'
     )
-    expect(block.querySelector('.zen-v2-title-block-title svg')).toBeNull()
-    const description = block.querySelector('.zen-v2-title-block-description')!
-    expect(description.textContent).toBe(
-      'Windows will open Default apps, where you can choose Zenium.'
-    )
-    expect(d.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
-    expect(d.getAttribute('aria-describedby')).toBe(description.id)
-    const [notNow, setDefault] = buttons(d)
-    expect(buttons(d)).toHaveLength(2)
-    expect(notNow.textContent).toBe('Not now')
-    // The strip's word again (§9.29): one flow, one name for the act.
-    expect(setDefault.textContent).toBe('Set as default')
-    expect(setDefault.hasAttribute('data-primary')).toBe(true)
-    expect(document.activeElement).toBe(setDefault)
-    // Up over the page's picture: the host hides the view meanwhile.
-    expect(uiStore.get().defaultBrowserPrompt).toBe(true)
-  })
-
-  it('closes on Escape without asking the OS, and focus goes back to the strip’s button once the chrome is back', async () => {
-    render(view(state('linux')))
-    const strip = container.querySelector<HTMLElement>('.zen-frame-strip')!
-    const opener = buttons(strip)[1]
-    act(() => opener.focus())
-    click(opener)
+    expect(content().hasAttribute('data-swap')).toBe(true)
+    expect(title()).toBe('Press Set default in Windows Settings')
+    expect(band().querySelector('.zen-band-detail')).toBeNull()
+    expect(band().style.getPropertyValue('--zen-band-height')).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    // An instruction: the user finishes in Windows Settings, so the band's one action is the
+    // hand-off again, named for where it goes (the Lead's gate on #754, §10); the × stays, by
+    // its one name.
+    expect(buttons(content())).toHaveLength(2)
+    expect(setDefaultButton()!.textContent).toBe('Open Windows Settings')
+    expect(dismissButton().getAttribute('aria-label')).toBe('Dismiss')
+    // The poll window closed without an answer: the instruction stands (the core reads the role
+    // again on the next return to the foreground).
     await settle()
-    expect(dialog()).not.toBeNull()
-    // The strip is window chrome: inert under the dialog (§9.5, §9.22).
-    expect(strip.hasAttribute('inert')).toBe(true)
-    escape()
-    await settle()
+    expect(title()).toBe('Press Set default in Windows Settings')
     expect(dialog()).toBeNull()
-    expect(uiStore.get().defaultBrowserAsk).toBeNull()
     expect(uiStore.get().defaultBrowserPrompt).toBe(false)
-    expect(cmd).not.toHaveBeenCalledWith('defaultBrowser.request', expect.anything())
-    expect(run).not.toHaveBeenCalledWith('settings.update', expect.anything())
-    // The host keeps the panel through its pop exit, inert and hidden from assistive technology,
-    // and the chrome stays inert with it (#188): the strip cannot take the focus back yet.
-    const panel = leaving()!
-    expect(panel).not.toBeNull()
-    expect(panel.hasAttribute('inert')).toBe(true)
-    expect(panel.getAttribute('aria-hidden')).toBe('true')
-    expect(strip.hasAttribute('inert')).toBe(true)
-    expect(document.activeElement).toBe(document.body)
-    // The exit ends: the panel goes, the chrome comes back and the opener takes the focus.
-    await act(async () => {
-      panel.dispatchEvent(new Event('animationend'))
-      await Promise.resolve()
-    })
-    await settle()
-    expect(leaving()).toBeNull()
-    expect(strip.hasAttribute('inert')).toBe(false)
-    expect(document.activeElement).toBe(opener)
+    expect(remembered()).toEqual([])
   })
 
-  it('closes on Not now and leaves the strip up', async () => {
-    render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
+  it('leaves when the role is confirmed – the status flipping under it – and remembers nothing', async () => {
+    cmd.mockResolvedValue(true)
+    render(view(state('win32')))
+    click(setDefaultButton())
     await settle()
-    click(buttons(dialog()!)[0])
-    await settle()
-    expect(dialog()).toBeNull()
-    expect(cmd).not.toHaveBeenCalledWith('defaultBrowser.request', expect.anything())
-    expect(run).not.toHaveBeenCalledWith('settings.update', expect.anything())
-    expect(container.querySelector('.zen-frame-strip')).not.toBeNull()
+    expect(title()).toBe('Press Set default in Windows Settings')
+    render(view(confirmed('win32')))
+    expect(chooseBand(bandStore.get())).toBeNull()
+    expect(remembered()).toEqual([])
+    // The hand-off is forgotten with the state: should the role be lost again, the band asks
+    // afresh, in the ask's words.
+    render(view(state('win32')))
+    expect(title()).toBe('Make Zenium your default browser')
+    expect(setDefaultButton()).not.toBeNull()
   })
 
-  it('runs the request from the strip and takes the strip down for this release on Set as default', async () => {
-    render(view(state('linux')))
-    click(buttons(container.querySelector('.zen-frame-strip')!)[1])
+  it('Open Windows Settings on the instruction is the hand-off again – the same request out, the instruction standing as it was with no re-wording', async () => {
+    cmd.mockResolvedValue(null)
+    render(view(state('win32')))
+    click(setDefaultButton())
     await settle()
-    click(buttons(dialog()!)[1])
+    const standing = chooseBand(bandStore.get())!
+    // The one swap so far is the ask's words fading out under the instruction.
+    const swaps = band().querySelectorAll('.zen-band-content').length
+    click(setDefaultButton())
+    expect(requests()).toEqual([
+      ['defaultBrowser.request', { source: 'banner' }],
+      ['defaultBrowser.request', { source: 'banner' }]
+    ])
+    // The same entry holds: nothing swapped under the words already there.
+    expect(chooseBand(bandStore.get())!.id).toBe(standing.id)
+    expect(band().querySelectorAll('.zen-band-content')).toHaveLength(swaps)
+    expect(title()).toBe('Press Set default in Windows Settings')
+    expect(setDefaultButton()!.textContent).toBe('Open Windows Settings')
     await settle()
-    expect(cmd).toHaveBeenCalledWith('defaultBrowser.request', { source: 'banner' })
-    expect(run).toHaveBeenCalledWith('settings.update', {
-      defaultBrowserPromptDismissed: '0.3.77'
-    })
-    expect(dialog()).toBeNull()
-    expect(uiStore.get().defaultBrowserAsk).toBeNull()
-    expect(uiStore.get().defaultBrowserPrompt).toBe(false)
+    expect(title()).toBe('Press Set default in Windows Settings')
+    expect(remembered()).toEqual([])
+  })
+
+  it('the × on the instruction is a plain put-away (§10): the user has Windows Settings open, not refused, so nothing is remembered and the band asks afresh in the ask’s words', async () => {
+    cmd.mockResolvedValue(null)
+    render(view(state('win32')))
+    click(setDefaultButton())
+    click(dismissButton())
+    expect(remembered()).toEqual([])
+    expect(chooseBand(bandStore.get())).toBeNull()
+    await settle()
+    expect(chooseBand(bandStore.get())).toBeNull()
+    // The next eligible moment: the hook mounting again on the same window state.
+    act(() => root.render(null))
+    render(view(state('win32')))
+    expect(title()).toBe('Make Zenium your default browser')
+    expect(setDefaultButton()!.textContent).toBe('Set as default')
+  })
+
+  it('the ask’s × alone keeps the refusal: on Windows as anywhere, before the hand-off', () => {
+    render(view(state('win32')))
+    click(dismissButton())
+    expect(remembered()).toEqual([['settings.update', { defaultBrowserPromptDismissed: '0.3.77' }]])
+    expect(cmd).not.toHaveBeenCalled()
+    expect(chooseBand(bandStore.get())).toBeNull()
+  })
+
+  it('a hand-off refused on the spot – Windows Settings never opened – takes the ask’s words back', async () => {
+    cmd.mockResolvedValue(false)
+    render(view(state('win32')))
+    click(setDefaultButton())
+    expect(title()).toBe('Press Set default in Windows Settings')
+    await settle()
+    expect(chooseBand(bandStore.get())!.key).toBe('default-browser')
+    expect(title()).toBe('Make Zenium your default browser')
+    expect(setDefaultButton()).not.toBeNull()
+    expect(remembered()).toEqual([])
+  })
+
+  it('a refusal arriving after the band has gone stands nothing up again', async () => {
+    cmd.mockResolvedValue(false)
+    render(view(state('win32')))
+    click(setDefaultButton())
+    click(dismissButton())
+    await settle()
+    expect(chooseBand(bandStore.get())).toBeNull()
+    expect(bandStore.get().entries).toEqual([])
   })
 })
 
@@ -307,7 +415,7 @@ describe('the campaign promo (§9.23: a prompt about Zenium itself)', () => {
     expect(sheet).not.toBeNull()
     const body = sheet.querySelector<HTMLElement>('.zen-sheet-scroll')!
     // The icon's box is the body's first content, the title block straight after it – the
-    // desktop `AskDialog`'s order, the one composition (§9.23).
+    // mouse dialog's order, the one composition (§9.23).
     const icon = body.querySelector<HTMLElement>('.zen-sheet-app-icon')!
     expect(icon).not.toBeNull()
     expect(icon.parentElement?.firstElementChild).toBe(icon)

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // A soak of Zenium's MCP server (Settings → AI Agents) against a RUNNING build, over plain HTTP:
-// many agent sessions, several at a time, each living an agent's life – initialize, a look at
-// the status, background mode, a tab on the fixture page, a snapshot, a screenshot, the form
+// many agent sessions, several at a time, each living an agent's life – initialize, a session
+// started under a descriptive name, a look at the status, background mode, a tab on the fixture page, a snapshot, a screenshot, the form
 // filled in, foreground mode, another screenshot, `zen_session end` (with closeTabs on the even
 // sessions, without on the odd ones, whose groups stay behind orphaned), a call after the end on
-// the SAME session id (the connection outlives the agent's tidy-up), the adoption of a group an
-// earlier session orphaned, a last end with closeTabs, a DELETE – with the client-side latency of
+// the SAME session id (the connection outlives the agent's tidy-up), a second named start and
+// the adoption of a group an earlier session orphaned, a last end with closeTabs, a DELETE – with the client-side latency of
 // every tool call and, at the end, the server's own counters (`zenium://diagnostics`).
 //
 // Optional legs: the stdio shim (`zenium --mcp`, one process per session; --shim), a dropped
@@ -40,7 +40,8 @@
 //   --verbose           one line per session, the shim's stderr
 //
 // Checks are HARD (the run fails) or SOFT (reported, never failing the run without --strict). A
-// soft check is named with the PR it waits on: `drop-force-adopt (until E)`. The background
+// soft check is named with the PR it waits on (`SOFT_CHECKS`); the drop leg's force adopt has been
+// hard since named sessions became durable – it must be refused. The background
 // snapshot and the two screenshots are hard since B (the host stages a hidden page an agent drives).
 // A hard check that has nothing to act on (no orphaned group to adopt) is counted as skipped.
 //
@@ -289,6 +290,7 @@ export function parseGroups(text) {
       orphaned: /(^|, )orphaned(,|$)/.test(flags),
       was: /orphaned, was "((?:[^"\\]|\\.)*)"/.exec(flags)?.[1] ?? null,
       owner: /owned by "((?:[^"\\]|\\.)*)"/.exec(flags)?.[1] ?? null,
+      away: /(^|, )away\b/.test(flags),
       user: /(^|, )the user's(,|$)/.test(flags)
     })
   }
@@ -297,6 +299,11 @@ export function parseGroups(text) {
     was: g.was === null ? null : unquote(g.was),
     owner: g.owner === null ? null : unquote(g.owner)
   }))
+}
+
+/** The session key a `zen_session start` answer hands out (`zk_…`), or null. */
+export function sessionKey(text) {
+  return /\b(zk_[\w-]+)/.exec(text)?.[1] ?? null
 }
 
 /**
@@ -320,7 +327,8 @@ export function parseSpaces(text) {
 }
 
 /** An adopt that failed because another session got there first, or the group is gone. */
-export const ADOPT_RACE = /which is still connected|Unknown group|is already yours/
+export const ADOPT_RACE =
+  /which is still connected|no other agent can adopt or force it|Unknown group|is already yours/
 
 /** A space switch refused because another agent's screen lease is still warm. */
 const LEASE_HELD = /holds it|holds the screen/
@@ -1160,6 +1168,14 @@ export class BrowserProcess {
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * The name a soak session starts under: the server refuses generic names and a name another
+ * live agent holds, so each one says which leg and which session it is.
+ */
+export function soakAgentName(leg, index) {
+  return `Soak ${leg} #${index + 1}: fixture form`
+}
+
+/**
  * Runs a session's script over `client` (HTTP or stdio) and records its checks in `ctx.verdict`.
  * `index` decides the variants: odd sessions end without closeTabs (their group stays orphaned),
  * every fourth opens the slow page.
@@ -1176,13 +1192,18 @@ export async function soakSession(client, ctx, { index, leg }) {
     verdict.calls++
     return r
   }
+  const name = soakAgentName(leg, index)
   let at = 'initialize'
   try {
     await client.initialize()
     verdict.hard(at, true)
 
+    at = 'zen_session start'
+    let r = await call('zen_session', { action: 'start', name })
+    verdict.hard(at, !r.isError, r.text)
+
     at = 'zen_status'
-    let r = await call('zen_status', {})
+    r = await call('zen_status', {})
     verdict.hard(at, !r.isError, r.text)
 
     at = 'zen_mode background'
@@ -1288,10 +1309,15 @@ export async function soakSession(client, ctx, { index, leg }) {
     r = await call('zen_status', {})
     verdict.hard(at, !r.isError, r.text)
 
+    // An ended session holds nothing: the next piece of work starts a session of its own.
+    at = 'zen_session start'
+    r = await call('zen_session', { action: 'start', name: `${name}: adopting leftovers` })
+    verdict.hard(at, !r.isError, r.text)
+
     at = 'zen_groups list'
     r = await call('zen_groups', { action: 'list', scope: 'all' })
     verdict.hard(at, !r.isError, r.text)
-    const orphans = parseGroups(r.text).filter((g) => g.orphaned && g.was !== client.name)
+    const orphans = parseGroups(r.text).filter((g) => g.orphaned && g.was !== name)
 
     at = 'zen_groups adopt'
     if (!orphans.length) verdict.skip(at, 'hard', 'no orphaned group of another session to adopt')
@@ -1399,63 +1425,80 @@ export async function soakShimLeg(ctx, { exe, userDataDir, sessions, concurrency
 }
 
 /**
- * A client that stops calling without a DELETE: its group is listed as owned by it; another
- * client's `adopt` with `force: true` is the soft check (until E); after the DELETE the group is
- * orphaned and the other client adopts it (hard).
+ * A named agent whose client stops calling and then drops (a DELETE, as a closed transport makes):
+ * its group is listed as its own, then as away, and another agent can adopt it at no point – not
+ * with `force: true`, not after the DELETE. A fresh connection of the dropped agent resumes the
+ * session with its key and finds the same group with the same tab (all hard).
  */
 export async function soakDropLeg(ctx) {
   const { verdict } = ctx
-  ctx.log('drop leg: a client goes quiet without DELETE, another wants its group')
+  ctx.log('drop leg: a named agent drops, another wants its group, the first resumes it')
+  const nameA = 'Soak drop: the agent that drops'
+  const nameB = 'Soak drop: the agent that wants its group'
   const A = new HttpClient({ ...ctx.endpoint, name: 'soak-drop-A', latencies: ctx.latencies })
   const B = new HttpClient({ ...ctx.endpoint, name: 'soak-drop-B', latencies: ctx.latencies })
+  const A2 = new HttpClient({ ...ctx.endpoint, name: 'soak-drop-A', latencies: ctx.latencies })
   const call = async (client, name, args) => {
     const r = await client.call(name, args)
     verdict.calls++
     return r
   }
+  const groupSeenBy = async (client, id) =>
+    parseGroups((await call(client, 'zen_groups', { action: 'list', scope: 'all' })).text).find(
+      (g) => g.id === id
+    )
   let at = 'drop-setup'
   try {
     await A.initialize()
+    const started = await call(A, 'zen_session', { action: 'start', name: nameA })
+    const key = sessionKey(started.text)
     await call(A, 'zen_mode', { mode: 'background' })
     const opened = await call(A, 'browser_tabs', { action: 'new', url: ctx.fixture.url })
+    const tabId = openedTab(opened.text)
     const own = parseGroups((await call(A, 'zen_groups', { action: 'list' })).text)
     const group = own[0]
-    if (!verdict.hard(at, Boolean(openedTab(opened.text)) && Boolean(group), opened.text)) return
-    // A goes quiet here: no DELETE, no more calls.
+    if (!verdict.hard(at, Boolean(key && tabId && group), `${started.text}\n${opened.text}`)) return
+    // A goes quiet here: no more calls.
     await B.initialize()
+    await call(B, 'zen_session', { action: 'start', name: nameB })
     at = 'drop-live-group-listed'
-    const all = parseGroups((await call(B, 'zen_groups', { action: 'list', scope: 'all' })).text)
-    const seen = all.find((g) => g.id === group.id)
-    verdict.hard(at, Boolean(seen) && seen.owner === A.name, seen ? seen.flags : 'not listed')
-    at = SOFT_CHECKS.dropForceAdopt
+    const seen = await groupSeenBy(B, group.id)
+    verdict.hard(at, seen?.owner === nameA, seen ? seen.flags : 'not listed')
+    at = 'drop-force-refused'
     const forced = await call(B, 'zen_groups', { action: 'adopt', groupId: group.id, force: true })
-    const forcedOk = verdict.soft(at, !forced.isError, forced.text)
+    verdict.hard(at, forced.isError, forced.text)
     at = 'delete'
     verdict.hard(at, await A.close(), 'DELETE of the quiet client did not answer 204')
-    if (!forcedOk) {
-      at = 'drop-adopt-after-delete'
-      const after = parseGroups(
-        (await call(B, 'zen_groups', { action: 'list', scope: 'all' })).text
-      ).find((g) => g.id === group.id)
-      const adopt = after?.orphaned
-        ? await call(B, 'zen_groups', { action: 'adopt', groupId: group.id })
-        : null
-      verdict.hard(
-        at,
-        Boolean(after?.orphaned) && adopt !== null && !adopt.isError,
-        adopt ? adopt.text : `after the DELETE the group was ${after ? `[${after.flags}]` : 'gone'}`
-      )
-    }
+    at = 'drop-held-after-delete'
+    const after = await groupSeenBy(B, group.id)
+    const adopt = await call(B, 'zen_groups', { action: 'adopt', groupId: group.id })
+    verdict.hard(
+      at,
+      Boolean(after && after.owner === nameA && after.away && !after.orphaned) && adopt.isError,
+      `after the DELETE the group was ${after ? `[${after.flags}]` : 'gone'}; adopt: ${adopt.text}`
+    )
+    at = 'drop-resume'
+    await A2.initialize()
+    const resumed = await call(A2, 'zen_session', { action: 'resume', key })
+    const back = parseGroups((await call(A2, 'zen_groups', { action: 'list' })).text)
+    const tabs = await call(A2, 'browser_tabs', { action: 'list' })
+    verdict.hard(
+      at,
+      !resumed.isError && back.some((g) => g.id === group.id) && tabs.text.includes(tabId),
+      `${resumed.text}\n${tabs.text}`
+    )
     at = 'zen_session end closeTabs'
-    const end = await call(B, 'zen_session', { action: 'end', closeTabs: true })
-    verdict.hard(at, !end.isError, end.text)
+    for (const client of [A2, B]) {
+      const end = await call(client, 'zen_session', { action: 'end', closeTabs: true })
+      verdict.hard(at, !end.isError, end.text)
+    }
     at = 'delete'
+    verdict.hard(at, await A2.close(), 'DELETE did not answer 204')
     verdict.hard(at, await B.close(), 'DELETE did not answer 204')
   } catch (error) {
     if (!(error instanceof SoakError)) throw error
     verdict.hard(at, false, `drop leg: ${error.message}`)
-    await A.close().catch(() => undefined)
-    await B.close().catch(() => undefined)
+    for (const client of [A, A2, B]) await client.close().catch(() => undefined)
   }
 }
 
@@ -1596,6 +1639,7 @@ export async function tidy(ctx) {
   const client = new HttpClient({ ...ctx.endpoint, name: 'soak-tidy' })
   try {
     await client.initialize()
+    await client.call('zen_session', { action: 'start', name: 'Soak tidy-up: closing leftovers' })
     const all = parseGroups(
       (await client.call('zen_groups', { action: 'list', scope: 'all' })).text
     )
@@ -1604,7 +1648,10 @@ export async function tidy(ctx) {
       const r = await client.call('zen_groups', { action: 'adopt', groupId: g.id })
       if (!r.isError) adopted++
     }
-    if (adopted) await client.call('zen_session', { action: 'end', closeTabs: true })
+    if (adopted) {
+      await client.call('zen_session', { action: 'end', closeTabs: true })
+      await client.call('zen_session', { action: 'start', name: 'Soak tidy-up: the user space' })
+    }
     ctx.verdict.bump('tidiedGroups', adopted)
     const spaces = parseSpaces((await client.call('zen_spaces', { action: 'list' })).text)
     const shown = spaces.find((sp) => sp.shown)

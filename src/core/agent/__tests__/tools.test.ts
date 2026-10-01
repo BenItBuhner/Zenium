@@ -71,11 +71,15 @@ describe('tool definitions', () => {
     expect(names).toEqual(expect.arrayContaining(['zen_status', 'zen_session', 'zen_groups']))
     const session = AGENT_TOOLS.find((t) => t.definition.name === 'zen_session')!.definition
     expect((session.inputSchema.properties.action as { enum: string[] }).enum).toEqual([
+      'start',
+      'resume',
       'status',
       'end',
       'rename'
     ])
     expect(session.inputSchema.properties).toHaveProperty('closeTabs')
+    expect(session.inputSchema.properties).toHaveProperty('name')
+    expect(session.inputSchema.properties).toHaveProperty('key')
     const groups = AGENT_TOOLS.find((t) => t.definition.name === 'zen_groups')!.definition
     expect((groups.inputSchema.properties.action as { enum: string[] }).enum).toEqual([
       'list',
@@ -91,7 +95,13 @@ describe('tool definitions', () => {
     const pageTools = AGENT_TOOLS.filter(
       (t) =>
         t.definition.name.startsWith('browser_') &&
-        !['browser_tabs', 'browser_navigate'].includes(t.definition.name)
+        ![
+          'browser_tabs',
+          'browser_navigate',
+          'browser_handle_dialog',
+          'browser_prompts',
+          'browser_respond_prompt'
+        ].includes(t.definition.name)
     )
     expect(pageTools.length).toBeGreaterThan(10)
     for (const { definition } of pageTools) {

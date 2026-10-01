@@ -150,6 +150,151 @@ class PrivateStrictTest {
         assertEquals(emptyMap<String, TextEngine?>(), strict.byPartition)
     }
 
+    /**
+     * The staged assignment (the #716 follow-up, Android's O1): with the switch on below Strict a
+     * build parses the general engine and then the private partition's; the snapshot with the
+     * general engine goes out between the two, answering normal tabs from the new general engine
+     * and private tabs as before – from the engine the previous snapshot gave them – and the
+     * snapshot after both parses answers both from the new engines.
+     */
+    @Test
+    fun theGeneralEngineGoesOutBeforeThePrivateParseAndPrivateRequestsAnswerAsBeforeUntilTheirOwnLands() {
+        // The previous build (the switch on at Balanced): EasyList everywhere, the privacy list for the private partition.
+        val before = Blocking.textEngines(listOf(list("easylist"), list("ubo-privacy", partitions = setOf("private"))), emptyMap()) { texts[it.id] }
+        val prior = EngineSnapshot(listOf(list("easylist"), list("ubo-privacy", partitions = setOf("private"))), before.general, before.byPartition)
+        val privateBefore = before.byPartition["private"]!!
+
+        // Both lists update: every fingerprint changes, so the general engine and the private partition's parse anew.
+        val easylist = list("easylist", updatedAt = 2L)
+        val privacy = list("ubo-privacy", partitions = setOf("private"), updatedAt = 2L)
+        val updated = mapOf(
+            "easylist" to "||ads.example^\n||banner.example^",
+            "ubo-privacy" to "||fingerprint.example^\n||beacon.example^"
+        )
+        val reads = ArrayList<String>()
+        val read: (RuleSetInfo) -> String? = { set -> reads.add(set.id); updated[set.id] }
+        val stages = ArrayList<EngineSnapshot>()
+        val readsAtStageOne = ArrayList<String>()
+        var carriedAtStageOne: TextEngine? = null
+        val engines = Blocking.textEngines(listOf(easylist, privacy), before.cache, prior.textEngineByPartition, read) { general, ready ->
+            readsAtStageOne.addAll(reads)
+            carriedAtStageOne = ready["private"]
+            stages.add(EngineSnapshot(listOf(easylist, privacy), general, ready))
+        }
+
+        // Told once, after the general parse (EasyList read) and before the private one (the privacy list unread).
+        assertEquals(1, stages.size)
+        assertEquals(listOf("easylist"), readsAtStageOne)
+        assertEquals(listOf("easylist", "ubo-privacy"), reads)
+        val banner = "https://banner.example/b.js"
+        val beacon = "https://beacon.example/p.gif"
+        val fp = "https://fingerprint.example/fp.js"
+
+        // Stage one: normal tabs read the new general engine; private tabs the engine they had, until theirs lands.
+        val staged = stages[0]
+        assertSame(privateBefore, carriedAtStageOne)
+        assertEquals(setOf("private"), staged.textPartitions)
+        assertEquals(2, staged.filterCount("default"))
+        assertEquals(2, staged.filterCount("private"))
+        assertEquals(1, prior.filterCount("default"))
+        assertEquals(Decision.Action.BLOCK, staged.decide(request(banner, "default")).action)
+        assertEquals(Decision.Action.BLOCK, staged.decide(request(banner, null)).action)
+        assertEquals(Decision.Action.BLOCK, staged.decide(request(fp, "private")).action)
+        assertEquals(Decision.Action.ALLOW, staged.decide(request(banner, "private")).action)
+        assertEquals(Decision.Action.ALLOW, staged.decide(request(beacon, "private")).action)
+        assertEquals(Decision.Action.ALLOW, staged.decide(request(fp, "default")).action)
+
+        // After both parses: both partitions on the new engines.
+        val after = EngineSnapshot(listOf(easylist, privacy), engines.general, engines.byPartition)
+        assertNotSame(privateBefore, engines.byPartition["private"])
+        assertEquals(2, after.filterCount("default"))
+        assertEquals(4, after.filterCount("private"))
+        assertEquals(Decision.Action.BLOCK, after.decide(request(banner, "private")).action)
+        assertEquals(Decision.Action.BLOCK, after.decide(request(beacon, "private")).action)
+        assertEquals(Decision.Action.BLOCK, after.decide(request(fp, "private")).action)
+        assertEquals(Decision.Action.BLOCK, after.decide(request(banner, "default")).action)
+        assertEquals(Decision.Action.ALLOW, after.decide(request(beacon, "default")).action)
+        assertEquals(Decision.Action.ALLOW, after.decide(request(fp, "default")).action)
+        assertEquals(2, engines.cache.size)
+
+        // The first build (nothing carried: boot, or the switch just turned on): a private tab reads the
+        // new general engine until its own lands, as the desktop's partitions do until their compile.
+        reads.clear()
+        val first = ArrayList<EngineSnapshot>()
+        val boot = Blocking.textEngines(listOf(easylist, privacy), emptyMap(), emptyMap(), read) { general, ready ->
+            first.add(EngineSnapshot(listOf(easylist, privacy), general, ready))
+        }
+        assertEquals(1, first.size)
+        assertEquals(emptySet<String>(), first[0].textPartitions)
+        assertEquals(2, first[0].filterCount("private"))
+        assertEquals(Decision.Action.BLOCK, first[0].decide(request(banner, "private")).action)
+        assertEquals(Decision.Action.ALLOW, first[0].decide(request(fp, "private")).action)
+        assertEquals(4, EngineSnapshot(listOf(easylist, privacy), boot.general, boot.byPartition).filterCount("private"))
+        assertEquals(listOf("easylist", "ubo-privacy"), reads)
+    }
+
+    @Test
+    fun aBuildWithNoPartitionEngineToParseAssignsOnce() {
+        val easylist = list("easylist")
+        val privacy = list("ubo-privacy", partitions = setOf("private"))
+        var staged = 0
+        val onGeneral: (TextEngine?, Map<String, TextEngine?>) -> Unit = { _, _ -> staged++ }
+
+        // The defaults: no partition, no first stage.
+        val defaults = Blocking.textEngines(listOf(easylist), emptyMap(), emptyMap(), { texts[it.id] }, onGeneral)
+        assertEquals(0, staged)
+        assertEquals(1, defaults.general!!.filterCount)
+        assertEquals(emptyMap<String, TextEngine?>(), defaults.byPartition)
+
+        // The switch on: the first build stages; the next with the same lists reuses both engines and assigns once.
+        val on = Blocking.textEngines(listOf(easylist, privacy), defaults.cache, emptyMap(), { texts[it.id] }, onGeneral)
+        assertEquals(1, staged)
+        assertSame(defaults.general, on.general)
+        val again = Blocking.textEngines(listOf(easylist, privacy), on.cache, on.byPartition, { texts[it.id] }, onGeneral)
+        assertEquals(1, staged)
+        assertSame(on.general, again.general)
+        assertSame(on.byPartition["private"], again.byPartition["private"])
+
+        // A general list that stands aside from the private partition: the general engine parses, the
+        // private partition's is the cached one, so nothing of a partition's is pending and the build assigns once.
+        val custom = list("custom", excluded = setOf("private"))
+        val wider = Blocking.textEngines(listOf(easylist, privacy, custom), on.cache, on.byPartition, { texts[it.id] }, onGeneral)
+        assertEquals(1, staged)
+        assertEquals(2, wider.general!!.filterCount)
+        assertSame(on.byPartition["private"], wider.byPartition["private"])
+
+        // A partition no list applies to is a null entry in the first stage as in the result.
+        val aside = list("custom", excluded = setOf("kiosk"))
+        val stagesOfKiosk = ArrayList<Map<String, TextEngine?>>()
+        val kiosk = Blocking.textEngines(listOf(aside, privacy), emptyMap(), emptyMap(), { texts[it.id] }) { _, ready -> stagesOfKiosk.add(ready) }
+        assertEquals(1, stagesOfKiosk.size)
+        assertTrue(stagesOfKiosk[0].containsKey("kiosk"))
+        assertNull(stagesOfKiosk[0]["kiosk"])
+        assertFalse(stagesOfKiosk[0].containsKey("private"))
+        assertTrue(kiosk.byPartition.containsKey("kiosk"))
+        assertNull(kiosk.byPartition["kiosk"])
+        assertEquals(2, kiosk.byPartition["private"]!!.filterCount)
+    }
+
+    /** The #716 follow-up's O2: an unreadable set's text is read once for the build, however many scopes the set is in. */
+    @Test
+    fun anUnreadableSetsTextIsReadOnceAcrossTheScopesItIsIn() {
+        val reads = ArrayList<String>()
+        val read: (RuleSetInfo) -> String? = { set -> reads.add(set.id); if (set.id == "easylist") null else texts[set.id] }
+        val easylist = list("easylist")
+        val privacy = list("ubo-privacy", partitions = setOf("private"))
+        val custom = list("custom", excluded = setOf("banking"))
+        // EasyList is in three scopes (the general one, private, banking) and unreadable: one read.
+        val engines = Blocking.textEngines(listOf(easylist, privacy, custom), emptyMap(), read)
+        assertEquals(listOf("easylist", "custom", "ubo-privacy"), reads)
+        assertEquals(1, engines.general!!.filterCount)
+        assertEquals(2, engines.byPartition["private"]!!.filterCount)
+        // The banking partition's only list is the unreadable one: no filter, so no engine, the parse still cached.
+        assertTrue(engines.byPartition.containsKey("banking"))
+        assertNull(engines.byPartition["banking"])
+        assertEquals(3, engines.cache.size)
+    }
+
     @Test
     fun levelOffWithTheSwitchOnLeavesThePrivatePartitionToItsLists() {
         // The core's index at level Off with the switch on: every list scoped to private, the allow-all everywhere else.

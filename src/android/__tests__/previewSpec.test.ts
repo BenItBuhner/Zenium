@@ -552,6 +552,16 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&webapp=banner')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('raises the share-target chooser (MW-63) for a shared link or text, behind the Home screen surfaces', () => {
+    expect(parsePreviewSpec('shareTarget=link')).toEqual({ kind: 'shareTarget', shared: 'link' })
+    expect(parsePreviewSpec('shareTarget=text')).toEqual({ kind: 'shareTarget', shared: 'text' })
+    expect(parsePreviewSpec('shareTarget=image')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('webapp=banner&shareTarget=link').kind).toBe('webapp')
+    expect(parsePreviewSpec('shareTarget=link&media=audio').kind).toBe('shareTarget')
+    // The host's own share panel keeps its name.
+    expect(parsePreviewSpec('share=link').kind).toBe('share')
+  })
+
   it('opens the tab overview, behind every other state', () => {
     expect(parsePreviewSpec('overview')).toEqual({ kind: 'overview' })
     expect(parsePreviewSpec('overview=1')).toEqual({ kind: 'overview' })

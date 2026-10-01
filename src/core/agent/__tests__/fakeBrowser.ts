@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_SETTINGS } from '../../../shared/defaults'
-import type { AgentSettings, Folder, Space, Tab } from '../../../shared/types'
+import type { AgentPromptKind, AgentSettings, Folder, Space, Tab } from '../../../shared/types'
 import type { Browser } from '../../browser'
 import {
   type Model,
@@ -13,7 +13,7 @@ import {
   removeTabFromLists,
   sectionIndexOf
 } from '../../model'
-import type { AgentInputEvent, AgentTransport, TabView } from '../../platform'
+import type { AgentInputEvent, AgentTransport, AgentUploadFile, TabView } from '../../platform'
 import type { ZenWindow } from '../../window'
 import type { ToolResult } from '../protocol'
 import { AgentService, type AgentSession } from '../service'
@@ -50,6 +50,15 @@ export interface FakeBrowser {
   input: Map<string, AgentInputEvent[]>
   /** Every `setAgentDriven` a page's view heard, by tab id, in order. */
   agentDriven: Map<string, boolean[]>
+  /** Every `interceptAgentPrompts` a page's view heard, by tab id, in order. */
+  intercepts: Map<string, boolean[]>
+  /** Tabs whose agent device picks were forgotten (`permissions.forgetAgentTab`), in order. */
+  devicePicksForgotten: string[]
+  /** Files set on inputs (`setInputFiles`) or dropped (`dropFiles`), by tab id. */
+  uploads: Map<
+    string,
+    Array<{ selector?: string; x?: number; y?: number; files: AgentUploadFile[] }>
+  >
   /** What the user does from the chrome. */
   user: {
     openTab(url: string, opts?: { essential?: boolean; pinned?: boolean; folderId?: string }): Tab
@@ -79,11 +88,26 @@ export interface FakeBrowser {
   stop(): Promise<void>
   /** How many times the service asked the state to persist (`state.commit()`). */
   readonly commits: number
+  /** The profile's files as the service wrote them. */
+  files: Map<string, string>
+  /** Tab ids whose view was reloaded by the service (`TabView.reload`), in order. */
+  reloads: string[]
 }
 
 export interface FakeBrowserOptions {
   /** A model to run on – a restart's persisted state – instead of a fresh one with `Work`. */
   model?: Model
+  /** The profile's files (`platform.io`), kept across `restart()`. */
+  files?: Map<string, string>
+  /**
+   * Whether agents must name themselves before acting (`AgentService.requireName`). Off by
+   * default here, so the tests of everything else need no `zen_session start`.
+   */
+  requireName?: boolean
+  /** The host routes page dialogs to agents (`HostCapabilities.agentDialogs`); on by default. */
+  agentDialogs?: boolean
+  /** The native prompts the host routes to agents (`HostCapabilities.agentPrompts`); none by default. */
+  agentPrompts?: AgentPromptKind[]
 }
 
 export function textOf(result: ToolResult): string {
@@ -136,7 +160,12 @@ export function fakeBrowser(
   const views = new Map<string, TabView>()
   const input = new Map<string, AgentInputEvent[]>()
   const agentDriven = new Map<string, boolean[]>()
+  const intercepts = new Map<string, boolean[]>()
+  const devicePicksForgotten: string[] = []
+  const uploads: FakeBrowser['uploads'] = new Map()
   const gates = new Map<string, Promise<void>>()
+  const files = options.files ?? new Map<string, string>()
+  const reloads: string[] = []
   let commits = 0
   const transport: AgentTransport = {
     start: async (options) => ({ port: options.port, lanAddresses: [] }),
@@ -185,9 +214,23 @@ export function fakeBrowser(
       canGoBack: () => false,
       canGoForward: () => false,
       focus: () => undefined,
+      stop: () => undefined,
+      reload: () => {
+        gates.delete(tab.id)
+        reloads.push(tab.id)
+      },
       setBackgroundThrottling: () => undefined,
       setAgentDriven: (on: boolean) => {
         driven.push(on)
+      },
+      interceptAgentPrompts: (on: boolean) => {
+        intercepts.set(tab.id, [...(intercepts.get(tab.id) ?? []), on])
+      },
+      setInputFiles: async (selector: string, files: AgentUploadFile[]) => {
+        uploads.set(tab.id, [...(uploads.get(tab.id) ?? []), { selector, files }])
+      },
+      dropFiles: async (x: number, y: number, files: AgentUploadFile[]) => {
+        uploads.set(tab.id, [...(uploads.get(tab.id) ?? []), { x, y, files }])
       },
       snapshot: async () => null
     } as unknown as TabView
@@ -306,14 +349,22 @@ export function fakeBrowser(
   const browser = {
     platform: {
       io: {
-        readSync: () => null,
-        write: async () => undefined,
-        writeSync: () => undefined
+        readSync: (name: string) => files.get(name) ?? null,
+        write: async (name: string, text: string) => {
+          files.set(name, text)
+        },
+        writeSync: (name: string, text: string) => {
+          files.set(name, text)
+        }
       },
       info: { version: '0.0.0-test' },
       createAgentTransport: () => transport,
       dialogs: { confirm: async () => false },
-      readabilitySource: () => null
+      readabilitySource: () => null,
+      capabilities: {
+        agentDialogs: options.agentDialogs ?? true,
+        ...(options.agentPrompts ? { agentPrompts: options.agentPrompts } : {})
+      }
     },
     state: {
       model,
@@ -380,10 +431,12 @@ export function fakeBrowser(
     deleteFolder,
     governor: { thaw: async () => undefined },
     history: { search: () => [] },
+    permissions: { forgetAgentTab: (tabId: string) => devicePicksForgotten.push(tabId) },
     handleCommand: () => undefined
   } as unknown as Browser & { agents: AgentService }
 
   const service = new AgentService(browser)
+  service.requireName = options.requireName ?? false
   browser.agents = service
   // Loads are instantaneous here: the fake pages are ready as soon as a view exists.
   service.waitForLoad = async () => true
@@ -418,6 +471,9 @@ export function fakeBrowser(
     pages,
     input,
     agentDriven,
+    intercepts,
+    devicePicksForgotten,
+    uploads,
     user,
     hold: (tabId) => {
       let release = (): void => undefined
@@ -446,13 +502,15 @@ export function fakeBrowser(
       // Local (blank / private window) spaces never survive a restart; nor do live views.
       persisted.localSpaces = {}
       for (const t of Object.values(persisted.tabs)) t.discarded = true
-      const next = fakeBrowser(settings, { model: persisted })
+      const next = fakeBrowser(settings, { ...options, model: persisted, files })
       next.service.start()
       return next
     },
     stop: () => service.stop(),
     get commits() {
       return commits
-    }
+    },
+    files,
+    reloads
   }
 }

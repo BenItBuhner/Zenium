@@ -12,7 +12,6 @@ import {
 import type {
   BookmarkNodeType,
   ContentCover,
-  DefaultBrowserRequestSource,
   ExtensionPromptRequest,
   ExternalProtocolRequest,
   LongCapture,
@@ -27,10 +26,12 @@ import type {
   SharePanelRequest,
   UIState,
   UrlbarOpenMode,
+  WebAppBanner,
   WebAppInstallPrompt
 } from '@shared/types'
-import { TOAST_SHOW_MS } from '@shared/toastCard'
 import { isEmptyTabUrl } from '@shared/url'
+import { isInstallable } from '@shared/webApp'
+import { TOAST_ACTION_MS, TOAST_DURATION } from './motion/tokens'
 import { isZoomed } from '@renderer/components/zoom/bubble'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
@@ -342,6 +343,16 @@ export interface DefineRequest {
   at?: { x: number; y: number }
 }
 
+/**
+ * The desktop's ambient install offer up (PWA-03, `lib/installOffer.ts`): the core's banner the
+ * pill's "Install <app>?" popover opened for of its own accord. `retired` once the core has
+ * taken the banner back (`webapp.bannerHide`) and the popover is leaving on its own.
+ */
+export interface InstallOffer {
+  banner: WebAppBanner
+  retired: boolean
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -500,6 +511,12 @@ export interface UiState {
    */
   folderDeleteConfirm: { folderId: string; keyboard: boolean } | null
   /**
+   * "Release <agent>'s groups?" (the folder menu's Release from <agent>…): a §9.23 frame dialog
+   * over the page, asked before a disconnected agent's groups are handed back. `keyboard`: the
+   * folder's header had the keyboard, so Cancel hands it back there.
+   */
+  agentReleaseConfirm: { claimId: string; folderId: string; keyboard: boolean } | null
+  /**
    * "Delete search history?" (the desktop omnibox row menu's Delete Search History; §10.5's
    * bulk case, pr-434 ruling 3): a §9.23 destructive frame dialog over the open bar and the
    * page's picture, asked before every remembered search goes.
@@ -628,14 +645,14 @@ export interface UiState {
    * page are offered. `seq` tells one opening from the next.
    */
   capture: { tabId: string; viewport: PageViewport | null; seq: number } | null
-  /**
-   * The desktop's default-browser prompt has been asked for – "Set as default" on the strip –
-   * and says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
-   * asked from, or null. `defaultBrowserPrompt` goes true once it is up over the page's picture.
-   */
-  defaultBrowserAsk: DefaultBrowserRequestSource | null
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
+  /**
+   * The desktop's install offer: the pill's popover up for the core's banner, with no prompt
+   * asked for (`install` is the user's; the two never stand together – the prompt takes the
+   * offer's place, `openInstallSheet`).
+   */
+  installOffer: InstallOffer | null
   /**
    * Phone layout: the media sheet (the in-app player for the tab whose media the OS controls
    * show, MW-16) is up, opened from the pill's Now playing chip; the tab it opened on.
@@ -774,6 +791,7 @@ export const uiStore = createStore<UiState>(
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     folderDeleteConfirm: null,
+    agentReleaseConfirm: null,
     deleteSearchHistoryOpen: false,
     barMenuOpen: false,
     permissionPromptOpen: false,
@@ -812,8 +830,8 @@ export const uiStore = createStore<UiState>(
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     capture: null,
-    defaultBrowserAsk: null,
     install: null,
+    installOffer: null,
     mediaSheet: null,
     translateSelection: null,
     define: null,
@@ -836,9 +854,16 @@ export const uiStore = createStore<UiState>(
 // Messages: toasts at the bottom, banners at the top
 // ---------------------------------------------------------------------------
 
-/** A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin: `@shared/toastCard`); one with an action needs time to be acted on. */
-export const TOAST_DURATION = TOAST_SHOW_MS
-export const TOAST_ACTION_DURATION = 5000
+/**
+ * A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin:
+ * `@shared/toastCard`, handed out by the motion tokens – `lib/motion/tokens.ts`, W8-M1 – and
+ * re-exported here for the callers that read it from the store module); one with an action
+ * needs time to be acted on: the tokens' `TOAST_ACTION_MS`. The number stays written on this
+ * line – Android's `V2TokensPinTest` reads the digits after `TOAST_ACTION_DURATION =` from this
+ * file – and `satisfies` holds it to the token: a value that drifts fails the typecheck.
+ */
+export { TOAST_DURATION }
+export const TOAST_ACTION_DURATION = 5000 satisfies typeof TOAST_ACTION_MS
 /** Banners beyond this many push the oldest out. */
 export const MAX_BANNERS = 3
 /**
@@ -874,6 +899,31 @@ export function claimMessageCards(): () => void {
 
 function onCards(): boolean {
   return cardHosts.size > 0
+}
+
+/**
+ * The surface that draws the core's banner claims so while mounted: the card in `banners` on
+ * the phone and the tablet (`components/messages/MessageLayer`), the pill's "Install <app>?"
+ * popover on the desktop (`components/install/InstallPopoverLayer`, the install banner's form
+ * there – `lib/installOffer.ts`; the sidebar draws toasts alone). A banner raised with no claim
+ * standing is undrawn – a card put in `banners` sits there unseen – and a caller that accounts
+ * for a drawn card asks first (the install prompt's word to the core, `lib/installBanner.ts`
+ * and `lib/installOffer.ts`).
+ */
+const bannerSurfaces = new Set<symbol>()
+
+/** Say that banners are drawn from now on; call the return value when the surface unmounts. */
+export function claimBannerSurface(): () => void {
+  const token = Symbol('banner surface')
+  bannerSurfaces.add(token)
+  return () => {
+    bannerSurfaces.delete(token)
+  }
+}
+
+/** Whether a surface that draws `banners` is mounted right now. */
+export function bannerSurfaceMounted(): boolean {
+  return bannerSurfaces.size > 0
 }
 
 let messageSeq = 0
@@ -1355,6 +1405,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !shareChooserUp() &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -1380,6 +1431,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.defaultBrowserPrompt &&
     !ui.capture &&
     !ui.install &&
+    !ui.installOffer &&
     !ui.clearBrowsingDataOpen &&
     !ui.nameWindowOpen &&
     !ui.importDialog &&
@@ -1393,6 +1445,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.agentReleaseConfirm &&
     !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui)
   )
@@ -1427,6 +1480,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !shareChooserUp() &&
     !ui.voice &&
     !ui.qrScan &&
     !ui.qrCode &&
@@ -1454,6 +1508,7 @@ export function invalidateSnapshot(): void {
     !ui.defaultBrowserPrompt &&
     !ui.capture &&
     !ui.install &&
+    !ui.installOffer &&
     !ui.clearBrowsingDataOpen &&
     !ui.nameWindowOpen &&
     !ui.importDialog &&
@@ -1466,6 +1521,7 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.agentReleaseConfirm &&
     !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
@@ -1664,21 +1720,47 @@ export function closeBookmarkChrome(
 }
 
 /**
- * The install prompt – the phone's "Add to Home screen" sheet, the desktop's "Install app" /
- * "Create shortcut" dialog (`InstallLayer`, `InstallDialogLayer`; the host's chrome mounts the
- * one that is its surface) – dims the page behind it like a menu: the snapshot comes first.
+ * The install prompt – the phone's "Add to Home screen" sheet, the desktop's "Install <app>?"
+ * popover under the pill's Install chip or its "Create shortcut" dialog (`InstallLayer`,
+ * `InstallPopoverLayer`; the host's chrome mounts the one that is its surface) – stands over
+ * the page's picture like a menu: the snapshot comes first. The desktop's offer popover, if up,
+ * gives way to the prompt (the core took the offer's banner back as the install opened).
  */
 export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
   await captureActiveTab(prompt.tabId)
   run('focus.chrome', undefined)
-  uiStore.set({ install: prompt, drawerOpen: false })
+  uiStore.set({ install: prompt, installOffer: null, drawerOpen: false })
 }
 
-export function closeInstallSheet(tabId: string): void {
+/**
+ * Whether the install prompt takes the pill's popover: the desktop's form for an app with an
+ * installable manifest (Chrome's, the Design Lead's ruling on W8-M3's item 3;
+ * `install/InstallPopover.tsx`), a popover with no scrim, where a page without one takes the
+ * "Create shortcut" frame dialog and the phone its sheet, each with a scrim of its own.
+ */
+export function installPromptIsPopover(prompt: WebAppInstallPrompt): boolean {
+  return prompt.surface === 'desktop' && prompt.info !== null && isInstallable(prompt.info)
+}
+
+/**
+ * Whether the pill's "Install <app>?" popover is up: for the core's offer (`installOffer`), or
+ * for the prompt in its popover form (`installPromptIsPopover`). The one reading the popover's
+ * layer and the content's dim share, so the page under the popover stays undimmed as under
+ * every other popover (§9.5, §9.20).
+ */
+export function installPopoverUp(ui: Pick<UiState, 'install' | 'installOffer'>): boolean {
+  return ui.installOffer !== null || (ui.install !== null && installPromptIsPopover(ui.install))
+}
+
+/**
+ * The prompt's surface has left. Focus goes back to the page unless the caller keeps it in the
+ * chrome (`keepFocus`: Escape on the desktop popover hands it to the chip it hung from, §9.22).
+ */
+export function closeInstallSheet(tabId: string, opts: { keepFocus?: boolean } = {}): void {
   if (uiStore.get().install?.tabId !== tabId) return
   uiStore.set({ install: null })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 /**
@@ -2404,6 +2486,33 @@ export function answerExternalProtocol(requestId: string, allow: boolean, always
   returnFocusToPage()
 }
 
+// ---------------------------------------------------------------------------
+// The share chooser (MW-63): a share another app sent, offered to the installed apps
+// ---------------------------------------------------------------------------
+
+/**
+ * The chooser is the core's to put up and take down: it rides the window's snapshot
+ * (`UIState.shareChooser`; `components/share/ShareChooserSheet.tsx` draws it from there), so
+ * the surface predicates read the browser state for it, not this store.
+ */
+function shareChooserUp(): boolean {
+  return (browserStore.get().state?.shareChooser ?? null) !== null
+}
+
+/**
+ * The chooser's pick – an installed app's id, or null for the house route – or its dismissal
+ * (`cancel`), for the chooser the snapshot carries (an answer to one it no longer does is
+ * nothing). The core routes or drops the share and clears the chooser from the snapshot; the
+ * sheet leaves on that, and lets the page's picture and the focus go once it is down
+ * (`ShareChooserSheet.tsx`, which also sees that a share is answered once).
+ */
+export function answerShareChooser(requestId: string, appId: string | null | 'cancel'): void {
+  const current = browserStore.get().state?.shareChooser ?? null
+  if (!current || current.requestId !== requestId) return
+  if (appId === 'cancel') run('share.chooserCancel', { requestId })
+  else run('share.chooserPick', { requestId, appId })
+}
+
 /** The core withdrew the question (its tab closed, a newer one took over). */
 export function cancelExternalProtocol(requestId: string): void {
   if (uiStore.get().externalProtocol?.requestId !== requestId) {
@@ -2643,6 +2752,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.defaultBrowserPrompt ||
     ui.capture !== null ||
     ui.install !== null ||
+    ui.installOffer !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
     ui.nameWindowOpen ||
@@ -2656,6 +2766,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.folderDeleteConfirm !== null ||
+    ui.agentReleaseConfirm !== null ||
     ui.deleteSearchHistoryOpen ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
@@ -2748,6 +2859,26 @@ export async function openFolderDeleteConfirm(
 export function closeFolderDeleteConfirm(toChrome = false): void {
   if (!uiStore.get().folderDeleteConfirm) return
   uiStore.set({ folderDeleteConfirm: null })
+  invalidateSnapshot()
+  if (!toChrome) returnFocusToPage()
+}
+
+/** "Release <agent>'s groups?" over the page, as `openFolderDeleteConfirm` asks its question. */
+export async function openAgentReleaseConfirm(
+  claimId: string,
+  folderId: string,
+  activeTabId: string | null,
+  keyboard: boolean
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ agentReleaseConfirm: { claimId, folderId, keyboard }, groupEditor: null })
+}
+
+/** Put the release prompt away; `toChrome` keeps the keyboard in the chrome. */
+export function closeAgentReleaseConfirm(toChrome = false): void {
+  if (!uiStore.get().agentReleaseConfirm) return
+  uiStore.set({ agentReleaseConfirm: null })
   invalidateSnapshot()
   if (!toChrome) returnFocusToPage()
 }
@@ -2993,7 +3124,8 @@ export function closePrintPreview(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
- * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
+ * blocked pop-ups popover, an autofill prompt in its popover form, the pill's "Install <app>?"
+ * popover (`installPopoverUp`), a menu the renderer draws,
  * the collapsed rail's flyout (`useRailFlyout` – the sidebar itself, §9.20's cascade beside
  * the rail), the compact sidebar's or the hidden toolbar's hover reveal (`compactHover`,
  * `toolbarHover`: chrome out over the page's picture, no dialog – #411 ruling 4), or a sign-in
@@ -3012,6 +3144,7 @@ export function closePrintPreview(): void {
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   const popover = ui.autofillPrompt === 'popover'
+  const installPopover = installPopoverUp(ui)
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
@@ -3046,6 +3179,11 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // chrome's twin of the notice, a status block with no scrim as the page-drawn one has
       // none – the page under the notice looks as it did.
       ui.quitHoldCover ||
+      // The pill's "Install <app>?" popover – the core's offer or the user's prompt – is a
+      // popover like the zoom bubble (the Design Lead's ruling on W8-M3's item 3: Chrome's
+      // form, no scrim); the "Create shortcut" dialog the prompt's entry stands for on a page
+      // without an installable manifest is a frame dialog, with the host's scrim for its one dim.
+      installPopover ||
       popover) &&
     !overlayCoversContent({
       ...ui,
@@ -3064,6 +3202,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
       menu: null,
       floatingChrome: 0,
       quitHoldCover: false,
+      install: installPopover ? null : ui.install,
+      installOffer: null,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )

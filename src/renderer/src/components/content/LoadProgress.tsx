@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { Tab } from '@shared/types'
 import { progressTarget } from '@renderer/lib/motion/progress'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 
 interface Props {
@@ -11,16 +12,15 @@ interface Props {
   hidden: boolean
 }
 
-/** The fade at the end, matching `.zen-load-progress`'s opacity transition. */
-const FADE_MS = 200
 /** How often the creep re-aims the spring while a report stands still. */
 const CREEP_TICK_MS = 250
 
 /**
  * The 2 px load bar along the top edge of the content frame: `--zen-accent-fill`, a spring
  * (`SPRING_SNAPPY`, in percent) towards the page's progress or the creep, then filled to the end
- * and faded out in 200 ms. Everything per frame is a `scaleX` on the fill; the bar's own opacity
- * only ever transitions; no sweep runs through it (v2 §9.33: the creep is the sign of life).
+ * and faded out over `MOTION_STATE_MS` (`.zen-load-progress`'s opacity transition, the same
+ * length). Everything per frame is a `scaleX` on the fill; the bar's own opacity only ever
+ * transitions; no sweep runs through it (v2 §9.33: the creep is the sign of life).
  * Switching tabs shows the new tab's bar where it stands – no motion from where the old one was.
  */
 export function LoadProgress({ tab, hidden }: Props): JSX.Element {
@@ -60,7 +60,7 @@ export function LoadProgress({ tab, hidden }: Props): JSX.Element {
       fadeTimer.current = setTimeout(() => {
         fadeTimer.current = null
         if (!shown.current) draw(0)
-      }, FADE_MS)
+      }, MOTION_STATE_MS)
     }
     spring.current ??= new SpringAnimation(SPRING_SNAPPY, draw, (x) => {
       if (x >= 100) finished()

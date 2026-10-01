@@ -1,10 +1,14 @@
 import type {
   AgentInfo,
+  AgentPromptKind,
+  AwayAgentInfo,
   AgentMode,
   AgentServerStatus,
   AgentSettings,
   AgentSkillStatus,
   Folder,
+  PageDialog,
+  PageDialogResponse,
   Space,
   Tab
 } from '../../shared/types'
@@ -19,7 +23,16 @@ import {
   regularTabs,
   sectionIndexOf
 } from '../model'
-import type { AgentSkillsHost, AgentTransport, TabView } from '../platform'
+import { describeDialog } from '../pageDialogs'
+import type {
+  AgentSkillsHost,
+  AgentTransport,
+  FileChooserAnswer,
+  FileChooserRequest,
+  PagePromptRequest,
+  TabView
+} from '../platform'
+import type { AgentPermissionPrompts } from '../permissions'
 import type { ZenWindow } from '../window'
 import {
   StreamableHttp,
@@ -28,10 +41,27 @@ import {
   type SessionInit,
   type SessionStore
 } from './http'
+import { ClaimStore, type AgentClaim } from './claims'
 import { Diagnostics, type DiagnosticsSnapshot } from './diagnostics'
+import { checkAgentName, NAME_YOURSELF } from './naming'
 import { TabFrames } from './frames'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, pageDispose, type PageCursorOptions } from './page'
+import {
+  ANSWER_FROM_THIS_COMPUTER,
+  downloadSpec,
+  fileChooserSpec,
+  permissionSpec,
+  type DownloadDestination
+} from './nativePrompts'
+import {
+  AgentPromptQueue,
+  describePrompt,
+  type AgentPrompt,
+  type AgentPromptAnswer,
+  type AgentPromptHandle,
+  type AgentPromptSpec
+} from './prompts'
 import {
   LATEST_PROTOCOL_VERSION,
   McpProtocol,
@@ -96,6 +126,31 @@ const KNOWN_CLIENTS_MAX = 50
 const SESSION_ID_SHAPE = /^[\x21-\x7e]{1,128}$/
 /** How long a requested navigation may take to report that it has started (see `waitForLoad`). */
 const NAVIGATION_START_GRACE_MS = 1500
+/**
+ * No tool call runs longer: past this it is answered with an error and the session's queue
+ * moves on, whatever the page is doing. Below the 60 s most MCP clients give a call, so the
+ * agent hears why instead of a client-side timeout – and the next call is never stuck behind a
+ * page that will not answer (a hung renderer, a page frozen mid-call), which used to wedge the
+ * session until the browser restarted.
+ */
+export const CALL_DEADLINE_MS = 45_000
+/** A tab whose last call ran into the deadline is probed this long before the next one acts. */
+const PAGE_PROBE_MS = 3000
+/** An agent's page dialog nobody answered is dismissed after this, so the page does not stay blocked. */
+export const AGENT_DIALOG_TTL_MS = 2 * 60 * 1000
+/**
+ * How long a native prompt of an agent's tab (`AgentPromptQueue`) waits for its agent before its
+ * default answer applies – the refusal for everything but a download, which is saved where
+ * Downloads puts it.
+ */
+export const AGENT_PROMPT_TTL_MS = 2 * 60 * 1000
+/** A claim with no groups left and no client for this long is forgotten. */
+const EMPTY_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** What an agent may call before it has named itself (`zen_session start`). */
+const UNCLAIMED_TOOLS = new Set(['zen_status', 'zen_session'])
+/** The resources an agent may read before it has named itself. */
+const UNCLAIMED_RESOURCES = new Set(['zenium://status', 'zenium://diagnostics'])
+/** The prompt every other call gets until the agent has named itself. */
 const SERVER_NAME = 'zenium'
 /** Endpoint + token, read by the `zenium --mcp` shim (see main/agent/shim.ts). */
 const AGENT_FILE = 'agent.json'
@@ -162,6 +217,13 @@ export interface AgentSession extends McpSession {
   parked: boolean
   /** The groups parking orphaned, taken back on the client's return while still orphaned. */
   readonly releasedGroupIds: Set<string>
+  /**
+   * The durable session this transport session carries (`zen_session start` / `resume`), or
+   * null before the agent named itself. Its groups are held for the agent across reconnects.
+   */
+  claimId: string | null
+  /** The transport session a renewing client says it replaces (the stdio relay's renewal). */
+  resumeFrom: string | null
 }
 
 /** What a client last said about itself, by who it appears to be (`clientKey`). */
@@ -230,7 +292,16 @@ export type Owner =
   | { kind: 'you' }
   | { kind: 'agent'; session: AgentSession }
   | { kind: 'orphaned'; groupId: string; was: string | null }
+  /** A durable session's group whose agent is not connected right now: kept for it, untouchable. */
+  | { kind: 'held'; name: string }
   | { kind: 'user' }
+
+/** A page dialog of an agent's tab, waiting for the agent (`browser_handle_dialog`). */
+interface AgentDialog {
+  dialog: PageDialog
+  resolve: (response: PageDialogResponse) => void
+  timer: ReturnType<typeof setTimeout>
+}
 
 /**
  * The browser side of the MCP server: sessions (one per agent), which groups and tabs each one
@@ -263,6 +334,33 @@ export class AgentService implements SessionStore, McpHandlers {
   readonly diagnostics = new Diagnostics()
   /** Spaces agents made for themselves (`zen_groups create {space: "own"}`, `zen_spaces create`). */
   private readonly agentSpaceIds = new Set<string>()
+  /** Durable sessions (`zen_session start`), persisted in the profile. */
+  readonly claims: ClaimStore
+  /** Page dialogs of agents' tabs waiting for their agent, by tab id. */
+  private readonly agentDialogs = new Map<string, AgentDialog>()
+  /** Per session, the running call's way out when a dialog opens on one of its tabs. */
+  private readonly dialogWaiters = new Map<string, (tabId: string) => void>()
+  /** Native prompts of agents' tabs (file choosers, permissions, sign-ins…) waiting for their agent. */
+  readonly prompts: AgentPromptQueue
+  /** Per session, the running call's way out when a prompt the page waits on opens on its tab. */
+  private readonly promptWaiters = new Map<string, (prompt: AgentPrompt) => void>()
+  /** Tabs whose last call ran into the deadline: probed before the next call acts on them. */
+  private readonly suspectTabs = new Set<string>()
+  /** The window agents open tabs in, chosen once – never whatever window the user focused last. */
+  private agentWinId: string | null = null
+  /** The longest a tool call may run (`CALL_DEADLINE_MS`); tests shorten it. */
+  callDeadlineMs = CALL_DEADLINE_MS
+  /** How long a suspect page has to answer a trivial script (`PAGE_PROBE_MS`); tests shorten it. */
+  pageProbeMs = PAGE_PROBE_MS
+  /** How long an agent's page dialog waits for its answer (`AGENT_DIALOG_TTL_MS`); tests shorten it. */
+  dialogTtlMs = AGENT_DIALOG_TTL_MS
+  /** How long a native prompt of an agent's tab waits (`AGENT_PROMPT_TTL_MS`); tests shorten it. */
+  promptTtlMs = AGENT_PROMPT_TTL_MS
+  /**
+   * Whether an agent must name itself (`zen_session start`) before it may act. Not a user
+   * setting: a nameless agent cannot own anything durably, so the host never turns this off.
+   */
+  requireName = true
   private status: AgentServerStatus = emptyAgentServerStatus()
   /** Why the last start failed, for `agent.json` (`storeEndpoint`); null while nothing failed. */
   private failure: EndpointError | null = null
@@ -303,8 +401,24 @@ export class AgentService implements SessionStore, McpHandlers {
       version: browser.platform.info.version
     })
     this.http = new StreamableHttp(this)
+    this.claims = new ClaimStore(browser.platform.io)
     this.token = this.loadToken()
     this.status.token = this.token
+    this.prompts = new AgentPromptQueue({
+      now: () => Date.now(),
+      opened: (p) => this.onPromptOpened(p),
+      ended: (p, how, action) => {
+        if (how !== 'answered')
+          this.log(`prompt ${p.id} (${p.kind}) on tab ${p.tabId} ${how}: ${action}`)
+        if (how === 'expired') {
+          const owner = this.driver(p.tabId)
+          owner?.notices.push(
+            `Notice: ${p.kind} prompt ${p.id} on tab ${p.tabId} went unanswered and got its default, "${action}".`
+          )
+        }
+        this.browser.state.commitVolatile()
+      }
+    })
     this.skills = emptyAgentSkillStatus(browser.platform.info.version)
   }
 
@@ -351,9 +465,12 @@ export class AgentService implements SessionStore, McpHandlers {
     if (this.skillRefresh) clearTimeout(this.skillRefresh)
     this.skillRefresh = null
     for (const id of [...this.sessions.keys()]) this.close(id)
+    for (const tabId of [...this.agentDialogs.keys()]) this.dismissAgentDialog(tabId)
+    this.prompts.dismissAll()
     await this.applying
     await this.stopServer()
     await this.writing
+    await this.claims.flush()
   }
 
   private async apply(): Promise<void> {
@@ -565,8 +682,27 @@ export class AgentService implements SessionStore, McpHandlers {
     return tab ? this.ownerOf(tab) : undefined
   }
 
+  /**
+   * Whether an agent's work holds the tab: a live session's group, or a durable session's while
+   * its agent is away – either way the governor leaves the page loaded and awake.
+   */
   isDriving(tabId: string): boolean {
-    return this.driver(tabId) !== undefined
+    if (this.driver(tabId) !== undefined) return true
+    const tab = this.browser.tabs.tab(tabId)
+    return Boolean(tab?.folderId && this.heldBy(tab.folderId))
+  }
+
+  /**
+   * Whether a page dialog of the tab is its agent's to answer (`PageDialogService.ask`, and its
+   * "Leave site?"): the tab sits in a live agent's group, or in one held for an away agent while
+   * the user cannot see it. A held tab in front of the user is the user's to answer: nobody would
+   * hear of the dialog, and the page would sit blocked until it timed out.
+   */
+  takesDialog(tabId: string): boolean {
+    if (this.driver(tabId) !== undefined) return true
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab?.folderId || !this.heldBy(tab.folderId)) return false
+    return !this.isShown(tab, this.browser.tabs.windowFor(tabId))
   }
 
   session(id: string): AgentSession | undefined {
@@ -577,8 +713,71 @@ export class AgentService implements SessionStore, McpHandlers {
   // User actions (Settings → AI Agents, tab indicator)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Settings → AI Agents → Disconnect: the user's word ends the agent's durable session too –
+   * its groups are left orphaned, as an end without closeTabs leaves them.
+   */
   disconnect(id: string): void {
+    const s = this.sessions.get(id)
+    if (s?.claimId) {
+      this.claims.delete(s.claimId)
+      s.claimId = null
+    }
     this.close(id)
+  }
+
+  /**
+   * The user releases a durable session whose agent is not connected (or is): its groups are
+   * left orphaned and the claim is forgotten. The one way besides the agent's own end.
+   */
+  releaseClaim(claimId: string): void {
+    const claim = this.claims.get(claimId)
+    if (!claim) return
+    const bound = this.boundSession(claim)
+    if (bound) {
+      this.disconnect(bound.id)
+      return
+    }
+    const now = Date.now()
+    for (const g of claim.groupIds)
+      if (this.browser.state.model.folders[g])
+        this.orphans.set(g, { ownerName: claim.name, endedAt: now })
+    this.claims.delete(claimId)
+    this.log(`claim ${claimId} (${claim.name}) released by the user`)
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * The folder menu's and Settings' Release: the same release, but only while the agent is away –
+   * a request made from a stale menu or row never cuts off an agent that has come back meanwhile.
+   */
+  releaseAway(claimId: string): void {
+    const claim = this.claims.get(claimId)
+    if (!claim || this.boundSession(claim)) return
+    this.releaseClaim(claimId)
+  }
+
+  /** Named agents that are not connected but hold groups that still exist, oldest first. */
+  away(): AwayAgentInfo[] {
+    const { folders, tabs } = this.browser.state.model
+    const out: AwayAgentInfo[] = []
+    for (const c of this.claims.all()) {
+      if (this.boundSession(c)) continue
+      const groupIds = c.groupIds.filter((g) => folders[g])
+      if (!groupIds.length) continue
+      const held = new Set(groupIds)
+      out.push({
+        claimId: c.id,
+        name: c.name,
+        color: c.color,
+        groupIds,
+        tabIds: Object.values(tabs)
+          .filter((t) => t.folderId !== null && t.folderId !== undefined && held.has(t.folderId))
+          .map((t) => t.id),
+        lastSeenAt: c.lastSeenAt
+      })
+    }
+    return out.sort((a, b) => a.lastSeenAt - b.lastSeenAt)
   }
 
   setMode(id: string, mode: AgentMode): void {
@@ -600,6 +799,8 @@ export class AgentService implements SessionStore, McpHandlers {
     this.memo(s).tabs.delete(tab.id)
     this.browser.tabs.moveToFolder(tab.id, null)
     this.detach(s, tab.id)
+    this.prompts.dismissTab(tab.id)
+    this.browser.permissions.forgetAgentTab(tab.id)
     this.browser.state.commitVolatile()
   }
 
@@ -615,6 +816,10 @@ export class AgentService implements SessionStore, McpHandlers {
       s.cursors.delete(tabId)
       s.frames.delete(tabId)
     }
+    this.dismissAgentDialog(tabId)
+    this.prompts.dismissTab(tabId)
+    this.browser.permissions.forgetAgentTab(tabId)
+    this.suspectTabs.delete(tabId)
     this.browser.state.commitVolatile()
   }
 
@@ -648,7 +853,9 @@ export class AgentService implements SessionStore, McpHandlers {
       cursors: new Map(),
       frames: new Map(),
       parked: false,
-      releasedGroupIds: new Set()
+      releasedGroupIds: new Set(),
+      claimId: null,
+      resumeFrom: init.resumeFrom ?? null
     }
     this.sessions.set(id, session)
     this.diagnostics.sessions.created++
@@ -689,9 +896,16 @@ export class AgentService implements SessionStore, McpHandlers {
       s.name = known.name
       s.version = known.version
     }
-    s.notices.push(
-      'Notice: your connection was resumed without an initialize – the browser restarted or your session had expired. Your earlier groups, if any, are orphaned now: zen_groups {"action":"list","scope":"all"} shows them and zen_groups {"action":"adopt","groupId":"…"} takes them back. Do not open their pages again.'
-    )
+    const claim = this.claims.bySession(id)
+    if (claim && !this.boundSession(claim)) {
+      this.bindClaim(s, claim)
+      s.notices.push(
+        `Notice: your connection was resumed without an initialize – the browser restarted or your connection was lost. Your session ${JSON.stringify(claim.name)} is back with its groups and tabs; refs from before are stale: browser_snapshot before acting.`
+      )
+    } else
+      s.notices.push(
+        'Notice: your connection was resumed without an initialize – the browser restarted or your session had expired. If you started a session before, resume it: zen_session {"action":"resume","key":"…"} with the key zen_session start gave you – your groups and tabs were kept for you. Do not open their pages again.'
+      )
     this.diagnostics.sessions.resurrected++
     this.log(`session ${s.id} resumed without initialize (${s.name}, ${s.transport})`)
     this.browser.state.commitVolatile()
@@ -740,16 +954,33 @@ export class AgentService implements SessionStore, McpHandlers {
    * goes to `onSessionReleased`, which fires last.
    */
   private release(s: AgentSession, reason: SessionReleaseReason): void {
-    for (const t of this.ownedTabs(s)) this.detach(s, t.id)
-    const now = Date.now()
-    for (const groupId of s.groupIds)
-      if (this.browser.state.model.folders[groupId])
-        this.orphans.set(groupId, { ownerName: s.name, endedAt: now })
-    s.groupIds.clear()
-    s.homeGroupId = null
+    const owned = this.ownedTabs(s)
+    for (const t of owned) this.detach(s, t.id)
+    const claim = reason === 'end' ? undefined : this.claims.get(s.claimId)
+    if (claim) {
+      // A durable session outlives its transport: the groups stay the agent's, held by the
+      // claim while no client carries it, and nothing is orphaned.
+      this.saveClaim(s)
+      if (reason === 'close') {
+        s.groupIds.clear()
+        s.homeGroupId = null
+      }
+    } else {
+      for (const t of owned) {
+        this.dismissAgentDialog(t.id)
+        this.prompts.dismissTab(t.id)
+        this.browser.permissions.forgetAgentTab(t.id)
+      }
+      const now = Date.now()
+      for (const groupId of s.groupIds)
+        if (this.browser.state.model.folders[groupId])
+          this.orphans.set(groupId, { ownerName: s.name, endedAt: now })
+      s.groupIds.clear()
+      s.homeGroupId = null
+      s.notices.length = 0
+    }
     s.cursors.clear()
     s.frames.clear()
-    s.notices.length = 0
     this.memos.delete(s.id)
     this.callStates.delete(s.id)
     for (const [win, lease] of this.leases) if (lease.sessionId === s.id) this.leases.delete(win)
@@ -769,6 +1000,10 @@ export class AgentService implements SessionStore, McpHandlers {
     if (closeTabs) for (const g of groups) this.closeGroup(s, g)
     this.release(s, 'end')
     s.releasedGroupIds.clear()
+    if (s.claimId) {
+      this.claims.delete(s.claimId)
+      s.claimId = null
+    }
     this.diagnostics.sessions.ended++
     this.log(
       `session ${s.id} ended by the agent (${s.name}; ${groups.length} groups, ${tabs} tabs${closeTabs ? ' closed' : ' orphaned'})`
@@ -787,10 +1022,12 @@ export class AgentService implements SessionStore, McpHandlers {
     const groups = [...s.groupIds].filter((id) => this.browser.state.model.folders[id])
     this.release(s, 'park')
     s.releasedGroupIds.clear()
-    for (const id of groups) s.releasedGroupIds.add(id)
+    if (!s.claimId) for (const id of groups) s.releasedGroupIds.add(id)
     s.parked = true
     this.diagnostics.sessions.parkedTotal++
-    this.log(`session ${s.id} parked after idling (${s.name}; ${groups.length} groups orphaned)`)
+    this.log(
+      `session ${s.id} parked after idling (${s.name}; ${groups.length} groups ${s.claimId ? 'kept' : 'orphaned'})`
+    )
     this.browser.state.commitVolatile()
   }
 
@@ -807,9 +1044,11 @@ export class AgentService implements SessionStore, McpHandlers {
     s.releasedGroupIds.clear()
     this.diagnostics.sessions.resumed++
     s.notices.push(
-      back.length
-        ? `Notice: your session was idle for a while and parked; it is back, and your ${back.length} group${back.length === 1 ? '' : 's'} (${back.join(', ')}) ${back.length === 1 ? 'is' : 'are'} yours again. Refs from before are stale: browser_snapshot again before acting.`
-        : 'Notice: your session was idle for a while and parked; it is back. Any groups you had were taken by another agent or closed meanwhile – zen_groups {"action":"list","scope":"all"} shows what is there.'
+      s.claimId
+        ? 'Notice: your session was idle for a while; it is back, and your groups and tabs stayed yours. Refs from before are stale: browser_snapshot again before acting.'
+        : back.length
+          ? `Notice: your session was idle for a while and parked; it is back, and your ${back.length} group${back.length === 1 ? '' : 's'} (${back.join(', ')}) ${back.length === 1 ? 'is' : 'are'} yours again. Refs from before are stale: browser_snapshot again before acting.`
+          : 'Notice: your session was idle for a while and parked; it is back. Any groups you had were taken by another agent or closed meanwhile – zen_groups {"action":"list","scope":"all"} shows what is there.'
     )
     this.log(`session ${s.id} resumed from parking (${s.name}; ${back.length} groups back)`)
     this.browser.state.commitVolatile()
@@ -825,6 +1064,182 @@ export class AgentService implements SessionStore, McpHandlers {
       } else if (!s.approved && !s.pending && idle > 60_000) this.close(s.id)
       else if (idle > (sessionless ? SESSIONLESS_IDLE_MS : SESSION_IDLE_MS)) this.park(s)
     }
+    this.pruneClaims(now)
+  }
+
+  /**
+   * A claim whose groups are all gone (the user closed them) and whose agent has not been back
+   * for `EMPTY_CLAIM_TTL_MS` is forgotten; a claim with groups is kept until its agent ends it
+   * or the user releases it.
+   */
+  private pruneClaims(now: number): void {
+    const folders = this.browser.state.model.folders
+    for (const claim of this.claims.all()) {
+      if (this.boundSession(claim)) continue
+      const live = claim.groupIds.filter((g) => folders[g])
+      if (live.length !== claim.groupIds.length) {
+        claim.groupIds = live
+        if (claim.homeGroupId && !folders[claim.homeGroupId]) claim.homeGroupId = null
+        this.claims.save()
+      }
+      if (!live.length && now - claim.lastSeenAt > EMPTY_CLAIM_TTL_MS) {
+        this.claims.delete(claim.id)
+        this.log(`claim ${claim.id} (${claim.name}) forgotten: no groups, no client for a week`)
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Durable sessions (claims)
+  // ---------------------------------------------------------------------------
+
+  /** The live session carrying `claim` right now, if any. */
+  boundSession(claim: AgentClaim): AgentSession | undefined {
+    for (const s of this.sessions.values()) if (s.claimId === claim.id) return s
+    return undefined
+  }
+
+  /** The durable session the session carries, if it started one. */
+  claimOf(s: AgentSession): AgentClaim | undefined {
+    return this.claims.get(s.claimId)
+  }
+
+  /** The claim holding `folderId` while no live session carries it. */
+  heldBy(folderId: string): AgentClaim | undefined {
+    const claim = this.claims.byGroup(folderId)
+    if (!claim || this.boundSession(claim)) return undefined
+    return this.browser.state.model.folders[folderId] ? claim : undefined
+  }
+
+  /** Whether the agent must still name itself before acting (`zen_session start`). */
+  needsName(s: AgentSession): boolean {
+    return !s.claimId && this.requireName
+  }
+
+  /**
+   * `zen_session start`: the agent names itself and gets a durable session – its groups held
+   * for it across reconnects until it ends the session. Throws with the reason when the name
+   * says nothing (`checkAgentName`) or the session already has one.
+   */
+  startClaim(s: AgentSession, rawName: unknown): AgentClaim {
+    const current = this.claims.get(s.claimId)
+    if (current)
+      throw new RpcError(
+        -32602,
+        `You already started your session as ${JSON.stringify(current.name)}. zen_session {"action":"rename","name":"…"} changes the name; zen_session {"action":"end"} ends it.`
+      )
+    const verdict = checkAgentName(rawName, {
+      clientName: s.client?.name ?? s.name,
+      taken: this.takenNames(s)
+    })
+    if (!verdict.ok) throw new RpcError(-32602, `Refused: ${verdict.reason}.`)
+    const claim = this.claims.create(
+      { name: verdict.name, color: s.color, mode: s.mode, takeScreen: s.takeScreen },
+      Date.now()
+    )
+    // Groups the session made before naming itself (a host that does not require the name).
+    for (const g of s.groupIds) if (this.browser.state.model.folders[g]) claim.groupIds.push(g)
+    claim.homeGroupId = s.homeGroupId
+    this.bindClaim(s, claim)
+    this.diagnostics.sessions.claimed++
+    this.log(`session ${s.id} started durable session ${claim.id} (${claim.name})`)
+    return claim
+  }
+
+  /**
+   * `zen_session resume {key}`: carry the durable session the key opens on this transport
+   * session. A client still holding it elsewhere (the stale end of a dropped connection) loses
+   * it and is told.
+   */
+  resumeClaim(s: AgentSession, key: unknown): AgentClaim {
+    const claim = typeof key === 'string' ? this.claims.byKey(key) : undefined
+    if (!claim)
+      throw new RpcError(
+        -32602,
+        'No session has that key: it was ended (zen_session end, or the user released it), or the key is mistyped. zen_session {"action":"start","name":"…"} starts a new one.'
+      )
+    if (s.claimId === claim.id) return claim
+    if (s.claimId)
+      throw new RpcError(
+        -32602,
+        `This connection already carries your session ${JSON.stringify(this.claims.get(s.claimId)?.name ?? '')}; end it first to resume another.`
+      )
+    const holder = this.boundSession(claim)
+    if (holder) this.unbindClaim(holder, 'resumed on another connection with its key')
+    this.bindClaim(s, claim)
+    return claim
+  }
+
+  /** Put the claim on the session: its name, colour, mode and groups, from this tick on. */
+  private bindClaim(s: AgentSession, claim: AgentClaim): void {
+    const folders = this.browser.state.model.folders
+    s.claimId = claim.id
+    s.name = claim.name
+    s.color = claim.color
+    s.mode = claim.mode
+    s.takeScreen = claim.takeScreen
+    for (const g of claim.groupIds) {
+      if (!folders[g]) continue
+      // A group another live session took meanwhile (the user handed it over) stays with it.
+      const other = this.groupOwner(g)
+      if (other && other.id !== s.id) continue
+      s.groupIds.add(g)
+      this.orphans.delete(g)
+    }
+    s.homeGroupId =
+      claim.homeGroupId && s.groupIds.has(claim.homeGroupId) ? claim.homeGroupId : s.homeGroupId
+    claim.lastSessionId = s.id
+    claim.lastSeenAt = Date.now()
+    this.saveClaim(s)
+    this.remember(s)
+    this.diagnostics.sessions.rebound++
+    this.browser.state.commitVolatile()
+  }
+
+  /** The session no longer carries its claim; the groups stay held by the claim. */
+  private unbindClaim(s: AgentSession, why: string): void {
+    const claim = this.claims.get(s.claimId)
+    if (claim) this.saveClaim(s)
+    for (const t of this.ownedTabs(s)) this.detach(s, t.id)
+    s.claimId = null
+    s.groupIds.clear()
+    s.homeGroupId = null
+    this.memos.delete(s.id)
+    s.notices.push(
+      `Notice: your session ${JSON.stringify(claim?.name ?? '')} was ${why}; this connection no longer carries it or its tabs.`
+    )
+    this.log(`session ${s.id} let go of claim ${claim?.id ?? '?'} (${why})`)
+  }
+
+  /** Write the session's groups, name and mode into its claim. */
+  private saveClaim(s: AgentSession): void {
+    const claim = this.claims.get(s.claimId)
+    if (!claim) return
+    const folders = this.browser.state.model.folders
+    claim.name = s.name
+    claim.color = s.color
+    claim.mode = s.mode
+    claim.takeScreen = s.takeScreen
+    claim.groupIds = [...s.groupIds].filter((g) => folders[g])
+    claim.homeGroupId = s.homeGroupId && folders[s.homeGroupId] ? s.homeGroupId : null
+    claim.lastSessionId = s.id
+    // Only the week-long prune reads it: a minute's precision spares a write per call.
+    if (s.lastActiveAt - claim.lastSeenAt > 60_000) claim.lastSeenAt = s.lastActiveAt
+    this.claims.save()
+  }
+
+  /** Wait for the claims written so far to reach the disk. */
+  flushClaims(): Promise<void> {
+    return this.claims.flush()
+  }
+
+  /** Names other agents go by now: live sessions' and durable sessions'. */
+  private takenNames(s: AgentSession): string[] {
+    const out: string[] = []
+    for (const c of this.claims.all()) if (c.id !== s.claimId) out.push(c.name)
+    for (const o of this.sessions.values())
+      if (o.id !== s.id && o.claimId && !o.parked) out.push(o.name)
+    return out
   }
 
   /** A snapshot of the server's own counters and timings (`zenium://diagnostics`, `zen_status`). */
@@ -861,7 +1276,7 @@ export class AgentService implements SessionStore, McpHandlers {
   async onInitialize(session: McpSession, client: ClientInfo): Promise<void> {
     const s = this.sessions.get(session.id)
     if (!s) throw new RpcError(UNAUTHORIZED, 'Unknown session')
-    s.name = client.name
+    if (!s.claimId) s.name = client.name
     s.version = client.version
     this.rememberClient(s, client)
     this.log(`session ${s.id} initialize (${client.name} ${client.version}, ${s.transport})`)
@@ -873,6 +1288,7 @@ export class AgentService implements SessionStore, McpHandlers {
       settings.approvedNames.includes(s.name)
     ) {
       s.approved = true
+      this.resumeRenewed(s)
       this.browser.state.commitVolatile()
       this.announce(s)
       return
@@ -892,6 +1308,27 @@ export class AgentService implements SessionStore, McpHandlers {
     }
     this.browser.state.commitVolatile()
     this.announce(s)
+  }
+
+  /**
+   * A client renewing a lost transport session names the one it replaces (the stdio relay's
+   * `Mcp-Resume-Session` header): with the token, the durable session that id carried moves to
+   * the new one, so a browser restart or an expired id costs the agent nothing.
+   */
+  private resumeRenewed(s: AgentSession): void {
+    const from = s.resumeFrom
+    s.resumeFrom = null
+    if (!from || s.claimId || !this.isValidToken(s.token)) return
+    const claim = this.claims.bySession(from)
+    if (!claim) return
+    const holder = this.boundSession(claim)
+    if (holder && holder.id !== from) return
+    if (holder) this.unbindClaim(holder, 'renewed on a new connection')
+    this.bindClaim(s, claim)
+    s.notices.push(
+      `Notice: your connection was renewed (the browser restarted or the connection was lost); your session ${JSON.stringify(claim.name)} carried over with its groups and tabs. Refs from before are stale: browser_snapshot before acting.`
+    )
+    this.log(`session ${s.id} renewed from ${from} with claim ${claim.id} (${claim.name})`)
   }
 
   /** Who introduced itself from where, so a session resumed without an initialize keeps its name. */
@@ -938,40 +1375,113 @@ export class AgentService implements SessionStore, McpHandlers {
   listTools(session: McpSession): ToolDefinition[] {
     void session
     const allow = this.settings.allowScripts
-    return AGENT_TOOLS.filter((t) => allow || !t.scripting).map((t) => t.definition)
+    return AGENT_TOOLS.filter((t) => (allow || !t.scripting) && this.hostHas(t)).map(
+      (t) => t.definition
+    )
+  }
+
+  private hostHas(tool: (typeof AGENT_TOOLS)[number]): boolean {
+    switch (tool.needs) {
+      case undefined:
+        return true
+      case 'agentDialogs':
+        return this.browser.platform.capabilities.agentDialogs
+      case 'agentPrompts':
+        return this.promptKinds().length > 0
+      case 'fileUpload':
+        return this.promptKinds().includes('file-chooser')
+    }
   }
 
   callTool(session: McpSession, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const s = this.requireApproved(session)
     const tool = AGENT_TOOLS.find((t) => t.definition.name === name)
-    if (!tool) return Promise.resolve(textError(`Unknown tool ${name}`))
+    if (!tool || !this.hostHas(tool)) return Promise.resolve(textError(`Unknown tool ${name}`))
     if (tool.scripting && !this.settings.allowScripts)
       return Promise.resolve(textError(SCRIPTING_DISABLED))
+    if (this.needsName(s) && !UNCLAIMED_TOOLS.has(name))
+      return Promise.resolve(textError(NAME_YOURSELF))
     s.calls++
     s.lastActiveAt = Date.now()
-    return this.enqueue(s, async () => {
-      this.reconcile(s)
-      const state = this.beginCall(s)
-      const ctx: ToolContext = { browser: this.browser, agents: this, session: s }
-      const end = this.diagnostics.begin(name)
-      let result: ToolResult
+    return this.enqueue(s, () => this.runBounded(s, name, tool, args))
+  }
+
+  /**
+   * One tool call, bounded: it ends with the tool's result, or – whichever comes first – when a
+   * page dialog opens on one of the session's tabs (the page blocks until it is answered, so the
+   * call would otherwise never return), or at the deadline. Either way the session's queue moves
+   * on; work the call left running finishes (or not) on its own and its result is dropped.
+   */
+  private async runBounded(
+    s: AgentSession,
+    name: string,
+    tool: (typeof AGENT_TOOLS)[number],
+    args: Record<string, unknown>
+  ): Promise<ToolResult> {
+    this.reconcile(s)
+    const state = this.beginCall(s)
+    const ctx: ToolContext = { browser: this.browser, agents: this, session: s }
+    const end = this.diagnostics.begin(name)
+    const work = (async (): Promise<ToolResult> => {
       try {
-        result = withUnknownArgsNote(tool.definition, args, await tool.run(ctx, args))
+        return withUnknownArgsNote(tool.definition, args, await tool.run(ctx, args))
       } catch (error) {
-        result =
-          error instanceof RpcError
-            ? textError(error.message)
-            : textError((error as Error).message || String(error))
-      } finally {
-        // A background agent (or a foreground one that had to act in the background) may have
-        // focused one of its hidden pages; hand keyboard focus back to what the user looks at.
-        if (s.mode === 'background' || state.degraded) this.restoreUserFocus()
-        this.remember(s)
-        this.browser.state.commitVolatile()
+        return error instanceof RpcError
+          ? textError(error.message)
+          : textError((error as Error).message || String(error))
       }
-      end(result.isError ? firstText(result) : null)
-      return this.decorate(s, state, result)
+    })()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const deadline = new Promise<ToolResult>((resolve) => {
+      timer = setTimeout(() => resolve(this.deadlineResult(s, name, args)), this.callDeadlineMs)
     })
+    const dialog = new Promise<ToolResult>((resolve) => {
+      this.dialogWaiters.set(s.id, (tabId) => resolve(this.dialogResult(name, tabId)))
+    })
+    const prompt = new Promise<ToolResult>((resolve) => {
+      this.promptWaiters.set(s.id, (p) => resolve(this.promptResult(name, p)))
+    })
+    let result: ToolResult
+    try {
+      result = await Promise.race([work, deadline, dialog, prompt])
+    } finally {
+      if (timer) clearTimeout(timer)
+      this.dialogWaiters.delete(s.id)
+      this.promptWaiters.delete(s.id)
+      // A background agent (or a foreground one that had to act in the background) may have
+      // focused one of its hidden pages; hand keyboard focus back to what the user looks at.
+      if (s.mode === 'background' || state.degraded) this.restoreUserFocus(s)
+      this.remember(s)
+      this.saveClaim(s)
+      this.browser.state.commitVolatile()
+    }
+    end(result.isError ? firstText(result) : null)
+    return this.decorate(s, state, result)
+  }
+
+  /** What a call that ran into the deadline answers; the tabs it named are probed next time. */
+  private deadlineResult(s: AgentSession, name: string, args: Record<string, unknown>): ToolResult {
+    this.diagnostics.noteTimeout()
+    const tabId = typeof args.tabId === 'string' ? args.tabId.trim() : ''
+    const tab = tabId ? this.ownedTabs(s).find((t) => t.id.startsWith(tabId)) : undefined
+    if (tab) this.suspectTabs.add(tab.id)
+    this.log(`session ${s.id} (${s.name}): ${name} hit the ${this.callDeadlineMs} ms deadline`)
+    return textError(
+      `${name} did not finish within ${this.callDeadlineMs < 1000 ? `${this.callDeadlineMs} ms` : `${Math.round(this.callDeadlineMs / 1000)} s`}${tab ? ` – the page in tab ${tab.id} stopped answering` : ''} and was abandoned. Your session is fine and your next call runs normally. It may still have taken effect: browser_snapshot${tab ? ` {"tabId":"${tab.id}"}` : ''} shows the page as it is now; if the page stays unresponsive, browser_reload restarts it.`
+    )
+  }
+
+  /** What a call interrupted by a page dialog on one of the session's tabs answers. */
+  private dialogResult(name: string, tabId: string): ToolResult {
+    const d = this.agentDialogs.get(tabId)?.dialog
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${d ? describeDialog(d) : `The page in tab ${tabId} opened a dialog`} while ${name} ran; the page waits for your answer. browser_handle_dialog {"tabId":"${tabId}","accept":true} (or false${d?.kind === 'prompt' ? ', with promptText' : ''}) answers it, then take a snapshot: ${name} may not have finished.`
+        }
+      ]
+    }
   }
 
   /**
@@ -1015,9 +1525,14 @@ export class AgentService implements SessionStore, McpHandlers {
     state.degraded = cause
   }
 
-  /** Queued notices and the call's notes go above the tool's own text, then the queue drains. */
+  /**
+   * Queued notices, the call's notes and the prompts still waiting on the session's tabs go above
+   * the tool's own text, then the notice queue drains. The prompts stay until they are answered:
+   * whatever the agent calls, it hears of them.
+   */
   private decorate(s: AgentSession, state: CallState, result: ToolResult): ToolResult {
-    const lines = [...s.notices.splice(0), ...state.notes]
+    const said = result.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
+    const lines = [...s.notices.splice(0), ...state.notes, ...this.pendingPromptLines(s, said)]
     if (!lines.length) return result
     const content = [...result.content]
     const i = content.findIndex((c) => c.type === 'text')
@@ -1027,7 +1542,17 @@ export class AgentService implements SessionStore, McpHandlers {
     return { ...result, content }
   }
 
-  private restoreUserFocus(): void {
+  /**
+   * Give the keyboard back to the page the user looks at – only when one of the session's own
+   * pages took it during the call. Where the user's focus is anywhere else (the address bar, the
+   * sidebar, another app), it stays there: an agent at work never moves the user's caret.
+   */
+  private restoreUserFocus(s: AgentSession): void {
+    const views = this.ownedTabs(s)
+      .map((t) => this.browser.tabs.view(t.id))
+      .filter((v): v is TabView => v !== undefined && !v.isDestroyed())
+    const canTell = views.every((v) => typeof v.isFocused === 'function')
+    if (canTell && !views.some((v) => v.isFocused?.())) return
     const win = this.browser.focusedWindow()
     const active = this.browser.tabs.activeTabFor(win)
     const view = active ? this.browser.tabs.view(active.id) : undefined
@@ -1066,12 +1591,30 @@ export class AgentService implements SessionStore, McpHandlers {
 
   readResource(session: McpSession, uri: string): Promise<ResourceContents[]> {
     const s = this.requireApproved(session)
+    if (this.needsName(s) && !UNCLAIMED_RESOURCES.has(splitQuery(uri)[0]))
+      return Promise.reject(new RpcError(-32002, NAME_YOURSELF))
     return this.enqueue(s, async () => {
       this.reconcile(s)
       this.beginCall(s)
+      let timer: ReturnType<typeof setTimeout> | null = null
       try {
-        return await this.readResourceNow(s, uri)
+        return await Promise.race([
+          this.readResourceNow(s, uri),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new RpcError(
+                    -32603,
+                    `${uri} did not answer within ${Math.round(this.callDeadlineMs / 1000)} s and was abandoned; your session is fine`
+                  )
+                ),
+              this.callDeadlineMs
+            )
+          })
+        ])
       } finally {
+        if (timer) clearTimeout(timer)
         this.remember(s)
       }
     })
@@ -1129,7 +1672,9 @@ export class AgentService implements SessionStore, McpHandlers {
     return agentInstructions(
       s?.mode ?? this.settings.defaultMode,
       this.settings.allowScripts,
-      others.length
+      others.length,
+      this.browser.platform.capabilities.agentDialogs,
+      this.promptKinds()
     )
   }
 
@@ -1144,12 +1689,31 @@ export class AgentService implements SessionStore, McpHandlers {
   // Groups and ownership
   // ---------------------------------------------------------------------------
 
-  /** The synced window agents work in (never a private or blank window). */
+  /**
+   * The synced window agents work in (never a private or blank window): chosen once and kept
+   * while it lives – never the window the user happened to focus last, so the user moving
+   * between windows moves nothing of the agents' (where their tabs open, whose screen the lease
+   * is for, what counts as on screen).
+   */
   agentWindow(): ZenWindow {
-    const focused = this.browser.focusedWindow()
-    if (focused.kind === 'synced') return focused
-    const synced = this.browser.allWindows().find((w) => w.kind === 'synced')
-    return synced ?? this.browser.createWindow({ kind: 'synced' })
+    const all = this.browser.allWindows()
+    const pinned = this.agentWinId
+      ? all.find((w) => w.id === this.agentWinId && w.kind === 'synced')
+      : undefined
+    if (pinned) return pinned
+    const agents = this.findAgentsSpace()
+    const synced =
+      (agents && all.find((w) => w.kind === 'synced' && w.activeSpaceId === agents.id)) ??
+      all.find((w) => w.kind === 'synced') ??
+      this.browser.createWindow({ kind: 'synced' })
+    this.agentWinId = synced.id
+    return synced
+  }
+
+  /** The window a group's tabs live in: its first member's, else the agents' window. */
+  groupWindow(group: Folder): ZenWindow {
+    const first = folderTabs(this.browser.state.model, group.id)[0]
+    return first ? this.browser.tabs.windowFor(first.id) : this.agentWindow()
   }
 
   /**
@@ -1301,7 +1865,15 @@ export class AgentService implements SessionStore, McpHandlers {
    */
   rename(s: AgentSession, name: string): void {
     const before = s.name
-    s.name = cleanName(name)
+    if (s.claimId || this.requireName) {
+      const verdict = checkAgentName(name, {
+        clientName: s.client?.name,
+        taken: this.takenNames(s)
+      })
+      if (!verdict.ok) throw new RpcError(-32602, `Refused: ${verdict.reason}.`)
+      s.name = verdict.name
+    } else s.name = cleanName(name)
+    this.saveClaim(s)
     const m = this.browser.state.model
     for (const id of s.groupIds) {
       const f = m.folders[id]
@@ -1352,7 +1924,8 @@ export class AgentService implements SessionStore, McpHandlers {
     return this.sidebarOrder(
       this.visibleTabs().filter((t) => {
         const owner = this.ownerOf(t)
-        return !owner || owner.id === s.id
+        if (owner) return owner.id === s.id
+        return !(t.folderId && this.heldBy(t.folderId))
       })
     )
   }
@@ -1398,7 +1971,7 @@ export class AgentService implements SessionStore, McpHandlers {
       this.orphans.delete(folderId)
       return false
     }
-    if (this.groupOwner(folderId)) return false
+    if (this.groupOwner(folderId) || this.heldBy(folderId)) return false
     return Boolean(folder.agent) || this.orphans.has(folderId)
   }
 
@@ -1418,7 +1991,10 @@ export class AgentService implements SessionStore, McpHandlers {
   agentGroups(): Folder[] {
     const m = this.browser.state.model
     return Object.values(m.folders).filter(
-      (f) => this.groupOwner(f.id) !== undefined || this.isOrphan(f.id)
+      (f) =>
+        this.groupOwner(f.id) !== undefined ||
+        this.heldBy(f.id) !== undefined ||
+        this.isOrphan(f.id)
     )
   }
 
@@ -1426,6 +2002,8 @@ export class AgentService implements SessionStore, McpHandlers {
   owner(s: AgentSession, tab: Tab): Owner {
     const live = this.ownerOf(tab)
     if (live) return live.id === s.id ? { kind: 'you' } : { kind: 'agent', session: live }
+    const held = tab.folderId ? this.heldBy(tab.folderId) : undefined
+    if (held) return { kind: 'held', name: held.name }
     if (tab.folderId && this.isOrphan(tab.folderId))
       return { kind: 'orphaned', groupId: tab.folderId, was: this.orphanWas(tab.folderId) }
     return { kind: 'user' }
@@ -1441,6 +2019,8 @@ export class AgentService implements SessionStore, McpHandlers {
         return `owned by ${JSON.stringify(o.session.name)}${this.ghostLabel(o.session)}`
       case 'orphaned':
         return o.was ? `orphaned, was ${JSON.stringify(o.was)}` : 'orphaned'
+      case 'held':
+        return `owned by ${JSON.stringify(o.name)}, away – kept for it`
       default:
         return null
     }
@@ -1490,6 +2070,11 @@ export class AgentService implements SessionStore, McpHandlers {
           UNAUTHORIZED,
           `Tab ${tab.id} is owned by agent ${JSON.stringify(o.session.name)} – another live agent's tabs cannot be addressed, not even with allowForeign; browser_tabs {"action":"list","scope":"all"} only shows them. ${yours()}`
         )
+      if (o.kind === 'held')
+        throw new RpcError(
+          UNAUTHORIZED,
+          `Tab ${tab.id} belongs to agent ${JSON.stringify(o.name)}, which is away and keeps its groups until it ends its session – it cannot be addressed, not even with allowForeign. ${yours()}`
+        )
       const whose =
         o.kind === 'orphaned'
           ? `it is in an orphaned agent group${o.was ? ` (was ${JSON.stringify(o.was)}'s)` : ''} – zen_groups {"action":"adopt","groupId":"${o.groupId}"} takes the group over`
@@ -1531,7 +2116,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const scope = allowForeign
       ? Object.values(m.folders).filter((f) => {
           const o = this.groupOwner(f.id)
-          return !o || o.id === s.id
+          return o ? o.id === s.id : !this.heldBy(f.id)
         })
       : own
     const exact = scope.find((f) => f.id === wanted)
@@ -1558,6 +2143,12 @@ export class AgentService implements SessionStore, McpHandlers {
         throw new RpcError(
           UNAUTHORIZED,
           `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(o.name)} – another live agent's groups cannot be used. ${yours()}`
+        )
+      const held = this.heldBy(folder.id)
+      if (held)
+        throw new RpcError(
+          UNAUTHORIZED,
+          `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(held.name)}, which is away and keeps it until it ends its session. ${yours()}`
         )
       if (this.isOrphan(folder.id))
         throw new RpcError(
@@ -1587,7 +2178,7 @@ export class AgentService implements SessionStore, McpHandlers {
    * client most likely dropped without a DELETE – so its groups may be adopted.
    */
   isGhost(s: AgentSession): boolean {
-    return !s.parked && this.idleFor(s) >= GHOST_IDLE_MS
+    return !s.claimId && !s.parked && this.idleFor(s) >= GHOST_IDLE_MS
   }
 
   /**
@@ -1659,6 +2250,17 @@ export class AgentService implements SessionStore, McpHandlers {
         -32602,
         `Group ${folder.id} ${JSON.stringify(folder.name)} is already yours.`
       )
+    if (o?.claimId)
+      throw new RpcError(
+        UNAUTHORIZED,
+        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(o.name)}, a named session that owns its groups until it ends its session – no other agent can adopt or force it; only the user can close it. ${list()}`
+      )
+    const held = this.heldBy(folder.id)
+    if (held)
+      throw new RpcError(
+        UNAUTHORIZED,
+        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(held.name)}, which is away and keeps it until it ends its session – no other agent can adopt or force it; only the user can close it. ${list()}`
+      )
     if (o) {
       if (opts.force || this.isGhost(o)) return { folder, from: o }
       throw new RpcError(
@@ -1678,6 +2280,8 @@ export class AgentService implements SessionStore, McpHandlers {
    * the adopter's mark goes on the group (`adopt`). Returns the former owner's name.
    */
   takeOver(s: AgentSession, from: AgentSession, folder: Folder, forced: boolean): string {
+    if (from.claimId)
+      throw new RpcError(UNAUTHORIZED, `Group ${folder.id} belongs to a named agent session`)
     for (const t of folderTabs(this.browser.state.model, folder.id)) this.detach(from, t.id)
     from.groupIds.delete(folder.id)
     if (from.homeGroupId === folder.id) from.homeGroupId = null
@@ -1702,7 +2306,7 @@ export class AgentService implements SessionStore, McpHandlers {
     s: AgentSession,
     group: Folder,
     opts: { url?: string; active: boolean },
-    win: ZenWindow = this.agentWindow()
+    win: ZenWindow = this.groupWindow(group)
   ): Tab {
     const m = this.browser.state.model
     const members = folderTabs(m, group.id)
@@ -1936,7 +2540,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const space = t.spaceId ? m.spaces.find((sp) => sp.id === t.spaceId) : null
     const folder = t.folderId ? m.folders[t.folderId] : null
     const o = this.owner(s, t)
-    const win = this.agentWindow()
+    const win = this.browser.tabs.windowFor(t.id)
     return {
       id: t.id,
       title: titleOf(t),
@@ -1954,9 +2558,18 @@ export class AgentService implements SessionStore, McpHandlers {
             ? { kind: 'agent', name: o.session.name }
             : o.kind === 'orphaned'
               ? { kind: 'orphaned', was: o.was }
-              : { kind: 'user' },
+              : o.kind === 'held'
+                ? { kind: 'agent', name: o.name, away: true }
+                : { kind: 'user' },
       usersActiveTab: this.browser.tabs.activeTabFor(win)?.id === t.id
     }
+  }
+
+  /** The agent's durable session as it sees it: named or not, and the key that resumes it. */
+  sessionJson(s: AgentSession): Record<string, unknown> {
+    const claim = this.claims.get(s.claimId)
+    if (!claim) return { named: false, required: this.requireName }
+    return { named: true, name: claim.name, key: claim.key, since: claim.createdAt }
   }
 
   statusJson(s: AgentSession): Record<string, unknown> {
@@ -1969,6 +2582,7 @@ export class AgentService implements SessionStore, McpHandlers {
         holdsScreen: holder?.id === s.id,
         screenHeldBy: holder && holder.id !== s.id ? holder.name : null
       },
+      session: this.sessionJson(s),
       groups: this.groupsOf(s).map((g) => ({
         id: g.id,
         name: g.name,
@@ -1979,6 +2593,10 @@ export class AgentService implements SessionStore, McpHandlers {
       agents: [...this.sessions.values()]
         .filter((o) => o.id !== s.id && (o.approved || o.pending) && !o.parked)
         .map((o) => ({ name: o.name, mode: o.mode, groups: o.groupIds.size, pending: o.pending })),
+      prompts: {
+        routed: this.promptKinds(),
+        waiting: this.promptsOf(s)
+      },
       server: {
         url: this.status.url,
         running: this.status.running,
@@ -2003,6 +2621,7 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!view) return
     view.setBackgroundThrottling?.(true)
     view.setAgentDriven?.(false)
+    view.interceptAgentPrompts?.(false)
     void this.evalPage(view, pageDispose(s.id)).catch(() => undefined)
     for (const node of frames?.nodes ?? []) {
       if (node.id === 0) continue
@@ -2023,8 +2642,15 @@ export class AgentService implements SessionStore, McpHandlers {
     const tabs = this.browser.tabs
     const tab = tabs.tab(tabId)
     if (!tab) throw new RpcError(-32002, `Tab ${tabId} is gone`)
+    const pending = this.agentDialogs.get(tabId)
+    if (pending)
+      throw new RpcError(
+        -32002,
+        `${describeDialog(pending.dialog)}; the page is blocked until it is answered. browser_handle_dialog {"tabId":"${tabId}","accept":true} (or false) answers it.`
+      )
     const win = tabs.windowFor(tabId)
     if (opts.activate !== false) this.bringInFront(s, tab, win)
+    if (this.suspectTabs.has(tabId)) await this.revive(s, tabId)
     let view = tabs.view(tabId)
     if (!view) {
       view = tabs.ensureLoaded(tabId, win)
@@ -2038,6 +2664,10 @@ export class AgentService implements SessionStore, McpHandlers {
     // layout viewport and paint nothing lays it out and paints it where the user cannot see it
     // (`TabView.setAgentDriven`). A tab in front of the user is the layout's as before.
     view.setAgentDriven?.(!this.isShown(tab, win))
+    // The page's file choosers and print come to the agent (`AgentService.takesPrompt`) instead
+    // of opening the system's dialog; the host asks per request, so a tab shown to the user later
+    // still gets its native UI.
+    if (this.promptKinds().length) view.interceptAgentPrompts?.(true)
     return view
   }
 
@@ -2080,6 +2710,284 @@ export class AgentService implements SessionStore, McpHandlers {
       if (Date.now() - started > timeoutMs) return false
       await sleep(100)
     }
+  }
+
+  /**
+   * A tab whose last call ran into the deadline: check that its page answers within
+   * `PAGE_PROBE_MS`; one that does not has its load stopped, then is reloaded – a hung page is
+   * worth less to the agent than a fresh one, and the result says so.
+   */
+  private async revive(s: AgentSession, tabId: string): Promise<void> {
+    this.suspectTabs.delete(tabId)
+    const view = this.browser.tabs.view(tabId)
+    if (!view || view.isDestroyed()) return
+    if (await this.answers(view)) return
+    view.stop()
+    if (await this.answers(view)) return
+    view.reload(false)
+    await this.waitForLoad(tabId, 15_000, { expectNavigation: true })
+    const note = `Note: the page in tab ${tabId} had stopped responding and was reloaded; refs from before are stale.`
+    const state = this.callState(s)
+    if (!state.notes.includes(note)) state.notes.push(note)
+    this.log(`session ${s.id}: tab ${tabId} unresponsive, reloaded`)
+  }
+
+  /** Whether the page runs a trivial script within `PAGE_PROBE_MS`. */
+  private async answers(view: TabView): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const late = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), this.pageProbeMs)
+    })
+    try {
+      return await Promise.race([
+        this.evalPage(view, '1').then(
+          () => true,
+          () => false
+        ),
+        late
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agent page dialogs
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A page dialog on an agent's tab (`PageDialogService.ask` routes it here): held for the
+   * agent to answer with `browser_handle_dialog`, never shown to the user. A running call of the
+   * owner returns at once with the dialog; unanswered for `AGENT_DIALOG_TTL_MS` it is dismissed,
+   * so the page is never blocked for good.
+   */
+  onPageDialog(dialog: PageDialog): Promise<PageDialogResponse> {
+    this.dismissAgentDialog(dialog.tabId)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.agentDialogs.get(dialog.tabId)?.dialog.id !== dialog.id) return
+        this.agentDialogs.delete(dialog.tabId)
+        this.log(`dialog on tab ${dialog.tabId} dismissed unanswered`)
+        resolve({ accepted: false, value: null })
+      }, this.dialogTtlMs)
+      this.agentDialogs.set(dialog.tabId, { dialog, resolve, timer })
+      const tab = this.browser.tabs.tab(dialog.tabId)
+      const owner = tab ? this.ownerOf(tab) : undefined
+      if (!owner) return
+      const waiter = this.dialogWaiters.get(owner.id)
+      if (waiter) waiter(dialog.tabId)
+      else
+        owner.notices.push(
+          `Notice: ${describeDialog(dialog)}. browser_handle_dialog {"tabId":"${dialog.tabId}","accept":true} (or false) answers it; unanswered it is dismissed after ${Math.round(this.dialogTtlMs / 1000)} s.`
+        )
+    })
+  }
+
+  /** Answer the pending dialog of an agent's tab as cancelled (its tab went away, the session ended). */
+  dismissAgentDialog(tabId: string): void {
+    const d = this.agentDialogs.get(tabId)
+    if (!d) return
+    this.agentDialogs.delete(tabId)
+    clearTimeout(d.timer)
+    d.resolve({ accepted: false, value: null })
+  }
+
+  /** The dialog waiting on one of the agent's tabs, if any. */
+  pendingDialog(tabId: string): PageDialog | null {
+    return this.agentDialogs.get(tabId)?.dialog ?? null
+  }
+
+  /** `browser_handle_dialog`: answer the dialog on the tab. Returns the dialog answered. */
+  answerDialog(tabId: string, accept: boolean, text?: string): PageDialog {
+    const d = this.agentDialogs.get(tabId)
+    if (!d) throw new RpcError(-32002, `No dialog is open on tab ${tabId}`)
+    this.agentDialogs.delete(tabId)
+    clearTimeout(d.timer)
+    d.resolve({ accepted: accept, value: accept ? (text ?? d.dialog.defaultValue) : null })
+    return d.dialog
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agent prompts (file choosers, permissions, sign-ins… – `AgentPromptQueue`)
+  // ---------------------------------------------------------------------------
+
+  /** The prompt kinds this host hands to agents (`HostCapabilities.agentPrompts`). */
+  promptKinds(): readonly AgentPromptKind[] {
+    const kinds = this.browser.platform.capabilities.agentPrompts
+    return Array.isArray(kinds) ? kinds : []
+  }
+
+  /**
+   * Whether a native prompt of `kind` the tab raised is its agent's to answer: the host routes
+   * that kind, and the tab is an agent's the way its page dialogs are (`takesDialog`). Anything
+   * else – a user's tab, a held tab in front of the user – keeps the native UI it always had.
+   */
+  takesPrompt(tabId: string | null | undefined, kind: AgentPromptKind): boolean {
+    if (!tabId || !this.promptKinds().includes(kind)) return false
+    return this.takesDialog(tabId)
+  }
+
+  /**
+   * Hand a native prompt to the tab's agent instead of showing it: the handle's `result` is the
+   * answer (the agent's, the default once it waited `promptTtlMs`, or the dismissal). Null when
+   * the prompt is not the agent's (`takesPrompt`): the caller shows its UI as before.
+   */
+  routePrompt<T>(
+    spec: Omit<AgentPromptSpec<T>, 'ttlMs'> & { ttlMs?: number }
+  ): AgentPromptHandle<T> | null {
+    if (!this.takesPrompt(spec.tabId, spec.kind)) return null
+    return this.prompts.open({ ...spec, ttlMs: spec.ttlMs ?? this.promptTtlMs })
+  }
+
+  /** The prompts waiting on the session's tabs, oldest first. */
+  promptsOf(s: AgentSession, tabId?: string): AgentPrompt[] {
+    const owned = new Set(this.ownedTabs(s).map((t) => t.id))
+    return this.prompts.list(tabId).filter((p) => owned.has(p.tabId))
+  }
+
+  /** `browser_respond_prompt`: the agent's answer to a prompt on one of its tabs. */
+  answerPrompt(s: AgentSession, id: string, answer: AgentPromptAnswer): AgentPrompt {
+    const p = this.prompts.get(id)
+    if (!p || this.driver(p.tabId)?.id !== s.id)
+      throw new RpcError(
+        -32002,
+        `No prompt ${id} is waiting on your tabs (it was answered, timed out or withdrawn)`
+      )
+    return this.prompts.answer(id, { ...answer, [ANSWER_FROM_THIS_COMPUTER]: this.isLocal(s) })
+  }
+
+  /** The tabs of the agent that holds `tabId` (the tab itself when its agent is away). */
+  agentTabsOf(tabId: string): string[] {
+    const owner = this.driver(tabId)
+    return owner ? this.ownedTabs(owner).map((t) => t.id) : [tabId]
+  }
+
+  /** Whether the agent runs on this computer, so the paths it names are this computer's files. */
+  isLocal(s: AgentSession): boolean {
+    return s.transport === 'stdio' || isLoopbackAddress(s.remoteAddress)
+  }
+
+  /** `PermissionService.agentPrompts`: permission requests (and desktop app launches) of agents' tabs. */
+  permissionPrompts(): AgentPermissionPrompts {
+    return {
+      takes: (tabId) =>
+        this.takesPrompt(tabId, 'permission') || this.takesPrompt(tabId, 'external-protocol'),
+      ask: (request, details) => {
+        const tabId = request.tabId
+        if (!tabId) return null
+        const external = details.externalUrl !== undefined
+        const handle = this.routePrompt(
+          permissionSpec(
+            { ...request, tabId },
+            external ? { externalUrl: details.externalUrl } : {}
+          )
+        )
+        return handle?.result ?? null
+      }
+    }
+  }
+
+  /**
+   * "Ask where to save each file" (the setting, the caller's `saveAs`, a "Save As…") for a download
+   * an agent's tab started: the agent names the file, which stays in the Downloads folder. Null
+   * when the tab is not an agent's: the host shows its save dialog.
+   */
+  downloadDestination(
+    tabId: string | null,
+    download: { url: string; filename: string; mimeType: string; totalBytes: number }
+  ): Promise<DownloadDestination> | null {
+    if (!tabId) return null
+    return this.routePrompt(downloadSpec(tabId, download))?.result ?? null
+  }
+
+  /**
+   * A file chooser the page of an agent's tab opened (`TabViewEvents.onFileChooser`): the agent
+   * answers it with `browser_respond_prompt` or `browser_file_upload`. A tab that is not an
+   * agent's gets the system's chooser from its host.
+   */
+  onFileChooser(tabId: string, request: FileChooserRequest): Promise<FileChooserAnswer> {
+    const handle = this.routePrompt(fileChooserSpec(tabId, request))
+    return handle ? handle.result : Promise.resolve({ kind: 'user' })
+  }
+
+  /**
+   * `window.print()` or a File System Access picker on an agent's tab: nothing is shown, the agent
+   * hears of it. `showOpenFilePicker` becomes the page's file chooser (`onFileChooser`); a save
+   * or directory picker is refused, as a cancelled one would be.
+   */
+  onPagePrompt(tabId: string, prompt: PagePromptRequest): 'agent' | 'user' {
+    const kind: AgentPromptKind = prompt.kind === 'print' ? 'print' : 'file-chooser'
+    if (!this.takesPrompt(tabId, kind)) return 'user'
+    if (prompt.kind === 'file-system-access' && prompt.picker === 'open') return 'agent'
+    const owner = this.driver(tabId)
+    owner?.notices.push(
+      prompt.kind === 'print'
+        ? `Notice: the page in tab ${tabId} called window.print(); nothing was printed and no dialog shown. browser_take_screenshot shows the page if that is what you need.`
+        : `Notice: the page in tab ${tabId} asked for a ${prompt.picker === 'save' ? 'save-file' : 'folder'} picker (File System Access), which agents cannot answer; the page heard it was cancelled. Look for another way to get the file (a download link, an upload field).`
+    )
+    this.log(
+      `tab ${tabId}: ${prompt.kind === 'print' ? 'print' : `${prompt.picker} picker`} kept from the user`
+    )
+    return 'agent'
+  }
+
+  /**
+   * A Bluetooth pairing on an agent's tab is refused: pairing bonds the device to the computer
+   * beyond the tab, which is the user's step. The agent hears of it; a device the user already
+   * paired is still the agent's to pick.
+   */
+  refusePairing(tabId: string, deviceName: string): boolean {
+    if (!this.takesPrompt(tabId, 'device-pairing')) return false
+    this.driver(tabId)?.notices.push(
+      `Notice: the page in tab ${tabId} asked to pair the Bluetooth device ${JSON.stringify(deviceName)}; agents never pair devices, so it was refused. Pairing is the user's step: ask them to pair it in the system's Bluetooth settings first, then pick it again – a device they already paired can be picked.`
+    )
+    this.log(`tab ${tabId}: Bluetooth pairing with ${deviceName} refused for the agent`)
+    return true
+  }
+
+  /**
+   * A site asked an agent's tab for a client certificate and the host has none to offer the
+   * agent (Android's KeyChain has no enumeration API: only the certificates the user already
+   * picked this session can be described). The request goes on without one, as a chooser
+   * cancelled would; the agent hears why.
+   */
+  refuseClientCertificate(tabId: string, host: string): boolean {
+    if (!this.takesPrompt(tabId, 'client-certificate')) return false
+    this.driver(tabId)?.notices.push(
+      `Notice: ${host} asked the page in tab ${tabId} for a client certificate; none is available to agents on this device, so the request went on without one. If the site needs one, the user must pick it in Zenium themselves.`
+    )
+    this.log(`tab ${tabId}: client certificate for ${host} refused, none on offer for the agent`)
+    return true
+  }
+
+  private onPromptOpened(p: AgentPrompt): void {
+    this.log(`prompt ${p.id} (${p.kind}) on tab ${p.tabId}: ${p.summary}`)
+    this.browser.state.commitVolatile()
+    const owner = this.driver(p.tabId)
+    if (owner && p.blocking) this.promptWaiters.get(owner.id)?.(p)
+  }
+
+  /** What a call interrupted by a prompt the page waits on answers. */
+  private promptResult(name: string, p: AgentPrompt): ToolResult {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${describePrompt(p, Date.now())}\nIt opened while ${name} ran; the page waits for your answer, so ${name} may not have finished – take a snapshot once you answered.`
+        }
+      ]
+    }
+  }
+
+  /** The footer every result carries while prompts wait on the session's tabs (those the result does not already name). */
+  private pendingPromptLines(s: AgentSession, already: string): string[] {
+    const waiting = this.promptsOf(s).filter((p) => !already.includes(p.id))
+    if (!waiting.length) return []
+    const now = Date.now()
+    return [
+      `Waiting for your answer (${waiting.length} prompt${waiting.length === 1 ? '' : 's'}; browser_prompts lists them):`,
+      ...waiting.map((p) => `- ${describePrompt(p, now)}`)
+    ]
   }
 
   evalPage(view: TabView, code: string): Promise<unknown> {
@@ -2236,7 +3144,12 @@ function isTruthy(v: string | null): boolean {
 }
 
 function describeRemote(address: string): string {
-  if (!address || address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1')
-    return 'this computer'
+  if (!address || isLoopbackAddress(address)) return 'this computer'
   return address.replace(/^::ffff:/, '')
+}
+
+/** A peer address on this computer: 127.0.0.0/8, ::1, or either mapped. */
+function isLoopbackAddress(address: string): boolean {
+  const bare = address.replace(/^::ffff:/i, '')
+  return bare === '::1' || /^127(\.\d{1,3}){3}$/.test(bare)
 }

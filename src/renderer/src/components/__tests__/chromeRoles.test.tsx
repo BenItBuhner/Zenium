@@ -126,6 +126,7 @@ function fixture({
     essentialTabIds: essentials,
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     boosts: [],

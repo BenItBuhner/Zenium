@@ -1524,7 +1524,7 @@ export class Menus {
   private async copyHighlightLink(tab: Tab, win: ZenWindow): Promise<void> {
     const url = await this.browser.textFragments.highlightUrl(tab.id)
     if (url) this.browser.copyText(url, 'Link copied', win, 'Link copied')
-    else this.browser.toast("Couldn't make a link to this text", 'info', win)
+    else this.browser.toast('Could not make a link to this text', 'info', win)
   }
 
   /**
@@ -3174,7 +3174,28 @@ export class Menus {
     const destroy: Template = [
       { label: 'Delete Folder', danger: true, click: () => this.deleteFolderAsking(folderId, win) }
     ]
-    this.popup(joinGroups([act, change, end, destroy]), win, 'folder', anchor)
+    this.popup(
+      joinGroups([act, change, end, this.releaseItems(folderId, win), destroy]),
+      win,
+      'folder',
+      anchor
+    )
+  }
+
+  /**
+   * "Release from <agent>…" on a group a disconnected agent still holds: the chrome asks first
+   * (`agent.confirmRelease`, a §9.23 prompt); the answer runs `agent.release`. Nothing on a group
+   * of a connected agent (Settings › AI Agents › Disconnect is that) or of no agent.
+   */
+  private releaseItems(folderId: string, win: ZenWindow): Template {
+    const claim = this.browser.agents.heldBy(folderId)
+    if (!claim) return []
+    return [
+      {
+        label: `Release from ${claim.name}…`,
+        click: () => this.browser.emit('agent.confirmRelease', { claimId: claim.id, folderId }, win)
+      }
+    ]
   }
 
   /**
@@ -3265,6 +3286,7 @@ export class Menus {
       ...fold,
       { type: 'separator' },
       ...closing,
+      ...this.releaseItems(id, win),
       { label: 'Delete Group', danger: true, click: () => this.deleteFolderAsking(id, win) }
     ]
   }

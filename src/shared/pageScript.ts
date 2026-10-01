@@ -7,7 +7,13 @@ import {
   type InterstitialAction,
   type InterstitialMessage
 } from './interstitial'
-import { MANIFEST_FIELDS, type RawWebAppManifest } from './webApp'
+import {
+  MANIFEST_FIELDS,
+  MAX_SHARE_ACCEPT,
+  MAX_SHARE_FILES,
+  MAX_SHARE_PARAM,
+  type RawWebAppManifest
+} from './webApp'
 import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
 import { installMediaTracking } from './mediaSessionScript'
@@ -722,6 +728,10 @@ function installZap(transport: PageScriptTransport): { active: () => boolean } {
 const MAX_MANIFEST_CHARS = 256 * 1024
 const MAX_MANIFEST_ICONS = 32
 const MAX_MANIFEST_SCREENSHOTS = 8
+/** A manifest string across the bridge (a URL, a name, a token). */
+const MAX_MANIFEST_STRING = 2048
+/** A `share_target` method or enctype token; the reader knows only a few short ones. */
+const MAX_SHARE_TOKEN = 64
 
 type InstallOutcome = 'accepted' | 'dismissed'
 interface InstallChoice {
@@ -729,9 +739,65 @@ interface InstallChoice {
   platform: string
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * The manifest's `share_target` across the bridge (MW-63): the reader (`parseShareTarget`) makes
+ * a target of an object of strings and one list, so exactly those cross, each bounded – the
+ * action as the manifest's other URLs are, the method and enctype tokens, the names of the
+ * fields the app reads the share from, and `files` as up to `MAX_SHARE_FILES` entries of a name
+ * and what it accepts – and nothing else. A target that is no object, or whose `params` is
+ * none, is dropped: the reader would make nothing of it either way. So is one whose `method`
+ * or `enctype` is present but no string: the reader refuses that target whole, where a member
+ * left out would read as the default (GET, urlencoded) and let the target through – the bridge
+ * must refuse what the reader refuses, as Chromium's parser does. An entry of `files` that is
+ * no object crosses as null, which the reader refuses as it would the original.
+ */
+function shareTargetSubset(value: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(value) || !isPlainObject(value.params)) return null
+  if (value.method !== undefined && typeof value.method !== 'string') return null
+  if (value.enctype !== undefined && typeof value.enctype !== 'string') return null
+  const target: Record<string, unknown> = {}
+  if (typeof value.action === 'string') target.action = value.action.slice(0, MAX_MANIFEST_STRING)
+  if (typeof value.method === 'string') target.method = value.method.slice(0, MAX_SHARE_TOKEN)
+  if (typeof value.enctype === 'string') target.enctype = value.enctype.slice(0, MAX_SHARE_TOKEN)
+  const params: Record<string, unknown> = {}
+  for (const key of ['title', 'text', 'url'] as const) {
+    const name = value.params[key]
+    if (typeof name === 'string') params[key] = name.slice(0, MAX_SHARE_PARAM)
+  }
+  const files = value.params.files
+  if (files !== undefined && files !== null) {
+    // The spec allows one entry or a list of them; the reader takes either.
+    params.files = (Array.isArray(files) ? files : [files])
+      .slice(0, MAX_SHARE_FILES)
+      .map((entry) => {
+        if (!isPlainObject(entry)) return null
+        const file: Record<string, unknown> = {}
+        if (typeof entry.name === 'string') file.name = entry.name.slice(0, MAX_SHARE_PARAM)
+        if (typeof entry.accept === 'string') {
+          file.accept = entry.accept.slice(0, MAX_SHARE_PARAM)
+        } else if (Array.isArray(entry.accept)) {
+          file.accept = entry.accept
+            .filter((accept): accept is string => typeof accept === 'string')
+            .slice(0, MAX_SHARE_ACCEPT)
+            .map((accept) => accept.slice(0, MAX_SHARE_PARAM))
+        }
+        return file
+      })
+  }
+  target.params = params
+  return target
+}
+
 /**
  * Only the fields the browser reads leave the page, with the lists capped, so a manifest never
- * carries more across the bridge than the install sheet can show.
+ * carries more across the bridge than the install sheet can show. Strings are cut at
+ * `MAX_MANIFEST_STRING`; `icons` and `screenshots` keep their entries' known members; the
+ * `share_target` object crosses bounded (`shareTargetSubset`) – the one object the reader
+ * takes, so an app installed from its page keeps the target its manifest declared.
  */
 export function manifestSubset(json: unknown): RawWebAppManifest | null {
   if (!json || typeof json !== 'object' || Array.isArray(json)) return null
@@ -755,8 +821,11 @@ export function manifestSubset(json: unknown): RawWebAppManifest | null {
           label: e.label
         }
       })
+    } else if (key === 'share_target') {
+      const target = shareTargetSubset(value)
+      if (target) subset[key] = target
     } else if (typeof value === 'string') {
-      subset[key] = value.slice(0, 2048)
+      subset[key] = value.slice(0, MAX_MANIFEST_STRING)
     }
   }
   return subset

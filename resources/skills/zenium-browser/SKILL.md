@@ -21,22 +21,26 @@ Zenium is the user's own browser. The user browses in it while you work, and oth
 
 ## First calls
 
-1. `zen_status` - who you are, your mode, your groups and tabs, which other agents are present. Read it once at the start of every task and after any reconnect.
-2. `zen_groups {"action":"create","name":"<task>"}` - your own tab group. Or skip it: your first `browser_tabs new` / `browser_navigate` creates your home group for you, in the shared Agents space.
-3. Work inside your group. `browser_tabs {"action":"list"}` shows only your tabs and is cheaper than `zen_status`.
+1. `zen_session {"action":"start","name":"<what you are doing>"}` - name yourself after the task, specifically: "Invoice reconciliation", "PR 741 review", "Flight search: Lisbon in May". Generic names ("Agent", "Claude", "Cursor", your client's name) are refused, and nothing but `zen_status` works until you have started. The answer gives your session key (`zk_...`): keep it for the whole task, and whenever you lose your session, resume with it rather than starting a new one.
+2. `zen_status` - who you are, your mode, your groups and tabs, which other agents are present. Read it at the start of every task and after any reconnect.
+3. `zen_groups {"action":"create","name":"<task>"}` - your own tab group. Or skip it: your first `browser_tabs new` / `browser_navigate` creates your home group for you, in the shared Agents space.
+4. Work inside your group. `browser_tabs {"action":"list"}` shows only your tabs and is cheaper than `zen_status`.
 
 ## Etiquette
 
 - Address everything by id. Tab ids look like `tab_3f9a...`, group ids like `folder_...`. Copy them from a listing. Never send a list position (1, 2, 3): positions shift whenever anyone opens or closes a tab, and the server refuses them.
 - Only touch what you created. Do not close, move, navigate, click or type in a tab that is not in one of your groups.
-- Other agents exist. They have their own groups. Their tabs are refused to you even with `allowForeign`. Do not rename, close or adopt a group that another working agent owns. An agent quiet for over 2 minutes counts as gone (its client most likely dropped) - listings mark its groups `quiet 2 min - adoptable`; a working agent's group is taken only with `force: true`, and only because the user asked you to (that agent is told).
+- Other agents exist. They have their own groups. Their tabs are refused to you even with `allowForeign`. Do not rename, close or adopt a group that another agent owns: a named agent's groups stay its own while it is away (listings mark them `away`), and no agent can adopt or force them - only the user can close or release them. Only orphaned groups (their session ended without closing them) can be adopted.
 - `allowForeign: true` is for the user's own tabs, only when the user explicitly asked you to work on their page ("read this tab", "fill the form I have open"). Never use it to grab a free tab for yourself. It never makes the tab yours. The user's Essentials and pinned tabs are never closed, moved or grouped.
 - Foreground needs the screen. Foreground mode acts in front of the user on a tab they are looking at. Bringing your tab in front first - which switches the user's space and active tab - takes `zen_mode {"mode":"foreground","takeScreen":true}`, and you pass that only when the user wants your work on screen (or the user set foreground as the default in Settings, which grants it). Without it, an action on a tab the user is not looking at runs in the background and the result says so. The screen is also a lease: if another agent holds it, your call runs in the background and the result says so - accept it, do not fight for the screen. When others are present, prefer `zen_mode {"mode":"background"}`.
 - Notices. When the user or another agent closes or moves one of your tabs, the next result starts with a line like `Notice: tab tab_... "Title" was closed by the user.` Read it, re-list your tabs, and adapt. Never assume a tab still exists after a notice; never retry the same call blindly.
 - Unexpected results (wrong page, missing element, unknown tab): `browser_tabs list`, then `browser_snapshot` on the tab you meant. Do not guess ids and do not open a second copy of a page you already have.
 - Every error message names what would have worked (valid actions, open tabs, how to get a ref). Follow it.
-- Clean up. When the task is done, `zen_session {"action":"end","closeTabs":true}` - unless the user wants to keep the results on screen, then end without `closeTabs` (your groups stay as orphaned folders the user can read). Ending keeps your connection: the next call simply starts a fresh session, no reconnect needed.
-- Long tasks and reconnects. If your connection drops, your group is not destroyed: it becomes orphaned. After reconnecting, `zen_status` lists the orphaned groups a session with your name left; `zen_groups {"action":"adopt"}` (no `groupId`) takes them all back, `{"action":"adopt","groupId":"folder_..."}` one of them (`zen_groups {"action":"list","scope":"all"}` shows every group with `[orphaned, was "<name>"]`). Re-list the tabs; do not open the pages again. A session idle for half an hour is parked, not lost: its groups become orphaned meanwhile and are yours again on your next call (the result says so). A result opening with `Notice: your connection was resumed` means the browser restarted or your session had expired; your old groups are orphaned - adopt them.
+- Clean up. When the task is done, `zen_session {"action":"end","closeTabs":true}` - unless the user wants to keep the results on screen, then end without `closeTabs` (your groups stay as orphaned folders the user can read). Ending is the only thing that gives your groups up; a later call needs a new `start`.
+- Your session is durable. Dropped connections, client or MCP restarts, idle parking and browser restarts do not take your groups away, and no other agent can adopt them. After a reconnect, call `zen_status`: usually your groups are already back. If it says you have no session or your groups are missing, `zen_session {"action":"resume","key":"zk_..."}` with your key carries the session over to the new connection. Never `start` a new session to get back to your work: a new session cannot reach your old groups. Resume promptly - the user can release an away agent's groups, and then the key stops working. Re-list the tabs; do not open the pages again. A result opening with `Notice:` about a resumed session is informational - read it and carry on.
+- Calls are bounded. A call that does not finish within its deadline (about 45 s; a hung page is stopped and reloaded) returns an error saying so instead of hanging. Your session is unaffected: take a `browser_snapshot` and decide; do not resend the same call blindly.
+- Page dialogs are yours where `browser_handle_dialog` is in your tool list (Zenium on the desktop). Where it is not listed (Zenium on Android, for now), the browser answers dialogs itself and you never see them. Where it is listed: an alert, confirm, prompt or "Leave site?" on one of your tabs never reaches the user. The call that triggers it returns with the dialog, and page tools refuse that tab until you answer it with `browser_handle_dialog`. Unanswered dialogs are dismissed after two minutes.
+- Native prompts are yours too, where `browser_prompts` is in your tool list. A file chooser, a download asking where to save, a sign-in, a client certificate, a permission request (camera, location, notifications...), screen sharing, a Bluetooth/USB/serial/HID picker, a link to another app or a print dialog opened by one of your tabs never reaches the user and never appears on screen. A `Notice:` announces it and every later result ends with a "Waiting for your answer" block until you answer with `browser_respond_prompt` (files: `browser_file_upload`). Never use OS automation (xdotool, AppleScript, clicking system dialogs in a screenshot): there is nothing on screen to automate. Unanswered, a prompt gets its default after two minutes - the refusal, or for a download the Downloads folder. The tool list tells you which kinds this browser hands you; Zenium on Android hands you sign-ins, permissions and links to other apps only, and handles the rest itself.
 - One call at a time. Your calls are serialised per session; sending several in parallel gains nothing.
 
 ## Reading vs acting
@@ -68,21 +72,23 @@ Who you are and what is in the browser: your name, session id, mode and foregrou
 
 Your session.
 
+- `{"action":"start","name":"Invoice reconciliation"}` - your first call. The name is what the user sees beside your tabs and on your cursor: specific to the task, not generic ("Agent", "Claude" and client names are refused, as is a name another agent is using). Returns your session key `zk_...`. From here on your groups and tabs are yours across reconnects and restarts until you end the session.
+- `{"action":"resume","key":"zk_..."}` - after a reconnect that left you without your session (`zen_status` shows no session or none of your groups), carry it over to this connection. The groups, tabs and name come back as they were.
 - `{"action":"status"}` - same as `zen_status`.
-- `{"action":"end","closeTabs":true}` - close your groups and their tabs, end the session. Without `closeTabs` your groups stay open as orphaned groups; a later session takes one back with `zen_groups {"action":"adopt","groupId":"..."}`. Your connection stays open either way: a call after `end` starts over as a fresh session under the same id.
-- `{"action":"rename","name":"Research: invoices"}` - the label the user sees in the sidebar and on your cursor.
-- Example: `zen_session {"action":"end","closeTabs":true}`
-- Pitfall: ending is not optional. A session left open keeps its tabs claimed for a long time.
+- `{"action":"end","closeTabs":true}` - close your groups and their tabs, end the session. Without `closeTabs` your groups stay open as orphaned groups; a later session takes one back with `zen_groups {"action":"adopt","groupId":"..."}`. Your connection stays open either way; call `start` again before more work.
+- `{"action":"rename","name":"Research: invoices"}` - change your name (the same rules as `start`).
+- Example: `zen_session {"action":"start","name":"PR 741 review"}`
+- Pitfalls: ending is not optional - a session left open keeps its groups held for the user to release by hand. Do not `start` again after a reconnect when you already have a key; `resume` it, or you will lose sight of your old groups.
 
 ### zen_groups
 
 Your tab groups (Zenium tab folders).
 
-- `{"action":"list"}` - your groups with their tabs; `"scope":"all"` lists every agent group with its tabs and its owner (`[yours]`, `[owned by "<name>"]`, or `[orphaned, was "<name>"]` for a group whose agent left), then the user's folders as headers only (name, id, tab count - theirs, not yours to use).
+- `{"action":"list"}` - your groups with their tabs; `"scope":"all"` lists every agent group with its tabs and its owner (`[yours]`, `[owned by "<name>"]`, `[owned by "<name>", away - kept for it]` for a named agent that is not connected right now, or `[orphaned, was "<name>"]` for a group whose agent ended its session and left it), then the user's folders as headers only (name, id, tab count - theirs, not yours to use).
 - `{"action":"create","name":"<task>"}` - a new group in the shared Agents space; returns `groupId`. `"space":"own"` creates a private space named after you; `"space":"<spaceId>"` (id or name) uses an existing space: the Agents space or a space an agent made needs nothing, the user's spaces need `allowForeign: true`.
 - `{"action":"rename","groupId":"folder_...","name":"..."}`
 - `{"action":"close","groupId":"folder_..."}` - closes every tab in it and removes the folder. Own groups only.
-- `{"action":"adopt","groupId":"folder_..."}` - take over an orphaned group (its owner session is gone) after a reconnect, or the group of an agent quiet for over 2 minutes. `{"action":"adopt"}` without `groupId` takes back every orphaned group a session with your name left. `"force":true` takes a working agent's group - only when the user asked you to; that agent is told.
+- `{"action":"adopt","groupId":"folder_..."}` - take over an orphaned group (its agent ended its session and left it), only when you are continuing that work. `{"action":"adopt"}` without `groupId` takes back every orphaned group a session with your name left. A named agent's groups are never adoptable, not while it is away and not with `force`; your own groups after a reconnect come back with `zen_session resume`, not `adopt`.
 - Example: `zen_groups {"action":"create","name":"Price check"}`
 - Pitfall: a group is addressed by `groupId`, never by name. Two agents may use the same name.
 
@@ -166,7 +172,7 @@ Click an element or a point, then return a snapshot.
 
 - `{"tabId":"tab_...","target":"e12"}` or `{"tabId":"tab_...","x":400,"y":250}`; `"doubleClick":true`, `"button":"right"`, `"modifiers":["Shift"]`.
 - Example: `browser_click {"tabId":"tab_3f9a...","target":"text=Accept all"}`
-- Pitfalls: `target` is `e12`, not `[ref=e12]`. A disabled element is reported, not clicked. For checkboxes and radios click them; for `<select>` use `browser_select_option`.
+- Pitfalls: `target` is `e12`, not `[ref=e12]`. A disabled element is reported, not clicked. For checkboxes and radios click them. A click on a `<select>`, colour or date field is refused - its picker would open on the user's screen; use `browser_select_option` for a `<select>` and `browser_type` for colour and date values (`"#ff0000"`, `"2026-10-01"`). An upload button opens a file chooser that comes to you as a prompt; answer it with `browser_file_upload`.
 
 ### browser_type
 
@@ -235,6 +241,40 @@ Run JavaScript in the page and get the JSON result: an expression (`"document.ti
 - Off unless the user enabled "Allow agents to run JavaScript in pages" in Settings > AI Agents. If the tool is missing or answers that scripting is disabled, say so and use `browser_snapshot`, `browser_read_page` and the interaction tools instead. Do not ask the user to enable it for something another tool does.
 - Example: `browser_evaluate {"tabId":"tab_3f9a...","expression":"document.querySelector('#chart').dataset.points"}`
 - Pitfalls: not for navigation, history, reload, scrolling, hovering or screenshots - dedicated tools exist. `Script threw: ...` is the page's own error; read it, do not switch to `view-source:` as a workaround.
+
+### browser_handle_dialog
+
+Listed only where page dialogs route to agents; when it is missing from your tools, dialogs are not yours to answer.
+
+Answer the dialog a page opened on one of your tabs: alert, confirm, prompt or "Leave site?". The page is blocked until it is answered, so the call that ran into it returns with the dialog's text, and page tools refuse the tab until you answer. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Returns a snapshot afterwards.
+
+- `{"tabId":"tab_...","accept":true}` presses OK (the default), `"accept":false` Cancel; `"promptText":"..."` is what a prompt receives.
+- Example: `browser_handle_dialog {"tabId":"tab_3f9a...","accept":false}`
+- Pitfall: read the dialog before accepting. A "Leave site?" or a confirm about deleting or paying is a decision; when it is not clearly part of the task, cancel and tell the user.
+
+### browser_prompts
+
+Listed only where native prompts route to agents. Lists what your tabs wait for you to answer: each prompt's `id`, `tabId`, `kind`, details, the `actions` it takes, its `defaultAction`, `secondsLeft` and whether the page waits on it - plus pending page dialogs. Read-only.
+
+- `{}` for all your tabs, `{"tabId":"tab_..."}` for one.
+- Example: `browser_prompts {"tabId":"tab_3f9a..."}`
+- Pitfall: you rarely need to poll it. The notice and the "Waiting for your answer" block already name each prompt with the call that answers it.
+
+### browser_respond_prompt
+
+Answer a prompt with one of its actions: `promptId` (or `tabId` when that tab has only one prompt) and `action`, plus what that action reads. Returns a snapshot afterwards.
+
+- Permissions: `"action":"allow"` or `"deny"` - an allow lasts until the tab leaves the site and is never saved for the user. Sign-in: `"action":"sign-in","username":"...","password":"..."` or `"cancel"`. Client certificate: `"action":"select","index":0` or `"none"`. Download: `"action":"save","filename":"report.pdf"` (the name only; it stays in Downloads) or `"cancel"`. Screen sharing: `"action":"share","sourceId":"..."`. Device picker: `"action":"connect","deviceId":"..."` - the site keeps the device while the tab is yours, never saved for the user. Bluetooth pairing is never yours: a page's pairing request on your tab is refused with a notice; ask the user to pair the device in the system's Bluetooth settings, then pick it again. Link to another app: `"action":"allow"` or `"deny"`.
+- Example: `browser_respond_prompt {"promptId":"prompt_7c1e...","action":"deny"}`
+- Pitfalls: a sign-in, certificate, device or app link is a decision with the user's identity or hardware. Use only what the task gives you; when unsure, refuse it and tell the user. Page dialogs (alert, confirm, "Leave site?") are answered with `browser_handle_dialog`, not here.
+
+### browser_file_upload
+
+Hand a page files without any system dialog. Three ways: answer the file chooser an upload button opened (`promptId`, or `tabId` alone); set an `<input type=file>` directly with `target`; or drop the files on a drop zone with `target` and `"drop":true`. Returns a snapshot afterwards.
+
+- `paths` are absolute paths on this computer, accepted only when you run on it (a local stdio or loopback connection). From another machine send `"files":[{"name":"a.pdf","base64":"...","mimeType":"application/pdf"}]` (50 MB in total). A folder input takes one folder path; a single-file input takes one file. The prompt names the input's `accept` list; match it, the page may reject other types.
+- Example: `browser_file_upload {"tabId":"tab_3f9a...","target":"#avatar","paths":["/home/me/avatar.png"]}`
+- Pitfalls: upload only files the task names. To cancel a chooser, `browser_respond_prompt {"promptId":"...","action":"cancel"}`. Where this tool is missing, this browser cannot hand pages files for you; say so instead of reaching for the system dialog.
 
 ## Before you say "done"
 

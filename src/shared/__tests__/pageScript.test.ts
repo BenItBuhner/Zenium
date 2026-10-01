@@ -5,9 +5,11 @@ import {
   installFullscreenReporter,
   installPageScript,
   isActivatingEvent,
+  manifestSubset,
   type PageScriptMessage,
   type PageScriptTransport
 } from '../pageScript'
+import { parseWebAppManifest, type WebAppInfo } from '../webApp'
 
 /** happy-dom lets a test mark an event as trusted; browsers only do so for real input. */
 function trusted<T extends Event>(e: T): T {
@@ -317,5 +319,317 @@ describe("Roll's relay on a web page (ERR-03)", () => {
     window.postMessage({ zeniumGame: { best: 42 } }, '*')
     await new Promise((r) => setTimeout(r, 20))
     expect(sent.filter((m) => m.type === 'game')).toEqual([])
+  })
+})
+
+describe('page script: the manifest subset the bridge carries (MW-63, share_target)', () => {
+  const DOC = 'https://app.example.com/tools/editor?mode=new#top'
+  const MANIFEST = 'https://app.example.com/tools/manifest.webmanifest'
+
+  /** The reader's view of a manifest, straight and through the subset. */
+  function bothWays(json: Record<string, unknown>): {
+    straight: WebAppInfo | null
+    viaBridge: WebAppInfo | null
+  } {
+    return {
+      straight: parseWebAppManifest(json, MANIFEST, DOC),
+      viaBridge: parseWebAppManifest(manifestSubset(json), MANIFEST, DOC)
+    }
+  }
+
+  it('carries a share_target with exactly its bounded fields, beside the strings and icons it always carried', () => {
+    const subset = manifestSubset({
+      name: 'Field Notes',
+      short_name: 'Notes',
+      start_url: '/tools/notes/',
+      icons: [{ src: 'icon.png', sizes: '192x192', type: 'image/png', purpose: 'any', weight: 3 }],
+      share_target: {
+        action: '/tools/notes/new',
+        method: 'POST',
+        enctype: 'multipart/form-data',
+        params: {
+          title: 'subject',
+          text: 'body',
+          url: 'link',
+          files: [
+            { name: 'pictures', accept: ['image/*', '.png'], required: true },
+            { name: 'doc', accept: '.txt' }
+          ],
+          extra: 'field'
+        },
+        target: '_blank'
+      },
+      related_applications: [{ platform: 'play' }]
+    })
+    expect(subset).toEqual({
+      name: 'Field Notes',
+      short_name: 'Notes',
+      start_url: '/tools/notes/',
+      icons: [{ src: 'icon.png', sizes: '192x192', type: 'image/png', purpose: 'any' }],
+      share_target: {
+        action: '/tools/notes/new',
+        method: 'POST',
+        enctype: 'multipart/form-data',
+        params: {
+          title: 'subject',
+          text: 'body',
+          url: 'link',
+          files: [
+            { name: 'pictures', accept: ['image/*', '.png'] },
+            { name: 'doc', accept: '.txt' }
+          ]
+        }
+      }
+    })
+    // Exactly those members: nothing the reader does not take rides along.
+    expect(subset?.share_target).toStrictEqual({
+      action: '/tools/notes/new',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: {
+        title: 'subject',
+        text: 'body',
+        url: 'link',
+        files: [
+          { name: 'pictures', accept: ['image/*', '.png'] },
+          { name: 'doc', accept: '.txt' }
+        ]
+      }
+    })
+  })
+
+  it('cuts an over-long action, token and field name, and over-count files and accept entries, at the caps', () => {
+    const subset = manifestSubset({
+      name: 'App',
+      share_target: {
+        action: 'https://app.example.com/tools/' + 'a'.repeat(3000),
+        method: 'p'.repeat(100),
+        enctype: 'e'.repeat(100),
+        params: {
+          title: 't'.repeat(300),
+          text: 'x'.repeat(128),
+          files: Array.from({ length: 10 }, (_, i) => ({
+            name: `f${i}`.padEnd(200, 'n'),
+            accept: Array.from({ length: 20 }, (_, j) => `.${j}`.padEnd(200, 'a'))
+          }))
+        }
+      }
+    })
+    const target = subset?.share_target as {
+      action: string
+      method: string
+      enctype: string
+      params: { title: string; text: string; files: Array<{ name: string; accept: string[] }> }
+    }
+    expect(target.action).toHaveLength(2048)
+    expect(target.action.startsWith('https://app.example.com/tools/aaa')).toBe(true)
+    expect(target.method).toHaveLength(64)
+    expect(target.enctype).toHaveLength(64)
+    expect(target.params.title).toHaveLength(128)
+    expect(target.params.text).toHaveLength(128)
+    expect(target.params.files).toHaveLength(8)
+    expect(target.params.files.map((f) => f.name.slice(0, 2))).toEqual([
+      'f0',
+      'f1',
+      'f2',
+      'f3',
+      'f4',
+      'f5',
+      'f6',
+      'f7'
+    ])
+    for (const file of target.params.files) {
+      expect(file.name).toHaveLength(128)
+      expect(file.accept).toHaveLength(16)
+      for (const accept of file.accept) expect(accept).toHaveLength(128)
+    }
+  })
+
+  it('drops a share_target that is no object, or whose params is none; carries what the reader would refuse as it would refuse it', () => {
+    for (const share_target of ['share', ['share'], null, 7, true, { action: 'share' }])
+      expect(manifestSubset({ name: 'App', share_target })).toEqual({ name: 'App' })
+    for (const params of ['title', ['url'], null, 3])
+      expect(manifestSubset({ name: 'App', share_target: { action: 'share', params } })).toEqual({
+        name: 'App'
+      })
+    // An action or a field name of the wrong type is left out; the reader then reads nothing
+    // there, as it reads nothing of the original.
+    expect(
+      manifestSubset({
+        name: 'App',
+        share_target: { action: 7, params: { title: 1, url: 'link' } }
+      })?.share_target
+    ).toStrictEqual({ params: { url: 'link' } })
+    // A method or enctype that is present but no string drops the target whole (seed #41): left
+    // out, it would read as the default and let through a target the reader – and Chromium's
+    // parser – refuse when the manifest is fetched.
+    for (const method of [null, 7, ['GET'], { value: 'GET' }, true])
+      expect(
+        manifestSubset({
+          name: 'App',
+          share_target: { action: 'share', method, params: { title: 't' } }
+        })
+      ).toEqual({ name: 'App' })
+    for (const enctype of [null, 7, ['multipart/form-data'], {}, false])
+      expect(
+        manifestSubset({
+          name: 'App',
+          share_target: { action: 'share', method: 'POST', enctype, params: { title: 't' } }
+        })
+      ).toEqual({ name: 'App' })
+    // A string method or enctype still crosses, cut at the token cap; one the reader will refuse
+    // (an unknown token) crosses too, for the reader to refuse.
+    expect(
+      manifestSubset({
+        name: 'App',
+        share_target: {
+          action: 'share',
+          method: 'G'.repeat(100),
+          enctype: 'text/plain',
+          params: {}
+        }
+      })?.share_target
+    ).toStrictEqual({ action: 'share', method: 'G'.repeat(64), enctype: 'text/plain', params: {} })
+    // A files entry that is no object crosses as null – the reader refuses the target, as it
+    // refuses the original – and one entry crosses as a list of one, as the reader takes it.
+    expect(
+      manifestSubset({
+        name: 'App',
+        share_target: { action: 'share', params: { files: ['pictures'] } }
+      })?.share_target
+    ).toStrictEqual({ action: 'share', params: { files: [null] } })
+    expect(
+      manifestSubset({
+        name: 'App',
+        share_target: { action: 'share', params: { files: { name: 'doc', accept: ['.txt', 4] } } }
+      })?.share_target
+    ).toStrictEqual({ action: 'share', params: { files: [{ name: 'doc', accept: ['.txt'] }] } })
+  })
+
+  it('round-trips through the reader: an app installed from its page keeps the target its manifest declared', () => {
+    const get = bothWays({
+      name: 'App',
+      start_url: '/tools/',
+      icons: [{ src: 'icon.png', sizes: '192x192' }],
+      share_target: { action: 'share', params: { title: 'subject', text: 'body', url: 'link' } }
+    })
+    expect(get.straight?.shareTarget).toEqual({
+      action: 'https://app.example.com/tools/share',
+      method: 'GET',
+      enctype: 'application/x-www-form-urlencoded',
+      params: { title: 'subject', text: 'body', url: 'link', files: [] }
+    })
+    expect(get.viaBridge).toEqual(get.straight)
+
+    const post = bothWays({
+      name: 'App',
+      share_target: {
+        action: '/tools/receive',
+        method: 'post',
+        enctype: 'Multipart/Form-Data',
+        params: {
+          text: 'note',
+          files: [
+            { name: 'pictures', accept: ['image/*', '.PNG'] },
+            { name: 'doc', accept: '.txt' }
+          ]
+        }
+      }
+    })
+    expect(post.straight?.shareTarget).toMatchObject({
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: {
+        files: [
+          { name: 'pictures', accept: ['image/*', '.png'] },
+          { name: 'doc', accept: ['.txt'] }
+        ]
+      }
+    })
+    expect(post.viaBridge?.shareTarget).toEqual(post.straight?.shareTarget)
+
+    // One entry of files, not a list: the reader takes it either way, and the same way.
+    const single = bothWays({
+      name: 'App',
+      share_target: {
+        action: 'receive',
+        method: 'POST',
+        enctype: 'multipart/form-data',
+        params: { url: 'link', files: { name: 'doc', accept: '.txt' } }
+      }
+    })
+    expect(single.straight?.shareTarget?.params.files).toEqual([{ name: 'doc', accept: ['.txt'] }])
+    expect(single.viaBridge?.shareTarget).toEqual(single.straight?.shareTarget)
+
+    // No params: no target, both ways; none declared: none, both ways.
+    const bare = bothWays({ name: 'App', share_target: { action: 'share' } })
+    expect(bare.straight?.shareTarget).toBeNull()
+    expect(bare.viaBridge?.shareTarget).toBeNull()
+    const none = bothWays({ name: 'App' })
+    expect(none.straight?.shareTarget).toBeNull()
+    expect(none.viaBridge?.shareTarget).toBeNull()
+    // A target the reader refuses (files on a GET) is refused through the subset too.
+    const refused = bothWays({
+      name: 'App',
+      share_target: { action: 'share', params: { files: { name: 'doc', accept: '.txt' } } }
+    })
+    expect(refused.straight?.shareTarget).toBeNull()
+    expect(refused.viaBridge?.shareTarget).toBeNull()
+    // A method or enctype present but no string: the reader refuses the target whole from a
+    // fetch, so the bridge must not let it through as the default (seed #41 – the app is
+    // offered through neither way, as Chrome offers it through none).
+    for (const share_target of [
+      { action: 'share', method: null, params: { title: 't' } },
+      { action: 'share', method: 7, params: { title: 't' } },
+      { action: 'share', method: ['GET'], params: { title: 't' } },
+      { action: 'share', method: { value: 'GET' }, params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: null, params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: 7, params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: ['multipart/form-data'], params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: {}, params: { title: 't' } }
+    ]) {
+      const malformed = bothWays({ name: 'App', share_target })
+      expect(malformed.straight?.shareTarget).toBeNull()
+      expect(malformed.viaBridge?.shareTarget).toBeNull()
+      expect(malformed.viaBridge).toEqual(malformed.straight)
+    }
+    // The app itself is still installable either way: only its target is refused.
+    expect(
+      bothWays({ name: 'App', share_target: { action: 'share', method: null, params: {} } })
+        .viaBridge?.name
+    ).toBe('App')
+  })
+
+  it('leaves the other fields as they were: strings cut at 2048, lists capped with their known members, the rest out', () => {
+    expect(manifestSubset(null)).toBeNull()
+    expect(manifestSubset('{}')).toBeNull()
+    expect(manifestSubset([{ name: 'App' }])).toBeNull()
+    const subset = manifestSubset({
+      name: 'App',
+      description: 'd'.repeat(3000),
+      display: 5,
+      icons: 'icon.png',
+      screenshots: Array.from({ length: 10 }, (_, i) => ({
+        src: `s${i}.png`,
+        form_factor: 'wide'
+      })),
+      unknown: 'x'
+    })
+    expect(subset).toEqual({
+      name: 'App',
+      description: 'd'.repeat(2048),
+      screenshots: Array.from({ length: 8 }, (_, i) => ({ src: `s${i}.png`, form_factor: 'wide' }))
+    })
+    expect(Object.keys(subset ?? {})).toEqual(['name', 'description', 'screenshots'])
+    expect(
+      manifestSubset({ icons: [null, 'icon.png', { src: 'a.png', sizes: '48x48', weight: 1 }] })
+        ?.icons
+    ).toEqual([null, null, { src: 'a.png', sizes: '48x48' }])
+    expect(
+      (
+        manifestSubset({ icons: Array.from({ length: 40 }, () => ({ src: 'a.png' })) })
+          ?.icons as unknown[]
+      ).length
+    ).toBe(32)
   })
 })

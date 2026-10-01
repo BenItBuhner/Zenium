@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  AwayAgentInfo,
   AgentServerStatus,
   AgentSkillStatus,
   AutofillUIState,
@@ -66,6 +67,7 @@ import type {
 import type { TranslateUIState } from '../shared/translate'
 import type { ContentDefault } from '../shared/contentSettings'
 import type { InstalledWebApp } from '../shared/webApp'
+import type { ShareChooser } from '../shared/shareTarget'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
@@ -331,6 +333,7 @@ export interface StateExtras {
   webApps: InstalledWebApp[]
   sync: SyncStatus
   agents: AgentInfo[]
+  awayAgents: AwayAgentInfo[]
   agentServer: AgentServerStatus
   agentSkills: AgentSkillStatus
   updates: UpdateStatus
@@ -352,6 +355,8 @@ export interface StateExtras {
   closingTabIds: string[]
   screenCaptureRequests: ScreenCaptureRequest[]
   shareRequests: ShareRequest[]
+  /** The share waiting on this window's chooser (MW-63), null while none does. */
+  shareChooser: ShareChooser | null
   crashRestore: CrashRestoreOffer | null
   autofill: AutofillUIState
   blocking: BlockingStatus
@@ -522,9 +527,15 @@ export class BrowserState {
       transport: 'folder',
       webdav: null,
       webdavAvailable: false,
-      authRefused: false
+      authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false
     },
     agents: [],
+    awayAgents: [],
     agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(this.version),
     updates: emptyUpdateStatus(this.version, {
@@ -549,6 +560,7 @@ export class BrowserState {
     closingTabIds: [],
     screenCaptureRequests: [],
     shareRequests: [],
+    shareChooser: null,
     crashRestore: null,
     autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),
@@ -1414,6 +1426,8 @@ export class BrowserState {
           hung: undefined,
           // A form in progress died with the page's document (OS-37).
           formEdited: undefined,
+          // The document generation counts this session's documents: the key is not written.
+          documentGeneration: undefined,
           // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).
           memorySaver: undefined,
           errorCode: null,

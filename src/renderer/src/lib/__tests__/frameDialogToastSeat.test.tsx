@@ -249,6 +249,7 @@ function tabletState(): UIState {
     folders: {},
     essentialTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     settings: {
       colorScheme: 'light',

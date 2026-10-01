@@ -2,10 +2,10 @@
   "id": "pip",
   "order": 108,
   "class": "PipDemo",
-  "shard": "webview",
+  "shard": "webview-b",
   "mirrors": "android-media-demo.yml:driver=pip",
   "dir": "media-demo",
   "timeout": 1200,
   "estimate": 8,
-  "note": "Home during fullscreen video into the picture-in-picture window in both themes: bounds and the page's fill read, the menu's Pause, Play and Next track driven through to the page, expand back inline, the requested window's X; a new document, another tab and the tab's close each end the window; a page without a video and an inline video give Home nothing new; the site's auto-picture-in-picture setting set to Block keeps Home out of the window while the explicit request still gets one, Allow again restores the auto-enter (MOT-30, MED-06)."
+  "note": "Home during fullscreen video into the picture-in-picture window in both themes: bounds and the page's fill read, the menu's Pause, Play and Next track driven through to the page, expand back inline, the requested window's X; a new document, another tab and the tab's close each end the window; a page without a video and an inline video give Home nothing new; the site's auto-picture-in-picture setting set to Block keeps Home out of the window while the explicit request still gets one, Allow again restores the auto-enter (MOT-30, MED-06). Moved from webview (67.0 of its 68 minutes, past the headroom line) to webview-b when that shard opened (services pass 17, seed #36), with media, media-ui and fullscreen – the four drivers on the media-demo handshake – and a11y-chrome-private: see media for the choice."
 }
