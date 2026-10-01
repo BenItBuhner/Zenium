@@ -160,6 +160,42 @@ describe('DocumentFilters', () => {
     expect(f.decide('https://short.example/')).toBeNull()
     expect(f.decide('https://other.example/short.exampl')).toBeNull()
   })
+
+  it('decides a `||host^*…` filter by the hostname, not by the credentials in front of it', () => {
+    // uBlock Origin's `||host` anchors to the request's hostname; a URL whose userinfo reads
+    // `opera.com@` is a request to `other.example`. The older parse tested every pattern's
+    // regular expression against the whole URL, and its `||` anchor (`HOSTNAME_ANCHOR`, which
+    // nothing stops at an `@`) accepted the userinfo as the hostname and the `@` or `:` after
+    // it as the `^` separator – a false positive on exactly these three easylist lines. The
+    // pattern is now filed under its hostname and found through the URL's real one.
+    const f = DocumentFilters.parse([
+      [
+        '||net.geo.opera.com^*utm_source=OFT$document',
+        '||opera.com^*admaven$document',
+        '||opera.com^*PWNgames$document'
+      ].join('\n')
+    ])
+    expect(f.size).toBe(3)
+    expect(f.decide('https://opera.com@other.example/admaven')).toBeNull()
+    expect(f.decide('https://x.opera.com@other.example/admaven')).toBeNull()
+    expect(f.decide('https://opera.com:pw@other.example/admaven')).toBeNull()
+    expect(f.decide('https://net.geo.opera.com@other.example/utm_source=OFT')).toBeNull()
+    expect(new URL('https://opera.com:pw@other.example/admaven').hostname).toBe('other.example')
+    // The filters themselves are live.
+    expect(f.decide('https://opera.com/admaven')).toEqual({
+      action: 'block',
+      filter: '||opera.com^*admaven$document'
+    })
+    expect(f.decide('https://www.opera.com/x/PWNgames?y')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://net.geo.opera.com/?utm_source=OFT')).toMatchObject({
+      action: 'block'
+    })
+    expect(f.decide('https://other.example/admaven')).toBeNull()
+    // Read back from the serialised form: the same.
+    const read = DocumentFilters.deserialize(f.serialize())
+    expect(read.decide('https://opera.com@other.example/admaven')).toBeNull()
+    expect(read.decide('https://opera.com/admaven')).toMatchObject({ action: 'block' })
+  })
 })
 
 describe('the serialised form', () => {
