@@ -10,6 +10,7 @@ import { useFullscreenAwayBinding } from '@renderer/hooks/useFullscreenAwayBindi
 import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
+import { dismissPosted, postBanner, usePostedKeyUp } from '@renderer/lib/band/post'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
 import { READER_BANNER_KEY, useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
@@ -58,10 +59,8 @@ import {
   closeHistoryMenu,
   closeTabsMenu,
   contentAreaStore,
-  dismissBanner,
   openMediaSheet,
   overlayCoversContent,
-  showBanner,
   uiStore,
   type UiState
 } from '@renderer/lib/ui'
@@ -152,31 +151,37 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     []
   )
 
-  // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33), up for
-  // as long as the core says a banner is due. Swiping or closing it is the campaign's one
-  // dismissal; the action hands over to the system, which ends the campaign either way; and
+  // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33) – on the
+  // phone the page-edge band in its state form (motion spec §4; `lib/band/post.ts` is the door),
+  // with "Not now" as the band's second action where its content has room: the same end as the
+  // × – up for as long as the core says a banner is due. Swiping or closing it is the campaign's
+  // one dismissal; the action hands over to the system, which ends the campaign either way; and
   // when the core takes the prompt down itself – after the request, or once Zenium holds the
   // role – the card leaves as `'program'`, which counts for nothing. A third banner pushing it
   // off (`'replaced'`) is not the user's answer either.
   const bannerDue = state.defaultBrowser.prompt === 'banner' && !onboarding
   useEffect(() => {
     if (!bannerDue) return
-    const id = showBanner({
-      title: 'Open links in Zenium',
-      detail: 'Make it your default browser',
-      icon: Globe,
-      action: {
-        label: 'Set as default',
-        onPick: () => run('defaultBrowser.request', { source: 'banner' })
+    const notNow = (): void => run('defaultBrowser.dismiss', { prompt: 'banner' })
+    const id = postBanner(
+      {
+        title: 'Open links in Zenium',
+        detail: 'Make it your default browser',
+        icon: Globe,
+        action: {
+          label: 'Set as default',
+          onPick: () => run('defaultBrowser.request', { source: 'banner' })
+        },
+        key: 'default-browser',
+        duration: null,
+        onDismiss: (reason) => {
+          if (reason === 'swipe' || reason === 'close') notNow()
+        }
       },
-      key: 'default-browser',
-      duration: null,
-      onDismiss: (reason) => {
-        if (reason === 'swipe' || reason === 'close')
-          run('defaultBrowser.dismiss', { prompt: 'banner' })
-      }
-    })
-    return () => dismissBanner(id)
+      'state',
+      { label: 'Not now', pick: notNow }
+    )
+    return () => dismissPosted(id)
   }, [bannerDue])
 
   // The device offline: "No internet connection" in the banner stack; back: a "Back online" toast (ERR-07).
@@ -721,12 +726,11 @@ export function PillContent({
   const privateMark = shown ? isPrivateTab(shown) : false
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
   const quietPromptOpen = uiStore.use((s) => s.quietPromptId !== null)
-  // The §9.33 "Show Reader View?" strip stands on the banner stack for the tab in front
-  // (`useReaderEntryMessage`, one banner under its key): the reader chip waits in the sheet
-  // while it asks, and takes the slot as the strip leaves (CT-37's coexistence with PUI-14).
-  const readerOfferUp = uiStore.use((s) =>
-    s.banners.some((b) => b.key === READER_BANNER_KEY && b.leaving !== true)
-  )
+  // The §9.33 "Show Reader View?" strip stands on the banner stack – or the page-edge band –
+  // for the tab in front (`useReaderEntryMessage`, one message under its key at either door):
+  // the reader chip waits in the sheet while it asks, and takes the slot as the strip leaves
+  // (CT-37's coexistence with PUI-14).
+  const readerOfferUp = usePostedKeyUp(READER_BANNER_KEY)
   // The chips after the address as data (`phonePillChips`): the lock, the blocking shield with
   // its count, a translate offer, the Now playing chip (MW-16), the reader chip on an article.
   // At rest the pill draws the favicon, the host and the lock alone – v2 §9.29 as amended on
