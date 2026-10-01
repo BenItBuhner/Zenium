@@ -122,7 +122,17 @@ import type {
 import type { SessionManager } from './sessions'
 import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
-import { answerFileChooser, dropFiles, setInputFiles, type FileChooserOpened } from './agentPrompts'
+import {
+  answerFileChooser,
+  armFrameChoosers,
+  ATTACH_FRAMES,
+  DETACH_FRAMES,
+  dropFiles,
+  INTERCEPT_FILE_CHOOSERS,
+  setInputFiles,
+  type FileChooserOpened,
+  type FrameAttached
+} from './agentPrompts'
 import { savePageDialogOptions, savePageTarget } from './savePage'
 import { StartupHold } from './startupHold'
 import { uniquePath } from './uniquePath'
@@ -323,18 +333,11 @@ interface CdpCommand {
   method: string
   params: Record<string, unknown>
   /** Sent first on every session the command goes on (a domain it needs enabled). */
-  before?: CdpCommand[]
+  before?: readonly CdpCommand[]
 }
 
-/**
- * File choosers come to the session instead of the system's dialog. `Page.fileChooserOpened`
- * reaches the session only with the Page domain enabled (measured on Electron 44).
- */
-const FILE_CHOOSERS_INTERCEPTED: CdpCommand = {
-  method: 'Page.setInterceptFileChooserDialog',
-  params: { enabled: true },
-  before: [{ method: 'Page.enable', params: {} }]
-}
+/** The page's file choosers, its cross-site frames' included, come to the session. */
+const FILE_CHOOSERS_INTERCEPTED: CdpCommand = { ...ATTACH_FRAMES, before: INTERCEPT_FILE_CHOOSERS }
 
 async function sendCdp(dbg: Electron.Debugger, command: CdpCommand): Promise<void> {
   for (const first of command.before ?? []) await dbg.sendCommand(first.method, first.params)
@@ -363,7 +366,10 @@ const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
   autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
   colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) },
   scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } },
-  fileChooser: { method: 'Page.setInterceptFileChooserDialog', params: { enabled: false } }
+  fileChooser: {
+    ...DETACH_FRAMES,
+    before: [{ method: 'Page.setInterceptFileChooserDialog', params: { enabled: false } }]
+  }
 }
 
 function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
@@ -628,15 +634,18 @@ export class ElectronTabView implements TabView {
       this.pausedByDebugger = false
       this.sessionDetached()
     })
-    this.wc.debugger?.on?.('message', (_e, method: string, params: unknown) => {
-      if (method === 'Debugger.paused') this.pausedByDebugger = true
-      else if (method === 'Debugger.resumed') this.pausedByDebugger = false
+    this.wc.debugger?.on?.('message', (_e, method: string, params: unknown, sessionId?: string) => {
+      if (method === 'Debugger.paused' && !sessionId) this.pausedByDebugger = true
+      else if (method === 'Debugger.resumed' && !sessionId) this.pausedByDebugger = false
+      else if (method === 'Target.attachedToTarget' && this.emulationApplied.has('fileChooser'))
+        void armFrameChoosers(this.wc.debugger, (params ?? {}) as FrameAttached).catch(() => {})
       else if (method === 'Page.fileChooserOpened' && this.emulationApplied.has('fileChooser'))
         void answerFileChooser(
           (fn) => this.withDebugger(fn),
           (params ?? {}) as FileChooserOpened,
           this.events?.onFileChooser?.bind(this.events),
-          () => this.win
+          () => this.win,
+          sessionId || undefined
         ).catch(() => {})
     })
     this.wc.on('blur', () => {
@@ -2697,7 +2706,7 @@ export class ElectronTabView implements TabView {
     } else {
       const release = EMULATION_RELEASE[override]
       try {
-        if (dbg.isAttached()) await dbg.sendCommand(release.method, release.params)
+        if (dbg.isAttached()) await sendCdp(dbg, release)
       } catch {
         /* already gone */
       }
