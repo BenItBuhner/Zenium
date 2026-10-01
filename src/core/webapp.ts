@@ -5,6 +5,7 @@ import {
   fallbackShortcutTitle,
   installFailedMessage,
   isInstallable,
+  isShortcutRecord,
   isWithinScope,
   launcherName,
   markDismissed,
@@ -72,7 +73,9 @@ export interface WebAppServiceOptions {
  * "Add" asks the host to pin a launcher shortcut (on the desktop with the dialog's "Open as
  * window" – a window of the app's own or a tab in Zenium); the launcher's confirmation lands in
  * `onPinned`, which toasts, records the app for the "Open <app>" menu label and fires the page's
- * `appinstalled`. The engagement counter behind the ambient banner lives here too.
+ * `appinstalled`. On the desktop a page without a manifest is recorded too, as a shortcut
+ * (`PinnedWebApp.kind` `shortcut`): listed, launched and uninstalled like an app, claiming no
+ * page. The engagement counter behind the ambient banner lives here too.
  */
 export class WebAppService {
   private pinned: PinnedWebApp[] = []
@@ -172,7 +175,12 @@ export class WebAppService {
     return this.browser.state.capabilities.windows ? 'desktop' : 'homeScreen'
   }
 
-  /** The pinned app whose scope contains `url` (the app menu says "Open <name>" inside it). */
+  /**
+   * The pinned app whose scope contains `url` (the app menu says "Open <name>" inside it, the
+   * install surfaces stand down). Never a shortcut: it has no scope and claims no page
+   * (`pinnedAppFor`), so a page with a shortcut is still offered as an app, or as a shortcut
+   * again – a second Create updates the launcher under the same id.
+   */
   pinnedFor(url: string): PinnedWebApp | null {
     return pinnedAppFor(url, this.pinned)
   }
@@ -183,10 +191,24 @@ export class WebAppService {
   }
 
   /**
+   * The record a launcher's `--app=<url>` is of (`Browser.openAppWindow`): the shortcut made for
+   * exactly `url` – a shortcut claims no page but its own, so nothing but its launcher's URL
+   * finds it, and it comes before an app whose scope merely holds the URL, since the launcher
+   * that ran is the shortcut's – else the installed app whose scope holds `url`.
+   */
+  appForLaunch(url: string): PinnedWebApp | null {
+    return (
+      this.pinned.find((p) => isShortcutRecord(p) && p.startUrl === url) ?? this.pinnedFor(url)
+    )
+  }
+
+  /**
    * Open an installed app the way its launcher does: in an app window of its own on hosts with
    * windows (MW-23), as a tab at its start URL elsewhere – and on the desktop too for an app
    * whose shortcut was made with "Open as window" off (`openAsWindow` false), whose launcher
-   * opens a tab. An id that is no app's does nothing.
+   * opens a tab. A shortcut to a page opens the same way, its window its own (the record's id
+   * is the window's, so it comes forward on the next launch and closes on uninstall). An id
+   * that is no app's does nothing.
    */
   launch(appId: string, win?: ZenWindow): void {
     const app = this.pinnedById(appId)
@@ -199,7 +221,7 @@ export class WebAppService {
         open.host.focus()
         return
       }
-      const opened = this.browser.openAppWindow(app.startUrl, { from: win })
+      const opened = this.browser.openAppWindow(app.startUrl, { from: win, appId: app.id })
       opened?.host.show()
       opened?.host.focus()
       return
@@ -225,7 +247,9 @@ export class WebAppService {
 
   /**
    * The installed apps a share of `kind` can go to – those whose manifest declared a
-   * `share_target` with a field for it – as the chooser's rows, in the order of installing.
+   * `share_target` with a field for it – as the chooser's rows, in the order of installing. A
+   * shortcut to a page has no manifest, so no target: never a row (Chrome's share targets are
+   * the manifest's too).
    */
   shareTargetsFor(kind: ShareKind): ShareChooserApp[] {
     return this.pinned
@@ -238,7 +262,8 @@ export class WebAppService {
    * fields as the query, or a POST with them as the form body – opened the way the app's
    * launcher opens it (`launch`): an app window of its own on hosts with windows (unless the
    * shortcut was made to open a tab), a tab another app sent (`fromIntent`) elsewhere. An id
-   * that is no app's, or an app whose target takes none of the share, does nothing and says so.
+   * that is no app's, an app whose target takes none of the share, or a shortcut to a page –
+   * no manifest, so no target (`shareTargetsFor`) – does nothing and says so.
    */
   launchShare(appId: string, fields: SharedFields, win?: ZenWindow): boolean {
     const app = this.pinnedById(appId)
@@ -249,7 +274,7 @@ export class WebAppService {
     const launch = shareTargetLaunch(app.shareTarget, fields)
     const post = launch.method === 'POST' ? launch.post : undefined
     if (this.opensWindow(app)) {
-      const opened = this.browser.openAppWindow(launch.url, { from: win, post })
+      const opened = this.browser.openAppWindow(launch.url, { from: win, post, appId: app.id })
       opened?.host.show()
       opened?.host.focus()
       return true
@@ -262,8 +287,8 @@ export class WebAppService {
   }
 
   /**
-   * Remove an installed app: its launcher where the host made one, then the record; open
-   * windows of the app close (Chrome closes them on uninstall too).
+   * Remove an installed app, or a shortcut: its launcher where the host made one, then the
+   * record; open windows of the app close (Chrome closes them on uninstall too).
    */
   async uninstall(appId: string): Promise<void> {
     const app = this.pinnedById(appId)
@@ -327,7 +352,10 @@ export class WebAppService {
    * A page's `setAppBadge` / `clearAppBadge` (the page script's `webapp: 'badge'`): it counts
    * for the app whose window shows the tab, while the tab is inside the app's scope – the page
    * script sends nothing otherwise (`PageFlags.installedApp`), and the core holds the same line
-   * against a message that arrived late or forged. A malformed badge is dropped.
+   * against a message that arrived late or forged. A shortcut's window is its record's too
+   * (`Browser.openAppWindow`, bounded by the origin), so a page in it badges the shortcut's
+   * icon as Chrome badges any installed app's window; a shortcut that opens a tab has no window
+   * and no badge, as a tab-mode app has none. A malformed badge is dropped.
    */
   private onBadge(tabId: string, value: unknown): void {
     const badge = appBadgeOf(value)
@@ -376,10 +404,12 @@ export class WebAppService {
 
   /**
    * The installed apps as the UI snapshot lists them (`UIState.webApps`): every record, in the
-   * order of installing, with how many of its windows stand open – the windows `uninstall`
-   * closes, which Settings › Apps asks about first when there are any (§9.23's notice; the #435
-   * lead check). A window on its way out is not counted, as `launch` does not bring one forward;
-   * a host whose apps open as tabs has no app windows and counts none.
+   * order of installing – the shortcuts to pages among them, as chrome://apps lists Chrome's
+   * shortcuts beside its apps, each with the Open and Uninstall its launcher and record take –
+   * with how many of its windows stand open – the windows `uninstall` closes, which Settings ›
+   * Apps asks about first when there are any (§9.23's notice; the #435 lead check). A window on
+   * its way out is not counted, as `launch` does not bring one forward; a host whose apps open
+   * as tabs has no app windows and counts none.
    */
   installed(): InstalledWebApp[] {
     const open = new Map<string, number>()
@@ -694,13 +724,18 @@ export class WebAppService {
   /**
    * The launcher confirmed the shortcut (NOT-20): register the app, tell the page, and have the
    * chrome toast "Added <name> to Home screen" (the desktop's "Installed <name>") with an Open
-   * action for the shortcut's URL. On the desktop a page without a manifest gets no record and
-   * is no installed app – the core toasts "Shortcut created" itself, with no action, and sends
-   * the chrome no `webapp.pinned` (the Design Lead's ruling on #761's first seam). A desktop
-   * host confirms with the icon it kept (`details.icon`); an app with a manifest then opens in
-   * its own window at once and the installing tab goes with it, as Chrome moves the tab into
-   * the new app window – unless the shortcut was made to open a tab ("Open as window" off),
-   * when the tab stays where it is, as Chrome leaves it.
+   * action for the shortcut's URL. On the desktop a page without a manifest becomes a shortcut
+   * record (`PinnedWebApp.kind` `shortcut`: listed in Settings › Apps, launched and uninstalled
+   * like an app, claiming no page), and the core toasts "Shortcut created" itself, with no
+   * action – Chrome offers none for a shortcut, and a window shortcut's page is in its window
+   * already – and sends the chrome no `webapp.pinned` (the Design Lead's ruling on #761's first
+   * seam, seed D5). The phone keeps no record of a plain page: its Home-screen tile is the
+   * launcher's own, which the core could not take back again (no `unpin`), and Chrome Android
+   * lists none. A desktop host confirms with the icon it kept (`details.icon`); a record whose
+   * launcher opens a window – an app with a manifest, a shortcut with "Open as window" on – then
+   * opens in its own window at once and the installing tab goes with it, as Chrome moves the tab
+   * into the new app window; a shortcut made to open a tab ("Open as window" off) leaves the tab
+   * where it is, as Chrome leaves it.
    */
   onPinned(id: string, details: { icon?: string | null } = {}): void {
     const pending = this.pendingPins.get(id)
@@ -710,10 +745,14 @@ export class WebAppService {
     const win = pending ? this.browser.tabs.windowFor(pending.tabId) : undefined
     const title = pending?.title ?? info?.name ?? 'Shortcut'
     const surface = this.surface
+    const previous = this.pinnedById(id)
+    // The mode this pin asked of the launcher, so `launch` opens the app the same way; a pin
+    // without the box (the popover, the phone) rewrote the launcher on the host's rule and the
+    // record says nothing, whatever an earlier shortcut asked.
+    const mode = pending?.openAsWindow === undefined ? {} : { openAsWindow: pending.openAsWindow }
+    let record: PinnedWebApp | null = null
     if (info) {
-      const previous = this.pinnedById(id)
-      this.pinned = this.pinned.filter((p) => p.id !== id)
-      this.pinned.push({
+      record = {
         id,
         name: title,
         startUrl: info.startUrl,
@@ -724,16 +763,32 @@ export class WebAppService {
         icon: details.icon ?? previous?.icon ?? displayIcon(info),
         bounds: previous?.bounds ?? null,
         shareTarget: info.shareTarget ?? null,
-        // The mode this pin asked of the launcher, so `launch` opens the app the same way; a
-        // pin without the box (the popover, the phone) rewrote the launcher on the host's rule
-        // and the record says nothing, whatever an earlier shortcut asked.
-        ...(pending?.openAsWindow === undefined ? {} : { openAsWindow: pending.openAsWindow })
-      })
+        ...mode
+      }
+    } else if (surface === 'desktop' && pending) {
+      // A shortcut: the page's URL is its id (as the pin request's), its start URL and – a
+      // claim on no page but its own – its scope; the icon is the one the host drew into the
+      // launcher, the only one a page without a manifest has.
+      record = {
+        id,
+        kind: 'shortcut',
+        name: title,
+        startUrl: pending.url,
+        scope: pending.url,
+        pinnedAt: this.now(),
+        icon: details.icon ?? previous?.icon ?? null,
+        bounds: previous?.bounds ?? null,
+        ...mode
+      }
+    }
+    if (record) {
+      this.pinned = this.pinned.filter((p) => p.id !== id)
+      this.pinned.push(record)
       this.save()
     }
     if (surface === 'desktop' && !info) {
-      // A shortcut, not an install: there is no app for the chrome's Open action to launch,
-      // and its "Installed <name>" would say what did not happen.
+      // A shortcut, not an install: its "Installed <name>" would say what did not happen, and
+      // Chrome offers no Open after creating one.
       this.browser.toast('Shortcut created', 'info', win)
     } else {
       this.browser.emit(
@@ -754,21 +809,21 @@ export class WebAppService {
       this.browser.tabs.view(pending.tabId)?.postToPage?.({ type: 'webapp', action: 'installed' })
     }
     this.browser.state.commitVolatile()
-    if (info && surface === 'desktop' && pending && pending.openAsWindow !== false)
-      this.moveIntoAppWindow(pending.tabId, id)
+    if (record && pending && this.opensWindow(record)) this.moveIntoAppWindow(pending.tabId, id)
   }
 
   /**
    * Chrome's install: the page the user installed from carries on in the app's new window and
    * its browser tab closes – unless the tab has meanwhile left the app, in which case the app
-   * window opens at its start URL and the tab stays.
+   * window opens at its start URL and the tab stays. The window is the record's (`appId`), a
+   * shortcut's as an app's.
    */
   private moveIntoAppWindow(tabId: string, appId: string): void {
     const app = this.pinnedById(appId)
     const tab = this.browser.tabs.tab(tabId)
     if (!app) return
     const inside = tab && isWithinScope(tab.url, app.scope)
-    const win = this.browser.openAppWindow(inside ? tab.url : app.startUrl)
+    const win = this.browser.openAppWindow(inside ? tab.url : app.startUrl, { appId })
     if (!win) return
     if (inside && tab) this.browser.tabs.closeTab(tab.id)
     win.host.show()
