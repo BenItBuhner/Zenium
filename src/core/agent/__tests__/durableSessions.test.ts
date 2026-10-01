@@ -1067,6 +1067,72 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
     )
   })
 
+  it('a stay is read by the navigation it kept, never a later one; back, forward and reload read it in their words too', async () => {
+    const fake = browser()
+    const dialogs = fake.browser.pageDialogs
+    const { s: a } = await named(fake, 'Invoice reconciliation')
+    const tab = await openTab(fake, a, 'https://billing.test')
+    await policy(fake, a, { tabId: tab, beforeunload: 'stay' })
+    // The page's own navigation on the hidden tab: the policy's stay keeps it, and no call of
+    // the agent was navigating to read so.
+    expect(await dialogs.confirmLeave(tab, false)).toBe(false)
+    // The agent's next navigation, which the page lets go without a word: the normal headline
+    // – the stay that kept the page before is not read against this navigation – and the
+    // Notice of the page's own.
+    const went = await fake.call(a, 'browser_navigate', { tabId: tab, url: 'https://next.test' })
+    expect(went.isError, textOf(went)).toBeFalsy()
+    expect(textOf(went)).toContain('Navigated to https://next.test')
+    expect(textOf(went)).not.toContain('Did not navigate')
+    expect(textOf(went)).toContain('– answered stayed by your dialog policy.')
+    expect(fake.model.tabs[tab].url).toBe('https://next.test')
+
+    // Back, forward and reload meet the page's objection like a navigation: stay keeps the
+    // page and each says so in place of its own headline; leave lets each go ahead.
+    const tabs = fake.browser.tabs as unknown as {
+      goBack(id: string): void
+      goForward(id: string): void
+      reload(id: string, ignoreCache?: boolean): void
+    }
+    const objecting =
+      (reload: boolean) =>
+      (id: string): void => {
+        void dialogs.confirmLeave(id, reload)
+      }
+    tabs.goBack = objecting(false)
+    tabs.goForward = objecting(false)
+    tabs.reload = objecting(true)
+    const view = fake.browser.tabs.view(tab)
+    if (!view) throw new Error('no view')
+    view.canGoBack = () => true
+    view.canGoForward = () => true
+    const moves = [
+      ['browser_navigate_back', 'Went back.'],
+      ['browser_navigate_forward', 'Went forward.'],
+      ['browser_reload', 'Reloaded.']
+    ] as const
+    for (const [tool, headline] of moves) {
+      const kept = await fake.call(a, tool, { tabId: tab })
+      expect(kept.isError, textOf(kept)).toBeFalsy()
+      expect(textOf(kept)).toContain(
+        'Did not navigate: the page objected ("Leave site?") and your dialog policy answered stay, so the tab still shows the page as it was.'
+      )
+      expect(textOf(kept)).not.toContain(headline)
+      expect(textOf(kept)).toContain(
+        `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered stayed by your dialog policy.`
+      )
+    }
+    await policy(fake, a, { tabId: tab, beforeunload: 'leave' })
+    for (const [tool, headline] of moves) {
+      const went = await fake.call(a, tool, { tabId: tab })
+      expect(went.isError, textOf(went)).toBeFalsy()
+      expect(textOf(went)).toContain(headline)
+      expect(textOf(went)).not.toContain('Did not navigate')
+      expect(textOf(went)).toContain(
+        `opened a "Leave site?" dialog: "Changes you made may not be saved." – answered left by your dialog policy.`
+      )
+    }
+  })
+
   it("the user outranks the policy: a hidden tab's \"Leave site?\" is the policy's, a shown tab's is the user's whoever navigates it", async () => {
     const fake = browser()
     const dialogs = fake.browser.pageDialogs

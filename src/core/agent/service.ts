@@ -2708,6 +2708,9 @@ export class AgentService implements SessionStore, McpHandlers {
         -32002,
         `${describeDialog(pending.dialog)}; the page is blocked until it is answered. browser_handle_dialog {"tabId":"${tabId}","accept":true} (or false) answers it.`
       )
+    // A "Leave site?" that kept the page under an earlier navigation – the policy's stay or
+    // the user's, which no call read – is not this call's: its own navigation sets it afresh.
+    this.stayed.delete(tabId)
     const win = tabs.windowFor(tabId)
     if (opts.activate !== false) this.bringInFront(s, tab, win)
     if (this.suspectTabs.has(tabId)) await this.revive(s, tabId)
