@@ -454,6 +454,25 @@ describe('the engine through the Zenium account', () => {
     await vi.waitFor(() => expect(session.deviceName).toBe('Study desk'))
   }, 30_000)
 
+  it('the name chosen at setup reaches the account’s list', async () => {
+    const a = accountDevice('Desk (Linux)')
+    await signIn(a)
+    const session = sessionOf('Desk (Linux)')
+    expect(
+      await a.engine.setup(
+        {
+          folder: '',
+          passphrase: PASSPHRASE,
+          deviceName: 'Kitchen laptop',
+          scope: a.engine.status().scope,
+          transport: 'account'
+        },
+        a.win
+      )
+    ).toBeNull()
+    await vi.waitFor(() => expect(session.deviceName).toBe('Kitchen laptop'))
+  }, 30_000)
+
   it('a restart connects with the token from the store; a store without one is signed out', async () => {
     const a = accountDevice('Desk (Linux)')
     await signIn(a)

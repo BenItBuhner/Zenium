@@ -602,6 +602,7 @@ export class SyncEngine implements SyncHost {
       if (this.data.scope.history) this.startSeed(Date.now())
       this.persist()
       this.attach(transport)
+      if (target.transport === 'account') this.renameAccountDevice()
     } finally {
       // Refused after the store took the password – by the server, the passphrase, a throw:
       // the store back to what it held, so a refused setup leaves nothing behind on either side.
@@ -892,6 +893,14 @@ export class SyncEngine implements SyncHost {
     this.persist()
     this.browser.state.commitVolatile()
     this.schedulePush()
+    this.renameAccountDevice()
+  }
+
+  /**
+   * The account's list of devices takes the sync name, best effort: the session was named at
+   * sign-in, before the person chose one.
+   */
+  private renameAccountDevice(): void {
     if (this.data.account && this.accountAvailable() && !this.accountSignedOut)
       void this.session()
         .mutation('devices:rename', { name: this.data.deviceName })

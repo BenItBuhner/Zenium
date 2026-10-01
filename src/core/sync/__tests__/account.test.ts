@@ -484,6 +484,20 @@ describe('the account transport', () => {
     expect(server.count('query sync:readMany')).toBe(2)
   })
 
+  it('asks again for what a budget-limited answer left out', async () => {
+    const { server, transport: t } = transport()
+    server.limits.readManyChars = 10
+    const docs = server.account(EMAIL).docs
+    for (const name of ['a', 'b', 'c']) docs.set(name, name.repeat(6))
+    expect(await t.readMany(['a', 'missing', 'b', 'c'])).toEqual([
+      'aaaaaa',
+      null,
+      'bbbbbb',
+      'cccccc'
+    ])
+    expect(server.count('query sync:readMany')).toBe(3)
+  })
+
   it('surfaces the quota refusal typed', async () => {
     const { server, transport: t } = transport()
     server.limits.maxDocuments = 1

@@ -19,11 +19,7 @@ export interface AccountEndpoints {
   websiteUrl: string
 }
 
-/**
- * The two deployments. PRODUCTION IS NOT DEPLOYED YET: its Convex URLs are placeholders that
- * resolve nowhere (a build against them reports the service as unreachable), to be replaced here
- * – and only here – once the production deployment exists.
- */
+/** The two deployments. */
 export const ACCOUNT_ENDPOINTS: Readonly<Record<AccountsEnv, AccountEndpoints>> = {
   dev: {
     env: 'dev',
@@ -33,8 +29,8 @@ export const ACCOUNT_ENDPOINTS: Readonly<Record<AccountsEnv, AccountEndpoints>> 
   },
   prod: {
     env: 'prod',
-    cloudUrl: 'https://PROD-PENDING.convex.cloud',
-    siteUrl: 'https://PROD-PENDING.convex.site',
+    cloudUrl: 'https://small-camel-544.convex.cloud',
+    siteUrl: 'https://small-camel-544.convex.site',
     websiteUrl: 'https://zenium.techlitnow.com'
   }
 }

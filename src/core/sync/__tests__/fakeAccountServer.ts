@@ -18,7 +18,8 @@ import type { AccountGrant } from '../account'
  * - `POST /api/query|mutation` with `Bearer <access>`: a token unknown or expired is HTTP 401;
  *   a revoked session is `errorData.code: 'revoked'`, a deleted account `account-deleted`, and
  *   the functions answer as the backend's do – `sync:write` refuses `bad-name`, `too-large` and
- *   `quota`, `sync:readMany` more than 64 names; `sync:version` moves once per write, once per
+ *   `quota`, `sync:readMany` more than 64 names (and answers only the in-order prefix that fits
+ *   `limits.readManyChars`, at least one); `sync:version` moves once per write, once per
  *   remove of a document that existed, and once per `removeAll`.
  *
  * Documents live per account in a `Map` a test may hand in (`account(email, files)`), so the
@@ -93,7 +94,12 @@ export class FakeAccountServer {
   linkTtlMs = 10 * 60_000
   accessTtlMs = 60 * 60_000
   now: () => number = Date.now
-  limits = { maxBytes: 128 * 1024 * 1024, maxDocChars: 4 * 1024 * 1024, maxDocuments: 4096 }
+  limits = {
+    maxBytes: 128 * 1024 * 1024,
+    maxDocChars: 4 * 1024 * 1024,
+    maxDocuments: 4096,
+    readManyChars: 8 * 1024 * 1024
+  }
   /** How many token polls answer 429 before the next real answer. */
   slowDown = 0
   /** While set, a refresh waits on it before answering (a test lines up concurrent callers). */
@@ -185,7 +191,12 @@ export class FakeAccountServer {
     this.linkTtlMs = 10 * 60_000
     this.accessTtlMs = 60 * 60_000
     this.now = Date.now
-    this.limits = { maxBytes: 128 * 1024 * 1024, maxDocChars: 4 * 1024 * 1024, maxDocuments: 4096 }
+    this.limits = {
+      maxBytes: 128 * 1024 * 1024,
+      maxDocChars: 4 * 1024 * 1024,
+      maxDocuments: 4096,
+      readManyChars: 8 * 1024 * 1024
+    }
     this.slowDown = 0
     this.refreshGate = null
     this.offline = false
@@ -407,7 +418,16 @@ export class FakeAccountServer {
         const names = args['names']
         if (!Array.isArray(names)) throw new Refusal('bad-request')
         if (names.length > 64) throw new Refusal('too-large')
-        return names.map((n) => (typeof n === 'string' ? (account.docs.get(n) ?? null) : null))
+        const out: (string | null)[] = []
+        let chars = 0
+        for (const n of names) {
+          const text = typeof n === 'string' ? (account.docs.get(n) ?? null) : null
+          const size = text?.length ?? 0
+          if (out.length > 0 && chars + size > this.limits.readManyChars) break
+          out.push(text)
+          chars += size
+        }
+        return out
       }
       case 'sync:version':
         wants('query')

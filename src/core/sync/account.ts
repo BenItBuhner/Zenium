@@ -619,19 +619,24 @@ export class AccountTransport implements SyncTransport {
     return typeof value === 'string' ? value : null
   }
 
-  /** Several documents in one request per 64 (`sync:readMany`), in the order asked. */
+  /**
+   * Several documents per request (`sync:readMany`, up to 64 names), in the order asked. The
+   * service answers the in-order prefix that fits its read budget, so the rest is asked again.
+   */
   async readMany(names: string[]): Promise<(string | null)[]> {
     for (const name of names) checkName(name)
     const out: (string | null)[] = names.map((name) => (name === README_NAME ? README : null))
     const wanted = names.flatMap((name, i) => (name === README_NAME ? [] : [i]))
-    for (let at = 0; at < wanted.length; at += ACCOUNT_READ_MANY_MAX) {
+    for (let at = 0; at < wanted.length;) {
       const batch = wanted.slice(at, at + ACCOUNT_READ_MANY_MAX)
       const value = await this.session.query('sync:readMany', { names: batch.map((i) => names[i]) })
-      const texts = Array.isArray(value) ? value : []
-      batch.forEach((index, j) => {
-        const text: unknown = texts[j]
-        out[index] = typeof text === 'string' ? text : null
+      const texts: unknown[] = Array.isArray(value) ? value.slice(0, batch.length) : []
+      if (texts.length === 0)
+        throw new AccountError('refused', 'Account sync:readMany answered no documents')
+      texts.forEach((text, j) => {
+        out[batch[j]] = typeof text === 'string' ? text : null
       })
+      at += texts.length
     }
     return out
   }
