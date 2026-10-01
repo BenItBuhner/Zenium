@@ -40,6 +40,7 @@ Zenium is the user's own browser. The user browses in it while you work, and oth
 - Your session is durable. Dropped connections, client or MCP restarts, idle parking and browser restarts do not take your groups away, and no other agent can adopt them. After a reconnect, call `zen_status`: usually your groups are already back. If it says you have no session or your groups are missing, `zen_session {"action":"resume","key":"zk_..."}` with your key carries the session over to the new connection. Never `start` a new session to get back to your work: a new session cannot reach your old groups. Resume promptly - the user can release an away agent's groups, and then the key stops working. Re-list the tabs; do not open the pages again. A result opening with `Notice:` about a resumed session is informational - read it and carry on.
 - Calls are bounded. A call that does not finish within its deadline (about 45 s; a hung page is stopped and reloaded) returns an error saying so instead of hanging. Your session is unaffected: take a `browser_snapshot` and decide; do not resend the same call blindly.
 - Page dialogs are yours where `browser_handle_dialog` is in your tool list (Zenium on the desktop). Where it is not listed (Zenium on Android, for now), the browser answers dialogs itself and you never see them. Where it is listed: an alert, confirm, prompt or "Leave site?" on one of your tabs never reaches the user. The call that triggers it returns with the dialog, and page tools refuse that tab until you answer it with `browser_handle_dialog`. Unanswered dialogs are dismissed after two minutes.
+- Native prompts are yours too, where `browser_prompts` is in your tool list. A file chooser, a download asking where to save, a sign-in, a client certificate, a permission request (camera, location, notifications...), screen sharing, a Bluetooth/USB/serial/HID picker, a link to another app or a print dialog opened by one of your tabs never reaches the user and never appears on screen. A `Notice:` announces it and every later result ends with a "Waiting for your answer" block until you answer with `browser_respond_prompt` (files: `browser_file_upload`). Never use OS automation (xdotool, AppleScript, clicking system dialogs in a screenshot): there is nothing on screen to automate. Unanswered, a prompt gets its default after two minutes - the refusal, or for a download the Downloads folder. The tool list tells you which kinds this browser hands you; Zenium on Android hands you sign-ins, permissions and links to other apps only, and handles the rest itself.
 - One call at a time. Your calls are serialised per session; sending several in parallel gains nothing.
 
 ## Reading vs acting
@@ -171,7 +172,7 @@ Click an element or a point, then return a snapshot.
 
 - `{"tabId":"tab_...","target":"e12"}` or `{"tabId":"tab_...","x":400,"y":250}`; `"doubleClick":true`, `"button":"right"`, `"modifiers":["Shift"]`.
 - Example: `browser_click {"tabId":"tab_3f9a...","target":"text=Accept all"}`
-- Pitfalls: `target` is `e12`, not `[ref=e12]`. A disabled element is reported, not clicked. For checkboxes and radios click them; for `<select>` use `browser_select_option`.
+- Pitfalls: `target` is `e12`, not `[ref=e12]`. A disabled element is reported, not clicked. For checkboxes and radios click them. A click on a `<select>`, colour or date field is refused - its picker would open on the user's screen; use `browser_select_option` for a `<select>` and `browser_type` for colour and date values (`"#ff0000"`, `"2026-10-01"`). An upload button opens a file chooser that comes to you as a prompt; answer it with `browser_file_upload`.
 
 ### browser_type
 
@@ -250,6 +251,30 @@ Answer the dialog a page opened on one of your tabs: alert, confirm, prompt or "
 - `{"tabId":"tab_...","accept":true}` presses OK (the default), `"accept":false` Cancel; `"promptText":"..."` is what a prompt receives.
 - Example: `browser_handle_dialog {"tabId":"tab_3f9a...","accept":false}`
 - Pitfall: read the dialog before accepting. A "Leave site?" or a confirm about deleting or paying is a decision; when it is not clearly part of the task, cancel and tell the user.
+
+### browser_prompts
+
+Listed only where native prompts route to agents. Lists what your tabs wait for you to answer: each prompt's `id`, `tabId`, `kind`, details, the `actions` it takes, its `defaultAction`, `secondsLeft` and whether the page waits on it - plus pending page dialogs. Read-only.
+
+- `{}` for all your tabs, `{"tabId":"tab_..."}` for one.
+- Example: `browser_prompts {"tabId":"tab_3f9a..."}`
+- Pitfall: you rarely need to poll it. The notice and the "Waiting for your answer" block already name each prompt with the call that answers it.
+
+### browser_respond_prompt
+
+Answer a prompt with one of its actions: `promptId` (or `tabId` when that tab has only one prompt) and `action`, plus what that action reads. Returns a snapshot afterwards.
+
+- Permissions: `"action":"allow"` or `"deny"` - an allow lasts until the tab leaves the site and is never saved for the user. Sign-in: `"action":"sign-in","username":"...","password":"..."` or `"cancel"`. Client certificate: `"action":"select","index":0` or `"none"`. Download: `"action":"save","filename":"report.pdf"` (the name only; it stays in Downloads) or `"cancel"`. Screen sharing: `"action":"share","sourceId":"..."`. Device picker: `"action":"connect","deviceId":"..."`. Link to another app: `"action":"allow"` or `"deny"`.
+- Example: `browser_respond_prompt {"promptId":"prompt_7c1e...","action":"deny"}`
+- Pitfalls: a sign-in, certificate, device or app link is a decision with the user's identity or hardware. Use only what the task gives you; when unsure, refuse it and tell the user. Page dialogs (alert, confirm, "Leave site?") are answered with `browser_handle_dialog`, not here.
+
+### browser_file_upload
+
+Hand a page files without any system dialog. Three ways: answer the file chooser an upload button opened (`promptId`, or `tabId` alone); set an `<input type=file>` directly with `target`; or drop the files on a drop zone with `target` and `"drop":true`. Returns a snapshot afterwards.
+
+- `paths` are absolute paths on this computer, accepted only when you run on it (a local stdio or loopback connection). From another machine send `"files":[{"name":"a.pdf","base64":"...","mimeType":"application/pdf"}]` (50 MB in total). A folder input takes one folder path; a single-file input takes one file. The prompt names the input's `accept` list; match it, the page may reject other types.
+- Example: `browser_file_upload {"tabId":"tab_3f9a...","target":"#avatar","paths":["/home/me/avatar.png"]}`
+- Pitfalls: upload only files the task names. To cancel a chooser, `browser_respond_prompt {"promptId":"...","action":"cancel"}`. Where this tool is missing, this browser cannot hand pages files for you; say so instead of reaching for the system dialog.
 
 ## Before you say "done"
 
