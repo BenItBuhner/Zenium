@@ -61,7 +61,9 @@ export function TabPreview({
   // hosts), or a tab not yet captured – shows the page drawn small as its address names it
   // (v2 §10.1): the landing, or the drill-in the tab is on. Where the host pictures its chrome
   // (`chrome.snapshot`, Android), the picture is the page's own and comes first, as a page's.
-  if (!thumbnail && isChromePageUrl(tab.url)) {
+  // Never while the tab is masked (INC-05): the drawing names the section or the page the tab is
+  // on, and a locked private tab's card carries nothing of it – the bare placeholder below.
+  if (!thumbnail && !masked && isChromePageUrl(tab.url)) {
     return (
       <div className={cn('h-full w-full', className)} style={style}>
         <SettingsPreview url={tab.url} />

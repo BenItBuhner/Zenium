@@ -2,7 +2,7 @@
   "id": "settings-tab-preview",
   "order": 121,
   "classes": ["SettingsTabPreviewDemo", "SettingsTabPreviewRestoreDemo"],
-  "shard": "phone-e",
+  "shard": "phone-g",
   "mirrors": "android-settings-tab-preview-demo.yml",
   "script": ".github/scripts/android-settings-tab-preview-demo.sh",
   "timeout": 900,

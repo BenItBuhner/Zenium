@@ -59,13 +59,15 @@ interface Fixture {
 function fixture(opts: {
   /** The host's answer to `snapshotChrome`; absent: a host without the hook (the desktop). */
   chrome?: (request: ChromeSnapshotRequest) => ChromeSnapshot | null
+  /** A host with private tabs (the phone's), so Settings can open in the private container. */
+  privateTabs?: boolean
 }): Fixture {
   const asked: ChromeSnapshotRequest[] = []
   const sent: Array<{ name: string; payload: unknown }> = []
   const viewSnapshots: string[] = []
   const capabilities = stub<HostCapabilities>({
     windows: false,
-    privateTabs: false,
+    privateTabs: opts.privateTabs ?? false,
     updates: false,
     agents: false,
     pageTabs: true
@@ -172,6 +174,27 @@ describe('the picture of a Settings tab', () => {
         persist: true
       }
     ])
+    expect(captured(f)).toEqual([{ tabId: id, ...CARD }])
+  })
+
+  it('asks for a private tab’s picture with nothing of it written: `persist` false, the card kept in memory alone as a private page’s is', async () => {
+    const f = fixture({ chrome: () => ({ cover: COVER, card: CARD }), privateTabs: true })
+    const id = f.browser.tabs.newPrivateTab('zen://settings/privacy', f.win)
+    expect(id).not.toBeNull()
+    if (!id) return
+    f.browser.handleCommand(f.win, 'page.navigate', {
+      tabId: id,
+      section: 'privacy',
+      subpage: 'site-data'
+    })
+    layout(f, id)
+    expect(await f.win.snapshot(id)).toBe(COVER)
+    expect(f.asked.map((r) => [r.url, r.persist])).toEqual([
+      ['zen://settings/privacy/site-data', false]
+    ])
+    // The host writes a card under `persist` alone; the picture it answers is the chrome's to
+    // hold for the overview's card (`TabWebView.publishThumbnail` raises a private page's the
+    // same way, without a save), where a private tab's cards never come from disk.
     expect(captured(f)).toEqual([{ tabId: id, ...CARD }])
   })
 

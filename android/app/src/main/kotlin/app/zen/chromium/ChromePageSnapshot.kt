@@ -35,7 +35,9 @@ import org.json.JSONObject
  * the cover alone and no card; the chrome's `thumbnail.drop` on the tab's navigation resets it.
  * The card's scaling, encode and write run on the pictures' thread ([Thumbnails.disk]), the
  * cover's encode on the host's io pool; the one answer goes out on the main thread once both are
- * in. A private tab's card is answered and never written (`persist` false).
+ * in, and the copy is recycled with it. A card is written only where the core says `persist`
+ * (a regular tab); a private tab's – or a request that leaves it unsaid – is answered and never
+ * written.
  */
 class ChromePageSnapshot(private val host: Host, private val io: ExecutorService) {
     /**
@@ -45,7 +47,8 @@ class ChromePageSnapshot(private val host: Host, private val io: ExecutorService
     fun take(args: JSONObject, reply: (Any?) -> Unit) {
         val tabId = args.str("tabId")
         val url = args.str("url")
-        val persist = args.bool("persist", true)
+        // Unsaid is unsaved: the one flag that keeps a private tab's picture off the disk fails closed.
+        val persist = args.bool("persist", false)
         val view = host.chrome
         if (tabId.isEmpty() || url.isEmpty() || view.width <= 0 || view.height <= 0 || !view.isShown) {
             reply(null)
@@ -63,7 +66,12 @@ class ChromePageSnapshot(private val host: Host, private val io: ExecutorService
         val asked = SystemClock.uptimeMillis()
         val main = Handler(Looper.getMainLooper())
         val copied: (Boolean) -> Unit = { ok ->
-            if (ok) publish(tabId, url, persist, bitmap, SystemClock.uptimeMillis() - asked, main, reply) else reply(null)
+            if (ok) {
+                publish(tabId, url, persist, bitmap, SystemClock.uptimeMillis() - asked, main, reply)
+            } else {
+                bitmap.recycle()
+                reply(null)
+            }
         }
         try {
             PixelCopy.request(host.activity.window, Rect(frame.left, frame.top, frame.right, frame.bottom), bitmap, { result ->
@@ -88,7 +96,7 @@ class ChromePageSnapshot(private val host: Host, private val io: ExecutorService
      * `persist` says so – and the one answer once both are in.
      */
     private fun publish(tabId: String, url: String, persist: Boolean, bitmap: Bitmap, copyMs: Long, main: Handler, reply: (Any?) -> Unit) {
-        val answer = Answer(reply)
+        val answer = Answer(bitmap, reply)
         io.execute {
             val out = ByteArrayOutputStream()
             val ok = runCatching { bitmap.compress(Bitmap.CompressFormat.JPEG, COVER_QUALITY, out) }.getOrDefault(false)
@@ -127,8 +135,12 @@ class ChromePageSnapshot(private val host: Host, private val io: ExecutorService
         }
     }
 
-    /** The two halves of one answer, each from its own thread; replied once both are in. Main thread. */
-    private class Answer(private val reply: (Any?) -> Unit) {
+    /**
+     * The two halves of one answer, each from its own thread; replied once both are in, and the
+     * copy both were read from recycled then – each half is posted after its thread is done with
+     * it, so nobody holds the bitmap past the reply. Main thread.
+     */
+    private class Answer(private val bitmap: Bitmap, private val reply: (Any?) -> Unit) {
         private var cover: String? = null
         private var coverIn = false
         private var card: JSONObject? = null
@@ -150,6 +162,7 @@ class ChromePageSnapshot(private val host: Host, private val io: ExecutorService
             if (!coverIn || !cardIn) return
             val data = cover
             reply(if (data == null) null else json("cover" to data, "card" to card))
+            bitmap.recycle()
         }
     }
 

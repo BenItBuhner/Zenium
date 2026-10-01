@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Tab, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { privateLockStore, resetPrivateLock } from '@renderer/lib/privateLock'
 import {
   rememberCard,
   rememberThumbnail,
@@ -67,6 +69,7 @@ const PICTURE = 'data:image/jpeg;base64,c2l0ZS1kYXRh'
 
 beforeEach(() => {
   resetThumbnails()
+  resetPrivateLock()
 })
 
 describe("the Settings tab's card", () => {
@@ -103,5 +106,18 @@ describe("the Settings tab's card", () => {
     const markup = card(t, true)
     expect(markup).toContain(`src="${PICTURE}"`)
     expect(markup).not.toContain('zen-settings-preview')
+  })
+
+  it("carries nothing of the page while a private tab's card is masked (INC-05): the bare placeholder, never the drill-in's label", () => {
+    const t = { ...tab('zen://settings/privacy/site-data'), containerId: PRIVATE_CONTAINER_ID }
+    privateLockStore.set({ locked: true })
+    const masked = card(t)
+    expect(masked).toContain('data-testid="tab-preview-masked"')
+    expect(masked).not.toContain('zen-settings-preview')
+    expect(masked).not.toContain('Site data')
+    expect(masked).not.toContain('Settings')
+    // Unlocked, the same tab's card draws the page it is on again.
+    privateLockStore.set({ locked: false })
+    expect(card(t)).toContain('Site data')
   })
 })
