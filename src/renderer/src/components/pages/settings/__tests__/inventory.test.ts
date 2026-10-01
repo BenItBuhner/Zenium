@@ -93,7 +93,8 @@ const ELECTRON: HostCapabilities = {
   pageLanguages: true,
   genericFontFamilies: true,
   caretBrowsing: true,
-  placementAnswered: false
+  placementAnswered: false,
+  agentDialogs: true
 }
 
 const SETTINGS_TAB = {
@@ -295,8 +296,8 @@ function desktopState(): UIState {
       authRefused: false
     },
     agents: [],
-    agentServer: {
     awayAgents: [],
+    agentServer: {
       running: true,
       url: 'http://127.0.0.1:8765/mcp',
       lanUrls: [],

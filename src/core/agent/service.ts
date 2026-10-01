@@ -1310,13 +1310,19 @@ export class AgentService implements SessionStore, McpHandlers {
   listTools(session: McpSession): ToolDefinition[] {
     void session
     const allow = this.settings.allowScripts
-    return AGENT_TOOLS.filter((t) => allow || !t.scripting).map((t) => t.definition)
+    return AGENT_TOOLS.filter((t) => (allow || !t.scripting) && this.hostHas(t)).map(
+      (t) => t.definition
+    )
+  }
+
+  private hostHas(tool: (typeof AGENT_TOOLS)[number]): boolean {
+    return !tool.needs || this.browser.platform.capabilities[tool.needs]
   }
 
   callTool(session: McpSession, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const s = this.requireApproved(session)
     const tool = AGENT_TOOLS.find((t) => t.definition.name === name)
-    if (!tool) return Promise.resolve(textError(`Unknown tool ${name}`))
+    if (!tool || !this.hostHas(tool)) return Promise.resolve(textError(`Unknown tool ${name}`))
     if (tool.scripting && !this.settings.allowScripts)
       return Promise.resolve(textError(SCRIPTING_DISABLED))
     if (this.needsName(s) && !UNCLAIMED_TOOLS.has(name))
@@ -1583,7 +1589,8 @@ export class AgentService implements SessionStore, McpHandlers {
     return agentInstructions(
       s?.mode ?? this.settings.defaultMode,
       this.settings.allowScripts,
-      others.length
+      others.length,
+      this.browser.platform.capabilities.agentDialogs
     )
   }
 

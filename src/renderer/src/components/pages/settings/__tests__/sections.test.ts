@@ -167,7 +167,8 @@ const ANDROID: HostCapabilities = {
   pageLanguages: false,
   genericFontFamilies: false,
   caretBrowsing: false,
-  placementAnswered: true
+  placementAnswered: true,
+  agentDialogs: false
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
@@ -312,8 +313,8 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     mods: [],
     webApps: [],
     agents: [],
-    agentServer: emptyAgentServerStatus(),
     awayAgents: [],
+    agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
     passwords: emptyPasswordsStatus(),

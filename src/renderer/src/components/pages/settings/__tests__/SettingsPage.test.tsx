@@ -97,7 +97,8 @@ const DESKTOP: HostCapabilities = {
   pageLanguages: true,
   genericFontFamilies: true,
   caretBrowsing: true,
-  placementAnswered: false
+  placementAnswered: false,
+  agentDialogs: true
 }
 
 const ANDROID: HostCapabilities = {
@@ -232,8 +233,8 @@ function state(
     mods: [],
     webApps: [],
     agents: [],
-    agentServer: emptyAgentServerStatus(),
     awayAgents: [],
+    agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),

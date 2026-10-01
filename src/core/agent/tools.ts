@@ -59,6 +59,8 @@ export interface AgentTool {
   definition: ToolDefinition
   /** Runs arbitrary JavaScript – hidden when scripts are disabled in Settings. */
   scripting?: boolean
+  /** Listed only where the host has this capability. */
+  needs?: 'agentDialogs'
   run(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult>
 }
 
@@ -1649,6 +1651,7 @@ const browserReload: AgentTool = {
 }
 
 const browserHandleDialog: AgentTool = {
+  needs: 'agentDialogs',
   definition: {
     name: 'browser_handle_dialog',
     title: 'Answer a page dialog',
@@ -2378,7 +2381,12 @@ export const AGENT_TOOLS: AgentTool[] = [
  * is how many other agents are connected right now – with any, background mode is the
  * recommendation.
  */
-export function agentInstructions(mode: AgentMode, allowScripts: boolean, others = 0): string {
+export function agentInstructions(
+  mode: AgentMode,
+  allowScripts: boolean,
+  others = 0,
+  agentDialogs = true
+): string {
   const company =
     others > 0
       ? `${others} other agent${others === 1 ? ' is' : 's are'} connected right now`
@@ -2390,7 +2398,7 @@ export function agentInstructions(mode: AgentMode, allowScripts: boolean, others
     '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
     `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
-    '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.',
+    `${agentDialogs ? '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',

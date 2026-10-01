@@ -461,6 +461,25 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     pageUrl: 'https://billing.test/'
   })
 
+  it('browser_handle_dialog is listed only where the host routes dialogs to agents', async () => {
+    const listed = (fake: FakeBrowser, s: AgentSession): string[] =>
+      fake.service.listTools(s).map((t) => t.name)
+    const desktop = browser()
+    const { s: d } = await named(desktop, 'Invoice reconciliation')
+    expect(listed(desktop, d)).toContain('browser_handle_dialog')
+    expect(desktop.service.instructions(d)).toContain('browser_handle_dialog answers it')
+
+    const android = browser({ agentDialogs: false })
+    const { s: a } = await named(android, 'Invoice reconciliation')
+    expect(listed(android, a)).not.toContain('browser_handle_dialog')
+    expect(listed(android, a)).toContain('browser_snapshot')
+    expect(android.service.instructions(a)).not.toContain('browser_handle_dialog')
+    expect(android.service.instructions(a)).toContain('answered by this browser, not by you')
+    const res = await android.call(a, 'browser_handle_dialog', { accept: true })
+    expect(res.isError).toBe(true)
+    expect(textOf(res)).toContain('Unknown tool browser_handle_dialog')
+  })
+
   it('a dialog during a call ends the call with it; the user never sees it; the agent answers', async () => {
     const fake = browser()
     const dialogs = new PageDialogService(fake.browser)

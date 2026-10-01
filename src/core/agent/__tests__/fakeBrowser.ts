@@ -95,6 +95,8 @@ export interface FakeBrowserOptions {
    * default here, so the tests of everything else need no `zen_session start`.
    */
   requireName?: boolean
+  /** The host routes page dialogs to agents (`HostCapabilities.agentDialogs`); on by default. */
+  agentDialogs?: boolean
 }
 
 export function textOf(result: ToolResult): string {
@@ -335,7 +337,8 @@ export function fakeBrowser(
       info: { version: '0.0.0-test' },
       createAgentTransport: () => transport,
       dialogs: { confirm: async () => false },
-      readabilitySource: () => null
+      readabilitySource: () => null,
+      capabilities: { agentDialogs: options.agentDialogs ?? true }
     },
     state: {
       model,
