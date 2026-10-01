@@ -118,6 +118,7 @@ function sidebar(ids: string[], activeId: string): void {
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     mods: [],

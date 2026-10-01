@@ -581,6 +581,11 @@ export class ZenWindow {
 
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
+    // Whether the pages' hide is a switch away from them (the tab overview over them, OS-39):
+    // carried with every hide this report makes, and once more to the pages it would place –
+    // hidden already, under the stage that opened the overview – when the word turns on.
+    const wasSwitched = this.lastLayout?.switchedAway === true
+    const switched = report.switchedAway === true
     this.lastLayout = report
     if (!this.alive) return
     const tabs = this.browser.tabs
@@ -670,7 +675,7 @@ export class ZenWindow {
         held.hideDeferred = true
         return
       }
-      for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setVisible(false)
+      for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setVisible(false, switched)
     }
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included, save for the
@@ -702,6 +707,11 @@ export class ZenWindow {
     // – and whether one of those pages held the keyboard as it went.
     let hidUnderChrome = false
     let typingHidUnderChrome = false
+    // The switch word turning on over pages hidden already – the stage hid them as the overview
+    // began to open, and that hide carried no switch: the pages this report would place (the
+    // ones under the overview) hear it now, hidden as they are; no other hidden page does.
+    const switchedNow =
+      switched && !wasSwitched ? new Set(report.placements.map((p) => p.tabId)) : null
     for (const [tabId, view] of owned) {
       if (view.isDestroyed()) continue
       const placement = wanted.get(tabId)
@@ -723,6 +733,8 @@ export class ZenWindow {
         hide(tabId)
         hid.push(tabId)
         hidUnderChrome = true
+      } else if (switchedNow?.has(tabId)) {
+        for (const v of tabs.viewsOf(tabId)) v.setVisible(false, true)
       }
     }
     if (glance) {

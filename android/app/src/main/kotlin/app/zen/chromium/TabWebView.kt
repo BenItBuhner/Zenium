@@ -948,7 +948,7 @@ class TabWebView(
         host.viewSized(this, w, h)
     }
 
-    // --- background video (MED-08 / EDGE-32) ----------------------------------------------------
+    // --- background video (MED-08 / EDGE-32) and background tabs (OS-39) -------------------------
 
     private val backgroundVideo = BackgroundVideoHold()
 
@@ -967,7 +967,19 @@ class TabWebView(
             backgroundVideo.onKeep(value)?.let { visible -> forwardWindowVisibility(visible) }
         }
 
-    /** A hide of the window is being held from the engine for this tab's video (diagnostics, the demo). */
+    /**
+     * The tab is behind another tab on screen, by the tab host's pass over what is on screen
+     * ([TabHost], [BackgroundTabRule]): the engine hears GONE – the page is hidden, as Chrome's
+     * switched-away tab is – and VISIBLE once the tab is back on screen; the hide is held like the
+     * window's while the tab's video keeps playing (OS-39).
+     */
+    var backgroundTab: Boolean
+        get() = backgroundVideo.background
+        set(value) {
+            backgroundVideo.onBackground(value)?.let { visible -> forwardWindowVisibility(visible) }
+        }
+
+    /** A hide – the window's, or a tab switch's – is being held from the engine for this tab's video (diagnostics, the demo). */
     val holdingWindowHide: Boolean get() = backgroundVideo.holding
 
     /**
@@ -975,13 +987,15 @@ class TabWebView(
      * activity's window leaves the screen, VISIBLE when it is back. `WebView` hands it to
      * `AwContents`, whose WebContents is shown or hidden by it – the hide that pauses a video and
      * tells the page `visibilitychange` – so a hide is held here while the tab's video may keep
-     * playing, and the return goes through as it always does.
+     * playing, the return goes through as it always does, and the VISIBLE the system dispatches
+     * to a view attached while its tab is behind another is not the tab's: the engine keeps the
+     * GONE the tab is owed ([backgroundTab]).
      */
     override fun onWindowVisibilityChanged(visibility: Int) {
-        if (backgroundVideo.onWindow(visibility == View.VISIBLE) != null) super.onWindowVisibilityChanged(visibility)
+        backgroundVideo.onWindow(visibility == View.VISIBLE)?.let { visible -> forwardWindowVisibility(visible) }
     }
 
-    /** The word the engine gets once a held hide goes through (or a show, were one ever held). */
+    /** The word the engine gets: a show, a hide going through (held or not), or a switch's. */
     private fun forwardWindowVisibility(visible: Boolean) {
         super.onWindowVisibilityChanged(if (visible) View.VISIBLE else View.GONE)
     }

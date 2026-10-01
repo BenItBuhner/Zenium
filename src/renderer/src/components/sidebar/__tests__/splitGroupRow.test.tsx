@@ -101,6 +101,7 @@ function fixture(
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     settings: { showTabSeparator: false }

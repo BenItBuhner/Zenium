@@ -90,6 +90,7 @@ function state(settings: Partial<Settings> = {}): UIState {
     mods: [],
     webApps: [],
     agents: [],
+    awayAgents: [],
     agentServer: emptyAgentServerStatus(),
     agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.4.27-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),

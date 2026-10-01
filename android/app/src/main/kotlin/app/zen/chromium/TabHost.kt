@@ -24,6 +24,15 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      */
     private var landingScreen: PageFrameFit.Screen? = null
     private val heldBack = HashMap<String, Rect>()
+    /** The tabs whose views have been on screen here at least once ([BackgroundTabRule]'s `shownBefore`). */
+    private val shownOnce = HashSet<String>()
+    /**
+     * The tabs whose last hide the core named a switch away from the page – the tab overview over
+     * it (`LayoutReport.switchedAway`, OS-39) – until the view is shown again ([BackgroundTabRule]'s
+     * `switched`).
+     */
+    private val switchedOff = HashSet<String>()
+    private var backgroundPassPosted = false
     private var popupSeq = 0
     private val density: Float get() = container.resources.displayMetrics.density
 
@@ -157,6 +166,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val view = views.remove(tabId) ?: return null
         reported.remove(tabId)
         heldBack.remove(tabId)
+        // Behind no tab of this host's any more: the host it goes to has its own word.
+        shownOnce.remove(tabId)
+        switchedOff.remove(tabId)
+        view.backgroundTab = false
         host.exitFullscreen(view)
         view.backTransition?.abort()
         host.snapshots.forget(tabId)
@@ -213,6 +226,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
         heldBack.remove(viewId)?.let { heldBack[tabId] = it }
+        if (shownOnce.remove(viewId)) shownOnce.add(tabId)
+        if (switchedOff.remove(viewId)) switchedOff.add(tabId)
         // Whatever the popup loaded before the core knew its tab id is reported now: the list
         // first, as at a commit, so the core records it as it handles the `navigated`.
         view.pushHistory(force = true)
@@ -249,11 +264,15 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         views.clear()
         reported.clear()
         heldBack.clear()
+        shownOnce.clear()
+        switchedOff.clear()
         host.snapshots.clear()
     }
 
     /** Tear a view down (already removed from [views]); the chrome is not told. */
     private fun drop(view: TabWebView) {
+        shownOnce.remove(view.tabId)
+        switchedOff.remove(view.tabId)
         host.tabRemoved(view)
         // The window's own view going: the fill ends the way every fill ends – the record dropped
         // (the view is out of [views], so nothing is laid back) and the host told, whose reader
@@ -416,6 +435,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun setVisible(tabId: String, visible: Boolean) {
         val view = views[tabId] ?: return
+        // Shown again: whatever switch its last hide was is over ([switched]).
+        if (visible) switchedOff.remove(tabId)
         val held = filled?.takeIf { it.tabId == tabId }
         if (held != null) {
             held.visible = visible
@@ -434,6 +455,21 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // The bar may have moved while this view was off screen (only views on screen follow it
         // per frame, [setBarHide]): it takes the bar's current frame as it comes on.
         if (visible) place(view)
+    }
+
+    /**
+     * The core's reason for the hide of `tabId` on its way ([Host.setTabVisible]): `switched` for
+     * the tab overview over the page – a switch away from it, as the core's `LayoutReport.switchedAway`
+     * has it – and false for a sheet or a field over it. Recorded ahead of the hide, which waits
+     * for the chrome's frame and posts the pass that reads it ([show]). A word that changes for a
+     * view gone already – the overview opened over the stage that had hidden the page, and the
+     * core sends the hide again for the reason alone – posts the pass itself: the screen is as it
+     * was, the reason is not, and the page under the overview hears it is behind.
+     */
+    fun switched(tabId: String, switched: Boolean) {
+        val changed = if (switched) switchedOff.add(tabId) else switchedOff.remove(tabId)
+        val view = views[tabId] ?: return
+        if (changed && view.visibility != View.VISIBLE && tabId in shownOnce) postBackgroundPass()
     }
 
     /**
@@ -462,6 +498,36 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     private fun show(view: TabWebView, visible: Boolean) {
         view.visibility = if (visible) View.VISIBLE else View.GONE
         readable(view, visible)
+        // What is on screen changed for the tabs that have been on it: a view coming on, or one
+        // that has been on going off. A fresh view's first GONE ([create]) posts nothing; the
+        // first show (the boot's restored tab, a new tab) posts one trivial O(N) pass that finds
+        // nobody behind and writes no change.
+        if (visible) shownOnce.add(view.tabId)
+        if (view.tabId in shownOnce) postBackgroundPass()
+    }
+
+    /**
+     * Page visibility on a tab switch (OS-39): once the frame's changes to what is on screen are
+     * in – posted, so the hides one frame brings together (a tablet split's two, under a cover)
+     * are read as one and the engine's word goes out from no layout call – every view hears
+     * whether its tab is behind another tab on screen ([BackgroundTabRule.behind]), and one that
+     * is forwards the hide to the engine the way the window's reaches it ([TabWebView.backgroundTab]):
+     * its page is hidden, as Chrome's switched-away tab is, and shown again with the view. The
+     * core's relayout hides a view the same way for a switch and for the chrome's covers, so the
+     * rule tells them apart by whether some tab is on the screen, and by the core's word on the
+     * one cover that is a switch, the tab overview ([switched]); the hide waits for the chrome's
+     * frame ([Host.setTabVisible]) and the card picture is taken before it, so neither is touched.
+     */
+    private fun postBackgroundPass() {
+        if (backgroundPassPosted) return
+        backgroundPassPosted = true
+        container.post {
+            backgroundPassPosted = false
+            val behind = BackgroundTabRule.behind(views.values.map {
+                BackgroundTabRule.Tab(it.tabId, it.visibility == View.VISIBLE, it.tabId in shownOnce, it.backgroundTab, it.tabId in switchedOff)
+            })
+            for (view in views.values) view.backgroundTab = view.tabId in behind
+        }
     }
 
     private fun readable(view: TabWebView, readable: Boolean) {

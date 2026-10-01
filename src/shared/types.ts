@@ -362,6 +362,12 @@ export interface HostCapabilities {
    * today.
    */
   placementAnswered: boolean
+  /**
+   * Page dialogs (alert, confirm, prompt, "Leave site?") on an AI agent's tabs reach the core's
+   * PageDialogService, so the agent answers them (`browser_handle_dialog` is listed). Off where
+   * the host's own dialog handling never hands them over (Android's WebChromeClient today).
+   */
+  agentDialogs: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -4040,6 +4046,21 @@ export interface AgentInfo {
   calls: number
 }
 
+/**
+ * A named agent that is not connected but still holds its tab groups (a durable session from
+ * `zen_session start`): they stay its own until it resumes or ends, or the user releases them.
+ */
+export interface AwayAgentInfo {
+  claimId: string
+  name: string
+  color: string
+  /** Its groups that still exist. */
+  groupIds: string[]
+  /** The tabs in those groups. */
+  tabIds: string[]
+  lastSeenAt: number
+}
+
 export interface AgentServerStatus {
   running: boolean
   /** Loopback endpoint, e.g. `http://127.0.0.1:41735/mcp`. */
@@ -5073,6 +5094,8 @@ export interface UIState {
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
+  /** Named agents that are not connected but still hold their tab groups. */
+  awayAgents: AwayAgentInfo[]
   agentServer: AgentServerStatus
   /** The `zenium-browser` Agent Skill's install state per harness (`capabilities.agentSkills`). */
   agentSkills: AgentSkillStatus
@@ -5505,6 +5528,15 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number; cover?: ContentCover } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /**
+   * Set with `contentHidden` when what covers the pages is the tab overview, open or on its way
+   * open (the gesture stage's `overviewInteractive`, on the phone and on the tablet): the hide
+   * is a switch away from the pages under it, not a sheet or a field over them, and the host
+   * tells those pages so (OS-39, the Android op `view.setVisible { tabId, visible, switched?:
+   * true }` → `BackgroundTabRule`). Absent otherwise – on every desktop report, where no
+   * overview exists.
+   */
+  switchedAway?: boolean
   /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
   sidePanel?: Rect | null
   /** The page-edge band's seat and the page's present offset (`LayoutBand`). */
@@ -7157,6 +7189,11 @@ export interface Commands {
 
   /** End an agent's session and release its tabs. */
   'agent.disconnect': { args: { id: string }; result: void }
+  /**
+   * Release a disconnected agent's tab groups: they stay open, orphaned for any agent to adopt,
+   * and the agent can no longer resume them.
+   */
+  'agent.release': { args: { claimId: string }; result: void }
   'agent.setMode': { args: { id: string; mode: AgentMode }; result: void }
   /** Take a tab back from the agent driving it. */
   'agent.releaseTab': { args: { tabId: string }; result: void }
@@ -7750,6 +7787,8 @@ export interface Events {
    * `unpack: false` when the user confirms. A folder with nothing in it is deleted without asking.
    */
   'folder.confirmDelete': { folderId: string }
+  /** The folder menu's "Release from <agent>…": ask before releasing that agent's groups. */
+  'agent.confirmRelease': { claimId: string; folderId: string }
   /**
    * Close the group's tabs with Undo on the toast (the touch hosts' group menu's "Close Group (N
    * Tabs)", TAB-16): the chrome runs `folder.close` through its one close-with-undo

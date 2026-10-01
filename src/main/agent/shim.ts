@@ -14,7 +14,12 @@ import { createInterface } from 'node:readline'
  * - A 404 `Unknown session` – the browser restarted, the session was deleted or expired – makes
  *   it start a new session as the Streamable HTTP spec asks of a client: it replays the client's
  *   own `initialize` and `notifications/initialized`, then retries the request once under the new
- *   session id. The client never learns; it keeps its tools and its ids.
+ *   session id, naming the lost one (`Mcp-Resume-Session`) so the agent's durable session and
+ *   its groups carry over. The client never learns; it keeps its tools, its ids and its tabs.
+ * - A `ping` every `PING_INTERVAL_MS` while the client is quiet finds a lost session (or a moved
+ *   endpoint) before the client's next call does.
+ * - No request waits longer than `REQUEST_TIMEOUT_MS`: a browser that stopped answering is
+ *   reported as such instead of hanging the client.
  * - A connection failure makes it re-read `agent.json`: a browser restarted on another port or
  *   with a regenerated token is found again, and the browser not yet started is waited for a
  *   moment at `initialize` instead of failing the client for good.
@@ -28,8 +33,16 @@ import { createInterface } from 'node:readline'
 /** How long `initialize` waits for the browser's endpoint to appear before giving up. */
 const STARTUP_WAIT_MS = 15_000
 const STARTUP_POLL_MS = 250
-/** A tool call that has not answered by then is reported failed to the client (the server has no such limit). */
-const REQUEST_TIMEOUT_MS = 10 * 60 * 1000
+/**
+ * A request that has not answered by then is reported failed to the client. The server ends every
+ * tool call within its own deadline (`CALL_DEADLINE_MS`), so this only fires when the browser
+ * itself stopped answering – a hung main process, a suspended machine.
+ */
+export const REQUEST_TIMEOUT_MS = 90_000
+/** How often the relay checks its session is alive while the client is quiet. */
+export const PING_INTERVAL_MS = 30_000
+/** Names the session a renewal replaces, so the agent's durable session carries over. */
+const RESUME_SESSION_HEADER = 'mcp-resume-session'
 
 export interface RelayEndpoint {
   url: string
@@ -47,6 +60,7 @@ export interface RelayOptions {
   /** Sleep, for the startup wait; tests replace it. */
   sleep?: (ms: number) => Promise<void>
   startupWaitMs?: number
+  requestTimeoutMs?: number
 }
 
 interface RpcMessage {
@@ -74,6 +88,9 @@ export class StdioRelay {
   private readonly fetchImpl: typeof fetch
   private readonly sleep: (ms: number) => Promise<void>
   private readonly startupWaitMs: number
+  private readonly timeoutMs: number
+  private pinging = false
+  private pings = 0
   /** Sessions started (the first, and every renewal), for the tests and the log. */
   renewals = 0
 
@@ -82,6 +99,30 @@ export class StdioRelay {
     this.fetchImpl = opts.fetch ?? fetch
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
     this.startupWaitMs = opts.startupWaitMs ?? STARTUP_WAIT_MS
+    this.timeoutMs = opts.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
+  }
+
+  /**
+   * Check the session is alive (an MCP `ping` under it), between the client's own requests: a
+   * session the browser lost – it restarted, the machine slept past the session's expiry – is
+   * renewed now rather than on the client's next call, and a moved endpoint is found again.
+   * True when the relay holds a live session afterwards.
+   */
+  async ping(): Promise<boolean> {
+    if (this.closed || this.pinging || !this.sessionId || this.reinit) return false
+    this.pinging = true
+    try {
+      await this.post(
+        JSON.stringify({ jsonrpc: '2.0', id: `zenium-relay-ping-${++this.pings}`, method: 'ping' }),
+        { isInit: false }
+      )
+      return this.sessionId !== null
+    } catch (error) {
+      this.log(`health check failed: ${(error as Error).message}`)
+      return false
+    } finally {
+      this.pinging = false
+    }
   }
 
   /** The session the relay holds with the browser right now (null before initialize, or after a loss). */
@@ -175,9 +216,13 @@ export class StdioRelay {
         method: 'POST',
         headers: this.headers(endpoint, { session: !opts.isInit }),
         body,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        signal: AbortSignal.timeout(this.timeoutMs)
       })
     } catch (error) {
+      if (isTimeout(error))
+        throw new Error(
+          `Zenium did not answer within ${Math.round(this.timeoutMs / 1000)} s (${endpoint.url}) – the browser is busy or stalled. Your session is kept: retry the call; if this repeats, check that Zenium is responsive.`
+        )
       if (!opts.moved && this.refreshEndpoint()) {
         this.log(`Zenium's endpoint changed (${this.endpoint?.url ?? 'gone'}); trying it`)
         return this.post(body, { ...opts, moved: true })
@@ -213,7 +258,7 @@ export class StdioRelay {
   private async recoverFrom(lost: string): Promise<boolean> {
     if (this.sessionId === lost) {
       this.sessionId = null
-      const renewed = await this.renewSession()
+      const renewed = await this.renewSession(lost)
       if (renewed)
         this.log(
           `session ${lost} was unknown to Zenium (restarted or expired) – renewed as ${this.sessionId}`
@@ -225,18 +270,19 @@ export class StdioRelay {
   }
 
   /** Start a new session with the client's own introduction; one at a time. */
-  private renewSession(): Promise<boolean> {
+  private renewSession(lost: string): Promise<boolean> {
     if (this.reinit) return this.reinit
-    const run = this.renewSessionNow().finally(() => {
+    const run = this.renewSessionNow(lost).finally(() => {
       this.reinit = null
     })
     this.reinit = run
     return run
   }
 
-  private async renewSessionNow(): Promise<boolean> {
+  private async renewSessionNow(lost: string): Promise<boolean> {
     const init = this.initRequest
     if (!init) return false
+    this.refreshEndpoint()
     const endpoint = this.requireEndpoint()
     // The client's initialize as it sent it, under an id of ours: its response is not the client's
     // to see (it has its own), so it is read here and dropped.
@@ -245,9 +291,9 @@ export class StdioRelay {
     try {
       res = await this.fetchImpl(endpoint.url, {
         method: 'POST',
-        headers: this.headers(endpoint, { session: false }),
+        headers: { ...this.headers(endpoint, { session: false }), [RESUME_SESSION_HEADER]: lost },
         body: replay,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        signal: AbortSignal.timeout(this.timeoutMs)
       })
     } catch {
       return false
@@ -268,7 +314,7 @@ export class StdioRelay {
       method: 'POST',
       headers: this.headers(endpoint),
       body: JSON.stringify(note),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      signal: AbortSignal.timeout(this.timeoutMs)
     }).catch(() => undefined)
     return true
   }
@@ -370,9 +416,12 @@ export async function runStdioShim(userDataDir: string): Promise<number> {
   rl.on('line', (line) => {
     void relay.handleLine(line)
   })
+  const health = setInterval(() => void relay.ping(), PING_INTERVAL_MS)
+  health.unref()
   await new Promise<void>((resolve) => {
     rl.once('close', () => resolve())
   })
+  clearInterval(health)
   await relay.close()
   return 0
 }
@@ -389,6 +438,11 @@ export function readEndpoint(userDataDir: string): RelayEndpoint | null {
   } catch {
     return null
   }
+}
+
+function isTimeout(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name
+  return name === 'TimeoutError' || name === 'AbortError'
 }
 
 function isMessage(v: unknown): v is RpcMessage {
