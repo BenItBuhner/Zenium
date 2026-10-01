@@ -10,6 +10,7 @@ import {
   type BandOptions
 } from '@renderer/lib/band'
 import { browserStore } from '@renderer/lib/browserStore'
+import { viewportStore } from '@renderer/lib/formFactor'
 import {
   abortPull,
   dispatchPullEvent,
@@ -40,7 +41,10 @@ function tab(
   }
 }
 
-/** Two web tabs and the new tab page in one space, `activeTabId` in front – what the stores' listeners read. */
+/**
+ * Two web tabs, the phone's new tab page (drawn by the chrome over `zen://blank` – no view under
+ * it) and a private tab in one space, `activeTabId` in front – what the stores' listeners read.
+ */
 function stateWith(activeTabId: string): UIState {
   return {
     activeSpaceId: 's1',
@@ -57,7 +61,7 @@ function stateWith(activeTabId: string): UIState {
     tabs: {
       t1: tab('t1'),
       t2: tab('t2'),
-      ntp: tab('ntp', 'zen://newtab'),
+      ntp: tab('ntp', 'zen://blank'),
       p1: tab('p1', 'https://example.com/p1', 'private')
     },
     essentialTabIds: [],
@@ -85,6 +89,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     vi.stubGlobal('requestAnimationFrame', () => 1)
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
     setPullHost({ setOffset: (tabId, offset) => written.push([tabId, offset]) })
+    viewportStore.set({ formFactor: 'phone' })
     browserStore.set({ state: stateWith('t1') })
     uiStore.set({ frameDialogsOpen: 0, frameDialogCover: 0 })
     resetBands()
@@ -97,6 +102,7 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     setPageHold(null)
     setPullHost(null)
     browserStore.set({ state: null })
+    viewportStore.set({ formFactor: 'desktop' })
     resetBands()
     vi.unstubAllGlobals()
     vi.useRealTimers()
@@ -109,10 +115,21 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     expect(bandStore.get()).toMatchObject({ front: 't1', ok: true, covered: true })
     uiStore.set({ frameDialogsOpen: 0 })
     expect(bandStore.get().covered).toBe(false)
+    // The phone's new tab page is drawn by the chrome over `zen://blank`: no document under it
+    // for the band to make room with, so the band waits there (§10 on Android, the Lead's (B)).
     browserStore.set({ state: stateWith('ntp') })
-    expect(bandStore.get()).toMatchObject({ front: 'ntp', ok: false })
+    expect(bandStore.get()).toMatchObject({ front: 'ntp', ok: false, offers: false })
     browserStore.set({ state: stateWith('t2') })
     expect(bandStore.get()).toMatchObject({ front: 't2', ok: true, offers: true })
+  })
+
+  it("the tablet's new tab page is a served zen://newtab document in the tab's own view: a state stands on it, an offer never (§10)", () => {
+    viewportStore.set({ formFactor: 'tablet' })
+    const tabletState = stateWith('ntp')
+    ;(tabletState.tabs as Record<string, { url: string }>).ntp.url = 'zen://newtab'
+    browserStore.set({ state: tabletState })
+    host = createAndroidBandHost()
+    expect(bandStore.get()).toMatchObject({ front: 'ntp', ok: true, offers: false })
   })
 
   it("a private tab in front withholds offers, not states – the model hears it as the host's word", () => {
@@ -219,7 +236,8 @@ describe('createAndroidBandHost – the BandSeam over the pull channel, and the 
     ])
     expect(heldPageOffset('t1')).toBe(0)
     expect(heldPageOffset('t2')).toBe(56)
-    // The new tab page is no place for a band: the old page comes home and the new one is not moved.
+    // The phone's new tab page is no place for a band (nothing under it to move): the old page
+    // comes home and the new one is not moved – the state holds and returns on the next document.
     browserStore.set({ state: stateWith('ntp') })
     expect(written).toEqual([
       ['t1', 56],

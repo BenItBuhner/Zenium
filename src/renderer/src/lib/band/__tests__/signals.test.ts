@@ -34,9 +34,10 @@ describe('readBandSignals', () => {
   })
 
   it('a web page in front, under nothing, with the keyboard down and no pull', () => {
-    expect(readBandSignals(stateWith(WEB), ui(), IDLE, false)).toEqual<BandSignals>({
+    expect(readBandSignals(stateWith(WEB), ui(), IDLE, false, false)).toEqual<BandSignals>({
       tabId: 't1',
-      webPage: true,
+      page: true,
+      document: true,
       privateTab: false,
       covered: false,
       keyboardUp: false,
@@ -45,25 +46,55 @@ describe('readBandSignals', () => {
   })
 
   it('no state or no tab in front means no page', () => {
-    expect(readBandSignals(null, ui(), IDLE, false).tabId).toBeNull()
+    expect(readBandSignals(null, ui(), IDLE, false, false).tabId).toBeNull()
     const noTab = {
       activeSpaceId: 's1',
       spaces: [{ id: 's1', activeTabId: null }],
       tabs: {}
     } as unknown as UIState
-    const signals = readBandSignals(noTab, ui(), IDLE, false)
+    const signals = readBandSignals(noTab, ui(), IDLE, false, false)
     expect(signals.tabId).toBeNull()
-    expect(signals.webPage).toBe(false)
+    expect(signals.page).toBe(false)
+    expect(signals.document).toBe(false)
   })
 
-  it('the new tab page and zen:// pages are not web pages', () => {
-    expect(readBandSignals(stateWith(''), ui(), IDLE, false).webPage).toBe(false)
-    expect(readBandSignals(stateWith('about:blank'), ui(), IDLE, false).webPage).toBe(false)
-    expect(readBandSignals(stateWith('zen://newtab'), ui(), IDLE, false).webPage).toBe(false)
-    expect(readBandSignals(stateWith('zen://settings/privacy'), ui(), IDLE, false).webPage).toBe(
-      false
+  it('the new tab page and zen:// pages are not pages to the band (no offer there, §10)', () => {
+    expect(readBandSignals(stateWith(''), ui(), IDLE, false, false).page).toBe(false)
+    expect(readBandSignals(stateWith('about:blank'), ui(), IDLE, false, false).page).toBe(false)
+    expect(readBandSignals(stateWith('zen://newtab'), ui(), IDLE, false, false).page).toBe(false)
+    expect(
+      readBandSignals(stateWith('zen://settings/privacy'), ui(), IDLE, false, false).page
+    ).toBe(false)
+    expect(readBandSignals(stateWith('http://news.example/'), ui(), IDLE, false, false).page).toBe(
+      true
     )
-    expect(readBandSignals(stateWith('http://news.example/'), ui(), IDLE, false).webPage).toBe(true)
+  })
+
+  it("a served zen:// document is a document in the tab's own view – a state stands on it (§10); a chrome-drawn page is not – the band waits there (the Lead's (B) on question (8))", () => {
+    const doc = (url: string, phone = false): boolean =>
+      readBandSignals(stateWith(url), ui(), IDLE, false, phone).document
+    expect(doc('https://example.com/')).toBe(true)
+    expect(doc('zen://newtab')).toBe(true)
+    expect(doc('zen://error?code=-2')).toBe(true)
+    expect(doc('zen://version')).toBe(true)
+    for (const url of ['zen://settings', 'zen://history', 'zen://downloads/', 'zen://bookmarks']) {
+      expect(doc(url), url).toBe(false)
+    }
+    expect(doc('')).toBe(false)
+  })
+
+  it("the phone draws its new tab page in the chrome over zen://blank: no document under it, so the band waits (BandDemo scene 6's verdict, the §9.33 pin); the tablet's zen://blank is the view's own", () => {
+    expect(readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, true).document).toBe(false)
+    expect(readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, false).document).toBe(true)
+    expect(
+      bandFrameOf(readBandSignals(stateWith('zen://blank'), ui(), IDLE, false, true))
+    ).toMatchObject({ ok: false, offers: false })
+    expect(
+      bandFrameOf(readBandSignals(stateWith('zen://newtab'), ui(), IDLE, false, false))
+    ).toMatchObject({
+      ok: true,
+      offers: false
+    })
   })
 
   it("every zen:// page is a chrome page (the Design Lead's ruling: not the new tab page and settings alone) – history, downloads, a page the chrome adds later, with a query or a fragment", () => {
@@ -76,14 +107,16 @@ describe('readBandSignals', () => {
       'chrome://flags',
       'about:about'
     ]) {
-      expect(readBandSignals(stateWith(url), ui(), IDLE, false).webPage, url).toBe(false)
+      expect(readBandSignals(stateWith(url), ui(), IDLE, false, false).page, url).toBe(false)
     }
   })
 
   it("an open omnibox covers the page – the phone's field and the tablet's URL-bar popup are one `urlbar` state – so an arriving band waits rather than leaves (the Design Lead's ruling); the desktop split's empty-pane field alone, which never opens on a touch host, covers none", () => {
     const base = ui().urlbar
     const phone = { ...base, open: true, mode: 'edit' as const, tabId: 't1' }
-    expect(readBandSignals(stateWith(WEB), ui({ urlbar: phone }), IDLE, false).covered).toBe(true)
+    expect(readBandSignals(stateWith(WEB), ui({ urlbar: phone }), IDLE, false, false).covered).toBe(
+      true
+    )
     const tabletPopup = {
       ...base,
       open: true,
@@ -91,16 +124,19 @@ describe('readBandSignals', () => {
       tabId: null,
       attached: true
     }
-    expect(readBandSignals(stateWith(WEB), ui({ urlbar: tabletPopup }), IDLE, false).covered).toBe(
-      true
-    )
-    const search = { ...base, open: true, mode: 'search' as const, tabId: 't1' }
-    expect(readBandSignals(stateWith(WEB), ui({ urlbar: search }), IDLE, false).covered).toBe(true)
     expect(
-      readBandSignals(stateWith(WEB), ui({ urlbar: { ...phone, pane: true } }), IDLE, false).covered
+      readBandSignals(stateWith(WEB), ui({ urlbar: tabletPopup }), IDLE, false, false).covered
+    ).toBe(true)
+    const search = { ...base, open: true, mode: 'search' as const, tabId: 't1' }
+    expect(
+      readBandSignals(stateWith(WEB), ui({ urlbar: search }), IDLE, false, false).covered
+    ).toBe(true)
+    expect(
+      readBandSignals(stateWith(WEB), ui({ urlbar: { ...phone, pane: true } }), IDLE, false, false)
+        .covered
     ).toBe(false)
     expect(
-      bandFrameOf(readBandSignals(stateWith(WEB), ui({ urlbar: phone }), IDLE, false))
+      bandFrameOf(readBandSignals(stateWith(WEB), ui({ urlbar: phone }), IDLE, false, false))
     ).toMatchObject({
       ok: true,
       covered: true
@@ -109,50 +145,55 @@ describe('readBandSignals', () => {
 
   it('a private tab is told apart by its container', () => {
     expect(
-      readBandSignals(stateWith(WEB, PRIVATE_CONTAINER_ID), ui(), IDLE, false).privateTab
+      readBandSignals(stateWith(WEB, PRIVATE_CONTAINER_ID), ui(), IDLE, false, false).privateTab
     ).toBe(true)
-    expect(readBandSignals(stateWith(WEB), ui(), IDLE, false).privateTab).toBe(false)
+    expect(readBandSignals(stateWith(WEB), ui(), IDLE, false, false).privateTab).toBe(false)
   })
 
   it('a sheet, a menu, a frame dialog or a dialog cover covers the page', () => {
     expect(
-      readBandSignals(stateWith(WEB), ui({ menu: {} as UiState['menu'] }), IDLE, false).covered
+      readBandSignals(stateWith(WEB), ui({ menu: {} as UiState['menu'] }), IDLE, false, false)
+        .covered
     ).toBe(true)
-    expect(readBandSignals(stateWith(WEB), ui({ siteInfoOpen: true }), IDLE, false).covered).toBe(
-      true
-    )
-    expect(readBandSignals(stateWith(WEB), ui({ frameDialogsOpen: 1 }), IDLE, false).covered).toBe(
-      true
-    )
-    expect(readBandSignals(stateWith(WEB), ui({ frameDialogCover: 1 }), IDLE, false).covered).toBe(
-      true
-    )
-    expect(readBandSignals(stateWith(WEB), ui(), IDLE, false).covered).toBe(false)
+    expect(
+      readBandSignals(stateWith(WEB), ui({ siteInfoOpen: true }), IDLE, false, false).covered
+    ).toBe(true)
+    expect(
+      readBandSignals(stateWith(WEB), ui({ frameDialogsOpen: 1 }), IDLE, false, false).covered
+    ).toBe(true)
+    expect(
+      readBandSignals(stateWith(WEB), ui({ frameDialogCover: 1 }), IDLE, false, false).covered
+    ).toBe(true)
+    expect(readBandSignals(stateWith(WEB), ui(), IDLE, false, false).covered).toBe(false)
   })
 
   it("the keyboard is up at the bar-hide gate's inset", () => {
     const insets = { top: 0, right: 0, bottom: KEYBOARD_INSET_MIN, left: 0 }
-    expect(readBandSignals(stateWith(WEB), ui({ insets }), IDLE, false).keyboardUp).toBe(true)
+    expect(readBandSignals(stateWith(WEB), ui({ insets }), IDLE, false, false).keyboardUp).toBe(
+      true
+    )
     const low = { ...insets, bottom: KEYBOARD_INSET_MIN - 1 }
-    expect(readBandSignals(stateWith(WEB), ui({ insets: low }), IDLE, false).keyboardUp).toBe(false)
+    expect(
+      readBandSignals(stateWith(WEB), ui({ insets: low }), IDLE, false, false).keyboardUp
+    ).toBe(false)
   })
 
   it('a pull in any phase has the page', () => {
     for (const phase of ['pulling', 'settling', 'refreshing', 'finishing'] as const) {
       const pull: PullState = { tabId: 't1', phase, armed: false }
-      expect(readBandSignals(stateWith(WEB), ui(), pull, false).pulling).toBe(true)
+      expect(readBandSignals(stateWith(WEB), ui(), pull, false, false).pulling).toBe(true)
     }
   })
 
   it("the open tab overview covers the page (the Design Lead's ruling on #731's still 09 – a banner over the overview's header): an arriving band waits rather than leaves, from the overview's first dragging frame, before `ui.stageActive` joins with the hero card's capture", () => {
-    expect(readBandSignals(stateWith(WEB), ui(), IDLE, true).covered).toBe(true)
-    expect(bandFrameOf(readBandSignals(stateWith(WEB), ui(), IDLE, true))).toMatchObject({
+    expect(readBandSignals(stateWith(WEB), ui(), IDLE, true, false).covered).toBe(true)
+    expect(bandFrameOf(readBandSignals(stateWith(WEB), ui(), IDLE, true, false))).toMatchObject({
       ok: true,
       covered: true
     })
-    expect(readBandSignals(stateWith(WEB), ui({ stageActive: true }), IDLE, false).covered).toBe(
-      true
-    )
+    expect(
+      readBandSignals(stateWith(WEB), ui({ stageActive: true }), IDLE, false, false).covered
+    ).toBe(true)
   })
 })
 
@@ -195,7 +236,8 @@ describe('bandSignals and subscribeBandSignals read the stage', () => {
 describe('bandFrameOf', () => {
   const free: BandSignals = {
     tabId: 't1',
-    webPage: true,
+    page: true,
+    document: true,
     privateTab: false,
     covered: false,
     keyboardUp: false,
@@ -206,8 +248,12 @@ describe('bandFrameOf', () => {
     expect(bandFrameOf(free)).toEqual({ front: 't1', ok: true, offers: true, covered: false })
   })
 
-  it('never on the new tab page or a chrome page, never without a page', () => {
-    expect(bandFrameOf({ ...free, webPage: false }).ok).toBe(false)
+  it('a state stands on a document that is not a page (a served zen:// document): ok, no offers (§10)', () => {
+    expect(bandFrameOf({ ...free, page: false })).toMatchObject({ ok: true, offers: false })
+  })
+
+  it('never on a chrome-drawn page (no document under the band), never without a page', () => {
+    expect(bandFrameOf({ ...free, document: false }).ok).toBe(false)
     expect(bandFrameOf({ ...free, tabId: null })).toMatchObject({ front: null, ok: false })
   })
 
