@@ -32,6 +32,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { PageBandHost } = await import('../PageBandHost')
+const { PageBandLayer } = await import('../PageBandLayer')
 const { BAND_HEIGHT_ONE_LINE, BAND_HEIGHT_TWO_LINE } = await import('@renderer/lib/motion/band')
 const { framesPending } = await import('@renderer/lib/motion/clock')
 const { bandStore, chooseBand, dismissBandByKey, resetBands, showBand } =
@@ -138,6 +139,25 @@ function render(s: UIState, u: UiState = ui()): void {
     root!.render(<PageBandHost state={s} ui={u} />)
   })
 }
+
+/**
+ * The host with the layer a chrome page rides on, as `ContentArea` mounts them on a chrome page
+ * (`InternalPageHost` inside `PageBandLayer`, where the band is hosted; a page of the web has a
+ * view the core moves, and no layer).
+ */
+function renderWithLayer(s: UIState): void {
+  act(() => {
+    root!.render(
+      <>
+        <PageBandHost state={s} ui={ui()} />
+        <PageBandLayer>
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      </>
+    )
+  })
+}
+const layer = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-band-layer]')!
 
 /** Run the clock until it goes idle (the spring rested) or `limit` frames pass. */
 function settle(limit = 200): void {
@@ -464,6 +484,88 @@ describe('PageBandHost – the seam to the page (motion spec §3.4, §6)', () =>
     expect(band()).not.toBeNull()
     expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
     expect(framesPending()).toBe(0)
+  })
+})
+
+describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, §10)', () => {
+  it('a chrome-drawn page is moved through the page seam: its layer is translated per frame by the very offset the core hears, laid out under the seat at the rest – offset − seat, as the views’ bounds move – and comes home the same way on a leave; at home it is a plain box', () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    expect(model()).toMatchObject({ front: 'settings', ok: true, offers: false })
+    expect(standing()).toBe('connectivity')
+    const el = layer()
+    expect(el.querySelector('[data-testid="chrome-page"]')).not.toBeNull()
+    // Before the first frame: home, no transform, the whole frame.
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+    frames.tick(3)
+    const travelling = offsets()
+    expect(travelling).toHaveLength(3)
+    // Nothing seated while the page travels at full height: the layer's translate is the offset
+    // itself – the one number the core heard this frame – and its box is still the whole frame.
+    expect(bandSeat()).toBe(0)
+    expect(el.style.transform).toBe(`translateY(${travelling.at(-1)}px)`)
+    expect(el.style.top).toBe('')
+    settle()
+    // At the rest the page is laid out under the seat (`top`) and the translate is gone: the
+    // offset against the seat is 0, as the core's shift of the views is.
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+    expect(offsets().at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+    expect(el.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    expect(el.style.transform).toBe('')
+    // A leave: the seat goes to 0 as the travel begins – the box is the whole frame again with
+    // the page still down by the offset, no jump – and the page comes home per frame.
+    run.mockClear()
+    act(() => dismissBandByKey('connectivity'))
+    expect(bandSeat()).toBe(0)
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_TWO_LINE}px)`)
+    frames.tick(2)
+    const leaving = offsets()
+    expect(leaving).toHaveLength(2)
+    expect(leaving[1]).toBeLessThan(leaving[0])
+    expect(el.style.transform).toBe(`translateY(${leaving.at(-1)}px)`)
+    settle()
+    expect(offsets().at(-1)).toBe(0)
+    expect(band()).toBeNull()
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+  })
+
+  it('a cut lands the layer where the band stands at once, no travel; a page of the web is moved by the core alone – the same offsets go to layout.pageOffset with no layer in the frame', () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    settle()
+    const el = layer()
+    expect(el.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    run.mockClear()
+    // The page's fullscreen under the window-wide band: a cut – the band goes and the page is
+    // home at once, the layer with it.
+    renderWithLayer(state({ front: 'settings', htmlFullscreenTabId: 'settings' }))
+    expect(offsets()).toEqual([0])
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe('')
+    expect(framesPending()).toBe(0)
+    // Its exit: the band stands again at once, the page laid out under it, no translate.
+    renderWithLayer(state({ front: 'settings' }))
+    expect(offsets()).toEqual([0, BAND_HEIGHT_TWO_LINE])
+    expect(el.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    expect(el.style.transform).toBe('')
+    expect(framesPending()).toBe(0)
+    // A page of the web in front: `ContentArea` mounts no layer for it – its view is the
+    // core's to move – and the band's travel reaches the core as it did before the layer.
+    act(() => root!.render(null))
+    resetBands()
+    resetPageBand()
+    run.mockClear()
+    offline()
+    render(state())
+    expect(mount!.querySelector('[data-band-layer]')).toBeNull()
+    frames.tick(3)
+    expect(offsets()).toHaveLength(3)
+    settle()
+    expect(offsets().at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
   })
 })
 

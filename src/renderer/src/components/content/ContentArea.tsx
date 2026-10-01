@@ -51,6 +51,7 @@ import { GlanceFrame } from './GlanceFrame'
 import { HistoryNavBubble } from './HistoryNavBubble'
 import { LoadProgress } from './LoadProgress'
 import { PageBandHost } from './PageBandHost'
+import { PageBandLayer } from './PageBandLayer'
 import { PullIndicator } from './PullIndicator'
 import { ReadAloudPanel } from './ReadAloudPanel'
 import { ReaderCrossing } from './ReaderCrossing'
@@ -325,7 +326,17 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
             {/* Idle it draws nothing; only a touch host in 3-button navigation mode ever starts it (GN-04). */}
             <HistoryNavBubble />
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
-            {tab && pageTab && <InternalPageHost state={state} tab={tab} hidden={staged} />}
+            {tab &&
+              pageTab &&
+              // A chrome page has no view for the core to move under the band: where the band
+              // is hosted it rides on the band's seat and offset as the views do (§3.4, §10).
+              (pageBand ? (
+                <PageBandLayer>
+                  <InternalPageHost state={state} tab={tab} hidden={staged} />
+                </PageBandLayer>
+              ) : (
+                <InternalPageHost state={state} tab={tab} hidden={staged} />
+              ))}
             {newTabPage && (
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
               // just not painted, so the page is there the moment they leave.

@@ -31,10 +31,11 @@ interface Props {
  * which a prompt arriving waits and one standing stays (the frame dialog host's scrim dims it
  * with the page's picture). It fills the band's seam for this host: the page's offset goes to
  * the core per frame, which moves the placed views' bounds (`layout.pageOffset`, a move, never a
- * resize); a travel's departure seats the band at the lesser of its seat and the destination
- * and its rest at the height, and the layout reporter lays the page out under the seat – once
- * per travel (`lib/pageBand.ts`). Tabs closing and documents changing take their bands with
- * them (`useBandTabs`).
+ * resize), and – the same number, from the same store – to the layer a page the chrome draws
+ * itself rides on (`PageBandLayer`); a travel's departure seats the band at the lesser of its
+ * seat and the destination and its rest at the height, and the layout reporter lays the page
+ * out under the seat – once per travel (`lib/pageBand.ts`). Tabs closing and documents changing
+ * take their bands with them (`useBandTabs`).
  *
  * Its tenants: the default-browser state (`useDefaultBrowserBand`). The strip across the
  * frame's top that asked before it (`DefaultBrowserBanner.tsx`) retired here.
