@@ -18,8 +18,12 @@
  * same number through `content/PageBandLayer.tsx`, which reads the store without React, so a
  * frame of the travel re-renders nothing.
  *
- * Android leaves both at 0: its band host moves the WebView by the pull channel, and a report
- * with nothing seated carries no band.
+ * Android leaves the seat at 0: its band host moves the WebView by the pull channel, and a
+ * report with nothing seated carries no band. For a page the chrome draws itself – a
+ * `render: 'chrome'` page, the phone's new tab page – it writes the OFFSET alone
+ * (`moveChromePage`): `PageBandLayer` rides on it as on the desktop, and the core is not told,
+ * since there is no view under such a page for it to move (`core/pages.ts`) and the band's
+ * offset there is a translation of the chrome's own layer, never a layout.
  */
 import type { LayoutBand, Rect } from '@shared/types'
 import { run } from './api'
@@ -53,6 +57,18 @@ export function movePage(to: number): void {
   if (to === bandOffsetStore.get().offset) return
   bandOffsetStore.set({ offset: to })
   run('layout.pageOffset', { offset: to })
+}
+
+/**
+ * A page the chrome draws itself is `to` from the frame's top edge now (per frame), on a host
+ * that moves its page views another way (Android's band host, over the pull channel): the store
+ * carries it to `PageBandLayer` alone; the core, which has no view under such a page, is not
+ * told. Returns whether the offset changed.
+ */
+export function moveChromePage(to: number): boolean {
+  if (to === bandOffsetStore.get().offset) return false
+  bandOffsetStore.set({ offset: to })
+  return true
 }
 
 /** What the layout report says of the band: nothing while nothing is seated and the page is home. */
