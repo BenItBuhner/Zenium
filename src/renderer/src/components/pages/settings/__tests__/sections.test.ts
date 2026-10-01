@@ -4498,7 +4498,7 @@ describe('what a row does', () => {
     })
   })
 
-  describe('Search › site search management on the desktop (omnibox-09, settings-43)', () => {
+  describe('Search › site search management on every layout (omnibox-09, settings-43, SET-10)', () => {
     const mine = {
       id: 'custom:mine',
       name: 'Mine',
@@ -4582,17 +4582,19 @@ describe('what a row does', () => {
       expect(keywords.description).not.toContain('@forum')
     })
 
-    it('the Inactive heading is not drawn while no engine is deactivated', () => {
+    it('the Inactive heading is not drawn while no engine is deactivated, on any layout', () => {
       const s = state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, mine] } as Partial<UIState>, {
         searchEngines: [mine],
         searchEngineId: 'custom:mine'
       })
-      const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
-      expect(model.groups.map((g) => g.id)).toEqual([
-        'search',
-        'search-engines',
-        'add-search-engine'
-      ])
+      for (const layout of ['desktop', 'tablet', 'phone'] as const) {
+        const model = buildSection(def, { ...context(s).ctx, formFactor: layout })
+        expect(model.groups.map((g) => g.id)).toEqual([
+          'search',
+          'search-engines',
+          'add-search-engine'
+        ])
+      }
     })
 
     it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on every layout, and asks the core for the screen', () => {
@@ -4714,35 +4716,117 @@ describe('what a row does', () => {
       ])
     })
 
-    it('the phone and tablet shells keep every engine under Added with Make default, Edit and Remove, the Inactive heading and the desktop’s Activate / Deactivate gone', () => {
+    it('the phone and tablet shells list a deactivated engine under Inactive as the desktop does, its sheet offering Activate and an active engine’s Deactivate (SET-10)', () => {
       for (const layout of ['phone', 'tablet'] as const) {
+        invoke.mockClear()
         const { model } = searchOn(layout)
-        expect(ids(model, 'search-engines')).toEqual([
+        // The groups the shell draws: `onLayout` is the filter the phone's page and the
+        // tablet's pane apply, so a `layouts: ['desktop']` left on the heading or a row would
+        // show here as its absence.
+        const drawn = onLayout(model.groups, layout)
+        expect(drawn.map((g) => g.id)).toEqual([
+          'search',
+          'search-engines',
+          'inactive-search-engines',
+          'add-search-engine'
+        ])
+        expect(ids({ ...model, groups: drawn }, 'search-engines')).toEqual([
           'search-engine:custom:mine',
-          'search-engine:custom:wiki',
+          'search-engine:custom:wiki'
+        ])
+        expect(ids({ ...model, groups: drawn }, 'inactive-search-engines')).toEqual([
           'search-engine:discovered:forum.example'
         ])
-        expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
-        // With no heading to say it, the row is the one place the engine reads inactive.
-        expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
-          description: 'Inactive · @forum · forum.example'
+        const inactive = drawn.find((g) => g.id === 'inactive-search-engines')!
+        expect(inactive.heading).toBe('Inactive')
+        expect(inactive.layouts).toBeUndefined()
+        // No empty state (§9.17): the group comes with the first engine deactivated and goes
+        // with the last activated.
+        expect(inactive.empty).toBeUndefined()
+        // The heading says "Inactive"; the row does not say it again (§9.17) – it keeps its
+        // source, its shortcut and its host, as the desktop's row under the heading does.
+        expect(findRow(drawn, 'search-engine:discovered:forum.example')).toMatchObject({
+          kind: 'item',
+          description: 'Recently visited · @forum · forum.example'
         })
-        // Edit on every engine of the user's, active or not (SET-10; Chrome 152's row menu
-        // offers Edit on each custom engine, Make default and Delete on those not the default).
-        expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+        for (const r of inactive.rows) expect(r.description).not.toMatch(/\bInactive\b/)
+        // The inactive engine's sheet – the phone's sheet, the tablet's dialog – offers Edit,
+        // Activate and Remove in the desktop's order, and no Make default; an active engine's
+        // offers Make default, Edit, Deactivate and Remove.
+        const drawnModel = { ...model, groups: drawn }
+        expect(sheetIds(drawnModel, 'search-engine:discovered:forum.example')).toEqual([
           'search-engine:discovered:forum.example:edit',
+          'search-engine:discovered:forum.example:activate',
           'search-engine:discovered:forum.example:remove'
         ])
-        expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
+        expect(sheetIds(drawnModel, 'search-engine:custom:wiki')).toEqual([
           'search-engine:custom:wiki:default',
           'search-engine:custom:wiki:edit',
+          'search-engine:custom:wiki:deactivate',
           'search-engine:custom:wiki:remove'
         ])
+        // The rows are the desktop's – the same ids, labels, descriptions and command – kept
+        // from no layout.
+        const activate = findRow(drawn, 'search-engine:discovered:forum.example:activate')
+        if (activate?.kind !== 'action') throw new Error('not an action')
+        expect(activate).toMatchObject({
+          label: 'Activate',
+          description: '@forum works in the URL bar again.'
+        })
+        expect(activate.layouts).toBeUndefined()
+        activate.onPress?.()
+        expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+          id: forum.id,
+          active: true
+        })
+        const deactivate = findRow(drawn, 'search-engine:custom:wiki:deactivate')
+        if (deactivate?.kind !== 'action') throw new Error('not an action')
+        expect(deactivate).toMatchObject({
+          label: 'Deactivate',
+          description: 'Keeps Wiki in the list but out of the URL bar until you activate it.'
+        })
+        expect(deactivate.layouts).toBeUndefined()
+        expect(deactivate.disabled).toBeFalsy()
+        deactivate.onPress?.()
+        expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+          id: wiki.id,
+          active: false
+        })
+        // The default engine stays active on every layout: its row says so and takes no press.
+        const held = findRow(drawn, 'search-engine:custom:mine:deactivate')
+        if (held?.kind !== 'action') throw new Error('not an action')
+        expect(held.disabled).toBe(true)
+        expect(held.description).toBe('The default search engine stays active.')
         // The picker still leaves the deactivated engine out: the flag is the model's, not the
         // layout's.
         const picker = row(model, 'search-engine')
         if (picker.kind !== 'value') throw new Error('not a value row')
         expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+        expect(picker.options.map((o) => o.value)).toContain(wiki.id)
+      }
+    })
+
+    it('the model is one across the layouts: the phone’s and the tablet’s Search groups are the desktop’s, row for row', () => {
+      const desktop = searchOn('desktop').model
+      for (const layout of ['phone', 'tablet'] as const) {
+        const { model } = searchOn(layout)
+        // `formFactor` no longer reaches the section: the same groups, headings, row ids and
+        // descriptions come out whatever the layout asked for …
+        expect(model.groups.map((g) => [g.id, g.heading, g.layouts])).toEqual(
+          desktop.groups.map((g) => [g.id, g.heading, g.layouts])
+        )
+        for (const id of [
+          'search-engine:custom:mine',
+          'search-engine:custom:wiki',
+          'search-engine:discovered:forum.example'
+        ]) {
+          expect(sheetIds(model, id)).toEqual(sheetIds(desktop, id))
+          expect(row(model, id).description).toBe(row(desktop, id).description)
+        }
+        // … and the shell's layout filter takes nothing away from the engines' groups.
+        expect(onLayout(model.groups, layout).map((g) => g.id)).toEqual(
+          model.groups.map((g) => g.id)
+        )
       }
     })
 
