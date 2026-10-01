@@ -25,14 +25,6 @@ name: Android private security demo
 # a change being correct. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml; this file picks the driver and the engine.
 on:
-  # TEMPORARY (W6-S26-e, PR #731): the run trigger for the PR's branch; removed before READY.
-  # Only a push whose head commit says `[a11y-run]` records (the budget is one run and one
-  # retry), so the milestone pushes between them cost nothing. The tab overview cleanup's device
-  # record (OverviewCleanupDemo) runs through this workflow's environment for its private view:
-  # the Chromium snapshot WebView keeps profiles, so `capabilities.privateTabs` is on here.
-  push:
-    branches:
-      - cursor/android-overview-cleanup-9271
   workflow_dispatch:
     inputs:
       theme:
@@ -53,9 +45,7 @@ concurrency:
 
 jobs:
   record:
-    name: overview cleanup demo (Chromium snapshot WebView on an AOSP image)
-    # TEMPORARY (W6-S26-e): only the tagged push records; a dispatch runs as before.
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[a11y-run]')
+    name: private security demo (Chromium snapshot WebView on an AOSP image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -63,10 +53,10 @@ jobs:
       emulator-gpu: swiftshader_indirect
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OverviewCleanupDemo
-        DEMO_DIR=overview-cleanup-demo
-        DEMO_OUT=artifacts/android-overview-cleanup-demo
-        DEMO_VIDEO=android-overview-cleanup-demo.mp4
+        DEMO_CLASS=app.zen.chromium.PrivateSecurityDemo
+        DEMO_DIR=private-security-demo
+        DEMO_OUT=artifacts/android-private-security-demo
+        DEMO_VIDEO=android-private-security-demo.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
@@ -83,14 +73,14 @@ jobs:
         curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
-      artifact-name: android-overview-cleanup-demo
-      artifact-path: artifacts/android-overview-cleanup-demo/
+      artifact-name: android-private-security-demo
+      artifact-path: artifacts/android-private-security-demo/
       timeout-minutes: 60
 
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
   # never when the driver failed: a run is then spent on the demo rather than on the runner.
   record-again:
-    name: overview cleanup demo, second boot
+    name: private security demo, second boot
     needs: record
     if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
     uses: ./.github/workflows/android-emulator-demo.yml
@@ -100,10 +90,10 @@ jobs:
       emulator-gpu: swiftshader_indirect
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
-        DEMO_CLASS=app.zen.chromium.OverviewCleanupDemo
-        DEMO_DIR=overview-cleanup-demo
-        DEMO_OUT=artifacts/android-overview-cleanup-demo
-        DEMO_VIDEO=android-overview-cleanup-demo.mp4
+        DEMO_CLASS=app.zen.chromium.PrivateSecurityDemo
+        DEMO_DIR=private-security-demo
+        DEMO_OUT=artifacts/android-private-security-demo
+        DEMO_VIDEO=android-private-security-demo.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       setup-script: |
@@ -117,6 +107,6 @@ jobs:
         curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
-      artifact-name: android-overview-cleanup-demo-second-boot
-      artifact-path: artifacts/android-overview-cleanup-demo/
+      artifact-name: android-private-security-demo-second-boot
+      artifact-path: artifacts/android-private-security-demo/
       timeout-minutes: 60
