@@ -1424,11 +1424,12 @@ export interface SyncStatus {
   lastSyncAt: number | null
   lastError: string | null
   /**
-   * The class of `lastError` when the WebDAV transport raised it (ID-32), for the chrome to say
-   * in its own words (§9.33: no method or status in a sentence); null for the folder transport's
+   * The class of `lastError` when the WebDAV or the account transport raised it (ID-32), for the
+   * chrome to say in its own words (§9.33: no method or status in a sentence) – read as a
+   * `WebDavErrorKind` or an `AccountErrorKind` by `transport`; null for the folder transport's
    * sentences and when there is no error.
    */
-  lastErrorKind: WebDavErrorKind | null
+  lastErrorKind: WebDavErrorKind | AccountErrorKind | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
   devices: SyncDevice[]
@@ -1455,10 +1456,61 @@ export interface SyncStatus {
    * waits for a new one (`sync.setWebDavPassword`). Never set by the folder transport.
    */
   authRefused: boolean
+  /**
+   * The host can reach the Zenium account service and keep the device's sign-in (a fetch and a
+   * secret store, as for a WebDAV server): the setup may offer the account.
+   */
+  accountAvailable: boolean
+  /**
+   * The Zenium account this device is signed in to: before setup once the sign-in in the browser
+   * was approved (the passphrase step follows), and while sync runs through it. Kept while the
+   * service has signed the device out (`accountSignedOut`), so the chrome can name it; null
+   * otherwise.
+   */
+  account: { email: string } | null
+  /**
+   * A sign-in under way (`sync.accountSignIn`): the code the new tab shows for the user to check,
+   * the page it opened, and when the code stops working. Null when none runs.
+   */
+  accountLink: SyncAccountLink | null
+  /** Why the last sign-in did not finish (the code expired, the service could not be reached…); null after a new one starts. */
+  accountLinkFailure: SyncAccountLinkFailure | null
+  /**
+   * The account service ended this device's sign-in (signed out from the website, the account
+   * deleted, a refresh refused): sync stays configured, nothing more is sent, and the engine
+   * waits for the user to sign in again (`sync.accountSignIn`) – the account's `authRefused`.
+   */
+  accountSignedOut: boolean
 }
 
-/** How a device reaches the shared folder: a folder of the host's (`folder`), or a WebDAV server (`webdav`). */
-export type SyncTransportKind = 'folder' | 'webdav'
+/**
+ * How a device reaches the shared folder: a folder of the host's (`folder`), a WebDAV server
+ * (`webdav`), or the user's Zenium account (`account`).
+ */
+export type SyncTransportKind = 'account' | 'folder' | 'webdav'
+
+/** A sign-in to the Zenium account under way: the code to check against the new tab, its page, its expiry (ms). */
+export interface SyncAccountLink {
+  userCode: string
+  verificationUrl: string
+  expiresAt: number
+}
+
+/**
+ * Why a sign-in did not finish: the code `expired` before it was approved, the service was
+ * `unavailable` or `rate-limited`, or the host's secret store could not keep the sign-in (`secrets`).
+ */
+export type SyncAccountLinkFailure = 'expired' | 'unavailable' | 'rate-limited' | 'secrets'
+
+/**
+ * How the Zenium account service answered, as the account transport classes it
+ * (`core/sync/account.ts`): `signed-out` (the device's sign-in is gone – revoked, the account
+ * deleted, a refresh refused), `quota` (the account's sync storage is full), `too-large` (one
+ * document past the service's size), `rate-limited` (too many requests for now), `unavailable`
+ * (a network failure, a timeout, a 5xx), `refused` (any other refusal).
+ */
+export type AccountErrorKind =
+  'signed-out' | 'quota' | 'too-large' | 'rate-limited' | 'unavailable' | 'refused'
 
 /**
  * A WebDAV server as the sync folder's home (ID-32): the DAV root the account's files live under
@@ -1494,13 +1546,16 @@ export type WebDavErrorKind =
 export type WebDavProbe = { ok: true } | { ok: false; kind: WebDavErrorKind; status: number }
 
 /**
- * Why `sync.setup` or `sync.setWebDavPassword` did not do what was asked with a WebDAV server,
- * for the chrome to say in its own words (§9.33): the server's answer as the transport classed
- * it, or the host's secret store not keeping the app password. Null when it did. The folder
- * transport's refusals are as before ID-32: a toast the setup form takes as its line.
+ * Why `sync.setup` or `sync.setWebDavPassword` did not do what was asked with a WebDAV server or
+ * the Zenium account, for the chrome to say in its own words (§9.33): the server's answer as the
+ * transport classed it, the account service's, or the host's secret store not keeping the app
+ * password. Null when it did. The folder transport's refusals are as before ID-32: a toast the
+ * setup form takes as its line.
  */
 export type SyncSetupRefusal =
-  { reason: 'server'; kind: WebDavErrorKind; status: number } | { reason: 'secrets' }
+  | { reason: 'server'; kind: WebDavErrorKind; status: number }
+  | { reason: 'account'; kind: AccountErrorKind }
+  | { reason: 'secrets' }
 
 // ---------------------------------------------------------------------------
 // Passwords (the encrypted credential vault)
@@ -7030,7 +7085,8 @@ export interface Commands {
   /**
    * Turn sync on. `transport` names the folder's home (the folder of `folder` when absent, as
    * before ID-32); with `webdav` the server's settings and app password come in `webdav` and
-   * `folder` is not read.
+   * `folder` is not read; with `account` the account signed in to (`sync.accountSignIn`) is the
+   * home and neither is read.
    */
   'sync.setup': {
     args: {
@@ -7051,6 +7107,19 @@ export interface Commands {
    * sync runs again with it. The secret store not keeping it is the typed refusal, never a rejection.
    */
   'sync.setWebDavPassword': { args: { password: string }; result: SyncSetupRefusal | null }
+  /**
+   * Sign this device in to the Zenium account: the sign-in page opens in a new tab and the code
+   * it must show lands in `SyncStatus.accountLink`; the engine waits for the approval in the
+   * background. Resolves once the code is shown (or the start failed: `accountLinkFailure`).
+   */
+  'sync.accountSignIn': { args: void; result: void }
+  /** Stop waiting for the sign-in under way; nothing is kept. */
+  'sync.accountCancel': { args: void; result: void }
+  /**
+   * Sign this device out of the Zenium account: the service forgets its sign-in, the secret store
+   * forgets it here, and sync turns off (this device keeps what it has).
+   */
+  'sync.accountSignOut': { args: void; result: void }
   'sync.setScope': { args: Partial<SyncScope>; result: void }
   'sync.setDeviceName': { args: { name: string }; result: void }
   /**

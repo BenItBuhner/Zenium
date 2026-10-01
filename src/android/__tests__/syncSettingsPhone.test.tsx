@@ -81,6 +81,11 @@ function syncStatus(patch: Partial<SyncStatus> = {}): SyncStatus {
     webdav: null,
     webdavAvailable: true,
     authRefused: false,
+    accountAvailable: false,
+    account: null,
+    accountLink: null,
+    accountLinkFailure: null,
+    accountSignedOut: false,
     ...patch
   }
 }
@@ -313,5 +318,98 @@ describe('Settings › Sync on the phone, from the engine’s status (ID-32)', (
     expect(rowOf(el, 'sync-turn-on').hasAttribute('aria-disabled')).toBe(false)
     expect(pageWords(el)).not.toContain(APP_PASSWORD)
     expect(el.innerHTML).not.toContain(APP_PASSWORD)
+  })
+
+  it('the Zenium account on the phone: picked first in Sync through, Sign in → the code with the wait and Cancel → the email with Sign out, Turn on sync pressable once signed in', () => {
+    const setupRows = (sync: SyncStatus): Array<string | null> => {
+      act(() => root?.unmount())
+      host?.remove()
+      const el = renderPhone(phoneSyncSection(sync))
+      return Array.from(groupOf(el, 'sync-setup').querySelectorAll('[data-row]')).map((r) =>
+        r.getAttribute('data-row')
+      )
+    }
+    const available = { accountAvailable: true }
+    expect(setupRows(syncStatus(available))).toEqual([
+      'sync-transport',
+      'sync-account-sign-in',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const el0 = host!
+    expect(
+      rowOf(el0, 'sync-transport').querySelector('.zen-settings-description')?.textContent
+    ).toBe('Zenium account')
+    expect(rowOf(el0, 'sync-account-sign-in').textContent).toContain(
+      'Opens the sign-in page in a new tab.'
+    )
+    expect(rowOf(el0, 'sync-turn-on').hasAttribute('aria-disabled')).toBe(true)
+    expect(pageWords(el0)).toContain('Sign in to your Zenium account first.')
+
+    const link = {
+      userCode: 'WXYZ-2345',
+      verificationUrl: 'https://example.test/link',
+      expiresAt: 0
+    }
+    expect(setupRows(syncStatus({ ...available, accountLink: link }))).toEqual([
+      'sync-transport',
+      'sync-account-code',
+      'sync-account-cancel',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const el1 = host!
+    expect(rowOf(el1, 'sync-account-code').querySelector('.zen-settings-label')?.textContent).toBe(
+      'WXYZ-2345'
+    )
+    expect(pageWords(el1)).toContain('Waiting for the sign-in to finish in the new tab…')
+    expect(pageWords(el1)).toContain('Cancel sign-in')
+
+    expect(setupRows(syncStatus({ ...available, account: { email: 'ada@example.com' } }))).toEqual([
+      'sync-transport',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const el2 = host!
+    expect(rowOf(el2, 'sync-account').textContent).toContain('ada@example.com')
+    expect(rowOf(el2, 'sync-turn-on').hasAttribute('aria-disabled')).toBe(false)
+  })
+
+  it('the Zenium account signed out by the service: the message row over Sign in again, and the engine’s raw line reaches nothing on the page', () => {
+    const el = renderPhone(
+      phoneSyncSection(
+        syncStatus({
+          enabled: true,
+          transport: 'account',
+          accountAvailable: true,
+          account: { email: 'ada@example.com' },
+          folder: 'https://accounts.example.convex.cloud',
+          folderName: 'ada@example.com',
+          lastSyncAt: Date.now() - 60_000,
+          accountSignedOut: true,
+          lastError: 'POST /auth/refresh answered 401 (revoked)',
+          lastErrorKind: 'signed-out'
+        })
+      )
+    )
+    const status = rowOf(el, 'sync-account-signed-out')
+    expect(status.getAttribute('data-tone')).toBe('danger')
+    expect(status.querySelector('.zen-settings-label')?.textContent).toBe(
+      'You were signed out of your Zenium account'
+    )
+    const where = groupOf(el, 'sync-where')
+    expect(where.querySelector('h2')?.textContent).toBe('Account and device')
+    expect(
+      Array.from(where.querySelectorAll('[data-row]')).map((r) => r.getAttribute('data-row'))
+    ).toEqual(['sync-account-sign-in', 'sync-account', 'sync-account-sign-out', 'sync-device-name'])
+    expect(
+      rowOf(el, 'sync-account-sign-in').querySelector('.zen-settings-label')?.textContent
+    ).toBe('Sign in again')
+    const words = pageWords(el)
+    expect(words).not.toContain('401')
+    expect(words).not.toContain('/auth/refresh')
+    expect(words).not.toContain('revoked')
   })
 })

@@ -525,7 +525,12 @@ export class BrowserState {
       transport: 'folder',
       webdav: null,
       webdavAvailable: false,
-      authRefused: false
+      authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false
     },
     agents: [],
     agentServer: emptyAgentServerStatus(),
