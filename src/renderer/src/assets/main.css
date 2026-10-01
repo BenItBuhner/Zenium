@@ -94,6 +94,12 @@
   --zen-phone-band: calc(var(--zen-phone-bar) + var(--zen-group-strip));
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The motion tokens' durations (motion spec §1; `lib/motion/tokens.ts` holds the same values,
+     pinned equal by `lib/__tests__/motionTokens.test.ts`) for a class string that cannot read a
+     TS token: Tailwind's `duration-[var(--zen-motion-state)]`. */
+  --zen-motion-state: 120ms;
+  --zen-motion-pop: 180ms;
+  --zen-motion-message: 200ms;
   /* Zen 1.22: the chrome uses squircles (superellipse corners) instead of plain rounding. */
   --zen-corner: squircle;
   /* Zen 1.22: sidebar type got larger for readability. */
@@ -935,6 +941,10 @@
   --zen-accent: var(--v2-text);
   /* The chrome's easing (§7), which the v2 button's press transition reads. */
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The chrome's durations (motion spec §1), restated beside the easing as `:root` declares them. */
+  --zen-motion-state: 120ms;
+  --zen-motion-pop: 180ms;
+  --zen-motion-message: 200ms;
   /* The chrome's corner (§2: the squircle on radius 8 and up), which the game-over card reads. */
   --zen-corner: squircle;
   height: 100%;

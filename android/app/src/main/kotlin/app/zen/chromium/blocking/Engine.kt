@@ -51,6 +51,13 @@ class EngineSnapshot(
     /** Partitions with a text engine of their own, in the order the sets named them (diagnostics and tests). */
     val textPartitions: Set<String> get() = textByPartition.keys
 
+    /**
+     * The partitions' own engines as this snapshot holds them: the next build's first stage
+     * carries a partition's engine from here while that partition's new one is still parsing
+     * (`Blocking.rebuild`), so its requests are answered as before until the new one lands.
+     */
+    internal val textEngineByPartition: Map<String, TextEngine?> get() = textByPartition
+
     /** Network filters in the text engine `partition`'s requests are matched against ([textFor]). */
     fun filterCount(partition: String?): Int = textFor(partition)?.filterCount ?: 0
 
