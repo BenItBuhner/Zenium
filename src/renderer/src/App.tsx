@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Minimize } from 'lucide-react'
 import type { Events, Rect, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
@@ -9,6 +9,7 @@ import { formatBinding } from '@shared/shortcuts'
 import { forcesRail, hasTopToolbar, isHorizontalTabs } from '@shared/toolbarLayout'
 import { run } from '@renderer/lib/api'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
+import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { openNewTabPage } from '@renderer/lib/newtab'
 import { onboardingCovers } from '@renderer/lib/onboarding'
 import { searchChoiceCovers } from '@renderer/lib/searchChoice'
@@ -396,16 +397,14 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
 /** What main's cursor tracking reports (the `compact.reveal` event, as `zen-compact-reveal`). */
 type ChromeReveal = Events['compact.reveal']
 
-/** The hidden toolbar's slide, in and out (Edge's reveal is about this long); `.zen-toolbar-reveal`. */
-const TOOLBAR_SLIDE_MS = 200
-
 /**
  * The top toolbar while hidden – compact mode with the toolbar switch on, or the window's
  * fullscreen: the cursor on the top edge slides it (and the bookmarks bar) down over a picture
  * of the page, as the sidebar comes out at its side, and it slides back 300 ms after the cursor
- * leaves. The picture stays under it until the slide out is done, so the toolbar never crosses
- * the live page view. Main reports the edge (the page view takes the pointer there); the strip
- * below catches the cursor where the chrome still has a gutter.
+ * leaves – both on the house spring (`SlideDown`). The picture stays under it until the slide
+ * out has come to rest, so the toolbar never crosses the live page view. Main reports the edge
+ * (the page view takes the pointer there); the strip below catches the cursor where the chrome
+ * still has a gutter.
  */
 function CompactToolbar({
   state,
@@ -426,17 +425,17 @@ function CompactToolbar({
   const urlbarOpen = uiStore.use((s) => s.urlbar.open)
   const overlay = uiStore.use((s) => s.overlay)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const slideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const revealing = useRef(false)
   const hovering = useRef(false)
-  // The toolbar is sliding away (the pose is off while it still stands, until it unmounts).
+  // The toolbar is sliding away (it still stands, heading for its hidden pose, until it has
+  // come to rest there and unmounts); the ref is the same flag for the timer's read.
   const [closing, setClosing] = useState(false)
+  const closingRef = useRef(false)
   const show = useCallback((): void => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
     // A slide out under way turns around where it is.
-    if (slideTimer.current) clearTimeout(slideTimer.current)
-    slideTimer.current = null
+    closingRef.current = false
     setClosing(false)
     if (uiStore.get().toolbarHover || revealing.current) return
     revealing.current = true
@@ -452,16 +451,18 @@ function CompactToolbar({
       // The toolbar stays while something it opened is up (the URL bar, an overlay).
       const ui = uiStore.get()
       if (ui.overlay !== 'none' || ui.urlbar.open || ui.menu || ui.zoomBubble) return
-      if (!ui.toolbarHover || slideTimer.current) return
-      // Slide out over the page's picture; the live page comes back once the toolbar is gone.
+      if (!ui.toolbarHover || closingRef.current) return
+      // Slide out over the page's picture; the live page comes back once the toolbar is gone
+      // (`closed`, when the slide has come to rest).
+      closingRef.current = true
       setClosing(true)
-      slideTimer.current = setTimeout(() => {
-        slideTimer.current = null
-        setClosing(false)
-        uiStore.set({ toolbarHover: false })
-        invalidateSnapshot()
-      }, TOOLBAR_SLIDE_MS)
     }, 300)
+  }, [])
+  const closed = useCallback((): void => {
+    closingRef.current = false
+    setClosing(false)
+    uiStore.set({ toolbarHover: false })
+    invalidateSnapshot()
   }, [])
   useEffect(() => {
     const onReveal = (e: Event): void => {
@@ -487,7 +488,6 @@ function CompactToolbar({
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current)
-      if (slideTimer.current) clearTimeout(slideTimer.current)
       if (uiStore.get().toolbarHover) {
         uiStore.set({ toolbarHover: false })
         invalidateSnapshot()
@@ -513,7 +513,7 @@ function CompactToolbar({
     >
       <div className="h-1.5" />
       {open && (
-        <SlideDown closing={closing}>
+        <SlideDown closing={closing} onClosed={closed}>
           {horizontal ? (
             <HorizontalChrome
               state={state}
@@ -553,28 +553,66 @@ function ExitFullscreenButton({ state }: { state: UIState }): JSX.Element {
   )
 }
 
+/** The slide's hidden pose, as the spring's position: the row's whole height and the gutter, off the top. */
+const HIDDEN_POSE = 100
+
+/** `transform` for the slide `p` of the way (0…`HIDDEN_POSE`) towards its hidden pose. */
+function slidePose(p: number): string {
+  if (p <= 0) return 'none'
+  const gutter = (p / HIDDEN_POSE) * 8
+  return `translateY(calc(${-p}% - ${gutter}px))`
+}
+
 /**
- * The hidden toolbar's slide (`.zen-toolbar-reveal`): mounted in its hidden pose, open a frame
- * later so the transition has a start, and off again while `closing` – it unmounts once the
- * slide out is done, which is also what resets it for the next reveal.
+ * The hidden toolbar's slide (`.zen-toolbar-reveal`): mounted in its hidden pose – the
+ * stylesheet's, so the first paint is off the top – it springs down to its place on the house
+ * spring (§1's `SPRING_SNAPPY`, run on the pose's 0…100), and back up while `closing`; a cursor
+ * returning mid-way turns it around where it is, with the velocity it had. `onClosed` runs once
+ * the slide out has come to rest, which is when the owner unmounts it (and what resets it for
+ * the next reveal). Under reduced motion the spring jumps: the toolbar is there or it is not.
  */
-function SlideDown({ closing, children }: { closing: boolean; children: ReactNode }): JSX.Element {
-  const [entered, setEntered] = useState(false)
-  useEffect(() => {
-    // Two frames: the hidden pose must be the computed style once before the open one.
-    let inner = 0
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => setEntered(true))
-    })
+function SlideDown({
+  closing,
+  onClosed,
+  children
+}: {
+  closing: boolean
+  onClosed: () => void
+  children: ReactNode
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const spring = useRef<SpringAnimation | null>(null)
+  const closedRef = useRef(onClosed)
+  useLayoutEffect(() => {
+    closedRef.current = onClosed
+  })
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return undefined
+    const anim = new SpringAnimation(
+      SPRING_SNAPPY,
+      (p) => {
+        el.style.transform = slidePose(p)
+      },
+      (p) => {
+        if (p >= HIDDEN_POSE) closedRef.current()
+      }
+    )
+    spring.current = anim
+    anim.start(HIDDEN_POSE, 0, 0)
     return () => {
-      cancelAnimationFrame(outer)
-      cancelAnimationFrame(inner)
+      anim.stop()
+      spring.current = null
     }
   }, [])
+  useEffect(() => {
+    spring.current?.retarget(closing ? HIDDEN_POSE : 0)
+  }, [closing])
   return (
     <div
+      ref={ref}
       className="zen-toolbar-reveal px-2"
-      data-open={entered && !closing ? 'true' : undefined}
+      data-closing={closing || undefined}
       data-testid="toolbar-reveal"
     >
       {children}

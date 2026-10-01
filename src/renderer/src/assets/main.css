@@ -3207,19 +3207,16 @@
   }
   /*
    * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
-   * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
-   * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
-   * chrome mounts it hidden and opens it a frame later; `data-open` off slides it away before
-   * it unmounts. Reduced motion removes the travel (the global rule at the foot): it is there
-   * or it is not.
+   * top edge on the cursor's touch and back out when it leaves, on the house spring (§1's
+   * `SPRING_SNAPPY`; `App.tsx`'s `SlideDown` writes the transform per frame), so a cursor
+   * returning mid-way turns it around where it is with the velocity it had. This is the hidden
+   * pose the chrome mounts it in – the first paint, before the spring's first frame; the spring
+   * takes it from here and leaves `none` at rest. Under reduced motion the spring jumps: it is
+   * there or it is not.
    */
   .zen-toolbar-reveal {
     transform: translateY(calc(-100% - 8px));
-    transition: transform 200ms var(--zen-ease);
     will-change: transform;
-  }
-  .zen-toolbar-reveal[data-open] {
-    transform: none;
   }
   .zen-animate-pop {
     animation: zen-pop 180ms var(--zen-ease);
