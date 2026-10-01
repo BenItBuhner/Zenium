@@ -151,7 +151,9 @@ export const QUIT_TRACE_EVERY_MS = 500
 // what it should, failed by the harness's read. Every read is now bounded (`readHold`): one
 // that has not answered within HOLD_READ_BOUND_MS is recorded as stalled and the next goes out,
 // so a later read can still catch the hold; the target going away ends the reading. The step's
-// rule is unchanged: no hold read still fails it.
+// rule is unchanged – no hold read still fails it – but the failure carries what the polls saw
+// and the span from the key down to the first before-quit, which tells the hold that ran under
+// a stalled read from an app that quit at the press (`formatHoldRead`).
 // ---------------------------------------------------------------------------------------------
 
 /** How long `holdQuitChord` keeps reading the chrome's state for the hold after the key down. */
@@ -228,6 +230,91 @@ export async function readHold(
     await delay(everyMs)
   }
   return { panel, polls }
+}
+
+/** `ms` as the hold's reading writes a count: `2,536`. */
+const count = (ms) => Math.round(ms).toLocaleString('en-US')
+
+/** One poll of the hold's reading as the message writes it; the first stalled one names the bound. */
+function formatHoldPoll(poll, boundMs, firstStalled) {
+  const at = `+${count(poll.at)} ms`
+  switch (poll.state) {
+    case 'hold': {
+      const v = poll.value
+      const shaped = v && typeof v === 'object' && 'chord' in v && 'durationMs' in v
+      return `${at} hold (${shaped ? `${v.chord}, ${count(v.durationMs)} ms` : JSON.stringify(v)})`
+    }
+    case 'not-yet':
+      return `${at} no hold yet`
+    case 'stalled':
+      return firstStalled ? `${at} stalled past ${count(boundMs)} ms` : `${at} stalled`
+    case 'gone':
+      return `${at} gone`
+    default:
+      return `${at} error: ${poll.error ?? '?'}`
+  }
+}
+
+/**
+ * The hold's reading as one clause of a failure message: what the polls saw, and the span from
+ * the chord's key down to the app's first `before-quit` – the two facts that tell a hold that
+ * ran under a stalled read from an app that quit at the press. `polls` are `readHold`'s;
+ * `beforeQuitAt` the first before-quit event's `t` (the app's Date.now()), or null when none was
+ * recorded; `downAt` the key down's moment on the app's clock (`sendKeys`'s `at`), with
+ * `chordAt`, the chord's moment on the harness's clock, as the fallback when the key down's own
+ * moment was not read – the text names the clock used. A span at or past `holdMs` is the hold
+ * having run (the quit came from its end; the read stalled, or the state never showed it), one
+ * under it the app quitting at the press. For example, run 36816729301's read:
+ *
+ *     no hold read before the app quit — polls: +12 ms stalled past 500 ms, +562 ms stalled,
+ *     +1,112 ms gone; before-quit +2,536 ms after the key down by the app's clock, past the
+ *     hold's 1,500 ms (the hold ran; the read stalled)
+ */
+export function formatHoldRead({
+  polls = [],
+  beforeQuitAt = null,
+  downAt = null,
+  chordAt = null,
+  holdMs = QUIT_HOLD_MS,
+  boundMs = HOLD_READ_BOUND_MS
+} = {}) {
+  const seen = (kind) => polls.some((p) => p.state === kind)
+  let lead
+  if (seen('hold')) lead = `the hold read at +${count(polls.find((p) => p.state === 'hold').at)} ms`
+  else if (seen('gone')) lead = 'no hold read before the app quit'
+  else if (seen('error')) lead = 'the read of the hold failed'
+  else if (polls.length === 0) lead = 'the hold was not read'
+  else lead = `no hold read within the read's ${count(HOLD_READ_WINDOW_MS)} ms`
+  let firstStalled = true
+  const list = polls.map((p) => {
+    const text = formatHoldPoll(p, boundMs, firstStalled)
+    if (p.state === 'stalled') firstStalled = false
+    return text
+  })
+  const reads = list.length ? `polls: ${list.join(', ')}` : 'no polls'
+  let span
+  const since = downAt ?? chordAt
+  if (beforeQuitAt === null || beforeQuitAt === undefined) {
+    span = 'no before-quit recorded'
+  } else if (since === null || since === undefined) {
+    span = `before-quit at ${beforeQuitAt}, the key down's moment unknown`
+  } else {
+    const ms = beforeQuitAt - since
+    const clock =
+      downAt !== null && downAt !== undefined
+        ? "by the app's clock"
+        : "by the harness's clock (the key down's own moment was not read)"
+    const why =
+      ms >= holdMs
+        ? seen('stalled')
+          ? 'the hold ran; the read stalled'
+          : seen('hold')
+            ? 'the hold ran'
+            : 'the hold ran; the state never showed it'
+        : 'the app quit at the press'
+    span = `before-quit ${ms < 0 ? '' : '+'}${count(ms)} ms after the key down ${clock}, ${ms >= holdMs ? 'past' : 'under'} the hold's ${count(holdMs)} ms (${why})`
+  }
+  return `${lead} — ${reads}; ${span}`
 }
 
 /**
