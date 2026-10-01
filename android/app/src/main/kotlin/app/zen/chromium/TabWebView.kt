@@ -664,7 +664,6 @@ class TabWebView(
         val referer = if (redirect) null else ContentRules.resumeReferer(currentDocument, target, policy)
         val held = HeldNavigation(++rulesTokenSeq, target, referer, leaveCarry.holds(SystemClock.uptimeMillis()))
         heldNavigation = held
-        Log.i("S13", "$tabId holdForContentRules $target token=${held.token} redirect=$redirect")
         askRules(target, held.token)
         // The chrome's thread may be busy (the renderer is one for every page): the pushed document
         // decides a navigation the core has not answered for by then.
@@ -685,7 +684,6 @@ class TabWebView(
      * objection is answered with that word rather than a second sheet (`onJsBeforeUnload`).
      */
     private fun resumeHeld(held: HeldNavigation) {
-        Log.i("S13", "$tabId resumeHeld ${held.url} token=${held.token}", Throwable("s13"))
         val headers = HashMap<String, String>()
         held.referer?.let { headers["Referer"] = it }
         loadRequested(held.url, headers)
@@ -1969,7 +1967,6 @@ class TabWebView(
      * the call – would be cancelled for this one.
      */
     private fun showDialog(spec: PageDialogSpec, result: JsResult, then: (accepted: Boolean, suppress: Boolean) -> Unit) {
-        Log.i("S13", "$tabId showDialog ${spec.kind} dialogUp=${dialog != null} shown=$isShown")
         dialog?.let { up ->
             dialog = null
             up.sheet.dismiss()
@@ -2021,7 +2018,6 @@ class TabWebView(
      * started, the document is the one that stayed – the WebView's word, the committed page's URL.
      */
     private fun stayedOnPage() {
-        Log.i("S13", "$tabId stayedOnPage webUrl=$url currentDocument=$currentDocument originalUrl=${copyBackForwardList().currentItem?.originalUrl}")
         // The user stays: no Leave of theirs carries to any load.
         leaveCarry.reset()
         val stayed = url?.takeIf(PageRules::isWebPage) ?: return
@@ -2291,7 +2287,6 @@ class TabWebView(
      * URL before its request leaves.
      */
     private fun loadRequested(requested: String, extra: Map<String, String>) {
-        Log.i("S13", "$tabId loadRequested $requested extra=${extra.keys} shown=$isShown webUrl=$url currentDocument=$currentDocument", Throwable("s13"))
         // A local document still being read for this view lands nowhere: the tab has moved on
         // (the read's own guard reads the sequence; a second local load bumps it itself).
         localDocumentSeq++
@@ -2336,7 +2331,6 @@ class TabWebView(
     }
 
     override fun loadUrl(requested: String, additionalHttpHeaders: MutableMap<String, String>) {
-        Log.i("S13", "$tabId loadUrl+headers $requested shown=$isShown webUrl=$url", Throwable("s13"))
         localDocumentSeq++
         heldNavigation = null
         val url = ExtensionUrls.toServed(requested)
@@ -2499,7 +2493,6 @@ class TabWebView(
     }
 
     override fun reload() {
-        Log.i("S13", "$tabId reload shown=$isShown webUrl=$url", Throwable("s13"))
         rememberCurrentPage()
         reloadAskedAt = SystemClock.uptimeMillis()
         leaveCarry.reset()
@@ -2915,12 +2908,7 @@ class TabWebView(
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            Log.i("S13", "$tabId shouldOverrideUrlLoading ${request.url} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect} shown=$isShown")
-            return shouldOverrideUrlLoadingBody(view, request)
-        }
-
-        private fun shouldOverrideUrlLoadingBody(view: WebView, request: WebResourceRequest): Boolean =
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
             // A speculation-rules prerender the page declared: WebView asks here for it as for a
             // navigation (`Sec-Purpose: prefetch;prerender`, no gesture, the outermost main
             // frame), and this answer is the embedder's only veto – the activation later runs no
@@ -3103,12 +3091,7 @@ class TabWebView(
          * prefetch ([refusePreload]); anything left goes to the request engine, whose rule sets
          * include the extensions' declarativeNetRequest rules.
          */
-        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-            if (request.isForMainFrame) Log.i("S13", "$tabId intercept main ${request.method} ${request.url} redirect=${request.isRedirect} gesture=${request.hasGesture()}")
-            return shouldInterceptRequestBody(view, request)
-        }
-
-        private fun shouldInterceptRequestBody(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             (if (servesNewTabPage) newTabFavicon(request) else null)
                 ?: PdfViewer.intercept(context, request, pdfPage)
                 ?: host.extensions?.intercept(request, this@TabWebView, null)
@@ -3176,7 +3159,6 @@ class TabWebView(
 
         override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
             val url = pageUrlFor(rawUrl)
-            Log.i("S13", "$tabId onPageStarted $rawUrl shown=$isShown")
             unloadCheck?.let { check ->
                 // The check's blank document started: the page did not object (or the user chose
                 // to leave) and is on its way out; the view goes with it (see confirmUnload).
@@ -3251,7 +3233,6 @@ class TabWebView(
          */
         override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
             val url = pageUrlFor(rawUrl)
-            Log.i("S13", "$tabId doUpdateVisitedHistory $rawUrl reload=$isReload")
             // The unload check's blank document is not the tab's (see confirmUnload).
             if (isUnloadCheckDocument(url)) return
             onHistoryCommitted(shown = url, reload = isReload)
@@ -3298,7 +3279,6 @@ class TabWebView(
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
-            Log.i("S13", "$tabId onPageCommitVisible $url")
             if (isUnloadCheckDocument(url)) return
             // WebView's word that nothing of the page before is drawn any more: from here the
             // pixels are this document's, and so may its card picture be.
@@ -3307,7 +3287,6 @@ class TabWebView(
         }
 
         override fun onPageFinished(view: WebView, url: String) {
-            Log.i("S13", "$tabId onPageFinished $url")
             if (isUnloadCheckDocument(url)) return
             loading = false
             // A document that finished has drawn (the word for one whose commit-visible never came).
@@ -3326,7 +3305,6 @@ class TabWebView(
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            Log.i("S13", "$tabId onReceivedError main=${request.isForMainFrame} ${request.url} code=${error.errorCode}")
             host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
             val url = request.url.toString()
             if (!request.isForMainFrame) {
@@ -3475,7 +3453,6 @@ class TabWebView(
             if (!host.pageDialogs) return false
             val check = unloadCheck
             val now = SystemClock.uptimeMillis()
-            Log.i("S13", "$tabId onJsBeforeUnload frame=$url message=$message shown=$isShown background=$backgroundTab check=${check != null} agent=$agentDriven webUrl=${this@TabWebView.url} currentDocument=$currentDocument reloadAskedAgo=${now - reloadAskedAt}")
             // The page objected to this very navigation a moment ago and the user chose to leave;
             // the objection now is the re-issued load's (a navigation held for the core's
             // content-settings answer, see resumeHeld), which the browser asked the page again
@@ -3490,7 +3467,6 @@ class TabWebView(
                 checkInFlight = check != null,
                 reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
             )
-            Log.i("S13", "$tabId beforeunload decision=$decision")
             when (decision) {
                 is UnloadObjection.SettleCheck -> {
                     // No sheet is up for settle to dismiss: the navigation is let go here.
@@ -3510,7 +3486,6 @@ class TabWebView(
                     // Never under a check (a check settles above): the question is the tab in front's own navigation's.
                     val reload = decision.reload
                     showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
-                        Log.i("S13", "$tabId beforeunload sheet answered leave=$leave webUrl=${this@TabWebView.url} shown=$isShown")
                         if (!leave) stayedOnPage()
                         else leaveChosen(askedAt = now, chosenAt = SystemClock.uptimeMillis(), reload = reload)
                     }

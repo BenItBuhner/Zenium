@@ -292,7 +292,6 @@ export class AndroidTabView implements TabView {
 
   /** Route a Kotlin event to the core. */
   dispatch<K extends keyof ViewEventPayloads>(name: K, payload: ViewEventPayloads[K]): void {
-    if (name !== 'progress' && name !== 'favicon') console.log('[s13] event', this.tabId, name, JSON.stringify(payload ?? null).slice(0, 160))
     if (this.destroyed && name !== 'destroyed') return
     const ev = this.events
     switch (name) {
@@ -584,7 +583,6 @@ export class AndroidTabView implements TabView {
     // The destination's content rules ride with the load (no hop: the core is in this process),
     // so Kotlin sets the WebSettings and the document's guards from the core's own word; the
     // key is absent while the core has none (Kotlin reads the pushed document then).
-    console.log('[s13] view.load', this.tabId, url, new Error('s13').stack?.split('\n').slice(1, 7).join(' | '))
     this.bridge.send('view.load', { tabId: this.tabId, url, ...this.rulesFor(url) })
   }
 

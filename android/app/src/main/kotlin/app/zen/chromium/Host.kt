@@ -1142,7 +1142,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // (`deliverRendererExit`): the crash page's word follows the reply and supersedes it.
             "view.load" -> {
                 val url = args.str("url")
-                Log.i("S13", "view.load tab=${tab?.tabId} url=$url")
                 // The core's content-settings answer for the destination rides with the load
                 // (`rules`; absent before its rules service started): the view sets the page's
                 // WebSettings and document-start guards from it, not from the pushed document.
@@ -1201,7 +1200,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 }
             }
             "view.reload" -> {
-                Log.i("S13", "view.reload tab=${tab?.tabId}")
                 // The reloaded page's answer comes along too (`url`, `rules`): the reload's
                 // document reads what the core resolves now, an extension's rule included.
                 args.strOrNull("url")?.let { tab?.presetResolvedRules(it, args.optJSONObject("rules")) }
@@ -1278,13 +1276,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
                 reply(null)
             }
-            "view.focus" -> { Log.i("S13", "view.focus tab=${tab?.tabId}"); tab?.requestFocus(); reply(null) }
+            "view.focus" -> { tab?.requestFocus(); reply(null) }
             "view.focusEdge" -> { tab?.focusEdge(args.str("edge", "first")); reply(null) }
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
-            "view.setVisible" -> { Log.i("S13", "view.setVisible ${args.str("tabId")} visible=${args.bool("visible")}"); setTabVisible(args.str("tabId"), args.bool("visible"), args.bool("switched")); reply(null) }
+            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible"), args.bool("switched")); reply(null) }
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
             "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
