@@ -225,6 +225,34 @@ describe('a window always has a tab from its creation (W5-F2)', () => {
     expect(urls(browser)).toEqual([NEW_TAB_URL])
   })
 
+  it('the crash band put away without an answer (its ×, a swipe) starts fresh: the last session’s tabs stay in the sidebar, unloaded, beside the one new tab', () => {
+    // The band's put-aways are `crashRestore(false)` (the Design Lead's gate on #754, §10):
+    // `startFresh`, the "never" run's start – not a loss of the tabs the hold kept.
+    const browser = fresh()
+    const space = browser.state.model.spaces[0]
+    const a = seedTab(browser, 'https://example.com/a')
+    const b = seedTab(browser, 'https://example.com/b')
+    browser.state.restoredWindows = [window('window_1', space.id, a)]
+    browser.state.settings.crashRestore = 'ask'
+    browser.state.uncleanExit = true
+    browser.start()
+    const win = only(browser)
+    browser.onChromeReady(win)
+    expect(browser.session.crashRestoreOffer()).toEqual({ tabCount: 2, windowCount: 1 })
+    expect(browser.session.holdsPages()).toBe(true)
+    expect(browser.tabs.view(a)).toBeUndefined()
+    expect(browser.tabs.view(b)).toBeUndefined()
+    browser.handleCommand(win, 'session.crashRestore', { restore: false })
+    expect(browser.session.crashRestoreOffer()).toBeNull()
+    expect(browser.session.holdsPages()).toBe(false)
+    expect(urls(browser).sort()).toEqual(
+      ['https://example.com/a', 'https://example.com/b', NEW_TAB_URL].sort()
+    )
+    expect(browser.tabs.view(a)).toBeUndefined()
+    expect(browser.tabs.view(b)).toBeUndefined()
+    expect(activeUrl(browser, win)).toBe(NEW_TAB_URL)
+  })
+
   it('the browser window a run on an app window opens later has its tab too', () => {
     const browser = fresh()
     browser.start({ windows: false })

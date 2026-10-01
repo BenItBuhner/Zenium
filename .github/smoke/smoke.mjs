@@ -44,7 +44,7 @@
 //                at the hold's 1.5 s, with no tab-count question) that leaves `cleanExit: true`
 //                in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
-//                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
+//                "Restore pages?" band (skipped, like `crash`, when boot's launch or onboarding
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
 //                the accessibility tree of the resting window, the open app menu, the open URL
@@ -432,6 +432,10 @@ const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
 // overlay for it, a modal dialog over the content frame (components/capture/CaptureOverlay.tsx).
 const CAPTURE_COMBO = `${ACCEL}+Shift+s`
 const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Screenshot"]'
+// "Restore pages?" after an unclean exit: the page-edge band's crash-restore tenant (W8-M3;
+// components/content/useCrashRestoreBand.ts – the strip above the frame before it), the band's
+// root naming its tenant.
+const CRASH_RESTORE_BAND = '.zen-band[data-key="crash-restore"]'
 
 const opts = parseArgs(process.argv.slice(2))
 if (!opts.exe || !opts.label || !opts.out) {
@@ -488,7 +492,7 @@ const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 15000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
 // Budget for a click on a button the chrome has just painted for the first time (the
-// crash-restore bar). Playwright waits for the button to be actionable; on a busy runner that
+// crash-restore band). Playwright waits for the button to be actionable; on a busy runner that
 // took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check. What the
 // wait is for: the button has to hold still across two animation frames, and a chrome page whose
 // window has no frames yet runs none (see Session.waitForFrames). The onboarding's clicks, on the
@@ -3853,7 +3857,7 @@ async function scenarioBoot() {
 
 /**
  * The profile from `boot` comes back after its graceful quit: the fixture's tab, no onboarding
- * and no "Restore pages?" bar (the clean-exit marker was written, #129).
+ * and no "Restore pages?" band (the clean-exit marker was written, #129).
  */
 async function scenarioRestore() {
   const userData = path.join(profileRoot, 'profile')
@@ -3876,7 +3880,7 @@ async function scenarioRestore() {
       // The page is loaded, not merely listed (after a crash it would be held back).
       const tab = await s.waitForTab(page.url, 30000)
       await s.settle()
-      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      const restoreBar = await s.chrome.locator(CRASH_RESTORE_BAND).count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
       await s.shot('01-restored')
       return {
@@ -5565,7 +5569,7 @@ async function scenarioWalkthrough() {
  * backup – the document the app's own reader takes at the next launch. The steps log which
  * file answered. A backup from that window is the write before the kill's, and every write of
  * the run from the first (the one `running-marker` waits for) carries `cleanExit: false`, so
- * the marker's assertions read the same on it; and the restore bar counts the tabs of the very
+ * the marker's assertions read the same on it; and the restore band counts the tabs of the very
  * document the smoke read, whichever file it was.
  */
 async function scenarioCrash() {
@@ -5632,18 +5636,18 @@ async function scenarioCrash() {
           `profile not marked as crashed in ${stateSource(before)}: ${JSON.stringify(before)}`
         )
       }
-      const bar = s.chrome.locator('[data-crash-restore]').first()
+      const bar = s.chrome.locator(CRASH_RESTORE_BAND).first()
       await bar.waitFor({ state: 'visible', timeout: 15000 })
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await s.settle()
       const text = ((await bar.textContent()) ?? '').replace(/\s+/g, ' ').trim()
       const m = /Restore (\d+) pages?/.exec(text)
-      if (!m) throw new Error(`restore bar reads "${text}"`)
+      if (!m) throw new Error(`restore band reads "${text}"`)
       const offered = Number(m[1])
       const persisted = before.tabs.length
       if (offered !== persisted) {
         throw new Error(
-          `bar offers ${offered} pages, ${stateSource(before)} lists ${persisted} tabs: "${text}"`
+          `band offers ${offered} pages, ${stateSource(before)} lists ${persisted} tabs: "${text}"`
         )
       }
       // Held back: the tabs are listed, no page of theirs is loaded yet.
@@ -5655,7 +5659,7 @@ async function scenarioCrash() {
       return { text, offered, persisted, file: before.file }
     })
     await s.step('restore', async () => {
-      const bar = s.chrome.locator('[data-crash-restore]').first()
+      const bar = s.chrome.locator(CRASH_RESTORE_BAND).first()
       await bar
         .getByRole('button', { name: 'Restore', exact: true })
         .click({ timeout: FIRST_PAINT_CLICK_MS })
@@ -5756,7 +5760,7 @@ async function setFixtureCookie(s, fixture, shotName) {
 }
 
 /**
- * The tab restored on `/cookie.html` (loaded, no "Restore pages?" bar) and the three readings
+ * The tab restored on `/cookie.html` (loaded, no "Restore pages?" band) and the three readings
  * from the launch's watermark `from`, which have to find the cookie gone. The step's detail.
  */
 async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
@@ -5773,7 +5777,7 @@ async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
     throw e
   }
   await s.settle()
-  const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+  const restoreBar = await s.chrome.locator(CRASH_RESTORE_BAND).count()
   if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
   const readings = await cookieReadings(s, fixture, tab, from)
   await s.shot(shotName)
@@ -7030,7 +7034,7 @@ async function scenarioSplit() {
       if (!group.tabIds.includes(state.activeTabId)) {
         throw new Error(`the active tab ${state.activeTabId} is not a pane of the restored split`)
       }
-      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      const restoreBar = await s.chrome.locator(CRASH_RESTORE_BAND).count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a clean quit')
       await s.settle()
       await s.shot('07-restored-split')
