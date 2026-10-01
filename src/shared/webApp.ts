@@ -559,13 +559,12 @@ export const MIN_VISIT_GAP_MS = 5 * 60 * 1000
 export const PROMPT_AFTER_VISITS = 2
 /** Swiping the prompt away silences it for this long. */
 export const DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000
-/** Ignoring the prompt (letting it time out) keeps it away for a day. */
-export const PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000
 /**
- * The ambient banner leaves on its own after this long (an ignored prompt is not a dismissal).
- * The core's clock and the chrome's banner card both run on it.
+ * Ignoring the prompt (letting it time out) keeps it away for a day. The prompt's clock is the
+ * chrome's – the page-edge band's one offer clock (`BAND_CLOCK_MS`, the Design Lead's ruling:
+ * one offer, one clock); the core runs none and hears `dismissBanner('timeout')` when it ran out.
  */
-export const BANNER_TIMEOUT_MS = 12_000
+export const PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 /** Count a page load as a visit when it is far enough from the previous one. */
 export function recordVisit(record: EngagementRecord | undefined, now: number): EngagementRecord {

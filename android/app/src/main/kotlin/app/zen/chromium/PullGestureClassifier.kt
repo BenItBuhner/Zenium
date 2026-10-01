@@ -76,10 +76,20 @@ class PullGestureClassifier(private val touchSlop: Float) {
     private var pageAllows: Boolean? = null
     /** How far the page sits below home right now, as the chrome last reported it. */
     private var pageOffset = 0f
+    /**
+     * The page is out because of a pull of this view's – one that began here and has not brought
+     * the page home yet (the finger still on it, or the spring after it). Otherwise an offset is
+     * the chrome's own hold – the page-edge band (`lib/band`) standing in the gap above the page,
+     * fed through the same channel (`lib/pull.ts`) – and a finger on the page is the page's: it
+     * taps and scrolls as usual, and only a drag down from the top becomes a pull, which then
+     * takes the page over where the band held it.
+     */
+    private var pullOut = false
 
     /** The chrome moved the page: it is `offset` below its home position (0 at rest). */
     fun offsetApplied(offset: Float) {
         pageOffset = offset
+        pullOut = offset > OUT_EPSILON && (state == State.PULLING || pullOut)
     }
 
     /**
@@ -104,7 +114,7 @@ class PullGestureClassifier(private val touchSlop: Float) {
             state = State.PASSTHROUGH
             return Step.FORWARD
         }
-        if (pageOffset > OUT_EPSILON) {
+        if (pageOffset > OUT_EPSILON && pullOut) {
             // The page is still out from an earlier pull: the finger catches it where it is.
             state = State.PULLING
             caught = true
@@ -205,7 +215,11 @@ class PullGestureClassifier(private val touchSlop: Float) {
         // A page too short to scroll reports the same overscroll for a drag upwards.
         if (dy <= 0f || abs(dx) > abs(dy)) return null
         state = State.PULLING
-        caught = false
+        // A page the chrome holds out (the band) is caught like one still out from a pull: the
+        // pull carries on from where it sits, and the finger is the WebView's again only once
+        // the page is home.
+        caught = pageOffset > OUT_EPSILON
+        pullOut = true
         originY = lastY
         return Step(Disposition.CANCEL_WEBVIEW, Pull.Start)
     }

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { BookOpenText } from 'lucide-react'
 import type { Tab } from '@shared/types'
+import { dismissPosted, postBanner } from '@renderer/lib/band/post'
 import { crossReaderView } from '@renderer/lib/readerTransition'
-import { dismissBanner, showBanner } from '@renderer/lib/ui'
 import {
   READER_ENTRY_ACTION,
   READER_ENTRY_CLOCK_MS,
@@ -43,7 +43,9 @@ function documentOf(url: string): string {
  * The reader entry's offer (PUI-14; v2 §9.33): an article page in front – the reader core's
  * probe said so at its dom-ready (`tab.readerable`) – puts "Show Reader View?" with its one
  * action on the banner stack at the frame's top, the same §9.33 host the connectivity and
- * default-browser banners use, on the phone and the tablet alike. The action opens Reader View
+ * default-browser banners use, on the phone and the tablet alike – on the touch hosts the
+ * page-edge band in its offer form (motion spec §4; `lib/band/post.ts` is the door, the ends
+ * read back in the same words). The action opens Reader View
  * for the tab – through the crossing where it runs, the core's plain `reader.toggle` elsewhere
  * (`crossReaderView`, MOT-36); a swipe or the X refuses it; so does the clock running out – the
  * offer stands about ten seconds (`READER_ENTRY_CLOCK_MS`, the host's clock: armed at the show,
@@ -51,9 +53,11 @@ function documentOf(url: string): string {
  * is remembered per SITE for the session, Chrome's `ReaderModeManager` rule read through the
  * host's dismiss reasons (`readerOfferEndEffect`): every end but the action mutes the host –
  * the timeout and leaving the page with the offer standing included, Chrome's timer and scope
- * destroyed – and the action un-mutes it, as does Reader View entered by another door while the
- * offer stood (the app menu's row, the site-information sheet's). `enabled` is what the shell
- * knows the offer must wait behind (onboarding, a page's fullscreen, the private lock): a gate
+ * destroyed; the band's unanswered ends (Back, a swipe up – spec §9 item 6) excepted, which
+ * only spend the offer – and the action un-mutes it, as does Reader View entered by another
+ * door while the offer stood (the app menu's row, the site-information sheet's). `enabled` is
+ * what the shell knows the offer must wait behind (onboarding, a page's fullscreen, the private
+ * lock): a gate
  * closing over the page takes the banner down without an answer, and it comes back with the
  * gate's lifting.
  */
@@ -81,25 +85,36 @@ export function useReaderEntryMessage(tab: Tab | null, enabled: boolean): void {
     }
     if (site === null || tabId === null || document === null) return undefined
     const current: Standing = { id: 0, site, tabId, document, live: true }
-    current.id = showBanner({
-      title: READER_ENTRY_TITLE,
-      icon: BookOpenText,
-      key: READER_BANNER_KEY,
-      duration: READER_ENTRY_CLOCK_MS,
-      action: {
-        label: READER_ENTRY_ACTION,
-        onPick: () => void crossReaderView(tabId)
+    current.id = postBanner(
+      {
+        title: READER_ENTRY_TITLE,
+        icon: BookOpenText,
+        key: READER_BANNER_KEY,
+        duration: READER_ENTRY_CLOCK_MS,
+        action: {
+          label: READER_ENTRY_ACTION,
+          onPick: () => void crossReaderView(tabId)
+        },
+        onDismiss: (reason) => {
+          // The effect's own take-down (`program`) is judged above, where the shell knows why.
+          if (reason === 'program') return
+          current.live = false
+          const effect = readerOfferEndEffect({ reason })
+          if (effect === 'mute') readerMutes.mute(site)
+          else if (effect === 'unmute') readerMutes.unmute(site)
+        }
       },
-      onDismiss: (reason) => {
-        // The effect's own take-down (`program`) is judged above, where the shell knows why.
-        if (reason === 'program') return
-        current.live = false
-        const effect = readerOfferEndEffect({ reason })
-        if (effect === 'mute') readerMutes.mute(site)
-        else if (effect === 'unmute') readerMutes.unmute(site)
+      'offer',
+      {
+        // The band put away unanswered (the Back gesture, a swipe up; spec §9 item 6): the
+        // offer is spent for this page and the site is not muted – Chrome's card muted on its
+        // swipe; the band's × still does, as `close` above.
+        onAway: () => {
+          current.live = false
+        }
       }
-    })
+    )
     standing.current = current
-    return () => dismissBanner(current.id)
+    return () => dismissPosted(current.id)
   }, [site, tabId, document])
 }

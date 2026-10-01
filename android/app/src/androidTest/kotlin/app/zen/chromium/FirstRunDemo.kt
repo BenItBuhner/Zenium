@@ -116,14 +116,22 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         shot("09-banner")
         finding("banner in the fourth session ${verdict(banner != null)}")
         if (banner != null) {
-            // From the title, not the action: a touch on a control stays the control's.
+            // From the title, not the action: a touch on a control stays the control's. On the
+            // phone the reminder is the page-edge band, swiped up off the page (motion spec §3.2);
+            // a banner card goes sideways.
+            val door = MessageProbe.parse(chromeJs(MessageProbe.PROBE_JS))
             f.down(banner.left + 0.3f * banner.width(), banner.exactCenterY())
-            f.moveBy(NUDGE, 0f, 80)
-            f.moveBy(0.6f * width, 0f, 260)
+            if (MessageProbe.isBand(door)) {
+                f.moveBy(0f, -NUDGE, 80)
+                f.moveBy(0f, -MessageProbe.swipeUp(door, density), 260)
+            } else {
+                f.moveBy(NUDGE, 0f, 80)
+                f.moveBy(0.6f * width, 0f, 260)
+            }
             f.up()
             SystemClock.sleep(1_800)
             shot("10-banner-swiped")
-            finding("banner gone after the swipe ${verdict(findByLabel(BANNER_TITLE) == null)}")
+            finding("banner (${door.optString("door").ifEmpty { "no door" }}) gone after the swipe ${verdict(findByLabel(BANNER_TITLE) == null)}")
         }
 
         // 6. Settings > About: the row still offers the role – the shared names for the row's two

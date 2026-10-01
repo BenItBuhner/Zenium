@@ -881,16 +881,21 @@ class TabWebView(
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
      * The card's whole gesture (down, moves, up) is handed to the view under the page (the chrome
      * WebView, [PageHost.underlay]) in its own coordinates; the page never sees it. A host with
-     * nothing under the page (a custom tab) covers nothing, so its pages keep every touch.
+     * nothing under the page (a custom tab) covers nothing, so its pages keep every touch. The
+     * strip the page's own displacement opens is the chrome's too: held down by a band or a pull
+     * ([setPullOffset]) the page hangs over a bottom-docked bar – the parent hit-tests it by its
+     * translated rect – and the clipped strip there is the bar's row, not the page's; the copy
+     * carries the translation so the chrome sees the touch where the bar is ([StripTouchRule]).
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val chrome = host.underlay
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            coverTouch = chrome != null && cover.active && (event.y < visibleTop() || event.y >= visibleBottom())
+            coverTouch = StripTouchRule.chromesTouch(chrome != null, cover.active, pullOffsetPx > 0f, event.y, visibleTop(), visibleBottom())
         }
         if (!coverTouch || chrome == null) return super.dispatchTouchEvent(event)
         val copy = MotionEvent.obtain(event)
-        copy.offsetLocation((left - chrome.left).toFloat(), (top - chrome.top).toFloat())
+        val (dx, dy) = StripTouchRule.offsetToChrome(left, top, translationX, translationY, chrome.left, chrome.top)
+        copy.offsetLocation(dx, dy)
         val handled = chrome.dispatchTouchEvent(copy)
         copy.recycle()
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {

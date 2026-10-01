@@ -277,7 +277,12 @@ class PullGestureClassifierTest {
     @Test
     fun aFingerOnAPageStillOutCatchesItAtOnce() {
         val c = classifier()
-        c.offsetApplied(30f) // retracting after an earlier pull
+        // An earlier pull of this view's, released; the chrome is easing the page home.
+        pullTo(c, 20f)
+        c.move(100f, 360f, 20L, atTop = true)
+        c.offsetApplied(40f)
+        c.up(30L)
+        c.offsetApplied(30f) // retracting after the earlier pull
         assertEquals(Step(Disposition.CONSUME, Pull.Start), c.down(100f, 300f, atTop = false, eligible = true))
         assertEquals(State.PULLING, c.state)
         assertEquals(Step(Disposition.CONSUME, Pull.Move(25f, 10L)), c.move(100f, 325f, 10L, atTop = false))
@@ -293,6 +298,70 @@ class PullGestureClassifierTest {
     fun aPageAtHomeIsNotCaught() {
         val c = classifier()
         c.offsetApplied(0.2f) // a spring's last sub-pixel
+        assertEquals(Step.FORWARD, c.down(100f, 300f, atTop = true, eligible = true))
+        assertEquals(State.WATCHING, c.state)
+    }
+
+    @Test
+    fun aPageTheChromeHoldsOutIsThePagesToTapAndScroll() {
+        // The page-edge band holds the page 56 px down through the same channel; no pull of this
+        // view's began. A finger on the page taps and scrolls as on a page at home.
+        val c = classifier()
+        c.offsetApplied(56f)
+        assertEquals(Step.FORWARD, c.down(100f, 300f, atTop = true, eligible = true))
+        assertEquals(State.WATCHING, c.state)
+        assertEquals(Step.FORWARD, c.up(10L))
+        assertEquals(State.IDLE, c.state)
+
+        val scrolled = classifier()
+        scrolled.offsetApplied(56f)
+        assertEquals(Step.FORWARD, scrolled.down(100f, 300f, atTop = false, eligible = true))
+        assertEquals(State.PASSTHROUGH, scrolled.state)
+        assertEquals(Step.FORWARD, scrolled.move(100f, 200f, 10L, atTop = false))
+        assertEquals(Step.FORWARD, scrolled.up(20L))
+
+        // The band's own motion (its spring opening or closing) changes nothing about that.
+        val moving = classifier()
+        moving.offsetApplied(12f)
+        moving.offsetApplied(31f)
+        moving.offsetApplied(56f)
+        assertEquals(Step.FORWARD, moving.down(100f, 300f, atTop = true, eligible = true))
+        assertEquals(State.WATCHING, moving.state)
+    }
+
+    @Test
+    fun aPullFromTheTopOfAHeldPageTakesItOverWhereItSits() {
+        val c = classifier()
+        c.offsetApplied(56f) // the band stands
+        // The drag down from the top overscrolls: a pull, as on a page at home…
+        assertEquals(Step(Disposition.CANCEL_WEBVIEW, Pull.Start), pullTo(c, 20f))
+        assertEquals(State.PULLING, c.state)
+        assertEquals(Step(Disposition.CONSUME, Pull.Move(10f, 20L)), c.move(100f, 330f, 20L, atTop = true))
+        // …whose offsets are now the pull's (the chrome carries on from the band's 56).
+        c.offsetApplied(60f)
+        // Back above the origin while the page is still out: the finger keeps easing the page
+        // home (as a caught page would); the WebView takes over only once it has arrived.
+        assertEquals(Step(Disposition.CONSUME, Pull.Move(-30f, 30L)), c.move(100f, 290f, 30L, atTop = true))
+        c.offsetApplied(0f)
+        assertEquals(Step(Disposition.HANDBACK, Pull.Cancel(40L)), c.move(100f, 285f, 40L, atTop = true))
+        assertEquals(State.WATCHING, c.state)
+    }
+
+    @Test
+    fun aPullsOwnOffsetStaysThePullsUntilThePageIsHome() {
+        val c = classifier()
+        pullTo(c, 20f)
+        c.move(100f, 380f, 20L, atTop = true)
+        c.offsetApplied(60f)
+        c.up(30L) // released: the chrome's spring brings the page to rest or home
+        c.offsetApplied(56f)
+        // A finger landing on it catches it (a tug on the waiting page)…
+        assertEquals(Step(Disposition.CONSUME, Pull.Start), c.down(100f, 300f, atTop = true, eligible = true))
+        c.up(40L)
+        // …until the page has come home, after which an out page is the chrome's hold again.
+        c.offsetApplied(20f)
+        c.offsetApplied(0f)
+        c.offsetApplied(56f)
         assertEquals(Step.FORWARD, c.down(100f, 300f, atTop = true, eligible = true))
         assertEquals(State.WATCHING, c.state)
     }

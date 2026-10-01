@@ -5,10 +5,17 @@ import {
   PULL_REST,
   PULL_THRESHOLD,
   PullMachine,
+  abortPull,
+  dispatchPullEvent,
+  heldPageOffset,
+  holdPage,
+  pageHeldByPull,
   pullOffset,
   pullProgress,
   pullTravelFor,
   releaseRefreshes,
+  setPageHold,
+  setPullHost,
   type PullState
 } from '../pull'
 
@@ -315,6 +322,58 @@ describe('PullMachine', () => {
     expect(h.machine.current).toBe(0)
   })
 
+  it('a finger on a page another source held out carries on from where it sits', () => {
+    const h = harness()
+    // The band held the page 56 px down and lets go to this finger: nothing is painted at the
+    // start (the page is already there), and travel counts from the held offset.
+    h.machine.dispatch('t1', 'start', null, 56)
+    expect(h.painted).toEqual([])
+    expect(h.machine.state.phase).toBe('pulling')
+    expect(h.machine.current).toBe(56)
+    now += 16
+    h.machine.dispatch('t1', 'move', { travel: 0, time: now })
+    expect(h.machine.current).toBeCloseTo(56, 6)
+    now += 16
+    h.machine.dispatch('t1', 'move', { travel: 30, time: now })
+    expect(h.machine.current).toBeGreaterThan(56)
+    expect(h.machine.current).toBeLessThan(56 + 30)
+    // Reversing eases the page home under the finger, all the way to the edge.
+    now += 16
+    h.machine.dispatch('t1', 'move', { travel: -pullTravelFor(56) - 5, time: now })
+    expect(h.machine.current).toBe(0)
+    // Letting go there leaves the page home and the machine idle.
+    now += 16
+    h.machine.dispatch('t1', 'release', { travel: -pullTravelFor(56) - 5, time: now })
+    settle()
+    expect(h.machine.state.phase).toBe('idle')
+    expect(h.painted[h.painted.length - 1]).toBe(0)
+  })
+
+  it('a held page released at once springs home from the held offset', () => {
+    const h = harness()
+    h.machine.dispatch('t1', 'start', null, 56)
+    now += 16
+    h.machine.dispatch('t1', 'release', { travel: 0, time: now })
+    expect(h.machine.state.phase).toBe('settling')
+    settle(2)
+    expect(h.painted[0]).toBeLessThan(56)
+    expect(h.painted[0]).toBeGreaterThan(40)
+    settle()
+    expect(h.machine.state.phase).toBe('idle')
+    expect(h.painted[h.painted.length - 1]).toBe(0)
+  })
+
+  it('a from offset is ignored while a spring of its own is in flight', () => {
+    const h = harness()
+    pull(h, 120)
+    now += 16
+    h.machine.dispatch('t1', 'release', { travel: 120, time: now })
+    settle(3)
+    const midway = h.machine.current
+    h.machine.dispatch('t1', 'start', null, 56)
+    expect(h.machine.current).toBe(midway)
+  })
+
   it('a pull during the reload takes the spinner over; letting go below the threshold puts it away', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const h = harness()
@@ -421,5 +480,127 @@ describe('PullMachine', () => {
       expect(h.machine.current).toBeCloseTo(pullOffset(130), 9)
       expect(h.machine.state.armed).toBe(true)
     })
+  })
+})
+
+describe('the hold (the band as the second source of the offset)', () => {
+  let frames: Array<(now: number) => void>
+  let now: number
+  let written: Array<[string, number]>
+  let displaced: Array<[string, number]>
+
+  const settle = (max = 600): void => {
+    for (let i = 0; i < max && frames.length; i++) {
+      now += 16
+      const batch = frames
+      frames = []
+      for (const frame of batch) frame(now)
+    }
+  }
+
+  beforeEach(() => {
+    frames = []
+    now = 1000
+    written = []
+    displaced = []
+    vi.stubGlobal('requestAnimationFrame', (cb: (now: number) => void) => {
+      frames.push(cb)
+      return frames.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      frames.splice(id - 1, 1)
+    })
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    setPullHost({ setOffset: (tabId, offset) => written.push([tabId, offset]) })
+    setPageHold({ displaced: (tabId, offset) => displaced.push([tabId, offset]) })
+  })
+  afterEach(() => {
+    holdPage('t1', 0)
+    holdPage('t2', 0)
+    abortPull()
+    setPageHold(null)
+    setPullHost(null)
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('writes the held offset through the host channel and lets go with 0', () => {
+    expect(holdPage('t1', 24)).toBe(true)
+    expect(holdPage('t1', 56)).toBe(true)
+    expect(heldPageOffset('t1')).toBe(56)
+    expect(heldPageOffset('t2')).toBe(0)
+    expect(pageHeldByPull()).toBe(false)
+    expect(holdPage('t1', 0)).toBe(true)
+    expect(heldPageOffset('t1')).toBe(0)
+    expect(written).toEqual([
+      ['t1', 24],
+      ['t1', 56],
+      ['t1', 0]
+    ])
+  })
+
+  it('refuses to hold a second tab while the first is held', () => {
+    holdPage('t1', 56)
+    expect(holdPage('t2', 56)).toBe(false)
+    expect(written).toEqual([['t1', 56]])
+    holdPage('t1', 0)
+    expect(holdPage('t2', 56)).toBe(true)
+  })
+
+  it('a pull that begins on the held page takes it over where it sits', () => {
+    holdPage('t1', 56)
+    dispatchPullEvent('t1', 'start')
+    // The hold was displaced after the pull had the page; nothing moved.
+    expect(displaced).toEqual([['t1', 56]])
+    expect(heldPageOffset('t1')).toBe(0)
+    expect(pageHeldByPull()).toBe(true)
+    expect(written).toEqual([['t1', 56]])
+    // Whatever the displaced hold still writes (a spring's last frames) is refused.
+    expect(holdPage('t1', 40)).toBe(false)
+    expect(holdPage('t1', 0)).toBe(false)
+    expect(written).toEqual([['t1', 56]])
+    // The finger carries on from 56.
+    now += 16
+    dispatchPullEvent('t1', 'move', { travel: 0, time: now })
+    expect(written[written.length - 1]).toEqual(['t1', 56])
+    now += 16
+    dispatchPullEvent('t1', 'move', { travel: 10, time: now })
+    const [, moved] = written[written.length - 1]
+    expect(moved).toBeGreaterThan(56)
+    now += 16
+    dispatchPullEvent('t1', 'release', { travel: 10, time: now })
+    settle()
+    expect(pageHeldByPull()).toBe(false)
+    expect(written[written.length - 1]).toEqual(['t1', 0])
+    // With the page home and the pull idle, the band may hold it again.
+    expect(holdPage('t1', 56)).toBe(true)
+  })
+
+  it('a pull on a page the hold does not have is an ordinary pull', () => {
+    holdPage('t1', 56)
+    dispatchPullEvent('t2', 'start')
+    expect(displaced).toEqual([])
+    // The other tab's pull begins at home…
+    expect(written[written.length - 1]).toEqual(['t2', 0])
+    // …and while it runs the hold may only let go of its own page, never move it.
+    expect(holdPage('t1', 60)).toBe(false)
+    expect(holdPage('t1', 0)).toBe(true)
+    expect(written[written.length - 1]).toEqual(['t1', 0])
+    now += 16
+    dispatchPullEvent('t2', 'cancel', { travel: 0, time: now })
+    settle()
+  })
+
+  it('a hold is refused while a pull has the page, until it comes home', () => {
+    dispatchPullEvent('t1', 'start')
+    now += 16
+    dispatchPullEvent('t1', 'move', { travel: 20, time: now })
+    expect(holdPage('t1', 56)).toBe(false)
+    now += 16
+    dispatchPullEvent('t1', 'release', { travel: 20, time: now })
+    expect(holdPage('t1', 56)).toBe(false)
+    settle()
+    expect(pageHeldByPull()).toBe(false)
+    expect(holdPage('t1', 56)).toBe(true)
   })
 })

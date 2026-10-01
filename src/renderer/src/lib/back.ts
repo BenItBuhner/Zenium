@@ -152,10 +152,29 @@ export function dispatchBackEvent(phase: BackPhase, payload?: BackEventPayload |
 
 /**
  * Back without a surface (and for hosts that deliver back as one event): closes the topmost
- * piece of chrome UI, then navigates the active tab back. Returns false when nothing was left to
- * do (the host may background the app).
+ * piece of chrome UI ({@link closeChromeForBack}), then navigates the active tab back. Returns
+ * false when nothing was left to do (the host may background the app).
  */
 export function handleSystemBack(): boolean {
+  if (closeChromeForBack()) return true
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  if (!tab || !state) return false
+  if (tab.canGoBack) {
+    run('tab.back', { tabId: tab.id })
+    return true
+  }
+  return performRootBack(tab, state)
+}
+
+/**
+ * The chrome's part of the legacy chain: closes the topmost piece of chrome UI that stands
+ * without a {@link BackSurface} of its own – a popover, the menu, the urlbar, an overlay, the
+ * drawer, a glance, the find bar, in the shell's order – and says whether it closed one. What a
+ * surface that stands over the page but under that chrome (the page-edge band) yields to on
+ * its commit, so the shell's order holds with it up. Never navigates the page.
+ */
+export function closeChromeForBack(): boolean {
   const ui = uiStore.get()
   const state = browserStore.get().state
   // A §9.20 popover (the star bubble, site information, an extension's popup) is the touch
@@ -190,13 +209,7 @@ export function handleSystemBack(): boolean {
     closeFindBar()
     return true
   }
-  const tab = state ? activeTab(state) : null
-  if (!tab || !state) return false
-  if (tab.canGoBack) {
-    run('tab.back', { tabId: tab.id })
-    return true
-  }
-  return performRootBack(tab, state)
+  return false
 }
 
 /**

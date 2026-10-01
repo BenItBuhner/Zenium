@@ -1,53 +1,77 @@
 import { Smartphone } from 'lucide-react'
 import type { WebAppBanner } from '@shared/types'
-import { BANNER_TIMEOUT_MS } from '@shared/webApp'
 import { run } from '@renderer/lib/api'
+import { dismissPosted, postBanner, postedUp } from '@renderer/lib/band/post'
+import { BAND_CLOCK_MS } from '@renderer/lib/motion/tokens'
 import {
   bannerSurfaceMounted,
-  dismissBanner,
-  showBanner,
-  uiStore,
-  type BannerDismissReason
+  type BannerDismissReason,
+  type BannerOptions
 } from '@renderer/lib/ui'
 
 /**
  * The ambient "Add <app> to Home screen" prompt (PWA-03) behind one seam. The core raises and
  * lowers it (`webapp.banner`, `webapp.bannerHide`) and only cares how it went; the card is the
- * shared top banner (`showBanner`, v2 §9.33): the phone glyph on the title, the app's origin as
- * the detail, one "Add" that opens the install sheet through the core like the menu item, the
- * card's own swipe, close and clock. One banner at a time under the `install` key. The card
- * drawn is the core's word to start the app's cooldown (`webapp.bannerShown`): it goes the
- * moment the card is in the store with a surface mounted that draws it, so the phone's timing
- * is the store's own; where no surface draws banners (the desktop's sidebar, #740) no word goes
- * and the core, hearing none inside its grace, counts the prompt as undrawn and takes it back.
+ * shared top banner (v2 §9.33) – on the touch hosts the page-edge band in its offer form
+ * (motion spec §4; `lib/band/post.ts` is the door): the phone glyph on the title, the app's
+ * origin as the detail, one "Add" that opens the install sheet through the core like the menu
+ * item, the card's own swipe and close, and the one offer clock (`BAND_CLOCK_MS`, 10 s – the
+ * Design Lead's ruling: one offer, one clock; the core runs none and hears it ran out as
+ * `timeout`, which starts no cooldown). One banner at a time under the `install` key.
+ * The card drawn is the core's word to start the app's cooldown (`webapp.bannerShown`): it
+ * goes the moment the card is posted with a surface mounted that draws banners (the phone's
+ * and the tablet's `MessageLayer`, under which the band is the door – so the word goes as the
+ * offer is posted, a wait under a cover included), so the phone's timing is the store's own;
+ * where no surface draws banners (the desktop's sidebar, #740) no word goes and the core,
+ * hearing none inside its grace, counts the prompt as undrawn and takes it back.
  */
 
-/** The banner card up for each tab, by the id `showBanner` gave it. */
+/** The banner card up for each tab, by the id the door gave it. */
 const shown = new Map<string, number>()
 
-/** The core raised the prompt for a tab; one already up (for any tab) is replaced. */
-export function presentInstallBanner(banner: WebAppBanner): void {
-  const id = showBanner({
+/** The card's words and ends for a tab's prompt: what either door shows. */
+export function installBannerOptions(
+  banner: WebAppBanner,
+  onDismiss: (reason: BannerDismissReason) => void
+): BannerOptions {
+  return {
     title: `Add ${banner.name} to Home screen`,
     detail: banner.origin,
     icon: Smartphone,
     action: { label: 'Add', onPick: () => run('webapp.openInstall', { tabId: banner.tabId }) },
     key: 'install',
-    duration: BANNER_TIMEOUT_MS,
-    onDismiss: (reason) => {
+    duration: BAND_CLOCK_MS,
+    onDismiss
+  }
+}
+
+/** The core raised the prompt for a tab; one already up (for any tab) is replaced. */
+export function presentInstallBanner(banner: WebAppBanner): void {
+  const id = postBanner(
+    installBannerOptions(banner, (reason) => {
       if (shown.get(banner.tabId) === id) shown.delete(banner.tabId)
       const why = coreReason(reason)
       if (why) run('webapp.dismissBanner', { tabId: banner.tabId, reason: why })
+    }),
+    'offer',
+    {
+      // The band put away unanswered (the Back gesture, a swipe up; spec §9 item 6): the core
+      // hears its banner is gone as for the clock – its bookkeeping clears, no cooldown starts.
+      onAway: () => {
+        if (shown.get(banner.tabId) === id) shown.delete(banner.tabId)
+        run('webapp.dismissBanner', { tabId: banner.tabId, reason: 'timeout' })
+      }
     }
-  })
+  )
   shown.set(banner.tabId, id)
   if (bannerSurfaceMounted()) run('webapp.bannerShown', { tabId: banner.tabId })
 }
 
 /**
  * What the core hears: the user sent the card away (a swipe or its close – the app's cooldown
- * starts) or its clock ran out. "Add" needs no report (the core opens the sheet and takes the
- * banner down itself); a replacement or the core's own take-down was not the user's doing.
+ * starts; on the band only the × says so, `onAway` above) or its clock ran out. "Add" needs no
+ * report (the core opens the sheet and takes the banner down itself); a replacement or the
+ * core's own take-down was not the user's doing.
  */
 function coreReason(reason: BannerDismissReason): 'swipe' | 'timeout' | null {
   switch (reason) {
@@ -69,11 +93,11 @@ export function retireInstallBanner(tabId: string): void {
   const id = shown.get(tabId)
   if (id === undefined) return
   shown.delete(tabId)
-  dismissBanner(id)
+  dismissPosted(id)
 }
 
 /** Whether the prompt's card is up for `tabId` (the preview host waits on it). */
 export function installBannerShown(tabId: string): boolean {
   const id = shown.get(tabId)
-  return id !== undefined && uiStore.get().banners.some((b) => b.id === id && !b.leaving)
+  return id !== undefined && postedUp(id)
 }
