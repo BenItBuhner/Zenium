@@ -20,8 +20,9 @@ import type { Browser } from './browser'
  * inert: sessions are still counted, but nothing is decided, marked as shown or dismissed, since
  * a showing with nothing on screen would burn the user's turn. On since the surfaces landed –
  * and they are the Android chrome's, so the campaign runs on Android only: the desktop program
- * asks with its own strip (`components/content/DefaultBrowserBanner.tsx`, remembered per feature
- * release in `defaultBrowserPromptDismissed`), and two campaigns on one window would nag twice.
+ * asks with its own page-edge band (`components/content/useDefaultBrowserBand.ts`; a strip
+ * across the frame's top before W8-M2), remembered per feature release in
+ * `defaultBrowserPromptDismissed`, and two campaigns on one window would nag twice.
  */
 export const PROMPT_SURFACES = true
 

@@ -45,6 +45,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.content.FileProvider
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebMessageCompat
@@ -63,6 +64,7 @@ import app.zen.chromium.privacy.SaverModes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.concurrent.Executors
@@ -304,9 +306,38 @@ class TabWebView(
     private var unloadCheck: UnloadCheck? = null
     /** When the core last asked for a reload: a `beforeunload` objection right after it is "Reload site?". */
     private var reloadAskedAt = 0L
+    /**
+     * An agent works this page while the layout hides it (the core's `TabView.setAgentDriven`,
+     * said before each of the agent's actions and taken back when it lets the tab go; OS-40).
+     * The page's `beforeunload` objection is then the agent's question, not the user's
+     * ([UnloadObjection]): the agent's input is trusted input, so a page it drives may raise
+     * one. Hidden, the view runs as any hidden one does (nothing pauses a GONE WebView;
+     * [TabHost.setVisible]). A show clears it: a tab brought in front is the user's again, sheet
+     * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
+     * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
+     *
+     * TODO(OS-40 part B): route `alert` / `confirm` / `prompt` of an agent-driven page to the
+     * agent (a `view.pageDialog` host event) once PR #742's `PageDialogService` is on main.
+     */
+    var agentDriven = false
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
+    /**
+     * An agent works this page (`view.interceptAgentPrompts`): the page's file choosers and the
+     * view's client-certificate requests are held for the core instead of opening system UI over
+     * the page (`AgentPrompts.kt`); the core says per request whose each one is, and a tab that
+     * is not an agent's (any more) gets the system's UI as every other tab does.
+     */
+    var interceptsAgentPrompts = false
+        private set
+    /** The file choosers held for the core's answer, by the request id the event carried. */
+    private val heldFileChoosers = HashMap<String, HeldFileChooser>()
+    private var fileChooserSeq = 0
+    /** Where the agent's chooser answers were written ([AgentUploads]), deleted when the agent lets the page go. */
+    private val agentUploadFolders = ArrayList<File>()
+
+    private class HeldFileChooser(val callback: ValueCallback<Array<Uri>>, val params: WebChromeClient.FileChooserParams)
 
     init {
         Profiles.apply(this, containerId)
@@ -398,6 +429,8 @@ class TabWebView(
             up.result.cancel()
         }
         unloadCheck?.settle(leave = true, destroyView = false)
+        cancelHeldFileChoosers()
+        clearAgentUploads()
         // An image search still waiting on a frame hears that the page went ([ImageOwner]).
         imageOwner?.destroy()
         NavigationReports.detach(this, navigationListener)
@@ -830,16 +863,21 @@ class TabWebView(
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
      * The card's whole gesture (down, moves, up) is handed to the view under the page (the chrome
      * WebView, [PageHost.underlay]) in its own coordinates; the page never sees it. A host with
-     * nothing under the page (a custom tab) covers nothing, so its pages keep every touch.
+     * nothing under the page (a custom tab) covers nothing, so its pages keep every touch. The
+     * strip the page's own displacement opens is the chrome's too: held down by a band or a pull
+     * ([setPullOffset]) the page hangs over a bottom-docked bar – the parent hit-tests it by its
+     * translated rect – and the clipped strip there is the bar's row, not the page's; the copy
+     * carries the translation so the chrome sees the touch where the bar is ([StripTouchRule]).
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val chrome = host.underlay
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            coverTouch = chrome != null && cover.active && (event.y < visibleTop() || event.y >= visibleBottom())
+            coverTouch = StripTouchRule.chromesTouch(chrome != null, cover.active, pullOffsetPx > 0f, event.y, visibleTop(), visibleBottom())
         }
         if (!coverTouch || chrome == null) return super.dispatchTouchEvent(event)
         val copy = MotionEvent.obtain(event)
-        copy.offsetLocation((left - chrome.left).toFloat(), (top - chrome.top).toFloat())
+        val (dx, dy) = StripTouchRule.offsetToChrome(left, top, translationX, translationY, chrome.left, chrome.top)
+        copy.offsetLocation(dx, dy)
         val handled = chrome.dispatchTouchEvent(copy)
         copy.recycle()
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
@@ -1202,6 +1240,92 @@ class TabWebView(
     /** The core's "always allow pop-ups on this site": window.open may open windows on its own. */
     fun setPopupsAllowed(allowed: Boolean) {
         settings.javaScriptCanOpenWindowsAutomatically = allowed
+    }
+
+    // --- an AI agent's native prompts (AgentPrompts.kt) ----------------------------------------------
+
+    /**
+     * `view.interceptAgentPrompts`: an agent took this page (on), or let it go (off). A chooser
+     * held when the agent lets go keeps waiting for the core's answer, which then says `user`;
+     * the files its answers wrote go with it ([AgentUploads]), the page having read them at
+     * submit while the agent worked it.
+     */
+    fun setInterceptAgentPrompts(on: Boolean) {
+        interceptsAgentPrompts = on
+        if (!on) clearAgentUploads()
+    }
+
+    /**
+     * The page opened a file chooser while an agent works it: nothing opens; the core hears of
+     * it (`fileChooser`) and answers with [answerFileChooser]. The callback waits meanwhile – the
+     * core's two-minute default cancels it, and [destroy] cancels one left waiting.
+     */
+    private fun holdFileChooser(callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams) {
+        val requestId = "fc_${++fileChooserSeq}"
+        heldFileChoosers[requestId] = HeldFileChooser(callback, params)
+        host.viewEvent(
+            tabId, "fileChooser",
+            AgentPrompts.fileChooserEvent(
+                requestId,
+                params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
+                params.acceptTypes?.toList() ?: emptyList()
+            )
+        )
+    }
+
+    /**
+     * The core's answer to a held chooser (`view.fileChooserAnswer`): the agent's files – bytes
+     * written to a private folder first ([AgentUploads]) and handed to the page as this app's
+     * `content://` URIs; never a path, which [AgentPrompts.fileChooserAnswer] turns into a cancel
+     * – a cancel, or `user`: the tab is not an agent's, the system's chooser opens as it would
+     * have. An answer to a chooser no longer held (the page went) is nothing.
+     */
+    fun answerFileChooser(requestId: String, args: JSONObject) {
+        val held = heldFileChoosers.remove(requestId) ?: return
+        when (val answer = AgentPrompts.fileChooserAnswer(args)) {
+            AgentPrompts.FileChooserAnswer.User ->
+                if (!host.activity.showFileChooser(host, held.callback, held.params)) held.callback.onReceiveValue(null)
+            AgentPrompts.FileChooserAnswer.Cancel -> held.callback.onReceiveValue(null)
+            is AgentPrompts.FileChooserAnswer.Files -> {
+                val activity = host.activity
+                Thread {
+                    val dir = File(activity.cacheDir, AgentUploads.DIR)
+                    val now = System.currentTimeMillis()
+                    // What an earlier run left behind goes before this answer is written.
+                    AgentUploads.sweep(dir, now)
+                    val written = runCatching {
+                        val w = AgentUploads.write(dir, answer.files, now)
+                        w to w.files.map { file -> FileProvider.getUriForFile(activity, "${activity.packageName}.files", file) }
+                    }.getOrElse { e ->
+                        Log.w("ZenTab", "an agent's upload could not be written: $e")
+                        null
+                    }
+                    post {
+                        if (written == null || written.second.isEmpty()) {
+                            held.callback.onReceiveValue(null)
+                            return@post
+                        }
+                        agentUploadFolders.add(written.first.folder)
+                        held.callback.onReceiveValue(written.second.toTypedArray())
+                    }
+                }.start()
+            }
+        }
+    }
+
+    /** The folders this tab's agent answers were written to go, off the main thread. */
+    private fun clearAgentUploads() {
+        if (agentUploadFolders.isEmpty()) return
+        val folders = agentUploadFolders.toList()
+        agentUploadFolders.clear()
+        Thread { for (f in folders) f.deleteRecursively() }.start()
+    }
+
+    /** The page went with choosers held: each hears it was cancelled, so no callback is left waiting. */
+    private fun cancelHeldFileChoosers() {
+        val held = heldFileChoosers.values.toList()
+        heldFileChoosers.clear()
+        for (h in held) h.callback.onReceiveValue(null)
     }
 
     // --- autofill and passkeys -----------------------------------------------------------------------
@@ -2887,7 +3011,7 @@ class TabWebView(
         }
 
         override fun onReceivedClientCertRequest(view: WebView, request: ClientCertRequest) {
-            host.security.onClientCertRequest(request)
+            host.security.onClientCertRequest(this@TabWebView, request)
         }
 
         /**
@@ -3304,6 +3428,12 @@ class TabWebView(
          * page the user has touched, as Chrome), and its answer lets the navigation go on or
          * cancels it, the page as it was ([stayedOnPage]). A check waits as long as the question
          * is up: its silence timer stops here, and the answer settles it.
+         *
+         * A page an agent drives is not asked ([UnloadObjection], OS-40): the WebView raises
+         * the question only after a user gesture, but an agent's input is trusted input, so a
+         * page it works on may object, and the question is the agent's, not the user's. For
+         * such a page the navigation goes on, with the bookkeeping a Leave runs, and a check in
+         * flight settles as leave, the view destroyed. A page the user drives asks as it always has.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3317,26 +3447,51 @@ class TabWebView(
                 result.confirm()
                 return true
             }
-            if (check != null) {
-                removeCallbacks(check.timeout)
-                check.asked = true
-            }
-            val reload = check == null && now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
-            showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
-                if (check != null) check.settle(leave = leave, destroyView = leave)
-                else if (!leave) stayedOnPage()
-                // A reload never passes shouldOverrideUrlLoading, so nothing of it is held or re-issued.
-                else if (!reload) {
-                    val chosenAt = SystemClock.uptimeMillis()
-                    leaveCarry.leaveChosen(chosenAt)
-                    // The sheet stood open from the question (`now`) to this Leave, between the
-                    // tap and its navigation reaching the hook: that time is not the hop's, and
-                    // the page's word on this navigation's referrer policy, live when the page
-                    // objected, is live for the hold past the Leave.
-                    referrerPolicyWord.leaveChosen(askedAt = now, now = chosenAt)
+            val decision = UnloadObjection.decide(
+                agentDriven = agentDriven,
+                checkInFlight = check != null,
+                reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+            )
+            when (decision) {
+                is UnloadObjection.SettleCheck -> {
+                    // No sheet is up for settle to dismiss: the navigation is let go here.
+                    result.confirm()
+                    checkNotNull(check) { "SettleCheck without a check in flight" }.settle(leave = true, destroyView = true)
+                }
+                is UnloadObjection.LeaveSilently -> {
+                    result.confirm()
+                    leaveChosen(askedAt = now, chosenAt = now, reload = decision.reload)
+                }
+                is UnloadObjection.Sheet -> {
+                    if (check != null) {
+                        removeCallbacks(check.timeout)
+                        check.asked = true
+                    }
+                    val reload = decision.reload
+                    showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
+                        if (check != null) check.settle(leave = leave, destroyView = leave)
+                        else if (!leave) stayedOnPage()
+                        else leaveChosen(askedAt = now, chosenAt = SystemClock.uptimeMillis(), reload = reload)
+                    }
                 }
             }
             return true
+        }
+
+        /**
+         * The page's objection to a navigation of its own (no check) ends in Leave – the user's
+         * at the sheet, asked at `askedAt` and answered at `chosenAt`, or the silent one of a
+         * page an agent drives, both at once. A reload never passes shouldOverrideUrlLoading,
+         * so nothing of it is held or re-issued; any other navigation's Leave carries to the
+         * hold that follows ([LeaveCarry]). The sheet stood open from the question to the Leave,
+         * between the tap and its navigation reaching the hook: that time is not the hop's, and
+         * the page's word on this navigation's referrer policy, live when the page objected, is
+         * live for the hold past the Leave.
+         */
+        private fun leaveChosen(askedAt: Long, chosenAt: Long, reload: Boolean) {
+            if (reload) return
+            leaveCarry.leaveChosen(chosenAt)
+            referrerPolicyWord.leaveChosen(askedAt = askedAt, now = chosenAt)
         }
 
         override fun onReceivedTitle(view: WebView, title: String?) {
@@ -3410,7 +3565,13 @@ class TabWebView(
             webView: WebView,
             filePathCallback: ValueCallback<Array<Uri>>,
             fileChooserParams: FileChooserParams
-        ): Boolean = host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
+        ): Boolean {
+            if (interceptsAgentPrompts) {
+                holdFileChooser(filePathCallback, fileChooserParams)
+                return true
+            }
+            return host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
+        }
 
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             // The WebView only asks without a gesture when the site may open windows on its own.

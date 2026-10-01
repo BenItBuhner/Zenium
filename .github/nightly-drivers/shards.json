@@ -124,6 +124,21 @@
       "budget-minutes": 68,
       "setup": ["ffmpeg", "perfetto-python"]
     },
+    "api35-b": {
+      "title": "Phone, API 35 Google APIs, pixel_6 (B)",
+      "api-level": "35",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "image": "system-images;android-35;google_apis;x86_64",
+      "webview": "com.google.android.webview 124.0.6367.219, the image's",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["ffmpeg", "perfetto-python"],
+      "note": "The second API 35 shard (services pass 17, seed #36): api35 stood at 65.5 of its 68 minutes, past the 60-minute headroom line, and its drivers are bound to the image (the predictive back, the sheet leave and recede, the wake and status bar want API 35; the perf readings their baselines' WebView 124). Opened with the two profiling drivers alone, motion-perf and menu-perf (31.5 minutes, the two largest and the only two whose findings are traces and frame statistics rather than scenes), leaving the eight functional drivers on api35 at 34.0: the boot the profiles are read on carries no other driver's history before them, nearer the dispatch workflows' own boots their baselines were taken on. Same recipe as api35, the setup steps included (the shard's own list and the drivers' are the same two)."
+    },
     "api33": {
       "title": "Phone, API 33 Google APIs, pixel_6",
       "api-level": "33",
@@ -162,7 +177,25 @@
       "env": {
         "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
       },
-      "note": "swiftshader_indirect as the AOSP jobs ask (android-private-demo.yml: swangle draws a chrome frame every 1.3-3.5 s on this image); -camera-back emulated for the fullscreen demo."
+      "note": "swiftshader_indirect as the AOSP jobs ask (android-private-demo.yml: swangle draws a chrome frame every 1.3-3.5 s on this image); -camera-back emulated for the fullscreen demo, kept after that demo moved to webview-b (services pass 17, seed #36) so that the two snapshot-WebView phone shards boot one recipe. The private surfaces stay here: the private tabs, lock and security demos, the primitives' veil and the fakebox morph's private act."
+    },
+    "webview-b": {
+      "title": "AOSP image (-writable-system) with the Chromium snapshot WebView swapped in (B)",
+      "api-level": "34",
+      "target": "default",
+      "profile": "pixel_6",
+      "image": "system-images;android-34;default;x86_64",
+      "webview": "com.android.webview, the Chromium snapshot's SystemWebView swapped in (AndroidDesktop_x64 LAST_CHANGE at run time; the revision in webview-REVISIONS.json)",
+      "emulator-gpu": "swiftshader_indirect",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["webview-snapshot"],
+      "env": {
+        "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
+      },
+      "note": "The second snapshot-WebView phone shard (services pass 17, seed #36): webview stood at 67.0 of its 68 minutes, past the 60-minute headroom line, and its drivers are bound to the swapped-in WebView (profiles for the private surfaces, a current engine for the media and notification behaviour). Opened with the media drivers – media, media-ui, pip and fullscreen, the four on the media-demo handshake (29 minutes) – and a11y-chrome-private (4, the private scene alone, which nothing ties to the other shard), 33.0 here against 34.0 left on webview. Same recipe as webview: the snapshot fetched by the setup step and swapped in by the first driver's prepare step (WEBVIEW_APK in this shard's env; a driver that blanks it, as ntp-morph-private does, must not run first on a shard), -camera-back emulated for the fullscreen demo."
     },
     "tablet": {
       "title": "Tablet: API 34 Google APIs, pixel_tablet at 1280x800@160",

@@ -5,6 +5,7 @@ import type { ToolbarControl } from '@shared/toolbarPins'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import { MOTION_POP_MS, MOTION_STATE_MS, ZEN_EASE } from '@renderer/lib/motion/tokens'
 import { closeBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { PillChip } from '../urlbar/PillChip'
 import { TOOLBAR_STROKE } from '../v2/controls'
@@ -51,7 +52,7 @@ export function StarChip({
         { transform: 'scale(1.25)', offset: 0.5 },
         { transform: 'scale(1)' }
       ],
-      { duration: 180, delay: 120, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }
+      { duration: MOTION_POP_MS, delay: MOTION_STATE_MS, easing: ZEN_EASE }
     )
   }, [filled, tab.id])
 

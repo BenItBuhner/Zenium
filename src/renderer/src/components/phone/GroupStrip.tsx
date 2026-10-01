@@ -12,6 +12,7 @@ import {
   stripCellKey
 } from '@renderer/lib/groupStrip'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
+import { ZEN_EASE } from '@renderer/lib/motion/tokens'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { openNewTabPage, prepareNewTabGrow } from '@renderer/lib/newtab'
 import { tabTitle } from '@renderer/lib/selectors'
@@ -31,8 +32,6 @@ import type { GroupStripPresence } from './useGroupStrip'
 const CHIP_TRAVEL = 40
 /** The scale a chip's face starts at coming in, and shrinks to going out. */
 const CHIP_SCALE_FROM = 0.6
-/** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 /** Room kept between the active chip and the scroller's fading edge. */
 const KEEP_IN_VIEW_PAD = 8
 
@@ -161,7 +160,7 @@ function fadeOver(
 ): () => void {
   const anim = el.animate?.([{ opacity: from }, { opacity: to }], {
     duration: ms,
-    easing: EASE,
+    easing: ZEN_EASE,
     fill: to === 0 ? 'forwards' : 'none'
   })
   if (anim) anim.onfinish = done
@@ -346,7 +345,7 @@ export const GroupStrip = memo(function GroupStrip({
       const from = phase === 'leaving' ? 1 : 0
       const fade = el.animate?.([{ opacity: from }, { opacity: 1 - from }], {
         duration: REDUCED_FADE_MS,
-        easing: EASE,
+        easing: ZEN_EASE,
         fill: 'forwards'
       })
       const done = (): void => landed(target)
@@ -578,7 +577,7 @@ function MemberChip({
     if (reducedMotion()) {
       const fade = el.animate?.([{ opacity: 0 }, { opacity: 1 }], {
         duration: REDUCED_FADE_MS,
-        easing: EASE
+        easing: ZEN_EASE
       })
       if (fade) fade.onfinish = settled
       const timer = fade ? null : setTimeout(settled, REDUCED_FADE_MS)
@@ -637,7 +636,7 @@ function ExitChip({ exit, onDone }: { exit: ChipExit; onDone: (id: string) => vo
     if (reducedMotion()) {
       const fade = el.animate?.([{ opacity: 1 }, { opacity: 0 }], {
         duration: REDUCED_FADE_MS,
-        easing: EASE,
+        easing: ZEN_EASE,
         fill: 'forwards'
       })
       if (fade) fade.onfinish = finish

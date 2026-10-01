@@ -181,6 +181,16 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      * desktop compiles a matcher per such partition. Every engine is kept across builds by
      * the fingerprint of the sets it was parsed from, so a settings change that leaves a
      * partition's lists as they were costs it nothing.
+     *
+     * The snapshot is assigned in two stages when a partition's engine has to be parsed: one
+     * with the general engine as soon as that is ready – a normal tab's time to its first
+     * filter is the general parse, as it was before the partition engines –, then one with
+     * every engine when the partition's parse lands. In the first, a partition still parsing
+     * keeps the engine the previous snapshot answered it with, and one that had none reads the
+     * general engine, as the desktop's partitions do until their compile lands. Each snapshot
+     * is built whole before it is assigned, so a request sees the previous one or the new one,
+     * never a half-built one. A build with no partition engine to parse – the defaults, a
+     * rebuild that left a partition's lists as they were – assigns once, as before.
      */
     internal fun rebuild() {
         val started = SystemClock.elapsedRealtime()
@@ -191,7 +201,10 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             // back on, so that is a rebuild of a few milliseconds and not a re-parse of them all.
             snapshot = EngineSnapshot(sets, null)
         } else {
-            val engines = textEngines(withText, cachedText) { readFilterText(it) }
+            val engines = textEngines(withText, cachedText, snapshot.textEngineByPartition, { readFilterText(it) }) { general, ready ->
+                snapshot = EngineSnapshot(sets, general, ready)
+                Log.i(TAG, "snapshot: general text engine ready in ${SystemClock.elapsedRealtime() - started} ms; a partition's engine is parsing")
+            }
             cachedText = engines.cache
             snapshot = EngineSnapshot(sets, engines.general, engines.byPartition)
         }
@@ -382,21 +395,45 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * an engine over the sets that apply there. An engine is parsed once per distinct
          * fingerprint of its sets – `previous` is the last build's engines by fingerprint, and
          * two scopes over the same sets share one – with `read` giving a set's filter text (read
-         * once per set per build). An engine without a filter is null in the result but kept in
-         * the cache.
+         * once per set per build, an unreadable set's null remembered like a text). An engine
+         * without a filter is null in the result but kept in the cache.
+         *
+         * A build in one go; the overload below is the staged one [rebuild] uses.
          */
         internal fun textEngines(
             withText: List<RuleSetInfo>,
             previous: Map<String, TextEngine>,
             read: (RuleSetInfo) -> String?
+        ): TextEngines = textEngines(withText, previous, emptyMap(), read) { _, _ -> }
+
+        /**
+         * [textEngines] in two stages: when a partition's engine has to be parsed, `onGeneral` is
+         * told once – after the general engine is ready, before any partition's parse – with the
+         * general engine and the partition engines a snapshot can already hold: a partition's own
+         * where it needs no parse, else the engine `carried` (the previous snapshot's, by
+         * partition) has for it, else no entry, so its requests read the general engine. A build
+         * with no partition engine to parse never tells it.
+         */
+        internal fun textEngines(
+            withText: List<RuleSetInfo>,
+            previous: Map<String, TextEngine>,
+            carried: Map<String, TextEngine?>,
+            read: (RuleSetInfo) -> String?,
+            onGeneral: (general: TextEngine?, byPartition: Map<String, TextEngine?>) -> Unit
         ): TextEngines {
             val used = HashMap<String, TextEngine>()
             val texts = HashMap<String, String?>()
+            // A set's text once per build, whichever scopes it is in: a null read is remembered
+            // too (`getOrPut` takes a stored null for a miss and would read the set once per scope).
+            fun textOf(set: RuleSetInfo): String? =
+                if (texts.containsKey(set.id)) texts[set.id] else read(set).also { texts[set.id] = it }
+            fun fingerprintOf(scoped: List<RuleSetInfo>): String = scoped.joinToString("|") { "${it.id}=${it.textFingerprint}" }
+            /** The engine over the sets of `fingerprint` that needs no parse: this build's or the last one's. */
+            fun known(fingerprint: String): TextEngine? = used[fingerprint] ?: previous[fingerprint]
             fun engineOver(scoped: List<RuleSetInfo>): TextEngine? {
                 if (scoped.isEmpty()) return null
-                val fingerprint = scoped.joinToString("|") { "${it.id}=${it.textFingerprint}" }
-                val engine = used[fingerprint] ?: previous[fingerprint]
-                    ?: TextEngine.parse(scoped.mapNotNull { set -> texts.getOrPut(set.id) { read(set) } })
+                val fingerprint = fingerprintOf(scoped)
+                val engine = known(fingerprint) ?: TextEngine.parse(scoped.mapNotNull { textOf(it) })
                 used[fingerprint] = engine
                 return engine.takeIf { it.filterCount > 0 }
             }
@@ -406,8 +443,23 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 set.partitions?.let(partitions::addAll)
                 set.excludedPartitions?.let(partitions::addAll)
             }
+            val scoped = partitions.associateWith { partition -> withText.filter { it.appliesTo(partition) } }
+            // Stage one: a partition whose engine has to be parsed keeps the carried one meanwhile.
+            val ready = LinkedHashMap<String, TextEngine?>()
+            var parsing = false
+            for ((partition, sets) in scoped) {
+                when {
+                    sets.isEmpty() -> ready[partition] = null
+                    known(fingerprintOf(sets)) != null -> ready[partition] = engineOver(sets)
+                    else -> {
+                        parsing = true
+                        if (carried.containsKey(partition)) ready[partition] = carried[partition]
+                    }
+                }
+            }
+            if (parsing) onGeneral(general, ready)
             val byPartition = LinkedHashMap<String, TextEngine?>()
-            for (partition in partitions) byPartition[partition] = engineOver(withText.filter { it.appliesTo(partition) })
+            for ((partition, sets) in scoped) byPartition[partition] = engineOver(sets)
             return TextEngines(general, byPartition, used)
         }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { forbiddenTargets } from '../../bookmarks/tree'
 import { HOLD_TO_OPEN_MS } from '../../bookmarks/useBarDrag'
@@ -193,11 +194,11 @@ export function useBookmarkDrag({ tree, canReorder, scrollRef, onHoldFolder }: O
         (s) => placeGhost(from.x + ux * s, from.y + uy * s),
         () => {
           if (ghost) ghost.style.opacity = '0'
-          setTimeout(settled, 120)
+          setTimeout(settled, MOTION_STATE_MS)
         }
       )
       settle.current = spring
-      if (ghost) ghost.style.transition = 'opacity 120ms ease-out'
+      if (ghost) ghost.style.transition = `opacity ${MOTION_STATE_MS}ms ease-out`
       spring.start(0, vx * ux + vy * uy, distance)
     },
     [placeGhost]

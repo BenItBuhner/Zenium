@@ -64,7 +64,8 @@ const START_GRACE_MS = 400
  * button busy until the host's promise settles, and leaves then; the core taking the prompt
  * down for any other reason slides the sheet away.
  *
- * The desktop has no campaign: its strip under the toolbar asks (`DefaultBrowserBanner`), and
+ * The desktop has no campaign: its page-edge band asks (`content/useDefaultBrowserBand.ts`; the
+ * strip under the toolbar before it, `DefaultBrowserBanner`, retired to the band in W8-M2), and
  * its "Set as default" raises the same composition as a dialog that says what the OS will do
  * before the hand-off (`AskDialog`, `ui.defaultBrowserAsk`); the dialog's primary is the same
  * word – one flow, one name for the act (§9.29).

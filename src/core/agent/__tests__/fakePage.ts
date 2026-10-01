@@ -19,6 +19,10 @@ export interface FakeElement {
   box: { x: number; y: number; width: number; height: number }
   editable?: boolean
   disabled?: boolean
+  /** `PageLocation.popup`: a drop-down select ("select") or a colour / date input's type. */
+  popup?: string
+  /** For `<input type=file>`: what it takes (`markUpload`). */
+  file?: { mode: 'single' | 'multiple' | 'folder'; accept?: string[] }
   /** For `<iframe>` elements: what the runtime reports about the frame element. */
   iframe?: { src: string; name: string; title: string }
 }
@@ -98,7 +102,8 @@ export class FakeFrame {
       disabled: Boolean(el.disabled),
       editable: Boolean(el.editable),
       covered: false,
-      inViewport: true
+      inViewport: true,
+      popup: el.popup ?? null
     }
   }
 
@@ -231,6 +236,13 @@ export class FakeFrame {
         const el = this.resolve(args[1] as string)
         if ('error' in el) return { ok: false, error: el.error }
         return { ok: true, value: args[2] }
+      }
+      case 'markUpload': {
+        const el = this.resolve(args[1] as string)
+        if ('error' in el) return { ok: false, error: el.error }
+        if (!el.file)
+          return { ok: false, error: 'The target is not a file input', notFileInput: true }
+        return { ok: true, mode: el.file.mode, accept: el.file.accept ?? [] }
       }
       case 'scroll':
         return { ok: true, scrollY: 0 }

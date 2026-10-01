@@ -2,11 +2,10 @@ import { Component, createRef, useLayoutEffect, useRef } from 'react'
 import type { JSX, ReactNode, RefObject } from 'react'
 import type { Rect } from '@shared/types'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
+import { ZEN_EASE } from '@renderer/lib/motion/tokens'
 
 /** How long a pane switch's cross-fade runs, each way (v2 §11.4); the same under reduced motion. */
 export const PANE_FADE_MS = REDUCED_FADE_MS
-/** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
 /**
  * A pane on its way out: a still of it – its DOM, copied – drawn where it stood while the next
@@ -216,7 +215,7 @@ function Still({
     // §11.4 as amended: content changing in place on a window strip fades the same there).
     const fade = el.animate?.([{ opacity: 1 }, { opacity: 0 }], {
       duration: PANE_FADE_MS,
-      easing: EASE,
+      easing: ZEN_EASE,
       fill: 'forwards'
     })
     // A cancelled animation rejects its `finished` promise, which nobody awaits.

@@ -94,6 +94,12 @@
   --zen-phone-band: calc(var(--zen-phone-bar) + var(--zen-group-strip));
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The motion tokens' durations (motion spec §1; `lib/motion/tokens.ts` holds the same values,
+     pinned equal by `lib/__tests__/motionTokens.test.ts`) for a class string that cannot read a
+     TS token: Tailwind's `duration-[var(--zen-motion-state)]`. */
+  --zen-motion-state: 120ms;
+  --zen-motion-pop: 180ms;
+  --zen-motion-message: 200ms;
   /* Zen 1.22: the chrome uses squircles (superellipse corners) instead of plain rounding. */
   --zen-corner: squircle;
   /* Zen 1.22: sidebar type got larger for readability. */
@@ -939,6 +945,10 @@
   --zen-accent: var(--v2-text);
   /* The chrome's easing (§7), which the v2 button's press transition reads. */
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The chrome's durations (motion spec §1), restated beside the easing as `:root` declares them. */
+  --zen-motion-state: 120ms;
+  --zen-motion-pop: 180ms;
+  --zen-motion-message: 200ms;
   /* The chrome's corner (§2: the squircle on radius 8 and up), which the game-over card reads. */
   --zen-corner: squircle;
   height: 100%;
@@ -2928,9 +2938,10 @@
   /*
    * The page-load bar: 2 px of accent hugging the top edge of the content frame, over its
    * hairline and clear of its rounded corners (the live page covers everything inside the
-   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades. No sweep
-   * or shimmer (v2 §9.33): the creep is the sign of life, and a looping highlight would be the
-   * one perpetual animation on the chrome.
+   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades, over the
+   * state's 120 ms (`MOTION_STATE_MS`; `LoadProgress.tsx` waits the same length before it puts
+   * the fill away). No sweep or shimmer (v2 §9.33): the creep is the sign of life, and a looping
+   * highlight would be the one perpetual animation on the chrome.
    */
   .zen-load-progress {
     position: absolute;
@@ -2939,7 +2950,7 @@
     right: var(--zen-content-radius);
     height: 2px;
     opacity: 0;
-    transition: opacity 200ms var(--zen-ease);
+    transition: opacity 120ms var(--zen-ease);
   }
   /* Its appearance and departure stay an opacity fade under reduced motion, at v2 §11.3's 120 ms. */
   @media (prefers-reduced-motion: reduce) {
@@ -3206,19 +3217,16 @@
   }
   /*
    * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
-   * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
-   * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
-   * chrome mounts it hidden and opens it a frame later; `data-open` off slides it away before
-   * it unmounts. Reduced motion removes the travel (the global rule at the foot): it is there
-   * or it is not.
+   * top edge on the cursor's touch and back out when it leaves, on the house spring (§1's
+   * `SPRING_SNAPPY`; `App.tsx`'s `SlideDown` writes the transform per frame), so a cursor
+   * returning mid-way turns it around where it is with the velocity it had. This is the hidden
+   * pose the chrome mounts it in – the first paint, before the spring's first frame; the spring
+   * takes it from here and leaves `none` at rest. Under reduced motion the spring jumps: it is
+   * there or it is not.
    */
   .zen-toolbar-reveal {
     transform: translateY(calc(-100% - 8px));
-    transition: transform 200ms var(--zen-ease);
     will-change: transform;
-  }
-  .zen-toolbar-reveal[data-open] {
-    transform: none;
   }
   .zen-animate-pop {
     animation: zen-pop 180ms var(--zen-ease);
@@ -4293,7 +4301,10 @@
   }
   /*
    * The card in the hand is positioned per frame at 90% opacity (v2 §11.4); its elevation is a
-   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow.
+   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is
+   * §1's rise, not a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a
+   * target, 1 as it lands) and the transform transition eases each step over `MOTION_STATE_MS`;
+   * under reduced motion the rule at the foot makes the step a cut.
    */
   .zen-overview-ghost {
     opacity: 0.9;
@@ -4301,6 +4312,7 @@
     transform-origin: center;
     transition:
       opacity 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
     will-change: transform, left, top;
   }
@@ -15511,12 +15523,13 @@ ol.zen-page-prose-list {
 }
 
 /*
- * The frame's strips – "Make Zenium your default browser" (content/DefaultBrowserBanner.tsx) and
- * "Restore pages?" (content/CrashRestoreBanner.tsx) – and the desktop's default-browser prompt's
- * icon, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): the strip as a
- * window surface (§9.29) around the shared v2 button. v1 motion only. They read the token block
- * and nothing else. (Settings → Default Browser and the prompt's title block draw on the §9.34
- * primitives; the flat card and rows they once had here went with them.)
+ * The frame's strip – "Restore pages?" (content/CrashRestoreBanner.tsx) – and the desktop's
+ * default-browser prompt's icon, on design language v2 (docs/design-language-v2-draft.md §1–§3,
+ * §9): the strip as a window surface (§9.29) around the shared v2 button. v1 motion only. They
+ * read the token block and nothing else. (Settings → Default Browser and the prompt's title
+ * block draw on the §9.34 primitives; the flat card and rows they once had here went with them.
+ * "Make Zenium your default browser" was a strip here too – content/DefaultBrowserBanner.tsx –
+ * until it moved to the page-edge band below (motion spec §3.4, W8-M2).)
  */
 @layer components {
   /* The frame's strips stay in layout but vanish under an open overlay: `visibility` inherits
@@ -15525,8 +15538,8 @@ ol.zen-page-prose-list {
     visibility: hidden;
   }
   /*
-   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx,
-   * content/CrashRestoreBanner.tsx): a window surface (§9.29, `data-surface="window"` on it) –
+   * A strip across the top of the content frame (content/CrashRestoreBanner.tsx): a window
+   * surface (§9.29, `data-surface="window"` on it) –
    * the theme's ink on the frame's own solid (`--zen-bg-solid`, the frame's background showing
    * through: the strip paints no fill of its own) – with §9.7's hairline at its bottom edge, the
    * one line it draws. A band of `--v2-window-fill` under its secondary button put the same
@@ -15581,6 +15594,154 @@ ol.zen-page-prose-list {
     width: 48px;
     height: 48px;
     margin: var(--v2-card-padding) var(--v2-card-padding) 0;
+  }
+}
+
+/*
+ * The page-edge band (components/band/PageEdgeBand.tsx; motion spec §3.1): one prompt about the
+ * page between the content frame's top edge and the page's top edge, in the page's own surface
+ * (`--v2-page`) with the frame's radius on its top corners – the pull-to-refresh disc's band,
+ * kept open. 56 for a one-line prompt, 76 with a 13 detail line (`--zen-band-height`, the
+ * component's); the glyph 20 in the deemphasised ink for a state – or the state's status ink
+ * (`data-tone`) – and the accent for an offer; the title 15 in the heading weight; the one
+ * action a §9.11 secondary at `--v2-control` (32 at a mouse, 40 under a finger) and the × the
+ * message close, both of the page family (`data-surface="page"` on the band). A tenant swapped
+ * in cross-fades 120 ms over the one swapped out (`zen-fade` / `zen-fade-out`); the travel is
+ * the driver's (lib/motion/band.ts), written to the host per frame, and the content's opacity
+ * is written straight to the element (§6) – under reduced motion the global rule below ends
+ * the swap's animations and the driver's fades carry it. On the desktop (content/PageBandHost.tsx)
+ * the band stands absolute at the top of the frame's viewport, over the page's picture under a
+ * cover and under the frame's own layers above the page (a foreign tab's preview, the split
+ * targets); the page's rect under it is the layout reporter's, seated once per travel (§3.4),
+ * never the band's box in flow – the band's height never follows the spring.
+ */
+@layer components {
+  .zen-band {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 6;
+    height: var(--zen-band-height);
+    overflow: hidden;
+    border-radius: var(--zen-content-radius) var(--zen-content-radius) 0 0;
+    background: var(--v2-page);
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .zen-band-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px 0 16px;
+  }
+  .zen-band-content[data-swap] {
+    animation: zen-fade 120ms var(--zen-ease);
+  }
+  .zen-band-content[data-leaving] {
+    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+    pointer-events: none;
+  }
+  .zen-band-glyph {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    stroke-width: var(--v2-icon-stroke);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-band[data-tone='ok'] .zen-band-glyph {
+    color: var(--v2-ok);
+  }
+  .zen-band[data-tone='warn'] .zen-band-glyph {
+    color: var(--v2-warn);
+  }
+  .zen-band[data-tone='danger'] .zen-band-glyph {
+    color: var(--v2-danger);
+  }
+  .zen-band[data-form='offer'] .zen-band-glyph {
+    color: var(--v2-accent);
+  }
+  .zen-band-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .zen-band-title,
+  .zen-band-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-band-title {
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-band-detail {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-band-trailing {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-band-button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: var(--v2-control);
+    padding: 0 12px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-control-fill);
+    color: var(--v2-control-accent);
+    font-size: inherit;
+    font-weight: var(--v2-weight-button);
+    white-space: nowrap;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  :where(:root[data-hover='hover']) .zen-band-button:hover {
+    background: var(--v2-control-fill-hover);
+  }
+  .zen-band-button:active {
+    transform: scale(0.98);
+  }
+  .zen-band-close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--v2-icon-button);
+    height: var(--v2-icon-button);
+    border-radius: calc(var(--v2-radius-control) + 2px);
+    color: var(--v2-control-text-deemphasized);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  :where(:root[data-hover='hover']) .zen-band-close:hover {
+    background: var(--v2-control-fill);
+  }
+  .zen-band-close:active {
+    background: var(--v2-control-fill-hover);
+    transform: scale(0.96);
+  }
+  .zen-band-close svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-band-button:focus-visible,
+  .zen-band-close:focus-visible,
+  .zen-band-button[data-keyboard-focus]:focus,
+  .zen-band-close[data-keyboard-focus]:focus {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
   }
 }
 

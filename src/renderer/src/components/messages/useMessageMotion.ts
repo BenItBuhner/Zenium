@@ -7,6 +7,7 @@ import {
   type Axis,
   type DismissDirections
 } from '@renderer/lib/gestures/dismiss'
+import { cancelFrame, requestFrame } from '@renderer/lib/motion/clock'
 import {
   reducedMotion,
   SPRING_GENTLE,
@@ -78,14 +79,15 @@ export function useMessageMotion(options: MessageMotionOptions): {
   const fadeFrame = useRef<number | null>(null)
 
   const cancelFade = (): void => {
-    if (fadeFrame.current !== null) cancelAnimationFrame(fadeFrame.current)
+    if (fadeFrame.current !== null) cancelFrame(fadeFrame.current)
     fadeFrame.current = null
   }
 
   /**
    * The reduced-motion fade (§11.3), written per frame: the reduced-motion stylesheet cuts
    * every CSS transition to nothing, so a transition could not carry it. Runs from the card's
-   * present opacity so a card thinned by a finger does not brighten first.
+   * present opacity so a card thinned by a finger does not brighten first – on the chrome's one
+   * animation clock, with the springs (motion spec §6).
    */
   const fade = (to: 0 | 1, done: () => void): void => {
     cancelFade()
@@ -101,13 +103,13 @@ export function useMessageMotion(options: MessageMotionOptions): {
       const t = Math.min(1, (now - startedAt) / REDUCED_FADE_MS)
       el.style.opacity = (from + (to - from) * t).toFixed(3)
       if (t < 1) {
-        fadeFrame.current = requestAnimationFrame(step)
+        fadeFrame.current = requestFrame(step)
         return
       }
       fadeFrame.current = null
       done()
     }
-    fadeFrame.current = requestAnimationFrame(step)
+    fadeFrame.current = requestFrame(step)
   }
 
   /** Distance along `axis` at which the card is out of sight: its own extent (plus the inset). */

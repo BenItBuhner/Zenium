@@ -168,6 +168,28 @@ describe('DeviceChooserService', () => {
     await expect(byGrant).resolves.toBeNull()
     await expect(byId).resolves.toBeNull()
   })
+
+  it("refuses pairing on an AI agent's tab at once, showing the user nothing; a user tab still asks", async () => {
+    const f = fixture()
+    const refused: Array<[string, string]> = []
+    const browser = (f.devices as unknown as { browser: Browser }).browser
+    ;(browser as { agents?: unknown }).agents = {
+      takesPrompt: () => false,
+      refusePairing: (tabId: string, name: string) => {
+        if (tabId !== 'agent') return false
+        refused.push([tabId, name])
+        return true
+      }
+    }
+    f.devices.open('bluetooth', [{ id: 'aa:bb', name: 'Heart rate', detail: '' }], PAGE)
+    await expect(
+      f.devices.pair({ deviceId: 'aa:bb', tabId: 'agent', kind: 'providePin' })
+    ).resolves.toBeNull()
+    expect(refused).toEqual([['agent', 'Heart rate']])
+    expect(f.devices.listPairings()).toEqual([])
+    void f.devices.pair({ deviceId: 'aa:bb', tabId: 'tab-1', kind: 'confirm' })
+    expect(f.devices.listPairings()).toHaveLength(1)
+  })
 })
 
 describe('PermissionService: device grants', () => {
