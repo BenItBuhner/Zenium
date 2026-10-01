@@ -205,7 +205,7 @@ describe('the rides (main.css): one value, transform and opacity only', () => {
     // Their resting 85 % (a disabled one's 30 %) kept in the ride; their own transitions off.
     const all = moving('.zen-phone-bar-row > [data-bar-item]')
     expect(all).toContain('opacity: calc(0.85 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1))')
-    expect(all).toContain('transition: background 120ms var(--zen-ease)')
+    expect(all).toContain('transition: background var(--zen-motion-state) var(--zen-ease)')
     expect(moving('.zen-phone-bar-row > [data-bar-item][data-disabled]')).toContain(
       'opacity: calc(0.3 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1))'
     )
@@ -281,17 +281,17 @@ describe('the rides (main.css): one value, transform and opacity only', () => {
       at(
         ":root[data-omnibox-focus='opening'] .zen-omnibox-sheet, :root[data-omnibox-focus='opening'] .zen-omnibox-field::before, :root[data-omnibox-focus='opening'] .zen-omnibox-field > *"
       )
-    ).toContain('animation: zen-fade 120ms var(--zen-ease) both !important')
+    ).toContain('animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important')
     expect(
       at(
         ":root[data-omnibox-focus='closing'] .zen-omnibox-sheet, :root[data-omnibox-focus='closing'] .zen-omnibox-field::before, :root[data-omnibox-focus='closing'] .zen-omnibox-field > *"
       )
-    ).toContain('animation: zen-fade-out 120ms var(--zen-ease) both !important')
+    ).toContain('animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important')
     const bar = at(
       ":root[data-omnibox-focus] .zen-phone-bar-row > [data-bar-item], :root[data-omnibox-focus] .zen-omnibox-field > *, :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill, :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill > *"
     )
     expect(bar).toContain('transform: none !important')
-    expect(bar).toContain('transition: opacity 120ms var(--zen-ease) !important')
+    expect(bar).toContain('transition: opacity var(--zen-motion-state) var(--zen-ease) !important')
     expect(at(':root[data-omnibox-focus] .zen-omnibox-field::before')).toContain(
       'transform: none !important'
     )

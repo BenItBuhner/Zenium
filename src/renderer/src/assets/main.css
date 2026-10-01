@@ -95,8 +95,9 @@
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* The motion tokens' durations (motion spec §1; `lib/motion/tokens.ts` holds the same values,
-     pinned equal by `lib/__tests__/motionTokens.test.ts`) for a class string that cannot read a
-     TS token: Tailwind's `duration-[var(--zen-motion-state)]`. */
+     pinned equal by `lib/__tests__/motionTokens.test.ts`) for what cannot read a TS token: this
+     sheet's own rules (`components/__tests__/motionStylesheet.test.ts` holds them to the face,
+     never digits before `ms`) and Tailwind's `duration-[var(--zen-motion-state)]`. */
   --zen-motion-state: 120ms;
   --zen-motion-pop: 180ms;
   --zen-motion-message: 200ms;
@@ -656,10 +657,10 @@
   color: var(--v2-text);
   box-shadow: var(--v2-shadow-panel);
   font: var(--v2-weight-heading) var(--v2-font-heading) / var(--v2-line-heading) var(--font-sans);
-  animation: zen-quit-hold-in 180ms var(--zen-ease);
+  animation: zen-quit-hold-in var(--zen-motion-pop) var(--zen-ease);
 }
 .zen-quit-hold-panel[data-leaving] {
-  animation: zen-fade-out 120ms ease forwards;
+  animation: zen-fade-out var(--zen-motion-state) ease forwards;
 }
 .zen-quit-hold-ring {
   display: block;
@@ -708,10 +709,10 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-quit-hold-panel {
-    animation: zen-fade 120ms ease !important;
+    animation: zen-fade var(--zen-motion-state) ease !important;
   }
   .zen-quit-hold-panel[data-leaving] {
-    animation: zen-fade-out 120ms ease forwards !important;
+    animation: zen-fade-out var(--zen-motion-state) ease forwards !important;
   }
 }
 /*
@@ -1679,9 +1680,9 @@
     border-radius: 6px;
     color: var(--zen-fg);
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The glyph: the svg itself, or the slot that wraps one – the phone's two-glyph slot
@@ -1691,7 +1692,7 @@
    */
   .zen-toolbar-button > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
     opacity: 0.85;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-toolbar-button:hover:not(:disabled) {
     background: var(--v2-window-fill-hover);
@@ -1791,8 +1792,8 @@
     color: var(--zen-fg);
     font-size: var(--zen-sidebar-font);
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-tab:hover,
   .zen-tab[data-editing]:not([data-active='true']) {
@@ -2091,7 +2092,7 @@
     height: var(--zen-tab-row);
     padding: 2px;
     border-radius: 10px;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-split-row:hover {
     background: var(--v2-window-fill-hover);
@@ -2201,8 +2202,8 @@
     border-radius: 8px;
     background: var(--v2-window-fill);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-essential:hover {
     background: var(--v2-window-fill-hover);
@@ -2284,9 +2285,9 @@
     transform: scale(1.02);
     opacity: 0.9;
     transition:
-      transform 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease),
-      box-shadow 120ms var(--zen-ease);
+      transform var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
     /*
      * The lift (MOT-33): the row rises from its resting form to level 2 – the scale, the
      * shadow, the 90 % – over the state change's 120 ms as the ghost mounts, rather than
@@ -2513,7 +2514,7 @@
     z-index: -1;
     border-radius: 8px;
     pointer-events: none;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::before,
   .zen-rail-flyout[data-flyout-rows] .zen-space-header::before {
@@ -2723,7 +2724,7 @@
     height: 1px;
     background: var(--v2-border);
     opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-overlay-header[data-scrolled]::after {
     opacity: 1;
@@ -2797,10 +2798,10 @@
    * animation from here (v2 draft §11.1; the Android program's sheet-leave work).
    */
   .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
-    animation: zen-fade-out 180ms var(--zen-ease) forwards;
+    animation: zen-fade-out var(--zen-motion-pop) var(--zen-ease) forwards;
   }
   .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving] {
-    animation: zen-pop-out 180ms var(--zen-ease) forwards;
+    animation: zen-pop-out var(--zen-motion-pop) var(--zen-ease) forwards;
   }
   /*
    * Under reduced motion the way out stays a departure: the 120 ms fade in place of v2 §11.3,
@@ -2811,7 +2812,7 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving],
     .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
-      animation: zen-fade-out 120ms var(--zen-ease) forwards !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards !important;
     }
   }
   .zen-frame-dialogs-slot {
@@ -2921,7 +2922,7 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
     .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-chrome-layer {
@@ -2946,12 +2947,12 @@
     right: var(--zen-content-radius);
     height: 2px;
     opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   /* Its appearance and departure stay an opacity fade under reduced motion, at v2 §11.3's 120 ms. */
   @media (prefers-reduced-motion: reduce) {
     .zen-load-progress {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-load-progress[data-shown] {
@@ -2988,7 +2989,7 @@
   .zen-ptr-glyph {
     color: var(--v2-text-deemphasized);
     transform: rotate(var(--zen-ptr-turn, 0deg));
-    transition: color 120ms var(--zen-ease);
+    transition: color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-ptr-glyph svg {
     width: var(--v2-icon);
@@ -3045,7 +3046,7 @@
     will-change: transform, opacity;
   }
   .zen-histnav[data-reduced] .zen-histnav-disc {
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-histnav-glyph {
     display: flex;
@@ -3208,7 +3209,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-desktop-popover[data-collapsing] {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   /*
@@ -3267,7 +3268,7 @@
   /* The sidebar's toast under reduced motion: the rise goes, a 120 ms fade in place stays (§11.3). */
   @media (prefers-reduced-motion: reduce) {
     .zen-toast {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
 
@@ -3367,8 +3368,8 @@
     font-weight: var(--v2-weight-button);
     white-space: nowrap;
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-message-button:hover:not(:disabled) {
     background: var(--v2-control-fill-hover);
@@ -3417,7 +3418,7 @@
    * corners round, the seams between rows keep one shared hairline.
    */
   .zen-message-stack > .zen-banner {
-    transition: border-radius 120ms var(--zen-ease);
+    transition: border-radius var(--zen-motion-state) var(--zen-ease);
   }
   .zen-message-stack > .zen-banner:not([data-stack-top]) {
     border-top-left-radius: 0;
@@ -3518,8 +3519,8 @@
     border-radius: calc(var(--v2-radius-control) + 2px);
     color: var(--v2-control-text-deemphasized);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-message-close:hover:not(:disabled) {
     background: var(--v2-control-fill);
@@ -3563,7 +3564,7 @@
     border: 1px solid var(--v2-border);
     border-radius: var(--v2-radius-control);
     background: var(--v2-panel);
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-screenshot-thumb:active {
     transform: scale(0.97);
@@ -3682,7 +3683,7 @@
     border-radius: 10px;
     background: var(--v2-panel);
     box-shadow: var(--v2-shadow-panel);
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-longshot-handle[data-dragging='true'] .zen-longshot-grip {
     transform: scale(1.08);
@@ -3758,7 +3759,7 @@
     top: 0;
   }
   .zen-hint-bubble[data-leaving] {
-    animation: zen-fade-out 200ms linear forwards;
+    animation: zen-fade-out var(--zen-motion-message) linear forwards;
   }
   /*
    * The bubble on a tab card in the overview (the drag-to-group teaching, `useOverviewGroupsHint`;
@@ -3852,10 +3853,10 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-hint-bubble {
-      animation: zen-fade 120ms linear !important;
+      animation: zen-fade var(--zen-motion-state) linear !important;
     }
     .zen-hint-bubble[data-leaving] {
-      animation: zen-fade-out 120ms linear forwards !important;
+      animation: zen-fade-out var(--zen-motion-state) linear forwards !important;
     }
   }
 
@@ -4063,9 +4064,9 @@
   .zen-segment {
     color: var(--zen-muted);
     transition:
-      background 120ms var(--zen-ease),
-      color 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      color var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-segment:active {
     transform: scale(0.98);
@@ -4093,7 +4094,7 @@
     border-radius: 12px;
     corner-shape: var(--zen-corner);
     color: var(--zen-muted);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   /* Hover only where the pointer hovers: a tap would otherwise leave the fill stuck on a phone. */
   :where(:root[data-hover='hover']) .zen-app-icon:hover {
@@ -4105,7 +4106,7 @@
     /* The artwork's own corner, so the ring around the picked one runs concentric with it. */
     border-radius: 22.5%;
     corner-shape: var(--zen-corner);
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-app-icon:active svg {
     transform: scale(0.98);
@@ -4152,7 +4153,7 @@
   .zen-space-row {
     corner-shape: var(--zen-corner);
     transition:
-      background 120ms var(--zen-ease),
+      background var(--zen-motion-state) var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
   }
   .zen-space-row:active {
@@ -4307,8 +4308,8 @@
     box-shadow: var(--zen-shadow-2);
     transform-origin: center;
     transition:
-      opacity 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
     will-change: transform, left, top;
   }
@@ -4347,7 +4348,7 @@
     corner-shape: inherit;
     background: rgb(var(--zen-group-rgb) / 0.13);
     pointer-events: none;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group[data-collapsed],
   .zen-group[data-clip] {
@@ -4389,13 +4390,13 @@
     padding: 0 6px 6px;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group[data-collapsed] > .zen-group-mosaic {
     opacity: 1;
   }
   .zen-group-members {
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group[data-collapsed] > .zen-group-members {
     opacity: 0;
@@ -4447,7 +4448,7 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-group-mosaic,
     .zen-group-members {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-group[data-targeted] {
@@ -4466,8 +4467,8 @@
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * A group's header and tint coming on at the end of the glide keep their 120 ms fade under
@@ -4477,7 +4478,7 @@
   @media (prefers-reduced-motion: reduce) {
     .zen-group::before,
     .zen-group-header {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-group-header:active {
@@ -4500,7 +4501,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   /*
@@ -4622,8 +4623,8 @@
     height: 36px;
     border-radius: 18px;
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-group-chip:active .zen-group-chip-face {
     background: var(--v2-window-fill-hover);
@@ -4690,11 +4691,11 @@
    * overview's `data-surface="window"`.
    */
   .zen-overview-pane {
-    animation: zen-fade 120ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease);
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-overview-pane {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
 
@@ -4747,7 +4748,7 @@
     border-radius: var(--zen-card-radius);
     background: var(--v2-window-fill);
     color: var(--zen-fg);
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * Under reduced motion the band comes and goes on that fade in place of the slide (§11.3;
@@ -4756,7 +4757,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview-actions-band {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
   .zen-overview-action {
@@ -4774,8 +4775,8 @@
     font-weight: var(--v2-weight-button);
     line-height: var(--v2-line-small);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-overview-action:active:not(:disabled) {
     background: var(--v2-window-fill-hover);
@@ -4914,7 +4915,7 @@
     justify-content: center;
     border-radius: 8px;
     color: inherit;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-sheet-header-control:active {
     background: var(--v2-fill);
@@ -4959,7 +4960,7 @@
     padding: 12px 16px;
     color: var(--v2-text);
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-menu-link-header:active {
     background: var(--v2-fill);
@@ -5084,7 +5085,7 @@
     height: 4px;
     border-radius: 2px;
     background: rgb(var(--v2-text-rgb) / 0.25);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-sheet[data-dragging='true'] .zen-sheet-handle {
     background: rgb(var(--v2-text-rgb) / 0.4);
@@ -5113,7 +5114,7 @@
     font-size: var(--v2-font-body);
     font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The press fill is the row's one tone; a row that is not a target – the static form,
@@ -5619,7 +5620,7 @@
     inset: 0;
     overflow: hidden;
     pointer-events: none;
-    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+    animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards;
   }
   .zen-share-seam-out[data-title] {
     display: flex;
@@ -5782,7 +5783,7 @@
     font-size: 13px;
     line-height: var(--v2-line-small);
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) button.zen-siteinfo-row:hover:not(:disabled),
   button.zen-siteinfo-row:focus-visible,
@@ -5923,8 +5924,8 @@
     white-space: nowrap;
     outline: none;
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-chip-icon {
     width: 16px;
@@ -6005,7 +6006,7 @@
     z-index: 100;
     pointer-events: none;
     will-change: transform;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   /* Resting on a folder chip, the chip in the hand thins out so the target's fill and outline read through it. */
   .zen-bm-ghost[data-into='true'] {
@@ -6207,8 +6208,8 @@
   .zen-tab-search-close {
     opacity: 0;
     transition:
-      opacity 120ms var(--zen-ease),
-      background 120ms var(--zen-ease);
+      opacity var(--zen-motion-state) var(--zen-ease),
+      background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-tab-search-row[aria-selected='true'] .zen-tab-search-close,
   .zen-tab-search-close:focus-visible {
@@ -6297,7 +6298,7 @@
     flex-shrink: 0;
     padding: 16px;
     border-bottom: 1px solid transparent;
-    transition: border-color 120ms var(--zen-ease);
+    transition: border-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-title-block[data-scrolled='true'] {
     border-color: var(--v2-border);
@@ -6378,13 +6379,13 @@
   .zen-bm-star {
     opacity: 0.7;
     transition:
-      background 120ms var(--zen-ease),
-      opacity 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-star svg {
     fill: currentColor;
     fill-opacity: 0;
-    transition: fill-opacity 120ms var(--zen-ease);
+    transition: fill-opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-star[data-filled='true'] svg {
     fill-opacity: 1;
@@ -6466,7 +6467,7 @@
     color: var(--v2-text-deemphasized);
   }
   .zen-bm-pick-twisty .lucide {
-    transition: transform 120ms var(--zen-ease);
+    transition: transform var(--zen-motion-state) var(--zen-ease);
   }
   .zen-bm-pick-twisty .lucide[data-open] {
     transform: rotate(90deg);
@@ -6720,7 +6721,7 @@
     color: var(--v2-text-deemphasized);
   }
   .zen-dl-pop-out {
-    animation: zen-dl-pop-out 180ms var(--zen-ease) forwards;
+    animation: zen-dl-pop-out var(--zen-motion-pop) var(--zen-ease) forwards;
   }
   /*
    * The bubble's list: flush with the popover's sides – the rows stand `--v2-ring-room` in from
@@ -6763,7 +6764,7 @@
     line-height: var(--v2-line-body);
     text-align: start;
     outline: none;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-dl-show-all:hover {
     background: var(--v2-fill-hover);
@@ -6864,7 +6865,7 @@
   }
   .zen-dl-actions {
     opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-dl-row:hover .zen-dl-actions,
   .zen-dl-row:focus-within .zen-dl-actions,
@@ -6924,7 +6925,7 @@
    */
   .zen-dl-button-toolbar {
     overflow: visible;
-    animation: zen-pop 180ms var(--zen-ease);
+    animation: zen-pop var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-dl-glyph-body {
     position: relative;
@@ -6979,7 +6980,7 @@
     font-weight: 600;
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    animation: zen-pop 180ms var(--zen-ease);
+    animation: zen-pop var(--zen-motion-pop) var(--zen-ease);
   }
   .zen-dl-badge-failed {
     background: var(--zen-danger);
@@ -7059,7 +7060,7 @@
     height: 8px;
     border-radius: 9999px;
     background: rgb(var(--zen-fg-rgb) / 0.3);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-dot[data-active='true'] {
     background: var(--v2-control-text);
@@ -7160,7 +7161,7 @@
     font-size: var(--v2-font-body);
     font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-radio:active {
     background: var(--v2-control-fill);
@@ -7174,9 +7175,9 @@
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
     border-radius: 9999px;
     transition:
-      border-color 120ms var(--zen-ease),
-      background 120ms var(--zen-ease),
-      box-shadow 120ms var(--zen-ease);
+      border-color var(--zen-motion-state) var(--zen-ease),
+      background var(--zen-motion-state) var(--zen-ease),
+      box-shadow var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * Checked (§9.14): `.zen-v2-radio`'s accent ring round a 6 px dot – the ring an inset shadow
@@ -7215,8 +7216,8 @@
     border: 1px solid var(--v2-control-fill);
     border-radius: var(--v2-radius-card);
     transition:
-      transform 120ms var(--zen-ease),
-      outline-color 120ms var(--zen-ease);
+      transform var(--zen-motion-state) var(--zen-ease),
+      outline-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-tile:active .zen-firstrun-tile-image {
     transform: scale(0.96);
@@ -7278,7 +7279,7 @@
     border-radius: var(--v2-radius-card);
     color: inherit;
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-firstrun-choice:active {
     background: var(--v2-control-fill);
@@ -7875,7 +7876,7 @@
   }
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
-    transition: border-color 120ms var(--zen-ease);
+    transition: border-color var(--zen-motion-state) var(--zen-ease);
   }
   .zen-scpick-panes[data-scrolled='true'] {
     border-color: var(--v2-border);
@@ -8181,7 +8182,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-capture-toast {
-      animation: zen-fade 120ms var(--zen-ease) !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
     }
   }
 }
@@ -8274,7 +8275,7 @@
     border-radius: var(--v2-radius-inner);
     color: var(--v2-text);
     text-align: left;
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   .zen-mhub-text:active {
     background: var(--v2-fill);
@@ -8534,8 +8535,8 @@
     border-radius: var(--v2-radius-card);
     background: var(--v2-control-fill);
     transition:
-      background-color 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease),
+      background-color var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
   }
   /* The one hover left on the media query: `newTabSharedCss` cuts this rule into the scriptless
@@ -8622,7 +8623,7 @@
     --zen-fg-rgb: var(--v2-text-rgb);
     --zen-element-bg: var(--v2-fill);
     --zen-element-bg-hover: var(--v2-fill-hover);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-ntp-field:has(.zen-ntp-field-main:active) {
     background: color-mix(in srgb, var(--v2-urlbar) 94%, var(--v2-text));
@@ -8636,7 +8637,7 @@
    * surface is still opaque over it (`data-grow='growing'`): it starts as the page shows through.
    */
   :root[data-form-factor='phone'] .zen-ntp-site {
-    animation: zen-fade 120ms var(--zen-ease) both;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) both;
     animation-delay: calc(var(--zen-ntp-i, 0) * 20ms);
   }
   :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-ntp-site,
@@ -8651,7 +8652,7 @@
    */
   @media (prefers-reduced-motion: reduce) {
     :root[data-form-factor='phone'] .zen-ntp-site {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-ntp-site,
     :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-ntp-site {
@@ -8802,7 +8803,7 @@
    * waits, as the tiles do, while the page is not painted or the grow surface is over it.
    */
   :root[data-form-factor='phone'] .zen-mstack {
-    animation: zen-fade 120ms var(--zen-ease) 160ms both;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) 160ms both;
   }
   :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-mstack,
   :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-mstack {
@@ -8810,7 +8811,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     :root[data-form-factor='phone'] .zen-mstack {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-mstack,
     :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-mstack {
@@ -8855,7 +8856,7 @@
     outline-offset: -1px;
     scroll-snap-align: start;
     scroll-snap-stop: always;
-    transition: flex-basis 120ms var(--zen-ease);
+    transition: flex-basis var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * A lone card has nothing to peek: it takes the strip's whole width, growing into it over the
@@ -8866,7 +8867,7 @@
     flex-basis: 100%;
   }
   :root[data-form-factor='phone'] .zen-mstack-card[data-leaving] {
-    animation: zen-mstack-leave 120ms var(--zen-ease) forwards;
+    animation: zen-mstack-leave var(--zen-motion-state) var(--zen-ease) forwards;
     pointer-events: none;
   }
   @keyframes zen-mstack-leave {
@@ -8876,7 +8877,7 @@
     }
   }
   :root[data-form-factor='phone'] .zen-mstack-card[data-arriving] {
-    animation: zen-mstack-arrive 120ms var(--zen-ease);
+    animation: zen-mstack-arrive var(--zen-motion-state) var(--zen-ease);
   }
   @keyframes zen-mstack-arrive {
     from {
@@ -9072,7 +9073,7 @@
     border-radius: 3px;
     background: var(--v2-control-text);
     opacity: 0.4;
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   :root[data-form-factor='phone'] .zen-mstack-dot[data-current] {
     opacity: 1;
@@ -9376,7 +9377,7 @@
   :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item],
   :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item],
   :root[data-omnibox-focus='closing'] .zen-phone-bar-row > [data-bar-item] {
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
     opacity: calc(0.85 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1));
   }
   :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item][data-disabled],
@@ -9428,10 +9429,10 @@
      * other animation and transition, and the sheet's own `zen-animate-fade` on specificity.
      */
     :root[data-fakebox='opening'] .zen-fakebox-layer {
-      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='closing'] .zen-fakebox-layer {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='opening'] .zen-fakebox-layer .zen-fakebox,
     :root[data-fakebox='closing'] .zen-fakebox-layer .zen-fakebox {
@@ -9441,17 +9442,17 @@
     :root[data-fakebox='opening'] .zen-omnibox-field::before,
     :root[data-fakebox='opening'] .zen-omnibox-field > *,
     :root[data-fakebox='closing'] .zen-phone-bar {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='closing'] .zen-omnibox-sheet,
     :root[data-fakebox='closing'] .zen-omnibox-field::before,
     :root[data-fakebox='closing'] .zen-omnibox-field > * {
-      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-fakebox='opening'] .zen-phone-bar,
     :root[data-fakebox='opening'] .zen-ntp-fades,
     :root[data-fakebox='closing'] .zen-ntp-fades {
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
     /*
      * What the scrub and the morph write per frame – the double's box and the layer's clip, the
@@ -9474,19 +9475,19 @@
     :root[data-omnibox-focus='opening'] .zen-omnibox-sheet,
     :root[data-omnibox-focus='opening'] .zen-omnibox-field::before,
     :root[data-omnibox-focus='opening'] .zen-omnibox-field > * {
-      animation: zen-fade 120ms var(--zen-ease) both !important;
+      animation: zen-fade var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-omnibox-focus='closing'] .zen-omnibox-sheet,
     :root[data-omnibox-focus='closing'] .zen-omnibox-field::before,
     :root[data-omnibox-focus='closing'] .zen-omnibox-field > * {
-      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+      animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) both !important;
     }
     :root[data-omnibox-focus] .zen-phone-bar-row > [data-bar-item],
     :root[data-omnibox-focus] .zen-omnibox-field > *,
     :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill,
     :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill > * {
       transform: none !important;
-      transition: opacity 120ms var(--zen-ease) !important;
+      transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
     }
     :root[data-omnibox-focus] .zen-omnibox-field::before {
       transform: none !important;
@@ -10246,11 +10247,11 @@
  * the sidebar's entrance; reduced motion keeps it (the rule past the global one at the foot).
  */
 .zen-sidebar-pose[data-switching] {
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-sidebar-pose[data-switching] {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 /*
@@ -10490,25 +10491,25 @@
  * (§11.3). The private view's heading, no control, draws none.
  */
 .zen-overview-title {
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-overview-title:active {
   background: var(--v2-control-fill);
 }
 .zen-overview-title-chevron {
   color: var(--zen-muted);
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-overview-title[aria-expanded='true'] > .zen-overview-title-chevron {
   transform: rotate(180deg);
 }
 .zen-overview-title-still {
-  animation: zen-fade-out 120ms var(--zen-ease) forwards;
+  animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards;
   pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-overview-title-still {
-    animation: zen-fade-out 120ms var(--zen-ease) forwards !important;
+    animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards !important;
   }
 }
 
@@ -10551,7 +10552,7 @@
   }
   /* Reload and Stop share one slot: the glyph that is not current is faded out, never removed. */
   .zen-glyph-swap > * {
-    transition: opacity 120ms var(--zen-ease);
+    transition: opacity var(--zen-motion-state) var(--zen-ease);
   }
   .zen-glyph-swap > [data-shown='false'] {
     opacity: 0;
@@ -10583,7 +10584,7 @@
     text-align: left;
     font-size: 14px;
     font-weight: var(--v2-weight-body);
-    transition: background 120ms var(--zen-ease);
+    transition: background var(--zen-motion-state) var(--zen-ease);
   }
   /*
    * The pressed tone: a finger on the row, or the hold's finger standing over it (`data-hold-lit`,
@@ -10633,10 +10634,10 @@
     user-select: none;
     -webkit-user-select: none;
     transition:
-      background 120ms var(--zen-ease),
+      background var(--zen-motion-state) var(--zen-ease),
       box-shadow 200ms var(--zen-ease),
-      opacity 120ms var(--zen-ease),
-      scale 120ms var(--zen-ease);
+      opacity var(--zen-motion-state) var(--zen-ease),
+      scale var(--zen-motion-state) var(--zen-ease);
   }
   /* Row glyphs at the phone's stroke; the bar's own glyphs keep theirs. */
   .zen-bar-row svg {
@@ -10845,7 +10846,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * A one-line row holding a control (§9.21): the larger of the row's base and the control plus 8,
@@ -11016,7 +11017,7 @@
   justify-content: center;
   border-radius: var(--v2-radius-inner);
   color: var(--v2-text);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 :root[data-form-factor='phone'] .zen-v2-icon-button {
   border-radius: var(--v2-radius-card);
@@ -11134,7 +11135,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-heading);
   line-height: var(--v2-line-body);
-  transition: color 120ms var(--zen-ease);
+  transition: color var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-segment > [role='tab'][aria-selected='true'] {
   color: var(--v2-control-text, var(--v2-text));
@@ -11149,7 +11150,7 @@
   border-radius: 1px;
   background: var(--v2-control-accent, var(--v2-accent));
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-segment > [role='tab'][aria-selected='true']::after {
   opacity: 1;
@@ -11161,7 +11162,7 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-v2-segment > [role='tab']::after {
-    transition: opacity 120ms var(--zen-ease) !important;
+    transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 /*
@@ -11270,7 +11271,7 @@
   text-align: left;
   font: inherit;
   color: inherit;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-device-heading-button:active {
   background: var(--v2-fill);
@@ -11316,11 +11317,11 @@
   padding-top: 48px;
 }
 .zen-overview-tabs-empty[data-in-place] {
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-overview-tabs-empty[data-in-place] {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 
@@ -11328,8 +11329,8 @@
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);
   transition:
-    box-shadow 120ms var(--zen-ease),
-    background 120ms var(--zen-ease);
+    box-shadow var(--zen-motion-state) var(--zen-ease),
+    background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-card-radio:active {
   background: var(--v2-fill);
@@ -11370,7 +11371,7 @@
   height: 20px;
   border-radius: 50%;
   background: rgb(var(--zen-group-rgb));
-  transition: box-shadow 120ms var(--zen-ease);
+  transition: box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-group-editor-swatch[aria-checked='true'] > .zen-group-editor-swatch-disc {
   box-shadow:
@@ -11485,9 +11486,9 @@
   border-radius: 50%;
   background: var(--v2-page);
   transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease),
+    border-color var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-radio[aria-checked='true'],
 [aria-checked='true'] > .zen-v2-radio {
@@ -11539,7 +11540,7 @@
   border-radius: var(--v2-radius-card);
   color: inherit;
   text-align: left;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) .zen-search-choice-row:hover {
   background: var(--zen-element-bg);
@@ -11605,9 +11606,9 @@
   border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
   border-radius: 50%;
   transition:
-    border-color 120ms var(--zen-ease),
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease);
+    border-color var(--zen-motion-state) var(--zen-ease),
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-search-choice-row[aria-checked='true'] > .zen-search-choice-mark {
   border-color: var(--zen-accent);
@@ -11657,8 +11658,8 @@
   display: grid;
   place-items: center;
   transition:
-    background 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    border-color var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover'])
   .zen-v2-checkbox:hover:not(
@@ -11765,7 +11766,7 @@
   color: inherit;
   text-align: left;
   white-space: nowrap;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-menu-item .lucide {
   width: var(--v2-icon);
@@ -11900,7 +11901,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-button);
   line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * The print preview's option column (§9.13, §9.34: a modifier beside the primitives, not a copy
@@ -11985,7 +11986,7 @@
   color: inherit;
   text-align: left;
   white-space: nowrap;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * On a tablet the list is the same anchored popover with the coarse pointer's rows (§9.36 as
@@ -12195,7 +12196,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 6px;
-  transition: box-shadow 120ms var(--zen-ease);
+  transition: box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-settings-drill-in[data-scrolled] .zen-settings-bar {
   box-shadow: 0 1px 0 var(--v2-border);
@@ -13154,7 +13155,7 @@
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) .zen-settings-nav-item:hover {
   background: var(--v2-fill);
@@ -13256,7 +13257,7 @@
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-settings-content[data-scrolled] > .zen-settings-find::after {
   opacity: 1;
@@ -13594,7 +13595,7 @@
 .zen-settings-add-language-filter {
   flex-shrink: 0;
   padding: 0 16px 8px;
-  transition: box-shadow 120ms var(--zen-ease);
+  transition: box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 .zen-settings-add-language[data-scrolled] > .zen-settings-add-language-filter {
   box-shadow: 0 1px 0 var(--v2-border);
@@ -13902,7 +13903,7 @@
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-scroll[data-scrolled] > .zen-page-header::after {
   opacity: 1;
@@ -14081,7 +14082,7 @@
 .zen-page-heading > .zen-page-heading-reveal {
   margin-inline-start: 4px;
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-heading:hover > .zen-page-heading-reveal,
 .zen-page-heading:focus-within > .zen-page-heading-reveal {
@@ -14114,7 +14115,7 @@
  * not a fade. The chevron then cuts from right to down, as the bookmarks tree's twisty does.
  */
 .zen-page-heading-twisty > svg {
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-heading-twisty > svg[data-open] {
   transform: rotate(90deg);
@@ -14239,7 +14240,7 @@
  */
 .zen-page-row .zen-page-row-reveal {
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-row:hover .zen-page-row-reveal,
 .zen-page-row:focus-within .zen-page-row-reveal,
@@ -14443,8 +14444,8 @@ ol.zen-page-prose-list {
   cursor: default;
   user-select: none;
   transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) .zen-bm-tree-row:hover {
   background: var(--v2-fill);
@@ -14486,7 +14487,7 @@ ol.zen-page-prose-list {
   width: var(--v2-icon);
   height: var(--v2-icon);
   stroke-width: var(--v2-icon-stroke);
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-bm-tree-twisty > svg[data-open] {
   transform: rotate(90deg);
@@ -14542,9 +14543,9 @@ ol.zen-page-prose-list {
   text-overflow: ellipsis;
   white-space: nowrap;
   transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease),
-    color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    box-shadow var(--zen-motion-state) var(--zen-ease),
+    color var(--zen-motion-state) var(--zen-ease);
 }
 :where(:root[data-hover='hover']) button.zen-bm-crumb:hover {
   background: var(--v2-fill);
@@ -14747,7 +14748,7 @@ ol.zen-page-prose-list {
 }
 /* The turn is a transition the reduced-motion remover at the foot of this sheet takes (§11.3). */
 .zen-licences-twisty {
-  transition: transform 120ms var(--zen-ease);
+  transition: transform var(--zen-motion-state) var(--zen-ease);
 }
 .zen-licences-twisty[data-open] {
   transform: rotate(90deg);
@@ -14822,7 +14823,7 @@ ol.zen-page-prose-list {
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-scroll[data-scrolled] .zen-tasks-header::after {
   opacity: 1;
@@ -14878,7 +14879,7 @@ ol.zen-page-prose-list {
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
-  transition: color 120ms var(--zen-ease);
+  transition: color var(--zen-motion-state) var(--zen-ease);
 }
 /* The glyph leads over a figure column: the label keeps the figures' trailing edge. */
 .zen-tasks-col[data-figure] .zen-tasks-col-button {
@@ -14945,7 +14946,7 @@ ol.zen-page-prose-list {
   height: 1px;
   background: var(--v2-border);
   opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
+  transition: opacity var(--zen-motion-state) var(--zen-ease);
 }
 .zen-page-footer[data-more]::before {
   opacity: 1;
@@ -15313,8 +15314,8 @@ ol.zen-page-prose-list {
   color: var(--v2-control-text-deemphasized);
   font-variant-numeric: tabular-nums;
   transition:
-    background 120ms var(--zen-ease),
-    color 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    color var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-blocked-chip > svg {
   width: var(--v2-icon);
@@ -15349,7 +15350,7 @@ ol.zen-page-prose-list {
   padding: 0 4px;
   border-radius: var(--v2-radius-inner);
   font-variant-numeric: tabular-nums;
-  transition: background 120ms var(--zen-ease);
+  transition: background var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-blocked-count[aria-expanded='true'],
 .zen-v2-blocked-count:active {
@@ -15598,10 +15599,10 @@ ol.zen-page-prose-list {
     padding: 0 12px 0 16px;
   }
   .zen-band-content[data-swap] {
-    animation: zen-fade 120ms var(--zen-ease);
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease);
   }
   .zen-band-content[data-leaving] {
-    animation: zen-fade-out 120ms var(--zen-ease) forwards;
+    animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards;
     pointer-events: none;
   }
   .zen-band-glyph {
@@ -15660,8 +15661,8 @@ ol.zen-page-prose-list {
     font-weight: var(--v2-weight-button);
     white-space: nowrap;
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-band-button:hover {
     background: var(--v2-control-fill-hover);
@@ -15679,8 +15680,8 @@ ol.zen-page-prose-list {
     border-radius: calc(var(--v2-radius-control) + 2px);
     color: var(--v2-control-text-deemphasized);
     transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
+      background var(--zen-motion-state) var(--zen-ease),
+      transform var(--zen-motion-state) var(--zen-ease);
   }
   :where(:root[data-hover='hover']) .zen-band-close:hover {
     background: var(--v2-control-fill);
@@ -15995,14 +15996,14 @@ ol.zen-page-prose-list {
   flex-shrink: 0;
   padding: 0 10px;
   color: var(--v2-control-text-deemphasized);
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 .zen-v2-heading.zen-omnibox-sheet-heading[data-outer] {
   margin-top: 8px;
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-v2-heading.zen-omnibox-sheet-heading {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 /*
@@ -16027,11 +16028,11 @@ ol.zen-page-prose-list {
   object-fit: contain;
 }
 .zen-engine-field-favicon[data-arrived] {
-  animation: zen-fade 120ms var(--zen-ease);
+  animation: zen-fade var(--zen-motion-state) var(--zen-ease);
 }
 @media (prefers-reduced-motion: reduce) {
   .zen-engine-field-favicon[data-arrived] {
-    animation: zen-fade 120ms var(--zen-ease) !important;
+    animation: zen-fade var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 
@@ -16189,8 +16190,8 @@ ol.zen-page-prose-list {
   color: var(--v2-text);
   font-weight: var(--v2-weight-button);
   transition:
-    background 120ms var(--zen-ease),
-    transform 120ms var(--zen-ease);
+    background var(--zen-motion-state) var(--zen-ease),
+    transform var(--zen-motion-state) var(--zen-ease);
 }
 /* Only where a pointer can hover: on a phone the emulated hover would stay lit on the button after its tap. */
 :where(:root[data-hover='hover']) .zen-zoom-reset:hover:not(:disabled) {
@@ -16324,8 +16325,8 @@ ol.zen-page-prose-list {
   inset: 0;
   margin: auto;
   transition:
-    opacity 120ms var(--zen-ease),
-    transform 120ms var(--zen-ease);
+    opacity var(--zen-motion-state) var(--zen-ease),
+    transform var(--zen-motion-state) var(--zen-ease);
 }
 /*
  * The play / pause swap is a change in place (v2 §11.4): under reduced motion its 120 ms fade
@@ -16333,7 +16334,7 @@ ol.zen-page-prose-list {
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-read-aloud-toggle > svg {
-    transition: opacity 120ms var(--zen-ease) !important;
+    transition: opacity var(--zen-motion-state) var(--zen-ease) !important;
   }
 }
 .zen-read-aloud-toggle > .zen-read-aloud-glyph-pause,
@@ -16388,8 +16389,9 @@ ol.zen-page-prose-list {
  * finger or a spring writes per frame lands on the frame it is written. One global rule may
  * remove; none may shorten.
  *
- * The fades that stay are declared where they live, each an explicit `transition: opacity 120ms`
- * or a 120 ms opacity-only keyframe animation under the same media query, `!important` so it
+ * The fades that stay are declared where they live, each an explicit `transition: opacity
+ * var(--zen-motion-state)` or a 120 ms opacity-only keyframe animation under the same media
+ * query, `!important` so it
  * beats this rule (an important declaration in a layer beats an unlayered important one; an
  * unlayered one beats `*` on specificity) – the sheet chassis' scrim and detents and the phone
  * frame-dialog host's sheet, the load bar, the overview's grid, panes and select-tabs action
