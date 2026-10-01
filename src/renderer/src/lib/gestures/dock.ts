@@ -1,5 +1,6 @@
 import type { PhoneBarPosition, Rect, UIState } from '@shared/types'
 import { run } from '../api'
+import { zenEase } from '../motion/ease'
 import {
   SPRING_GENTLE,
   isAtRest,
@@ -8,7 +9,7 @@ import {
   type SpringConfig,
   type SpringState
 } from '../motion/spring'
-import { SPRING_FOLLOW } from '../motion/tokens'
+import { MOTION_STATE_MS, SPRING_FOLLOW } from '../motion/tokens'
 import { activeTab } from '../selectors'
 import { createStore } from '../store'
 import { captureThumbnail } from '../thumbnails'
@@ -21,8 +22,9 @@ import { rubberBand, settleTarget, type SwipeThresholds } from './swipe'
  * the pill picks it up (`beginDock`); it then follows the finger on a one-dimensional track from
  * its own slot (0) to the slot at the opposite edge (1) while the page – drawn as a card – slides
  * out of the way. Letting go settles it on whichever slot position and velocity point at; the
- * bar's edge is only committed to Settings once the pill has landed. Every motion is a spring a
- * finger can catch, so a move can be reversed at any point.
+ * bar's edge is only committed to Settings once the pill has landed. Every travel is a spring a
+ * finger can catch, so a move can be reversed at any point; the pick-up and the set-down are the
+ * vocabulary's lift (`liftTowards`), a timed rise and fall.
  */
 export type DockPhase = 'idle' | 'lifted' | 'settling' | 'landing'
 
@@ -89,13 +91,39 @@ export function cssPx(name: string, fallback: number): number {
 /** Flying into a slot after release: the overview's gentle spring, a whisper of overshoot. */
 export const SPRING_DOCK: SpringConfig = SPRING_GENTLE
 
-/** Pick-up and set-down (0…100). */
-const SPRING_LIFT: SpringConfig = {
-  stiffness: 520,
-  damping: 34,
-  mass: 1,
-  restDelta: 0.5,
-  restSpeed: 10
+/**
+ * The pick-up and the set-down (motion spec §1's lift): a `MOTION_STATE_MS` rise on `--zen-ease`
+ * from flat (0) to lifted (1), and the same 120 ms back – never a spring (the lift spring this
+ * replaced, k 520 c 34, overshot). Eased in time here and composed into the pill's per-frame
+ * transform by the shell, since a stylesheet transition on that transform would smear the
+ * follow; a cut under reduced motion.
+ */
+export interface LiftMotion {
+  /** Where the lift set off from (0…1). */
+  from: number
+  /** Where it is heading: 1 lifted, 0 flat. */
+  to: 0 | 1
+  /** When it set off (the frame clock's ms). */
+  startedAt: number
+  /** Where it is now (0…1). */
+  x: number
+}
+
+/** Start the lift towards `to` at `now`, from wherever it is: a set-down mid-rise turns back. */
+export function liftTowards(lift: LiftMotion, to: 0 | 1, now: number): LiftMotion {
+  return { from: lift.x, to, startedAt: now, x: lift.x }
+}
+
+/** The lift at `now`: the rise's fraction eased on the curve; under reduced motion a cut to `to`. */
+export function liftAt(lift: LiftMotion, now: number, reduced = reducedMotion()): LiftMotion {
+  const t = reduced ? 1 : Math.max(0, (now - lift.startedAt) / MOTION_STATE_MS)
+  if (t >= 1) return { ...lift, x: lift.to }
+  return { ...lift, x: lift.from + (lift.to - lift.from) * zenEase(t) }
+}
+
+/** The lift has arrived where it was heading. */
+export function liftAtRest(lift: LiftMotion): boolean {
+  return lift.x === lift.to
 }
 
 /** A fling commits regardless of distance; a slow release docks on the nearer half. */
@@ -167,8 +195,7 @@ const sim = {
   alongTarget: 0,
   drift: { x: 0, v: 0 } as SpringState,
   driftTarget: 0,
-  lift: { x: 0, v: 0 } as SpringState,
-  liftTarget: 0
+  lift: { from: 0, to: 0, startedAt: 0, x: 0 } as LiftMotion
 }
 let frame: number | null = null
 let last = 0
@@ -192,7 +219,7 @@ function stopLoop(): void {
 function publish(): void {
   const s = dockStore.get()
   const progress = sim.along.x / s.travel
-  dockStore.set({ progress, drift: sim.drift.x, lift: sim.lift.x / 100 })
+  dockStore.set({ progress, drift: sim.drift.x, lift: sim.lift.x })
   if (s.phase === 'lifted') {
     const now: 0 | 1 = progress >= 0.5 ? 1 : 0
     if (now !== side) {
@@ -207,27 +234,27 @@ function tick(now: number): void {
   const dt = Math.min(0.064, Math.max(0.001, (now - last) / 1000))
   last = now
   const { phase } = dockStore.get()
-  if (reducedMotion()) {
+  const reduced = reducedMotion()
+  if (reduced) {
     sim.along = { x: sim.alongTarget, v: 0 }
     sim.drift = { x: sim.driftTarget, v: 0 }
-    sim.lift = { x: sim.liftTarget, v: 0 }
   } else {
     const alongSpring = phase === 'settling' ? SPRING_DOCK : SPRING_FOLLOW
     sim.along = stepSpring(sim.along, sim.alongTarget, dt, alongSpring)
     sim.drift = stepSpring(sim.drift, sim.driftTarget, dt, SPRING_FOLLOW)
-    sim.lift = stepSpring(sim.lift, sim.liftTarget, dt, SPRING_LIFT)
   }
+  sim.lift = liftAt(sim.lift, now, reduced)
   publish()
   const rest =
     isAtRest(sim.along, sim.alongTarget) &&
     isAtRest(sim.drift, sim.driftTarget) &&
-    isAtRest(sim.lift, sim.liftTarget)
+    liftAtRest(sim.lift)
   if (!rest) {
     frame = requestAnimationFrame(tick)
     return
   }
   const current = dockStore.get().phase
-  if (current === 'settling') landed()
+  if (current === 'settling') landed(now)
   else if (current === 'landing') finishIfReady()
 }
 
@@ -253,8 +280,7 @@ export function beginDock(state: UIState, slot: Rect, from: PhoneBarPosition): b
   sim.alongTarget = 0
   sim.drift = { x: 0, v: 0 }
   sim.driftTarget = 0
-  sim.lift = { x: 0, v: 0 }
-  sim.liftTarget = 100
+  sim.lift = liftTowards({ from: 0, to: 0, startedAt: 0, x: 0 }, 1, performance.now())
   side = 0
   committed = false
   cancelCommit?.()
@@ -332,12 +358,12 @@ export function dockIsActive(): boolean {
 // Landing
 // ---------------------------------------------------------------------------
 
-function landed(): void {
+function landed(now: number): void {
   const s = dockStore.get()
   const target = s.target ?? s.from
   dockStore.set({ phase: 'landing', target, progress: target === s.from ? 0 : 1 })
   run('haptic', { kind: 'dock' })
-  sim.liftTarget = 0
+  sim.lift = liftTowards(sim.lift, 0, now)
   if (target === s.from) {
     committed = true
   } else {
@@ -354,7 +380,7 @@ function landed(): void {
 /** The ghost sets down flat and the browser state carries the new edge: hand back to the bar. */
 function finishIfReady(): void {
   if (dockStore.get().phase !== 'landing') return
-  if (!committed || !isAtRest(sim.lift, 0)) return
+  if (!committed || !liftAtRest(sim.lift)) return
   finish()
 }
 

@@ -99,13 +99,37 @@ export interface RawWebAppManifest {
 }
 
 /**
+ * What a pinned record is: `app`, an installed app with a manifest, whose pages are those inside
+ * the manifest's scope; `shortcut`, the desktop's shortcut to a page without one (Chrome's
+ * "Create shortcut?"), a launcher for one URL with no manifest and no scope beyond that URL.
+ */
+export type PinnedWebAppKind = 'app' | 'shortcut'
+
+/**
  * An installed app: a shortcut the user put on the Home screen or, on desktop, a launcher that
- * opens the app in a window of its own (the registry behind "Open <app>" and `--app=`).
+ * opens the app in a window of its own (the registry behind "Open <app>" and `--app=`) – or, on
+ * desktop, a shortcut to a page without a manifest (`kind` `shortcut`), listed, launched and
+ * uninstalled like an app but claiming no page.
  */
 export interface PinnedWebApp {
   id: string
+  /**
+   * `shortcut` for the desktop's shortcut to a page without a manifest (Chrome's "Create
+   * shortcut?"; chrome://apps lists shortcuts beside the apps): no manifest and no scope beyond
+   * its URL, so every reader that means an installed app with a manifest – the scope match
+   * behind "Open in <app>", the pill's Install chip and the ambient offer (`pinnedAppFor`), the
+   * share chooser – passes it over, while the apps list, `launch` and `uninstall` take it as any
+   * record. Absent – every record from before the shortcut record, which reads unchanged – or
+   * `app`: an installed app with a manifest.
+   */
+  kind?: PinnedWebAppKind
   name: string
   startUrl: string
+  /**
+   * Absolute scope URL; the app's pages are those whose URL starts with it. A shortcut's is its
+   * start URL: it claims no page (`pinnedAppFor` passes it over), and its window is bounded by
+   * the URL's origin, as any `--app=<url>` window of no app is (`Browser.openAppWindow`).
+   */
   scope: string
   pinnedAt: number
   /**
@@ -129,11 +153,12 @@ export interface PinnedWebApp {
 }
 
 /**
- * An installed app as the UI snapshot lists it (`UIState.webApps`): the record, and how many
- * windows of the app stand open on this host – what an uninstall closes with the launcher and
- * the record. Settings › Apps asks before it acts when the count is above zero (§9.23's notice:
- * "Uninstall <app>? Its open window closes."; the #435 lead check) and acts at once when it is
- * not. A host whose apps open as tabs (Android) counts none.
+ * An installed app – or a desktop shortcut (`kind` `shortcut`) – as the UI snapshot lists it
+ * (`UIState.webApps`): the record, and how many windows of the app stand open on this host –
+ * what an uninstall closes with the launcher and the record. Settings › Apps asks before it acts
+ * when the count is above zero (§9.23's notice: "Uninstall <app>? Its open window closes."; the
+ * #435 lead check) and acts at once when it is not. A host whose apps open as tabs (Android)
+ * counts none.
  */
 export interface InstalledWebApp extends PinnedWebApp {
   windows: number
@@ -432,14 +457,24 @@ export function isWithinScope(url: string, scope: string): boolean {
   }
 }
 
-/** The pinned app whose scope contains `url`; the most specific (longest) scope wins. */
+/**
+ * The pinned app whose scope contains `url`; the most specific (longest) scope wins. A shortcut
+ * is never it: it has no scope and claims no page (Chrome's shortcut apps capture no navigation),
+ * so the app menu offers no "Open in <shortcut>" and a page that has a shortcut is still offered
+ * as an app – the chip, the ambient offer and Create Shortcut… stand as if there were none.
+ */
 export function pinnedAppFor(url: string, pinned: PinnedWebApp[]): PinnedWebApp | null {
   let best: PinnedWebApp | null = null
   for (const app of pinned) {
-    if (!isWithinScope(url, app.scope)) continue
+    if (isShortcutRecord(app) || !isWithinScope(url, app.scope)) continue
     if (!best || app.scope.length > best.scope.length) best = app
   }
   return best
+}
+
+/** Whether a record is a shortcut to one page (`kind` `shortcut`), not an app with a manifest. */
+export function isShortcutRecord(app: Pick<PinnedWebApp, 'kind'>): boolean {
+  return app.kind === 'shortcut'
 }
 
 // ---------------------------------------------------------------------------

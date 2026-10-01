@@ -9,6 +9,7 @@ import {
 } from './insertionCaret'
 import type { SlideMotion } from './motion/slide'
 import { SPRING_GENTLE, SpringAnimation } from './motion/spring'
+import { MOTION_STATE_MS } from './motion/tokens'
 import { VelocityTracker } from './motion/velocity'
 import { gapCentre, slideOffsets, slotAt, slotKey, type Span } from './reorder'
 import { activeTab, tabTitle } from './selectors'
@@ -527,10 +528,10 @@ function settle(s: Session, to: { x: number; y: number } | null, focusPage: bool
   const distance = Math.hypot(dx, dy)
   if (!to || distance < 0.5) {
     if (ghost) {
-      ghost.style.transition = 'opacity 120ms var(--zen-ease)'
+      ghost.style.transition = `opacity ${MOTION_STATE_MS}ms var(--zen-ease)`
       ghost.style.opacity = '0'
     }
-    setTimeout(done, to ? 0 : 130)
+    setTimeout(done, to ? 0 : MOTION_STATE_MS + 10)
     return
   }
   const ux = dx / distance
@@ -541,10 +542,10 @@ function settle(s: Session, to: { x: number; y: number } | null, focusPage: bool
     (d) => placeGhostAt(from.x + ux * d, from.y + uy * d),
     () => {
       if (ghost) {
-        ghost.style.transition = 'opacity 100ms var(--zen-ease)'
+        ghost.style.transition = `opacity ${MOTION_STATE_MS}ms var(--zen-ease)`
         ghost.style.opacity = '0'
       }
-      setTimeout(done, 100)
+      setTimeout(done, MOTION_STATE_MS)
     }
   )
   settleSpring = spring

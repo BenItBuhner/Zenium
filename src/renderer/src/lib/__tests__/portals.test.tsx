@@ -556,10 +556,10 @@ describe('the way out: the host keeps a closed dialog’s panel through its exit
     // chassis marks `data-leaving` for its way down on a phone gets nothing from them.
     expect(
       cssRule('.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving]')
-    ).toContain('animation: zen-pop-out 180ms var(--zen-ease) forwards')
+    ).toContain('animation: zen-pop-out var(--zen-motion-pop) var(--zen-ease) forwards')
     expect(
       cssRule('.zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]')
-    ).toContain('animation: zen-fade-out 180ms var(--zen-ease) forwards')
+    ).toContain('animation: zen-fade-out var(--zen-motion-pop) var(--zen-ease) forwards')
     expect(cssRule('@keyframes zen-pop-out')).toMatch(/from \{ opacity: 1; transform: none;/)
     expect(cssRule('.zen-frame-dialogs[data-open], .zen-frame-dialogs[data-leaving]')).toContain(
       'pointer-events: auto'
@@ -570,7 +570,9 @@ describe('the way out: the host keeps a closed dialog’s panel through its exit
     const reduced = cssRule(
       '.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving], .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]'
     )
-    expect(reduced).toContain('animation: zen-fade-out 120ms var(--zen-ease) forwards !important')
+    expect(reduced).toContain(
+      'animation: zen-fade-out var(--zen-motion-state) var(--zen-ease) forwards !important'
+    )
     // Every `[data-leaving]` rule on the slot's panels and the scrim is so gated – none reaches
     // a sheet host – and on a phone the chassis slides the slot: the panels' own animation is
     // off there.
