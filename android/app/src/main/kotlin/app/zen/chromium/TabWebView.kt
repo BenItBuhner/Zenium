@@ -307,11 +307,11 @@ class TabWebView(
     /**
      * An agent works this page while the layout hides it (the core's `TabView.setAgentDriven`,
      * said before each of the agent's actions and taken back when it lets the tab go; OS-40).
-     * The page's `beforeunload` objection is then no question for the user ([UnloadObjection]):
-     * the agent's input is trusted input, so a page it drives may raise one, and its sheet would
-     * come up over whatever the user is looking at. Hidden, the view runs as any hidden one
-     * does (nothing pauses a GONE WebView; [TabHost.setVisible]). Cleared when the view is bound
-     * to another tab ([TabHost.bind], [TabHost.adopt]).
+     * The page's `beforeunload` objection is then the agent's question, not the user's
+     * ([UnloadObjection]): the agent's input is trusted input, so a page it drives may raise
+     * one. Hidden, the view runs as any hidden one does (nothing pauses a GONE WebView;
+     * [TabHost.setVisible]). Cleared when the view is bound to another tab ([TabHost.bind],
+     * [TabHost.adopt]).
      *
      * TODO(OS-40 part B): route `alert` / `confirm` / `prompt` of an agent-driven page to the
      * agent (a `view.pageDialog` host event) once PR #742's `PageDialogService` is on main.
@@ -3306,10 +3306,9 @@ class TabWebView(
          *
          * A page an agent drives is not asked ([UnloadObjection], OS-40): the WebView raises
          * the question only after a user gesture, but an agent's input is trusted input, so a
-         * page it works on in a hidden tab may object, and its sheet would come up over whatever
-         * the user is looking at. For such a page the navigation goes on, with the bookkeeping a
-         * Leave runs, and a check in flight settles as leave, the view destroyed. A page the
-         * user drives asks as it always has, shown or hidden.
+         * page it works on may object, and the question is the agent's, not the user's. For
+         * such a page the navigation goes on, with the bookkeeping a Leave runs, and a check in
+         * flight settles as leave, the view destroyed. A page the user drives asks as it always has.
          */
         override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
             if (!host.pageDialogs) return false
@@ -3332,7 +3331,7 @@ class TabWebView(
                 is UnloadObjection.SettleCheck -> {
                     // No sheet is up for settle to dismiss: the navigation is let go here.
                     result.confirm()
-                    check?.settle(leave = true, destroyView = true)
+                    checkNotNull(check) { "SettleCheck without a check in flight" }.settle(leave = true, destroyView = true)
                 }
                 is UnloadObjection.LeaveSilently -> {
                     result.confirm()
@@ -3357,7 +3356,7 @@ class TabWebView(
         /**
          * The page's objection to a navigation of its own (no check) ends in Leave – the user's
          * at the sheet, asked at `askedAt` and answered at `chosenAt`, or the silent one of a
-         * page the user is not on, both at once. A reload never passes shouldOverrideUrlLoading,
+         * page an agent drives, both at once. A reload never passes shouldOverrideUrlLoading,
          * so nothing of it is held or re-issued; any other navigation's Leave carries to the
          * hold that follows ([LeaveCarry]). The sheet stood open from the question to the Leave,
          * between the tap and its navigation reaching the hook: that time is not the hop's, and

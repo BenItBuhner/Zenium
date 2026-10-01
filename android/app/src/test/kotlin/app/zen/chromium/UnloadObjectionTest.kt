@@ -5,9 +5,9 @@ import org.junit.Test
 
 /**
  * The answer to a page's `beforeunload` objection (`UnloadObjection`, OS-40): the user's sheet
- * for every page the user drives, as before – shown or hidden, under the unload check or not –
- * and for a page an agent drives a silent Leave, or a check in flight settled as leave; never a
- * sheet from an agent's page over whatever the user is looking at.
+ * for every page the user drives, as before – under the unload check or not – and for a page an
+ * agent drives a silent Leave, or a check in flight settled as leave; never a sheet for the user
+ * from an agent's page.
  */
 class UnloadObjectionTest {
     private fun decide(agentDriven: Boolean, checkInFlight: Boolean, reloadAsked: Boolean = false) =
