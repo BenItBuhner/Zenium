@@ -290,6 +290,14 @@ describe('parsePreviewSpec', () => {
       kind: 'link',
       url: 'mailto:hello@zenium.example'
     })
+    // Steps on the menu once it is up: a row taken – the group the link menu makes.
+    expect(
+      parsePreviewSpec('link=https://sample.example/other&then=tap:Open Link in New Tab in Group')
+    ).toEqual({
+      kind: 'link',
+      url: 'https://sample.example/other',
+      then: [{ kind: 'tap', text: 'Open Link in New Tab in Group' }]
+    })
     // Behind a group (which takes the link as its own), ahead of an overlay; nothing for no URL.
     expect(parsePreviewSpec('group=2&link=https://sample.example/other')).toEqual({
       kind: 'group',

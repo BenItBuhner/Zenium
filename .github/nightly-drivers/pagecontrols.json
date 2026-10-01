@@ -2,11 +2,12 @@
   "id": "pagecontrols",
   "order": 54,
   "class": "PageControlsDemo",
-  "shard": "phone-c",
+  "shard": "phone-h",
   "mirrors": "android-pagecontrols-demo.yml",
   "dir": "pagecontrols-demo",
   "env": {
     "DEMO_THEME": "dark"
   },
-  "estimate": 5
+  "estimate": 5,
+  "note": "The workflow's dark scheme, taken through its own env line. Moved from phone-c (61.5 of its 68 minutes, past the headroom line) to phone-h when that shard opened (W6-S24c-b), with site-controls, history-bookmarks and select-tabs: see site-controls for the choice. The same image, no setup step of its own."
 }

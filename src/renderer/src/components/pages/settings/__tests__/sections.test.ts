@@ -34,7 +34,9 @@ import {
   customListId,
   emptyBlockingStatus,
   type FilterListStatus,
-  type ListTier
+  type ListTier,
+  type TrackingLevel,
+  type TrackingLevelPrivateMode
 } from '@shared/blocking'
 import {
   DEFAULT_CONTAINERS,
@@ -4496,7 +4498,7 @@ describe('what a row does', () => {
     })
   })
 
-  describe('Search › site search management on the desktop (omnibox-09, settings-43)', () => {
+  describe('Search › site search management on every layout (omnibox-09, settings-43, SET-10)', () => {
     const mine = {
       id: 'custom:mine',
       name: 'Mine',
@@ -4580,17 +4582,19 @@ describe('what a row does', () => {
       expect(keywords.description).not.toContain('@forum')
     })
 
-    it('the Inactive heading is not drawn while no engine is deactivated', () => {
+    it('the Inactive heading is not drawn while no engine is deactivated, on any layout', () => {
       const s = state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, mine] } as Partial<UIState>, {
         searchEngines: [mine],
         searchEngineId: 'custom:mine'
       })
-      const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
-      expect(model.groups.map((g) => g.id)).toEqual([
-        'search',
-        'search-engines',
-        'add-search-engine'
-      ])
+      for (const layout of ['desktop', 'tablet', 'phone'] as const) {
+        const model = buildSection(def, { ...context(s).ctx, formFactor: layout })
+        expect(model.groups.map((g) => g.id)).toEqual([
+          'search',
+          'search-engines',
+          'add-search-engine'
+        ])
+      }
     })
 
     it('"Choose your search engine again" (W6-2) stands in the EEA or over a record, on every layout, and asks the core for the screen', () => {
@@ -4712,35 +4716,117 @@ describe('what a row does', () => {
       ])
     })
 
-    it('the phone and tablet shells keep every engine under Added with Make default, Edit and Remove, the Inactive heading and the desktop’s Activate / Deactivate gone', () => {
+    it('the phone and tablet shells list a deactivated engine under Inactive as the desktop does, its sheet offering Activate and an active engine’s Deactivate (SET-10)', () => {
       for (const layout of ['phone', 'tablet'] as const) {
+        invoke.mockClear()
         const { model } = searchOn(layout)
-        expect(ids(model, 'search-engines')).toEqual([
+        // The groups the shell draws: `onLayout` is the filter the phone's page and the
+        // tablet's pane apply, so a `layouts: ['desktop']` left on the heading or a row would
+        // show here as its absence.
+        const drawn = onLayout(model.groups, layout)
+        expect(drawn.map((g) => g.id)).toEqual([
+          'search',
+          'search-engines',
+          'inactive-search-engines',
+          'add-search-engine'
+        ])
+        expect(ids({ ...model, groups: drawn }, 'search-engines')).toEqual([
           'search-engine:custom:mine',
-          'search-engine:custom:wiki',
+          'search-engine:custom:wiki'
+        ])
+        expect(ids({ ...model, groups: drawn }, 'inactive-search-engines')).toEqual([
           'search-engine:discovered:forum.example'
         ])
-        expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
-        // With no heading to say it, the row is the one place the engine reads inactive.
-        expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
-          description: 'Inactive · @forum · forum.example'
+        const inactive = drawn.find((g) => g.id === 'inactive-search-engines')!
+        expect(inactive.heading).toBe('Inactive')
+        expect(inactive.layouts).toBeUndefined()
+        // No empty state (§9.17): the group comes with the first engine deactivated and goes
+        // with the last activated.
+        expect(inactive.empty).toBeUndefined()
+        // The heading says "Inactive"; the row does not say it again (§9.17) – it keeps its
+        // source, its shortcut and its host, as the desktop's row under the heading does.
+        expect(findRow(drawn, 'search-engine:discovered:forum.example')).toMatchObject({
+          kind: 'item',
+          description: 'Recently visited · @forum · forum.example'
         })
-        // Edit on every engine of the user's, active or not (SET-10; Chrome 152's row menu
-        // offers Edit on each custom engine, Make default and Delete on those not the default).
-        expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+        for (const r of inactive.rows) expect(r.description).not.toMatch(/\bInactive\b/)
+        // The inactive engine's sheet – the phone's sheet, the tablet's dialog – offers Edit,
+        // Activate and Remove in the desktop's order, and no Make default; an active engine's
+        // offers Make default, Edit, Deactivate and Remove.
+        const drawnModel = { ...model, groups: drawn }
+        expect(sheetIds(drawnModel, 'search-engine:discovered:forum.example')).toEqual([
           'search-engine:discovered:forum.example:edit',
+          'search-engine:discovered:forum.example:activate',
           'search-engine:discovered:forum.example:remove'
         ])
-        expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
+        expect(sheetIds(drawnModel, 'search-engine:custom:wiki')).toEqual([
           'search-engine:custom:wiki:default',
           'search-engine:custom:wiki:edit',
+          'search-engine:custom:wiki:deactivate',
           'search-engine:custom:wiki:remove'
         ])
+        // The rows are the desktop's – the same ids, labels, descriptions and command – kept
+        // from no layout.
+        const activate = findRow(drawn, 'search-engine:discovered:forum.example:activate')
+        if (activate?.kind !== 'action') throw new Error('not an action')
+        expect(activate).toMatchObject({
+          label: 'Activate',
+          description: '@forum works in the URL bar again.'
+        })
+        expect(activate.layouts).toBeUndefined()
+        activate.onPress?.()
+        expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+          id: forum.id,
+          active: true
+        })
+        const deactivate = findRow(drawn, 'search-engine:custom:wiki:deactivate')
+        if (deactivate?.kind !== 'action') throw new Error('not an action')
+        expect(deactivate).toMatchObject({
+          label: 'Deactivate',
+          description: 'Keeps Wiki in the list but out of the URL bar until you activate it.'
+        })
+        expect(deactivate.layouts).toBeUndefined()
+        expect(deactivate.disabled).toBeFalsy()
+        deactivate.onPress?.()
+        expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+          id: wiki.id,
+          active: false
+        })
+        // The default engine stays active on every layout: its row says so and takes no press.
+        const held = findRow(drawn, 'search-engine:custom:mine:deactivate')
+        if (held?.kind !== 'action') throw new Error('not an action')
+        expect(held.disabled).toBe(true)
+        expect(held.description).toBe('The default search engine stays active.')
         // The picker still leaves the deactivated engine out: the flag is the model's, not the
         // layout's.
         const picker = row(model, 'search-engine')
         if (picker.kind !== 'value') throw new Error('not a value row')
         expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+        expect(picker.options.map((o) => o.value)).toContain(wiki.id)
+      }
+    })
+
+    it('the model is one across the layouts: the phone’s and the tablet’s Search groups are the desktop’s, row for row', () => {
+      const desktop = searchOn('desktop').model
+      for (const layout of ['phone', 'tablet'] as const) {
+        const { model } = searchOn(layout)
+        // `formFactor` no longer reaches the section: the same groups, headings, row ids and
+        // descriptions come out whatever the layout asked for …
+        expect(model.groups.map((g) => [g.id, g.heading, g.layouts])).toEqual(
+          desktop.groups.map((g) => [g.id, g.heading, g.layouts])
+        )
+        for (const id of [
+          'search-engine:custom:mine',
+          'search-engine:custom:wiki',
+          'search-engine:discovered:forum.example'
+        ]) {
+          expect(sheetIds(model, id)).toEqual(sheetIds(desktop, id))
+          expect(row(model, id).description).toBe(row(desktop, id).description)
+        }
+        // … and the shell's layout filter takes nothing away from the engines' groups.
+        expect(onLayout(model.groups, layout).map((g) => g.id)).toEqual(
+          model.groups.map((g) => g.id)
+        )
       }
     })
 
@@ -5419,6 +5505,90 @@ describe('what a row does', () => {
     expect(row(off, 'tracking-blocked').description).toBe('Filter lists are loading')
   })
 
+  it('PS-49: “Always use Strict in private windows” (private tabs on Android) follows the Level row as its dependent on every layout', () => {
+    const def = PAGE.sections.find((x) => x.id === 'privacy')!
+    const withLevel = (
+      level: TrackingLevel,
+      levelPrivate: TrackingLevelPrivateMode = 'default',
+      enabled = true,
+      host: Partial<UIState> = {}
+    ): UIState =>
+      state(
+        { blocking: { ...emptyBlockingStatus(), ready: true, enabled }, ...host },
+        { blocking: { ...DEFAULT_BLOCKING_SETTINGS, level, levelPrivate } }
+      )
+    // Directly after the Level row in the Tracking prevention group, by name, on the three
+    // layouts. The noun follows the host through the same `capabilities.windows` read the cookies
+    // twin uses: windows on the desktop; tabs on Android – the phone and the tablet alike, since
+    // `src/android/platform.ts` sets `windows: false` for all of Android. Both pairs verbatim.
+    const WINDOWS = {
+      label: 'Always use Strict in private windows',
+      description: 'Whatever the level above, private windows block at Strict.',
+      keywords: ['private windows', 'strict', 'tracking prevention level'],
+      twin: 'Only in private windows'
+    }
+    const TABS = {
+      label: 'Always use Strict in private tabs',
+      description: 'Whatever the level above, private tabs block at Strict.',
+      keywords: ['private tabs', 'strict', 'tracking prevention level'],
+      twin: 'Only in private tabs'
+    }
+    const desktop: Partial<UIState> = {
+      platform: 'linux',
+      capabilities: { ...ANDROID, windows: true }
+    }
+    const chassis = [
+      { name: 'desktop', formFactor: 'desktop', host: desktop, words: WINDOWS },
+      { name: 'tablet', formFactor: 'tablet', host: {}, words: TABS },
+      { name: 'phone', formFactor: 'phone', host: {}, words: TABS }
+    ] as const
+    for (const { name, formFactor, host, words } of chassis) {
+      const privacy = buildSection(def, {
+        ...context(withLevel('balanced', 'default', true, host)).ctx,
+        formFactor
+      })
+      const ids = privacy.groups.find((g) => g.id === 'tracking-prevention')!.rows.map((r) => r.id)
+      expect(ids.indexOf('tracking-level-private'), name).toBe(ids.indexOf('tracking-level') + 1)
+      expect(row(privacy, 'tracking-level-private'), name).toMatchObject({
+        kind: 'switch',
+        label: words.label,
+        description: words.description,
+        keywords: words.keywords,
+        checked: false,
+        disabled: false
+      })
+      // The cookies twin on the same chassis speaks the same noun.
+      expect(row(privacy, 'site-data-private-only').label, name).toBe(words.twin)
+    }
+    // Moot – at .4, still laid out and read – while blocking is off or the level above is already
+    // Strict; live at every other level, Off included (private windows then block at Strict alone).
+    const off = section('privacy', withLevel('balanced', 'strict', false))
+    expect(row(off, 'tracking-level-private')).toMatchObject({ checked: true, disabled: true })
+    const strict = section('privacy', withLevel('strict'))
+    expect(row(strict, 'tracking-level-private')).toMatchObject({ checked: false, disabled: true })
+    for (const level of ['off', 'basic', 'balanced'] as const)
+      expect(
+        row(section('privacy', withLevel(level)), 'tracking-level-private').disabled,
+        level
+      ).toBe(false)
+    // The switch patches `settings.blocking.levelPrivate`, keeping the rest of `blocking`.
+    const c = context(withLevel('balanced'))
+    const live = row(buildSection(def, c.ctx), 'tracking-level-private')
+    if (live.kind !== 'switch') throw new Error('not a switch')
+    live.onChange(true)
+    expect(c.patches).toEqual([
+      { blocking: { ...c.ctx.state.settings.blocking, levelPrivate: 'strict' } }
+    ])
+    const on = context(withLevel('balanced', 'strict'))
+    const onRow = row(buildSection(def, on.ctx), 'tracking-level-private')
+    if (onRow.kind !== 'switch') throw new Error('not a switch')
+    expect(onRow.checked).toBe(true)
+    onRow.onChange(false)
+    expect(on.patches).toEqual([
+      { blocking: { ...on.ctx.state.settings.blocking, levelPrivate: 'default' } }
+    ])
+  })
+
   it('Boosts offers the site the tab came from, and leaves for it', () => {
     const c = context()
     const boosts = buildSection(
@@ -5708,6 +5878,53 @@ describe('the Extensions category', () => {
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids).toContain(`extension:${noisy.id}:clear-errors`)
     expect(ids).toContain(`extension:${noisy.id}:error:2`)
+  })
+
+  it('a synced landing waiting for approval (services pass 16, ID-44) reads the pending line in the warn ink for Off, and again under its Enabled switch; approved, the line goes', () => {
+    const pending = ext({
+      id: 'c'.repeat(32),
+      name: 'Adblock',
+      enabled: false,
+      pendingApproval: true
+    })
+    const model = section('extensions', extState([pending, ext({})]))
+    const item = row(model, `extension:${pending.id}`)
+    // The lead's words as ruled (round 4): a spaced en dash, U+2013, between the two halves.
+    expect(item).toMatchObject({
+      description: 'Synced from another device – needs your permission',
+      tone: 'warn'
+    })
+    expect(item.description).toContain(' \u2013 ')
+    expect(item.description).not.toContain('\u2014')
+    const enabled = row(model, `extension:${pending.id}:enabled`)
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(false)
+    expect(enabled.description).toBe('Synced from another device – needs your permission')
+    // The switch runs the same command as ever: the host's `setEnabled` opens the prompt.
+    enabled.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', { id: pending.id, enabled: true })
+    // The other extension, installed here, says nothing of the kind.
+    expect(row(model, `extension:${EXT_ID}`).tone).toBeUndefined()
+    const plainSwitch = row(model, `extension:${EXT_ID}:enabled`)
+    if (plainSwitch.kind !== 'switch') throw new Error('not a switch')
+    expect(plainSwitch.description).toBeUndefined()
+    // Approved (on, the flag gone) or merely off: the description is the extension's own, or Off.
+    const approved = section('extensions', extState([ext({ id: pending.id, name: 'Adblock' })]))
+    expect(row(approved, `extension:${pending.id}`).description).toBe(ext({}).description)
+    expect(row(approved, `extension:${pending.id}`).tone).toBeUndefined()
+    const off = section('extensions', extState([ext({ id: pending.id, enabled: false })]))
+    expect(row(off, `extension:${pending.id}`)).toMatchObject({ description: 'Off' })
+    // A load error outranks the line: one red line per row (the lead's ruling on #212).
+    const broken = section(
+      'extensions',
+      extState([
+        ext({ id: pending.id, enabled: false, pendingApproval: true, error: 'Bad manifest' })
+      ])
+    )
+    expect(row(broken, `extension:${pending.id}`)).toMatchObject({
+      description: 'Bad manifest',
+      tone: 'danger'
+    })
   })
 
   it('the Errors detail row sums the console and lists it newest first, then Clear errors', () => {
@@ -7545,10 +7762,17 @@ describe('ID-08’s Sync category on a phone', () => {
       'Reading list',
       'Settings'
     ])
-    // Every key of the engine's scope is a switch here, once.
+    // Every key of the engine's scope is a switch here, once – on a host that has what the key
+    // names: the Extensions row (ID-44) sits behind the `extensions` capability, and this
+    // fixture's phone has none, so the list is every row but that one.
     const keys = SYNC_SCOPES.map((s) => s.key)
     expect([...keys].sort()).toEqual(Object.keys(defaultScope()).sort())
-    expect(scope?.rows.map((r) => r.id)).toEqual(keys.map((k) => `sync-scope:${k}`))
+    expect(SYNC_SCOPES.filter((s) => s.requires).map((s) => [s.key, s.requires])).toEqual([
+      ['extensions', 'extensions']
+    ])
+    expect(scope?.rows.map((r) => r.id)).toEqual(
+      keys.filter((k) => k !== 'extensions').map((k) => `sync-scope:${k}`)
+    )
     const openTabs = row(model, 'sync-scope:openTabs')
     if (openTabs.kind !== 'switch') throw new Error('not a switch')
     expect(openTabs.checked).toBe(false)
@@ -7609,6 +7833,52 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(
       scope?.rows.map((r) => r.id)
     )
+  })
+
+  it('What you sync › Extensions (services pass 16, ID-44): on every host that installs extensions, after Settings and before Spaces (the lead’s seat), on by default, the lead’s label and hint verbatim; absent where the host has no extensions', () => {
+    // A host with extensions – the desktop, or a phone whose build installs them.
+    const withExtensions = (sync: SyncStatus): UIState =>
+      state({
+        capabilities: { ...ANDROID, sync: true, extensions: true },
+        sync
+      } as Partial<UIState>)
+    for (const status of [syncStatus(), connected()]) {
+      const model = section('sync', withExtensions(status))
+      const scope = model.groups.find((g) => g.id === 'sync-scope')
+      expect(scope?.rows.map((r) => r.id)).toEqual(SYNC_SCOPES.map((s) => `sync-scope:${s.key}`))
+      // The seat (the lead's ruling, round 4): the last of Chrome's types – right after
+      // Settings, right before Spaces – not among Zenium's own after Mods, which stay last.
+      const labels = scope?.rows.map((r) => r.label) ?? []
+      expect(labels.slice(7, 10)).toEqual(['Settings', 'Extensions', 'Spaces'])
+      expect(labels.slice(-2)).toEqual(['Boosts', 'Mods'])
+      expect(labels.indexOf('Extensions')).toBe(labels.indexOf('Settings') + 1)
+      expect(labels.indexOf('Spaces')).toBe(labels.indexOf('Extensions') + 1)
+      const extensions = row(model, 'sync-scope:extensions')
+      if (extensions.kind !== 'switch') throw new Error('not a switch')
+      expect(extensions.label).toBe('Extensions')
+      expect(extensions.description).toBe(
+        'Store extensions and whether they are enabled and pinned; unpacked ones stay on this device.'
+      )
+      expect(extensions.checked).toBe(true)
+      expect(defaultScope().extensions).toBe(true)
+      invoke.mockClear()
+      extensions.onChange(false)
+      expect(invoke).toHaveBeenCalledWith('sync.setScope', { extensions: false })
+    }
+    // Off in the engine's scope: the switch shows it off.
+    const off = section(
+      'sync',
+      withExtensions(connected({ scope: { ...defaultScope(), extensions: false } }))
+    )
+    const offRow = row(off, 'sync-scope:extensions')
+    if (offRow.kind !== 'switch') throw new Error('not a switch')
+    expect(offRow.checked).toBe(false)
+    // A host without extensions has no row for the type, before setup and connected alike.
+    for (const status of [syncStatus(), connected()]) {
+      const model = section('sync', syncState(status))
+      expect(allRows(model.groups).map((r) => r.id)).not.toContain('sync-scope:extensions')
+      expect(allRows(model.groups).map((r) => r.label)).not.toContain('Extensions')
+    }
   })
 
   it('connected: the status with Sync now, the folder and device, the other devices newest first with their last-seen time, the toggles, and Turn off sync', async () => {

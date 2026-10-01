@@ -3,8 +3,17 @@ package app.zen.chromium
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.net.Uri
 import android.os.Build
+import android.util.Base64
 import android.view.textclassifier.TextClassifier
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * The URL bar's clipboard row (Chrome's "Link you copied" / "Text you copied"), in two reads.
@@ -20,6 +29,18 @@ import android.view.textclassifier.TextClassifier
  * `pasteAction` is the same look at the description for the omnibox field's floating toolbar
  * (OMN-23, `FieldToolbar`): whether its Paste and go / Paste and search item is offered, and
  * which; the read, once more, is the core's when the item is touched.
+ *
+ * `readClip` + `encodeImage` are the page's `navigator.clipboard.read()` (MW-38; `Host.kt`'s
+ * `clipboard.read` with `image: true`, behind the core's `clipboard-read` decision): the same
+ * one read of the primary clip, its text as [read] has it and, when the clip carries an image,
+ * the image decoded through the content resolver – bounded, PNG-encoded, base64 – for the
+ * page's `image/png` representation. Chrome reads an Android clip's image the same way
+ * (`ui/android/java/src/org/chromium/ui/base/Clipboard.java`, `getImageUri`: the description's
+ * `image/` type, the first item's `Uri`). The PNG is sized to the bridge's admission
+ * ([imageBudget]): the core hands the page its answer as ONE `view.postMessage` call, which
+ * `JsBridge` admits on its raw length against [BridgeAdmission.messageLimitChars] and refuses
+ * unparsed over it – and a refused answer is never re-sent, so an image over the limit would
+ * leave the page's `read()` unsettled.
  */
 object ClipboardPeek {
     /** A copy older than this is not offered (Chrome's clipboard suggestions age out the same way). */
@@ -138,6 +159,215 @@ object ClipboardPeek {
             manager.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
         }.getOrNull() ?: ""
     }
+
+    /**
+     * The primary clip's first item for a page's `read()`, read once: its text and its image
+     * ([ClipImage]) when the clip's description carries an `image/` type and the item a `Uri` –
+     * Chrome's reading of an Android clip (`Clipboard.java` `getImageUri`); null for a clip
+     * without one. The decode is [encodeImage]'s, off the caller's thread.
+     */
+    class Clip(val text: String, val imageUri: ClipImage?)
+
+    /**
+     * The clip's image for [encodeImage]: its `Uri`, and the chars the clip's text takes beside
+     * it on the wire as JSON ([textQuotedChars]) – the term the image's byte budget is computed
+     * against ([imageBudget]), carried from the one read so the encode needs no second look at
+     * the clipboard (a second `primaryClip` read would be Android 12+'s second toast).
+     */
+    class ClipImage(val uri: Uri, val textQuotedChars: Int)
+
+    /**
+     * The primary clip for a page's `read()`; [NO_CLIP] for an empty clipboard or a refused read
+     * (Android 10+ hides the clipboard from an app that is not in the foreground). The text is
+     * [read]'s `coerceToText` – except for an image item with no text of its own, which is ""
+     * here: Chrome offers no `text/plain` for an image-only clip, and on API levels before the
+     * platform's scheme guard `coerceToText` renders a `content://` URI it cannot open as text as
+     * the URI's string, which no page's `text/plain` should carry. [read] itself – the page's
+     * `readText()`, the URL bar's row – is not touched by this.
+     */
+    fun readClip(context: Context): Clip {
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        return runCatching {
+            val clip = manager.primaryClip?.takeIf { it.itemCount > 0 }
+            if (clip == null) {
+                NO_CLIP
+            } else {
+                val item = clip.getItemAt(0)
+                val imageUri = item.uri?.takeIf { clip.description.hasMimeType("image/*") }
+                val text = if (imageUri != null) {
+                    item.text?.toString() ?: ""
+                } else {
+                    item.coerceToText(context)?.toString() ?: ""
+                }
+                Clip(text, imageUri?.let { ClipImage(it, textQuotedChars(text)) })
+            }
+        }.getOrDefault(NO_CLIP)
+    }
+
+    /** The longer edge of a clipboard image handed to a page, at most: a bigger one is scaled down to it, never dropped. */
+    const val MAX_IMAGE_EDGE = 2048
+
+    /**
+     * The encoded PNG handed to a page, at most, on the largest heaps: over it the bitmap is
+     * halved and encoded again. Below the admission's ceiling the budget is the admission's,
+     * smaller ([imageBudget]).
+     */
+    const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+    /**
+     * Chars kept free of the message limit for the call's own JSON around the image and the text
+     * – `{"id","method":"view.postMessage","args":{"tabId","message":{"type":"clipboardRead",
+     * "id","text","image":{"png","width","height"}}}}`, a few hundred chars – and for the little
+     * the chrome's `JSON.stringify` may escape in the text beyond [textQuotedChars]'s count.
+     */
+    const val ENVELOPE_SLACK_CHARS = 64L * 1024
+
+    /** A budget under this many PNG bytes carries no image worth a page's while: the text goes alone. */
+    const val MIN_IMAGE_BYTES = 16 * 1024
+
+    /**
+     * The clip's image ([Clip.imageUri]) as the page's `image/png` representation:
+     * `{png, width, height}` – the PNG's bytes base64 (`NO_WRAP`) and the encoded bitmap's size
+     * – or null when the URI does not decode (a provider that refuses the open, a type the system
+     * cannot read) or the budget beside the text leaves no room for one, for the text to go
+     * alone. Decoded through the content resolver, bounded at the decode: `ImageDecoder` on API
+     * 28+ (every type the system decodes, the EXIF orientation applied) at the exact [fit]
+     * within [MAX_IMAGE_EDGE], `BitmapFactory` below it at the power-of-two [sampleSize] that
+     * brings the longer edge within the cap – so no bitmap over 2048 px on its longer edge is
+     * ever held – then PNG-encoded and halved while the encoding is over the read's byte budget
+     * ([encodePng]): [imageBudget] of this process's [BridgeAdmission.messageLimitChars] (the
+     * heap's limit, read through the class so the formula lives in one place) and the text's
+     * chars. Heavy work, for a worker thread and never the UI's; no persistent URI grant is
+     * taken, the clipboard's own grant to the reader covering the open.
+     */
+    fun encodeImage(context: Context, image: ClipImage): JSONObject? =
+        encodeImage(context, image.uri, image.textQuotedChars)
+
+    /** [encodeImage] for an image at [uri] beside a text of [textQuotedChars] chars on the wire. */
+    fun encodeImage(context: Context, uri: Uri, textQuotedChars: Int): JSONObject? = runCatching {
+        val limit = BridgeAdmission(Runtime.getRuntime().maxMemory()).messageLimitChars
+        val budget = imageBudget(limit, textQuotedChars)
+        if (budget == 0) return@runCatching null
+        val decoded = decodeBounded(context, uri) ?: return@runCatching null
+        val (png, encoded) = encodePng(decoded, budget)
+        val result = json(
+            "png" to Base64.encodeToString(png, Base64.NO_WRAP),
+            "width" to encoded.width,
+            "height" to encoded.height
+        )
+        if (encoded !== decoded) encoded.recycle()
+        decoded.recycle()
+        result
+    }.getOrNull()
+
+    /** The image at [uri] decoded within [MAX_IMAGE_EDGE], as a software bitmap `compress` can read; null for one that does not decode. */
+    private fun decodeBounded(context: Context, uri: Uri): Bitmap? {
+        val resolver = context.contentResolver
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val (width, height) = fit(info.size.width, info.size.height, MAX_IMAGE_EDGE)
+                if (width != info.size.width || height != info.size.height) decoder.setTargetSize(width, height)
+            }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, MAX_IMAGE_EDGE)
+        }
+        return resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+    }
+
+    /**
+     * [bitmap] as PNG, halved (both edges) while the encoding is over [maxBytes] – down to a
+     * single pixel at the limit, so the loop ends – with the bitmap the bytes encode (the one
+     * handed in, or the last halving, for the caller to recycle). The loop is [shrinkToBudget]'s.
+     */
+    private fun encodePng(bitmap: Bitmap, maxBytes: Int): Pair<ByteArray, Bitmap> = shrinkToBudget(
+        bitmap,
+        maxBytes,
+        size = { it.width to it.height },
+        encode = { ByteArrayOutputStream().also { out -> it.compress(Bitmap.CompressFormat.PNG, 100, out) }.toByteArray() },
+        halve = { Bitmap.createScaledBitmap(it, max(1, it.width / 2), max(1, it.height / 2), true) },
+        recycle = { it.recycle() }
+    )
+
+    /**
+     * The shrink loop behind [encodePng], generic over the image so the unit tests can run it
+     * (a `Bitmap` has no JVM seam): [encode] the image; while the encoding is over [maxBytes]
+     * and the image is bigger than a pixel, [halve] it and encode again, [recycle]-ing every
+     * halving that is left behind and never the image handed in. The bytes, with the image they
+     * encode (the one handed in, or the last halving).
+     */
+    fun <T> shrinkToBudget(
+        image: T,
+        maxBytes: Int,
+        size: (T) -> Pair<Int, Int>,
+        encode: (T) -> ByteArray,
+        halve: (T) -> T,
+        recycle: (T) -> Unit
+    ): Pair<ByteArray, T> {
+        var current = image
+        while (true) {
+            val bytes = encode(current)
+            val (width, height) = size(current)
+            if (bytes.size <= maxBytes || (width <= 1 && height <= 1)) return bytes to current
+            val next = halve(current)
+            if (current !== image) recycle(current)
+            current = next
+        }
+    }
+
+    /**
+     * `BitmapFactory.Options.inSampleSize` for a [width] × [height] image: the smallest power of
+     * two that brings the longer edge to at most [maxEdge], the division rounded up as a decoder
+     * may round its sampled size up (a 4097 px edge at 2 could come out 2049, so 4 it is); 1 for
+     * an image within the cap. Pure, for the unit tests.
+     */
+    fun sampleSize(width: Int, height: Int, maxEdge: Int): Int {
+        val longer = max(width, height)
+        var sample = 1
+        while ((longer + sample - 1) / sample > maxEdge) sample *= 2
+        return sample
+    }
+
+    /**
+     * [width] × [height] scaled to fit [maxEdge] on the longer edge, the aspect kept and neither
+     * edge under one pixel; the size itself for an image within the cap. Pure, for the unit tests.
+     */
+    fun fit(width: Int, height: Int, maxEdge: Int): Pair<Int, Int> {
+        val longer = max(width, height)
+        if (longer <= maxEdge) return width to height
+        val scale = maxEdge.toDouble() / longer
+        return max(1, (width * scale).roundToInt()) to max(1, (height * scale).roundToInt())
+    }
+
+    /**
+     * The PNG bytes one read may hand the page beside a text of [textQuotedChars] chars, under a
+     * bridge message limit of [limitChars]: the room the limit leaves past [ENVELOPE_SLACK_CHARS]
+     * and the text, at three bytes per four base64 chars in whole groups (so the encoding's
+     * padding never passes the limit: `ceil(budget / 3) * 4 + slack + text ≤ limit`), and never
+     * over [MAX_IMAGE_BYTES]; 0 – no image, the text alone – when that is under
+     * [MIN_IMAGE_BYTES]. On a 192-MB heap (6 MiB chars) an empty text leaves 4 669 440 bytes,
+     * on 256 MB (8 MiB) 6 242 304, at the admission's floor (2 MiB) 1 523 712; the cap binds
+     * only at its ceiling (16 MiB, a 512-MB heap). Pure, for the unit tests.
+     */
+    fun imageBudget(limitChars: Long, textQuotedChars: Int): Int {
+        val room = limitChars - ENVELOPE_SLACK_CHARS - textQuotedChars
+        if (room <= 0) return 0
+        val budget = minOf(room / 4 * 3, MAX_IMAGE_BYTES.toLong()).toInt()
+        return if (budget < MIN_IMAGE_BYTES) 0 else budget
+    }
+
+    /**
+     * The chars [text] takes on the wire as a JSON string, quotes and escapes included
+     * (`JSONObject.quote`; the raw length under-counts a text with quotes, backslashes or
+     * control characters in it) – the text's term in [imageBudget].
+     */
+    fun textQuotedChars(text: String): Int = JSONObject.quote(text).length
+
+    private val NO_CLIP = Clip("", null)
 
     const val URL = "url"
     const val TEXT = "text"
