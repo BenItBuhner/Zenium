@@ -543,10 +543,11 @@ export class WebAppService {
   }
 
   /**
-   * The grace ran out with no word of the card: the window's chrome has no surface that draws
-   * banners (the desktop today, #740). Nobody saw the prompt, so the cooldown is not spent and
-   * the engagement record keeps counting; the tab leaves `banners` and the chrome hears
-   * `bannerHide`, so a surface mounting late never shows a card the core has let go of.
+   * The grace ran out with no word of the card: the window's chrome drew nothing within it –
+   * no surface that draws banners is mounted there, or the one mounted could not open the card.
+   * Nobody saw the prompt, so the cooldown is not spent and the engagement record keeps
+   * counting; the tab leaves `banners` and the chrome hears `bannerHide`, so a surface mounting
+   * late never shows a card the core has let go of.
    */
   private bannerUndrawn(tabId: string): void {
     if (!this.banners.has(tabId)) return
