@@ -4,7 +4,7 @@ import type { Browser } from '../browser'
 import type { PageHostMessage, ShortcutRequest, StoreIO } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
-import { BANNER_TIMEOUT_MS, MIN_VISIT_GAP_MS, type EngagementRecord } from '../../shared/webApp'
+import { MIN_VISIT_GAP_MS, type EngagementRecord } from '../../shared/webApp'
 import type { AppBadge } from '../../shared/appBadge'
 
 const DOCUMENT_URL = 'https://app.example/'
@@ -512,7 +512,7 @@ describe('WebAppService', () => {
     expect(engagement(quiet)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
   })
 
-  it('stamps the cooldown on the chrome’s word that the card is drawn, not on the emit; the timeout path then runs as before', () => {
+  it('stamps the cooldown on the chrome’s word that the card is drawn, not on the emit; the core runs no clock of its own – the band’s running out, reported by the chrome, records no dismissal and the day’s stamp holds', () => {
     const h = harness()
     postManifest(h)
     revisit(h)
@@ -529,9 +529,14 @@ describe('WebAppService', () => {
     h.now.value += 5000
     h.service.bannerShown(h.tab.id)
     expect(engagement(h).promptedAt).toBe(stampedAt)
-    // The banner's own clock runs out: the core takes it down, no dismissal is recorded...
-    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
-    expect(bannerHides(h)).toEqual([{ tabId: 't1' }])
+    // One offer, one clock (the Design Lead's ruling): the clock is the band's, in the chrome.
+    // The core runs none – a minute on with no word, the prompt still stands as far as it knows.
+    vi.advanceTimersByTime(60_000)
+    expect(bannerHides(h)).toEqual([])
+    // The band's clock ran out and the chrome says so: no dismissal is recorded, and the core,
+    // which took nothing down itself, emits no take-down...
+    h.service.dismissBanner(h.tab.id, 'timeout')
+    expect(bannerHides(h)).toEqual([])
     expect(engagement(h).dismissedAt).toBeNull()
     // ...and the stamp keeps the prompt away for the rest of the day.
     postManifest(h)
@@ -555,8 +560,9 @@ describe('WebAppService', () => {
     h.service.bannerShown(h.tab.id)
     h.service.dismissBanner(h.tab.id, 'swipe')
     expect(engagement(h)).toMatchObject({ promptedAt: null, dismissedAt: null })
-    // The banner's clock went down with it: no second take-down at the timeout.
-    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
+    // Nothing of the banner is left ticking in the core (it runs no clock of its own): a minute
+    // on, no second take-down.
+    vi.advanceTimersByTime(60_000)
     expect(bannerHides(h)).toHaveLength(1)
     // The engagement record kept counting: the next visit offers the prompt again.
     revisit(h)
@@ -572,7 +578,8 @@ describe('WebAppService', () => {
     vi.advanceTimersByTime(1500)
     expect(bannerEvents(h)).toHaveLength(1)
     h.service.onTabRemoved(h.tab.id)
-    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
+    // The grace's timer went with the tab: it never counts the prompt undrawn.
+    vi.advanceTimersByTime(60_000)
     expect(bannerHides(h)).toEqual([])
     h.service.bannerShown(h.tab.id)
     expect(engagement(h).promptedAt).toBeNull()

@@ -1326,6 +1326,120 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
   })
 
+  it("cuts a slot's quiet wait short when the bytes of a scope with no list compiled arrive during it, and leaves it be for a protected scope's (W8-P1c pin)", async () => {
+    vi.useFakeTimers()
+    try {
+      const gates: Array<() => void> = []
+      const compile = vi.fn(async (scopes: GhosteryCompileScope[]) => {
+        await new Promise<void>((resolve) => gates.push(resolve))
+        return GHOSTERY_COMPILE_TASK.run({
+          scopes: scopes.map((scope) => ({ ...scope, cache: null }))
+        })
+      })
+      // The worker answers; its answer reaches the matcher on the microtask queue.
+      const release = async (call: number): Promise<void> => {
+        gates[call]!()
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      // The real idle slot on a fake clock, every probe on time, with a record of what each
+      // slot was asked for and how many were cancelled.
+      const asked: Array<{ capMs: number; quietMs: number | undefined }> = []
+      let cancelled = 0
+      const real = idleSlot({ busy: () => false, now: () => Date.now() })
+      const slot: IdleSlot = (fn, capMs, quietMs) => {
+        asked.push({ capMs, quietMs })
+        const cancel = real(fn, capMs, quietMs)
+        return () => {
+          cancelled++
+          cancel()
+        }
+      }
+      const s = source()
+      const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0, compile, slot)
+      const inPrivate = (url: string): RequestContext =>
+        ctx(url, { partition: 'private', isPrivate: true })
+
+      // A list private windows alone turn on, and no unscoped list: the private partition's
+      // matcher is compiled (urgent – nothing answers for it yet) while the unscoped matcher is
+      // the one built from no sets, so every other window is unprotected.
+      s.engine.setRuleSet({ ...textSet('fp', '||fp.example^'), partitions: ['private'] })
+      matcher.rebuild()
+      await release(0)
+      expect(asked).toEqual([{ capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 }])
+      await vi.advanceTimersByTimeAsync(IDLE_PROBE_MS)
+      expect(matcher.compiledInBackground).toBe(1)
+      expect(matcher.match(inPrivate('https://fp.example/'))).toMatchObject({ action: 'block' })
+
+      // The private list refreshes: the partition is protected, so its new bytes wait for quiet.
+      s.engine.setRuleSet({
+        ...textSet('fp', '||fp.example^\n||fp2.example^'),
+        partitions: ['private'],
+        updatedAt: 2000
+      })
+      matcher.rebuild()
+      await release(1)
+      expect(asked.at(-1)).toEqual({ capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS })
+      await vi.advanceTimersByTimeAsync(20)
+      expect(matcher.compiledInBackground).toBe(1)
+
+      // The first unscoped list lands 20 ms into that wait: its scope has no list compiled, so
+      // the pending slot is cancelled and asked for again as the urgent one, and the unscoped
+      // matcher is adopted at the next probe – not up to 3 s later.
+      s.engine.setRuleSet(textSet('a', '||a.example^'))
+      matcher.rebuild()
+      await release(2)
+      expect(cancelled).toBe(1)
+      expect(asked.length).toBe(3)
+      expect(asked.at(-1)).toEqual({ capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 })
+      expect(matcher.waitingScopes).toBe(2)
+      await vi.advanceTimersByTimeAsync(IDLE_PROBE_MS)
+      expect(matcher.compiledInBackground).toBe(2)
+      expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+      // The private partition's bytes – protected – get a slot of their own, with the quiet wait.
+      expect(asked.length).toBe(4)
+      expect(asked.at(-1)).toEqual({ capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS })
+      await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS - IDLE_PROBE_MS)
+      expect(matcher.compiledInBackground).toBe(2)
+      await vi.advanceTimersByTimeAsync(IDLE_PROBE_MS * 2)
+      expect(matcher.compiledInBackground).toBe(3)
+      expect(matcher.match(inPrivate('https://fp2.example/'))).toMatchObject({ action: 'block' })
+      expect(matcher.match(inPrivate('https://a.example/'))).toMatchObject({ action: 'block' })
+      expect(matcher.ready).toBe(true)
+
+      // The negative: both scopes protected, the unscoped list refreshes and its slot waits for
+      // quiet; the private list refreshing 20 ms in replaces the private bytes waiting but asks
+      // for nothing – the slot on its way keeps its quiet wait and fires at 52 ms as before.
+      s.engine.setRuleSet({ ...textSet('a', '||a.example^\n||a2.example^'), updatedAt: 3000 })
+      matcher.rebuild()
+      await release(3)
+      expect(asked.length).toBe(5)
+      expect(asked.at(-1)).toEqual({ capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS })
+      await vi.advanceTimersByTimeAsync(20)
+      s.engine.setRuleSet({
+        ...textSet('fp', '||fp.example^\n||fp2.example^\n||fp3.example^'),
+        partitions: ['private'],
+        updatedAt: 4000
+      })
+      matcher.rebuild()
+      await release(4)
+      expect(matcher.superseded).toBe(2)
+      expect(cancelled).toBe(1)
+      expect(asked.length).toBe(5)
+      expect(matcher.compiledInBackground).toBe(3)
+      await vi.advanceTimersByTimeAsync(28)
+      expect(matcher.compiledInBackground).toBe(3)
+      await vi.advanceTimersByTimeAsync(IDLE_PROBE_MS)
+      expect(matcher.compiledInBackground).toBe(4)
+      expect(matcher.match(ctx('https://a2.example/'))).toMatchObject({ action: 'block' })
+      await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS + IDLE_PROBE_MS)
+      expect(matcher.compiledInBackground).toBe(5)
+      expect(matcher.match(inPrivate('https://fp3.example/'))).toMatchObject({ action: 'block' })
+      expect(matcher.ready).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   describe("the worker's cache write", () => {
     it('lands atomically after the answer, and a failing write is logged once and never delays the adopt (condition 1)', async () => {
       const { resetGhosteryCacheWarnings, writeGhosteryCache } = await import('../blockingCompile')

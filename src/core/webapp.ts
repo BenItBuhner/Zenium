@@ -1,7 +1,6 @@
 import type { Rect, Tab, WebAppBanner, WebAppInstallPrompt } from '../shared/types'
 import { resolveTheme, rgbToHex } from '../shared/theme'
 import {
-  BANNER_TIMEOUT_MS,
   displayIcon,
   fallbackShortcutTitle,
   installFailedMessage,
@@ -498,7 +497,6 @@ export class WebAppService {
     this.banners.delete(tabId)
     this.clear(`banner:${tabId}`)
     this.clear(`banner-shown:${tabId}`)
-    this.clear(`banner-timeout:${tabId}`)
   }
 
   // ---------------------------------------------------------------------------
@@ -518,11 +516,11 @@ export class WebAppService {
     }
     this.browser.emit('webapp.banner', banner, win)
     // The cooldown is stamped on the chrome's word that the card is drawn (`bannerShown`), not
-    // here: a card no surface drew would spend it on a prompt nobody saw (#740, seed #42).
+    // here: a card no surface drew would spend it on a prompt nobody saw (#740, seed #42). The
+    // prompt's clock is the chrome's too – the page-edge band's one offer clock (the Design
+    // Lead's ruling: one offer, one clock) – so the core runs none: it hears the clock ran out
+    // as `dismissBanner('timeout')`, which records no dismissal.
     this.schedule(`banner-shown:${tabId}`, BANNER_SHOWN_GRACE_MS, () => this.bannerUndrawn(tabId))
-    this.schedule(`banner-timeout:${tabId}`, BANNER_TIMEOUT_MS, () =>
-      this.hideBanner(tabId, 'timeout')
-    )
   }
 
   /**
@@ -552,16 +550,18 @@ export class WebAppService {
   private bannerUndrawn(tabId: string): void {
     if (!this.banners.has(tabId)) return
     this.banners.delete(tabId)
-    this.clear(`banner-timeout:${tabId}`)
     this.browser.emit('webapp.bannerHide', { tabId }, this.browser.tabs.windowFor(tabId))
   }
 
-  /** The chrome reports the banner went away (or the core takes it down itself). */
+  /**
+   * The chrome reports the banner went away – the user sent it off (`swipe`: the cooldown
+   * starts) or its clock ran out (`timeout`: nothing is recorded; the day's stamp holds) – or
+   * the core takes it down itself.
+   */
   dismissBanner(tabId: string, reason: 'swipe' | 'timeout'): void {
     const appId = this.banners.get(tabId)
     this.banners.delete(tabId)
     this.clear(`banner-shown:${tabId}`)
-    this.clear(`banner-timeout:${tabId}`)
     if (!appId) return
     const record = this.engagement[appId]
     if (record && reason === 'swipe') {
