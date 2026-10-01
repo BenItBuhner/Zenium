@@ -301,7 +301,7 @@ function domainsOf(
 
 /**
  * The filter at `index` of a serialised form whose columns were checked, or null when its
- * offsets do not fit its line (a filter with neither host nor pattern would match every URL).
+ * offsets do not fit its line or it is host-only without a host (it would match every URL).
  */
 function filterOf(
   form: SerialisedForm,
@@ -316,7 +316,8 @@ function filterOf(
   const start = exception ? 2 : 0
   if (patternEnd < start || patternEnd > line.length) return null
   const body = line.slice(start, patternEnd)
-  if (hostLength > body.length - 2) return null
+  // A host sits after the `||`; a pattern without one may be as short as `a`, `*` or nothing.
+  if (hostLength !== 0 && 2 + hostLength > body.length) return null
   const hostOnly = (flags & FLAG_HOST_ONLY) !== 0
   if (hostOnly && hostLength === 0) return null
   const host = hostLength === 0 ? null : body.slice(2, 2 + hostLength).toLowerCase()

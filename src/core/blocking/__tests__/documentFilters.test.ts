@@ -204,6 +204,16 @@ describe('the serialised form', () => {
     // The empty set has a form too.
     expect(DocumentFilters.deserialize(DocumentFilters.EMPTY.serialize()).size).toBe(0)
     expect(new TextDecoder().decode(DocumentFilters.EMPTY.serialize())).toBe('[1,[],[],[],[],[]]')
+    // A pattern shorter than a `||host` – one character, or none at all – parses to a filter,
+    // and its form reads back (a user's own list can carry `@@$document`).
+    for (const line of ['a$document', '@@$document', '*$document', '|$document', '^$document']) {
+      const one = DocumentFilters.parse([line])
+      expect(one.size).toBe(1)
+      const back = DocumentFilters.deserialize(one.serialize())
+      expect(back.lines).toEqual([line])
+      for (const url of ['https://x.example/a', 'https://a.example/', 'https://x.example/b?a'])
+        same(one, back, url)
+    }
   })
 
   it('writes the same bytes for the same lines (the pin: a change here is a format change)', () => {
