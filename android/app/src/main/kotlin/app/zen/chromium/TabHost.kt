@@ -87,12 +87,16 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /** Whether a spare view stands ready for the next [create] of its container. */
     val hasSpare: Boolean get() = views.containsKey(SPARE_ID)
 
+    /** The container the standing spare was built for; null with none. */
+    val spareContainerId: String? get() = views[SPARE_ID]?.containerId
+
     /**
      * Whether [warm] builds anything. Off, every wake builds its view inside the morph as it
      * did before the spare – the tab-wake perf demo's before-reading on the same run; the
      * product never turns it off.
      */
     var warmingEnabled = true
+        internal set
 
     /**
      * Build the page view for the next tab the core wakes, ahead of the wake. Constructing a
@@ -101,13 +105,16 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      * frames of the overview's morph into the tapped card, the moment the user is watching. The
      * host calls this on an idle moment once the pages are covered (the overview, a sheet), never
      * on the boot path, for the container of the page that was covered; [create] takes the view
-     * for the first tab of that container and builds as before for any other. One at a time.
+     * for the first tab of that container and builds as before for any other. One at a time: a
+     * spare of another container ([spareContainerId]) is the host's to drop first, on the same
+     * idle moment, so the latest hide's container is the one a spare stands for.
      *
      * The spare lives in [views] under [SPARE_ID], hidden and unplaced like any view the core has
      * yet to lay out, so every push the host makes to its pages – fonts, privacy, page rules, an
      * extension installed meanwhile – reaches it the way it reaches a tab's hidden view; nothing
      * reports it to the core, which never asked for the id. It is dropped under memory pressure
-     * ([dropSpare]) and goes with every other view at a teardown.
+     * ([dropSpare]), with its container's profile when that is cleared (a private session's end),
+     * and goes with every other view at a teardown.
      */
     fun warm(containerId: String): Boolean {
         if (!warmingEnabled || hasSpare) return false

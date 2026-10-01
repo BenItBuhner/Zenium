@@ -1445,8 +1445,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> {
-                security.forgetCertificates(args.str("containerId"))
-                Profiles.clear(activity, args.str("containerId")) { reply(null) }
+                val containerId = args.str("containerId")
+                security.forgetCertificates(containerId)
+                // A spare page view built for the container still uses its profile, and the
+                // profile cannot be deleted under a live WebView: the spare goes first.
+                if (tabs.spareContainerId == containerId && tabs.dropSpare()) Log.d(TAG, "spare page view dropped with the profile of $containerId")
+                Profiles.clear(activity, containerId) { reply(null) }
             }
             // Clear browsing data: the engine's kinds (cookies, storage, cache) per container, and the
             // preview's counts. A live tab of a container clears its cache; otherwise a throwaway view.
@@ -2667,37 +2671,54 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     /**
      * Have [TabHost.warm] build the page view for the next wake, once the screen is still: a page
-     * was just hidden under the chrome (the overview opening, a sheet), so the user may tap a
-     * sleeping tab's card next, and the view's construction (some fifteen milliseconds of UI
-     * thread) is better spent now than inside the morph's first frames. Not before the core is
-     * up with the window showing (never on the boot path), not while a spare stands, and never
-     * inside an animation: the build waits until the window has drawn nothing for
-     * [SPARE_QUIET_MS] – the overview's spring at rest, the finger lifted – and then for the
-     * looper's next idle moment. One container at a time: the latest hide's.
+     * was just hidden under the chrome (any hide the core asks for – the overview opening, a
+     * sheet, a swipe between tabs), so the user may tap a sleeping tab's card next, and the view's
+     * construction (some fifteen milliseconds of UI thread) is better spent now than inside the
+     * morph's first frames. Not before the core is up with the window showing (never on the boot
+     * path); not while a spare for this container stands – one of another container's counts as
+     * none and is dropped as this one is built, so a session that has moved on (a private page's
+     * spare after the private tabs closed, another space's) never pins the old one and turns the
+     * next wakes cold; and never inside an animation: the build waits until the window has drawn
+     * nothing for [SPARE_QUIET_MS] – the overview's spring at rest – and then for the looper's
+     * next idle moment, where the quiet is read once more before the build, the pre-draw
+     * listener kept until then, because an idle moment falls between the frames of a running
+     * animation too. One container at a time: the latest hide's.
      */
     private fun warmSpareLater(containerId: String) {
-        if (!coreUp || !windowUp() || tabs.hasSpare) return
+        if (!coreUp || !windowUp() || tabs.spareContainerId == containerId) return
         spareWarmFor = containerId
         if (spareWatch != null) return
         lastTraversal = SystemClock.uptimeMillis()
         root.viewTreeObserver.takeIf { it.isAlive }?.addOnPreDrawListener(traversalListener)
         val check = object : Runnable {
             override fun run() {
+                val watch = this
                 val forContainer = spareWarmFor
-                if (forContainer == null || !coreUp || !windowUp() || tabs.hasSpare) {
+                if (forContainer == null || !coreUp || !windowUp() || tabs.spareContainerId == forContainer) {
                     endSpareWatch()
                     return
                 }
                 if (SystemClock.uptimeMillis() - lastTraversal < SPARE_QUIET_MS) {
-                    main.postDelayed(this, SPARE_QUIET_MS)
+                    main.postDelayed(watch, SPARE_QUIET_MS)
                     return
                 }
-                endSpareWatch()
                 Looper.myQueue().addIdleHandler {
-                    if (coreUp && windowUp() && !tabs.hasSpare) {
-                        val started = SystemClock.uptimeMillis()
-                        if (tabs.warm(forContainer)) Log.d(TAG, "spare page view built for $forContainer in ${SystemClock.uptimeMillis() - started} ms")
+                    // The watch ended meanwhile (a teardown): nothing to build.
+                    if (spareWatch !== watch) return@addIdleHandler false
+                    val target = spareWarmFor
+                    if (target == null || !coreUp || !windowUp() || tabs.spareContainerId == target) {
+                        endSpareWatch()
+                        return@addIdleHandler false
                     }
+                    // An animation began between the check and this idle: back to waiting.
+                    if (SystemClock.uptimeMillis() - lastTraversal < SPARE_QUIET_MS) {
+                        main.postDelayed(watch, SPARE_QUIET_MS)
+                        return@addIdleHandler false
+                    }
+                    endSpareWatch()
+                    if (tabs.dropSpare()) Log.d(TAG, "spare page view of another container dropped for $target")
+                    val started = SystemClock.uptimeMillis()
+                    if (tabs.warm(target)) Log.d(TAG, "spare page view built for $target in ${SystemClock.uptimeMillis() - started} ms")
                     false
                 }
             }
@@ -3025,6 +3046,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // new core is booting from (#344 finding 5). `teardown` tells it first, and last: its
         // views die with the host, and it writes nothing more.
         chrome.hostEvent("teardown", null)
+        // A spare's pending quiet check or idle build would keep this host reachable: ended with its views.
+        endSpareWatch()
         tabs.dropAll()
         orientationSensor.follow(false)
         // Not the request engine: it is the process's, and a custom tab may still be using it.
