@@ -8480,6 +8480,117 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("kbbdabhdfibnancpjfhlkhafgdilcnji", "Screenity - Screen Recorder & Annotation Tool", "screenity", core = actionMarker("Screenity", "page-a.html?screenity", SCREENITY_UI, settleMs = 30_000)),
         Row("dfbnddndcmilnhdfmmaolepiaefacnpo", "DeepSider™:AI Sidebar | DeepSeek, Gemini, Claude, GPT", "deepsider", core = accountGate("DeepSider", Regex("deepsider", RegexOption.IGNORE_CASE), page = "sidePanel.html", gate = "a DeepSider account (its click opens its side panel, `sidePanel.html`; its chats run through its service signed in)")),
         Row("hjbfbllnfhppnhjdhhbmjabikmkfekgf", "Shopify Spy & Dropshipping - Koala Inspector", "koala-inspector", core = accountGate("Koala Inspector", Regex("koala-apps\\.io|koala-inspector", RegexOption.IGNORE_CASE), injects = "#koala-inspector, [id*='koala-inspector'], [class*='koala-inspector'], [class*='kins-']", gate = "a Koala account and a Shopify store page (its click's `\$R` mounts its inspector over the tab or opens its popup window; `identity.email` signs it in at auth.koala-apps.io)")),
+        // --- compat round 27 (ranks 691-720 by installs; `.github/scripts/ext-compat/next30-round24.json`) ---
+        // Each core rule read off the unpacked bundle: iGuge's popup (`main.html`,
+        // `check_user_login`) sends itself to `welcome.html` – its sign-in – without a user token,
+        // and its `open_vpn` sets a `pac_script` proxy; Add to MyRegistry.com Button has no
+        // default popup: its worker's `MRXMain.ActivatePopup()` sets `data/panels/contentPanel.html`
+        // with `action.setPopup`, a frame of myregistry.com's `PanelMain.aspx` behind its account;
+        // META SEO inspector's popup asks the tab's content script for `pageInfo` (`mode: "full"`)
+        // and writes the page's title, description and headings into `#out` (`#outextra` beside
+        // it); WA Sender's one content script runs on web.whatsapp.com (its bulk sender acts on a
+        // linked session's chat list); AiPrice(AliPrice)'s popup is a Vue app under an
+        // `ap-root-…` element (favorites, express tracking, search by image) whose data comes
+        // from api.aiprice.com; Table Capture's popup lists every `<table>` of the tab as an `li`
+        // carrying `.row-actions` (copy, Sheets, CSV; `li.table-not-found` when there is none);
+        // Allow Copy's content script, once its popup's `_switch_ve…` control enables the site
+        // (`storage.local`, live through `storage.local.onChanged`), inserts a `<style>` with
+        // `user-select: text !important` and capture listeners that stop the page's `copy`,
+        // `contextmenu` and `selectstart` handlers; Magic Eden Wallet's `content.js`
+        // (`document_start`) injects its Solana, Ethereum and Bitcoin providers into the page
+        // world – `window.magicEden.{solana, ethereum, bitcoin}`, `window.solana.isMagicEden` when
+        // the slot is free, a wallet-standard `register-wallet` event; Email Finder by Skrapp.io's
+        // click runs `scripting.executeScript({files: ["modalContentScript.bundle.js"]})` into a
+        // linkedin.com tab alone (`B(url)`: `url.indexOf("linkedin.com") > -1`), its modal signing
+        // in at skrapp.io; ScreenPal has no popup: its click sends `{launcherMenu: "toggle"}` to
+        // the tab's content script, which mounts `#som-popup-menu` (a 345x393 frame of its
+        // `popup_menu.html`) over the page – the recording behind it is `getDisplayMedia`'s and
+        // `tabCapture`'s, the WebView's limit as [captureLimit] reads it; DocsAfterDark has no
+        // background: its content script (docs.google.com/document) classes the document's
+        // `<html>` `DocsAfterDark_…` and links its theme sheet by that id; Simple Translate's
+        // content script shows `.simple-translate-button` on a selection and, tapped, opens
+        // `.simple-translate-panel` with the `.simple-translate-result`; RoSeal's `main.js` (the
+        // isolated world) and `inject.js` (MAIN) run at `document_start` on every roblox.com page,
+        // each appending a `#roseal-script-loaded` marker and drawing its `roseal-` buttons and
+        // icons on a game page (its click opens `www.roblox.com/my/account?roseal`); Mirror Mode for
+        // Google Meet's content script runs on meet.google.com, where its `mirrorVideos` interval
+        // turns every `<video>` by `rotateY(180deg)` and its `#reactions-plugin` sidebar mounts in
+        // a call; Ad Block Genius builds its dynamic rules from its own `json/adDomains.json` (245
+        // hosts – ads.pubmatic.com, js.adsrvr.org, x.bidswitch.net among them, none of the tracker
+        // fixture's eight) with `updateDynamicRules`; Bardeen has no popup: its click opens its
+        // side panel (`sidePanel.open`, `debugger.html`) or mounts `#bardeen-root` over the tab,
+        // each behind a sign-in at bardeen.ai; Save Page WE has no popup: its click runs
+        // `content.js` into the tab, which builds the page's single-file HTML and (its default
+        // save method) clicks an `<a download>` on a `blob:` of it – the tab's own download, the
+        // phone's `DownloadListener` → `Downloads.start`, a row in `app.getState().downloads`;
+        // Adaware AdBlock is a uBlock Origin Lite build (43 `declarative_net_request` rulesets,
+        // `default` enabled with the fixture's hosts in it, the rest shipped disabled); EverBee's
+        // content script runs on etsy.com's listing and search pages and mounts its
+        // `#everbee-analytics-btn` beside a listing's carousel once signed in (`h && …` in
+        // `production.js`; auth.everbee.io), its popup a settings page; PDF Viewer (1.0.13)'s
+        // worker registers `webRequest.onHeadersReceived` with `["blocking", "responseHeaders"]`,
+        // which Chrome refuses an MV3 extension without `webRequestBlocking` (the shim throws the
+        // same `You do not have permission to use blocking webRequest listeners`), so a web PDF is
+        // not taken over in Chrome either – its click opens its own pdf.js viewer
+        // (`/bg/helper/web/viewer.html?file=/bg/main/privet.pdf`) as a tab; Auto Tab Discard's
+        // popup (`/data/popup/index.html`) carries `[data-cmd=discard-window]` ("Discard Other Tabs
+        // in This Window"), whose worker runs `discard(tab)` – a title and favicon script, then
+        // `chrome.tabs.discard(tab.id)` – on each other tab; ClickUp's `popup.js` reads the
+        // `cu_chrome_extension_token` cookie on app.clickup.com and, without it, sends the popup
+        // to its Angular `index.html`, whose `LoginComponent` is the sign-in; Twitch Adblock's
+        // content script (every page, `document_start`) appends `<script id="ads-twitch-tw"
+        // src=getURL("js/tw.js")>` on twitch.tv, whose page script sets
+        // `window.twitchAdSolutionsVersion` and wraps `fetch` (its `default_rules.json` allows the
+        // player's ad hosts); LinkedIn Extension has no popup: its worker polls linkedin.com's
+        // badge counts with the session's `JSESSIONID` and, signed out, sets the badge `?` with the
+        // title "Please click here to login into LinkedIn." – its click opens linkedin.com;
+        // Linguist's popup has "Translate page" run its content script over the page's text nodes
+        // (each node's text replaced, `originalText` kept; Google's engine by default); Picture in
+        // Picture - PiP Floating Video's click runs its `script.js` into the tab's MAIN world, which
+        // calls `requestPictureInPicture()` on the playing video; GIPHY for Chrome has no
+        // background: its popup (`index.html`, `#react-target`) lists trending GIFs from
+        // api.giphy.com as `[data-giphy-id]` cells; Image Downloader - Fatkun's popup has "Download
+        // Current Tab" ask its worker, which opens `output.html` as a tab listing the images its
+        // content script collected from the source tab; TTV LOL PRO's worker sets a `pac_script`
+        // proxy (`FindProxyForURL` by Twitch's passport, usher, video-weaver and GraphQL host
+        // patterns) from `onInstalled` / `onStartup`, its content and page scripts on twitch.tv
+        // marking `documentElement.dataset.tlpParams` and wrapping `fetch` – the PAC the WebView's
+        // limit as Yandex Access's is; Discrub's content script (every discord.com page,
+        // `document_end`) mounts `#discrub-floating-button`, whose click (and the action's)
+        // opens its `#discrub-overlay` dialog with the launcher frame, the account's token read
+        // from the page's localStorage.
+        Row("ncldcbhpeplkfijdhnoepdgdnmjkckij", "iGuge", "iguge", account = true, core = popupLogin("iGuge")),
+        Row("cnofkjmkojconhdimlkamdckmidfmoio", "Add to MyRegistry.com Button", "add-to-myregistry", account = true, core = popupLogin("Add to MyRegistry.com Button")),
+        Row("ibkclpciafdglkjkcibmohobjkcfkaef", "META SEO inspector", "meta-seo-inspector", core = popupMarker("META SEO inspector", META_SEO_POPUP, page = "article.html?metaseo", settleMs = 25_000)),
+        Row("cgipcgghboamefelooajpiabilddemlh", "WA Sender - Bulk Messages & Automation", "wa-sender", core = attachedGate("WA Sender", "https://web.whatsapp.com/", "a linked WhatsApp Web session (its bulk sender acts on the chat list; signed out the page is the QR code)")),
+        Row("iebpjdmgckacbodjpijphcplhebcmeop", "Table Capture", "table-capture", core = popupMarker("Table Capture", TABLE_CAPTURE_POPUP, page = "table.html?tablecapture", settleMs = 25_000)),
+        Row("mmpljcghnbpkokhbkmfdmoagllopfmlm", "Allow Copy - Select & Enable Right Click", "allow-copy", core = popupSwitch("Allow Copy", "right-click.html?allowcopy", "[class*=\"_switch_ve\"]", ALLOW_COPY_ENABLED, settleMs = 30_000)),
+        Row("mkpegjkblkkefacfnmkajcjmabijhclg", "Magic Eden Wallet", "magic-eden-wallet", core = domMarker("Magic Eden Wallet's providers injected into the page world", "wallet.html?magiceden", MAGIC_EDEN_PROVIDER, settleMs = 30_000)),
+        Row("geplbbbmdpmdodfmohpikfacgkfpkhec", "Email Finder by Skrapp.io", "skrapp", core = accountGate("Email Finder by Skrapp.io", Regex("skrapp\\.io|linkedin\\.com", RegexOption.IGNORE_CASE), injects = "[id*='skrapp'], [class*='skrapp']", site = "https://www.linkedin.com/in/williamhgates/", gate = "a Skrapp account and a LinkedIn profile page (its click injects `modalContentScript.bundle.js` into a linkedin.com tab alone – `B(url)` –, whose modal signs in at skrapp.io; signed out, linkedin.com serves its sign-in)")),
+        Row("pihphjfnfjmdbhakhjifipfdgbpenobg", "DocsAfterDark", "docsafterdark", core = siteGate("DocsAfterDark", "https://docs.google.com/document/u/0/", "html[class*='DocsAfterDark_'], link[id^='DocsAfterDark_'], link[href*='pihphjfnfjmdbhakhjifipfdgbpenobg']", Regex("^https://docs\\.google\\.com/document/"), "a Google sign-in (its script runs on a document; docs.google.com sends a fresh browser to its sign-in)")),
+        Row("ibplnjkanclpjokhdolnendpplpjiace", "Simple Translate", "simple-translate", core = selectionTranslator("Simple Translate", "editor.html?simpletranslate", ".simple-translate-button", ".simple-translate-panel, .simple-translate-result")),
+        Row("hfjngafpndganmdggnapblamgbfjhnof", "RoSeal - Augmented Roblox Experience", "roseal", core = liveMarker("RoSeal", "https://www.roblox.com/games/920587237", injectedAny("roseal"))),
+        Row("akmglodbcihkcgojpdmbocmlpkfjhfof", "Mirror Mode for Google Meet™", "mirror-mode-for-google-meet", core = attachedGate("Mirror Mode for Google Meet", "https://meet.google.com/", "a Google account in a Meet call (its `mirrorVideos` interval turns the call's `<video>` elements by `rotateY(180deg)`; its `#reactions-plugin` sidebar mounts there)")),
+        Row("dkagmnnkfinalebballociekdnlaniem", "Ad Block Genius - stop invasive ads", "ad-block-genius", core = listBlocker("Ad Block Genius", listOf("ads.pubmatic.com", "js.adsrvr.org", "x.bidswitch.net"))),
+        Row("ihhkmalpkhkoedlmcnilbbhhbhnicjga", "Bardeen: Automate Browser Apps with AI", "bardeen", core = accountGate("Bardeen", Regex("bardeen\\.ai|accounts\\.google", RegexOption.IGNORE_CASE), injects = "#bardeen-root, [id*='bardeen'], [class*='bardeen']", gate = "a Bardeen account (its click opens its side panel – `sidePanel.open` with `debugger.html` – or mounts `#bardeen-root` over the tab, each behind a sign-in at bardeen.ai)")),
+        Row("dhhpefjklgkmgeafimnjhojgjamoafof", "Save Page WE", "save-page-we", core = pageDownload("Save Page WE", "article.html?savepagewe", Regex("tramway|probe article|\\.html?$", RegexOption.IGNORE_CASE))),
+        Row("jdlkkmamiaikhfampledjnhhkbeifokk", "PDF Viewer", "pdf-viewer-2", core = actionPage("PDF Viewer (1.0.13)", Regex("bg/helper/web/viewer\\.html"), PDFJS_VIEWER_PAGE, listOf("page-a.html?pdfviewer"))),
+        Row("jhnleheckmknfcgijgkadoemagpecfol", "Auto Tab Discard (suspend)", "auto-tab-discard", core = discardsOthers("Auto Tab Discard", "[data-cmd=discard-window]")),
+        Row("pliibjocnfmkagafnbkfcimonlnlpghj", "ClickUp: Tasks, Screenshots, Email, Time", "clickup", account = true, core = popupLogin("ClickUp")),
+        Row("hmaahgcbijnfogbgmnnjmlbfjoncneff", "Twitch Adblock", "twitch-adblock", core = liveMarker("Twitch Adblock", "https://www.twitch.tv/directory", TWITCH_ADBLOCK_INJECTED, settleMs = 45_000)),
+        Row("meajfmicibjppdgbjfkpdikfjcflabpk", "LinkedIn Extension", "linkedin-extension", core = badgeThenOpens("LinkedIn Extension", Regex("^\\?$"), Regex("log ?in", RegexOption.IGNORE_CASE), Regex("linkedin\\.com", RegexOption.IGNORE_CASE), "a LinkedIn session (its badge counts the signed-in account's messages, notifications and invitations)")),
+        Row("gbefmodhlophhakmoecijeppjblibmie", "Linguist - web page translator", "linguist", core = pageTranslator("Linguist", "translate.html?linguist", "/^translate page$|translate page|translate this page/i", LINGUIST_TRANSLATED, settleMs = 30_000, tabWords = "/^page translation$/i")),
+        Row("nalkmonnmldhpfcpdlbdpljlaajlaphh", "Picture in Picture - PiP Floating Video", "picture-in-picture-pip-floating-video", core = ::pictureInPicture),
+        Row("jlleokkdhkflpmghiioglgmnminbekdi", "GIPHY for Chrome", "giphy-for-chrome", core = popupMarker("GIPHY for Chrome", GIPHY_POPUP, settleMs = 25_000, gate = "its service (api.giphy.com)", apiHost = "api.giphy.com")),
+        Row("mojcdcedhidldcgaokbelcmffoaengkj", "Image Downloader - Fatkun AI Batch Save", "image-downloader-fatkun", core = imageList("Image Downloader - Fatkun", tap = "/download current tab/i", base = PUBLIC_NAME_BASE)),
+        Row("bpaoeijjlplfjbagceilcgbkcdjbomjd", "TTV LOL PRO", "ttv-lol-pro", core = vpn("TTV LOL PRO", pac = true, hasPopup = false)),
+        // The five largest bundles last (ScreenPal 21.4 MB, EverBee 12.0, Discrub 8.8, AiPrice 8.3,
+        // Adaware AdBlock 8.3), as rounds 19 to 26 ordered their own.
+        Row("eefedolmcildfckjamddopaplfiiankl", "ScreenPal - Screen Recorder & Video Editor", "screenpal", core = actionMarker("ScreenPal", "page-a.html?screenpal", SCREENPAL_MENU, settleMs = 30_000)),
+        Row("oeicpkgdngoghobnbjngekclpcmpgpij", "EverBee - Find Best Selling Products on Etsy", "everbee", core = attachedGate("EverBee", "https://www.etsy.com/", "an EverBee account (its `#everbee-analytics-btn` mounts beside a listing's carousel once signed in at auth.everbee.io – `h && …` in production.js)")),
+        Row("plhdclenpaecffbcefjmpkkbdpkmhhbj", "Discrub - Discord Message Manager", "discrub", core = attachedGate("Discrub", "https://discord.com/login", "a Discord session (its launcher reads the account's token from the page's localStorage; signed out its `#discrub-floating-button` still mounts on the login page)")),
+        Row("lenipkahddombkldhfmcnnjakmcepdlk", "AiPrice(AliPrice)跨境卖家辅助工具", "aiprice", core = popupMarker("AiPrice(AliPrice)", AIPRICE_POPUP, page = "page-a.html?aiprice", settleMs = 25_000, gate = "its service (aiprice.com)", apiHost = "api.aiprice.com")),
+        Row("cmllgdnjnkbapbchnebiedipojhmnjej", "Adaware AdBlock", "adaware-adblock", core = ::adBlocker),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -8514,6 +8625,252 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 27 (ranks 691-720 by installs) --------------------------
+
+    /**
+     * A blocker with a list of its own (Ad Block Genius: 245 hosts from its `json/adDomains.json`
+     * put up as dynamic rules at install, none of them the tracker fixture's eight): its worker
+     * is woken and its dynamic rules counted (`declarativeNetRequest.getDynamicRules`, waited
+     * for while the worker builds them), then the fixture requests a script off each of `hosts`
+     * (a path no server has, so the page's `onerror` says nothing by itself – the verdict is the
+     * layer's own decision log, as [adBlocker] reads it). Every host blocked or redirected is
+     * `P`; some, `PARTIAL`; none, `F` with the rule count beside it (rules present and no
+     * decision is the engine's; no rule at all the install's).
+     */
+    private fun listBlocker(label: String, hosts: List<String>): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val bg = awakeBackground(row.id, factor)
+        var rules = JSONObject().put("error", "no background view")
+        if (bg != null) {
+            rules = poll(scaled(20_000, factor), 2_000) { probe(bg, DNR_DYNAMIC_RULES, "__zenDnr", scaled(8_000, factor)).takeIf { it.optInt("n") > 0 } }
+                ?: probe(bg, DNR_DYNAMIC_RULES, "__zenDnr", scaled(8_000, factor))
+        }
+        extra.put("dynamicRules", rules)
+        val (_, view) = fixture("page-a.html?listblocker", factor, 1_500)
+        extra.put("asked", tabEval(view, LIST_PROBES.replace("__HOSTS__", JSONArray(hosts).toString())))
+        poll(scaled(20_000, factor), 500) { if (tabEval(view, "String(Object.keys(window.__list || {}).length >= ${hosts.size})") == "true") true else null }
+        SystemClock.sleep(scaled(1_500, factor))
+        val page = json(tabEval(view, "JSON.stringify(window.__list || {})"))
+        val all = decisions()
+        val verdicts = JSONObject()
+        val stopped = ArrayList<String>()
+        for (h in hosts) {
+            val decision = all.lastOrNull { it.substringAfterLast(' ').contains("://$h/") }?.substringBefore(' ') ?: "unseen"
+            verdicts.put(h, "$decision/${page.optString(h, "pending")}")
+            if (decision == "block" || decision == "redirect") stopped += h
+        }
+        var ruleSets: JSONArray? = null
+        instrumentation.runOnMainSync { ruleSets = host.extensions.ruleSetStats() }
+        extra.put("page", page).put("verdicts", verdicts).put("decisions", JSONArray(all.takeLast(30))).put("ruleSets", ruleSets ?: JSONArray())
+            .put("badge", extensionAction(row.id)?.optString("badgeText") ?: "")
+        bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        val ruleNote = "dynamic rules ${rules.optInt("n")}" + (rules.optString("error").takeIf { it.isNotEmpty() && it != "null" }?.let { " ($it)" } ?: "")
+        val note = "${stopped.size} of ${hosts.size} of its own hosts stopped (${stopped.joinToString()}); $ruleNote; per host decision/page: $verdicts"
+        when {
+            stopped.size == hosts.size -> Grade("P", "$label: $note", extra)
+            stopped.isNotEmpty() -> Grade("PARTIAL", "$label: $note", extra)
+            rules.optInt("n") > 0 -> Grade("F", "$label: its rules landed but none decided a request: $note", extra)
+            else -> Grade("F", "$label: no dynamic rule and nothing stopped: $note", extra)
+        }
+    }
+
+    /**
+     * A page saver whose default save is the tab's own download (Save Page WE: its click runs
+     * `content.js` into the tab, which builds the page's single-file HTML and clicks an
+     * `<a download>` on a `blob:` of it – the phone's `DownloadListener`, `Downloads.start`, a
+     * row in the core's `downloads`): the fixture settles, the action is clicked, and the core's
+     * download list is polled for a new row whose name matches `name` or whose URL is a `blob:`
+     * – `completed` is `P`, a row that never completes `PARTIAL` with its state, no row `F` with
+     * the fixture's and the worker's console (a tab the click opened instead is named).
+     */
+    private fun pageDownload(label: String, page: String, name: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture(page, factor, 2_500)
+        val before = downloadRows().map { it.optString("id") }.toSet()
+        val tabsBefore = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        var item = poll(scaled(40_000, factor), 700) {
+            downloadRows().firstOrNull { it.optString("id") !in before && (name.containsMatchIn(it.optString("filename")) || name.containsMatchIn(it.optString("finalName")) || it.optString("url").startsWith("blob:")) }
+        }
+        if (item != null) {
+            val id = item.optString("id")
+            item = poll(scaled(15_000, factor), 500) { downloadRows().firstOrNull { it.optString("id") == id }?.takeIf { it.optString("state") == "completed" } }
+                ?: downloadRows().firstOrNull { it.optString("id") == id } ?: item
+        }
+        val opened = tabUrls().entries.firstOrNull { it.key !in tabsBefore && it.key != tab }
+        extra.put("download", item ?: JSONObject.NULL).put("downloads", downloadRows().size).put("openedInstead", opened?.value?.take(120) ?: JSONObject.NULL)
+            .put("fixtureConsole", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-saved-download")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val summary = item?.let { "\"${it.optString("finalName").ifEmpty { it.optString("filename") }}\" ${it.optString("state")} ${it.optLong("receivedBytes")}/${it.optLong("totalBytes")} B, ${it.optString("mimeType")}, url ${it.optString("url").take(40)}" }
+        when {
+            item != null && item.optString("state") == "completed" -> Grade("P", "$label: the page's single-file copy downloaded as the tab's own ($summary)", extra)
+            item != null -> Grade("PARTIAL", "$label: the download row came but did not complete within ${scaled(15_000, factor) / 1000} s ($summary)", extra)
+            opened != null -> Grade("F", "$label: the click opened ${opened.value.take(80)} and no download row came within ${scaled(40_000, factor) / 1000} s", extra)
+            else -> Grade("F", "$label: no download row within ${scaled(40_000, factor) / 1000} s of the click (${downloadRows().size} rows in all)", extra)
+        }
+    }
+
+    /** The core's download rows (`app.getState().downloads`, the `DownloadItem` shape). */
+    private fun downloadRows(): List<JSONObject> {
+        val list = coreSnapshot().optJSONArray("downloads") ?: JSONArray()
+        return (0 until list.length()).map { list.getJSONObject(it) }
+    }
+
+    /** The core's record of one tab (`app.getState().tabs[id]`), or null once it is gone. */
+    private fun tabState(tabId: String): JSONObject? = coreSnapshot().optJSONObject("tabs")?.optJSONObject(tabId)
+
+    /**
+     * A tab discarder (Auto Tab Discard's "Discard Other Tabs in This Window",
+     * `[data-cmd=discard-window]` in its popup: its worker runs `discard(tab)` on every other
+     * tab – a title and favicon script, then `chrome.tabs.discard(tab.id)`, the phone's
+     * `tabs.discard` dropping the tab's view and marking the core's tab `discarded`): two
+     * fixtures (A, then B on screen), the popup, the control tapped at its centre
+     * ([tapSettled]; a script click when the tap left nothing), and the core's tab A polled for
+     * `discarded` while B stays. A discarded with B kept is `P`; B discarded too `PARTIAL`; A
+     * kept `F` with the worker's console and the control's record.
+     */
+    private fun discardsOthers(label: String, control: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tabA, _) = fixture("page-a.html?discard-a", factor, 1_500)
+        val (tabB, _) = fixture("page-b.html?discard-b", factor, 1_500)
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        var how = "none"
+        if (popup != null) {
+            found = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", control))).takeIf { it.has("x") } } ?: JSONObject()
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (found.has("x") && screenPoint(popup, found) != null && onScreen("$label: the discard control")) {
+                tapSettled(popup, found, factor)?.let { extra.put("tap", it) }
+                how = "tap"
+            }
+        }
+        extra.put("control", found).put("selector", control)
+        val discardedA = { tabState(tabA)?.optBoolean("discarded") == true }
+        var discarded = if (how == "tap") poll(scaled(20_000, factor), 500) { if (discardedA()) true else null } ?: false else false
+        if (!discarded && found.has("x") && popupView()?.takeIf { it.context == "popup" } != null) {
+            extra.put("scriptClick", tabEval(popup!!, "(function(){var e=document.querySelector(${JSONObject.quote(control)});if(!e)return 'gone';e.click();return 'clicked'})()"))
+            how = "script"
+            discarded = poll(scaled(15_000, factor), 500) { if (discardedA()) true else null } ?: false
+        }
+        SystemClock.sleep(scaled(1_000, factor))
+        val a = tabState(tabA)
+        val b = tabState(tabB)
+        extra.put("how", how).put("tabA", a ?: JSONObject.NULL).put("tabB", b ?: JSONObject.NULL)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-discarded")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val bKept = b?.optBoolean("discarded") != true
+        val states = "A discarded=${a?.optBoolean("discarded")}, B discarded=${b?.optBoolean("discarded")}"
+        when {
+            discarded && bKept -> Grade("P", "$label: the other tab was discarded on the control ($how) and the one on screen kept ($states)", extra)
+            discarded -> Grade("PARTIAL", "$label: the other tab was discarded ($how) but so was the one on screen ($states)", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            !found.has("x") -> Grade("F", "$label: no $control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
+            else -> Grade("F", "$label: the control was pressed ($how) and the other tab was not discarded within the wait ($states)", extra)
+        }
+    }
+
+    /**
+     * An action with no popup whose worker sets the badge and, clicked, opens a site (LinkedIn
+     * Extension: signed out its badge is `?` with the title "Please click here to login into
+     * LinkedIn.", its click a `tabs.create` on linkedin.com; the counts behind the badge are a
+     * session's): the action is polled for `badge` or `title`, then clicked and a new tab on
+     * `opens` waited for. Both are `P`; one of them `PARTIAL`; neither `F` with the action's
+     * state and the worker's console. The counts themselves need `gate` (the note names it).
+     */
+    private fun badgeThenOpens(label: String, badge: Regex, title: Regex, opens: Regex, gate: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val action = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.takeIf { badge.containsMatchIn(it.optString("badgeText")) || title.containsMatchIn(it.optString("title")) } }
+            ?: extensionAction(row.id)
+        val marked = action != null && (badge.containsMatchIn(action.optString("badgeText")) || title.containsMatchIn(action.optString("title")))
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(20_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) } }
+        extra.put("action", action ?: JSONObject.NULL).put("opened", opened?.value?.take(120) ?: JSONObject.NULL).put("tabs", JSONArray(tabUrls().values.map { it.take(80) }))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-badge-open")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val state = "badge \"${action?.optString("badgeText")}\", title \"${action?.optString("title")?.take(60)}\""
+        when {
+            marked && opened != null -> Grade("P", "$label: the signed-out badge set ($state) and the click opened ${opened.value.take(60)} – the counts behind it need $gate", extra)
+            marked -> Grade("PARTIAL", "$label: the badge set ($state) but the click opened no tab on ${opens.pattern} within ${scaled(20_000, factor) / 1000} s", extra)
+            opened != null -> Grade("PARTIAL", "$label: the click opened ${opened.value.take(60)} but the badge never set within ${scaled(15_000, factor) / 1000} s ($state)", extra)
+            else -> Grade("F", "$label: no badge or title within ${scaled(15_000, factor) / 1000} s ($state) and the click opened nothing on ${opens.pattern}", extra)
+        }
+    }
+
+    /**
+     * A whole-page translator run from its popup (Linguist's "Translate page" under its "Page
+     * translation" tab: its content script walks the page's text nodes and replaces each one's
+     * text, the original kept on the node; Google's engine by default) – [immersiveTranslate]'s
+     * body with the popup's tab words, its control's words, the page's expression and the wait
+     * as parameters: the Spanish fixture settles, the popup opens, the tab (when named) and then
+     * the control found by their words are tapped (a script click when the tap left nothing),
+     * and `expr` (`{pass, changed, …}`) polled on the fixture – English in the phrase is `P`,
+     * the phrase changed but not read as English `PARTIAL`, nothing `F`.
+     */
+    private fun pageTranslator(label: String, page: String, clickWords: String, expr: String, settleMs: Long = 25_000, tabWords: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 3_000)
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (tabWords != null) {
+                val tabHit = json(tabEval(popup, clickTarget(tabWords)))
+                extra.put("tab", tabHit)
+                if (tabHit.optBoolean("clicked")) {
+                    screenPoint(popup, tabHit)?.let { tap(it.first, it.second) }
+                    SystemClock.sleep(scaled(1_500, factor))
+                }
+            }
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clickTarget(clickWords))).takeIf { it.optBoolean("clicked") } }
+                ?: json(tabEval(popup, clickTarget("/translate/i")))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        var found = pollExpr(view, expr, scaled(settleMs, factor))
+        if (!found.optBoolean("pass") && !found.optBoolean("changed") && click.optBoolean("clicked") && popup != null && popupView() != null) {
+            extra.put("clickedByScript", tabEval(popup, CLICK_TARGET_SYNTH))
+            found = pollExpr(view, expr, scaled(settleMs, factor))
+        }
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-translated")
+        runCatching { coreCall("extension.closePopup", "null") }
+        Grade(
+            when {
+                found.optBoolean("pass") -> "P"
+                found.optBoolean("changed") -> "PARTIAL"
+                else -> "F"
+            },
+            "$label: popup ${if (popup == null) "did not render" else "translate ${click.toString().take(80)}"}; page ${found.toString().take(200)}",
+            extra
+        )
+    }
 
     // --- the core checks of compat round 26 (ranks 661-690 by installs) --------------------------
 
@@ -16596,6 +16953,83 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SAML_TRACER_LISTED =
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
+
+        // --- the expressions of compat round 27 (ranks 691-720) ---------------------------------
+
+        /**
+         * META SEO inspector's popup after its content script answered `pageInfo`: `#out` holding
+         * the article fixture's title ("the tramway that outlived its river").
+         */
+        private const val META_SEO_POPUP =
+            "(function(){var o=document.getElementById('out');var x=document.getElementById('outextra');var t=((o?o.innerText:'')+' '+(x?x.innerText:'')).replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:/tramway/i.test(t),out:!!o,text:t.slice(0,200),body:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** Table Capture's popup over the table fixture: an `li` per table found with its `.row-actions` (copy, Sheets, CSV); `li.table-not-found` when it saw none. */
+        private const val TABLE_CAPTURE_POPUP =
+            "(function(){var rows=document.querySelectorAll('li .row-actions');var none=document.querySelectorAll('li.table-not-found').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:rows.length>=1,rows:rows.length,notFound:none,text:t.slice(0,160)})})()"
+
+        /**
+         * Allow Copy's effect on the right-click fixture after its popup switch: its content
+         * script's `<style>` with `user-select: text !important` in the document and the
+         * fixture's own `contextmenu` probe (`window.__zenRightClick()`) reading `allowed` – the
+         * page's cancelling listener stopped by the script's capture listener. The script reads
+         * its `storage.local` entry live (`onChanged`), so a reload is the fallback alone (up to
+         * three, 2.5 s apart, the count in `sessionStorage`), as [ECP_ENABLED] takes.
+         */
+        private const val ALLOW_COPY_ENABLED =
+            "(function(){var styled=[].slice.call(document.querySelectorAll('style')).some(function(s){return /user-select:\\s*text\\s*!important/.test(s.textContent||'')});var rc=window.__zenRightClick?window.__zenRightClick():null;var pass=styled&&!!(rc&&rc.allowed);var n=parseInt(sessionStorage.getItem('__allowCopyReloads')||'0',10);" +
+                "if(!pass&&n<3&&performance.now()>2500){sessionStorage.setItem('__allowCopyReloads',String(n+1));location.reload();return JSON.stringify({pass:false,reloading:n+1})}" +
+                "return JSON.stringify({pass:pass,style:styled,contextmenu:rc,reloads:n})})()"
+
+        /**
+         * Magic Eden Wallet's providers in the page world: `window.magicEden.{solana, ethereum,
+         * bitcoin}` from its `document_start` script, `window.solana.isMagicEden` when the slot
+         * was free, the wallet-standard `register-wallet` announcement the fixture records
+         * (`window.__wallet`).
+         */
+        private const val MAGIC_EDEN_PROVIDER =
+            "(function(){var me=window.magicEden;var sol=window.solana;var w=window.__wallet||{};var announced=[].concat(w.announced||[],w.standard||[]).map(function(x){return typeof x==='string'?x:(x&&(x.name||x.rdns||x.info&&x.info.name))||''}).filter(Boolean);" +
+                "return JSON.stringify({pass:!!(me&&(me.solana||me.ethereum||me.bitcoin))||!!(sol&&sol.isMagicEden)||announced.some(function(n){return /magic ?eden/i.test(n)}),magicEden:typeof me,keys:me?Object.keys(me).slice(0,8):[],solana:!!sol,isMagicEden:!!(sol&&sol.isMagicEden),ethereum:!!(window.ethereum&&(window.ethereum.isMagicEden||window.ethereum.providers&&window.ethereum.providers.some(function(p){return p.isMagicEden}))),announced:announced.slice(0,6)})})()"
+
+        /** ScreenPal's launcher menu after the action click: `#som-popup-menu` (a 345x393 frame of its `popup_menu.html`) drawn over the page; its other `som-` elements counted beside it. */
+        private const val SCREENPAL_MENU =
+            "(function(){var m=document.getElementById('som-popup-menu');var r=m?m.getBoundingClientRect():null;var f=m?(m.tagName==='IFRAME'?m:m.querySelector('iframe')):null;var own=document.querySelectorAll('[id^=\"som-\"], [class*=\"som-\"]').length;" +
+                "return JSON.stringify({pass:!!m&&!!r&&r.width>100&&r.height>100,menu:!!m,size:r?[Math.round(r.width),Math.round(r.height)]:null,frame:f?String(f.src).slice(-40):null,own:own,title:document.title})})()"
+
+        /** AiPrice(AliPrice)'s popup: its Vue app mounted under an `ap-root-…` element with its controls and text. */
+        private const val AIPRICE_POPUP =
+            "(function(){var root=document.querySelector('[id^=\"ap-root\"], [class^=\"ap-root\"]');var n=root?root.querySelectorAll('*').length:0;var t=(root||document.body||{}).innerText||'';t=t.replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!root&&n>=10,root:root?(root.id||root.className).slice(0,40):null,nodes:n,text:t.slice(0,160)})})()"
+
+        /** pdf.js's viewer page (PDF Viewer 1.0.13's `bg/helper/web/viewer.html`, its own sample) after the action click: a page canvas drawn or a page marked loaded. */
+        private const val PDFJS_VIEWER_PAGE =
+            "(function(){var pages=document.querySelectorAll('#viewer .page');var canvases=document.querySelectorAll('#viewer .page canvas');var loaded=document.querySelectorAll('#viewer .page[data-loaded=\"true\"]');var n=document.getElementById('numPages');" +
+                "return JSON.stringify({pass:canvases.length>0||loaded.length>0,pages:pages.length,canvases:canvases.length,loaded:loaded.length,numPages:n?n.textContent.trim():null,title:document.title,url:location.href.slice(0,120)})})()"
+
+        /** Twitch Adblock on twitch.tv: its `<script id="ads-twitch-tw">` appended at `document_start` and the page script's `window.twitchAdSolutionsVersion`. */
+        private const val TWITCH_ADBLOCK_INJECTED =
+            "(function(){var s=document.getElementById('ads-twitch-tw');var v=window.twitchAdSolutionsVersion;" +
+                "return JSON.stringify({pass:!!s||typeof v==='string',script:!!s,src:s?String(s.src).slice(-40):null,version:typeof v==='string'?v:null,title:document.title})})()"
+
+        /** Linguist's page translation on the Spanish fixture: the `#phrase` read as English, or changed from its Spanish. */
+        private const val LINGUIST_TRANSLATED =
+            "(function(){var p=document.getElementById('phrase');var t=p?(p.textContent||'').replace(/\\s+/g,' ').trim():'';var h=document.getElementById('title');" +
+                "return JSON.stringify({pass:/good morning|friend|weather|walk/i.test(t),phrase:t.slice(0,120),heading:h?h.textContent.trim().slice(0,60):null,changed:t.length>0&&!/Buenos d/.test(t)})})()"
+
+        /** GIPHY for Chrome's popup: its trending grid from api.giphy.com as `[data-giphy-id]` cells (or the grid's pictures). */
+        private const val GIPHY_POPUP =
+            "(function(){var gifs=document.querySelectorAll('[data-giphy-id]');var imgs=document.querySelectorAll('.giphy-grid img, .giphy-grid picture, .giphy-grid video, [class*=\"giphy\"] img');var t=(document.body&&document.body.innerText||'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:gifs.length>0||imgs.length>=3,gifs:gifs.length,imgs:imgs.length,text:t.slice(0,160)})})()"
+
+        /**
+         * A script requested off each host of `__HOSTS__` (a JSON array) at a path no server has,
+         * the page recording what each came to in `window.__list` – the engine's decision log is
+         * the verdict, the page's `error` alone saying nothing ([listBlocker]).
+         */
+        private const val LIST_PROBES =
+            "(function(){var hosts=__HOSTS__;window.__list={};hosts.forEach(function(h){var s=document.createElement('script');s.src='https://'+h+'/zenium-probe.js?zen='+Date.now();" +
+                "s.onload=function(){window.__list[h]='loaded'};s.onerror=function(){window.__list[h]='error'};document.head.appendChild(s)});return 'asked '+hosts.length})()"
 
         // --- the expressions of compat round 26 (ranks 661-690) ---------------------------------
 
