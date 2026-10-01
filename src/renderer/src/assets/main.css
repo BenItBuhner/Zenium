@@ -2924,9 +2924,10 @@
   /*
    * The page-load bar: 2 px of accent hugging the top edge of the content frame, over its
    * hairline and clear of its rounded corners (the live page covers everything inside the
-   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades. No sweep
-   * or shimmer (v2 §9.33): the creep is the sign of life, and a looping highlight would be the
-   * one perpetual animation on the chrome.
+   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades, over the
+   * state's 120 ms (`MOTION_STATE_MS`; `LoadProgress.tsx` waits the same length before it puts
+   * the fill away). No sweep or shimmer (v2 §9.33): the creep is the sign of life, and a looping
+   * highlight would be the one perpetual animation on the chrome.
    */
   .zen-load-progress {
     position: absolute;
@@ -2935,7 +2936,7 @@
     right: var(--zen-content-radius);
     height: 2px;
     opacity: 0;
-    transition: opacity 200ms var(--zen-ease);
+    transition: opacity 120ms var(--zen-ease);
   }
   /* Its appearance and departure stay an opacity fade under reduced motion, at v2 §11.3's 120 ms. */
   @media (prefers-reduced-motion: reduce) {
@@ -3202,19 +3203,16 @@
   }
   /*
    * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
-   * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
-   * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
-   * chrome mounts it hidden and opens it a frame later; `data-open` off slides it away before
-   * it unmounts. Reduced motion removes the travel (the global rule at the foot): it is there
-   * or it is not.
+   * top edge on the cursor's touch and back out when it leaves, on the house spring (§1's
+   * `SPRING_SNAPPY`; `App.tsx`'s `SlideDown` writes the transform per frame), so a cursor
+   * returning mid-way turns it around where it is with the velocity it had. This is the hidden
+   * pose the chrome mounts it in – the first paint, before the spring's first frame; the spring
+   * takes it from here and leaves `none` at rest. Under reduced motion the spring jumps: it is
+   * there or it is not.
    */
   .zen-toolbar-reveal {
     transform: translateY(calc(-100% - 8px));
-    transition: transform 200ms var(--zen-ease);
     will-change: transform;
-  }
-  .zen-toolbar-reveal[data-open] {
-    transform: none;
   }
   .zen-animate-pop {
     animation: zen-pop 180ms var(--zen-ease);
@@ -4289,7 +4287,10 @@
   }
   /*
    * The card in the hand is positioned per frame at 90% opacity (v2 §11.4); its elevation is a
-   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow.
+   * level swap (2 while held, back to 1 as it lands), never a per-frame shadow. Its scale is
+   * §1's rise, not a spring: `useCardLift` steps the value (1.02 in the hand, the tuck over a
+   * target, 1 as it lands) and the transform transition eases each step over `MOTION_STATE_MS`;
+   * under reduced motion the rule at the foot makes the step a cut.
    */
   .zen-overview-ghost {
     opacity: 0.9;
@@ -4297,6 +4298,7 @@
     transform-origin: center;
     transition:
       opacity 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease),
       box-shadow 200ms var(--zen-ease);
     will-change: transform, left, top;
   }
