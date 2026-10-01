@@ -305,6 +305,81 @@ describe('RuleSetStore', () => {
     expect(new RuleSetStore(io).load()[0].set.partitions).toEqual(['default'])
   })
 
+  it('keeps a set’s excluded partitions in the index and restores them (PS-49)', async () => {
+    const io = memoryIo()
+    const first = new RuleEngine()
+    const store1 = new RuleSetStore(io)
+    store1.load()
+    store1.attach(first)
+    first.setRuleSet({
+      id: 'builtin:global-off',
+      source: 'builtin',
+      priority: 1000,
+      enabled: true,
+      excludedPartitions: ['private'],
+      rules: [{ id: 1, action: { type: 'allow' }, condition: {} }]
+    })
+    first.setRuleSet({
+      id: 'ubo-privacy',
+      source: 'filter-list',
+      priority: 1,
+      enabled: true,
+      partitions: ['private'],
+      rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }]
+    })
+    await store1.whenSettled()
+    expect(index(io).sets.map((s) => [s.id, s.partitions, s.excludedPartitions])).toEqual([
+      ['builtin:global-off', undefined, ['private']],
+      ['ubo-privacy', ['private'], undefined]
+    ])
+
+    // Re-registered without the exclusion (the switch went off): the index drops the key.
+    const writesBefore = io.writes.length
+    first.setRuleSet({
+      id: 'builtin:global-off',
+      source: 'builtin',
+      priority: 1000,
+      enabled: true,
+      rules: [{ id: 1, action: { type: 'allow' }, condition: {} }]
+    })
+    await store1.whenSettled()
+    expect(index(io).sets[0].excludedPartitions).toBeUndefined()
+    expect(io.writes.slice(writesBefore)).toEqual([INDEX_FILE])
+    first.setRuleSet({
+      id: 'builtin:global-off',
+      source: 'builtin',
+      priority: 1000,
+      enabled: true,
+      excludedPartitions: ['private'],
+      rules: [{ id: 1, action: { type: 'allow' }, condition: {} }]
+    })
+    await store1.whenSettled()
+
+    const store2 = new RuleSetStore(io)
+    const loaded = store2.load()
+    expect(loaded.map((l) => l.set.excludedPartitions)).toEqual([['private'], undefined])
+    const second = new RuleEngine()
+    for (const l of loaded) second.setRuleSet(l.set, { persisted: true })
+    const ad = (partition?: string): Parameters<RuleEngine['decide']>[0] => ({
+      url: 'https://ads.example/x.js',
+      type: 'script',
+      method: 'GET',
+      ...(partition ? { partition } : {})
+    })
+    expect(second.decide(ad('private'))).toMatchObject({
+      action: 'block',
+      matched: { setId: 'ubo-privacy' }
+    })
+    expect(second.decide(ad('default')).matched?.setId).toBe('builtin:global-off')
+    expect(second.decide(ad()).matched?.setId).toBe('builtin:global-off')
+
+    // Junk in a hand-edited list keeps the strings only, as for `partitions`.
+    const raw = index(io)
+    ;(raw.sets[0] as { excludedPartitions?: unknown }).excludedPartitions = ['private', 7, null]
+    io.files.set(INDEX_FILE, JSON.stringify(raw))
+    expect(new RuleSetStore(io).load()[0].set.excludedPartitions).toEqual(['private'])
+  })
+
   it('drops the text bookkeeping when the text file has gone missing', async () => {
     const io = memoryIo()
     const engine = new RuleEngine()

@@ -49,7 +49,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     private val builder = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "zen-blocking") }
     private var scheduled: ScheduledFuture<*>? = null
-    private var cachedText: Pair<String, TextEngine>? = null
+    /** Builder thread only: the text engines of the last build that read any, keyed by the fingerprint of the sets each was parsed from. */
+    private var cachedText: Map<String, TextEngine> = emptyMap()
     /** Builder thread only: keeps the compiled rules of the sets the last read saw. */
     private val indexReader = IndexReader { line -> Log.w(TAG, line) }
 
@@ -171,21 +172,29 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         }
     }
 
-    /** Read the index and every enabled set's text; called on the builder thread. */
+    /**
+     * Read the index and every enabled set's text; called on the builder thread. The general
+     * text engine is parsed from the enabled lists every partition reads; a partition some
+     * list is scoped to or stands aside from (`textPartitions` in `engine.ts` – the private
+     * partition when "Always use Strict in private windows" is on and the level is below
+     * Strict) gets an engine of its own over the lists that apply there, the same way the
+     * desktop compiles a matcher per such partition. Every engine is kept across builds by
+     * the fingerprint of the sets it was parsed from, so a settings change that leaves a
+     * partition's lists as they were costs it nothing.
+     */
     internal fun rebuild() {
         val started = SystemClock.elapsedRealtime()
         val sets = readIndex()
         val withText = sets.filter { it.enabled && it.hasFilterText && it.file != null }
-        val fingerprint = withText.joinToString("|") { "${it.id}=${it.textFingerprint}" }
-        val cached = cachedText
-        val text = when {
+        if (withText.isEmpty()) {
             // The master switch off disables every list: keep the parsed lists for when it comes
             // back on, so that is a rebuild of a few milliseconds and not a re-parse of them all.
-            withText.isEmpty() -> null
-            cached != null && cached.first == fingerprint -> cached.second
-            else -> TextEngine.parse(withText.mapNotNull { readFilterText(it) }).also { cachedText = fingerprint to it }
+            snapshot = EngineSnapshot(sets, null)
+        } else {
+            val engines = textEngines(withText, cachedText) { readFilterText(it) }
+            cachedText = engines.cache
+            snapshot = EngineSnapshot(sets, engines.general, engines.byPartition)
         }
-        snapshot = EngineSnapshot(sets, if (text != null && text.filterCount > 0) text else null)
         lastBuildMs = SystemClock.elapsedRealtime() - started
         builds++
     }
@@ -360,8 +369,47 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         .put("lastBuildMs", lastBuildMs)
         .put("indexChars", lastIndexChars)
 
+    /** The text engines of one build ([textEngines]): the general one, each named partition's own, and the cache the next build starts from. */
+    internal class TextEngines(val general: TextEngine?, val byPartition: Map<String, TextEngine?>, val cache: Map<String, TextEngine>)
+
     companion object {
         private const val TAG = "zen-blocking"
+
+        /**
+         * The text engines of a build over `withText`, the enabled sets with filter text in index
+         * order: the general engine over the sets every partition reads ([RuleSetInfo.appliesTo]
+         * of no partition) and, for each partition some set is scoped to or stands aside from,
+         * an engine over the sets that apply there. An engine is parsed once per distinct
+         * fingerprint of its sets – `previous` is the last build's engines by fingerprint, and
+         * two scopes over the same sets share one – with `read` giving a set's filter text (read
+         * once per set per build). An engine without a filter is null in the result but kept in
+         * the cache.
+         */
+        internal fun textEngines(
+            withText: List<RuleSetInfo>,
+            previous: Map<String, TextEngine>,
+            read: (RuleSetInfo) -> String?
+        ): TextEngines {
+            val used = HashMap<String, TextEngine>()
+            val texts = HashMap<String, String?>()
+            fun engineOver(scoped: List<RuleSetInfo>): TextEngine? {
+                if (scoped.isEmpty()) return null
+                val fingerprint = scoped.joinToString("|") { "${it.id}=${it.textFingerprint}" }
+                val engine = used[fingerprint] ?: previous[fingerprint]
+                    ?: TextEngine.parse(scoped.mapNotNull { set -> texts.getOrPut(set.id) { read(set) } })
+                used[fingerprint] = engine
+                return engine.takeIf { it.filterCount > 0 }
+            }
+            val general = engineOver(withText.filter { it.appliesTo(null) })
+            val partitions = LinkedHashSet<String>()
+            for (set in withText) {
+                set.partitions?.let(partitions::addAll)
+                set.excludedPartitions?.let(partitions::addAll)
+            }
+            val byPartition = LinkedHashMap<String, TextEngine?>()
+            for (partition in partitions) byPartition[partition] = engineOver(withText.filter { it.appliesTo(partition) })
+            return TextEngines(general, byPartition, used)
+        }
 
         /**
          * The text of the bundled list the manifest names `file` (`easylist.txt.gz`), through

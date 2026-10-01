@@ -464,7 +464,14 @@ class RuleSetInfo(
      * scoped to the partitions it is loaded into, so a private tab's requests never meet the
      * rules of an extension the user has not allowed there.
      */
-    val partitions: Set<String>? = null
+    val partitions: Set<String>? = null,
+    /**
+     * Session partitions the set stands aside from (`RuleSet.excludedPartitions`, the
+     * `excludedTabIds` of a set's scope): the level-Off allow-all set leaves the private
+     * partition to its own lists when "Always use Strict in private windows" is on. Null for a
+     * set that excludes none.
+     */
+    val excludedPartitions: Set<String>? = null
 ) {
     /** The compiled rules in resolution order. */
     val rules: List<DnrRule> get() = compiled.rules
@@ -475,8 +482,9 @@ class RuleSetInfo(
     /** Changes to any of these mean the filter text must be re-read. */
     val textFingerprint: String get() = "$file:$updatedAt:$filterCount"
 
-    /** Whether the set takes part in requests of `partition` (`appliesToPartition` in `engine.ts`). */
+    /** Whether the set takes part in requests of `partition` (`appliesTo` in `engine.ts`): excluded first, then the allow-list. */
     fun appliesTo(partition: String?): Boolean {
+        if (partition != null && excludedPartitions?.contains(partition) == true) return false
         val scope = partitions ?: return true
         return partition != null && partition in scope
     }
@@ -492,14 +500,8 @@ class RuleSetInfo(
             if (id.isEmpty() || !o.has("priority")) return null
             val priority = o.optInt("priority")
             val hasText = o.optBoolean("hasFilterText", false)
-            val partitions = o.optJSONArray("partitions")?.let { arr ->
-                val out = HashSet<String>()
-                for (i in 0 until arr.length()) {
-                    val p = arr.optString(i, "")
-                    if (p.isNotEmpty()) out.add(p)
-                }
-                out
-            }
+            val partitions = partitionSet(o.optJSONArray("partitions"))
+            val excludedPartitions = partitionSet(o.optJSONArray("excludedPartitions"))
             return RuleSetInfo(
                 id = id,
                 source = o.optString("source", "filter-list"),
@@ -510,8 +512,20 @@ class RuleSetInfo(
                 file = o.optString("file").takeIf { hasText && it.isNotEmpty() },
                 updatedAt = o.optLong("updatedAt", 0L),
                 filterCount = o.optInt("filterCount", 0),
-                partitions = partitions
+                partitions = partitions,
+                excludedPartitions = excludedPartitions
             )
+        }
+
+        /** A partition list of a summary as a set of its non-empty names; null when absent. */
+        private fun partitionSet(arr: JSONArray?): Set<String>? {
+            if (arr == null) return null
+            val out = HashSet<String>()
+            for (i in 0 until arr.length()) {
+                val p = arr.optString(i, "")
+                if (p.isNotEmpty()) out.add(p)
+            }
+            return out
         }
     }
 }

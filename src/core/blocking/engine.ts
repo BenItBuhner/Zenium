@@ -297,6 +297,24 @@ export function appliesToPartition(
   return partition !== undefined && partitions.includes(partition)
 }
 
+/** A set's scope: where it applies (`partitions`) and where it never does (`excludedPartitions`). */
+export type PartitionScope = Pick<RuleSetSummary, 'partitions' | 'excludedPartitions'>
+
+/**
+ * Whether a set applies to a request from `partition`: {@link appliesToPartition}, and never
+ * where the set's `excludedPartitions` name the request's partition (a request whose partition
+ * is unknown is excluded from nothing, as `excludedTabIds` excludes no tabless request).
+ */
+export function appliesTo(scope: PartitionScope, partition: string | undefined): boolean {
+  if (partition !== undefined && scope.excludedPartitions?.includes(partition)) return false
+  return appliesToPartition(scope.partitions, partition)
+}
+
+/** The partitions a scope names, either way. */
+function scopedPartitions(scope: PartitionScope): string[] {
+  return [...(scope.partitions ?? []), ...(scope.excludedPartitions ?? [])]
+}
+
 function samePartitions(
   a: readonly string[] | undefined,
   b: readonly string[] | undefined
@@ -535,6 +553,7 @@ export class RuleEngine implements BlockingEngine {
     if (input.updatedAt !== undefined) summary.updatedAt = input.updatedAt
     if (input.attribution) summary.attribution = { ...input.attribution }
     if (input.partitions) summary.partitions = [...input.partitions]
+    if (input.excludedPartitions) summary.excludedPartitions = [...input.excludedPartitions]
     const stored: StoredSet = { summary, rules, source: null, table: null, index: null }
     this.sets.set(input.id, stored)
     this.ordered = null
@@ -784,6 +803,28 @@ export class RuleEngine implements BlockingEngine {
       .map((s) => s.summary)
   }
 
+  /**
+   * The enabled text sets a request from `partition` is matched against ({@link appliesTo}),
+   * highest priority first: what a host's text matcher compiles for that partition. `undefined`
+   * is the matcher for every partition no scoped text set names – the unscoped sets alone.
+   */
+  textSetsFor(partition: string | undefined): RuleSetSummary[] {
+    return this.enabledTextSets().filter((s) => appliesTo(s, partition))
+  }
+
+  /**
+   * The partitions an enabled text set is scoped to or excluded from, in first-seen order: each
+   * needs a text matcher of its own ({@link textSetsFor}), every other partition shares the
+   * unscoped one. Empty until a text set is scoped – the filter lists of "Always use Strict in
+   * private windows" name `private`, nothing else does today.
+   */
+  textPartitions(): string[] {
+    const out: string[] = []
+    for (const s of this.enabledTextSets())
+      for (const p of scopedPartitions(s)) if (!out.includes(p)) out.push(p)
+    return out
+  }
+
   subscribe(listener: RuleSetListener): () => void {
     this.listeners.add(listener)
     return () => {
@@ -823,7 +864,7 @@ export class RuleEngine implements BlockingEngine {
     for (let i = 0; i < ordered.length; i++) {
       const stored = ordered[i]!
       if (!stored.summary.enabled || stored.summary.ruleCount === 0) continue
-      if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
+      if (!appliesTo(stored.summary, ctx.partition)) continue
       if (!resolution.worthScanning(stored)) break
       const table = this.table(stored)
       const index = stored.index
@@ -871,7 +912,7 @@ export class RuleEngine implements BlockingEngine {
     for (let i = 0; i < ordered.length; i++) {
       const stored = ordered[i]!
       if (!stored.summary.enabled || stored.summary.ruleCount === 0) continue
-      if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
+      if (!appliesTo(stored.summary, ctx.partition)) continue
       if (!resolution.worthScanning(stored)) break
       scanTable(this.table(stored), i, resolution)
     }
@@ -957,6 +998,7 @@ export class RuleEngine implements BlockingEngine {
     if (s.updatedAt !== undefined) out.updatedAt = s.updatedAt
     if (s.attribution) out.attribution = s.attribution
     if (s.partitions) out.partitions = [...s.partitions]
+    if (s.excludedPartitions) out.excludedPartitions = [...s.excludedPartitions]
     return out
   }
 

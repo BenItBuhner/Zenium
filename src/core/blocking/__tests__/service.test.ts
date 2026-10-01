@@ -221,6 +221,178 @@ describe('BlockingService levels', () => {
   })
 })
 
+describe('BlockingService "Always use Strict in private windows" (services pass 16, PS-49)', () => {
+  /** The strict-only list's text, as the fetch answers it. */
+  const privacyList = '! Title: uBO privacy\n! Version: 7\n||fingerprint.example^\n'
+  const privateReq = (url: string): RequestContext =>
+    req(url, { partition: 'private', isPrivate: true })
+  const normalReq = (url: string): RequestContext =>
+    req(url, { partition: 'default', isPrivate: false })
+
+  /**
+   * A text matcher built the way the desktop's is: one compiled matcher per partition over
+   * `textSetsFor(partition)`, here standing in as a lookup of which lists' filters apply to the
+   * request's partition. `||fingerprint.example^` is the strict-only list's entry, `||ads.example^`
+   * EasyList's.
+   */
+  function partitionedMatcher(engine: RuleEngine): {
+    match: (ctx: RequestContext) => TextMatch | null
+  } {
+    return {
+      match: (ctx) => {
+        const lists = new Set(engine.textSetsFor(ctx.partition).map((s) => s.id))
+        if (lists.has('ubo-privacy') && /^https:\/\/fingerprint\.example\//.test(ctx.url))
+          return { action: 'block', filter: '||fingerprint.example^' }
+        if (lists.has('easylist') && /^https:\/\/ads\.example\//.test(ctx.url))
+          return { action: 'block', filter: '||ads.example^' }
+        return null
+      }
+    }
+  }
+
+  async function withSwitch(
+    level: BlockingSettings['level'],
+    levelPrivate: BlockingSettings['levelPrivate']
+  ): Promise<{ h: ReturnType<typeof harness>; service: ReturnType<typeof start> }> {
+    const h = harness()
+    const service = start(h)
+    h.respond = (url) =>
+      url === DEFAULT_FILTER_LISTS.find((d) => d.id === 'ubo-privacy')?.url
+        ? { ok: true, status: 200, text: privacyList }
+        : { ok: true, status: 200, text: '! Title: list\n||ads.example^\n' }
+    // EasyList has content from the start (as the bundled snapshot gives it).
+    service.engine.setRuleSet({
+      id: 'easylist',
+      source: 'filter-list',
+      priority: RULE_SET_PRIORITY.filterList,
+      enabled: true,
+      filterText: '||ads.example^'
+    })
+    h.settings.blocking = { ...h.settings.blocking, level, levelPrivate }
+    service.onSettingsChanged()
+    await service.whenSettled()
+    service.engine.setTextMatcher(partitionedMatcher(service.engine))
+    return { h, service }
+  }
+
+  it('enables the strict-only lists as sets scoped to the private partition while the level is Balanced', async () => {
+    const { h, service } = await withSwitch('balanced', 'strict')
+    // The strict-only list is fetched the moment the switch turns it on, and enabled for private windows alone.
+    expect(h.fetched).toEqual([DEFAULT_FILTER_LISTS.find((d) => d.id === 'ubo-privacy')?.url])
+    expect(service.engine.summary('ubo-privacy')).toMatchObject({
+      enabled: true,
+      partitions: ['private'],
+      hasFilterText: true
+    })
+    expect(service.engine.summary('easylist')).toMatchObject({ enabled: true, hasFilterText: true })
+    expect(service.engine.summary('easylist')?.partitions).toBeUndefined()
+    expect(service.engine.textPartitions()).toEqual(['private'])
+    expect(service.engine.textSetsFor('private').map((s) => s.id)).toEqual([
+      'easylist',
+      'ubo-privacy'
+    ])
+    expect(service.engine.textSetsFor('default').map((s) => s.id)).toEqual(['easylist'])
+    // The lists group keeps the level's word: the strict-only list reads off there.
+    expect(service.status().lists.find((l) => l.id === 'ubo-privacy')).toMatchObject({
+      enabled: false,
+      tier: 'strict',
+      filterCount: 1
+    })
+    expect(service.status().lists.find((l) => l.id === 'easylist')?.enabled).toBe(true)
+    // The strict-only entry blocks in a private window and not in a normal one; EasyList's blocks in both.
+    expect(service.engine.decide(privateReq('https://fingerprint.example/fp.js'))).toMatchObject({
+      action: 'block',
+      matched: { setId: TEXT_MATCH_SET_ID, filter: '||fingerprint.example^' }
+    })
+    expect(service.engine.decide(normalReq('https://fingerprint.example/fp.js')).action).toBe(
+      'allow'
+    )
+    expect(service.engine.decide(privateReq('https://ads.example/a.js')).action).toBe('block')
+    expect(service.engine.decide(normalReq('https://ads.example/a.js')).action).toBe('block')
+    // No allow-all stands: the level is not Off.
+    expect(service.engine.summary(BUILTIN_RULE_SETS.globalOff)?.enabled).toBe(false)
+
+    // Switched off again: the general level everywhere – the list is disabled and unscoped.
+    h.settings.blocking = { ...h.settings.blocking, levelPrivate: 'default' }
+    service.onSettingsChanged()
+    expect(service.engine.summary('ubo-privacy')?.enabled).toBe(false)
+    expect(service.engine.summary('ubo-privacy')?.partitions).toBeUndefined()
+    expect(service.engine.textPartitions()).toEqual([])
+    expect(service.engine.decide(privateReq('https://fingerprint.example/fp.js')).action).toBe(
+      'allow'
+    )
+    expect(service.engine.decide(privateReq('https://ads.example/a.js')).action).toBe('block')
+  })
+
+  it('leaves the private partition out of the level-Off allow-all while the switch is on', async () => {
+    const { h, service } = await withSwitch('off', 'strict')
+    expect(service.engine.summary(BUILTIN_RULE_SETS.globalOff)).toMatchObject({
+      enabled: true,
+      excludedPartitions: ['private']
+    })
+    // Every list is scoped to private windows: nothing is on for the others.
+    for (const def of DEFAULT_FILTER_LISTS)
+      expect(service.engine.summary(def.id), def.id).toMatchObject({
+        enabled: true,
+        partitions: ['private']
+      })
+    expect(service.status().lists.every((l) => !l.enabled)).toBe(true)
+    expect(service.engine.decide(normalReq('https://ads.example/a.js'))).toMatchObject({
+      action: 'allow',
+      matched: { setId: BUILTIN_RULE_SETS.globalOff }
+    })
+    expect(service.engine.decide(privateReq('https://ads.example/a.js')).action).toBe('block')
+    expect(service.engine.decide(privateReq('https://fingerprint.example/fp.js')).action).toBe(
+      'block'
+    )
+    // A request of no known partition meets the allow-all as before.
+    expect(service.engine.decide(req('https://ads.example/a.js')).matched?.setId).toBe(
+      BUILTIN_RULE_SETS.globalOff
+    )
+
+    // The switch off at level Off: the allow-all caps every window, the private one included.
+    h.settings.blocking = { ...h.settings.blocking, levelPrivate: 'default' }
+    service.onSettingsChanged()
+    expect(service.engine.summary(BUILTIN_RULE_SETS.globalOff)?.enabled).toBe(true)
+    expect(service.engine.summary(BUILTIN_RULE_SETS.globalOff)?.excludedPartitions).toBeUndefined()
+    expect(service.engine.decide(privateReq('https://ads.example/a.js')).matched?.setId).toBe(
+      BUILTIN_RULE_SETS.globalOff
+    )
+    expect(enabledIds(service)).toEqual([])
+
+    // The master switch off beats the private override: nothing is on anywhere.
+    h.settings.blocking = { ...h.settings.blocking, levelPrivate: 'strict' }
+    service.onSettingsChanged()
+    service.setEnabled(false)
+    expect(service.engine.summary(BUILTIN_RULE_SETS.globalOff)?.excludedPartitions).toBeUndefined()
+    expect(enabledIds(service)).toEqual([])
+    expect(service.engine.decide(privateReq('https://ads.example/a.js')).matched?.setId).toBe(
+      BUILTIN_RULE_SETS.globalOff
+    )
+  })
+
+  it('changes nothing while the level is already Strict', async () => {
+    const { h, service } = await withSwitch('strict', 'strict')
+    const strictIds = DEFAULT_FILTER_LISTS.map((d) => d.id).sort()
+    expect(enabledIds(service)).toEqual(strictIds)
+    for (const def of DEFAULT_FILTER_LISTS)
+      expect(service.engine.summary(def.id)?.partitions, def.id).toBeUndefined()
+    expect(service.engine.textPartitions()).toEqual([])
+    const before = service.engine.listRuleSets().map((s) => [s.id, s.enabled, s.partitions ?? null])
+    h.settings.blocking = { ...h.settings.blocking, levelPrivate: 'default' }
+    service.onSettingsChanged()
+    expect(
+      service.engine.listRuleSets().map((s) => [s.id, s.enabled, s.partitions ?? null])
+    ).toEqual(before)
+    expect(service.engine.decide(privateReq('https://fingerprint.example/fp.js')).action).toBe(
+      'block'
+    )
+    expect(service.engine.decide(normalReq('https://fingerprint.example/fp.js')).action).toBe(
+      'block'
+    )
+  })
+})
+
 describe('BlockingService site exceptions and user filters', () => {
   it('expresses site exceptions as an allowAllRequests set and normalises the input', () => {
     const h = harness()

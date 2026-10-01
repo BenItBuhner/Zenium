@@ -528,6 +528,12 @@ export class AndroidExtensions implements ExtensionHost {
         updatedAt: record.updatedAt,
         pinned: record.pinned,
         toolbarPinned: record.toolbarPinned,
+        // The switches' clocks (ID-44): the flips made here carry one; a switch never flipped
+        // on this device has none.
+        ...(record.enabledAt !== undefined ? { enabledAt: record.enabledAt } : {}),
+        ...(record.toolbarPinnedAt !== undefined
+          ? { toolbarPinnedAt: record.toolbarPinnedAt }
+          : {}),
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
         allowUserScripts: record.allowUserScripts,
@@ -906,6 +912,9 @@ export class AndroidExtensions implements ExtensionHost {
         record.pendingWarnings = null
       }
       record.enabled = enabled
+      // The switch's clock for the sync merge (ID-44), taken as the flip completes – after the
+      // prompt, never at the tap – so a peer's flip that landed meanwhile does not outrank it.
+      record.enabledAt = this.now()
       if (enabled) await this.attach(record)
       else await this.detach(record.id)
       this.persist()
@@ -941,6 +950,7 @@ export class AndroidExtensions implements ExtensionHost {
     const record = this.record(id)
     if (!record || record.toolbarPinned === pinned) return
     record.toolbarPinned = pinned
+    record.toolbarPinnedAt = this.now()
     this.persist()
     this.browser.state.commitVolatile()
   }

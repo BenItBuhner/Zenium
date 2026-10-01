@@ -2,8 +2,9 @@
   "id": "select-tabs",
   "order": 45,
   "class": "SelectTabsDemo",
-  "shard": "phone-c",
+  "shard": "phone-h",
   "mirrors": "android-select-tabs-demo.yml",
   "dir": "selecttabs-demo",
-  "estimate": 3.5
+  "estimate": 3.5,
+  "note": "Moved from phone-c (61.5 of its 68 minutes, past the headroom line) to phone-h when that shard opened (W6-S24c-b), with site-controls, pagecontrols and history-bookmarks: see site-controls for the choice. The same image, no setup step of its own."
 }
