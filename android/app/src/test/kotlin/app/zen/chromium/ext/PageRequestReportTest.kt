@@ -50,9 +50,9 @@ class PageRequestReportTest {
             )
         )
 
-    private fun relay(fetcher: HeaderStage.Fetcher, load: PageRequestReport.Load, events: MutableList<Event>): PageRequestReport.Relayed? {
+    private fun relay(fetcher: HeaderStage.Fetcher, load: PageRequestReport.Load, events: MutableList<Event>, wholeBodyCap: Int = PageRequestReport.WHOLE_BODY_CAP): PageRequestReport.Relayed? {
         var next = 100
-        return PageRequestReport(fetcher).relay(load, ORIGIN, PageRequestReport.typeOf(load), "41", { (++next).toString() }, UA) { name, payload ->
+        return PageRequestReport(fetcher, wholeBodyCap).relay(load, ORIGIN, PageRequestReport.typeOf(load), "41", { (++next).toString() }, UA) { name, payload ->
             events.add(Event(name, payload))
         }
     }
@@ -110,7 +110,7 @@ class PageRequestReportTest {
     }
 
     @Test
-    fun `a relayed image reports its headers and, once read to the end, its completion with the wire's content type and length`() {
+    fun `a relayed image reports its headers and its completion before WebView reads a byte, with the wire's content type and length`() {
         val body = ByteArray(5120) { 7 }
         val fetcher = ScriptedFetcher(
             mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/jpeg", "Content-Length" to "5120", "Cache-Control" to "max-age=60", "Set-Cookie" to "a=1; Path=/", body = body) })
@@ -127,8 +127,9 @@ class PageRequestReportTest {
         assertNull(sent.keys.firstOrNull { it.equals("Referer", ignoreCase = true) })
         assertNull(sent.keys.firstOrNull { it.equals("Cookie", ignoreCase = true) })
         assertNull(sent.keys.firstOrNull { it.equals("Host", ignoreCase = true) })
-        // The headers stage, under the request's id, before the body is read.
-        assertEquals(listOf("ext.response:headers:41"), names(events))
+        // The headers stage then the completion, under the request's id, with the body in the
+        // host's hands and WebView yet to read a byte of it (R27-7).
+        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41"), names(events))
         val headers = events[0].payload
         assertEquals(200, headers.getInt("statusCode"))
         assertEquals("HTTP/1.1 200 OK", headers.getString("statusLine"))
@@ -148,23 +149,53 @@ class PageRequestReportTest {
         assertEquals("max-age=60", relayed.headers["Cache-Control"])
         assertNull(relayed.headers.keys.firstOrNull { it.equals("Content-Type", ignoreCase = true) })
         assertNull(relayed.headers.keys.firstOrNull { it.equals("Set-Cookie", ignoreCase = true) })
-        assertEquals(5120, relayed.body.readBytes().size)
-        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41"), names(events))
         assertEquals("5120", header(events[1].payload, "content-length"))
+        assertEquals(5120, relayed.body.readBytes().size)
+        relayed.body.close()
+        // WebView's read and its close report nothing more.
+        assertEquals(2, events.size)
+    }
+
+    @Test
+    fun `a body past the cap streams, the part read ahead of the rest, and is complete at the stream's end`() {
+        val body = ByteArray(100) { (it % 251).toByte() }
+        val fetcher = ScriptedFetcher(mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/png", "Content-Length" to "100", body = body) }))
+        val events = ArrayList<Event>()
+        val relayed = relay(fetcher, image(), events, wholeBodyCap = 32)!!
+        assertEquals(listOf("ext.response:headers:41"), names(events))
+        assertTrue(body.contentEquals(relayed.body.readBytes()))
+        assertEquals(listOf("ext.response:headers:41", "ext.response:complete:41"), names(events))
+        assertEquals("100", header(events[1].payload, "content-length"))
         relayed.body.close()
         // The close after the end reports nothing more.
         assertEquals(2, events.size)
     }
 
     @Test
-    fun `a body WebView closes before its end is an aborted request`() {
+    fun `a streamed body WebView closes before its end is an aborted request`() {
         val fetcher = ScriptedFetcher(mapOf(IMAGE to { response(200, "OK", "Content-Type" to "image/png", body = ByteArray(64)) }))
         val events = ArrayList<Event>()
-        val relayed = relay(fetcher, image(), events)!!
+        val relayed = relay(fetcher, image(), events, wholeBodyCap = 32)!!
         relayed.body.read()
+        assertEquals(listOf("ext.response:headers:41"), names(events))
         relayed.body.close()
         assertEquals(listOf("ext.response:headers:41", "ext.response:error:41"), names(events))
         assertEquals(HeaderStage.ERR_ABORTED, events[1].payload.getString("error"))
+    }
+
+    @Test
+    fun `a body whose read fails before the cap is a closed connection and goes back to WebView`() {
+        val failing = object : java.io.InputStream() {
+            override fun read(): Int = throw java.io.IOException("connection reset")
+        }
+        val map = LinkedHashMap<String?, List<String>?>()
+        map[null] = listOf("HTTP/1.1 200 OK")
+        map["Content-Type"] = listOf("image/png")
+        val fetcher = ScriptedFetcher(mapOf(IMAGE to { HeaderStage.Response(200, "OK", map, failing) }))
+        val events = ArrayList<Event>()
+        assertNull(relay(fetcher, image(), events))
+        assertEquals(listOf("ext.response:headers:41", "ext.response:error:41"), names(events))
+        assertEquals(HeaderStage.ERR_CONNECTION_CLOSED, events[1].payload.getString("error"))
     }
 
     @Test

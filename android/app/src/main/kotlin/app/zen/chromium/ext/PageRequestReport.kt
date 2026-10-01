@@ -5,7 +5,10 @@ import app.zen.chromium.blocking.ResourceType
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
+import java.io.SequenceInputStream
 import java.net.URL
 import java.util.Locale
 
@@ -37,9 +40,11 @@ import java.util.Locale
  *   host would otherwise leave to WebView ([relay]), which offers no response hook of its own
  *   (`onReceivedHttpError` speaks for 4xx and 5xx alone, `onLoadResource` names the URL): the
  *   load is fetched here as the tab path's media relay fetches (`HeaderStage.relayMedia`,
- *   contract 7.3 / 7.4), the headers reported at `headers`, the body streamed to WebView
- *   through the same [HeaderStage.ObservedStream] that reports `complete` at its end and
- *   `error` when WebView closed it early. A `3xx` with a `Location` is reported at `headers` –
+ *   contract 7.3 / 7.4), the headers reported at `headers`, a body within [WHOLE_BODY_CAP] read
+ *   here and reported `complete` before WebView is handed it (Chrome's `onCompleted` runs ahead
+ *   of the page's `load` event; R27-7), one past the cap streamed to WebView through the same
+ *   [HeaderStage.ObservedStream] that reports `complete` at its end and `error` when WebView
+ *   closed it early. A `3xx` with a `Location` is reported at `headers` –
  *   the runtime makes `onBeforeRedirect` of it and marks the target – and followed HERE, the
  *   target's own request stage reported under a fresh id the runtime's ledger continues under
  *   the chain's (`onBeforeRequest` again, as Chrome fires it), up to [MAX_HOPS]. Without a
@@ -61,7 +66,17 @@ import java.util.Locale
  * Plain JVM: the fetch comes in as a [HeaderStage.Fetcher]; what is Android comes in as values.
  */
 class PageRequestReport(
-    private val fetcher: HeaderStage.Fetcher = HeaderStage.HttpFetcher(CorsProxy.CONNECT_TIMEOUT_MS, CorsProxy.READ_TIMEOUT_MS)
+    private val fetcher: HeaderStage.Fetcher = HeaderStage.HttpFetcher(CorsProxy.CONNECT_TIMEOUT_MS, CorsProxy.READ_TIMEOUT_MS),
+    /**
+     * A body read whole here before WebView is handed it, so `complete` is reported when the host
+     * has the body – Chrome's `onCompleted` fires when the browser's network read ends, ahead of
+     * the renderer's decode and the page's own `load` event, and Image Downloader - picture and
+     * photos saver's popup asks its worker for a picture's headers from `img.onload`, which the
+     * worker had recorded from `onCompleted` in Chrome and had not yet on the phone while
+     * `complete` waited for WebView to read the stream to its end (compat round 27, R27-7). A
+     * body past the cap streams as before, `complete` at the stream's end.
+     */
+    private val wholeBodyCap: Int = WHOLE_BODY_CAP
 ) {
     /** The load as the intercept sees it (a `WebResourceRequest`, as values). */
     class Load(val url: String, val method: String, val isForMainFrame: Boolean, val headers: Map<String, String>) {
@@ -171,9 +186,40 @@ class PageRequestReport(
                 report(COMPLETE, null)
                 return Relayed(fetched.status, reason, mime, charset, served, ByteArrayInputStream(ByteArray(0)))
             }
-            val stream = HeaderStage.ObservedStream(body, onComplete = { report(COMPLETE, null) }, onError = { report(ERROR, it) })
-            return Relayed(fetched.status, reason, mime, charset, served, stream)
+            // The body within the cap is read here and is complete before WebView sees a byte of
+            // it; one past the cap streams, the part read so far ahead of the rest.
+            val whole = try {
+                readUpTo(body, wholeBodyCap)
+            } catch (e: IOException) {
+                body.close()
+                report(ERROR, HeaderStage.ERR_CONNECTION_CLOSED)
+                return null
+            }
+            if (whole.ended) {
+                body.close()
+                report(COMPLETE, null)
+                return Relayed(fetched.status, reason, mime, charset, served, ByteArrayInputStream(whole.bytes))
+            }
+            val rest = HeaderStage.ObservedStream(body, onComplete = { report(COMPLETE, null) }, onError = { report(ERROR, it) })
+            return Relayed(fetched.status, reason, mime, charset, served, SequenceInputStream(ByteArrayInputStream(whole.bytes), rest))
         }
+    }
+
+    /** What [readUpTo] read: the bytes, and whether the source ended within the cap. */
+    private class Read(val bytes: ByteArray, val ended: Boolean)
+
+    /** Up to `cap` bytes of `source`, and whether it ended within them (a read past the cap is left to the stream). */
+    private fun readUpTo(source: InputStream, cap: Int): Read {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        var total = 0
+        while (total < cap) {
+            val n = source.read(buffer, 0, minOf(buffer.size, cap - total))
+            if (n == -1) return Read(out.toByteArray(), true)
+            out.write(buffer, 0, n)
+            total += n
+        }
+        return Read(out.toByteArray(), false)
     }
 
     companion object {
@@ -184,6 +230,11 @@ class PageRequestReport(
         const val ERROR = "error"
         /** Chrome's limit on a chain (`net::URLRequest::kMaxRedirects`), and its name for the chain past it. */
         const val MAX_HOPS = 20
+        /**
+         * The body a relay reads whole before WebView is handed it (its `complete` then precedes
+         * the page's `load`); a web page's picture or script fits, a download streams.
+         */
+        const val WHOLE_BODY_CAP = 4 * 1024 * 1024
         const val ERR_TOO_MANY_REDIRECTS = "net::ERR_TOO_MANY_REDIRECTS"
 
         /**
