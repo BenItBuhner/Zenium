@@ -19,7 +19,8 @@ import {
   overviewTitleLabel,
   tabsWord
 } from '@renderer/lib/overviewHeader'
-import { OVERVIEW_TITLE_TESTID, OverviewTitle } from '../OverviewHeader'
+import { OVERVIEW_TITLE_TESTID, OverviewTitle, TITLE_FADE_MS } from '../OverviewHeader'
+import { PANE_FADE_MS } from '../PaneSlot'
 
 /*
  * The tab overview's one header row (tab overview cleanup spec §1, §3): the space's dot and
@@ -179,5 +180,107 @@ describe('the title control (§1)', () => {
     expect(title.textContent?.replace(/\s+/g, ' ').trim()).toBe('Private · 1 tab')
     expect(title.querySelector('svg')).not.toBeNull()
     expect(document.querySelectorAll('button')).toHaveLength(0)
+  })
+})
+
+/*
+ * §6: at a space switch (GN-19's swipe, the Spaces sheet, the menu's Switch Space) the title's
+ * words cross-fade over 120 ms, the pane's fade – the words that were kept over the new ones as
+ * a still fading out (opacity alone, `.zen-overview-title-still` in main.css), the new ones
+ * beneath from the first frame. Nothing of the sort within one space: a count that changes
+ * there is a cut, as the grid's card count is.
+ */
+describe('the title at a space switch (§6)', () => {
+  const STILL = '[data-testid="overview-title-still"]'
+  /** The words that stand live: the title's `.zen-title` outside any still. */
+  const live = (): string => {
+    const title = q<HTMLElement>(`[data-testid="${OVERVIEW_TITLE_TESTID}"]`)!
+    const words = [...title.querySelectorAll<HTMLElement>('.zen-title')].filter(
+      (w) => !w.closest(STILL)
+    )
+    expect(words).toHaveLength(1)
+    return words[0]!.textContent!.replace(/\s+/g, ' ').trim()
+  }
+  const titleFor = (sp: Space, count: number): ReactElement => (
+    <OverviewTitle
+      view="tabs"
+      space={sp}
+      count={count}
+      spacesOpen={false}
+      onOpenSpaces={() => undefined}
+    />
+  )
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fades the words that were over the new ones for the pane’s 120 ms, the name new at once', () => {
+    vi.useFakeTimers()
+    expect(TITLE_FADE_MS).toBe(120)
+    expect(TITLE_FADE_MS).toBe(PANE_FADE_MS)
+    const work = space('work', 'Work', [])
+    const personal = space('personal', 'Personal', [])
+    render(titleFor(work, 10))
+    expect(q(STILL)).toBeNull()
+    render(titleFor(personal, 5))
+    const title = q<HTMLButtonElement>(`[data-testid="${OVERVIEW_TITLE_TESTID}"]`)!
+    // TalkBack and the live words are the new space's from the first frame …
+    expect(title.getAttribute('aria-label')).toBe('Personal, 5 tabs')
+    const still = q<HTMLElement>(STILL)!
+    expect(still).not.toBeNull()
+    // … the still is the old words, out of the accessibility tree, laid over them.
+    expect(still.getAttribute('aria-hidden')).toBe('true')
+    expect(still.textContent?.replace(/\s+/g, ' ').trim()).toBe('Work · 10 tabs')
+    expect(still.classList.contains('zen-overview-title-still')).toBe(true)
+    expect(live()).toBe('Personal · 5 tabs')
+    // The button stays the row's one control through the fade.
+    expect(title.querySelectorAll('button, [role="button"]')).toHaveLength(0)
+    act(() => {
+      vi.advanceTimersByTime(TITLE_FADE_MS - 1)
+    })
+    expect(q(STILL)).not.toBeNull()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(q(STILL)).toBeNull()
+    expect(live()).toBe('Personal · 5 tabs')
+  })
+
+  it('a second switch inside the fade restarts it from the words that stood', () => {
+    vi.useFakeTimers()
+    const work = space('work', 'Work', [])
+    const personal = space('personal', 'Personal', [])
+    const reading = space('reading', 'Reading', [])
+    render(titleFor(work, 10))
+    render(titleFor(personal, 5))
+    act(() => {
+      vi.advanceTimersByTime(60)
+    })
+    render(titleFor(reading, 2))
+    const stills = document.querySelectorAll(STILL)
+    expect(stills).toHaveLength(1)
+    expect(stills[0]!.textContent?.replace(/\s+/g, ' ').trim()).toBe('Personal · 5 tabs')
+    act(() => {
+      vi.advanceTimersByTime(TITLE_FADE_MS - 1)
+    })
+    expect(q(STILL)).not.toBeNull()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(q(STILL)).toBeNull()
+    expect(live()).toBe('Reading · 2 tabs')
+  })
+
+  it('a count that changes within one space is a cut: no still', () => {
+    vi.useFakeTimers()
+    const work = space('work', 'Work', [])
+    render(titleFor(work, 10))
+    render(titleFor(work, 9))
+    expect(q(STILL)).toBeNull()
+    expect(live()).toBe('Work · 9 tabs')
+    // And none at the first render of a space, which is no switch.
+    render(titleFor({ ...work, name: 'Work' }, 9))
+    expect(q(STILL)).toBeNull()
   })
 })
