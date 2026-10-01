@@ -59,8 +59,10 @@ import { bridgeTraced, type Bridge } from './bridge'
 import { helperShortcuts } from './shortcutHelper'
 import {
   fileChooserAnswerWire,
+  fileChooserPathsNotice,
   fileChooserRequestOf,
   setInputFilesScript,
+  uploadPathsRefusal,
   type FileChooserEvent
 } from './agentPrompts'
 
@@ -272,7 +274,9 @@ export class AndroidTabView implements TabView {
     /** Told of every `setBounds`: the boot's READY counts the first placement (`startup.ts`). */
     private readonly placed: () => void = () => {},
     /** The core's content-rules resolver, asked for every navigation the view starts or Kotlin asks about. */
-    private readonly rules: () => ContentRulesResolver | null = () => null
+    private readonly rules: () => ContentRulesResolver | null = () => null,
+    /** A line for the agent driving this tab, read with its next result (`AgentSession.notices`); heard by no one before the core is bound. */
+    private readonly agentNotice: (line: string) => void = () => {}
   ) {}
 
   /**
@@ -461,8 +465,11 @@ export class AndroidTabView implements TabView {
    * A file chooser the page opened while Kotlin intercepts them: the core says whose it is and
    * answers – the agent's files, its cancel, or `user` for a tab that is not an agent's (any
    * more), on which Kotlin shows the system's chooser as it does for every other tab. A core
-   * without the event, or one whose answer fails, leaves the chooser to the user as well: the
-   * page must never sit on a `ValueCallback` nobody answers.
+   * without the event leaves the chooser to the user as well; one whose answer fails cancels it,
+   * as Kotlin does with an answer it cannot read: the page must never sit on a `ValueCallback`
+   * nobody answers, and nothing of the system's may open over an agent's page by mistake. An
+   * answer naming paths on this device is refused the same way, and the agent is told
+   * (`fileChooserPathsNotice`).
    */
   private onFileChooser(event: FileChooserEvent): void {
     if (typeof event?.requestId !== 'string') return
@@ -480,8 +487,12 @@ export class AndroidTabView implements TabView {
     }
     void ask
       .call(this.events, fileChooserRequestOf(event))
-      .then((result) => answer(fileChooserAnswerWire(result)))
-      .catch(() => answer({ kind: 'user' }))
+      .then((result) => {
+        const refusal = result.kind === 'files' ? uploadPathsRefusal(result.files) : null
+        if (refusal) this.agentNotice(fileChooserPathsNotice(this.tabId, refusal))
+        answer(fileChooserAnswerWire(result))
+      })
+      .catch(() => answer({ kind: 'cancel' }))
   }
 
   // --- an AI agent's native prompts -----------------------------------------
@@ -1237,6 +1248,12 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
    */
   contentRules: ContentRulesResolver | null = null
   private readonly rules = (): ContentRulesResolver | null => this.contentRules
+  /**
+   * Where a view's word for the agent driving its tab goes (`AndroidPlatform.bind` points it at
+   * the session's notices): a chooser answer refused on this device is explained there, not
+   * swallowed. Nothing hears it before the core is bound.
+   */
+  agentNotices: ((tabId: string, line: string) => void) | null = null
 
   constructor(private readonly bridge: Bridge) {
     this.navigation = new NavigationBridge(bridge)
@@ -1254,7 +1271,8 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
       this.navigation,
       this,
       this.placed,
-      this.rules
+      this.rules,
+      (line) => this.agentNotices?.(tab.id, line)
     )
     view.events = events
     view.containerId = tab.containerId
@@ -1281,7 +1299,8 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
       this.navigation,
       this,
       this.placed,
-      this.rules
+      this.rules,
+      (line) => this.agentNotices?.(tabId, line)
     )
     this.views.set(tabId, view)
     return view

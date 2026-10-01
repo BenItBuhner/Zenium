@@ -56,8 +56,9 @@ class Security(private val host: PageHost) {
      * session (Chrome's rule), the agent's or not. Otherwise, on a page an agent works
      * ([TabWebView.interceptsAgentPrompts]) no system UI opens: the core hears of the request
      * (`certificate.request`) with the certificates this app can describe – the KeyChain has no
-     * enumeration API, so those are the aliases the user picked for other sites this session –
-     * and answers through [respondClientCertificate]. Every other page gets the KeyChain chooser.
+     * enumeration API, so those are the aliases the user picked for this host on another port
+     * this session, and none picked for another host – and answers through
+     * [respondClientCertificate]. Every other page gets the KeyChain chooser.
      */
     fun onClientCertRequest(tab: TabWebView, request: ClientCertRequest) {
         val key = "${request.host}:${request.port}"
@@ -73,12 +74,19 @@ class Security(private val host: PageHost) {
         chooseWithKeyChain(key, request)
     }
 
+    /**
+     * The certificates on offer to the agent are the user's picks for this host alone
+     * ([AgentPrompts.candidateAliases]) – a certificate shown to one site is consent for that
+     * site – narrowed to what the server asked for by key type and issuer
+     * ([AgentPrompts.certificateFits]), as the KeyChain narrows the user's own list.
+     */
     private fun askAgent(tab: TabWebView, request: ClientCertRequest) {
         val id = "cert_${++seq}"
-        val aliases = certificateChoices.values.distinct()
+        val aliases = AgentPrompts.candidateAliases(certificateChoices, request.host ?: "")
         keychain.execute {
             val described = aliases.mapNotNull { alias ->
-                val chain = runCatching { KeyChain.getCertificateChain(host.activity, alias) }.getOrNull()
+                val chain = runCatching { KeyChain.getCertificateChain(host.activity, alias) }.getOrNull() ?: return@mapNotNull null
+                if (!AgentPrompts.certificateFits(chain, request.keyTypes, request.principals)) return@mapNotNull null
                 AgentPrompts.describeCertificate(chain)?.let { alias to it }
             }
             main.post {

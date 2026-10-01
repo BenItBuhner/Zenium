@@ -4,8 +4,10 @@ import {
   clientCertificatesOf,
   downloadAsksWhere,
   fileChooserAnswerWire,
+  fileChooserPathsNotice,
   fileChooserRequestOf,
-  setInputFilesScript
+  setInputFilesScript,
+  uploadPathsRefusal
 } from '../agentPrompts'
 
 describe("an agent's file chooser on Android (agentPrompts.ts)", () => {
@@ -32,14 +34,13 @@ describe("an agent's file chooser on Android (agentPrompts.ts)", () => {
     )
   })
 
-  it("carries the core's answer to Kotlin: files as paths or as bytes with a name and type, a cancel, or the user's chooser", () => {
+  it("carries the core's answer to Kotlin: files as bytes with a name and type, a cancel, or the user's chooser", () => {
     expect(fileChooserAnswerWire({ kind: 'cancel' })).toEqual({ kind: 'cancel' })
     expect(fileChooserAnswerWire({ kind: 'user' })).toEqual({ kind: 'user' })
     expect(
       fileChooserAnswerWire({
         kind: 'files',
         files: [
-          { path: '/sdcard/Download/a.pdf' },
           { name: 'b.txt', base64: 'Yg==' },
           { name: 'c.png', mimeType: 'image/png', base64: 'Yw==' }
         ]
@@ -47,11 +48,32 @@ describe("an agent's file chooser on Android (agentPrompts.ts)", () => {
     ).toEqual({
       kind: 'files',
       files: [
-        { path: '/sdcard/Download/a.pdf' },
         { name: 'b.txt', mimeType: null, base64: 'Yg==' },
         { name: 'c.png', mimeType: 'image/png', base64: 'Yw==' }
       ]
     })
+  })
+
+  it('refuses an answer naming a path on this device whole – the chooser is cancelled, no path reaches Kotlin – and says why', () => {
+    // A path the WebView opened would be read as Zenium itself (its cookies, its preferences,
+    // the agent token store) and handed to the page the agent drives: never, from any agent.
+    const files = [
+      { name: 'b.txt', base64: 'Yg==' },
+      { path: '/data/data/app.zen.chromium/app_webview/Default/Cookies' }
+    ]
+    expect(fileChooserAnswerWire({ kind: 'files', files })).toEqual({ kind: 'cancel' })
+    expect(
+      fileChooserAnswerWire({ kind: 'files', files: [{ path: '/sdcard/Download/a.pdf' }] })
+    ).toEqual({ kind: 'cancel' })
+    const refusal = uploadPathsRefusal(files)
+    expect(refusal).toContain('/data/data/app.zen.chromium/app_webview/Default/Cookies')
+    expect(refusal).toContain('send the file contents instead')
+    expect(uploadPathsRefusal([{ name: 'b.txt', base64: 'Yg==' }])).toBeNull()
+    // The same sentence `setInputFiles` answers with, so the agent is told one thing.
+    expect(JSON.parse(setInputFilesScript('input', files).slice(1, -1))).toEqual({ error: refusal })
+    expect(fileChooserPathsNotice('tab_1', refusal!)).toMatch(
+      /^Notice: .*tab tab_1.*cancelled: paths cannot be read on this device/
+    )
   })
 
   it('sets the files of a marked input in the page from the bytes the agent sent, and refuses paths page script cannot read', () => {
@@ -70,6 +92,12 @@ describe("an agent's file chooser on Android (agentPrompts.ts)", () => {
     expect(JSON.parse(refused.slice(1, -1))).toEqual({
       error: expect.stringContaining('/sdcard/a.txt')
     })
+  })
+
+  it("tells a file input by its tag and type, not by instanceof: an input in a same-origin frame is that realm's", () => {
+    const script = setInputFilesScript('input', [{ name: 'a.txt', base64: 'YQ==' }])
+    expect(script).toContain("input.tagName !== 'INPUT' || input.type !== 'file'")
+    expect(script).not.toContain('instanceof HTMLInputElement')
   })
 })
 

@@ -240,10 +240,11 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         }
         // The agent driving the tab answered where the save dialog would have asked (the core's
         // `downloadDestination`, `AgentPrompts.kt`): no dialog – the setting's folder or the
-        // default – and the file takes the agent's name, which the response's own no longer replaces.
+        // default – and the file takes the agent's name, sanitised and given its type's extension
+        // as every name is, which the response's own no longer replaces.
         destination.optJSONObject("agent")?.let { agent ->
             l.saveAs = false
-            l.filename = AgentPrompts.downloadName(agent.strOrNull("filename"), l.filename)
+            l.filename = AgentPrompts.downloadName(agent.strOrNull("filename"), l.filename, l.mimeType, DownloadSink::extensionFor)
             l.namedByAgent = true
         }
         // The setting's mode, or the save dialog for the one download the menu's Save As… started.
@@ -727,12 +728,14 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         if (!contentType.isNullOrEmpty() && contentType != "application/octet-stream" &&
             (l.mimeType.isEmpty() || l.mimeType == "application/octet-stream")
         ) l.mimeType = contentType
-        if (l.sink == null && !l.namedByAgent) {
+        if (l.sink == null) {
             val fromHeader = DownloadLogic.dispositionFilename(connection.getHeaderField("Content-Disposition"))
-            if (!fromHeader.isNullOrEmpty()) {
+            if (!fromHeader.isNullOrEmpty() && !l.namedByAgent) {
                 l.filename = DownloadLogic.filenameFor(l.url, connection.getHeaderField("Content-Disposition"), l.mimeType.ifEmpty { null }, DownloadSink::extensionFor)
             } else if (!l.filename.contains('.') && l.mimeType.isNotEmpty()) {
-                l.filename = DownloadLogic.filenameFor(l.url, null, l.mimeType, DownloadSink::extensionFor)
+                // The agent's name keeps its stem; the response's type gives it the extension it lacks.
+                l.filename = if (l.namedByAgent) AgentPrompts.downloadName(l.filename, l.filename, l.mimeType, DownloadSink::extensionFor)
+                else DownloadLogic.filenameFor(l.url, null, l.mimeType, DownloadSink::extensionFor)
             }
         }
         val length = if (status == 206) DownloadLogic.parseContentRange(connection.getHeaderField("Content-Range"))?.total ?: -1L

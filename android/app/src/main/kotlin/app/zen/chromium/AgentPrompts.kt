@@ -3,8 +3,10 @@ package app.zen.chromium
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.Principal
 import java.security.cert.X509Certificate
 import java.util.Base64
+import javax.security.auth.x500.X500Principal
 
 /**
  * The host's side of an AI agent's native prompts (the core's `agentPrompts` capability,
@@ -25,11 +27,13 @@ object AgentPrompts {
             "accept" to JSONArray(acceptTypes.map(String::trim).filter(String::isNotEmpty))
         )
 
-    /** One file of a chooser's answer: a path on this device, or bytes the agent sent inline. */
-    sealed class UploadFile {
-        data class Path(val path: String) : UploadFile()
-        data class Inline(val name: String, val mimeType: String?, val base64: String) : UploadFile()
-    }
+    /**
+     * One file of a chooser's answer: the bytes the agent sent inline, under the name the page
+     * will see. Never a path: a file the WebView opened by path would be read as this app – its
+     * cookies, its preferences, the agent token store – and handed to whatever page the agent
+     * drives, so no path an agent names is ever turned into a `Uri` here.
+     */
+    data class UploadFile(val name: String, val mimeType: String?, val base64: String)
 
     /** The core's word on a chooser (`view.fileChooserAnswer`). */
     sealed class FileChooserAnswer {
@@ -42,23 +46,24 @@ object AgentPrompts {
 
     /**
      * The answer the bridge carried. A malformed one cancels the chooser: the page must not sit
-     * on its callback, and nothing of the system's may open over an agent's page by mistake.
+     * on its callback, and nothing of the system's may open over an agent's page by mistake. An
+     * answer with a path in it is refused whole, not thinned to its inline files: the core
+     * already refused it and told the agent (`agentPrompts.ts`), and this side must not differ
+     * on what crosses the app's sandbox.
      */
     fun fileChooserAnswer(args: JSONObject): FileChooserAnswer = when (args.str("kind")) {
         "user" -> FileChooserAnswer.User
         "files" -> {
             val files = ArrayList<UploadFile>()
             val list = args.arr("files")
+            var refused = false
             for (i in 0 until list.length()) {
                 val f = list.optJSONObject(i) ?: continue
-                val path = f.strOrNull("path")
-                val base64 = f.strOrNull("base64")
-                when {
-                    !path.isNullOrEmpty() -> files.add(UploadFile.Path(path))
-                    base64 != null -> files.add(UploadFile.Inline(uploadFileName(f.str("name")), f.strOrNull("mimeType"), base64))
-                }
+                if (f.has("path")) refused = true
+                val base64 = f.strOrNull("base64") ?: continue
+                files.add(UploadFile(uploadFileName(f.str("name")), f.strOrNull("mimeType"), base64))
             }
-            if (files.isEmpty()) FileChooserAnswer.Cancel else FileChooserAnswer.Files(files)
+            if (refused || files.isEmpty()) FileChooserAnswer.Cancel else FileChooserAnswer.Files(files)
         }
         else -> FileChooserAnswer.Cancel
     }
@@ -88,6 +93,42 @@ object AgentPrompts {
         if (!args.has("index") || args.isNull("index")) return CertificateAnswer.Cancel
         val index = args.optInt("index", -1)
         return aliases.getOrNull(index)?.let { CertificateAnswer.Proceed(it) } ?: CertificateAnswer.Cancel
+    }
+
+    /**
+     * The aliases an agent's request for `host` may be offered, out of the picks the user made
+     * this session (`host:port` → alias): those for the same host, on any port, and no other. A
+     * certificate the user showed one site is their consent for that site; an agent on another
+     * host never sees it, whatever the KeyChain would have let the user pick there.
+     */
+    fun candidateAliases(choices: Map<String, String>, host: String): List<String> =
+        choices.entries
+            .filter { (key, _) -> key.substringBeforeLast(':').equals(host, ignoreCase = true) }
+            .map { it.value }
+            .distinct()
+
+    /**
+     * Whether a chain answers what the server asked for, as `KeyChain.choosePrivateKeyAlias`
+     * narrows the user's list by the same two facts: the leaf's key algorithm is among
+     * `keyTypes`, and one of the chain's issuers – or the leaf itself – is among the accepted
+     * `issuers` (canonical distinguished names). An empty list on either side asks nothing.
+     */
+    fun certificateFits(leafKeyAlgorithm: String, chainNames: List<String>, keyTypes: List<String>, issuers: List<String>): Boolean {
+        val keyOk = keyTypes.isEmpty() || keyTypes.any { it.equals(leafKeyAlgorithm, ignoreCase = true) }
+        val issuerOk = issuers.isEmpty() || chainNames.any { name -> issuers.any { it == name } }
+        return keyOk && issuerOk
+    }
+
+    /** [certificateFits] for a chain as the KeyChain returns it, against the request's facts. */
+    fun certificateFits(chain: Array<out X509Certificate>, keyTypes: Array<String>?, principals: Array<out Principal>?): Boolean {
+        val leaf = chain.firstOrNull() ?: return false
+        val names = chain.flatMap { listOf(it.subjectX500Principal, it.issuerX500Principal) }
+            .map { it.getName(X500Principal.CANONICAL) }
+        // A principal that is no distinguished name stays as written, and so matches no chain.
+        val issuers = principals.orEmpty().map { p ->
+            (p as? X500Principal ?: runCatching { X500Principal(p.name) }.getOrNull())?.getName(X500Principal.CANONICAL) ?: p.name
+        }
+        return certificateFits(leaf.publicKey.algorithm, names, keyTypes.orEmpty().toList(), issuers)
     }
 
     /**
@@ -157,12 +198,16 @@ object AgentPrompts {
 
     /**
      * The name a download is written under once its tab's agent answered the ask-where-to-save
-     * question: the agent's name when it gave one (a name, no folders – the core checked), else
-     * the one the response suggested.
+     * question: the agent's name when it gave one, taken the way every download's name is
+     * ([DownloadLogic.filenameFor]: sanitised – no folders, no control characters, no leading
+     * dot, no reserved name, within the length cap – and given the type's extension when it has
+     * none), else the one the response suggested. The core checked for folders; the rest is this
+     * side's, since the name goes to MediaStore and the documents provider as is.
      */
-    fun downloadName(agentName: String?, suggested: String): String {
-        val name = agentName?.trim()?.replace('\\', '_')?.replace('/', '_') ?: return suggested
-        return if (name.isEmpty() || name == "." || name == "..") suggested else name
+    fun downloadName(agentName: String?, suggested: String, mimeType: String, extensionFor: (String) -> String?): String {
+        val clean = agentName?.let(DownloadLogic::sanitizeFilename)
+        if (clean.isNullOrEmpty()) return suggested
+        return DownloadLogic.filenameFor("", null, mimeType.ifEmpty { null }, extensionFor, suggestedName = clean)
     }
 }
 
@@ -170,22 +215,29 @@ object AgentPrompts {
  * The files an agent sends inline for a page's chooser, written under the cache's
  * `agent-uploads` directory (one folder per answer, reached through the `FileProvider` as the
  * camera's photos are, `res/xml/file_paths.xml`) so the WebView reads them as it reads any
- * picked file. The page sees the agent's names. A folder older than [KEEP_MS] at a start was
- * uploaded long ago, or never read, and goes ([sweep]).
+ * picked file. The page sees the agent's names: each file sits in its own numbered folder, so
+ * two files of one answer under the same name stay two files. The folders of a tab's answers
+ * go when its agent lets the page go ([TabWebView.setInterceptAgentPrompts]), the page reading
+ * them at submit time until then; one older than [KEEP_MS] at a start, or at a later answer,
+ * was left by a run that ended first and goes too ([sweep]).
  */
 object AgentUploads {
     const val DIR = "agent-uploads"
     const val KEEP_MS = 5 * 60 * 60 * 1000L
 
-    /** Write the inline files of one answer into a fresh folder under `dir`; the files in the answer's order. */
-    fun write(dir: File, files: List<AgentPrompts.UploadFile.Inline>, now: Long): List<File> {
+    /** One answer's folder under [DIR] and its files, in the answer's order. */
+    class Written(val folder: File, val files: List<File>)
+
+    /** Write the inline files of one answer into a fresh folder under `dir`, each in a numbered folder of its own. */
+    fun write(dir: File, files: List<AgentPrompts.UploadFile>, now: Long): Written {
         val folder = File(dir, "u-$now-${Integer.toHexString(System.identityHashCode(files))}")
-        folder.mkdirs()
-        return files.map { f ->
-            val target = File(folder, AgentPrompts.uploadFileName(f.name))
+        val written = files.mapIndexed { i, f ->
+            val own = File(folder, i.toString()).apply { mkdirs() }
+            val target = File(own, AgentPrompts.uploadFileName(f.name))
             target.writeBytes(Base64.getDecoder().decode(f.base64))
             target
         }
+        return Written(folder, written)
     }
 
     /** Whether a folder in [DIR] is old enough at `now` to go. */

@@ -334,6 +334,8 @@ class TabWebView(
     /** The file choosers held for the core's answer, by the request id the event carried. */
     private val heldFileChoosers = HashMap<String, HeldFileChooser>()
     private var fileChooserSeq = 0
+    /** Where the agent's chooser answers were written ([AgentUploads]), deleted when the agent lets the page go. */
+    private val agentUploadFolders = ArrayList<File>()
 
     private class HeldFileChooser(val callback: ValueCallback<Array<Uri>>, val params: WebChromeClient.FileChooserParams)
 
@@ -428,6 +430,7 @@ class TabWebView(
         }
         unloadCheck?.settle(leave = true, destroyView = false)
         cancelHeldFileChoosers()
+        clearAgentUploads()
         // An image search still waiting on a frame hears that the page went ([ImageOwner]).
         imageOwner?.destroy()
         NavigationReports.detach(this, navigationListener)
@@ -1238,10 +1241,13 @@ class TabWebView(
 
     /**
      * `view.interceptAgentPrompts`: an agent took this page (on), or let it go (off). A chooser
-     * held when the agent lets go keeps waiting for the core's answer, which then says `user`.
+     * held when the agent lets go keeps waiting for the core's answer, which then says `user`;
+     * the files its answers wrote go with it ([AgentUploads]), the page having read them at
+     * submit while the agent worked it.
      */
     fun setInterceptAgentPrompts(on: Boolean) {
         interceptsAgentPrompts = on
+        if (!on) clearAgentUploads()
     }
 
     /**
@@ -1263,8 +1269,9 @@ class TabWebView(
     }
 
     /**
-     * The core's answer to a held chooser (`view.fileChooserAnswer`): the agent's files – inline
-     * bytes written to a private folder first ([AgentUploads]), a path on this device as it is
+     * The core's answer to a held chooser (`view.fileChooserAnswer`): the agent's files – bytes
+     * written to a private folder first ([AgentUploads]) and handed to the page as this app's
+     * `content://` URIs; never a path, which [AgentPrompts.fileChooserAnswer] turns into a cancel
      * – a cancel, or `user`: the tab is not an agent's, the system's chooser opens as it would
      * have. An answer to a chooser no longer held (the page went) is nothing.
      */
@@ -1275,35 +1282,38 @@ class TabWebView(
                 if (!host.activity.showFileChooser(host, held.callback, held.params)) held.callback.onReceiveValue(null)
             AgentPrompts.FileChooserAnswer.Cancel -> held.callback.onReceiveValue(null)
             is AgentPrompts.FileChooserAnswer.Files -> {
-                val inline = answer.files.filterIsInstance<AgentPrompts.UploadFile.Inline>()
                 val activity = host.activity
                 Thread {
-                    // The written files in the inline files' order; their content URIs are read back below.
+                    val dir = File(activity.cacheDir, AgentUploads.DIR)
+                    val now = System.currentTimeMillis()
+                    // What an earlier run left behind goes before this answer is written.
+                    AgentUploads.sweep(dir, now)
                     val written = runCatching {
-                        if (inline.isEmpty()) emptyList()
-                        else AgentUploads.write(File(activity.cacheDir, AgentUploads.DIR), inline, System.currentTimeMillis())
-                            .map { file -> FileProvider.getUriForFile(activity, "${activity.packageName}.files", file) }
+                        val w = AgentUploads.write(dir, answer.files, now)
+                        w to w.files.map { file -> FileProvider.getUriForFile(activity, "${activity.packageName}.files", file) }
                     }.getOrElse { e ->
                         Log.w("ZenTab", "an agent's upload could not be written: $e")
                         null
                     }
                     post {
-                        if (written == null) {
+                        if (written == null || written.second.isEmpty()) {
                             held.callback.onReceiveValue(null)
                             return@post
                         }
-                        val writtenUris = written.iterator()
-                        val uris = answer.files.map { f ->
-                            when (f) {
-                                is AgentPrompts.UploadFile.Path -> Uri.fromFile(File(f.path))
-                                is AgentPrompts.UploadFile.Inline -> writtenUris.next()
-                            }
-                        }
-                        held.callback.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+                        agentUploadFolders.add(written.first.folder)
+                        held.callback.onReceiveValue(written.second.toTypedArray())
                     }
                 }.start()
             }
         }
+    }
+
+    /** The folders this tab's agent answers were written to go, off the main thread. */
+    private fun clearAgentUploads() {
+        if (agentUploadFolders.isEmpty()) return
+        val folders = agentUploadFolders.toList()
+        agentUploadFolders.clear()
+        Thread { for (f in folders) f.deleteRecursively() }.start()
     }
 
     /** The page went with choosers held: each hears it was cancelled, so no callback is left waiting. */

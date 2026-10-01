@@ -32,23 +32,51 @@ export function fileChooserRequestOf(event: FileChooserEvent): FileChooserReques
   return { mode: event.multiple === true ? 'multiple' : 'single', accept, source: 'input' }
 }
 
-/** One file of a chooser's answer as Kotlin takes it: a path on this device, or bytes to write. */
-export type WireUploadFile =
-  { path: string } | { name: string; mimeType: string | null; base64: string }
+/**
+ * One file of a chooser's answer as Kotlin takes it: bytes to write, never a path. A path the
+ * agent names would be read by the WebView under Zenium's own uid – the app's cookies, its
+ * preferences, the agent token store – and handed to whatever page the agent drives, which no
+ * agent may do; the agent sends the file's contents instead, as `setInputFiles` has it.
+ */
+export type WireUploadFile = { name: string; mimeType: string | null; base64: string }
 
 /** The `view.fileChooserAnswer` command's payload (without the tab and request ids). */
 export type FileChooserAnswerWire =
   { kind: 'files'; files: WireUploadFile[] } | { kind: 'cancel' } | { kind: 'user' }
 
-/** The core's answer as the bridge carries it to Kotlin. */
+/**
+ * The core's answer as the bridge carries it to Kotlin. An answer that names a path on this
+ * device is refused whole: the chooser is cancelled and the agent hears why
+ * (`uploadPathsRefusal`); nothing of it reaches Kotlin, which takes no paths either.
+ */
 export function fileChooserAnswerWire(answer: FileChooserAnswer): FileChooserAnswerWire {
   if (answer.kind !== 'files') return { kind: answer.kind }
-  return { kind: 'files', files: answer.files.map(wireUploadFile) }
+  if (uploadPathsRefusal(answer.files)) return { kind: 'cancel' }
+  return {
+    kind: 'files',
+    files: answer.files
+      .filter((f): f is Exclude<AgentUploadFile, { path: string }> => !('path' in f))
+      .map((f) => ({ name: f.name, mimeType: f.mimeType ?? null, base64: f.base64 }))
+  }
 }
 
-function wireUploadFile(file: AgentUploadFile): WireUploadFile {
-  if ('path' in file) return { path: file.path }
-  return { name: file.name, mimeType: file.mimeType ?? null, base64: file.base64 }
+/**
+ * Why an upload's files are refused on this device, or null when none of them is a path: the
+ * one sentence the chooser's notice and `setInputFiles`' error both say, so the agent is told
+ * the same thing whichever way it sent them.
+ */
+export function uploadPathsRefusal(files: readonly AgentUploadFile[]): string | null {
+  const paths = files.filter((f): f is { path: string } => 'path' in f)
+  if (!paths.length) return null
+  return `paths cannot be read on this device (${paths.map((p) => p.path).join(', ')}); send the file contents instead ("files": [{"name","base64","mimeType"}])`
+}
+
+/**
+ * The notice an agent reads when its answer to a page's file chooser named paths: the chooser
+ * was cancelled for the page, and the same answer with the bytes is the way through.
+ */
+export function fileChooserPathsNotice(tabId: string, refusal: string): string {
+  return `Notice: your answer to the file chooser in tab ${tabId} was refused and the page heard the chooser was cancelled: ${refusal}.`
 }
 
 /** What Kotlin's `certificate.request` host event carries of a `ClientCertRequest`. */
@@ -127,14 +155,13 @@ export function downloadAsksWhere(settings: { askWhereToSave: boolean }, saveAs:
  * the files are built in the page from the bytes the agent sent, so `input` and `change` fire
  * as a person's pick would. A path on this device cannot be read by page script (and the
  * app's own reach into another app's files is nil under scoped storage): the agent is told to
- * send the bytes. The result is `{ ok: true }` or `{ error }`.
+ * send the bytes. The input is told by tag and type, not `instanceof HTMLInputElement`: one
+ * found in a same-origin frame belongs to that frame's realm, whose constructors are its own.
+ * The result is `{ ok: true }` or `{ error }`.
  */
 export function setInputFilesScript(selector: string, files: readonly AgentUploadFile[]): string {
-  const paths = files.filter((f): f is { path: string } => 'path' in f)
-  if (paths.length) {
-    const error = `paths cannot be read on this device (${paths.map((p) => p.path).join(', ')}); send the file contents instead ("files": [{"name","base64","mimeType"}])`
-    return `(${JSON.stringify({ error })})`
-  }
+  const error = uploadPathsRefusal(files)
+  if (error) return `(${JSON.stringify({ error })})`
   const inline = files.filter(
     (f): f is Exclude<AgentUploadFile, { path: string }> => !('path' in f)
   )
@@ -156,7 +183,7 @@ export function setInputFilesScript(selector: string, files: readonly AgentUploa
   const input = find(document);
   if (!input) return { error: 'the input is not in this document or a frame of the same site' };
   input.removeAttribute('data-zen-upload');
-  if (!(input instanceof HTMLInputElement) || input.type !== 'file') return { error: 'not a file input' };
+  if (input.tagName !== 'INPUT' || input.type !== 'file') return { error: 'not a file input' };
   const transfer = new DataTransfer();
   for (const f of files) {
     const text = atob(f.base64);

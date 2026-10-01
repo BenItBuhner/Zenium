@@ -528,11 +528,21 @@ describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () =>
         kind: 'files',
         files: [
           { name: 'a.txt', mimeType: 'text/plain', base64: 'YQ==' },
-          { path: '/sdcard/b.pdf' }
+          { name: 'b.pdf', base64: 'Yg==' }
         ]
       }
     }
-    const view = new AndroidTabView('tab_1', bridge)
+    const notices: string[] = []
+    const view = new AndroidTabView(
+      'tab_1',
+      bridge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (line) => notices.push(line)
+    )
     view.events = {
       onFileChooser: (request) => answer(request)
     } as unknown as TabViewEvents
@@ -554,11 +564,12 @@ describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () =>
           kind: 'files',
           files: [
             { name: 'a.txt', mimeType: 'text/plain', base64: 'YQ==' },
-            { path: '/sdcard/b.pdf' }
+            { name: 'b.pdf', mimeType: null, base64: 'Yg==' }
           ]
         }
       }
     ])
+    expect(notices).toEqual([])
     answer = async () => ({ kind: 'cancel' })
     view.dispatch('fileChooser', { requestId: 'fc_2' })
     await flush()
@@ -566,7 +577,8 @@ describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () =>
       method: 'view.fileChooserAnswer',
       args: { tabId: 'tab_1', requestId: 'fc_2', kind: 'cancel' }
     })
-    // The core's answer failing leaves the chooser to the user: no callback sits unanswered.
+    // The core's answer failing cancels the chooser, as Kotlin does with an answer it cannot
+    // read: no callback sits unanswered, and no system UI opens over the agent's page.
     answer = async () => {
       throw new Error('gone')
     }
@@ -574,8 +586,28 @@ describe("AndroidTabView and an agent's native prompts (agentPrompts.ts)", () =>
     await flush()
     expect(calls[2]).toEqual({
       method: 'view.fileChooserAnswer',
-      args: { tabId: 'tab_1', requestId: 'fc_3', kind: 'user' }
+      args: { tabId: 'tab_1', requestId: 'fc_3', kind: 'cancel' }
     })
+    // An answer naming a path on this device is refused whole: Kotlin hears a cancel, never the
+    // path, and the agent reads why with its next result.
+    answer = async () => ({
+      kind: 'files',
+      files: [
+        { name: 'a.txt', mimeType: 'text/plain', base64: 'YQ==' },
+        { path: '/data/data/app.zen.chromium/shared_prefs/zen.xml' }
+      ]
+    })
+    view.dispatch('fileChooser', { requestId: 'fc_4' })
+    await flush()
+    expect(calls[3]).toEqual({
+      method: 'view.fileChooserAnswer',
+      args: { tabId: 'tab_1', requestId: 'fc_4', kind: 'cancel' }
+    })
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatch(/^Notice: .*tab tab_1/)
+    expect(notices[0]).toContain('/data/data/app.zen.chromium/shared_prefs/zen.xml')
+    expect(notices[0]).toContain('send the file contents instead')
+    expect(JSON.stringify(calls)).not.toContain('shared_prefs')
   })
 
   it('a core without the event hands the chooser to the user at once; an event without a request id is nothing', async () => {

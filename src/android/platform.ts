@@ -1920,6 +1920,9 @@ export class AndroidPlatform implements Platform {
     // PS-64, PS-59 and the guarded rows): the WebView decides from `permissions.resolve`, an
     // extension's rule over the user's, not from the pushed document alone.
     this.views.contentRules = browser.contentRules
+    // A view's word for the agent driving its tab (a chooser answer refused on this device) goes
+    // with the agent's next result, as the core's own notices do.
+    this.views.agentNotices = (tabId, line) => browser.agents.driver(tabId)?.notices.push(line)
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
@@ -2262,8 +2265,14 @@ export class AndroidPlatform implements Platform {
             return
           }
           void agent.then((answer) => {
-            if (browser.downloads.item(record.id) !== record || record.state === 'cancelled') return
             const destination = agentDownloadDestination(answer, settings.directory)
+            // The record went while the agent was asked (the user cleared it): Kotlin's transfer,
+            // never bound, is refused so it does not sit in its live set for the session.
+            if (browser.downloads.item(record.id) !== record || record.state === 'cancelled') {
+              this.downloadTokens.delete(p.token)
+              this.bridge.send('download.refuse', { token: p.token })
+              return
+            }
             if (destination) {
               place(destination)
               return
