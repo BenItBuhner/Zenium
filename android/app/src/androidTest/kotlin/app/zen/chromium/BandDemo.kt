@@ -488,24 +488,37 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         val held = offsetCss()
         val pageX = width * 0.5f
         val pageY = height * 0.45f
-        val away = scene("band-pull-takeover", JankBudget.Kind.GESTURE, timeoutMs = 6_000, took = { !bandUp() && offsetCss() <= TOLERANCE }) {
+        // The band standing here is a STATE: the pull takes the page over where it sits and the
+        // band goes (unseen while the pull has the page), the page comes home on the release –
+        // and then the state, which holds, returns on its own entrance and the page is held again.
+        // So the verdict reads the host's samples (the page's offset every 8 ms through the whole
+        // act) and the band under the finger at the pull's peak, not one instant after the release
+        // that the state's return overwrites within a frame or two. `took` is the page at rest at
+        // either of its two rests (home, or the state's).
+        var midPullBand = ""
+        var midPullOffset = 0f
+        val settled = scene("band-pull-takeover", JankBudget.Kind.GESTURE, timeoutMs = 6_000, took = { val o = offsetCss(); o <= TOLERANCE || abs(o - held) <= TOLERANCE }) {
             Finger().apply {
                 down(pageX, pageY)
                 moveBy(0f, NUDGE, 80)
                 moveBy(0f, 200 * density, 600)
                 hold(300)
+                midPullBand = bandTitle()
+                midPullOffset = offsetCss()
                 snap("pull-takeover-finger-down")
                 up()
             }
         }
         val samples = sampler.stop()
         val jumped = jumpedHome(samples, held)
-        finding("  the pull: ${describeSamples(samples)}; the page's lowest offset before the pull's peak: ${"%.1f".format(jumped.lowestBeforePeak)} (held at $held)")
-        check("the band leaves on the pull and the page comes home on the release", away)
-        if (!away) touchFault("a pull on the held page did not take the band off, or the page did not come home")
+        val home = lowestAfterPeak(samples)
+        finding("  the pull: ${describeSamples(samples)}; the page's lowest offset before the pull's peak: ${"%.1f".format(jumped.lowestBeforePeak)} (held at $held); after the peak: ${"%.1f".format(home)}; under the finger at the pull's peak: band='$midPullBand', page offset $midPullOffset")
+        check("the band leaves on the pull: no band under the finger at the pull's peak, the page the pull's (offset $midPullOffset, past the band's $held)", midPullBand.isEmpty() && midPullOffset > held + PULL_SLACK)
+        check("the page comes home on the release (the lowest offset after the pull's peak ${"%.1f".format(home)} ≤ $TOLERANCE)", home <= TOLERANCE)
+        if (!settled) touchFault("a pull on the held page left the page at rest at neither home nor the band's offset")
         check("the page never jumped home under the finger: the pull carried on from the band's offset (lowest ${"%.1f".format(jumped.lowestBeforePeak)} ≥ ${held - PULL_SLACK})", jumped.ok)
         val returned = awaitBand(OFFLINE_TITLE, 8_000)
-        finding("  after the pull: band=${bandTitle()} (the state holds; its return is reported, not gated); page offset ${offsetCss()}")
+        finding("  after the pull: band=${bandTitle()}, returned=$returned (the state holds; its return is reported, not gated); page offset ${offsetCss()}")
         snap("pull-takeover-after")
         beat()
     }
@@ -645,12 +658,14 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
      * The install prompt's record for a site's app, from the core's `webapps.json` (the test
      * shares the app's uid): `{visits, firstVisitAt, lastVisitAt, dismissedAt, promptedAt}`, or
      * null while the file or the record is not there yet (the core writes it after the show).
+     * [site] is the site's URL ([SITE_A] …); the record's key is the app's id, the manifest's
+     * `/app/` resolved against the site – the key [seedMore] wrote.
      */
     private fun engagement(site: String): JSONObject? {
         val file = File(File(app.filesDir, "zen"), "webapps.json")
         if (!file.exists()) return null
         val doc = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
-        return doc.optJSONObject("engagement")?.optJSONObject("http://$site:$PORT/app/")
+        return doc.optJSONObject("engagement")?.optJSONObject("$site/app/")
     }
 
     private fun chromeTheme(): String = jsonString(chromeJs("(function(){return document.documentElement.getAttribute('data-theme')||''})()"))
@@ -760,6 +775,18 @@ class BandDemo : DemoHarness("band-demo-state.json", MEDIA_PREFIX, "band-demo") 
         val peak = values.indices.maxByOrNull { values[it] } ?: 0
         val lowest = values.take(peak + 1).minOrNull() ?: 0f
         return Jump(lowest >= held - PULL_SLACK, lowest)
+    }
+
+    /**
+     * The lowest offset the host drew after the pull's peak: the release brings the page home
+     * (≈ 0) before a state that still holds brings its band back, so the band's return is no
+     * miss – the page's visit home is the fact, read from the samples rather than the rest.
+     */
+    private fun lowestAfterPeak(samples: List<Pair<Long, Float>>): Float {
+        if (samples.isEmpty()) return Float.MAX_VALUE
+        val values = samples.map { it.second }
+        val peak = values.indices.maxByOrNull { values[it] } ?: 0
+        return values.drop(peak).minOrNull() ?: Float.MAX_VALUE
     }
 
     /** A `requestAnimationFrame` loop in the chrome's document noting every frame's time, armed before a motion and read after it ([frameClock]). */
