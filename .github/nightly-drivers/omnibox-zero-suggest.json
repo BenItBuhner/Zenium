@@ -1,0 +1,12 @@
+{
+  "id": "omnibox-zero-suggest",
+  "class": "OmniboxZeroSuggestDemo",
+  "shard": "api33",
+  "mirrors": "android-omnibox-group-suggestion-demo.yml:light",
+  "dir": "omnibox-zero-suggest-demo",
+  "env": {
+    "DEMO_THEME": "light"
+  },
+  "estimate": 5,
+  "note": "OMN-04 (W6-S25-d): zero-suggest on focus under a finger - the empty field over a web page offers the most visited tiles (the new tab page's eight of nine seeded hosts, first in the list), the recent searches read out of the history through the default engine's template (two, most recent first, under the clock) and the recently visited pages that are neither; typing a letter takes the tiles away; the touch on a recent search runs the search (the engine's results page requested) and over that page - the default engine's results page - the empty field offers the searches and pages and no tiles (Chrome's SRP classification); the touch on a tile opens its site; the new tab page's field offers the searches and no tiles. No workflow of its own: it takes the omnibox group suggestion demo's environment (the shared script, the light scheme on the phone). On api33 - the one phone shard with room under the headroom line (7 of 68 minutes before it); the five API 34 phone shards stand at 58-61 - on the WebView the shard installs; omnibox-zero-suggest-tablet is the same driver on a tablet shard. The estimate is six fenced stills' worth."
+}

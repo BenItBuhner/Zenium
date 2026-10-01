@@ -13,6 +13,7 @@ import type {
 } from './platform'
 import type {
   DevtoolsDock,
+  FormFactor,
   MagicStackModuleId,
   NewTabDeviceState,
   NewTabHideableSection,
@@ -21,6 +22,7 @@ import type {
   NewTabPageState,
   NewTabSettings,
   NewTabShortcut,
+  NewTabShortcutsMode,
   NewTabThemeVariant,
   PageDialogResponse,
   SpaceTheme,
@@ -40,12 +42,14 @@ import { TOAST_UNDO_MS } from '../shared/toastCard'
 import {
   DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
+  composeTiles,
   emptyNewTabDevice,
   hideSite,
   newTabBackground,
   newTabSections,
   newTabShortcutsMode,
   noteBrowsingDataCleared,
+  openTabFavicons,
   pinShortcut,
   removeSite,
   sanitizeNewTabDevice,
@@ -428,35 +432,21 @@ export class NewTabService {
   private build(theme: SpaceTheme | null, isPrivate: boolean): NewTabPageState {
     const settings = this.settings
     const sections = newTabSections(settings)
-    const shortcutsMode = newTabShortcutsMode(settings)
     const host = this.browser.platform.newTabBackground
     const backgroundImage = host?.current() ?? null
     const background = newTabBackground(settings)
-    // A private window's page has no tiles: neither what was browsed elsewhere nor the user's
-    // own shortcuts – its explainer stands where the grid would (design language v2 §9.29).
-    // The tiles are history's rows (HB-47): each icon is the cache's copy, or live only while
-    // its site is open in a tab; a closed site the cache has nothing for shows its letter.
-    const open = openHosts(Object.values(this.browser.state.model.tabs))
-    const shortcuts = (!isPrivate && shortcutsMode !== 'hidden' ? this.shortcuts() : []).map(
-      (s) => ({ ...s, favicon: this.tileFavicon(s.favicon, s.url, open) })
-    )
+    const grid = this.grid(isPrivate)
     const state: NewTabPageState = {
       light: this.variant(theme, false),
       dark: this.variant(theme, true),
       colorScheme: this.browser.state.settings.colorScheme,
       isPrivate,
-      shortcutsMode,
+      shortcutsMode: grid.shortcutsMode,
       // An image source with no image on this device paints the space gradient, never a blank.
       background: background === 'image' && !backgroundImage ? 'space' : background,
       greeting: sections.greeting,
-      shortcuts,
-      topSites:
-        shortcutsMode === 'most-visited' && !isPrivate
-          ? this.topSites(shortcuts).map((s) => ({
-              ...s,
-              favicon: this.tileFavicon(s.favicon, s.url, open)
-            }))
-          : [],
+      shortcuts: grid.shortcuts,
+      topSites: grid.topSites,
       backgroundImage,
       canPickImage: Boolean(host?.pick),
       // The field leads with the engine's favicon (v2 §6), the pill's source: the extension's
@@ -485,21 +475,87 @@ export class NewTabService {
   }
 
   /**
+   * The grid as the page lays it – the one list the page's state and the omnibox's tile row
+   * read (OMN-04): the user's shortcuts fronting and the most visited sites of other hosts
+   * filling under "most visited", the shortcuts alone under "my shortcuts", nothing while the
+   * shortcuts section is off (`hidden`). A private window's page has no tiles: neither what was
+   * browsed elsewhere nor the user's own shortcuts – its explainer stands where the grid would
+   * (design language v2 §9.29). The tiles are history's rows (HB-47): each icon is the cache's
+   * copy, or live only while its site is open in a tab; a closed site the cache has nothing for
+   * shows its letter.
+   */
+  private grid(isPrivate: boolean): {
+    shortcutsMode: NewTabShortcutsMode
+    shortcuts: NewTabPageShortcut[]
+    topSites: TopSite[]
+  } {
+    const shortcutsMode = newTabShortcutsMode(this.settings)
+    const open = openHosts(Object.values(this.browser.state.model.tabs))
+    const shortcuts = (!isPrivate && shortcutsMode !== 'hidden' ? this.shortcuts() : []).map(
+      (s) => ({ ...s, favicon: this.tileFavicon(s.favicon, s.url, open) })
+    )
+    const topSites =
+      shortcutsMode === 'most-visited' && !isPrivate
+        ? this.topSites(shortcuts).map((s) => ({
+            ...s,
+            favicon: this.tileFavicon(s.favicon, s.url, open)
+          }))
+        : []
+    return { shortcutsMode, shortcuts, topSites }
+  }
+
+  /**
    * The most visited sites that fill the grid after the shortcuts: other hosts only (a shortcut
    * fronts the grid in place of its host's tile), none the user removed.
    */
   private topSites(shortcuts: readonly NewTabShortcut[]): TopSite[] {
     const n = MAX_NEW_TAB_SHORTCUTS - shortcuts.length
     if (n <= 0) return []
-    const excluded = [
+    return this.rankedSites(n, [
       ...this.device.hiddenHosts,
       ...shortcuts.map((s) => siteHost(s.url)).filter((host) => host !== '')
-    ]
+    ])
+  }
+
+  /** History's `n` most visited sites without `excluded` hosts, once per history version. */
+  private rankedSites(n: number, excluded: readonly string[]): TopSite[] {
     const key = `${this.historyVersion}|${n}|${excluded.join(',')}`
     if (this.topSitesCache?.key === key) return this.topSitesCache.sites
-    const sites = this.browser.history.topSites(n, excluded)
+    const sites = this.browser.history.topSites(n, [...excluded])
     this.topSitesCache = { key, sites }
     return sites
+  }
+
+  /**
+   * The page's tiles for the omnibox's row before anything is typed (OMN-04, the Design Lead's
+   * fold on #725): the very list the layout's page draws – the shortcuts fronting and the most
+   * visited sites filling, or the shortcuts alone, per the page's mode, under the page's
+   * removals – and nothing while the shortcuts section is off, so the row is the grid and goes
+   * with it. On a `phone` window the page is the chrome's own (`NewTabPage.tsx`), which
+   * composes its grid with `composeTiles` from the pins, the eight most visited sites and the
+   * open tabs' icons: the row is that composition, from the same inputs, the icons as the page
+   * hands its tiles (the chrome's `TileIcon` resolves them by the tiles' rule, HB-47). The open
+   * tabs read here are the model's – the window's own on Android, which has the one window; a
+   * phone-class window among several on a desktop may borrow a pin's icon from another window's
+   * tab, where its page, reading its window's tabs, shows the letter. On the other layouts the
+   * page is the served document, and the row is the grid `stateFor()` hands it, with the tiles'
+   * icons resolved here. A private window's page has no tiles, and its bar lists nothing before
+   * typing (`SuggestionService.rows`): the ordinary page's list is the one asked for.
+   */
+  pageTiles(formFactor: FormFactor): Pick<TopSite, 'url' | 'title' | 'favicon'>[] {
+    if (formFactor === 'phone') {
+      const mode = newTabShortcutsMode(this.settings)
+      if (mode === 'hidden') return []
+      return composeTiles({
+        pinned: this.device.shortcuts,
+        ranked: this.rankedSites(MAX_NEW_TAB_SHORTCUTS, this.device.hiddenHosts),
+        style: mode,
+        n: MAX_NEW_TAB_SHORTCUTS,
+        favicons: openTabFavicons(Object.values(this.browser.state.model.tabs))
+      }).map(({ url, title, favicon }) => ({ url, title, favicon }))
+    }
+    const { shortcuts, topSites } = this.grid(false)
+    return [...shortcuts, ...topSites].map(({ url, title, favicon }) => ({ url, title, favicon }))
   }
 
   /**

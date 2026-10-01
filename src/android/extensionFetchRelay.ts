@@ -1,23 +1,31 @@
 import { extensionOrigin } from '@core/extensions/runtime/plan'
+import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
 
 /**
- * An extension-origin `fetch` of a content script under the page's Content-Security-Policy.
+ * A content script's `fetch` of its own extension's file, answered by the host.
  *
- * A content script may fetch its own extension's web-accessible files
- * (`fetch(chrome.runtime.getURL('locales/en.json'))`, RoPro on roblox.com): in Chrome the request
- * is the isolated world's, which carries the extension's own policy, beyond the page's
- * `connect-src`. A WebView's isolated world carries no policy of its own (the document's applies
- * to it: `Refused to connect because it violates the document's Content Security Policy` from the
- * world's fetch on WebView 156), and under the `with` fallback (no worlds, Chromium < 146) the
- * request is the page's outright; either way a page whose policy names its `connect-src` refuses
- * it: the promise rejects with `TypeError: Failed to fetch` and the extension never gets the file.
+ * A content script fetches its extension's web-accessible files
+ * (`fetch(chrome.runtime.getURL('locales/en.json'))`, RoPro on roblox.com; RoValra's locale
+ * index): in Chrome the request is the isolated world's, which carries the extension's origin,
+ * so the page's Content-Security-Policy (`connect-src`) never sees it and the file answers as a
+ * same-origin response (`type: "basic"`, whatever `mode` asked – a request to one's own origin
+ * is never a CORS one). A WebView's isolated world carries no origin of its own (the document's
+ * policy applies to it: `Refused to connect because it violates the document's Content Security
+ * Policy` from the world's fetch on WebView 156), and under the `with` fallback (no worlds,
+ * Chromium < 146) the request is the page's outright; a page whose policy names its
+ * `connect-src` refuses it with `TypeError: Failed to fetch`, and a permissive page at least
+ * logs nothing but sends the request through the page's network stack.
  *
- * So the content scripts' `fetch` tries the page's first (a page without such a policy loads the file as
- * before, `Response.url` and all) and, when a request to an attached extension's origin is
- * refused, asks the host for the file over the bridge, which no page policy governs; the host
- * answers the web-accessible file's bytes and type (`Extensions.extensionFetch`), or the reason,
- * and then the extension gets the refusal it was already getting. Any other URL, and any other
- * failure (an abort), is the page's fetch's as it is.
+ * So a request for an attached extension's own file – the served spelling
+ * `https://<id>.ext.zenium.invalid/…` or Chrome's `chrome-extension://<id>/…`, which an
+ * extension writes out by hand and only the served origin loads – goes to the host FIRST, over
+ * the bridge, which no page policy governs: the host reads the web-accessible file and answers
+ * its bytes and type (`Extensions.extensionFetch`, `ExtensionFileAnswer`), rebuilt here as a
+ * `Response` with the file's URL and type. When the host cannot (not web-accessible, missing,
+ * past the bridge's size), the request goes the page's way after all, and the page's answer –
+ * the served origin's 404, or the policy's refusal – is the extension's, as it was before the
+ * relay. Any other URL is the page's fetch's as it is. The `XMLHttpRequest` of the same files
+ * rides on this `fetch` (`extensionXhrRelay.ts`).
  */
 
 /** What the bootstrap lends the relay: the attached extensions, the bridge and the realm's globals. */
@@ -40,6 +48,8 @@ export interface FetchRelayReply {
 export interface FetchRelay {
   /** The `fetch` the scope's `window` answers. */
   fetch: typeof globalThis.fetch
+  /** Whether `url` (as written, either spelling) is an attached extension's own file. */
+  owns(url: string): boolean
   /** The host's answer to `request`. */
   done(id: string, reply: FetchRelayReply): void
   /** Requests still waiting for the host (tests, diagnostics). */
@@ -48,10 +58,13 @@ export interface FetchRelay {
 
 interface Waiting {
   url: string
+  method: string
   resolve(response: Response): void
   reject(reason: unknown): void
-  /** The page's refusal, handed on when the host cannot answer either. */
-  refusal: unknown
+  /** The page's own fetch of the same request, when the host cannot answer. */
+  page(): Promise<Response>
+  /** Stops listening for an abort once the request is settled. */
+  settle(): void
 }
 
 export function createFetchRelay(
@@ -62,39 +75,59 @@ export function createFetchRelay(
   const waiting = new Map<string, Waiting>()
   let seq = 0
 
-  const extensionFor = (url: string): string | null => {
-    for (const id of host.attachedIds()) if (url.startsWith(extensionOrigin(id) + '/')) return id
+  const extensionFor = (served: string): string | null => {
+    for (const id of host.attachedIds()) if (served.startsWith(extensionOrigin(id) + '/')) return id
     return null
   }
 
   const relayed: typeof globalThis.fetch = function fetch(input, init) {
     if (typeof native !== 'function') return Promise.reject(new win.TypeError('Failed to fetch'))
-    const url = urlOf(win, input)
-    const extId = extensionFor(url)
-    const attempt = native.call(win, input, init)
-    if (extId === null) return attempt
-    return attempt.catch((refusal: unknown) => {
-      // The page's policy refuses with a TypeError; an abort, or anything else, is not the policy's.
-      if (!isTypeError(refusal)) throw refusal
-      return new Promise<Response>((resolve, reject) => {
-        const id = `f${(seq += 1)}`
-        waiting.set(id, { url, resolve, reject, refusal })
-        host.request(id, extId, url)
+    const asked = urlOf(win, input)
+    const served = toServedUrl(asked)
+    const extId = extensionFor(served)
+    if (extId === null) return native.call(win, input, init)
+    // Chrome's spelling of the extension's own file loads from the served origin, the page's
+    // way included (the CORS proxy does the same for an extension page's own fetch).
+    const pageInput = served === asked ? input : respelled(win, input, served)
+    const request = isRequest(win, input) ? input : null
+    const signal = init?.signal ?? request?.signal ?? null
+    if (signal?.aborted) return Promise.reject(abortReason(win, signal))
+    const method = String(init?.method ?? request?.method ?? 'GET').toUpperCase()
+    return new Promise<Response>((resolve, reject) => {
+      const id = `f${(seq += 1)}`
+      const onAbort = (): void => {
+        const entry = waiting.get(id)
+        if (!entry) return
+        waiting.delete(id)
+        entry.settle()
+        reject(abortReason(win, signal as AbortSignal))
+      }
+      waiting.set(id, {
+        url: served,
+        method,
+        resolve,
+        reject,
+        page: () => native.call(win, pageInput, init),
+        settle: () => signal?.removeEventListener('abort', onAbort)
       })
+      signal?.addEventListener('abort', onAbort)
+      host.request(id, extId, served)
     })
   }
 
   return {
     fetch: relayed,
+    owns: (url) => extensionFor(toServedUrl(url)) !== null,
     done(id, reply) {
       const entry = waiting.get(id)
       if (!entry) return
       waiting.delete(id)
+      entry.settle()
       if (reply.ok !== true || typeof reply.body !== 'string') {
         host.error(
-          `[Zenium] ${entry.url} could not be read for the content script: ${String(reply.error ?? 'the host refused')}`
+          `[Zenium] ${entry.url} could not be read for the content script: ${String(reply.error ?? 'the host refused')}; the page's fetch answers it`
         )
-        entry.reject(entry.refusal)
+        entry.page().then(entry.resolve, entry.reject)
         return
       }
       let response: Response
@@ -102,20 +135,30 @@ export function createFetchRelay(
         const bytes = decodeBase64(win, reply.body)
         const headers: Record<string, string> = { 'Content-Length': String(bytes.byteLength) }
         if (typeof reply.mime === 'string' && reply.mime) headers['Content-Type'] = reply.mime
-        response = new win.Response(bytes.buffer as ArrayBuffer, {
-          status: 200,
-          statusText: 'OK',
-          headers
-        })
-        // Chrome's `Response.url` is the file's; a constructed Response reads '' otherwise.
-        try {
-          Object.defineProperty(response, 'url', { value: entry.url, configurable: true })
-        } catch {
-          /* a frozen Response prototype of the page's: the body and type still stand */
+        // A HEAD answers the headers alone, as the origin would.
+        response = new win.Response(
+          entry.method === 'HEAD' ? null : (bytes.buffer as ArrayBuffer),
+          {
+            status: 200,
+            statusText: 'OK',
+            headers
+          }
+        )
+        // Chrome's `Response.url` is the file's and its `type` "basic" – a same-origin answer;
+        // a constructed Response reads '' and "default" otherwise.
+        for (const [name, value] of [
+          ['url', entry.url],
+          ['type', 'basic']
+        ]) {
+          try {
+            Object.defineProperty(response, name, { value, configurable: true })
+          } catch {
+            /* a frozen Response of the page's: the body and headers still stand */
+          }
         }
       } catch (e) {
         host.error(`[Zenium] ${entry.url} arrived unreadable over the bridge`, e)
-        entry.reject(entry.refusal)
+        entry.page().then(entry.resolve, entry.reject)
         return
       }
       entry.resolve(response)
@@ -124,12 +167,38 @@ export function createFetchRelay(
   }
 }
 
-function isTypeError(value: unknown): boolean {
+function isRequest(win: Window & typeof globalThis, input: RequestInfo | URL): input is Request {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { name?: unknown }).name === 'TypeError'
+    typeof input === 'object' &&
+    input !== null &&
+    ((typeof win.Request === 'function' && input instanceof win.Request) ||
+      (typeof Request === 'function' && input instanceof Request))
   )
+}
+
+/** `input` with its URL in the served spelling: a string or URL as the string, a Request rebuilt on it. */
+function respelled(
+  win: Window & typeof globalThis,
+  input: RequestInfo | URL,
+  served: string
+): RequestInfo | URL {
+  if (!isRequest(win, input)) return served
+  try {
+    return new win.Request(served, input)
+  } catch {
+    return served
+  }
+}
+
+/** What an aborted fetch rejects with: the signal's reason, or an AbortError as fetch's own. */
+function abortReason(win: Window & typeof globalThis, signal: AbortSignal): unknown {
+  const reason = (signal as { reason?: unknown }).reason
+  if (reason !== undefined) return reason
+  if (typeof win.DOMException === 'function')
+    return new win.DOMException('The user aborted a request.', 'AbortError')
+  const error = new win.Error('The user aborted a request.')
+  error.name = 'AbortError'
+  return error
 }
 
 function urlOf(win: Window & typeof globalThis, input: RequestInfo | URL): string {

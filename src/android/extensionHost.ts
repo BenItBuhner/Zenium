@@ -1103,8 +1103,9 @@ export class AndroidExtensions implements ExtensionHost {
 
   /**
    * A running extension's `permissions.request` as the chrome's sheet (kind `request`), else the
-   * native chassis's sheet. The runtime's own `permissions.request` grants declared optional permissions
-   * without asking for now; this is the question a host raises when it does ask.
+   * native chassis's sheet: the runtime asks it (`RuntimeStoreLink.confirmPermissionRequest`) when
+   * the request adds a warning line over what the install prompt showed; a request adding none
+   * is granted without a question, as Chrome grants it.
    */
   confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
     const record = this.record(id)

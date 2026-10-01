@@ -135,7 +135,7 @@ function Dialog({ state, preselect }: { state: UIState; preselect: string | null
         description={
           form.phase === 'result'
             ? undefined
-            : 'Bring your bookmarks, browsing history and saved passwords from another browser on this computer, or from a file.'
+            : 'Bring your bookmarks, browsing history, saved passwords and addresses from another browser on this computer, or from a file.'
         }
         scrolled={scrolled}
       />

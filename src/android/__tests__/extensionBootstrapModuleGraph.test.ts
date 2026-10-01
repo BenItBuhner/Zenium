@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import type { BootGroup, ContentBootConfig, ExtensionBoot } from '@core/extensions/runtime/boot'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { wrapModuleText } from '../extensionModuleChrome'
+import { isScriptShapedModule, wrapModuleText } from '../extensionModuleChrome'
 
 /*
  * A content script's module graph under the `with` fallback (a WebView without isolated worlds):
@@ -301,5 +301,56 @@ describe('a content script module graph under the with fallback', () => {
     )
     await expect(claim).rejects.toThrow('TypeError: no registry')
     expect(g.__zenExtStats?.chunks).toEqual({ scoped: 1, plain: 2, failed: 1 })
+  })
+
+  it('R25-1 Web Highlights: a script-shaped module writing self.QrCreator and reading QrCreator bare runs as a block of the scope, where both are the same name', async () => {
+    // content.js, `import()`ed by content-loader.js: the QR module's registration through `self`
+    // and the bare read two statements on (`self.QrCreator=nr,…;const or=QrCreator;`).
+    const text = `class nr{}self.QrCreator=nr;const or=QrCreator;self.__qrRead=or;`
+    expect(isScriptShapedModule(text)).toBe(true)
+    // Bracketed on the real global: `self` answers the scope while the module evaluates, so the
+    // write lands in the scope's store, and the bare read on the real global finds nothing –
+    // the row's F on WebView 113.
+    expect(() => evaluateModule(text, MOTE)).toThrow(ReferenceError)
+    expect((g as Store).QrCreator).toBeUndefined()
+    // Served as the stub instead (`isScriptShapedModule` on the host), the block of the scope
+    // reads the name it wrote: the highlights' QR component defines.
+    const url = `https://${MOTE}.ext.zenium.invalid/content.js`
+    const claim = g.__zenExtChunk?.(MOTE, url)
+    expect(claim).toBeInstanceOf(Promise)
+    const ask = posted.filter((m) => m.t === 'chunkScript').at(-1)
+    expect(ask).toMatchObject({ t: 'chunkScript', token: TOKEN, ext: MOTE, url })
+    const exec = g.__zenExtExec
+    if (!exec) throw new Error('no __zenExtExec')
+    expect(exec(TOKEN, MOTE, 'chunk', { id: ask?.id, url }, chunkFunction(text))).toBeNull()
+    await expect(claim).resolves.toBe(true)
+    // The name is the content script's own, never the page's.
+    expect((g as Store).QrCreator).toBeUndefined()
+    expect((g as Store).__qrRead).toBeUndefined()
+    expect(g.__zenExtStats?.chunks).toEqual({ scoped: 2, plain: 2, failed: 1 })
+  })
+
+  it('a <script type="module"> element of the page asking for the file keeps it on the real global: the page’s own module, the main world’s in Chrome', () => {
+    const element = document.createElement('script')
+    element.type = 'module'
+    element.src = `https://${MOTE}.ext.zenium.invalid/inject.js`
+    document.head.appendChild(element)
+    // The element in the document, under whatever spelling it carries by now (happy-dom loads no
+    // script, so its error ran the script recovery, which respells a refused module to the
+    // page's alias – the host serves the stub for that URL the same way): the stub's claim for
+    // the URL the element asks for answers false at once, without a bridge message, and the
+    // stub imports the file plain, bracketed, where it evaluates on the page's window as a
+    // page module does.
+    const inDocument = Array.from(document.scripts).find((s) => s.src.endsWith('/inject.js'))
+    if (!inDocument) throw new Error('the module element left the document')
+    expect(inDocument.type).toBe('module')
+    const url = inDocument.src
+    const before = posted.length
+    expect(g.__zenExtChunk?.(MOTE, url)).toBe(false)
+    expect(posted).toHaveLength(before)
+    expect(g.__zenExtStats?.chunks).toEqual({ scoped: 2, plain: 3, failed: 1 })
+    inDocument.remove()
+    // Without the element the same URL is a content script's `import()` again.
+    expect(g.__zenExtChunk?.(MOTE, url)).toBeInstanceOf(Promise)
   })
 })
