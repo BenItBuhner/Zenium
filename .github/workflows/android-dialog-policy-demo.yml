@@ -19,10 +19,6 @@ name: Android dialog policy demo
 # failed: a run is then spent on the demo rather than on the runner.
 on:
   workflow_dispatch:
-  # Temporary: one recording run while the demo lands; reverted before the PR is ready.
-  push:
-    branches:
-      - cursor/android-dialog-policy-9271
 
 permissions:
   contents: read
