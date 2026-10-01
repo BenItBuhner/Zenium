@@ -39,7 +39,10 @@ import java.io.File
  *  4. the one ⋯ is the bar's (§4): while the overview stands it opens the overview's menu –
  *     New Tab, New Private Tab, Select Tabs, Search Tabs, a hairline, Close All Tabs (7) in
  *     danger ink, Switch Space – no Private Tabs row while none is open, no Inactive Tabs row
- *     while none is archived (light, dark); back puts it away, the overview standing;
+ *     while none is archived (light, dark); back puts it away, the overview standing. New
+ *     Private Tab is on the menu exactly where `capabilities.privateTabs` is on (a WebView with
+ *     profiles: the Chromium snapshot swapped in on the webview shard and in the private
+ *     security demo's environment; the google_apis image's own keeps none);
  *  5. Search Tabs is a row of that menu (§4, §9): the field pinned under the header, focused,
  *     the keyboard up; "tea" leaves Tea's card alone in the grid; the X clears, then closes,
  *     the header row back;
@@ -49,7 +52,9 @@ import java.io.File
  *     Tabs (1), no Switch Space (light, dark); back leaves the overview; "Tabs (10)" switches
  *     to the regular view and "Private Tabs (1)" back, the system back from the PICKED private
  *     view returning to the regular one; Close Private Tabs asks – back is Cancel – and
- *     confirmed closes the session, the regular view back;
+ *     confirmed closes the session, the regular view back. Skipped, as a line in the findings
+ *     and no failure, on a WebView without profiles (`capabilities.privateTabs` false), where
+ *     the host hides private browsing;
  *  7. selection mode (§5): Select Tabs from the menu – Done, "Select tabs", Select all in the
  *     header; a card's touch picks it ("1 selected", the card a checked checkbox); the foot's
  *     action row Close, Group, Bookmark, Share; the menu while selecting Select All, Deselect
@@ -92,7 +97,8 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
         SystemClock.sleep(1_200)
         finding(
             "warm-up: the overview ${if (overview.isSuccess) "opened and left" else "did NOT open (${overview.exceptionOrNull()?.message})"}; " +
-                "the menu ${if (menu.isSuccess) "opened and left" else "did NOT open"}; ${describeState()}"
+                "the menu ${if (menu.isSuccess) "opened and left" else "did NOT open"}; ${describeState()}; " +
+                "the host: capabilities.privateTabs ${privateTabsCapability()} (${webViewPackage()})"
         )
     }
 
@@ -239,8 +245,9 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
             val opened = openMenu()
             val rows = overviewMenuRows()
             val danger = dangerRows()
+            val want = menuRows(privateTabsCapability())
             still("menu-light")
-            expect("the bar's ⋯ opens the overview's menu, its rows in §4's order: $rows", opened && rows.size == MENU_ROWS.size && rows.dropLast(1) == MENU_ROWS.dropLast(1) && rows.last().startsWith(MENU_ROWS.last()))
+            expect("the bar's ⋯ opens the overview's menu, its rows in §4's order (New Private Tab where capabilities.privateTabs is on: ${privateTabsCapability()}): $rows", opened && rows.size == want.size && rows.dropLast(1) == want.dropLast(1) && rows.last().startsWith(want.last()))
             expect("Close All Tabs is the one row in danger ink: $danger", danger == listOf("Close All Tabs (7)"))
             expect("no Private Tabs row while none is open, no Inactive Tabs row while none is archived, no Recently Closed row while the list is empty", rows.none { it.startsWith("Private Tabs (") || it.startsWith("Inactive Tabs (") || it.startsWith("Recently Closed (") })
             setColorScheme("dark")
@@ -286,6 +293,14 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
 
     private fun privateView() {
         step("6. The private view (§3): New Private Tab, the view, its menu, the way back, Close Private Tabs") {
+            if (!privateTabsCapability()) {
+                // The google_apis image's own WebView keeps no profiles: the host hides private
+                // browsing (no New Private Tab row – step 4 pinned that), so §3 has nothing to show
+                // here. The claims run where the Chromium snapshot WebView is swapped in (the
+                // webview shard; the private security demo's environment).
+                finding("  SKIPPED: capabilities.privateTabs is false on this WebView (${webViewPackage()}); the §3 claims need the snapshot WebView")
+                return@step
+            }
             openOverview()
             val tabsBefore = coreState().getJSONObject("tabs").length()
             val opened = openOverviewMenuRow("New Private Tab")
@@ -410,6 +425,13 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
     private fun activeSpaceId(): String = coreState().optString("activeSpaceId")
 
     private fun privateActive(): Boolean = activeCoreTab()?.optString("containerId") == PRIVATE_CONTAINER
+
+    /** The core's word on private tabs: on only where the WebView keeps profiles (`androidCapabilities`). */
+    private fun privateTabsCapability(): Boolean =
+        runCatching { coreState().getJSONObject("capabilities").optBoolean("privateTabs") }.getOrDefault(false)
+
+    private fun webViewPackage(): String =
+        shellCommand("dumpsys webviewupdate").lines().firstOrNull { it.contains("Current WebView package") }?.trim() ?: "WebView package ?"
 
     private fun privateCount(): Int {
         val tabs = coreState().getJSONObject("tabs")
@@ -717,8 +739,13 @@ class OverviewCleanupDemo : DemoHarness("overview-demo-state.json", "overview-cl
         /** The Close-all prompt's title block heading (`PhoneSheet` on the frame's dialog host). */
         private const val PROMPT_TITLE = ".zen-sheet-title-block h2"
 
-        /** The overview's menu on the seeded profile (§4): no Private / Inactive / Recently Closed row while none. */
-        private val MENU_ROWS = listOf("New Tab", "New Private Tab", "Select Tabs", "Search Tabs", "Close All Tabs (7)", "Switch Space")
+        /**
+         * The overview's menu on the seeded profile (§4): no Private / Inactive / Recently Closed
+         * row while none; New Private Tab only where the host keeps private browsing in tabs
+         * (`capabilities.privateTabs` – a WebView with profiles, the shared template's one gate).
+         */
+        private fun menuRows(privateTabs: Boolean): List<String> =
+            listOfNotNull("New Tab", "New Private Tab".takeIf { privateTabs }, "Select Tabs", "Search Tabs", "Close All Tabs (7)", "Switch Space")
         /** The private view's menu: "Tabs (10)" the way back, the session's close, no Switch Space (§3). */
         private val PRIVATE_MENU_ROWS = listOf("New Tab", "New Private Tab", "Tabs (10)", "Select Tabs", "Search Tabs", "Close Private Tabs (1)")
         /** The menu while selecting (§5). */
