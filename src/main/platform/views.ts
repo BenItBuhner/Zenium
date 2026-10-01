@@ -98,6 +98,7 @@ import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  AgentUploadFile,
   ScreenshotOptions,
   AgentFrame,
   AgentInputEvent,
@@ -110,6 +111,7 @@ import type {
   PageFlags,
   PageHostMessage,
   PageMessage,
+  PagePromptRequest,
   TabView,
   TabViewEvents,
   TabViewHost,
@@ -120,6 +122,7 @@ import type {
 import type { SessionManager } from './sessions'
 import { requestDetails, type ContentRulesLookup } from './contentRules'
 import { downloadDir } from './downloads'
+import { answerFileChooser, dropFiles, setInputFiles, type FileChooserOpened } from './agentPrompts'
 import { savePageDialogOptions, savePageTarget } from './savePage'
 import { StartupHold } from './startupHold'
 import { uniquePath } from './uniquePath'
@@ -310,14 +313,32 @@ function fontsKey(fonts: EffectiveFonts): string {
  * The emulation overrides a page view keeps on the page's shared session
  * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, the Appearance
  * setting's `prefers-color-scheme` where the engine does not carry it to pages itself, and the
- * JavaScript site setting's switch (`refreshScripts`).
+ * JavaScript site setting's switch (`refreshScripts`), and an AI agent's hold on the page's file
+ * choosers (`interceptAgentPrompts`).
  */
-type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts'
+type EmulationOverride = 'autoDark' | 'colorScheme' | 'scripts' | 'fileChooser'
 
 /** A DevTools protocol command as the view sends it. */
 interface CdpCommand {
   method: string
   params: Record<string, unknown>
+  /** Sent first on every session the command goes on (a domain it needs enabled). */
+  before?: CdpCommand[]
+}
+
+/**
+ * File choosers come to the session instead of the system's dialog. `Page.fileChooserOpened`
+ * reaches the session only with the Page domain enabled (measured on Electron 44).
+ */
+const FILE_CHOOSERS_INTERCEPTED: CdpCommand = {
+  method: 'Page.setInterceptFileChooserDialog',
+  params: { enabled: true },
+  before: [{ method: 'Page.enable', params: {} }]
+}
+
+async function sendCdp(dbg: Electron.Debugger, command: CdpCommand): Promise<void> {
+  for (const first of command.before ?? []) await dbg.sendCommand(first.method, first.params)
+  await dbg.sendCommand(command.method, command.params)
 }
 
 const AUTO_DARK_MODE_ON: CdpCommand = {
@@ -341,7 +362,8 @@ const SCRIPTS_OFF: CdpCommand = {
 const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
   autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
   colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) },
-  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } }
+  scripts: { method: 'Emulation.setScriptExecutionDisabled', params: { value: false } },
+  fileChooser: { method: 'Page.setInterceptFileChooserDialog', params: { enabled: false } }
 }
 
 function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
@@ -606,9 +628,16 @@ export class ElectronTabView implements TabView {
       this.pausedByDebugger = false
       this.sessionDetached()
     })
-    this.wc.debugger?.on?.('message', (_e, method: string) => {
+    this.wc.debugger?.on?.('message', (_e, method: string, params: unknown) => {
       if (method === 'Debugger.paused') this.pausedByDebugger = true
       else if (method === 'Debugger.resumed') this.pausedByDebugger = false
+      else if (method === 'Page.fileChooserOpened' && this.emulationApplied.has('fileChooser'))
+        void answerFileChooser(
+          (fn) => this.withDebugger(fn),
+          (params ?? {}) as FileChooserOpened,
+          this.events?.onFileChooser?.bind(this.events),
+          () => this.win
+        ).catch(() => {})
     })
     this.wc.on('blur', () => {
       this.keyboardAsked = false
@@ -911,6 +940,28 @@ export class ElectronTabView implements TabView {
   /** The request engine held this page's navigation to `url` on the core's lookalike verdict (PS-18). */
   noteLookalikeNavigation(url: string, verdict: LookalikeVerdict): void {
     this.events.onLookalikeNavigation?.(url, verdict)
+  }
+
+  // --- an AI agent's native prompts -----------------------------------------
+
+  interceptAgentPrompts(on: boolean): void {
+    this.setEmulation('fileChooser', on ? FILE_CHOOSERS_INTERCEPTED : null)
+  }
+
+  async setInputFiles(selector: string, files: AgentUploadFile[]): Promise<void> {
+    if (this.wc.isDestroyed()) throw new Error('the page is gone')
+    await this.withDebugger((dbg) => setInputFiles(dbg, selector, files))
+  }
+
+  async dropFiles(x: number, y: number, files: AgentUploadFile[]): Promise<void> {
+    if (this.wc.isDestroyed()) throw new Error('the page is gone')
+    await this.withDebugger((dbg) => dropFiles(dbg, x, y, files))
+  }
+
+  /** The page's preload asks whose its `window.print()` or File System Access picker is. */
+  askPagePrompt(prompt: PagePromptRequest): 'agent' | 'user' {
+    if (this.wc.isDestroyed()) return 'user'
+    return this.events?.onPagePrompt?.(prompt) ?? 'user'
   }
 
   // --- dialogs and beforeunload ----------------------------------------------
@@ -2557,8 +2608,7 @@ export class ElectronTabView implements TabView {
     // Attached already: by this view's own `sessionDetached` (the hold's, `cdpAttachedHere`
     // stands) or by the governor putting an override back (its own; it detaches it when that
     // goes, and a hold of this view's attaches again then).
-    for (const command of this.emulationApplied.values())
-      await dbg.sendCommand(command.method, command.params)
+    for (const command of this.emulationApplied.values()) await sendCdp(dbg, command)
   }
 
   /**
@@ -2585,7 +2635,7 @@ export class ElectronTabView implements TabView {
     }
     this.cdpAttachedHere = true
     for (const [override, command] of this.emulationApplied) {
-      void dbg.sendCommand(command.method, command.params).catch(() => {
+      void sendCdp(dbg, command).catch(() => {
         if (this.emulationApplied.get(override) === command) this.emulationApplied.delete(override)
         this.releaseEmulationHold()
       })
@@ -2639,7 +2689,7 @@ export class ElectronTabView implements TabView {
         this.emulationHold = true
       }
       try {
-        await dbg.sendCommand(command.method, command.params)
+        await sendCdp(dbg, command)
       } catch {
         /* the page went away, or the debugger is not ours: release the hold, retry on the next change */
         if (this.emulationApplied.get(override) === command) this.emulationApplied.delete(override)
