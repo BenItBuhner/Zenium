@@ -24,9 +24,6 @@ name: Android page dialogs demo
 # rather than on the runner.
 on:
   workflow_dispatch:
-  # TEMPORARY (#759's scene-13 debug run: this VM's KVM cannot create a vCPU): comes off with the next push.
-  push:
-    branches: [cursor/android-agent-dialogs-b-9271]
 
 permissions:
   contents: read
