@@ -17,6 +17,7 @@ import {
 import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import { windowIcon } from './appIcon'
+import { DockBadge } from './dockBadge'
 import { downloadDir } from './downloads'
 import type { ElectronWindow } from './window'
 
@@ -27,8 +28,11 @@ import type { ElectronWindow } from './window'
  * a failure while others run, cleared when the last one ends – completions while no window is
  * focused post a notification whose click reveals the item, and the dock badge (macOS) or the
  * launcher's count (Linux, `app.setBadgeCount`; Windows has no count, only the taskbar bar)
- * counts those until a window takes focus again. The engine calls neither `setProgressBar` nor
- * `Notification` (contract); nothing here touches `downloads.json` or the transfers.
+ * counts those until a window takes focus again. The count reaches the icon through
+ * `DockBadge`, the badge's one owner, shared with the installed apps' badges (MW-51,
+ * `appBadges.ts`); the rule for the count itself – finished while unfocused, cleared on focus –
+ * is this class's alone. The engine calls neither `setProgressBar` nor `Notification`
+ * (contract); nothing here touches `downloads.json` or the transfers.
  */
 export class ElectronDownloadsShell {
   private readonly bars = new WeakMap<BrowserWindow, ProgressBar>()
@@ -39,7 +43,10 @@ export class ElectronDownloadsShell {
   /** Rows known to be interrupted, so a failure flashes once, not on every later update. */
   private readonly interrupted = new Set<string>()
 
-  constructor(private readonly browser: Browser) {
+  constructor(
+    private readonly browser: Browser,
+    private readonly dock: DockBadge = new DockBadge()
+  ) {
     browser.onDownloadChange((item, kind) => {
       // A resumable interruption (the connection dropped) arrives as a progress change, a
       // terminal one as done; both are the failure the taskbar shows for a moment.
@@ -101,13 +108,9 @@ export class ElectronDownloadsShell {
     const focused = this.browser.allWindows().some((w) => w.host.isFocused())
     if (focused) return
     this.unseen++
-    if (process.platform === 'darwin' && app.dock) {
-      app.dock.setBadge(String(this.unseen))
-      app.dock.bounce('informational')
-    } else if (process.platform === 'linux') {
-      // The Unity launcher API (GNOME's dock extensions, KDE, Unity); false where there is none.
-      app.setBadgeCount(this.unseen)
-    }
+    // The dock badge (macOS) or the launcher's count (Linux; nothing on Windows) via the arbiter.
+    this.dock.setDownloads(this.unseen)
+    if (process.platform === 'darwin') app.dock?.bounce('informational')
     const settings = resolveDownloadSettings(this.browser.state.settings)
     if (!shouldNotifyCompletion(item, settings, focused)) return
     if (!Notification.isSupported()) return
@@ -126,8 +129,7 @@ export class ElectronDownloadsShell {
   private onWindowFocused(): void {
     if (this.unseen === 0) return
     this.unseen = 0
-    if (process.platform === 'darwin') app.dock?.setBadge('')
-    else if (process.platform === 'linux') app.setBadgeCount(0)
+    this.dock.setDownloads(0)
   }
 
   /** Bring a window up and open the bubble on `id` (a notification was clicked). */

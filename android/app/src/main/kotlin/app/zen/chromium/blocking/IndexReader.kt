@@ -110,6 +110,7 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
         var name: String? = null
         var tag: String? = null
         var partitions: HashSet<String>? = null
+        var excludedPartitions: HashSet<String>? = null
         var rules: CompiledRules? = null
         var deferred: String? = null
         c.objectEntries { key ->
@@ -125,6 +126,7 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
                 "document" -> name = c.stringOrNull()
                 "tag" -> tag = c.stringOrNull()
                 "partitions" -> partitions = c.strings()
+                "excludedPartitions" -> excludedPartitions = c.strings()
                 "rules" -> {
                     val p = priority
                     if (!enabled) {
@@ -174,7 +176,8 @@ internal class IndexReader(private val log: (String) -> Unit = {}) {
             file = file?.takeIf { hasText && it.isNotEmpty() },
             updatedAt = updatedAt,
             filterCount = filterCount,
-            partitions = partitions
+            partitions = partitions,
+            excludedPartitions = excludedPartitions
         )
     }
 

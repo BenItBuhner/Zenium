@@ -1451,6 +1451,7 @@ export class Browser {
     this.fullscreen.onWindowClosed(win)
     this.mediaSession.onWindowClosed(win)
     this.newTab.onWindowClosed(win)
+    this.webApps.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     const pageId = this.pageWindowIdOf(win)

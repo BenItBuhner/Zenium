@@ -3,6 +3,7 @@ import {
   DEFAULT_BLOCKING_SETTINGS,
   DEFAULT_FILTER_LISTS,
   customListId,
+  effectiveLevel,
   enabledListsFor,
   levelIncludes,
   listDefaultFor,
@@ -57,6 +58,87 @@ describe('tracking levels', () => {
   })
 })
 
+describe('"Always use Strict in private windows" (services pass 16, PS-49)', () => {
+  const strictIds = DEFAULT_FILTER_LISTS.map((l) => l.id).sort()
+  const ids = (s: typeof DEFAULT_BLOCKING_SETTINGS, isPrivate: boolean, enabled = true): string[] =>
+    [...enabledListsFor(s, enabled, isPrivate)].sort()
+  const on = { ...DEFAULT_BLOCKING_SETTINGS, levelPrivate: 'strict' as const }
+
+  it('effectiveLevel: a private window reads strict while the switch is on, every other window the level', () => {
+    expect(effectiveLevel(on, true)).toBe('strict')
+    expect(effectiveLevel(on, false)).toBe('balanced')
+    expect(effectiveLevel({ ...on, level: 'basic' }, true)).toBe('strict')
+    expect(effectiveLevel({ ...on, level: 'basic' }, false)).toBe('basic')
+    // Off is a level too: the switch lifts a private window above it and leaves the others off.
+    expect(effectiveLevel({ ...on, level: 'off' }, true)).toBe('strict')
+    expect(effectiveLevel({ ...on, level: 'off' }, false)).toBe('off')
+    // Switch off: the general level everywhere.
+    expect(effectiveLevel(DEFAULT_BLOCKING_SETTINGS, true)).toBe('balanced')
+    expect(effectiveLevel({ ...DEFAULT_BLOCKING_SETTINGS, level: 'off' }, true)).toBe('off')
+    // Already Strict: the switch changes nothing either way.
+    expect(effectiveLevel({ ...on, level: 'strict' }, true)).toBe('strict')
+    expect(effectiveLevel({ ...DEFAULT_BLOCKING_SETTINGS, level: 'strict' }, true)).toBe('strict')
+  })
+
+  it('enabledListsFor: the strict set for a private window while on, the general set otherwise', () => {
+    // On at Balanced: private windows get every list, the others the balanced tier as before.
+    expect(ids(on, true)).toEqual(strictIds)
+    expect(ids(on, false)).toEqual(ids(DEFAULT_BLOCKING_SETTINGS, false))
+    expect(ids(on, true)).not.toEqual(ids(on, false))
+    // Off: the general level everywhere.
+    expect(ids(DEFAULT_BLOCKING_SETTINGS, true)).toEqual(ids(DEFAULT_BLOCKING_SETTINGS, false))
+    // General level Strict: identical sets whether the switch is on or off.
+    const strict = { ...DEFAULT_BLOCKING_SETTINGS, level: 'strict' as const }
+    expect(ids({ ...strict, levelPrivate: 'strict' }, true)).toEqual(strictIds)
+    expect(ids(strict, true)).toEqual(strictIds)
+    expect(ids(strict, false)).toEqual(strictIds)
+    // Level Off with the switch on: the strict set in private windows, nothing elsewhere.
+    expect(ids({ ...on, level: 'off' }, true)).toEqual(strictIds)
+    expect(ids({ ...on, level: 'off' }, false)).toEqual([])
+    // The master switch off enables nothing anywhere.
+    expect(ids(on, true, false)).toEqual([])
+    // A per-list override and a custom list hold in private windows as they do elsewhere.
+    const overridden = {
+      ...on,
+      lists: { 'ubo-privacy': false },
+      customLists: [{ id: 'custom-a', url: 'https://a/x.txt', name: 'A', enabled: true }]
+    }
+    expect(ids(overridden, true)).toEqual(
+      ['custom-a', ...strictIds.filter((id) => id !== 'ubo-privacy')].sort()
+    )
+    expect(ids(overridden, false)).toEqual(
+      [
+        ...enabledListsFor({ ...DEFAULT_BLOCKING_SETTINGS, lists: { 'ubo-privacy': false } }),
+        'custom-a'
+      ].sort()
+    )
+  })
+
+  it('sanitises levelPrivate to strict or default and defaults it to default', () => {
+    expect(sanitizeBlockingSettings(undefined).levelPrivate).toBe('default')
+    expect(sanitizeBlockingSettings({}).levelPrivate).toBe('default')
+    expect(sanitizeBlockingSettings({ levelPrivate: 'strict' }).levelPrivate).toBe('strict')
+    expect(sanitizeBlockingSettings({ levelPrivate: 'default' }).levelPrivate).toBe('default')
+    expect(
+      sanitizeBlockingSettings({ levelPrivate: 'inherit' as unknown as 'default' }).levelPrivate
+    ).toBe('default')
+    expect(sanitizeBlockingSettings({ levelPrivate: 1 as unknown as 'strict' }).levelPrivate).toBe(
+      'default'
+    )
+    // A settings record from a build before the switch reads as the switch off.
+    const before = {
+      level: 'balanced',
+      lists: {},
+      customLists: [],
+      userFilters: '',
+      autoUpdate: true
+    }
+    expect(sanitizeBlockingSettings(before as Partial<typeof DEFAULT_BLOCKING_SETTINGS>)).toEqual(
+      DEFAULT_BLOCKING_SETTINGS
+    )
+  })
+})
+
 describe('normalizeSiteException', () => {
   it('reduces hosts and URLs to the origin the permission store keys on', () => {
     expect(normalizeSiteException('https://WWW.Example.com/path')).toBe('https://www.example.com')
@@ -100,6 +182,7 @@ describe('sanitizeBlockingSettings', () => {
     })
     expect(s).toEqual({
       level: 'balanced',
+      levelPrivate: 'default',
       lists: { easylist: false },
       customLists: [
         {
