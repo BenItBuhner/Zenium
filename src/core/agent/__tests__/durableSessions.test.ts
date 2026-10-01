@@ -470,18 +470,22 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     expect(listed(desktop, d)).toContain('browser_handle_dialog')
     expect(desktop.service.instructions(d)).toContain('browser_handle_dialog answers it')
     // The dialogs handed to an agent are alert, confirm and prompt (`PageDialogRequest.kind`);
-    // "Leave site?" never reaches it – an agent's page leaves without a question
-    // (`PageDialogService.confirmLeave`; Android's `UnloadObjection` leaves silently) – so no
-    // text names it among them, and both hosts' instructions say so.
+    // a "Leave site?" is never handed to it: where the host has the dialog policy it is the
+    // policy's leave or stay (`PageDialogService.confirmLeave` → `AgentService.onLeaveSite`),
+    // leave by default; where it has not (Android's `UnloadObjection` leaves silently) the
+    // page leaves without a question. The texts say which.
     const handleDialog = desktop.service
       .listTools(d)
       .find((t) => t.name === 'browser_handle_dialog')
     expect(handleDialog?.description).toContain('(alert, confirm or prompt)')
-    expect(handleDialog?.description).not.toContain('Leave site?')
+    expect(handleDialog?.description).toContain(
+      'a "Leave site?" is never handed to you – your policy\'s leave or stay answers it, leave by default'
+    )
     expect(desktop.service.instructions(d)).toContain(
       'Page dialogs (alert, confirm, prompt) on your tabs'
     )
-    expect(desktop.service.instructions(d)).toContain('your tab leaves without a question')
+    expect(desktop.service.instructions(d)).toContain('"Leave site?" leave or stay')
+    expect(desktop.service.instructions(d)).not.toContain('your tab leaves without a question')
 
     const android = browser({ agentDialogs: false })
     const { s: a } = await named(android, 'Invoice reconciliation')
