@@ -27,8 +27,8 @@ const offer = (over: Partial<BandRequest> = {}): BandRequest => ({
 })
 
 describe('tenantReasonOf', () => {
-  it("reads Escape as the ×'s end and a navigation as the chrome's", () => {
-    expect(tenantReasonOf('escape')).toBe('close')
+  it("keeps Escape (the system Back) its own, unanswered end – not the ×'s – and reads a navigation as the chrome's", () => {
+    expect(tenantReasonOf('escape')).toBe('escape')
     expect(tenantReasonOf('navigation')).toBe('program')
   })
 
@@ -85,7 +85,7 @@ describe('bandOptionsOf', () => {
     options.onDismiss?.('escape')
     options.onDismiss?.('navigation')
     options.onDismiss?.('swipe')
-    expect(onEnd.mock.calls.map((c) => c[0])).toEqual(['close', 'program', 'swipe'])
+    expect(onEnd.mock.calls.map((c) => c[0])).toEqual(['escape', 'program', 'swipe'])
   })
 })
 

@@ -7,7 +7,9 @@ import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
  * the phone's default-browser offer – ask of the band, and how the band's ends read back as the
  * ends the tenants already act on. Pure: the mapping is one to one with today's words and ends
  * (no string changes), so the tenants' own code (`installBanner.ts`, `readerEntryMessage.ts`,
- * `connectivityMessages.ts`, `PhoneShell.tsx`) keeps its ends and only changes its door.
+ * `connectivityMessages.ts`, `PhoneShell.tsx`) keeps its ends and only changes its door – with
+ * one ruling the band adds (spec §9 item 6, {@link unansweredEnd}): the Back gesture and the
+ * swipe put the band away UNANSWERED and are no refusal, where a card's swipe was one.
  *
  * The band itself – one at a time, the state > offer priority, the clock, the dismissals, the
  * never-on rules – is the shared model's (`lib/band`, Desktop's W8-M2); this module only
@@ -34,20 +36,43 @@ export interface BandAction {
  */
 export type BandTone = 'ok' | 'warn' | 'danger'
 
-/** What a tenant adds to its banner for the band: a second, dismissing action a state may carry, and a state's tone. */
+/**
+ * What a tenant adds to its banner for the band: a second, dismissing action a state may carry,
+ * a state's tone, and what it does when the band is put away UNANSWERED (`onAway`).
+ */
 export interface BandExtras {
   secondary?: BandAction
   tone?: BandTone
+  /**
+   * The band was put away without an answer – the system Back (the band's Escape, spec §9 item
+   * 6) or a swipe up: no refusal is remembered, so the tenant's `onDismiss` is NOT called (its
+   * `swipe` and `close` are today's refusals: the install prompt's cooldown, the default-browser
+   * campaign's dismissal, the reader offer's mute). What the tenant does instead is bookkeeping
+   * only – the install prompt tells the core the band is gone with no refusal, the reader offer
+   * marks its standing offer spent – or nothing.
+   */
+  onAway?(): void
 }
 
 /**
  * Why a band left, in the tenants' vocabulary: the §9.33 host's reasons – `action` (the action
  * taken), `close` (the ×), `swipe` (swiped up off the page), `timeout` (the clock), `replaced`
  * (a newer band took its place), `program` (its tenant or a rule took it down: a navigation,
- * the tab leaving the front, a gate) – and the band's own `displaced`: a pull-to-refresh began
- * on the held page and took it over (§3.2: a pull while a band stands dismisses the band first).
+ * the tab leaving the front, a gate) – and the band's own two: `escape`, the system Back (the
+ * band's Escape; the stack's cards never had one), and `displaced`, a pull-to-refresh begun on
+ * the held page that took it over (§3.2: a pull while a band stands dismisses the band first).
  */
-export type BandEndReason = BannerDismissReason | 'displaced'
+export type BandEndReason = BannerDismissReason | 'displaced' | 'escape'
+
+/**
+ * The ends that put the band away UNANSWERED (spec §9 item 6: Escape – the system Back on
+ * Android – and the swipe leave the band without starting a cooldown; a refusal that is
+ * remembered is only ever an explicit button, here the ×). The clock running out and the
+ * tenants' own take-downs keep today's readings.
+ */
+export function unansweredEnd(reason: BandEndReason): boolean {
+  return reason === 'escape' || reason === 'swipe'
+}
 
 /** What a tenant asks of the band: the spec's content `[glyph] Title · detail [Action] [×]`. */
 export interface BandRequest {
@@ -103,9 +128,15 @@ export function bandRequestFromBanner(
   if (extras.secondary && shape === 'state') request.secondary = extras.secondary
   if (extras.tone && shape === 'state') request.tone = extras.tone
   if (opts.key !== undefined) request.key = opts.key
-  if (opts.onDismiss) {
-    const onDismiss = opts.onDismiss
-    request.onEnd = (reason) => onDismiss(bannerReasonOf(reason))
+  const { onDismiss } = opts
+  const { onAway } = extras
+  if (onDismiss || onAway) {
+    // An unanswered end (§9 item 6) never reaches the tenant's `onDismiss`, whose `swipe` and
+    // `close` are today's refusals; it goes to `onAway`, or nowhere.
+    request.onEnd = (reason) => {
+      if (unansweredEnd(reason)) onAway?.()
+      else onDismiss?.(bannerReasonOf(reason))
+    }
   }
   return request
 }
@@ -115,12 +146,14 @@ export function bandRequestFromBanner(
  * – the pull-to-refresh took the page over – was the chrome's doing, not the user's answer to
  * the offer: it reads as `program`, which no tenant counts as a refusal (the install prompt
  * reports nothing to the core, the reader offer's site stays unmuted); the offer may come back.
+ * The unanswered ends ({@link unansweredEnd}) do not travel this way from
+ * {@link bandRequestFromBanner}; asked anyway, `escape` reads as `program` too – no refusal.
  */
 export function bannerReasonOf(reason: BandEndReason): BannerDismissReason {
-  return reason === 'displaced' ? 'program' : reason
+  return reason === 'displaced' || reason === 'escape' ? 'program' : reason
 }
 
-/** Whether a band's end was the user's own doing (the action, the ×, the swipe) – not a rule's. */
+/** Whether a band's end was the user's own doing (the action, the ×, the swipe, the Back) – not a rule's. */
 export function userEnded(reason: BandEndReason): boolean {
-  return reason === 'action' || reason === 'close' || reason === 'swipe'
+  return reason === 'action' || reason === 'close' || reason === 'swipe' || reason === 'escape'
 }

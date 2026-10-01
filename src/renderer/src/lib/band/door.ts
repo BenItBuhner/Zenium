@@ -19,19 +19,13 @@ import type { BandEndReason, BandRequest } from './tenants'
  */
 
 /**
- * The model's end in the tenants' vocabulary: Escape with focus in the band is the ×'s key
- * (`close`, a refusal); a navigation's take-down is the chrome's doing (`program`), which no
- * tenant counts as an answer.
+ * The model's end in the tenants' vocabulary: `escape` – the Escape key with focus in the band,
+ * the system Back on Android (`TouchBandLayer`) – stays its own word, an UNANSWERED end the
+ * tenants hear apart from the ×'s refusal (spec §9 item 6; `tenants.ts` `unansweredEnd`); a
+ * navigation's take-down is the chrome's doing (`program`), which no tenant counts as an answer.
  */
 export function tenantReasonOf(reason: BandDismissReason): BandEndReason {
-  switch (reason) {
-    case 'escape':
-      return 'close'
-    case 'navigation':
-      return 'program'
-    default:
-      return reason
-  }
+  return reason === 'navigation' ? 'program' : reason
 }
 
 /** A request without a tenant's `key` stands under one of its own: the same key again replaces. */

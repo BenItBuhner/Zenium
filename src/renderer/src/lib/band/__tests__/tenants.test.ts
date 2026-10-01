@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Smartphone } from 'lucide-react'
 import type { BannerDismissReason, BannerOptions } from '@renderer/lib/ui'
-import { bandRequestFromBanner, bannerReasonOf, userEnded, type BandEndReason } from '../tenants'
+import {
+  bandRequestFromBanner,
+  bannerReasonOf,
+  unansweredEnd,
+  userEnded,
+  type BandEndReason
+} from '../tenants'
 
 const REASONS: BandEndReason[] = [
   'action',
@@ -10,7 +16,8 @@ const REASONS: BandEndReason[] = [
   'timeout',
   'replaced',
   'program',
-  'displaced'
+  'displaced',
+  'escape'
 ]
 
 describe('bandRequestFromBanner', () => {
@@ -91,25 +98,56 @@ describe('bandRequestFromBanner', () => {
     expect(request.clock).toBeNull()
   })
 
-  it("hands the band's ends to the tenant in the banner's vocabulary", () => {
+  it("hands the band's answered ends to the tenant in the banner's vocabulary; the unanswered ones (Back, the swipe) go to onAway and never to onDismiss", () => {
+    const heard: BannerDismissReason[] = []
+    let away = 0
+    const request = bandRequestFromBanner(
+      { title: 'T', onDismiss: (reason) => heard.push(reason) },
+      'state',
+      { onAway: () => void away++ }
+    )
+    for (const reason of REASONS) request.onEnd?.(reason)
+    expect(heard).toEqual(['action', 'close', 'timeout', 'replaced', 'program', 'program'])
+    expect(away).toBe(2)
+  })
+
+  it('a tenant with no onAway hears nothing of an unanswered end (no refusal, no cooldown); one with onAway alone still gets an onEnd', () => {
     const heard: BannerDismissReason[] = []
     const request = bandRequestFromBanner(
       { title: 'T', onDismiss: (reason) => heard.push(reason) },
       'state'
     )
-    for (const reason of REASONS) request.onEnd?.(reason)
-    expect(heard).toEqual(['action', 'close', 'swipe', 'timeout', 'replaced', 'program', 'program'])
+    request.onEnd?.('escape')
+    request.onEnd?.('swipe')
+    expect(heard).toEqual([])
+
+    let away = 0
+    const quiet = bandRequestFromBanner({ title: 'T' }, 'state', { onAway: () => void away++ })
+    expect(quiet.onEnd).toBeDefined()
+    quiet.onEnd?.('escape')
+    quiet.onEnd?.('close')
+    expect(away).toBe(1)
+
+    expect(bandRequestFromBanner({ title: 'T' }, 'state').onEnd).toBeUndefined()
   })
 })
 
 describe('the ends', () => {
-  it('every banner reason is its own; displaced reads as program (not a refusal)', () => {
+  it('every banner reason is its own; displaced and escape read as program (not a refusal)', () => {
     for (const reason of REASONS) {
-      expect(bannerReasonOf(reason)).toBe(reason === 'displaced' ? 'program' : reason)
+      expect(bannerReasonOf(reason)).toBe(
+        reason === 'displaced' || reason === 'escape' ? 'program' : reason
+      )
     }
   })
 
-  it("the user's own ends are the action, the × and the swipe", () => {
-    expect(REASONS.filter(userEnded)).toEqual(['action', 'close', 'swipe'])
+  it('the unanswered ends are Back (escape) and the swipe – §9 item 6; the × is the explicit refusal', () => {
+    expect(REASONS.filter(unansweredEnd)).toEqual(['swipe', 'escape'])
+    expect(unansweredEnd('close')).toBe(false)
+    expect(unansweredEnd('timeout')).toBe(false)
+  })
+
+  it("the user's own ends are the action, the ×, the swipe and the Back", () => {
+    expect(REASONS.filter(userEnded)).toEqual(['action', 'close', 'swipe', 'escape'])
   })
 })

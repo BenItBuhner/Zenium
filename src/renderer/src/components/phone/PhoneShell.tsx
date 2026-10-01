@@ -154,11 +154,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
 
   // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33) – on the
   // phone the page-edge band in its state form (motion spec §4; `lib/band/post.ts` is the door),
-  // with "Not now" as the band's second action where its content has room: the same end as the
-  // × – up for as long as the core says a banner is due. Swiping or closing it is the campaign's
-  // one dismissal; the action hands over to the system, which ends the campaign either way; and
+  // with "Not now" as the band's second action (the model carries one action today; the × is
+  // the same end meanwhile) – up for as long as the core says a banner is due. "Not now" and
+  // the × are the campaign's one dismissal, a card's swipe too; the band's Back and swipe put it
+  // away UNANSWERED (spec §9 item 6: a remembered refusal is only ever an explicit button) and
+  // count for nothing. The action hands over to the system, which ends the campaign either way;
   // when the core takes the prompt down itself – after the request, or once Zenium holds the
-  // role – the card leaves as `'program'`, which counts for nothing. A third banner pushing it
+  // role – the card leaves as `'program'`, which counts for nothing; a third banner pushing it
   // off (`'replaced'`) is not the user's answer either.
   const bannerDue = state.defaultBrowser.prompt === 'banner' && !onboarding
   useEffect(() => {

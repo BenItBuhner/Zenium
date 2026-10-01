@@ -53,9 +53,11 @@ function documentOf(url: string): string {
  * is remembered per SITE for the session, Chrome's `ReaderModeManager` rule read through the
  * host's dismiss reasons (`readerOfferEndEffect`): every end but the action mutes the host –
  * the timeout and leaving the page with the offer standing included, Chrome's timer and scope
- * destroyed – and the action un-mutes it, as does Reader View entered by another door while the
- * offer stood (the app menu's row, the site-information sheet's). `enabled` is what the shell
- * knows the offer must wait behind (onboarding, a page's fullscreen, the private lock): a gate
+ * destroyed; the band's unanswered ends (Back, a swipe up – spec §9 item 6) excepted, which
+ * only spend the offer – and the action un-mutes it, as does Reader View entered by another
+ * door while the offer stood (the app menu's row, the site-information sheet's). `enabled` is
+ * what the shell knows the offer must wait behind (onboarding, a page's fullscreen, the private
+ * lock): a gate
  * closing over the page takes the banner down without an answer, and it comes back with the
  * gate's lifting.
  */
@@ -102,7 +104,15 @@ export function useReaderEntryMessage(tab: Tab | null, enabled: boolean): void {
           else if (effect === 'unmute') readerMutes.unmute(site)
         }
       },
-      'offer'
+      'offer',
+      {
+        // The band put away unanswered (the Back gesture, a swipe up; spec §9 item 6): the
+        // offer is spent for this page and the site is not muted – Chrome's card muted on its
+        // swipe; the band's × still does, as `close` above.
+        onAway: () => {
+          current.live = false
+        }
+      }
     )
     standing.current = current
     return () => dismissPosted(current.id)

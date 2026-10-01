@@ -41,15 +41,24 @@ export function presentInstallBanner(banner: WebAppBanner): void {
       const why = coreReason(reason)
       if (why) run('webapp.dismissBanner', { tabId: banner.tabId, reason: why })
     }),
-    'offer'
+    'offer',
+    {
+      // The band put away unanswered (the Back gesture, a swipe up; spec §9 item 6): the core
+      // hears its banner is gone as for the clock – its bookkeeping clears, no cooldown starts.
+      onAway: () => {
+        if (shown.get(banner.tabId) === id) shown.delete(banner.tabId)
+        run('webapp.dismissBanner', { tabId: banner.tabId, reason: 'timeout' })
+      }
+    }
   )
   shown.set(banner.tabId, id)
 }
 
 /**
  * What the core hears: the user sent the card away (a swipe or its close – the app's cooldown
- * starts) or its clock ran out. "Add" needs no report (the core opens the sheet and takes the
- * banner down itself); a replacement or the core's own take-down was not the user's doing.
+ * starts; on the band only the × says so, `onAway` above) or its clock ran out. "Add" needs no
+ * report (the core opens the sheet and takes the banner down itself); a replacement or the
+ * core's own take-down was not the user's doing.
  */
 function coreReason(reason: BannerDismissReason): 'swipe' | 'timeout' | null {
   switch (reason) {
