@@ -252,6 +252,16 @@ Answer the dialog a page opened on one of your tabs that your dialog policy did 
 - Example: `browser_handle_dialog {"tabId":"tab_3f9a...","accept":false}`
 - Pitfall: read the dialog before accepting. A confirm about deleting or paying is a decision; when it is not clearly part of the task, cancel and tell the user - and do not set a policy that accepts confirms blindly on a page where such a decision may come up.
 
+### browser_dialog_policy
+
+Listed only where the browser answers page dialogs from a policy of yours; when it is missing from your tools, you have no say in how dialogs are answered.
+
+Say ahead of an action how the dialogs a page opens on your tabs are to be answered, and the browser answers them at once from your policy instead of handing them to you: `confirm` `"accept"` (OK) or `"dismiss"` (Cancel); `prompt` `"accept"` (OK with the page's default text), `"dismiss"` (Cancel) or `{"text":"..."}` (OK with that text); `beforeunload` `"leave"` or `"stay"` for a page's "Leave site?" under your navigations on a tab the user is not looking at. Alerts are not a rule - they always get OK. Without a policy the defaults apply: alert OK, confirm Cancel, prompt Cancel, "Leave site?" leave. The result repeats the policy now in force on that scope kind by kind (a kind you gave no word marked `(default)`, one a tab takes from your session-wide policy `(for every tab)`), how long it stands, and that every dialog it answers is reported. Each such dialog comes back in your next result as `Notice: the page in tab tab_... (site) opened a confirm dialog: "..." - answered OK by your dialog policy.` - `(no policy; browser_dialog_policy sets one)` in place of the last words when a default answered - and a navigation of yours that a `"stay"` cancelled says so in place of its headline.
+
+- With `tabId` the policy is that tab's own and overrides your session-wide one kind by kind; without `tabId` it covers every tab you own, now and later. A set replaces the earlier rule of the same scope; `"action":"clear"` drops that scope's rule only. `"ttl":60` is the seconds the rule stands; `"once":true` spends each kind's rule with the first dialog it answers (then the next rule, else the default, applies).
+- Example: `browser_dialog_policy {"tabId":"tab_3f9a...","confirm":"accept","once":true}`
+- Pitfalls: a standing `"confirm":"accept"` also accepts the next confirm you did not expect - a deletion, a payment - so scope it to a tab or use `once`. `"stay"` protects unsaved work on your hidden tabs only: a tab the user is looking at follows the user's rules - the user is asked, and your navigating call reports what the user chose.
+
 ### browser_prompts
 
 Listed only where native prompts route to agents. Lists what your tabs wait for you to answer: each prompt's `id`, `tabId`, `kind`, details, the `actions` it takes, its `defaultAction`, `secondsLeft` and whether the page waits on it - plus pending page dialogs. Read-only.
