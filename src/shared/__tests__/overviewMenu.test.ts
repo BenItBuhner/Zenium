@@ -4,7 +4,10 @@ import {
   isOverviewMenuSeparator,
   otherOverviewView,
   overviewMenu,
+  overviewMenuTitle,
+  selectionTitle,
   switchViewRow,
+  tabsWord,
   type OverviewMenuContext,
   type OverviewMenuEntry,
   type OverviewMenuRow
@@ -171,5 +174,30 @@ describe('overviewMenu (tab-overview-cleanup-spec §4)', () => {
 
   it('writes counts in parentheses', () => {
     expect(counted('Recently Closed', 12)).toBe('Recently Closed (12)')
+  })
+
+  it('titles the sheet as the overview is titled – the space’s name and count, "Private" and the session’s, the selection’s – never "Zenium"', () => {
+    expect(overviewMenuTitle(ctx({ counts: { ...ctx().counts, regular: 10 } }), 'Work')).toBe(
+      'Work · 10 tabs'
+    )
+    expect(overviewMenuTitle(ctx({ counts: { ...ctx().counts, regular: 1 } }), 'Work')).toBe(
+      'Work · 1 tab'
+    )
+    // The private session is one across the spaces: the space's name is not in its title.
+    expect(
+      overviewMenuTitle(
+        ctx({ view: 'private', counts: { ...ctx().counts, regular: 10, private: 1 } }),
+        'Work'
+      )
+    ).toBe('Private · 1 tab')
+    // The select-tabs mode's header word: the count, the mode's name before the first pick.
+    expect(overviewMenuTitle(ctx({ selection: { selected: 1, total: 5 } }), 'Work')).toBe(
+      '1 selected'
+    )
+    expect(overviewMenuTitle(ctx({ selection: { selected: 0, total: 5 } }), 'Work')).toBe(
+      'Select tabs'
+    )
+    expect(selectionTitle(3)).toBe('3 selected')
+    expect(tabsWord(0)).toBe('0 tabs')
   })
 })

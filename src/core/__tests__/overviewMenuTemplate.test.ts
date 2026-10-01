@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { OverviewMenuContext } from '../../shared/overviewMenu'
 import { overviewMenuTemplate, type OverviewMenuActs } from '../overviewMenu'
 import type { MenuItemTemplate } from '../platform'
+import { ANDROID, harness } from './menusFixture'
 
 /*
  * The tab overview's ⋯ menu as the core's template (tab overview cleanup spec §4, §5): the
@@ -117,5 +118,36 @@ describe('the overview menu template (§4)', () => {
       'Close Private Tabs (3)'
     ])
     expect(items.some((i) => i.submenu)).toBe(false)
+  })
+})
+
+/*
+ * Through the bar's ⋯ (`Menus.showAppMenu` with the overview's request): the sheet the core pops
+ * is titled as the overview is – "Work · 10 tabs", "Private · 1 tab", "1 selected" – never
+ * "Zenium", the app menu's generic name (§4). The title rides the popup's options to the
+ * renderer-drawn surface (`MenuPopupOptions.title` → `MenuDescriptor.title`); the app menu
+ * itself carries none and keeps its source's name.
+ */
+describe('the overview menu through the bar’s ⋯ (§4)', () => {
+  it('is titled as the overview is: the space’s name with the regular grid’s count, "Private" with the session’s, the selection’s count', () => {
+    const h = harness(ANDROID, { formFactor: 'phone' })
+    const space = h.browser.tabs.activeSpaceFor(h.win)
+    h.browser.tabs.createTab({ url: 'https://a.example/', active: true }, h.win)
+    h.browser.tabs.createTab({ url: 'https://b.example/', active: true }, h.win)
+    h.browser.handleCommand(h.win, 'app.menu', { overview: { view: 'tabs' } })
+    expect(h.where()?.source).toBe('app')
+    expect(h.where()?.title).toBe(`${space.name} · 2 tabs`)
+    expect(labels(h.shown())).toContain('Search Tabs')
+    h.browser.tabs.newPrivateTab(undefined, h.win)
+    h.browser.handleCommand(h.win, 'app.menu', { overview: { view: 'private' } })
+    expect(h.where()?.title).toBe('Private · 1 tab')
+    h.browser.handleCommand(h.win, 'app.menu', {
+      overview: { view: 'tabs', selection: { selected: 1, total: 2 } }
+    })
+    expect(h.where()?.title).toBe('1 selected')
+    expect(labels(h.shown())).toEqual(['Select All', 'Deselect All', 'Close Selected (1)'])
+    // The app menu, with no overview up, is the source's own: no title of its own.
+    h.browser.handleCommand(h.win, 'app.menu', {})
+    expect(h.where()?.title).toBeUndefined()
   })
 })

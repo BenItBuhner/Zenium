@@ -11,7 +11,9 @@
  * (N) – only while any; Recently Closed (N) – only while any; a hairline; Close All Tabs (N) /
  * Close Private Tabs (N) in danger ink; Switch Space ▸ with the spaces as rows, the current one
  * checked. Title Case (§9.1), the counts in parentheses as the overview's sheet wrote them.
- * In SELECTION MODE (§5) the menu is Select All, Deselect All, Close Selected (N) instead.
+ * In SELECTION MODE (§5) the menu is Select All, Deselect All, Close Selected (N) instead. The
+ * sheet is titled as the overview is (`overviewMenuTitle`): "Work · 10 tabs", "Private · 1 tab",
+ * "1 selected" – never "Zenium", the app menu's.
  */
 
 /**
@@ -140,6 +142,37 @@ export function otherOverviewView(view: OverviewView): OverviewView {
 /** "2 Tabs", "1 Tab": a row's count with its unit, capitalised with the row (v2 §9.1). */
 export function tabsUnit(n: number): string {
   return `${n} ${n === 1 ? 'Tab' : 'Tabs'}`
+}
+
+/** "3 tabs", "1 tab": the header's count in its own words (§1), after the title's dot. */
+export function tabsWord(n: number): string {
+  return `${n} tab${n === 1 ? '' : 's'}`
+}
+
+/**
+ * The select-tabs header's title (§5): "3 selected"; "Select tabs" before the first pick, so the
+ * mode announces itself.
+ */
+export function selectionTitle(count: number): string {
+  return count === 0 ? 'Select tabs' : `${count} selected`
+}
+
+/**
+ * The ⋯ sheet's title (§4): the sheet is titled as the thing it acts on is titled – the
+ * overview's own title, "Work · 10 tabs", "Private · 1 tab", "1 selected" – as the group sheet
+ * is titled by the group and the Spaces sheet "Spaces"; never "Zenium", the app menu's. The
+ * words are the header's (`OverviewTitle`, `SelectionHeader`): the space's name – the name
+ * alone, as the header writes it beside the glyph it draws; not a row's `spaceLabel` with the
+ * emoji – with the regular grid's count, "Private" with the session's, the selection's count.
+ */
+export function overviewMenuTitle(
+  ctx: Pick<OverviewMenuContext, 'view' | 'counts' | 'selection'>,
+  spaceName: string
+): string {
+  if (ctx.selection) return selectionTitle(ctx.selection.selected)
+  if (ctx.view === 'private')
+    return `${OVERVIEW_LABELS.privateTitle} · ${tabsWord(ctx.counts.private)}`
+  return `${spaceName} · ${tabsWord(ctx.counts.regular)}`
 }
 
 /**

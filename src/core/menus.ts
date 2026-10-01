@@ -93,7 +93,7 @@ import { orderMediaEntries } from '../shared/mediaHub'
 import { toolbarPinned, withToolbarPin, type ToolbarControl } from '../shared/toolbarPins'
 import { serialiseMenu } from './rendererMenus'
 import { overviewMenuTemplate } from './overviewMenu'
-import type { OverviewMenuContext } from '../shared/overviewMenu'
+import { overviewMenuTitle, type OverviewMenuContext } from '../shared/overviewMenu'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
@@ -347,7 +347,8 @@ export class Menus {
     source: MenuSource,
     anchor?: MenuAnchor,
     header?: MenuHeader,
-    defaultOrder?: string[]
+    defaultOrder?: string[],
+    title?: string
   ): void {
     const items = withAccelerators(
       tidySeparators(template),
@@ -360,7 +361,8 @@ export class Menus {
       win,
       ...anchor,
       ...(header ? { header } : {}),
-      ...(defaultOrder ? { defaultOrder } : {})
+      ...(defaultOrder ? { defaultOrder } : {}),
+      ...(title ? { title } : {})
     })
   }
 
@@ -4096,6 +4098,8 @@ export class Menus {
     const anchor = options.anchor
       ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
       : undefined
+    // The sheet is titled as the overview is – "Work · 10 tabs", "Private · 1 tab",
+    // "1 selected" – never "Zenium", the app menu's (§4).
     this.popup(
       overviewMenuTemplate(ctx, {
         switchSpace: (spaceId) => tabs.switchSpace(spaceId, win),
@@ -4103,7 +4107,10 @@ export class Menus {
       }),
       win,
       'app',
-      { ...anchor, keyboard: options.keyboard }
+      { ...anchor, keyboard: options.keyboard },
+      undefined,
+      undefined,
+      overviewMenuTitle(ctx, space.name)
     )
   }
 

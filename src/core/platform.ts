@@ -1654,6 +1654,13 @@ export interface MenuPopupOptions {
    */
   header?: MenuHeader
   /**
+   * What the renderer-drawn surface calls the menu – the phone's sheet title, the tablet
+   * popover's name – when the source's generic name is not it: the tab overview's ⋯ menu is
+   * titled as the overview is ("Work · 10 tabs"; cleanup spec §4, `MenuDescriptor.title`).
+   * Native menus have no title to draw and leave it be.
+   */
+  title?: string
+  /**
    * The phone app menu's keys in the build's default order, for the sheet's edit mode (TB-22;
    * `MenuDescriptor.defaultOrder`). Native hosts have no edit mode and leave it be.
    */

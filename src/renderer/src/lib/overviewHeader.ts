@@ -1,5 +1,5 @@
 import type { Space, UIState } from '@shared/types'
-import { OVERVIEW_LABELS, type OverviewView } from '@shared/overviewMenu'
+import { OVERVIEW_LABELS, tabsWord, type OverviewView } from '@shared/overviewMenu'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { privateTabsOf, tabsOnPane } from './privateTabs'
 import { essentialsFor, pinnedOf, regularOf } from './selectors'
@@ -7,16 +7,15 @@ import { essentialsFor, pinnedOf, regularOf } from './selectors'
 /**
  * The words of the tab overview's one header row (tab overview cleanup spec §1, §3): the
  * space's name with its count – "Default · 3 tabs" – or, in the private view, "Private · N
- * tabs"; the same count the Spaces sheet writes after each space.
+ * tabs"; the same count the Spaces sheet writes after each space, and the words the core titles
+ * the ⋯ sheet with (§4, `overviewMenuTitle`).
  */
 
 /** The private view's title (§3): the session has no space's name. */
 export const PRIVATE_TITLE = OVERVIEW_LABELS.privateTitle
 
-/** "3 tabs", "1 tab". */
-export function tabsWord(n: number): string {
-  return `${n} tab${n === 1 ? '' : 's'}`
-}
+/** "3 tabs", "1 tab": the shared spelling, the ⋯ sheet's title reading the same (§4). */
+export { tabsWord }
 
 /**
  * The cards the overview's regular grid shows of `space`: its Essentials, pinned and regular
