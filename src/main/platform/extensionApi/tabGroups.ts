@@ -2,6 +2,7 @@ import type { Folder, Tab } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 import { TAB_GROUP_NONE } from '../../../core/extensions/api/tabs'
 import {
+  ERROR_AGENT_GROUP,
   ERROR_CROSS_WINDOW,
   ERROR_ESSENTIAL_TAB,
   ERROR_LOCAL_WINDOW,
@@ -40,7 +41,8 @@ const NEW_FOLDER_ICON = '📁'
  * is a group, its name the title, its colour the group colour (the two palettes are the same),
  * its collapsed flag the group's. Group ids are handed out per folder by the model mapper; a
  * group's window is the one holding its first tab. `tabs.group` / `tabs.ungroup` move tabs into
- * and out of folders. Events come from diffing the folders on every tick.
+ * and out of folders, except an AI agent's (`isAgentFolder`). Events come from diffing the
+ * folders on every tick.
  */
 export class TabGroupsApi {
   private snapshot: Map<string, TabGroupSnapshot> | null = null
@@ -83,6 +85,25 @@ export class TabGroupsApi {
     const folder = this.model.folderForGroup(groupId)
     if (!folder) throw new ApiError(groupNotFound(groupId))
     return folder
+  }
+
+  /**
+   * A folder an AI agent session holds is the agent's working set: a tab inside it is the
+   * agent's to drive (its hidden dialogs, its leave prompts, its listing, its close with the
+   * session), so an extension may read it as a group but may not move tabs into or out of it.
+   * The core's word on the hold: a live session's group (`groupOwner`), or a durable session's
+   * while its agent is away (`heldBy`). The user's own drag and menu moves are not here.
+   */
+  private isAgentFolder(folderId: string): boolean {
+    const { agents } = this.host.browser
+    return agents.groupOwner(folderId) !== undefined || agents.heldBy(folderId) !== undefined
+  }
+
+  /** Refuse before anything moves: a call touching an agent's folder changes nothing. */
+  private refuseAgentFolders(tabs: readonly Tab[], target?: Folder): void {
+    if (target && this.isAgentFolder(target.id)) throw new ApiError(ERROR_AGENT_GROUP)
+    if (tabs.some((tab) => tab.folderId && this.isAgentFolder(tab.folderId)))
+      throw new ApiError(ERROR_AGENT_GROUP)
   }
 
   /** Window (Chrome id) and index of the first tab of every folder that has one, live. */
@@ -246,6 +267,7 @@ export class TabGroupsApi {
     let folder: Folder
     if (options.groupId !== undefined) {
       folder = this.folderById(options.groupId)
+      this.refuseAgentFolders(tabs, folder)
       const groupWindow = this.groupOf(folder).windowId
       if (groupWindow >= 0 && groupWindow !== this.model.windowIdOf(win))
         throw new ApiError(ERROR_CROSS_WINDOW)
@@ -259,6 +281,8 @@ export class TabGroupsApi {
       }
       // A blank or private window's space is never persisted; a folder in it would be orphaned.
       if (win.localSpace) throw new ApiError(ERROR_LOCAL_WINDOW)
+      // Checked before the folder is made, so a refused call leaves no "New Folder" shell.
+      this.refuseAgentFolders(tabs)
       const spaceId = tabs[0].spaceId ?? win.activeSpace().id
       folder = this.host.browser.createFolder(spaceId, NEW_FOLDER_NAME, NEW_FOLDER_ICON, win, {
         rename: false
@@ -284,6 +308,7 @@ export class TabGroupsApi {
   private ungroup(_ctx: ApiContext, raw: unknown): void {
     const ids = checked(() => normalizeTabsUngroup(raw))
     const tabs = ids.map((id) => this.tabById(id))
+    this.refuseAgentFolders(tabs)
     for (const tab of tabs) {
       if (tab.folderId) this.host.browser.tabs.moveToFolder(tab.id, null)
     }

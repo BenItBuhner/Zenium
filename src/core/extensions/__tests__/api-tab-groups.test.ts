@@ -13,6 +13,7 @@ import {
 import type { ZenWindow } from '../../window'
 import type { Sender } from '../../../main/platform/extensionApi/types'
 import {
+  ERROR_AGENT_GROUP,
   ERROR_CROSS_WINDOW,
   ERROR_ESSENTIAL_TAB,
   ERROR_GROUP_PARAMS,
@@ -202,6 +203,8 @@ interface Harness {
   groupIdFor: (folderId: string) => number
   created: Folder[]
   deleted: string[]
+  /** Folders AI agents hold: a live session's, and a durable session's while its agent is away. */
+  agentFolders: { live: Set<string>; held: Set<string> }
 }
 
 function harness(): Harness {
@@ -255,9 +258,16 @@ function harness(): Harness {
   }
   const created: Folder[] = []
   const deleted: string[] = []
+  const agentFolders = { live: new Set<string>(), held: new Set<string>() }
   const browser = {
     allWindows: () => [win],
     state: { model },
+    agents: {
+      groupOwner: (folderId: string) =>
+        agentFolders.live.has(folderId) ? { id: 'session-1' } : undefined,
+      heldBy: (folderId: string) =>
+        agentFolders.held.has(folderId) ? { id: 'claim-1' } : undefined
+    },
     createFolder(
       spaceId: string,
       name: string,
@@ -372,7 +382,8 @@ function harness(): Harness {
     order: () => tabsInWindow().map((t) => t.id),
     groupIdFor: (folderId: string) => ids.idFor(folderId),
     created,
-    deleted
+    deleted,
+    agentFolders
   }
 }
 
@@ -503,6 +514,48 @@ describe('chrome.tabGroups host', () => {
     expect(h.deleted).toEqual([])
     h.tick()
     expect(await call(h.api, 'get', h.ctx(EXT_A), id)).toMatchObject({ id, title: 'Reading' })
+  })
+
+  it("refuses to move tabs into or out of an AI agent's folder, which it still reads as a group", async () => {
+    const h = harness()
+    h.load(EXT_A, ['tabGroups'])
+    h.addFolder('agent', { name: 'Research' })
+    h.addTab('a1', { folderId: 'agent' })
+    h.addTab('t1')
+    h.agentFolders.live.add('agent')
+    const id = h.groupIdFor('agent')
+    // Reads stay open: Chrome exposes every group.
+    expect(await call(h.api, 'get', h.ctx(EXT_A), id)).toMatchObject({ id, title: 'Research' })
+    expect(await call(h.api, 'query', h.ctx(EXT_A), { title: 'Res*' })).toHaveLength(1)
+    // Into the agent's group.
+    await expect(
+      callTabs(h.api, 'group', h.ctx(EXT_A), { tabIds: [h.chromeId('t1')], groupId: id })
+    ).rejects.toThrow(ERROR_AGENT_GROUP)
+    expect(h.model.tabs.t1.folderId).toBeNull()
+    // Out of it: ungrouped, or grouped elsewhere – and nothing is made before the refusal.
+    await expect(
+      callTabs(h.api, 'ungroup', h.ctx(EXT_A), [h.chromeId('t1'), h.chromeId('a1')])
+    ).rejects.toThrow(ERROR_AGENT_GROUP)
+    await expect(
+      callTabs(h.api, 'group', h.ctx(EXT_A), { tabIds: [h.chromeId('t1'), h.chromeId('a1')] })
+    ).rejects.toThrow(ERROR_AGENT_GROUP)
+    expect(h.model.tabs.a1.folderId).toBe('agent')
+    expect(h.created).toEqual([])
+    // A durable session's folder while its agent is away is held the same way.
+    h.agentFolders.live.delete('agent')
+    h.agentFolders.held.add('agent')
+    await expect(
+      callTabs(h.api, 'group', h.ctx(EXT_A), { tabIds: [h.chromeId('t1')], groupId: id })
+    ).rejects.toThrow(ERROR_AGENT_GROUP)
+    await expect(callTabs(h.api, 'ungroup', h.ctx(EXT_A), [h.chromeId('a1')])).rejects.toThrow(
+      ERROR_AGENT_GROUP
+    )
+    // Released by its agent: an ordinary folder again.
+    h.agentFolders.held.delete('agent')
+    await callTabs(h.api, 'group', h.ctx(EXT_A), { tabIds: [h.chromeId('t1')], groupId: id })
+    expect(h.model.tabs.t1.folderId).toBe('agent')
+    await callTabs(h.api, 'ungroup', h.ctx(EXT_A), [h.chromeId('a1')])
+    expect(h.model.tabs.a1.folderId).toBeNull()
   })
 
   it('drops an extension-made folder whose last tab closed, reporting onRemoved next tick', async () => {
