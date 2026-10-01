@@ -15,6 +15,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { run } from '@renderer/lib/api'
+import { folderDeleteWords } from '@renderer/lib/folderDelete'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
@@ -583,7 +584,7 @@ describe('the row’s sheet (TAB-16, §9.1, §6)', () => {
 // --- Delete Group's prompt -------------------------------------------------------------------
 
 describe('Delete Group’s prompt (§9.23)', () => {
-  it('for an open group names the tabs that close and the Undo that brings them back, Delete alone in the danger ink', () => {
+  it('for an open group names the tabs that close, each to Recently Closed – no Undo promised (TAB-13, option C) – Delete alone in the danger ink', () => {
     const rows = rowsOf([folder('work')], [tab('w1', 'work'), tab('w2', 'work'), tab('w3', 'work')])
     const confirmed: GroupRow[] = []
     render(
@@ -594,9 +595,12 @@ describe('Delete Group’s prompt (§9.23)', () => {
     )
     const sheet = q<HTMLElement>('.zen-sheet[role="dialog"]')!
     expect(sheet.textContent).toContain('Delete Work?')
+    // The one source of the three hosts' words (`folderDeleteWords`, the group noun).
     expect(sheet.textContent).toContain(
-      'Its 3 tabs close and the group goes; Undo on the toast brings the tabs back, ungrouped.'
+      'Its 3 tabs close with it; Recently Closed keeps their pages.'
     )
+    expect(sheet.textContent).not.toContain('Undo')
+    expect(sheet.textContent).toContain(folderDeleteWords('Work', 3, false, 'group').detail)
     const buttons = all('.zen-sheet .zen-sheet-footer button')
     expect(buttons.map((b) => b.textContent?.trim())).toEqual(['Cancel', 'Delete'])
     expect(buttons[0].hasAttribute('data-danger')).toBe(false)
@@ -626,9 +630,26 @@ describe('Delete Group’s prompt (§9.23)', () => {
     )
     const sheet = q<HTMLElement>('.zen-sheet[role="dialog"]')!
     expect(sheet.textContent).toContain('Delete Trip?')
-    expect(sheet.textContent).toContain('Its 2 tabs are forgotten with it. There is no undo.')
+    expect(sheet.textContent).toContain(
+      'Its 2 saved pages are forgotten with it. There is no undo.'
+    )
+    expect(sheet.textContent).toContain(folderDeleteWords('Trip', 2, true, 'group').detail)
     act(() => q<HTMLElement>('[data-testid="overview-delete-group-confirm"]')!.click())
     settle()
     expect(confirmed.map((r) => r.folder.id)).toEqual(['trip'])
+  })
+
+  it('for a group with no name asks "Delete this group?" (v2 §6, the touch hosts’ noun; #711’s fallback), one tab in the singular', () => {
+    const rows = rowsOf([folder('anon', { name: '  ' })], [tab('x1', 'anon')])
+    render(
+      <>
+        <FrameDialogHost frame />
+        <DeleteGroupSheet row={rows.open[0]} onClose={noop} onConfirm={noop} />
+      </>
+    )
+    const sheet = q<HTMLElement>('.zen-sheet[role="dialog"]')!
+    expect(sheet.textContent).toContain('Delete this group?')
+    expect(sheet.textContent).toContain('Its 1 tab closes with it; Recently Closed keeps its page.')
+    expect(sheet.textContent).not.toContain('Undo')
   })
 })
