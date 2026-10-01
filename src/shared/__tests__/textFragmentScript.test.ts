@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   HIGHLIGHT_NAME,
   LATE_CONTENT_MS,
+  TEXT_FRAGMENT_LINK_EVENT,
   highlightTextFragments,
   installTextFragmentScript,
   isTextFragmentPageMessage,
@@ -59,20 +60,40 @@ interface Harness {
   down: (message: TextFragmentHostMessage) => void
 }
 
+/** The DOM listeners the installs of a test left on the shared document, removed after it. */
+const domListeners: EventListenerOrEventListenerObject[] = []
+
 function install(win: Window = window, withSelection?: <T>(work: () => T) => T): Harness {
   const sent: TextFragmentPageMessage[] = []
   let listener: ((message: TextFragmentHostMessage) => void) | null = null
-  installTextFragmentScript(
-    {
-      send: (message) => void sent.push(message),
-      onCommand: (l) => {
-        listener = l
+  const doc = win.document
+  const addEventListener = doc.addEventListener.bind(doc)
+  doc.addEventListener = ((type: string, l: EventListenerOrEventListenerObject, o?: unknown) => {
+    if (type === TEXT_FRAGMENT_LINK_EVENT) domListeners.push(l)
+    addEventListener(type, l, o as AddEventListenerOptions)
+  }) as Document['addEventListener']
+  try {
+    installTextFragmentScript(
+      {
+        send: (message) => void sent.push(message),
+        onCommand: (l) => {
+          listener = l
+        },
+        withSelection
       },
-      withSelection
-    },
-    win
-  )
+      win
+    )
+  } finally {
+    delete (doc as { addEventListener?: unknown }).addEventListener
+  }
   return { sent, down: (message) => listener!(message) }
+}
+
+/** What the phone's host does through `evaluateJavascript`: dispatch the DOM event and read the answer. */
+function askThroughDom(): string | null | undefined {
+  const detail: { directive?: string | null } = {}
+  document.dispatchEvent(new CustomEvent(TEXT_FRAGMENT_LINK_EVENT, { detail }))
+  return detail.directive
 }
 
 beforeEach(() => {
@@ -83,6 +104,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   delete (document as unknown as Record<string, unknown>).fragmentDirective
+  for (const l of domListeners) document.removeEventListener(TEXT_FRAGMENT_LINK_EVENT, l)
+  domListeners.length = 0
 })
 
 describe('making a link to the highlight (the core’s generate request)', () => {
@@ -154,6 +177,49 @@ describe('making a link to the highlight (the core’s generate request)', () =>
     expect(isTextFragmentPageMessage({ type: 'textFragment', id: 'a', directive: null })).toBe(true)
     expect(isTextFragmentPageMessage({ type: 'textFragment', id: 1, directive: null })).toBe(false)
     expect(isTextFragmentPageMessage({ type: 'share', id: 'a' })).toBe(false)
+  })
+})
+
+describe('making a link to the highlight without the bridge (the phone’s action mode, through the DOM)', () => {
+  it('listens for the event the host dispatches (`TextFragmentLink.EVENT` in Kotlin)', () => {
+    expect(TEXT_FRAGMENT_LINK_EVENT).toBe('zen-text-fragment-link')
+  })
+
+  it('writes the selection’s directive into the event’s detail', () => {
+    install()
+    select('ledger did not care')
+    expect(askThroughDom()).toBe('text=ledger%20did%20not%20care')
+  })
+
+  it('answers null for a collapsed selection', () => {
+    install()
+    expect(askThroughDom()).toBeNull()
+  })
+
+  it('generates through the host’s selection wrapper, as the bridge’s request does', () => {
+    const range = select('lighthouse keeper')
+    document.getSelection()!.removeAllRanges()
+    const withSelection = <T>(work: () => T): T => {
+      const selection = document.getSelection()!
+      selection.addRange(range)
+      try {
+        return work()
+      } finally {
+        selection.removeAllRanges()
+      }
+    }
+    install(window, withSelection)
+    expect(askThroughDom()).toBe('text=lighthouse%20keeper')
+    expect(document.getSelection()!.rangeCount).toBe(0)
+  })
+
+  it('leaves an event without an object detail alone', () => {
+    install()
+    select('ledger')
+    expect(() =>
+      document.dispatchEvent(new CustomEvent(TEXT_FRAGMENT_LINK_EVENT, { detail: 'x' }))
+    ).not.toThrow()
+    expect(() => document.dispatchEvent(new CustomEvent(TEXT_FRAGMENT_LINK_EVENT))).not.toThrow()
   })
 })
 

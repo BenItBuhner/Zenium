@@ -16,7 +16,9 @@ import type {
   NewTabPreset,
   NewTabSettings,
   NewTabShortcut,
-  NewTabShortcutsMode
+  NewTabShortcutsMode,
+  Tab,
+  TopSite
 } from './types'
 import { newId } from './ids'
 import {
@@ -468,6 +470,80 @@ export function unhideSite(device: NewTabDeviceState, url: string): NewTabDevice
 /** Remove a tile: its shortcut goes and its host stays out of the most-visited tiles. */
 export function removeSite(device: NewTabDeviceState, url: string): NewTabDeviceState {
   return hideSite(unpinShortcut(device, url), url)
+}
+
+// ---------------------------------------------------------------------------
+// The phone page's grid
+// ---------------------------------------------------------------------------
+
+/** A tile of the phone's chrome-drawn page: a pin, or one of the most visited sites. */
+export interface TopSiteTile {
+  url: string
+  title: string
+  favicon: string | null
+  pinned: boolean
+}
+
+/**
+ * The tiles the phone's chrome-drawn page shows (`NewTabPage.tsx`'s `TopSites`), `n` at most:
+ * the pinned sites first, in their order, one per host (`siteHost`: `www.` and case aside),
+ * then the most visited sites of other hosts – or only the pinned ones when the shortcuts are
+ * "my shortcuts". A pin borrows the icon (and a missing title) from the history of its host,
+ * since a pin only knows its URL and title. Shared with the core so the omnibox's tile row on
+ * the phone (OMN-04) is this very list, composed from the same inputs.
+ */
+export function composeTiles(opts: {
+  pinned: readonly Pick<NewTabShortcut, 'url' | 'title'>[]
+  ranked: readonly TopSite[]
+  style: NewTabMode
+  n: number
+  /** Icons known from elsewhere (open tabs), by host. */
+  favicons?: ReadonlyMap<string, string>
+}): TopSiteTile[] {
+  const byHost = new Map<string, TopSite>()
+  for (const site of opts.ranked) {
+    const host = siteHost(site.url)
+    if (host && !byHost.has(host)) byHost.set(host, site)
+  }
+  const pinnedHosts = new Set<string>()
+  const tiles: TopSiteTile[] = []
+  for (const pin of opts.pinned) {
+    const host = siteHost(pin.url)
+    if (!host || pinnedHosts.has(host)) continue
+    pinnedHosts.add(host)
+    const known = byHost.get(host)
+    tiles.push({
+      url: pin.url,
+      title: pin.title || known?.title || '',
+      favicon: known?.favicon ?? opts.favicons?.get(host) ?? null,
+      pinned: true
+    })
+  }
+  if (opts.style === 'most-visited') {
+    for (const site of opts.ranked) {
+      const host = siteHost(site.url)
+      if (!host || pinnedHosts.has(host)) continue
+      pinnedHosts.add(host)
+      tiles.push({ url: site.url, title: site.title, favicon: site.favicon, pinned: false })
+    }
+  }
+  return tiles.slice(0, Math.max(0, opts.n))
+}
+
+/**
+ * The icons a window's open tabs know, by host (`siteHost`), the first tab's per host: what the
+ * phone page hands `composeTiles` for a pinned site the history has no icon for yet.
+ */
+export function openTabFavicons(
+  tabs: Iterable<Pick<Tab, 'url' | 'favicon'>>
+): ReadonlyMap<string, string> {
+  const map = new Map<string, string>()
+  for (const t of tabs) {
+    if (!t.favicon) continue
+    const host = siteHost(t.url)
+    if (host && !map.has(host)) map.set(host, t.favicon)
+  }
+  return map
 }
 
 // ---------------------------------------------------------------------------

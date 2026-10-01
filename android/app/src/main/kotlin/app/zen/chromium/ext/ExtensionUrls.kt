@@ -45,6 +45,27 @@ object ExtensionUrls {
         return m.groupValues[1].lowercase() to (m.groupValues.getOrNull(2) ?: "")
     }
 
+    /** An alias URL whole: any `http(s)` page origin, then the alias path; the query and fragment apart. */
+    private val PAGE_ALIAS_URL = Regex("^https?://[^/?#]+(/\\.zenium-ext/[a-p]{32}(?:/[^?#]*)?)(?:[?#].*)?$", RegexOption.IGNORE_CASE)
+
+    /**
+     * The extension-relative path (no leading slash; the query and fragment dropped) of one of
+     * `extensionId`'s own files, spelled at the served origin
+     * (`https://<id>.ext.zenium.invalid/<path>`) or at its page-origin alias under any page
+     * (`https://<page>/.zenium-ext/<id>/<path>`, the spelling a content script's `import()`
+     * retried past the page's policy asks with); null for a URL of any other extension or origin.
+     */
+    fun ownFile(url: String, extensionId: String): String? {
+        val served = SERVED.matchEntire(url)
+        if (served != null) {
+            if (!served.groupValues[1].equals(extensionId, ignoreCase = true)) return null
+            return served.groupValues[2].substringBefore('?').substringBefore('#').trimStart('/')
+        }
+        val alias = PAGE_ALIAS_URL.matchEntire(url) ?: return null
+        val (id, path) = pageAlias(alias.groupValues[1]) ?: return null
+        return if (id.equals(extensionId, ignoreCase = true)) path else null
+    }
+
     /** A path that may be empty or start at `?` / `#` gets its root slash, as URL parsing would give it. */
     private fun rooted(rest: String): String = if (rest.startsWith("/")) rest else "/$rest"
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CREDENTIALS_HEADER,
   MAX_BODY_BYTES,
+  NET_ERROR_HEADER,
   PROXY_HEADER,
   SKIP,
   base64,
@@ -19,8 +20,8 @@ interface Sent {
   body: string | null
 }
 
-/** A page window with the real fetch primitives and a recording `fetch`. */
-function fakeWindow(): {
+/** A page window with the real fetch primitives and a recording `fetch`; `answer` is what the WebView (the host) answers. */
+function fakeWindow(answer: (sent: Sent) => Response = () => new Response('ok', { status: 200 })): {
   win: Window & typeof globalThis
   sent: Sent[]
   posted: Array<{ ticket: string; body: string }>
@@ -38,19 +39,21 @@ function fakeWindow(): {
     FormData,
     ArrayBuffer,
     Promise,
+    TypeError,
     fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const request = new Request(input, init)
       const headers: Record<string, string> = {}
       request.headers.forEach((value, key) => {
         headers[key] = value
       })
-      sent.push({
+      const record = {
         url: request.url,
         method: request.method,
         headers,
         body: request.body ? await request.text() : null
-      })
-      return new Response('ok', { status: 200 })
+      }
+      sent.push(record)
+      return answer(record)
     }
   } as unknown as Window & typeof globalThis
   let seq = 0
@@ -134,6 +137,60 @@ describe('the page side of the CORS proxy', () => {
     const bytes = new Uint8Array(70_000)
     for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff
     expect(base64(bytes)).toBe(Buffer.from(bytes).toString('base64'))
+  })
+
+  describe("R25-11: the host's refusal of an extension-origin request is Chrome's network error", () => {
+    const refused = (code: string): Response =>
+      new Response(null, { status: 404, headers: { [NET_ERROR_HEADER]: code } })
+    const VIVALDI_READER =
+      'chrome-extension://mpognobbkildjkofajifpdfhcoklimli/components/reader/reader.html'
+
+    it("Black Menu's HEAD of Vivaldi's reader extension, not installed, rejects as in Chrome – and its probe reads null", async () => {
+      const { win, sent } = fakeWindow(() => refused('ERR_BLOCKED_BY_CLIENT'))
+      await expect(win.fetch(VIVALDI_READER, { method: 'HEAD' })).rejects.toThrow(
+        new TypeError('Failed to fetch')
+      )
+      expect(sent).toEqual([
+        expect.objectContaining({
+          url: 'https://mpognobbkildjkofajifpdfhcoklimli.ext.zenium.invalid/components/reader/reader.html',
+          method: 'HEAD'
+        })
+      ])
+      const vivaldi = await win.fetch(VIVALDI_READER, { method: 'HEAD' }).then(
+        () => true,
+        () => null
+      )
+      expect(vivaldi).toBeNull()
+    })
+
+    it("the extension's own missing file (ERR_FILE_NOT_FOUND) and another's file that is not web-accessible reject too", async () => {
+      const { win } = fakeWindow((request) =>
+        refused(request.url.startsWith(ORIGIN) ? 'ERR_FILE_NOT_FOUND' : 'ERR_BLOCKED_BY_CLIENT')
+      )
+      await expect(win.fetch(`${ORIGIN}/missing.json`)).rejects.toThrow(TypeError)
+      await expect(
+        win.fetch('https://bcdefghijklmnopabcdefghijklmnopa.ext.zenium.invalid/private/data.json')
+      ).rejects.toThrow(TypeError)
+    })
+
+    it('an extension-origin answer without the header stands, a 404 included; a web answer with the header is the web answer', async () => {
+      const { win } = fakeWindow((request) =>
+        request.url.startsWith('https://')
+          ? request.url.includes('.ext.zenium.invalid/')
+            ? new Response(null, { status: 404 })
+            : new Response('web', {
+                status: 200,
+                headers: { [NET_ERROR_HEADER]: 'ERR_BLOCKED_BY_CLIENT' }
+              })
+          : new Response('ok')
+      )
+      const own = await win.fetch(`${ORIGIN}/gone.json`)
+      expect(own.status).toBe(404)
+      // Off the permissions and off any extension origin: the WebView's answer, whatever its headers say.
+      const web = await win.fetch('https://example.org/x')
+      expect(web.status).toBe(200)
+      expect(await web.text()).toBe('web')
+    })
   })
 })
 

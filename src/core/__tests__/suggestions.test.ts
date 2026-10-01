@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Suggestion } from '../../shared/types'
+import {
+  PRIVATE_CONTAINER_ID,
+  type FormFactor,
+  type HostCapabilities,
+  type Suggestion,
+  type TopSite
+} from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
 import { customSearchEngine } from '../../shared/search'
 import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
@@ -63,6 +69,13 @@ function setup(
   win: ZenWindow
   net: FakeNet
   state: BrowserState
+  /** The new tab page's tile source as the fixture stands in for it (OMN-04). */
+  newTab: {
+    hiddenHosts: string[]
+    tiles: Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null
+    /** The layout whose page the tiles were last asked for (`pageTiles`' argument). */
+    askedFor: FormFactor | null
+  }
 } {
   const state = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
   state.load()
@@ -77,6 +90,18 @@ function setup(
   const extensions = { omniboxSuggest: async () => null }
   // Nothing on the clipboard: the empty state (nothing typed) is the recent history alone.
   const searchEngines = { peekClipboard: async () => 'none' as const }
+  // The new tab page's tiles (`NewTabService.pageTiles`, the grid as the layout's page lays
+  // it): the fixture's own list when a test sets one, else history's top sites under the page's
+  // hidden hosts – the grid under "most visited" with no shortcut pinned.
+  const newTab = {
+    hiddenHosts: [] as string[],
+    tiles: null as Pick<TopSite, 'url' | 'title' | 'favicon'>[] | null,
+    askedFor: null as FormFactor | null,
+    pageTiles: (formFactor: FormFactor) => {
+      newTab.askedFor = formFactor
+      return newTab.tiles ?? history.topSites(8, newTab.hiddenHosts)
+    }
+  }
   const browser = {
     state,
     bookmarks,
@@ -84,6 +109,7 @@ function setup(
     omniboxShortcuts: shortcuts,
     extensions,
     searchEngines,
+    newTab,
     platform: { net }
   } as unknown as Browser
   const win = new ZenWindow(browser, {
@@ -100,7 +126,7 @@ function setup(
     material: 'none'
   })
   const suggestions = new SuggestionService(browser)
-  return { suggestions, bookmarks, history, shortcuts, win, net, state }
+  return { suggestions, bookmarks, history, shortcuts, win, net, state, newTab }
 }
 
 const kinds = (rows: Suggestion[]): string[] => rows.map((r) => r.kind)
@@ -1358,6 +1384,259 @@ describe('SuggestionService: tab group rows (OMN-15)', () => {
       ['search', undefined],
       ['history', 'Pages'],
       ['tab', 'Open tabs']
+    ])
+  })
+})
+
+describe('SuggestionService: zero-suggest on the touch layouts (OMN-04)', () => {
+  const learnSearch = (
+    shortcuts: OmniboxShortcutsService,
+    terms: string,
+    engineId = 'google'
+  ): void =>
+    shortcuts.learn(terms, {
+      url: `https://www.google.com/search?q=${encodeURIComponent(terms)}`,
+      title: terms,
+      kind: 'search',
+      engineId
+    })
+  const phone = (win: ZenWindow): ZenWindow => {
+    win.formFactor = 'phone'
+    return win
+  }
+  const openTab = (state: BrowserState, id: string, url: string): void => {
+    const space = state.model.spaces[0]
+    const tab = createTabRecord({
+      id,
+      url,
+      title: id,
+      spaceId: space.id,
+      containerId: space.containerId
+    })
+    state.model.tabs[tab.id] = tab
+    space.tabIds.push(tab.id)
+  }
+
+  it("reads the searches the history holds into Recent searches: the default engine's results pages and another engine's, the terms parsed back, a plain page ignored", async () => {
+    const { suggestions, history, win } = setup()
+    phone(win)
+    history.visit(
+      'https://www.google.com/search?q=cats&sourceid=chrome',
+      'cats - Google Search',
+      null,
+      { at: NOW - 3000 }
+    )
+    history.visit('https://duckduckgo.com/?q=two+words&t=h_', 'two words at DuckDuckGo', null, {
+      at: NOW - 2000
+    })
+    history.visit('https://news.example/story', 'A story', null, { at: NOW - 1000 })
+    const rows = await suggestions.suggest('', null, win)
+    const recent = rows.filter((r) => r.group === 'Recent searches')
+    expect(recent.map((r) => [r.title, r.subtitle, r.targetId, r.url])).toEqual([
+      [
+        'two words',
+        'Search with DuckDuckGo',
+        'duckduckgo',
+        'https://duckduckgo.com/?q=two%20words'
+      ],
+      ['cats', 'Search with Google', 'google', 'https://www.google.com/search?q=cats']
+    ])
+    expect(recent.every((r) => r.kind === 'search' && r.deletable && r.fill === r.title)).toBe(true)
+    // The results pages the rows stand for are not recent pages as well; the story stands as a
+    // tile (every host is one here, three of the eight slots), so no recent page is left.
+    expect(rows.filter((r) => r.kind === 'history')).toEqual([])
+    expect(rows.filter((r) => r.group === 'Most visited').map((r) => r.url)).toContain(
+      'https://news.example/story'
+    )
+  })
+
+  it("merges the remembered searches with the history's: the same terms once, dated by the later of the two, most recent first, eight at most", async () => {
+    const { suggestions, shortcuts, history, win } = setup()
+    phone(win)
+    learnSearch(shortcuts, 'cats')
+    // The same search made again later on the engine's own page: one row, at its newer date.
+    history.visit('https://www.google.com/search?q=Cats&sca_esv=1', 'Cats', null, {
+      at: NOW + 5000
+    })
+    history.visit('https://www.google.com/search?q=older', 'older', null, { at: NOW - 60_000 })
+    history.visit('https://www.google.com/search?q=newest', 'newest', null, { at: NOW + 9000 })
+    const rows = await suggestions.suggest('', null, win)
+    const recent = rows.filter((r) => r.group === 'Recent searches')
+    expect(recent.map((r) => r.title)).toEqual(['newest', 'cats', 'older'])
+    // The remembered pick's row is the one shown for its terms: its address, its id.
+    expect(recent[1]).toMatchObject({
+      url: 'https://www.google.com/search?q=cats',
+      id: 'recent:https://www.google.com/search?q=cats'
+    })
+
+    for (let i = 0; i < 10; i += 1)
+      history.visit(`https://www.google.com/search?q=q${i}`, `q${i}`, null, {
+        at: NOW + 10_000 + i
+      })
+    const capped = await suggestions.suggest('', null, win)
+    expect(capped.filter((r) => r.group === 'Recent searches')).toHaveLength(8)
+    expect(capped.filter((r) => r.group === 'Recent searches')[0].title).toBe('q9')
+  })
+
+  it('lists the most visited sites as a "Most visited" group of address rows first, the recent pages minus the pages the tiles stand for', async () => {
+    const { suggestions, history, newTab, win } = setup()
+    phone(win)
+    // Three sites: a.example's front page visited often (its tile) and another of its pages once,
+    // b.example's home a few times, c.example's page once – every host is a tile (three of the
+    // eight slots); only the page no tile stands for is a recent page.
+    for (let i = 0; i < 5; i += 1)
+      history.visit('https://a.example/', 'A', 'https://a.example/icon.png', {
+        at: NOW - 100_000 + i
+      })
+    for (let i = 0; i < 3; i += 1)
+      history.visit('https://www.b.example/home', 'B', null, { at: NOW - 90_000 + i })
+    history.visit('https://c.example/page', 'C', null, { at: NOW - 1000 })
+    history.visit('https://a.example/other', 'A other', null, { at: NOW })
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.map((r) => [r.kind, r.group ?? null])).toEqual([
+      ['url', 'Most visited'],
+      ['url', 'Most visited'],
+      ['url', 'Most visited'],
+      ['history', null]
+    ])
+    expect(rows[0]).toMatchObject({
+      id: 'tile:https://a.example/',
+      title: 'A',
+      subtitle: 'a.example',
+      url: 'https://a.example/',
+      favicon: 'https://a.example/icon.png',
+      fill: 'a.example'
+    })
+    expect(rows[0].deletable).toBeUndefined()
+    expect(rows.slice(1, 3).map((r) => r.url)).toEqual([
+      'https://www.b.example/home',
+      'https://c.example/page'
+    ])
+    // The pages the tiles stand for are not recent pages as well; a.example's other page is.
+    expect(rows[3].url).toBe('https://a.example/other')
+
+    // The page's exclusions are the row's: a site removed from the page is no tile here either,
+    // and its pages are recent pages again.
+    newTab.hiddenHosts.push('a.example')
+    const hidden = await suggestions.suggest('', null, win)
+    expect(hidden.filter((r) => r.group === 'Most visited').map((r) => r.url)).toEqual([
+      'https://www.b.example/home',
+      'https://c.example/page'
+    ])
+    expect(hidden.filter((r) => r.kind === 'history').map((r) => r.url)).toEqual([
+      'https://a.example/other',
+      'https://a.example/'
+    ])
+  })
+
+  it("caps the tiles at eight and lists them on the tablet layout too – the served page's list, asked for as the tablet's", async () => {
+    const { suggestions, history, newTab, win } = setup()
+    win.formFactor = 'tablet'
+    for (let i = 0; i < 12; i += 1)
+      history.visit(`https://site${i}.example/`, `Site ${i}`, null, { at: NOW - i })
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.filter((r) => r.group === 'Most visited')).toHaveLength(8)
+    expect(newTab.askedFor).toBe('tablet')
+  })
+
+  it("the row is the page's list as the page gives it (the Lead's fold on #725): the phone's chrome-drawn page's, asked for as the phone's; a pinned shortcut is a tile in its place, an untitled one named by its host; no tiles at all while the page has none", async () => {
+    const { suggestions, history, newTab, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1) history.visit('https://a.example/', 'A', null, { at: NOW - i })
+    // The page under "most visited" with a shortcut pinned: the shortcut fronts, the most
+    // visited site follows – the very list `NewTabService.pageTiles` composes for the layout.
+    newTab.tiles = [
+      { url: 'https://mine.example/', title: '', favicon: null },
+      { url: 'https://a.example/', title: 'A', favicon: null }
+    ]
+    const rows = await suggestions.suggest('', null, win)
+    expect(newTab.askedFor).toBe('phone')
+    expect(rows.filter((r) => r.group === 'Most visited')).toMatchObject([
+      { id: 'tile:https://mine.example/', title: 'mine.example', url: 'https://mine.example/' },
+      { id: 'tile:https://a.example/', title: 'A', url: 'https://a.example/' }
+    ])
+    // A page with no tiles – its shortcuts section off, or "my shortcuts" with none pinned –
+    // gives the omnibox no row; the pages the tiles would have stood for are recent pages.
+    newTab.tiles = []
+    const none = await suggestions.suggest('', null, win)
+    expect(none.some((r) => r.group === 'Most visited')).toBe(false)
+    expect(none.map((r) => [r.kind, r.url])).toEqual([['history', 'https://a.example/']])
+  })
+
+  it("offers no tiles over the default engine's results page (Chrome's SRP classification), the recent searches and pages as ever; another engine's results page and a plain page get them", async () => {
+    const { suggestions, history, state, shortcuts, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1) history.visit('https://a.example/', 'A', null, { at: NOW - i })
+    learnSearch(shortcuts, 'cats')
+    expect(state.defaultSearchEngine().id).toBe('google')
+    openTab(state, 'tab_srp', 'https://www.google.com/search?q=cats&sourceid=chrome')
+    openTab(state, 'tab_other_srp', 'https://duckduckgo.com/?q=cats&t=h_')
+    openTab(state, 'tab_web', 'https://news.example/')
+    const onResults = await suggestions.suggest('', 'tab_srp', win)
+    expect(onResults.some((r) => r.group === 'Most visited')).toBe(false)
+    expect(onResults.map((r) => r.group ?? r.kind)).toEqual(['Recent searches', 'history'])
+    for (const tabId of ['tab_other_srp', 'tab_web']) {
+      const rows = await suggestions.suggest('', tabId, win)
+      expect(rows.map((r) => r.group ?? r.kind)).toEqual(['Most visited', 'Recent searches'])
+    }
+  })
+
+  it('offers no tiles over the new tab page itself (Chrome: the page already shows them), the recent searches and pages as ever', async () => {
+    const { suggestions, history, state, shortcuts, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1) history.visit('https://a.example/', 'A', null, { at: NOW - i })
+    learnSearch(shortcuts, 'cats')
+    openTab(state, 'tab_ntp', 'zen://blank')
+    openTab(state, 'tab_newtab', 'zen://newtab')
+    openTab(state, 'tab_web', 'https://news.example/')
+    for (const tabId of ['tab_ntp', 'tab_newtab']) {
+      const rows = await suggestions.suggest('', tabId, win)
+      expect(rows.some((r) => r.group === 'Most visited')).toBe(false)
+      expect(rows.map((r) => r.group ?? r.kind)).toEqual(['Recent searches', 'history'])
+    }
+    const onPage = await suggestions.suggest('', 'tab_web', win)
+    expect(onPage.map((r) => r.group ?? r.kind)).toEqual(['Most visited', 'Recent searches'])
+  })
+
+  it('changes nothing while the user types: no tiles, no rows read from the history', async () => {
+    const { suggestions, history, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1)
+      history.visit('https://cats.example/', 'Cats site', null, { at: NOW - i })
+    history.visit('https://www.google.com/search?q=cats', 'cats', null, { at: NOW })
+    const typed = await suggestions.suggest('c', null, win)
+    expect(typed.length).toBeGreaterThan(0)
+    expect(typed.some((r) => r.group === 'Most visited' || r.id.startsWith('tile:'))).toBe(false)
+    expect(typed.some((r) => r.id.startsWith('recent:'))).toBe(false)
+  })
+
+  it("the desktop's list is as it was: no tiles, the history's results pages recent pages, the remembered searches alone under Recent searches", async () => {
+    const { suggestions, history, shortcuts, win } = setup()
+    expect(win.formFactor).toBe('desktop')
+    for (let i = 0; i < 3; i += 1)
+      history.visit('https://a.example/', 'A', null, { at: NOW - 1000 - i })
+    history.visit('https://www.google.com/search?q=dogs', 'dogs', null, { at: NOW })
+    learnSearch(shortcuts, 'cats')
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.map((r) => [r.kind, r.group ?? null, r.url])).toEqual([
+      ['search', 'Recent searches', 'https://www.google.com/search?q=cats'],
+      ['history', null, 'https://www.google.com/search?q=dogs'],
+      ['history', null, 'https://a.example/']
+    ])
+  })
+
+  it("the phone card keeps the tiles' group and heads the recent pages (groupForCard)", async () => {
+    const { suggestions, history, shortcuts, win } = setup()
+    phone(win)
+    for (let i = 0; i < 3; i += 1)
+      history.visit('https://a.example/', 'A', null, { at: NOW - 1000 - i })
+    history.visit('https://a.example/other', 'A other', null, { at: NOW - 500 })
+    learnSearch(shortcuts, 'cats')
+    const rows = await suggestions.suggest('', null, win, { grouped: true })
+    expect(rows.map((r) => r.group)).toEqual([
+      'Most visited',
+      'Recent searches',
+      'Recently visited'
     ])
   })
 })
