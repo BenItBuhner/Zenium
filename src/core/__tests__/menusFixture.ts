@@ -89,7 +89,8 @@ export const DESKTOP: HostCapabilities = {
   pageLanguages: false,
   genericFontFamilies: false,
   caretBrowsing: false,
-  placementAnswered: false
+  placementAnswered: false,
+  agentDialogs: true
 }
 
 /**
@@ -151,7 +152,8 @@ export const ANDROID: HostCapabilities = {
   pageLanguages: false,
   genericFontFamilies: false,
   caretBrowsing: false,
-  placementAnswered: false
+  placementAnswered: false,
+  agentDialogs: false
 }
 
 export function memoryIo(files: Record<string, string> = {}): StoreIO {

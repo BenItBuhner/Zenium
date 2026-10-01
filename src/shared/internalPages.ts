@@ -201,7 +201,7 @@ export type InternalPageRegistry = Readonly<Record<string, InternalPageDefinitio
 /**
  * Settings sections in nav order (Zen's `about:preferences` order, the desktop panel's): Zen's
  * own features first, Privacy and Security after Search as Firefox has it, then – past the
- * landing's first hairline (v2 §10.2) – the browser-wide categories, Sync, Accessibility,
+ * landing's first hairline (v2 §10.2) – the browser-wide categories, Account, Sync, Accessibility,
  * Keyboard Shortcuts and Updates, whichever the host has, and About past the second. Ids are
  * stable: they are deep-link targets (`zenium://settings/privacy`) and what
  * `overlay.open { section }` callers already pass. Sections other PRs add (Downloads, Languages,
@@ -407,6 +407,16 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'permissions',
       'notifications'
     ]
+  },
+  {
+    // The Zenium account (ID-32's third transport, on its own page): the sign-in by email, the
+    // sync it carries and its status, the other devices, and Sign out – the one place a user
+    // scanning Settings for "Account" finds it, on every host that syncs. The full sync
+    // controls (what you sync, this device's name, the other ways to sync) stay under Sync.
+    id: 'account',
+    label: 'Account',
+    keywords: ['zenium account', 'sign in', 'sign out', 'email', 'devices', 'sync'],
+    requires: 'sync'
   },
   {
     id: 'sync',
@@ -1019,14 +1029,17 @@ export function availableSections(
   )
 }
 
-/** Sections a hairline precedes on the phone landing: Zen's two nav separators (v2 §10.2). */
-export const SETTINGS_LANDING_BREAKS: readonly string[] = ['sync', 'about']
+/**
+ * Sections a hairline precedes on the phone landing: Zen's two nav separators (v2 §10.2). The
+ * first stands before Account, which heads the browser-wide run with Sync right after it.
+ */
+export const SETTINGS_LANDING_BREAKS: readonly string[] = ['account', 'about']
 
 /**
- * The landing's category rows in runs a hairline separates: one break before Sync and one before
- * About, in the page's nav order. A break is a position in that order rather than a row, so a
- * host without Sync still separates what follows it (Updates) from Zen's features above, and a
- * run nothing falls into is dropped.
+ * The landing's category rows in runs a hairline separates: one break before Account (and Sync
+ * behind it) and one before About, in the page's nav order. A break is a position in that order
+ * rather than a row, so a host without Sync still separates what follows it (Updates) from Zen's
+ * features above, and a run nothing falls into is dropped.
  */
 export function landingRuns(
   page: InternalPageDefinition,

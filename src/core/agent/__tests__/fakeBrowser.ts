@@ -79,11 +79,24 @@ export interface FakeBrowser {
   stop(): Promise<void>
   /** How many times the service asked the state to persist (`state.commit()`). */
   readonly commits: number
+  /** The profile's files as the service wrote them. */
+  files: Map<string, string>
+  /** Tab ids whose view was reloaded by the service (`TabView.reload`), in order. */
+  reloads: string[]
 }
 
 export interface FakeBrowserOptions {
   /** A model to run on – a restart's persisted state – instead of a fresh one with `Work`. */
   model?: Model
+  /** The profile's files (`platform.io`), kept across `restart()`. */
+  files?: Map<string, string>
+  /**
+   * Whether agents must name themselves before acting (`AgentService.requireName`). Off by
+   * default here, so the tests of everything else need no `zen_session start`.
+   */
+  requireName?: boolean
+  /** The host routes page dialogs to agents (`HostCapabilities.agentDialogs`); on by default. */
+  agentDialogs?: boolean
 }
 
 export function textOf(result: ToolResult): string {
@@ -137,6 +150,8 @@ export function fakeBrowser(
   const input = new Map<string, AgentInputEvent[]>()
   const agentDriven = new Map<string, boolean[]>()
   const gates = new Map<string, Promise<void>>()
+  const files = options.files ?? new Map<string, string>()
+  const reloads: string[] = []
   let commits = 0
   const transport: AgentTransport = {
     start: async (options) => ({ port: options.port, lanAddresses: [] }),
@@ -185,6 +200,11 @@ export function fakeBrowser(
       canGoBack: () => false,
       canGoForward: () => false,
       focus: () => undefined,
+      stop: () => undefined,
+      reload: () => {
+        gates.delete(tab.id)
+        reloads.push(tab.id)
+      },
       setBackgroundThrottling: () => undefined,
       setAgentDriven: (on: boolean) => {
         driven.push(on)
@@ -306,14 +326,19 @@ export function fakeBrowser(
   const browser = {
     platform: {
       io: {
-        readSync: () => null,
-        write: async () => undefined,
-        writeSync: () => undefined
+        readSync: (name: string) => files.get(name) ?? null,
+        write: async (name: string, text: string) => {
+          files.set(name, text)
+        },
+        writeSync: (name: string, text: string) => {
+          files.set(name, text)
+        }
       },
       info: { version: '0.0.0-test' },
       createAgentTransport: () => transport,
       dialogs: { confirm: async () => false },
-      readabilitySource: () => null
+      readabilitySource: () => null,
+      capabilities: { agentDialogs: options.agentDialogs ?? true }
     },
     state: {
       model,
@@ -384,6 +409,7 @@ export function fakeBrowser(
   } as unknown as Browser & { agents: AgentService }
 
   const service = new AgentService(browser)
+  service.requireName = options.requireName ?? false
   browser.agents = service
   // Loads are instantaneous here: the fake pages are ready as soon as a view exists.
   service.waitForLoad = async () => true
@@ -446,13 +472,15 @@ export function fakeBrowser(
       // Local (blank / private window) spaces never survive a restart; nor do live views.
       persisted.localSpaces = {}
       for (const t of Object.values(persisted.tabs)) t.discarded = true
-      const next = fakeBrowser(settings, { model: persisted })
+      const next = fakeBrowser(settings, { ...options, model: persisted, files })
       next.service.start()
       return next
     },
     stop: () => service.stop(),
     get commits() {
       return commits
-    }
+    },
+    files,
+    reloads
   }
 }

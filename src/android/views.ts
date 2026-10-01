@@ -865,10 +865,17 @@ export class AndroidTabView implements TabView {
     this.bridge.batched('view.setRadius', { tabId: this.tabId, radius })
   }
 
-  setVisible(visible: boolean): void {
+  setVisible(visible: boolean, switched?: boolean): void {
     const landing = visible && !this.visible
     this.visible = visible
-    this.bridge.batched('view.setVisible', { tabId: this.tabId, visible })
+    // A hide that is a switch away from the page (the tab overview over it, OS-39) says so, for
+    // the host's `BackgroundTabRule`; a show and a cover's hide read as they always did.
+    this.bridge.batched(
+      'view.setVisible',
+      !visible && switched
+        ? { tabId: this.tabId, visible, switched: true }
+        : { tabId: this.tabId, visible }
+    )
     if (landing) this.askShown()
   }
 

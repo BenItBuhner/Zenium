@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  HOLD_READ_BOUND_MS,
+  HOLD_READ_EVERY_MS,
+  HOLD_READ_WINDOW_MS,
   HOLD_RELEASE_ATTEMPTS,
   HOLD_RELEASE_AT_MS,
   NO_WINDOW_MESSAGE,
@@ -7,13 +10,17 @@ import {
   QUIT_TRACE_EVERY_MS,
   TARGET_CLOSED_MESSAGE,
   classifyHoldPoll,
+  classifyHoldRead,
   exitWithin,
+  formatHoldRead,
   formatQuitTrace,
+  holdReadStops,
   holdReleaseRedrives,
   isTargetClosedError,
   judgeHoldRelease,
   mainProcessState,
   probeOutcome,
+  readHold,
   unlessNoWindow,
   unlessTargetClosed
 } from './quit.mjs'
@@ -560,5 +567,235 @@ describe('formatQuitTrace (the quit’s trace in a failure message, W8-F9)', () 
   it('says so when nothing was sampled', () => {
     expect(formatQuitTrace([], 0)).toBe('(no samples)')
     expect(formatQuitTrace(undefined)).toBe('(no samples)')
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The hold read with bounded polls (W8-H6): run 36816729301's macos-x64 red (job 110223400037,
+// scenario `visibility`, step `quit`) – the chord's key down taken by the chrome at
+// t=1790830501110, before-quit at t=1790830503646, 2536 ms later and past the hold's 1500 ms,
+// the one app.getState read in flight stalled until the quit closed its target and read as
+// "the quit chord held showed no hold: null". The fixtures below are that run's moments.
+// ---------------------------------------------------------------------------------------------
+
+const D0 = 1_790_830_501_110 // the key down on the app's clock, that run
+const BEFORE_QUIT_AT = 1_790_830_503_646 // the hook's before-quit, 2536 ms later
+const holdRead = { startedAt: D0 + 2, durationMs: QUIT_HOLD_MS, chord: '⌘Q' }
+
+describe('classifyHoldRead (one bounded read of the hold, W8-H6)', () => {
+  it('reads the hold when the state names it', () => {
+    expect(classifyHoldRead({ state: 'responsive', value: holdRead })).toBe('hold')
+  })
+
+  it('reads no hold yet when the state answered null', () => {
+    expect(classifyHoldRead({ state: 'responsive', value: null })).toBe('not-yet')
+    expect(classifyHoldRead({ state: 'responsive', value: undefined })).toBe('not-yet')
+  })
+
+  it('reads a read that outran its bound as stalled, not as no hold', () => {
+    expect(classifyHoldRead({ state: 'blocked' })).toBe('stalled')
+  })
+
+  it('reads the lost target as gone', () => {
+    expect(classifyHoldRead({ state: 'gone' })).toBe('gone')
+  })
+
+  it('reads any other failure as the error, and nothing that is not an outcome', () => {
+    expect(classifyHoldRead({ state: 'error: page.evaluate: boom' })).toBe('error')
+    expect(classifyHoldRead(undefined)).toBe('error')
+    expect(classifyHoldRead({})).toBe('error')
+  })
+
+  it('stops the reading on the hold, the lost target and the error; goes on after no hold yet and a stall', () => {
+    expect(holdReadStops('hold')).toBe(true)
+    expect(holdReadStops('gone')).toBe(true)
+    expect(holdReadStops('error')).toBe(true)
+    expect(holdReadStops('not-yet')).toBe(false)
+    expect(holdReadStops('stalled')).toBe(false)
+  })
+})
+
+describe('readHold (the hold polled with bounded reads, W8-H6)', () => {
+  const noWait = async () => {}
+  /** `read` answering each of `outcomes` in turn: a value, a rejection, or `pending` for a stall. */
+  const reads = (outcomes) => {
+    let i = 0
+    return () => {
+      const next = outcomes[Math.min(i++, outcomes.length - 1)]
+      if (next === pending) return pending
+      if (next instanceof Error) return Promise.reject(next)
+      return Promise.resolve(next)
+    }
+  }
+
+  it('keeps the quit constants it is read against', () => {
+    expect(HOLD_READ_WINDOW_MS).toBe(2000)
+    expect(HOLD_READ_EVERY_MS).toBe(50)
+    expect(HOLD_READ_BOUND_MS).toBe(500)
+    expect(HOLD_READ_BOUND_MS).toBeLessThan(QUIT_HOLD_MS)
+  })
+
+  it('stops on the hold with it as the panel, the polls before it recorded', async () => {
+    const r = await readHold(reads([null, null, holdRead]), { delay: noWait, boundMs: 200 })
+    expect(r.panel).toEqual(holdRead)
+    expect(r.polls.map((p) => p.state)).toEqual(['not-yet', 'not-yet', 'hold'])
+    expect(r.polls[2].value).toEqual(holdRead)
+    expect(r.polls.every((p) => typeof p.at === 'number' && p.at >= 0)).toBe(true)
+  })
+
+  it('goes on after a stalled read and lets a later one catch the hold – the run’s fix', async () => {
+    // The real run's one read hung for the whole hold; here the first two stall past a 20 ms
+    // bound and the third answers with the hold.
+    const r = await readHold(reads([pending, pending, holdRead]), { delay: noWait, boundMs: 20 })
+    expect(r.panel).toEqual(holdRead)
+    expect(r.polls.map((p) => p.state)).toEqual(['stalled', 'stalled', 'hold'])
+    expect(r.polls[1].at).toBeGreaterThanOrEqual(r.polls[0].at + 15)
+  })
+
+  it('stops when the target is gone: the app quitting, no hold read', async () => {
+    const r = await readHold(reads([pending, evaluateGone, holdRead]), {
+      delay: noWait,
+      boundMs: 20
+    })
+    expect(r.panel).toBeNull()
+    expect(r.polls.map((p) => p.state)).toEqual(['stalled', 'gone'])
+  })
+
+  it('stops on any other failure with it as the panel, as the step’s check expects', async () => {
+    const r = await readHold(reads([null, timedOut, holdRead]), { delay: noWait })
+    expect(r.panel).toEqual({ error: 'app.evaluate timed out after 30000 ms' })
+    expect(r.polls.map((p) => p.state)).toEqual(['not-yet', 'error'])
+    expect(r.polls[1].error).toBe('app.evaluate timed out after 30000 ms')
+    const thrown = await readHold(
+      () => {
+        throw new Error('sync boom')
+      },
+      { delay: noWait }
+    )
+    expect(thrown.panel).toEqual({ error: 'sync boom' })
+  })
+
+  it('stops with no hold once the window has passed with every read answering null', async () => {
+    const waits = []
+    const r = await readHold(reads([null]), {
+      since: Date.now() - 1990,
+      windowMs: 2000,
+      everyMs: 7,
+      delay: async (ms) => {
+        waits.push(ms)
+        await new Promise((res) => setTimeout(res, ms))
+      }
+    })
+    expect(r.panel).toBeNull()
+    expect(r.polls.length).toBeGreaterThanOrEqual(1)
+    expect(r.polls.every((p) => p.state === 'not-yet')).toBe(true)
+    expect(waits.every((ms) => ms === 7)).toBe(true)
+  })
+
+  it('never rejects, and counts `at` from `since`', async () => {
+    const r = await readHold(reads([holdRead]), { since: Date.now() - 1000, delay: noWait })
+    expect(r.polls[0].at).toBeGreaterThanOrEqual(1000)
+    expect(r.polls[0].at).toBeLessThan(1500)
+  })
+})
+
+describe('formatHoldRead (the chord→before-quit span in a failure, W8-H6)', () => {
+  /** The run's polls as the bounded reads would have taken them: stalls until the target went. */
+  const stalledPolls = [
+    { at: 12, state: 'stalled' },
+    { at: 562, state: 'stalled' },
+    { at: 1112, state: 'stalled' },
+    { at: 1662, state: 'stalled' },
+    { at: 2212, state: 'gone' }
+  ]
+
+  it('names the hold that ran under a stalled read: the run’s 2536 ms, past the hold', () => {
+    expect(formatHoldRead({ polls: stalledPolls, beforeQuitAt: BEFORE_QUIT_AT, downAt: D0 })).toBe(
+      "no hold read before the app quit — polls: +12 ms stalled past 500 ms, +562 ms stalled, +1,112 ms stalled, +1,662 ms stalled, +2,212 ms gone; before-quit +2,536 ms after the key down by the app's clock, past the hold's 1,500 ms (the hold ran; the read stalled)"
+    )
+  })
+
+  it('names an app that quit at the press: before-quit under the hold', () => {
+    expect(
+      formatHoldRead({
+        polls: [
+          { at: 10, state: 'not-yet' },
+          { at: 70, state: 'gone' }
+        ],
+        beforeQuitAt: D0 + 80,
+        downAt: D0
+      })
+    ).toBe(
+      "no hold read before the app quit — polls: +10 ms no hold yet, +70 ms gone; before-quit +80 ms after the key down by the app's clock, under the hold's 1,500 ms (the app quit at the press)"
+    )
+  })
+
+  it('says so when no before-quit was recorded', () => {
+    expect(
+      formatHoldRead({
+        polls: [
+          { at: 8, state: 'not-yet' },
+          { at: 1990, state: 'not-yet' }
+        ],
+        beforeQuitAt: null,
+        downAt: D0
+      })
+    ).toBe(
+      "no hold read within the read's 2,000 ms — polls: +8 ms no hold yet, +1,990 ms no hold yet; no before-quit recorded"
+    )
+  })
+
+  it('measures from the chord on the harness’s clock when the key down’s own moment was not read, and says so', () => {
+    const chordAt = D0 - 40
+    expect(
+      formatHoldRead({ polls: stalledPolls, beforeQuitAt: BEFORE_QUIT_AT, downAt: null, chordAt })
+    ).toContain(
+      "before-quit +2,576 ms after the key down by the harness's clock (the key down's own moment was not read), past the hold's 1,500 ms (the hold ran; the read stalled)"
+    )
+    expect(formatHoldRead({ polls: stalledPolls, beforeQuitAt: BEFORE_QUIT_AT })).toContain(
+      `before-quit at ${BEFORE_QUIT_AT}, the key down's moment unknown`
+    )
+  })
+
+  it('tells a hold that ran with the state never showing it from one the read stalled under', () => {
+    expect(
+      formatHoldRead({
+        polls: [
+          { at: 5, state: 'not-yet' },
+          { at: 1600, state: 'gone' }
+        ],
+        beforeQuitAt: D0 + 1520,
+        downAt: D0
+      })
+    ).toContain("past the hold's 1,500 ms (the hold ran; the state never showed it)")
+    expect(
+      formatHoldRead({ polls: [], beforeQuitAt: D0 + QUIT_HOLD_MS, downAt: D0, holdMs: 1000 })
+    ).toBe(
+      "the hold was not read — no polls; before-quit +1,500 ms after the key down by the app's clock, past the hold's 1,000 ms (the hold ran; the state never showed it)"
+    )
+  })
+
+  it('writes the hold a read did see, and a read that failed', () => {
+    expect(
+      formatHoldRead({
+        polls: [
+          { at: 4, state: 'not-yet' },
+          { at: 60, state: 'hold', value: { ...holdRead, chord: 'Ctrl + Q' } }
+        ],
+        beforeQuitAt: D0 + 1540,
+        downAt: D0
+      })
+    ).toBe(
+      "the hold read at +60 ms — polls: +4 ms no hold yet, +60 ms hold (Ctrl + Q, 1,500 ms); before-quit +1,540 ms after the key down by the app's clock, past the hold's 1,500 ms (the hold ran)"
+    )
+    expect(
+      formatHoldRead({
+        polls: [{ at: 4, state: 'error', error: 'page.evaluate: boom' }],
+        beforeQuitAt: null,
+        downAt: D0
+      })
+    ).toBe(
+      'the read of the hold failed — polls: +4 ms error: page.evaluate: boom; no before-quit recorded'
+    )
   })
 })

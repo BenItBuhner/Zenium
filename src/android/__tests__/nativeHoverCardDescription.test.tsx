@@ -98,6 +98,7 @@ function fixture(tabs: Tab[], activeTabId: string): UIState {
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     boosts: [],

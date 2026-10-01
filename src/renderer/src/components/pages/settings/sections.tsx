@@ -134,6 +134,7 @@ import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openThemePicker, resetSpaceTheme } from '@renderer/lib/theme'
+import { agentReleaseWords } from '@renderer/lib/agentRelease'
 import { openOverlay, pushToast } from '@renderer/lib/ui'
 import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
@@ -201,6 +202,7 @@ import {
   type SectionModel,
   type SettingsRow
 } from './model'
+import { accountGroups } from './account'
 import { syncGroups } from './sync'
 import { PRIVACY_HUB_CARDS, PRIVACY_HUB_LINES, thirdPartyCookiesLine } from './privacyHub'
 import {
@@ -346,6 +348,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   agents: agentsSection,
   passwords: passwordsSection,
   security: securitySection,
+  account: accountSection,
   sync: syncSection,
   import: importGroups,
   shortcuts: shortcutsSection,
@@ -4861,8 +4864,12 @@ function appSite(startUrl: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sync
+// Account and Sync
 // ---------------------------------------------------------------------------
+
+function accountSection(ctx: SectionContext): RowGroup[] {
+  return accountGroups(ctx)
+}
 
 function syncSection(ctx: SectionContext): RowGroup[] {
   return syncGroups(ctx)
@@ -5078,6 +5085,45 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
         : 'Turn the server on to let agents connect'
     }
   )
+  if (state.awayAgents.length > 0) {
+    groups.push({
+      id: 'away',
+      heading: 'Disconnected agents',
+      rows: state.awayAgents.map((agent) => {
+        const words = agentReleaseWords(agent.name, agent.groupIds.length, agent.tabIds.length)
+        return item(
+          `away:${agent.claimId}`,
+          agent.name,
+          `${agent.groupIds.length} group${agent.groupIds.length === 1 ? '' : 's'} · ${agent.tabIds.length} tab${agent.tabIds.length === 1 ? '' : 's'} · last seen ${relativeTime(agent.lastSeenAt)}`,
+          [
+            {
+              kind: 'action',
+              id: `away:${agent.claimId}:release`,
+              label: 'Release',
+              description: 'Keeps its tabs open for you; the agent cannot resume them.',
+              button: 'Release…',
+              confirm: {
+                title: words.title,
+                description: words.detail,
+                action: 'Release',
+                verbTone: 'plain'
+              },
+              onPress: () => run('agent.release', { claimId: agent.claimId })
+            }
+          ],
+          {
+            leading: (
+              <span
+                className="zen-settings-agent-dot"
+                style={{ background: agent.color }}
+                aria-hidden="true"
+              />
+            )
+          }
+        )
+      })
+    })
+  }
   if (a.approvedNames.length > 0) {
     groups.push({
       id: 'remembered',

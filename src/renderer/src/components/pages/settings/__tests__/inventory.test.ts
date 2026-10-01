@@ -93,7 +93,8 @@ const ELECTRON: HostCapabilities = {
   pageLanguages: true,
   genericFontFamilies: true,
   caretBrowsing: true,
-  placementAnswered: false
+  placementAnswered: false,
+  agentDialogs: true
 }
 
 const SETTINGS_TAB = {
@@ -292,9 +293,15 @@ function desktopState(): UIState {
       transport: 'folder',
       webdav: null,
       webdavAvailable: false,
-      authRefused: false
+      authRefused: false,
+      accountAvailable: false,
+      account: null,
+      accountLink: null,
+      accountLinkFailure: null,
+      accountSignedOut: false
     },
     agents: [],
+    awayAgents: [],
     agentServer: {
       running: true,
       url: 'http://127.0.0.1:8765/mcp',
@@ -825,6 +832,8 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'AI Agents',
       'Passwords',
       'Security',
+      // The Zenium account on its own page, before the Sync it is the first transport of.
+      'Account',
       'Sync',
       'Import',
       'Accessibility',

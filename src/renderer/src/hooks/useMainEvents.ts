@@ -71,6 +71,7 @@ import {
 import { activeTab, isEmptySplitPane, regularOf } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { closeWithUndo } from '@renderer/lib/closeUndo'
+import { requestAgentRelease } from '@renderer/lib/agentRelease'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { tabsOnPane } from '@renderer/lib/privateTabs'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
@@ -417,6 +418,10 @@ export function useMainEvents(): void {
       onEvent('folder.confirmDelete', ({ folderId }) => {
         closeUrlbar()
         requestFolderDelete(folderId)
+      }),
+      onEvent('agent.confirmRelease', ({ claimId, folderId }) => {
+        closeUrlbar()
+        requestAgentRelease(claimId, folderId)
       }),
       // The touch hosts' group menu's "Close Group (N Tabs)" (the tablet sidebar row's hold;
       // TAB-16, the Design Lead's option C): the phone's undoable path – the group's live

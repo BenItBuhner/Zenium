@@ -337,6 +337,68 @@ describe('the passphrase form', () => {
     expect(first!.getAttribute('aria-invalid')).toBe('true')
     expect(syncSetupStore.get()).toMatchObject({ transport: 'webdav', webdav })
   })
+
+  it('through the Zenium account it sends sync.setup with the account transport and no folder – the passphrase never leaves for anything else – and the account’s typed refusal is the page’s sentence, never its code', async () => {
+    syncSetupStore.set({ folder: null, transport: 'account' })
+    const refusals: Array<[unknown, string]> = [
+      [{ reason: 'account', kind: 'signed-out' }, 'You were signed out of your Zenium account.'],
+      [{ reason: 'account', kind: 'quota' }, 'Your Zenium account’s sync storage is full.'],
+      [{ reason: 'account', kind: 'unavailable' }, 'Your Zenium account could not be reached.']
+    ]
+    for (const [refusal, sentence] of refusals) {
+      invoke.mockClear()
+      invoke.mockImplementationOnce(async () => refusal)
+      const close = vi.fn()
+      const el = render(
+        createElement(SyncPassphraseForm, {
+          folder: '',
+          account: true,
+          deviceName: 'Work laptop',
+          scope: defaultScope(),
+          close
+        })
+      )
+      const [first, second] = Array.from(el.querySelectorAll<HTMLInputElement>('input'))
+      type(first!, 'correct horse battery')
+      type(second!, 'correct horse battery')
+      act(() => button(el, 'Turn on sync').click())
+      expect(invoke).toHaveBeenCalledWith('sync.setup', {
+        folder: '',
+        transport: 'account',
+        passphrase: 'correct horse battery',
+        deviceName: 'Work laptop',
+        scope: defaultScope()
+      })
+      await settle()
+      expect(close, sentence).not.toHaveBeenCalled()
+      expect(el.textContent).toContain(sentence)
+      expect(el.textContent).not.toMatch(/signed-out|quota|unavailable|sync:/)
+      expect(first!.getAttribute('aria-invalid')).toBe('true')
+      act(() => root!.unmount())
+      mount?.remove()
+      root = null
+      mount = null
+    }
+
+    const close = vi.fn()
+    const el = render(
+      createElement(SyncPassphraseForm, {
+        folder: '',
+        account: true,
+        deviceName: 'Work laptop',
+        scope: defaultScope(),
+        close
+      })
+    )
+    const [first, second] = Array.from(el.querySelectorAll<HTMLInputElement>('input'))
+    type(first!, 'correct horse battery')
+    type(second!, 'correct horse battery')
+    syncOn(true)
+    act(() => button(el, 'Turn on sync').click())
+    await settle()
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+  })
 })
 
 describe('the merge question', () => {
@@ -395,5 +457,14 @@ describe('Turn off sync', () => {
     const el = render(createElement(SyncDisconnectForm, { close: vi.fn() }))
     act(() => button(el, 'Turn off').click())
     expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+  })
+
+  it('through the Zenium account the checkbox names the account, not a folder', () => {
+    const el = render(createElement(SyncDisconnectForm, { close: vi.fn(), account: true }))
+    expect(el.querySelector('.zen-v2-check-row')?.textContent).toContain(
+      'Also remove this device’s data from your Zenium account'
+    )
+    act(() => button(el, 'Turn off').click())
+    expect(invoke).toHaveBeenCalledWith('sync.disconnect', { wipeRemote: false })
   })
 })

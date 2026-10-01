@@ -31,6 +31,8 @@ import {
   openedTab,
   parseArgs,
   parseGroups,
+  sessionKey,
+  soakAgentName,
   parseSnapshot,
   parseSpaces,
   percentiles,
@@ -308,7 +310,24 @@ describe('parseGroups', () => {
     ).toBe(true)
     expect(ADOPT_RACE.test('Unknown group "folder_9"')).toBe(true)
     expect(ADOPT_RACE.test('Group folder_1 is already yours')).toBe(true)
+    expect(
+      ADOPT_RACE.test(
+        'Group folder_1 "x" belongs to agent "PR 741 review", a named session that owns its groups until it ends its session – no other agent can adopt or force it.'
+      )
+    ).toBe(true)
     expect(ADOPT_RACE.test('Not authorized')).toBe(false)
+  })
+
+  it('reads a named agent that is away, and the session key a start hands out', () => {
+    const [g] = parseGroups(
+      'Group "Prices" (folder_7) [owned by "PR 741 review", away – kept for it] in space "Agents" – 1 tab:'
+    )
+    expect(g).toMatchObject({ owner: 'PR 741 review', away: true, orphaned: false })
+    expect(
+      sessionKey('Session started as "PR 741 review". Your session key is zk_Ab-9_x: keep it')
+    ).toBe('zk_Ab-9_x')
+    expect(sessionKey('You have not started your session yet')).toBeNull()
+    expect(soakAgentName('stdio', 2)).toBe('Soak stdio #3: fixture form')
   })
 })
 
@@ -957,17 +976,21 @@ class FakeZenium {
    * background mode, as PR-A does), 'error' (always). `hiddenSnapshot`: a 0×0 viewport and no
    * refs in background mode (PR-A). `laysOutAfter`: that many background snapshots of a tab read
    * 0×0 before the page lays out (the staged view a beat after the tab opens, run 36371842431).
-   * `forceAdopt`: adopt with force: true takes a live agent's group (PR-E). `resurrect`: unknown
-   * ids with the token are resumed (PR-A); false 404s them.
+   * `resurrect`: unknown ids with the token are resumed (PR-A); false 404s them.
+   *
+   * Named sessions as the server keeps them: every tool but zen_status and zen_session is refused
+   * until `zen_session start` names the agent; a named agent's groups stay its own (listed away)
+   * when its session closes, nobody can adopt them, and `resume` with its key takes them back.
    */
   constructor({
     screenshots = 'image',
     hiddenSnapshot = false,
     laysOutAfter = 0,
-    forceAdopt = false,
     resurrect = true
   } = {}) {
-    this.options = { screenshots, hiddenSnapshot, laysOutAfter, forceAdopt, resurrect }
+    this.options = { screenshots, hiddenSnapshot, laysOutAfter, resurrect }
+    /** key → { key, name } */
+    this.claims = new Map()
     this.sessions = new Map()
     this.groups = new Map()
     this.tabs = new Map()
@@ -1098,6 +1121,8 @@ class FakeZenium {
     this.tools.set(name, t)
     let result
     try {
+      if (!s.claim && name !== 'zen_status' && name !== 'zen_session')
+        throw new Error('Start your session first: zen_session {"action":"start","name":"…"}')
       result = this.tool(s, name, args)
     } catch (e) {
       result = { content: [{ type: 'text', text: e.message }], isError: true }
@@ -1111,14 +1136,15 @@ class FakeZenium {
   }
 
   createSession(name, id = randomSessionId()) {
-    const s = { id, name, mode: 'foreground', home: null }
+    const s = { id, name, mode: 'foreground', home: null, claim: null }
     this.sessions.set(id, s)
     this.counters.created++
     return s
   }
 
   closeSession(s) {
-    this.releaseGroups(s)
+    if (s.claim) for (const g of this.groupsOf(s)) g.owner = null
+    else this.releaseGroups(s)
     this.sessions.delete(s.id)
     this.counters.closed++
   }
@@ -1130,6 +1156,7 @@ class FakeZenium {
   releaseGroups(s) {
     for (const g of this.groupsOf(s)) {
       g.owner = null
+      g.claim = null
       g.was = s.name
     }
     s.home = null
@@ -1147,7 +1174,9 @@ class FakeZenium {
       if (g.owner) {
         const owner = this.sessions.get(g.owner)
         flags.push(owner.id === s.id ? 'yours' : `owned by ${JSON.stringify(owner.name)}`)
-      } else flags.push(g.was ? `orphaned, was ${JSON.stringify(g.was)}` : 'orphaned')
+      } else if (g.claim)
+        flags.push(`owned by ${JSON.stringify(this.claims.get(g.claim).name)}, away – kept for it`)
+      else flags.push(g.was ? `orphaned, was ${JSON.stringify(g.was)}` : 'orphaned')
     }
     const n = g.tabs.length
     return `Group ${JSON.stringify(g.name)} (${g.id})${flags.length ? ` [${flags.join(', ')}]` : ''} in space "Agents" – ${n} tab${n === 1 ? '' : 's'}:`
@@ -1209,10 +1238,23 @@ class FakeZenium {
         s.mode = args.mode
         return text(`Mode: ${s.mode}.`)
       case 'browser_tabs': {
+        if (args.action === 'list')
+          return text(
+            this.groupsOf(s)
+              .flatMap((g) => g.tabs.map((id) => `- ${id} "Soak fixture" ${this.tabs.get(id).url}`))
+              .join('\n') || 'You have no tabs.'
+          )
         if (args.action !== 'new') throw new Error(`Unsupported action ${args.action}`)
         let home = s.home && this.groups.get(s.home)
         if (!home) {
-          home = { id: `folder_${++this.seq}`, name: s.name, owner: s.id, was: null, tabs: [] }
+          home = {
+            id: `folder_${++this.seq}`,
+            name: s.name,
+            owner: s.id,
+            claim: s.claim,
+            was: null,
+            tabs: []
+          }
           this.groups.set(home.id, home)
           s.home = home.id
         }
@@ -1270,9 +1312,40 @@ class FakeZenium {
         )
       }
       case 'zen_session': {
+        if (args.action === 'start') {
+          const name = typeof args.name === 'string' ? args.name.trim() : ''
+          if (name.length < 3 || /^(agent|claude|cursor)$/i.test(name) || name === s.name)
+            return fail(`Refused: ${JSON.stringify(name)} is generic – name your task.`)
+          if ([...this.claims.values()].some((c) => c.name === name && c.key !== s.claim))
+            return fail(`Refused: another agent already goes by ${JSON.stringify(name)}.`)
+          if (s.claim) this.claims.delete(s.claim)
+          const claim = { key: `zk_${++this.seq}abc`, name }
+          this.claims.set(claim.key, claim)
+          s.claim = claim.key
+          s.name = name
+          return text(
+            `Session started as ${JSON.stringify(name)}. Your session key is ${claim.key}.`
+          )
+        }
+        if (args.action === 'resume') {
+          const claim = this.claims.get(args.key)
+          if (!claim) return fail('No session with that key.')
+          for (const other of this.sessions.values())
+            if (other.claim === claim.key) other.claim = null
+          s.claim = claim.key
+          s.name = claim.name
+          for (const g of this.groups.values())
+            if (g.claim === claim.key) {
+              g.owner = s.id
+              s.home ??= g.id
+            }
+          return text(`Resumed ${JSON.stringify(claim.name)}.\n\n${this.listing(s, 'own')}`)
+        }
         if (args.action !== 'end') throw new Error(`Unsupported action ${args.action}`)
         if (args.closeTabs) for (const g of this.groupsOf(s)) this.closeGroup(g)
         else this.releaseGroups(s)
+        if (s.claim) this.claims.delete(s.claim)
+        s.claim = null
         s.home = null
         s.mode = 'foreground'
         this.counters.ended++
@@ -1285,15 +1358,13 @@ class FakeZenium {
         const g = this.groups.get(args.groupId)
         if (!g) return fail(`Unknown group ${JSON.stringify(args.groupId)}`)
         if (g.owner === s.id) return fail(`Group ${g.id} is already yours`)
-        if (g.owner) {
-          const owner = this.sessions.get(g.owner)
-          if (!(args.force === true && this.options.forceAdopt))
-            return fail(
-              `Group ${JSON.stringify(g.name)} (${g.id}) belongs to agent ${JSON.stringify(owner.name)}, which is still connected${args.force !== undefined && !this.options.forceAdopt ? '\n\n(Ignored unknown argument force)' : ''}`
-            )
-        }
-        const was = g.owner ? this.sessions.get(g.owner).name : g.was
+        if (g.owner || g.claim)
+          return fail(
+            `Group ${JSON.stringify(g.name)} (${g.id}) belongs to agent ${JSON.stringify(this.claims.get(g.claim)?.name ?? this.sessions.get(g.owner).name)} – no other agent can adopt or force it.`
+          )
+        const was = g.was
         g.owner = s.id
+        g.claim = s.claim
         g.was = null
         if (!s.home) s.home = g.id
         return text(
@@ -1415,8 +1486,8 @@ describe('soakSession', () => {
     expect(v.hardFailures).toBe(0)
     expect(v.softFailures).toBe(0)
     expect(v.sessions).toBe(2)
-    // 14 calls each, plus the second session's adopt of the first's orphan.
-    expect(v.calls).toBe(29)
+    // 16 calls each (two named starts), plus the second session's adopt of the first's orphan.
+    expect(v.calls).toBe(33)
     expect(v.counters).toEqual({ formViaRef: 2, adopted: 1 })
     const s = v.summary()
     expect(s.checks['zen_groups adopt']).toMatchObject({
@@ -1426,6 +1497,7 @@ describe('soakSession', () => {
       skipped: 1
     })
     expect(s.checks['zen_status after end']).toMatchObject({ pass: 2 })
+    expect(s.checks['zen_session start']).toMatchObject({ kind: 'hard', pass: 4, fail: 0 })
     expect(s.checks['zen_session end']).toMatchObject({ pass: 1 })
     expect(s.checks['zen_session end closeTabs']).toMatchObject({ pass: 3 })
     expect(s.checks.delete).toMatchObject({ pass: 2 })
@@ -1528,7 +1600,7 @@ describe('soakSession', () => {
     const original = client.call.bind(client)
     let n = 0
     client.call = async (name, args) => {
-      if (++n === 3) throw new SoakError(`${name}: HTTP 500`)
+      if (++n === 4) throw new SoakError(`${name}: HTTP 500`)
       return original(name, args)
     }
     await soakSession(client, ctx, { index: 0, leg: 'http' })
@@ -1595,29 +1667,46 @@ describe('the legs', () => {
     expect(d.calls.total).toBeGreaterThan(0)
   })
 
-  it('the drop leg: force adopt is soft until E, adoption after the DELETE is hard', async () => {
+  it('the drop leg: a dropped named agent keeps its group from everyone and resumes it by key', async () => {
     fake = await new FakeZenium().start()
     const ctx = context(fake)
     await soakDropLeg(ctx)
     const s = ctx.verdict.summary()
     expect(ctx.verdict.hardFailures).toBe(0)
-    expect(s.checks['drop-setup']).toMatchObject({ pass: 1 })
-    expect(s.checks['drop-live-group-listed']).toMatchObject({ pass: 1 })
-    expect(s.checks[SOFT_CHECKS.dropForceAdopt]).toMatchObject({ kind: 'soft', fail: 1 })
-    expect(s.checks[SOFT_CHECKS.dropForceAdopt].samples[0]).toContain('still connected')
-    expect(s.checks['drop-adopt-after-delete']).toMatchObject({ kind: 'hard', pass: 1 })
-    expect(s.checks.delete).toMatchObject({ pass: 2 })
+    expect(ctx.verdict.softFailures).toBe(0)
+    for (const check of [
+      'drop-setup',
+      'drop-live-group-listed',
+      'drop-force-refused',
+      'drop-held-after-delete',
+      'drop-resume'
+    ])
+      expect(s.checks[check]).toMatchObject({ kind: 'hard', pass: 1, fail: 0 })
+    expect(s.checks.delete).toMatchObject({ pass: 3 })
     expect(fake.sessions.size).toBe(0)
     expect(fake.groups.size).toBe(0)
+    expect(fake.claims.size).toBe(0)
+  })
 
-    await fake.stop()
-    fake = await new FakeZenium({ forceAdopt: true }).start()
-    const ctx2 = context(fake)
-    await soakDropLeg(ctx2)
-    const s2 = ctx2.verdict.summary()
-    expect(ctx2.verdict.hardFailures).toBe(0)
-    expect(s2.checks[SOFT_CHECKS.dropForceAdopt]).toMatchObject({ pass: 1, fail: 0 })
-    expect(s2.checks['drop-adopt-after-delete']).toBeUndefined()
+  it('the drop leg fails hard on a server that lets another agent take a dropped group', async () => {
+    fake = await new FakeZenium().start()
+    const adoptable = fake.tool.bind(fake)
+    fake.tool = (s, name, args) => {
+      if (name === 'zen_groups' && args.action === 'adopt') {
+        const g = fake.groups.get(args.groupId)
+        if (g && g.owner !== s.id) {
+          g.owner = s.id
+          g.claim = s.claim
+          return { content: [{ type: 'text', text: `Adopted group ${g.id}` }] }
+        }
+      }
+      return adoptable(s, name, args)
+    }
+    const ctx = context(fake)
+    await soakDropLeg(ctx)
+    const s = ctx.verdict.summary()
+    expect(s.ok).toBe(false)
+    expect(s.checks['drop-force-refused']).toMatchObject({ kind: 'hard', fail: 1 })
   })
 
   it('the resurrection probes: 200 + resumed with the token, 404 without', async () => {
@@ -1668,7 +1757,7 @@ describe('main', () => {
       expect(summary.ok).toBe(true)
       expect(summary.counts.sessions).toBe(4)
       expect(summary.counts.hardFailures).toBe(0)
-      expect(summary.counts.softFailures).toBe(1) // the force adopt (soft until E)
+      expect(summary.counts.softFailures).toBe(0)
       expect(summary.options).toMatchObject({
         sessions: 4,
         concurrency: 2,
@@ -1684,7 +1773,7 @@ describe('main', () => {
       expect(printed).not.toContain(TOKEN)
       expect(stderr.mock.calls.map((c) => String(c[0])).join('')).not.toContain(TOKEN)
 
-      // --strict: the soft failure (the drop leg's force adopt) fails the run.
+      // --strict: nothing soft is left to fail, the drop leg's force adopt is refused as it must be.
       expect(
         await main([
           '--url',
@@ -1698,7 +1787,7 @@ describe('main', () => {
           '--out',
           out
         ])
-      ).toBe(1)
+      ).toBe(0)
     } finally {
       stdout.mockRestore()
       stderr.mockRestore()

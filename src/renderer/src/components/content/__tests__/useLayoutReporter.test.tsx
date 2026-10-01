@@ -7,6 +7,7 @@ import type { LayoutReport, Rect, Space, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { viewportStore, type FormFactor } from '@renderer/lib/formFactor'
 import { landingStore } from '@renderer/lib/fullscreenLanding'
+import { stageStore, type OverviewPhase } from '@renderer/lib/gestures/stage'
 import { registerRecedeLayer, recedeScale, type RecedeHandle } from '@renderer/lib/motion/recede'
 import { contentAreaStore, uiStore } from '@renderer/lib/ui'
 import { useLayoutReporter } from '../useLayoutReporter'
@@ -457,5 +458,66 @@ describe('useLayoutReporter under the recede', () => {
     } finally {
       viewportStore.set(before)
     }
+  })
+
+  /*
+   * Page visibility under the tab overview (OS-39, the lead's ruling on #728): a report that
+   * hides the pages under the overview – open or on its way open (`overviewInteractive`), the
+   * phone's and the tablet's one stage – carries `switchedAway`, and the host tells the pages
+   * under it they are hidden (`view.setVisible { switched: true }`). A report hidden under any
+   * other cover carries no flag, nor does one that shows the pages; the desktop, where the
+   * overview never opens, never carries one.
+   */
+  const overviewAt = (phase: OverviewPhase, target: 0 | 1 = 1): void =>
+    stageStore.set({ overview: { phase, progress: target, heroTabId: 't1', target } })
+  const overviewClosed = (): void =>
+    stageStore.set({ overview: { phase: 'closed', progress: 0, heroTabId: null, target: 0 } })
+
+  it('the pages hidden under the open overview report switchedAway; under a sheet, and shown again, no flag', () => {
+    vi.mocked(run).mockClear()
+    try {
+      const { rerender } = render(<Probe state={state('bottom')} />)
+      expect(lastReport().contentHidden).toBe(false)
+      expect('switchedAway' in lastReport()).toBe(false)
+      // The stage hides the page as the overview begins to open (its drag): a cover, no word yet.
+      uiStore.set({ stageActive: true })
+      overviewAt('dragging')
+      rerender(<Probe state={state('bottom')} />)
+      expect(lastReport().contentHidden).toBe(true)
+      expect('switchedAway' in lastReport()).toBe(false)
+      // On its way open (the tabs button's spring), then open: the hide is a switch.
+      overviewAt('settling')
+      rerender(<Probe state={state('bottom')} />)
+      expect(lastReport()).toMatchObject({ contentHidden: true, switchedAway: true })
+      overviewAt('open')
+      rerender(<Probe state={state('bottom')} />)
+      expect(lastReport()).toMatchObject({ contentHidden: true, switchedAway: true })
+      // Closed on the page's own card: the page is shown again, and nothing is switched.
+      overviewClosed()
+      uiStore.set({ stageActive: false })
+      rerender(<Probe state={state('bottom')} />)
+      expect(lastReport().contentHidden).toBe(false)
+      expect('switchedAway' in lastReport()).toBe(false)
+      // A sheet over the page (a hold's cover here): hidden, and no flag – not a switch.
+      uiStore.set({ quitHoldCover: true })
+      rerender(<Probe state={state('bottom')} />)
+      expect(lastReport().contentHidden).toBe(true)
+      expect('switchedAway' in lastReport()).toBe(false)
+    } finally {
+      uiStore.set({ stageActive: false, quitHoldCover: false })
+      overviewClosed()
+    }
+  })
+
+  it('a desktop report never carries the flag: no overview opens there, and a cover is a cover', () => {
+    vi.mocked(run).mockClear()
+    const desktop = { ...state('bottom'), platform: 'linux' } as UIState
+    const { rerender } = render(<Probe state={desktop} />)
+    expect('switchedAway' in lastReport()).toBe(false)
+    uiStore.set({ quitHoldCover: true })
+    rerender(<Probe state={{ ...desktop }} />)
+    expect(lastReport().contentHidden).toBe(true)
+    expect('switchedAway' in lastReport()).toBe(false)
+    uiStore.set({ quitHoldCover: false })
   })
 })

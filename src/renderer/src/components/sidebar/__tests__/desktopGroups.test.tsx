@@ -134,6 +134,7 @@ function panel(tabs: Tab[], folders: Folder[]): void {
     essentialTabIds: [],
     foreignTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     media: [],
     settings: { showTabSeparator: false }

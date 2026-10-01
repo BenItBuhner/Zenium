@@ -293,6 +293,103 @@ export function frameDrawn(wc: WebContents): Promise<number> {
   return asked.then((answer) => (typeof answer === 'number' ? answer : NaN))
 }
 
+// ---------------------------------------------------------------------------------------------
+// The shown page's word: a frame of the document to show is on screen (`TabView.shownPainted`;
+// a page shown on the activate commit under the page it replaces, `ZenWindow.showOnCommit`,
+// W8-P0).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Both words at once: `FRAME_DRAWN_SCRIPT`'s double `requestAnimationFrame` (a frame with the
+ * document as it stands now, produced after the ask – a page shown again after a hide whose
+ * compositor surface was evicted meanwhile has to produce one before anything of it is on
+ * screen) AND the document's first `paint` entry (`first-paint`, marked on presentation). The
+ * second is what the frames alone cannot say: a page loaded in the background never presented a
+ * frame, and paint holding – an http(s) document's commits deferred until its first contentful
+ * paint or 500 ms of frames – keeps the engine's animation frames running while nothing is
+ * committed, so a double `requestAnimationFrame` in such a page answers with the view still
+ * showing its background colour. An entry already there resolves at once; a
+ * `PerformanceObserver` that cannot observe `paint` (never, in Chromium; guarded all the same)
+ * lets the frames answer alone. The answer is the document's clock, for a log.
+ */
+export const SHOWN_PAINTED_SCRIPT = `/* zenium: shown painted */ new Promise(function (resolve) {
+  var frames = new Promise(function (ok) {
+    requestAnimationFrame(function () { requestAnimationFrame(ok) })
+  })
+  var painted = new Promise(function (ok) {
+    if (performance.getEntriesByType('paint').length > 0) return ok()
+    try {
+      new PerformanceObserver(function (list, observer) {
+        observer.disconnect()
+        ok()
+      }).observe({ type: 'paint', buffered: true })
+    } catch (e) { ok() }
+  })
+  Promise.all([frames, painted]).then(function () { resolve(performance.now()) })
+})`
+
+/**
+ * Ask the page for its word that the document it is to show has a frame on screen
+ * (`SHOWN_PAINTED_SCRIPT`, through the main frame as `frameDrawn` asks – the contents'
+ * `executeJavaScript` would wait for the load to stop). A page with a committed document is
+ * asked now; one without (a woken tab, its load just issued: the main frame still the initial
+ * empty document, whose frames say nothing of the page) is asked once its document commits
+ * (`did-navigate`: the main frame's cross-document commit, an error page's included). Rejects
+ * for contents that are gone, before or while waiting; never throws out of the ask. Resolves
+ * `NaN` for an answer that is no number.
+ */
+export function shownPainted(wc: WebContents): Promise<number> {
+  if (wc.isDestroyed()) return Promise.reject(new Error('The page is gone'))
+  if (hasDocument(wc)) return askShownPainted(wc)
+  return new Promise<number>((resolve, reject) => {
+    const settle = (): void => {
+      wc.removeListener('did-navigate', onCommit)
+      wc.removeListener('destroyed', onGone)
+    }
+    const onCommit = (): void => {
+      settle()
+      askShownPainted(wc).then(resolve, reject)
+    }
+    const onGone = (): void => {
+      settle()
+      reject(new Error('The page is gone'))
+    }
+    wc.on('did-navigate', onCommit)
+    wc.on('destroyed', onGone)
+  })
+}
+
+/** Whether the main frame has a committed document (`ElectronTabView.hasDocument`'s reading). */
+function hasDocument(wc: WebContents): boolean {
+  let url: string
+  try {
+    url = wc.getURL()
+  } catch {
+    return false
+  }
+  return url !== '' && url !== 'about:blank'
+}
+
+function askShownPainted(wc: WebContents): Promise<number> {
+  if (wc.isDestroyed()) return Promise.reject(new Error('The page is gone'))
+  let frame: Pick<Electron.WebFrameMain, 'executeJavaScript'> | null
+  try {
+    frame = wc.mainFrame
+  } catch {
+    return Promise.reject(new Error('The page has no main frame'))
+  }
+  if (!frame) return Promise.reject(new Error('The page has no main frame'))
+  let asked: Promise<unknown>
+  try {
+    asked = frame.executeJavaScript(SHOWN_PAINTED_SCRIPT, false)
+  } catch (error) {
+    return Promise.reject(
+      error instanceof Error ? error : new Error('The page’s frame is gone', { cause: error })
+    )
+  }
+  return asked.then((answer) => (typeof answer === 'number' ? answer : NaN))
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }

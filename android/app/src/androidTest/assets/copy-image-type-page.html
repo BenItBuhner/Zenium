@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CP|pastes:0</title>
+<style>
+  body { font: 18px/1.4 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  #copied { font-size: 16px; color: #444; margin: 0 0 10px; min-height: 22px; }
+  #ce { min-height: 200px; border: 2px solid #3366cc; border-radius: 8px; padding: 12px; margin: 10px 0; font-size: 20px; }
+  #ce img { max-width: 100%; max-height: 300px; display: block; }
+  #readout { border-radius: 8px; padding: 12px 14px; margin: 10px 0; font-size: 19px; line-height: 1.5; background: #f1f4f9; color: #111; word-break: break-word; }
+  #readout.agree { background: #e3f4e6; }
+  #readout.disagree { background: #fbe4e1; }
+  #readout b { font-weight: 700; }
+  #log { font: 12px/1.3 monospace; white-space: pre-wrap; word-break: break-all; color: #666; }
+</style>
+</head>
+<body>
+<h1>Zenium: Copy Image, then paste</h1>
+<div id="copied">Nothing copied yet</div>
+<div id="readout">No paste yet</div>
+<div id="ce" contenteditable="true">Paste here</div>
+<pre id="log"></pre>
+<script>
+(function () {
+  // The page's word on every paste it hears, in its title (the driver reads the core's title):
+  // CP|pastes:N|target:id|types:a+b|items:kind~type+..|files:N|name:..|type:..|size:N|magic:png|ce:img-data|text:..|uri:..
+  // `type` is the File's declared type, `magic` what its first bytes really are: the two agree
+  // when the clipboard told the page the truth about the image it handed over (PUI-38).
+  var state = { pastes: 0, target: '-', types: '-', items: '-', files: 0, name: '-', type: '-', size: 0, magic: '-', ce: 'none', text: '-', uri: '-' };
+  var fresh = true;
+  function esc(s) { return String(s).replace(/[|:]/g, '_').replace(/\//g, '~'); }
+  function render() {
+    document.title = 'CP|pastes:' + state.pastes + '|target:' + state.target + '|types:' + state.types + '|items:' + state.items +
+      '|files:' + state.files + '|name:' + state.name + '|type:' + state.type + '|size:' + state.size + '|magic:' + state.magic +
+      '|ce:' + state.ce + '|text:' + state.text + '|uri:' + state.uri;
+    document.getElementById('log').textContent = document.title;
+    var readout = document.getElementById('readout');
+    if (fresh) { readout.textContent = state.pastes ? 'No paste yet for this image' : 'No paste yet'; readout.className = ''; return; }
+    if (!state.files) {
+      readout.innerHTML = 'Paste ' + state.pastes + ': <b>no file</b> in clipboardData (types ' + state.types.replace(/~/g, '/') + ')';
+      readout.className = 'disagree';
+      return;
+    }
+    var declared = state.type.replace(/~/g, '/');
+    var agree = state.magic !== '-' && state.magic !== 'reading' && declared === 'image/' + state.magic;
+    readout.innerHTML = 'Paste ' + state.pastes + ': the page got <b>' + state.name + '</b>, declared <b>' + declared + '</b>, ' +
+      (state.size / 1024).toFixed(1) + ' kB; its bytes are <b>' + state.magic.toUpperCase() + '</b> – ' +
+      (agree ? 'type and bytes agree' : state.magic === 'reading' ? 'reading the bytes' : 'TYPE AND BYTES DISAGREE');
+    readout.className = state.magic === 'reading' ? '' : agree ? 'agree' : 'disagree';
+  }
+  function magic(buffer) {
+    var u = new Uint8Array(buffer);
+    if (u.length >= 8 && u[0] === 0x89 && u[1] === 0x50 && u[2] === 0x4e && u[3] === 0x47) return 'png';
+    if (u.length >= 3 && u[0] === 0xff && u[1] === 0xd8 && u[2] === 0xff) return 'jpeg';
+    if (u.length >= 12 && u[0] === 0x52 && u[1] === 0x49 && u[2] === 0x46 && u[3] === 0x46 && u[8] === 0x57 && u[9] === 0x45 && u[10] === 0x42 && u[11] === 0x50) return 'webp';
+    if (u.length >= 6 && u[0] === 0x47 && u[1] === 0x49 && u[2] === 0x46 && u[3] === 0x38) return 'gif';
+    if (u.length >= 14 && u[0] === 0x42 && u[1] === 0x4d) return 'bmp';
+    return 'other' + u.length;
+  }
+  function contents() {
+    var ce = document.getElementById('ce');
+    var img = ce.querySelector('img');
+    if (img) {
+      var src = img.src || '';
+      return src.indexOf('data:') === 0 ? 'img-data-' + esc(src.slice(5, src.indexOf(';') > 0 ? src.indexOf(';') : 20)) :
+        src.indexOf('blob:') === 0 ? 'img-blob' : 'img-' + esc(src.slice(0, 16));
+    }
+    var text = ce.textContent.trim();
+    return text === '' || text === 'Paste here' ? 'none' : 'text-' + esc(text.slice(0, 24));
+  }
+  document.addEventListener('paste', function (e) {
+    var d = e.clipboardData;
+    fresh = false;
+    state.pastes++;
+    state.target = (e.target && e.target.id) || esc(e.target && e.target.nodeName || '?');
+    state.types = d ? (Array.prototype.slice.call(d.types).map(esc).join('+') || 'none') : 'nodata';
+    state.items = d ? (Array.prototype.map.call(d.items, function (i) { return i.kind + '~' + esc(i.type); }).join('+') || 'none') : 'nodata';
+    state.files = d ? d.files.length : 0;
+    var t = d ? d.getData('text/plain') : '';
+    state.text = t ? esc(encodeURIComponent(t).slice(0, 60)) : '-';
+    // Chromium on Android lists the clipboard's image as a string item typed "image-uri" too.
+    var u = d ? d.getData('image-uri') : '';
+    state.uri = u ? esc(encodeURIComponent(u).slice(0, 80)) : '-';
+    state.name = '-'; state.type = '-'; state.size = 0; state.magic = '-';
+    if (d && d.files.length) {
+      var f = d.files[0];
+      state.name = esc(f.name);
+      state.type = esc(f.type) || 'empty';
+      state.size = f.size;
+      state.magic = 'reading';
+      var r = new FileReader();
+      r.onload = function () { state.magic = magic(r.result); render(); };
+      r.onerror = function () { state.magic = 'readerror'; render(); };
+      r.readAsArrayBuffer(f);
+    }
+    render();
+    setTimeout(function () { state.ce = contents(); render(); }, 400);
+  });
+  // The driver names what it copied (the fixture's real type and name) so the still reads end to end.
+  window.setCopied = function (what) {
+    document.getElementById('copied').textContent = what ? 'Copied through the menu\u2019s Copy Image: ' + what : 'Nothing copied yet';
+  };
+  // The driver resets the editor and the readout between rounds; the paste count keeps counting.
+  window.resetRound = function () {
+    document.getElementById('ce').innerHTML = 'Paste here';
+    document.getElementById('ce').blur();
+    state.files = 0; state.name = '-'; state.type = '-'; state.size = 0; state.magic = '-'; state.ce = 'none';
+    fresh = true;
+    render();
+  };
+  render();
+})();
+</script>
+</body>
+</html>
