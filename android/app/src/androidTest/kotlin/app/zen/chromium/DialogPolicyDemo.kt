@@ -440,7 +440,9 @@ class DialogPolicyDemo : DemoHarness("page-dialogs-demo-state.json", "dialog-pol
     /**
      * Press the hidden page's `selector` from its own script (`click()`: the handler's call
      * blocks the page until it is answered) and watch the app's windows while the call is out:
-     * whether it returned within [LOOKUP_WAIT], how long it took, how many sheets came up.
+     * whether the call was made and returned within [LOOKUP_WAIT] (the page's own count of it
+     * one up), how long it took, how many sheets came up. The view's `evaluate` takes one
+     * expression, so the press is a function call; a script that failed is noted.
      */
     private fun clickAndWatch(selector: String): PageCall {
         val before = pageLog()
@@ -451,10 +453,19 @@ class DialogPolicyDemo : DemoHarness("page-dialogs-demo-state.json", "dialog-pol
         }
         val started = SystemClock.uptimeMillis()
         val latch = CountDownLatch(1)
-        val press = "document.querySelector(${JSONObject.quote(selector)}).click();''"
+        var value: String? = null
+        val press = "(function(){document.querySelector(${JSONObject.quote(selector)}).click();" +
+            "return ''})()"
         instrumentation.runOnMainSync {
             val tab = host.tabs.get(DEMO)
-            if (tab == null) latch.countDown() else tab.evaluate(press) { latch.countDown() }
+            if (tab == null) {
+                latch.countDown()
+            } else {
+                tab.evaluate(press) {
+                    value = it
+                    latch.countDown()
+                }
+            }
         }
         var sheets = 0
         var up = appWindows() > 1
@@ -471,8 +482,9 @@ class DialogPolicyDemo : DemoHarness("page-dialogs-demo-state.json", "dialog-pol
             SystemClock.sleep(POLL_MS)
         }
         val took = SystemClock.uptimeMillis() - started
-        if (returned) awaitLog { it.getInt(count) == before.getInt(count) + 1 }
-        return PageCall(returned, took, sheets)
+        if (value?.contains("__zenError") == true) finding("  (the page's script failed: $value)")
+        val counted = returned && awaitLog { it.getInt(count) == before.getInt(count) + 1 }
+        return PageCall(counted, took, sheets)
     }
 
     // --- the sheet: the dialog's own window in the accessibility tree ----------------------------
