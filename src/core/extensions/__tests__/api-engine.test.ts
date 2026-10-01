@@ -583,6 +583,73 @@ describe('createEmulatedEngine', () => {
     expect(h.last()).toMatchObject({ ns: 'contextMenus', method: 'removeAll' })
   })
 
+  it("a worker writes a declarativeContent rule with the namespace's constructors and the event routes it to the host as built (iCloud Passwords' onInstalled rule, Android compat round 25)", async () => {
+    // `chrome.declarativeContent.onPageChanged.removeRules(undefined, () => addRules([{
+    // conditions: [new PageStateMatcher({ pageUrl: { schemes: ['https', 'http'] } })],
+    // actions: [new ShowPageAction()] }]))` – its worker's `onInstalled`, both lanes of the
+    // round 25 BEFORE: "PageStateMatcher is not a constructor", the merged table having dropped
+    // the classes the shim defines.
+    const h = harness({ permissions: ['declarativeContent'] })
+    const dc = h.chrome.declarativeContent as Record<string, unknown>
+    type Ctor = new (details?: unknown) => Record<string, unknown>
+    const PageStateMatcher = dc.PageStateMatcher as Ctor
+    const ShowPageAction = dc.ShowPageAction as Ctor
+    for (const name of ['ShowAction', 'SetIcon', 'RequestContentScript']) {
+      expect(typeof dc[name], name).toBe('function')
+    }
+    const matcher = new PageStateMatcher({ pageUrl: { schemes: ['https', 'http'] } })
+    expect({ ...matcher }).toEqual({
+      pageUrl: { schemes: ['https', 'http'] },
+      instanceType: 'declarativeContent.PageStateMatcher'
+    })
+    expect({ ...new ShowPageAction() }).toEqual({ instanceType: 'declarativeContent.ShowAction' })
+    expect(() => new PageStateMatcher({ hostSuffix: 'x' })).toThrow(
+      "Invalid invocation: Unexpected property: 'hostSuffix'."
+    )
+    expect(dc.PageStateMatcherInstanceType).toEqual({
+      DECLARATIVE_CONTENT_PAGE_STATE_MATCHER: 'declarativeContent.PageStateMatcher'
+    })
+    // The rule members route to the host with the event's name first and the rule as built.
+    const onPageChanged = dc.onPageChanged as { addRules: Fn; removeRules: Fn }
+    let removed = false
+    void onPageChanged.removeRules(undefined, () => (removed = true))
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'declarativeContent',
+      method: 'removeRules',
+      // The optional `ruleIdentifiers` left out travels as JSON's null.
+      args: ['onPageChanged', null]
+    })
+    h.reply(h.last().id, null)
+    await flush()
+    expect(removed).toBe(true)
+    const rule = { conditions: [matcher], actions: [new ShowPageAction()] }
+    const added = onPageChanged.addRules([rule]) as Promise<unknown>
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'declarativeContent',
+      method: 'addRules',
+      args: [
+        'onPageChanged',
+        [
+          {
+            conditions: [
+              {
+                pageUrl: { schemes: ['https', 'http'] },
+                instanceType: 'declarativeContent.PageStateMatcher'
+              }
+            ],
+            actions: [{ instanceType: 'declarativeContent.ShowAction' }]
+          }
+        ]
+      ]
+    })
+    h.reply(h.last().id, [{ ...rule, id: '_0_', priority: 100 }])
+    await expect(added).resolves.toEqual([{ ...rule, id: '_0_', priority: 100 }])
+    // Without the permission the namespace is not there, as Chrome has it.
+    expect(harness({ permissions: ['storage'] }).chrome.declarativeContent).toBeUndefined()
+  })
+
   it('user-script contexts get messaging and identity only, flagged for onUserScriptMessage', () => {
     const h = harness({ context: 'userScript' })
     // The desktop world's surface (shared/userScriptWorld.ts): no storage, tabs or i18n there.
