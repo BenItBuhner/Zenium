@@ -9955,7 +9955,7 @@ describe('AI Agents › Disconnected agents', () => {
     expect(release.destructive).toBeFalsy()
     expect(release.confirm).toEqual({
       title: 'Release Invoice reconciliation’s tabs?',
-      description: 'Its 1 group and 2 tabs stay open, but the agent can’t get them back.',
+      description: 'Its 1 group and 2 tabs stay open, but the agent cannot resume them.',
       action: 'Release',
       verbTone: 'plain'
     })

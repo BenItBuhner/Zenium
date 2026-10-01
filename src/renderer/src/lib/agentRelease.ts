@@ -19,7 +19,7 @@ export function agentReleaseWords(
   const t = `${tabs} tab${tabs === 1 ? '' : 's'}`
   return {
     title: `Release ${name}’s tabs?`,
-    detail: `Its ${g} and ${t} stay open, but the agent can’t get them back.`
+    detail: `Its ${g} and ${t} stay open, but the agent cannot resume them.`
   }
 }
 

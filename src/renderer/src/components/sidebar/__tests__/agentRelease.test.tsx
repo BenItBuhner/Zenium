@@ -101,10 +101,10 @@ describe('agentReleaseWords', () => {
   it('names the agent and says the tabs stay', () => {
     expect(agentReleaseWords('Invoice reconciliation', 2, 5)).toEqual({
       title: 'Release Invoice reconciliation’s tabs?',
-      detail: 'Its 2 groups and 5 tabs stay open, but the agent can’t get them back.'
+      detail: 'Its 2 groups and 5 tabs stay open, but the agent cannot resume them.'
     })
     expect(agentReleaseWords('PR review', 1, 1).detail).toBe(
-      'Its 1 group and 1 tab stay open, but the agent can’t get them back.'
+      'Its 1 group and 1 tab stay open, but the agent cannot resume them.'
     )
   })
 })
@@ -130,7 +130,7 @@ describe('the "Release <agent>\'s tabs?" prompt', () => {
       'Release Invoice reconciliation’s tabs?'
     )
     expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
-      'Its 1 group and 2 tabs stay open, but the agent can’t get them back.'
+      'Its 1 group and 2 tabs stay open, but the agent cannot resume them.'
     )
     const confirm = d.querySelector<HTMLButtonElement>('button[data-action="confirm"]')!
     expect(confirm.textContent).toBe('Release')

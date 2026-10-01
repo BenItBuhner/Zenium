@@ -5094,7 +5094,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
               kind: 'action',
               id: `away:${agent.claimId}:release`,
               label: 'Release',
-              description: 'Keeps its tabs open for you. The agent can’t resume them.',
+              description: 'Keeps its tabs open for you; the agent cannot resume them.',
               button: 'Release…',
               confirm: {
                 title: words.title,
