@@ -210,6 +210,12 @@ export class ZenWindow {
   private savedBounds: Rect | null
   private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
+  /**
+   * How far below their laid-out rects the placed views stand right now – the page-edge band's
+   * travel (`LayoutBand`, `setPageOffset`): 0 at rest, the band's offset less its seat while it
+   * moves.
+   */
+  private pageShift = 0
   /** Where the content area last put a page (the size a page preloaded off screen lays out at). */
   private lastContentRect: Rect | null = null
   private pendingContentFocus = false
@@ -608,10 +614,18 @@ export class ZenWindow {
       this,
       report.contentHidden ? null : (report.sidePanel ?? null)
     )
+    // The page-edge band's travel: the views stand `offset - seat` below their laid-out rects
+    // (`LayoutBand`); 0 at rest, where the seat is the offset.
+    const shift = bandShift(report)
+    this.pageShift = shift
     const wanted = new Map<string, { rect: Rect; radius: number; cover: ContentCover }>()
     if (!report.contentHidden) {
       for (const p of report.placements)
-        wanted.set(p.tabId, { rect: p.rect, radius: p.radius, cover: p.cover ?? NO_COVER })
+        wanted.set(p.tabId, {
+          rect: shifted(p.rect, shift),
+          radius: p.radius,
+          cover: p.cover ?? NO_COVER
+        })
     }
     if (report.placements.length === 1) this.lastContentRect = roundRect(report.placements[0].rect)
     const glance = report.glance
@@ -650,7 +664,7 @@ export class ZenWindow {
           place(
             glance.tabId,
             view,
-            roundRect(glance.rect),
+            roundRect(shifted(glance.rect, shift)),
             Math.round(glance.radius),
             glance.cover ?? NO_COVER,
             true
@@ -692,6 +706,36 @@ export class ZenWindow {
       // – a resize, a sheet – and an extension popup open over it must keep the keyboard.
       this.focusChrome()
     }
+  }
+
+  /**
+   * The page-edge band's frame (motion spec §3.4, §6): the page is `offset` from the frame's top
+   * edge now. The views the last layout placed move to `offset - seat` below their laid-out
+   * rects – their bounds alone: no resize, no show or hide, no radius, no handshake with the
+   * chrome – so a frame of the band's travel costs one bounds write per view. The seat is the
+   * last report's (`LayoutBand`): a frame that lands before the layout the band's `depart`
+   * asked for is placed against the rects it was laid out with, and the report that follows
+   * carries the offset of its own moment. Nothing moves while the chrome covers the page or a
+   * page is in HTML fullscreen – no band stands there.
+   */
+  setPageOffset(offset: number): void {
+    const layout = this.lastLayout
+    if (!this.alive || !layout || layout.contentHidden) return
+    const tabs = this.browser.tabs
+    const owned = tabs.viewsOwnedBy(this)
+    const fullscreenTabId = this.htmlFullscreenTabId
+    if (fullscreenTabId && owned.has(fullscreenTabId)) return
+    const shift = offset - (layout.band?.seat ?? 0)
+    if (shift === this.pageShift) return
+    this.pageShift = shift
+    const move = (tabId: string, rect: Rect): void => {
+      const view = owned.get(tabId)
+      if (!view || view.isDestroyed()) return
+      const bounds = roundRect(shifted(rect, shift))
+      for (const v of tabs.viewsOf(tabId)) if (v.isVisible()) v.setBounds(bounds)
+    }
+    for (const p of layout.placements) if (p.tabId !== layout.glance?.tabId) move(p.tabId, p.rect)
+    if (layout.glance) move(layout.glance.tabId, layout.glance.rect)
   }
 
   /**
@@ -840,6 +884,15 @@ function roundRect(r: Rect): Rect {
     width: Math.max(0, Math.round(r.width)),
     height: Math.max(0, Math.round(r.height))
   }
+}
+
+/** How far below their laid-out rects a report's views stand: the band's offset less its seat. */
+function bandShift(report: LayoutReport): number {
+  return report.band ? report.band.offset - report.band.seat : 0
+}
+
+function shifted(r: Rect, dy: number): Rect {
+  return dy === 0 ? r : { ...r, y: r.y + dy }
 }
 
 const NO_COVER: ContentCover = { top: 0, bottom: 0 }

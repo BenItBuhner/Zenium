@@ -5386,6 +5386,21 @@ export interface ViewPlacement {
   cover?: ContentCover
 }
 
+/**
+ * The page-edge band's word in a layout (motion spec §3.4, the desktop's mechanics): `seat` is
+ * the band's seated height these placements were laid out under – the page's laid-out top is
+ * the frame's edge plus it – and `offset` is where the page is right now, its offset from the
+ * frame's edge, which differs from the seat while the band travels. The host places the views
+ * `offset - seat` below their laid-out rects; a `layout.pageOffset` between reports moves them
+ * by a new offset against this report's seat, so the page is never placed against a seat its
+ * rects were not laid out with. Absent (both 0) where no band stands or the host moves the
+ * page another way (Android's pull channel).
+ */
+export interface LayoutBand {
+  seat: number
+  offset: number
+}
+
 export interface LayoutReport {
   placements: ViewPlacement[]
   glance: { tabId: string; rect: Rect; radius: number; cover?: ContentCover } | null
@@ -5393,6 +5408,8 @@ export interface LayoutReport {
   contentHidden: boolean
   /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
   sidePanel?: Rect | null
+  /** The page-edge band's seat and the page's present offset (`LayoutBand`). */
+  band?: LayoutBand
 }
 
 // ---------------------------------------------------------------------------
@@ -5463,6 +5480,12 @@ export interface Commands {
     result: void
   }
   'layout.report': { args: LayoutReport; result: void }
+  /**
+   * The page-edge band's frame (motion spec §3.4, §6): the page's offset from the frame's top
+   * edge right now. The host moves the placed views by it against the last report's seat
+   * (`LayoutBand`) – a move of their bounds, never a resize – per frame of the band's travel.
+   */
+  'layout.pageOffset': { args: { offset: number }; result: void }
 
   /**
    * The user asked for a new tab: the URL bar in new-tab mode, or the page an extension

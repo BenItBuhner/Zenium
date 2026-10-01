@@ -3552,6 +3552,7 @@ export class Browser {
       'externalProtocol.respond': ({ requestId, allow, always }) =>
         this.externalProtocols.respond(requestId, allow, always),
       'layout.report': (report, win) => win.applyLayout(report),
+      'layout.pageOffset': ({ offset }, win) => win.setPageOffset(offset),
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,

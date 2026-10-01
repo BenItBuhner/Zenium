@@ -8,6 +8,7 @@ import { run } from '@renderer/lib/api'
 import { viewportStore, type FormFactor } from '@renderer/lib/formFactor'
 import { landingStore } from '@renderer/lib/fullscreenLanding'
 import { registerRecedeLayer, recedeScale, type RecedeHandle } from '@renderer/lib/motion/recede'
+import { movePage, resetPageBand, seatBand } from '@renderer/lib/pageBand'
 import { contentAreaStore, uiStore } from '@renderer/lib/ui'
 import { useLayoutReporter } from '../useLayoutReporter'
 
@@ -456,6 +457,49 @@ describe('useLayoutReporter under the recede', () => {
       expect(lastReport().placements.map((p) => p.tabId)).toEqual(['t1'])
     } finally {
       viewportStore.set(before)
+    }
+  })
+
+  /*
+   * The page-edge band's seat (motion spec §3.4, lib/pageBand.ts): the desktop's band host
+   * seats the band's height once per travel, and the reporter lays the page out under it in the
+   * same flush – the page's rect less the seat at its top – naming the seat and the page's
+   * present offset in the report, so the core places the views by their difference. Nothing is
+   * said while nothing is seated and the page is home (Android's reports, every one).
+   */
+  it('lays the page out under the band’s seat in the flush that seats it, and names the seat and the offset', () => {
+    vi.mocked(run).mockClear()
+    resetPageBand()
+    try {
+      const desktop = { ...state('bottom'), platform: 'linux' } as UIState
+      render(<Probe state={desktop} />)
+      expect(reports()).toBe(1)
+      const home = lastReport()
+      expect(home.band).toBeUndefined()
+      const [full] = home.placements
+      // The band's rest: the page goes 56 down and 56 shorter, in one report, with the word.
+      act(() => {
+        movePage(56)
+        seatBand(56)
+      })
+      expect(reports()).toBe(2)
+      const seated = lastReport()
+      expect(seated.band).toEqual({ seat: 56, offset: 56 })
+      expect(seated.placements[0].rect).toEqual({
+        ...full.rect,
+        y: full.rect.y + 56,
+        height: full.rect.height - 56
+      })
+      // The leave's departure: home again at once, the page still 56 down by the word.
+      act(() => seatBand(0))
+      expect(reports()).toBe(3)
+      expect(lastReport().band).toEqual({ seat: 0, offset: 56 })
+      expect(lastReport().placements[0].rect).toEqual(full.rect)
+      // The frames are the host's, not the reporter's: a frame reports no layout.
+      act(() => movePage(30))
+      expect(reports()).toBe(3)
+    } finally {
+      resetPageBand()
     }
   })
 })
