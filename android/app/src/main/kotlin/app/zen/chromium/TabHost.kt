@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import org.json.JSONObject
+import kotlin.math.roundToInt
 
 /**
  * Owns the tab WebViews and places them above the chrome exactly where the core says, in device
@@ -17,6 +18,12 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     private val views = HashMap<String, TabWebView>()
     /** The frame the chrome last laid each page out at (device px), what [place] works from. */
     private val reported = HashMap<String, Rect>()
+    /**
+     * The page-edge band's seat per tab (device px, absent for 0): how far into its frame the
+     * band's host has the page's view laid out at rest ([setBandSeat]); [place] takes it off the
+     * top of the bar's placement, and the view translates the band's offset less it ([PageSeat]).
+     */
+    private val seats = HashMap<String, Int>()
     /**
      * The screen a fullscreen's exit is landing on while the bars settle after it ([landingOn]
      * from [Host.exitFullscreen], cleared by [landed]), and the frames held back meanwhile for
@@ -166,6 +173,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val view = views.remove(tabId) ?: return null
         reported.remove(tabId)
         heldBack.remove(tabId)
+        // The band that seated it stood in this window; the host it goes to places it as reported.
+        seats.remove(tabId)
+        view.setBandSeat(0)
         // Behind no tab of this host's any more: the host it goes to has its own word.
         shownOnce.remove(tabId)
         switchedOff.remove(tabId)
@@ -234,6 +244,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
         heldBack.remove(viewId)?.let { heldBack[tabId] = it }
+        seats.remove(viewId)?.let { seats[tabId] = it }
         if (shownOnce.remove(viewId)) shownOnce.add(tabId)
         if (switchedOff.remove(viewId)) switchedOff.add(tabId)
         // Whatever the popup loaded before the core knew its tab id is reported now: the list
@@ -250,6 +261,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.captureThumbnail()
         reported.remove(tabId)
         heldBack.remove(tabId)
+        seats.remove(tabId)
         drop(view)
         // The spare was never a tab of the core's: nothing to tell it.
         if (tabId != SPARE_ID) host.viewEvent(tabId, "destroyed", null)
@@ -272,6 +284,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         views.clear()
         reported.clear()
         heldBack.clear()
+        seats.clear()
         shownOnce.clear()
         switchedOff.clear()
         host.snapshots.clear()
@@ -399,18 +412,47 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     }
 
     /**
+     * The page-edge band's host seats `tabId`'s page `seatCss` CSS px into its frame (the
+     * bridge's `view.setBandSeat`; `lib/band/androidHost.ts`): the view is laid out that much
+     * lower and shorter than the bar's placement alone has it ([place], [BarHidePlacement.of]'s
+     * `seatPx`) and translates the pull channel's offset less the seat ([TabWebView.setBandSeat],
+     * [PageSeat]) – in the one layout pass, so the page stays where it is on screen. 0 places the
+     * view as reported again. Recorded for a view filling the window too ([fillWindow]), which
+     * takes it when it is put back, and for a view the chrome has yet to lay out, which takes it
+     * with its first frame.
+     */
+    fun setBandSeat(tabId: String, seatCss: Double) {
+        val px = (seatCss * density).toFloat().roundToInt().coerceAtLeast(0)
+        val before = if (px == 0) seats.remove(tabId) ?: 0 else seats.put(tabId, px) ?: 0
+        if (before == px) return
+        val view = views[tabId] ?: return
+        place(view)
+    }
+
+    /** The band's seat `tabId`'s view is laid out under, device px (diagnostics, the band demo). */
+    fun bandSeatOf(tabId: String): Int = seats[tabId] ?: 0
+
+    /** The frame the chrome last laid `tabId`'s page out at (device px), or null (diagnostics, the band demo). */
+    fun reportedFrameOf(tabId: String): Rect? = reported[tabId]?.let { Rect(it) }
+
+    /**
      * Lay `view` out where the chrome put it, adjusted for the bar that hides on scroll
-     * ([BarHidePlacement] has the geometry). A view filling the window (picture-in-picture,
-     * [fillWindow]) is laid out by nobody else until it is put back: the chrome's frames for it
-     * are recorded meanwhile ([setBounds], [setBarHide]) and applied then.
+     * ([BarHidePlacement] has the geometry) and seated under a standing page-edge band
+     * ([setBandSeat]). A view filling the window (picture-in-picture, [fillWindow]) is laid out
+     * by nobody else until it is put back: the chrome's frames for it are recorded meanwhile
+     * ([setBounds], [setBarHide], [setBandSeat]) and applied then.
      */
     private fun place(view: TabWebView) {
         val r = reported[view.tabId] ?: return
         val frame = barHide
         // The gesture's knowledge of the bar is not a layout: it stays current, held or not.
         view.barHide.frame = frame
-        val p = BarHidePlacement.of(r.top, r.bottom, frame, held = filled?.tabId == view.tabId) ?: return
+        val seat = seats[view.tabId] ?: 0
+        val p = BarHidePlacement.of(r.top, r.bottom, frame, held = filled?.tabId == view.tabId, seatPx = seat) ?: return
         view.setBarHideShift(p.shiftPx, p.clipPx)
+        // The layout params and the translation change in this one pass: the view's top on
+        // screen – the band's offset – is the same before and after, whatever frame falls between.
+        view.setBandSeat(seat)
         val w = r.width()
         val h = p.height
         val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(w, h)
@@ -596,8 +638,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /**
      * The window is (or is about to be) the picture-in-picture one: `tabId`'s view alone fills it
      * – over the chrome, without its corners, its covers, the slide and clip of a bar hiding on
-     * scroll, or the bounds the core lays it out at (which keep arriving and are recorded for
-     * later, [setBounds]; the bar's frames too, [setBarHide]) – so the small window shows nothing
+     * scroll, a band's seat, or the bounds the core lays it out at (which keep arriving and are
+     * recorded for later, [setBounds]; the bar's frames and the seat too, [setBarHide],
+     * [setBandSeat]) – so the small window shows nothing
      * but the page, whose video the core lays over the viewport. `null` puts the view back where
      * the chrome has it by now, laid out for the bar as it stands ([place]). A view that is gone
      * by then is simply not restored. The host hears each change ([PageHost.windowFillChanged]):
@@ -623,6 +666,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
             view.setRadius(0f)
             view.cover.set(0f, 0f, snap = true)
             view.setBarHideShift(0f, 0)
+            view.setBandSeat(0)
             show(view, true)
             view.bringToFront()
         }
