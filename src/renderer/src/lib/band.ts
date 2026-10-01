@@ -38,8 +38,28 @@ export type BandForm = 'state' | 'offer'
  */
 export type BandTone = 'ok' | 'warn' | 'danger'
 
+/**
+ * Why a band went, as its tenant hears it (`onDismiss`). `'action'` is the action picked;
+ * `'close'` the ×. The rest put the band away: `'swipe'` (up, past half its height), `'escape'`
+ * (with focus in the band), `'back'` (Android's Back button; the desktop never emits it),
+ * `'timeout'` (an offer's clock), `'navigation'` (the tab's document changed), `'replaced'` (a
+ * newer prompt took its place), `'program'` (the tab closed, the tenant withdrew).
+ *
+ * The host contract, the Design Lead's ruling on the prompt band (§3.2 / §9.6, both hosts): on
+ * a prompt band ONLY the × is a refusal to remember – the one that starts a cooldown or an
+ * answer kept for the release. Every put-away – `'close'` excepted – means "not now": the band
+ * goes for now and nothing is remembered, so it may stand again at the next eligible moment.
+ */
 export type BandDismissReason =
-  'action' | 'close' | 'swipe' | 'escape' | 'timeout' | 'navigation' | 'replaced' | 'program'
+  | 'action'
+  | 'close'
+  | 'swipe'
+  | 'escape'
+  | 'back'
+  | 'timeout'
+  | 'navigation'
+  | 'replaced'
+  | 'program'
 
 export interface BandAction {
   label: string
