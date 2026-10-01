@@ -8,6 +8,7 @@ import { newId } from '../shared/ids'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
 import { surfaceMounted } from './window'
+import { screenCaptureSpec } from './agent/nativePrompts'
 
 /** What the host hands the engine once the picker answered. */
 export interface ScreenCaptureAnswer {
@@ -126,6 +127,24 @@ export class ScreenCaptureService {
     const tab = this.browser.tabs.tab(init.tabId)
     if (!tab) return refused
     this.cancelForTab(init.tabId)
+    // An agent's tab: its agent picks among its own tabs, and the picker never shows.
+    const agents = this.browser.agents
+    if (!init.extension && agents?.takesPrompt(tab.id, 'screen-capture')) {
+      const own = new Set(agents.agentTabsOf(tab.id))
+      const sources = [tab, ...[...own].map((id) => this.browser.tabs.tab(id))]
+        .filter((t): t is Tab => t !== undefined)
+        .filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i)
+        .filter((t) => t.id === tab.id || this.browser.tabs.view(t.id)?.isDestroyed() === false)
+        .map((t) => tabSource(t))
+      const agent = agents.routePrompt(
+        screenCaptureSpec(tab.id, displayHost(init.url) || init.url, sources)
+      )
+      if (agent)
+        return {
+          id: agent.id,
+          answer: agent.result.then((sourceId) => ({ sourceId, audio: false }))
+        }
+    }
     if (!surfaceMounted(this.browser.tabs.ownerOf(init.tabId), 'screenCapture')) return refused
     // The panes, in the picker's order; a call that asks for none has nothing to pick from.
     const kinds = SCREEN_CAPTURE_KINDS.filter((k) => !init.kinds || init.kinds.includes(k))

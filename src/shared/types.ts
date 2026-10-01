@@ -368,7 +368,34 @@ export interface HostCapabilities {
    * the host's own dialog handling never hands them over (Android's WebChromeClient today).
    */
   agentDialogs: boolean
+  /**
+   * The browser-level prompts this host hands to an AI agent's tab's agent instead of showing
+   * them (`AgentPromptKind`; listed by `browser_prompts`). A kind the host leaves out keeps
+   * its usual UI on agents' tabs too, and agents are told it is not routed here. Absent: none.
+   */
+  agentPrompts?: readonly AgentPromptKind[]
 }
+
+/**
+ * The native and browser-level prompts a page can raise that an AI agent answers for its own
+ * tabs through MCP (`browser_prompts`, `browser_respond_prompt`, `browser_file_upload`), never
+ * the OS's own UI: a file chooser (`<input type=file>`, `showOpenFilePicker`), the download
+ * "Save as" dialog, HTTP authentication, client-certificate selection, a permission request
+ * (camera, microphone, location, notifications, clipboard, MIDI, opening another app…), the
+ * screen-share picker, a Bluetooth / USB / serial / HID device chooser and a Bluetooth
+ * pairing, a link that opens another app, and `window.print()`.
+ */
+export type AgentPromptKind =
+  | 'file-chooser'
+  | 'download'
+  | 'http-auth'
+  | 'client-certificate'
+  | 'permission'
+  | 'screen-capture'
+  | 'device-chooser'
+  | 'device-pairing'
+  | 'external-protocol'
+  | 'print'
 
 // ---------------------------------------------------------------------------
 // The mini menu over a text selection, and Define (CT-39)
@@ -7511,6 +7538,12 @@ export interface Commands {
   'webapp.pin': { args: { tabId: string; title: string }; result: void }
   /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
   'webapp.cancelInstall': { args: { tabId: string }; result: void }
+  /**
+   * The ambient banner's card is mounted on a surface that draws banners: the prompt counts as
+   * shown now and the app's cooldown starts on this word, not on the core's emit (#740). Without
+   * it inside the core's grace the prompt counts as undrawn and the cooldown is not spent.
+   */
+  'webapp.bannerShown': { args: { tabId: string }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
   /**

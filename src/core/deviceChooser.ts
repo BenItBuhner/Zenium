@@ -1,6 +1,7 @@
 import type { Browser } from './browser'
 import { permissionSite } from './permissions'
 import { newId } from '../shared/ids'
+import { deviceChooserSpec } from './agent/nativePrompts'
 import type {
   DeviceCandidate,
   DeviceChooser,
@@ -32,6 +33,8 @@ export interface DeviceChooserHandle {
   update(candidates: DeviceCandidate[], scanning?: boolean): void
   /** The engine withdrew the request (the page navigated away, a scan gave up): no answer. */
   close(): void
+  /** An AI agent answers it, on its own tab: the pick is granted to that tab alone, never stored. */
+  readonly byAgent?: boolean
 }
 
 interface Pending {
@@ -76,7 +79,7 @@ export class DeviceChooserService {
    */
   open(
     kind: DeviceKind,
-    candidates: DeviceCandidate[],
+    initial: DeviceCandidate[],
     request: DeviceChooserRequest
   ): DeviceChooserHandle {
     const origin = permissionSite(request.origin)
@@ -88,12 +91,30 @@ export class DeviceChooserService {
         close: () => undefined
       }
     }
+    const tabId = request.tabId
+    if (tabId && this.browser.agents?.takesPrompt(tabId, 'device-chooser')) {
+      let candidates = dedupe(initial)
+      const agent = this.browser.agents.routePrompt(
+        deviceChooserSpec(tabId, kind, origin, () => candidates)
+      )
+      if (agent)
+        return {
+          id: agent.id,
+          result: agent.result,
+          update: (list, scanning) => {
+            candidates = dedupe(list)
+            agent.update({ candidates, ...(scanning !== undefined ? { scanning } : {}) })
+          },
+          close: () => agent.close(),
+          byAgent: true
+        }
+    }
     const chooser: DeviceChooser = {
       id: newId('device'),
       tabId: request.tabId,
       origin,
       kind,
-      candidates: dedupe(candidates),
+      candidates: dedupe(initial),
       scanning: request.scanning ?? false,
       hint: request.hint ?? 'none',
       requestedAt: this.now()
@@ -159,6 +180,8 @@ export class DeviceChooserService {
       kind: details.kind,
       pin: details.pin ?? ''
     }
+    if (details.tabId && this.browser.agents?.refusePairing(details.tabId, prompt.deviceName))
+      return Promise.resolve(null)
     return new Promise((resolve) => {
       this.pairings.push({ prompt, resolve })
       this.browser.state.commitVolatile()

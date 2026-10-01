@@ -51,9 +51,14 @@ export class MediaAccessGate {
    * Whether the system lets Zenium use every device the request names. Off macOS always true.
    * On macOS a device the system has not been asked about yet is asked for now (the system's
    * dialog; one at a time per kind), one it refuses (`denied`, `restricted`, or a status the gate
-   * does not know) refuses the request at once, without a dialog for the other device.
+   * does not know) refuses the request at once, without a dialog for the other device. With
+   * `ask: false` (an AI agent's tab, whose prompts never reach the user) a device the system has
+   * not been asked about is refused as well, without the dialog and without the notice.
    */
-  async allows(mediaTypes: ReadonlyArray<'video' | 'audio'>): Promise<boolean> {
+  async allows(
+    mediaTypes: ReadonlyArray<'video' | 'audio'>,
+    opts: { ask?: boolean } = {}
+  ): Promise<boolean> {
     if (this.options.platform !== 'darwin') return true
     const kinds = mediaDeviceKinds(mediaTypes)
     const statuses = kinds.map((kind) => [kind, this.status(kind)] as const)
@@ -64,6 +69,7 @@ export class MediaAccessGate {
       this.refuse(refused[0], refused[1])
       return false
     }
+    if (opts.ask === false) return statuses.every(([, status]) => status === 'granted')
     for (const [kind, status] of statuses) {
       if (status === 'granted') continue
       if (!(await this.ask(kind))) {

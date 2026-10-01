@@ -44,6 +44,7 @@ import {
 import { installNotificationBridge, installNotificationShim } from './notifications'
 import { installNavigatorSignals } from '../shared/privacySignals'
 import { installLeaveSite, installPageDialogs } from './pageDialogs'
+import { installPagePrompts } from './pagePrompts'
 import { installFormsScript } from '../shared/formsScript'
 import type { FormsCommand } from '../shared/forms'
 import { USER_SCRIPTS_CHANNELS } from '../shared/userScripts'
@@ -123,6 +124,7 @@ try {
   console.warn('[zen] content guards unavailable:', (error as Error).message)
 }
 installPageDialogs()
+installPagePrompts()
 installUserScripts({
   // The frame's plan came with the document-start answer; `installUserScripts` asks once.
   plan: () => documentStart.userScripts,

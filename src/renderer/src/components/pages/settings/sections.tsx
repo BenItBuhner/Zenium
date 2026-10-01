@@ -892,7 +892,7 @@ function lookSection({
   // its rows (BUG-055 – the desktop drew "Position on phones" for a bar it does not have).
   groups.push({
     id: 'url-bar',
-    heading: 'URL bar',
+    heading: 'Address bar',
     rows: [
       choice<UrlbarBehavior>({
         id: 'urlbar-behaviour',
@@ -3553,7 +3553,7 @@ function searchEngineItem(
       kind: 'action',
       id: `search-engine:${e.id}:default`,
       label: 'Make default',
-      description: `Searches from the URL bar use ${e.name}.`,
+      description: `Searches from the address bar use ${e.name}.`,
       disabled: isDefault,
       onPress: () => set({ searchEngineId: e.id })
     })
@@ -3593,7 +3593,7 @@ function searchEngineItem(
           kind: 'action',
           id: `search-engine:${e.id}:activate`,
           label: 'Activate',
-          description: `${e.keyword} works in the URL bar again.`,
+          description: `${e.keyword} works in the address bar again.`,
           onPress: () => run('search.setEngineActive', { id: e.id, active: true })
         }
       : {
@@ -3602,7 +3602,7 @@ function searchEngineItem(
           label: 'Deactivate',
           description: isDefault
             ? 'The default search engine stays active.'
-            : `Keeps ${e.name} in the list but out of the URL bar until you activate it.`,
+            : `Keeps ${e.name} in the list but out of the address bar until you activate it.`,
           disabled: isDefault,
           onPress: () => run('search.setEngineActive', { id: e.id, active: false })
         },
@@ -3615,7 +3615,7 @@ function searchEngineItem(
       destructive: true,
       confirm: {
         title: `Remove ${e.name}?`,
-        description: isDefault ? 'The URL bar goes back to the default engine.' : undefined,
+        description: isDefault ? 'The address bar goes back to the default engine.' : undefined,
         action: 'Remove'
       },
       onPress: () => run('search.removeEngine', { id: e.id })

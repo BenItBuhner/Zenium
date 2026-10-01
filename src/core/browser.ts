@@ -630,6 +630,7 @@ export class Browser {
     this.mods = new ModService(this)
     this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
+    this.permissions.agentPrompts = this.agents.permissionPrompts()
     // A session's END that emptied its space hands the user's window back (W7-F3): the agent's
     // `zen_session end` and the record's close (DELETE, Disconnect, the parked limit, shutdown).
     // A park is not an end – the idle sweep's timer, no action of anyone's; the session may
@@ -4502,6 +4503,7 @@ export class Browser {
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
       'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
+      'webapp.bannerShown': ({ tabId }) => this.webApps.bannerShown(tabId),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
       'webapp.launch': ({ appId }, win) => this.webApps.launch(appId, win),
       'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),

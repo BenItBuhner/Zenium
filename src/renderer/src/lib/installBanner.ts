@@ -2,14 +2,24 @@ import { Smartphone } from 'lucide-react'
 import type { WebAppBanner } from '@shared/types'
 import { BANNER_TIMEOUT_MS } from '@shared/webApp'
 import { run } from '@renderer/lib/api'
-import { dismissBanner, showBanner, uiStore, type BannerDismissReason } from '@renderer/lib/ui'
+import {
+  bannerSurfaceMounted,
+  dismissBanner,
+  showBanner,
+  uiStore,
+  type BannerDismissReason
+} from '@renderer/lib/ui'
 
 /**
  * The ambient "Add <app> to Home screen" prompt (PWA-03) behind one seam. The core raises and
  * lowers it (`webapp.banner`, `webapp.bannerHide`) and only cares how it went; the card is the
  * shared top banner (`showBanner`, v2 §9.33): the phone glyph on the title, the app's origin as
  * the detail, one "Add" that opens the install sheet through the core like the menu item, the
- * card's own swipe, close and clock. One banner at a time under the `install` key.
+ * card's own swipe, close and clock. One banner at a time under the `install` key. The card
+ * drawn is the core's word to start the app's cooldown (`webapp.bannerShown`): it goes the
+ * moment the card is in the store with a surface mounted that draws it, so the phone's timing
+ * is the store's own; where no surface draws banners (the desktop's sidebar, #740) no word goes
+ * and the core, hearing none inside its grace, counts the prompt as undrawn and takes it back.
  */
 
 /** The banner card up for each tab, by the id `showBanner` gave it. */
@@ -31,6 +41,7 @@ export function presentInstallBanner(banner: WebAppBanner): void {
     }
   })
   shown.set(banner.tabId, id)
+  if (bannerSurfaceMounted()) run('webapp.bannerShown', { tabId: banner.tabId })
 }
 
 /**
