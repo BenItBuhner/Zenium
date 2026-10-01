@@ -1,0 +1,9 @@
+{
+  "id": "overview-cleanup",
+  "class": "OverviewCleanupDemo",
+  "shard": "phone-e",
+  "mirrors": "android-overview-demo.yml",
+  "dir": "overview-cleanup-demo",
+  "estimate": 8,
+  "note": "The tab overview after the cleanup spec (docs/tab-overview-cleanup-spec.md §1–§6), the device record the design gate reads, on the overview demo's profile: the one header row with the title alone (56 tall; no Spaces button, search toggle, ⋯ of its own or segment row), the title as the space switcher (the Spaces sheet, a pick, the GN-19 swipe between spaces), a group as one card in its place (fold, unfold, its header's ⋯ sheet), the bar's ⋯ as the overview's menu with §4's rows in order, Search Tabs as a row (the field under the header, the X clearing then closing), the private view (New Private Tab, the view's menu, back, the row switches, Close Private Tabs' prompt with back as Cancel) and the select-tabs mode (a pick, the action row, the selection menu, Select all, Done) – stills in both colour schemes. On phone-e, the phone shard with the room for it (58 of 68 minutes before it); without an order, so it runs last by its id."
+}
