@@ -649,9 +649,16 @@ class TabWakePerfDemo : DemoHarness("perf-motion-demo-state.json", "tab-wake", "
 
     // --- the pages -----------------------------------------------------------------------------------
 
-    /** A page fixture kept gzipped in the tree (`perf/<name>.html.gz`); AAPT2 may have unpacked it (see BarHidePerfDemo). */
+    /**
+     * A page fixture kept gzipped in the tree (`perf/<name>.html.gz`). AAPT2 gunzips a `.gz` asset
+     * as it packages it and drops the suffix, so the APK carries `perf/<name>.html` plain; a build
+     * that kept the file as it is answers under the tree's name (see BarHidePerfDemo).
+     */
     private fun pageFixture(name: String): ByteArray {
-        val bytes = instrumentation.context.assets.open("perf/$name.html.gz").use { it.readBytes() }
+        val assets = instrumentation.context.assets
+        val plain = runCatching { assets.open("perf/$name.html") }.getOrNull()
+        if (plain != null) return plain.use { it.readBytes() }
+        val bytes = assets.open("perf/$name.html.gz").use { it.readBytes() }
         val gzip = bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()
         return if (gzip) GZIPInputStream(bytes.inputStream()).use { it.readBytes() } else bytes
     }
