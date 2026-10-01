@@ -6,7 +6,6 @@ import type {
   Folder,
   PhoneBarPosition,
   Rect,
-  Space,
   SyncRemoteTab,
   Tab,
   UIState
@@ -44,13 +43,7 @@ import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { ZEN_EASE } from '@renderer/lib/motion/tokens'
-import {
-  indicatorFrame,
-  planSpaceSwitch,
-  SPACE_SLIDE_ID,
-  switchDirection,
-  type StripBox
-} from '@renderer/lib/motion/spaceSwitch'
+import { planSpaceSwitch, SPACE_SLIDE_ID, switchDirection } from '@renderer/lib/motion/spaceSwitch'
 import {
   reducedMotion,
   SPRING_GENTLE,
@@ -134,10 +127,8 @@ import {
   tabTitle
 } from '@renderer/lib/selectors'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
-import { SpaceGlyph } from '../SpaceGlyph'
 import { CloseAllSheet } from './CloseAllSheet'
 import { Departures } from './Departures'
 import {
@@ -262,9 +253,9 @@ interface ShownGroups {
   /** The view the grid showed: its groups are the regular view's, and the private view has none. */
   pane: OverviewPane
   /**
-   * The Space the grid showed: its groups are that Space's. Another Space's grid (a switch in
-   * the strip, MOT-05) is a fresh one in the same component – the last Space's groups did not
-   * lose their cards, they are simply not there.
+   * The Space the grid showed: its groups are that Space's. Another Space's grid (a switch from
+   * the Spaces sheet or the swipe, MOT-05) is a fresh one in the same component – the last
+   * Space's groups did not lose their cards, they are simply not there.
    */
   spaceId: string
   /** The groups holding cards after the last render, by folder id. */
@@ -372,8 +363,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const foundAll = found + reach.closed.length + reach.remote.length
 
   // The last private tab closing ends the session, and the overview returns to the regular view
-  // whether the private view was picked or followed (Chrome's switcher does the same); the
-  // empty view's sentence stays a pick away, for whoever picks Private Tabs with none open.
+  // whether the private view was picked or followed (Chrome's switcher does the same): the
+  // pick is released, so the next private tab opened does not find the private view picked
+  // already. (`overviewPane` reads a pick of the private view with none open as the regular
+  // view at once; there is no empty private view, §4.)
   const privateCount = hasPrivate ? privateTabsOf(state).length : 0
   const privateCountBefore = useRef(privateCount)
   useEffect(() => {
@@ -553,14 +546,14 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   })
   // The grid's slot is the SPACE's in the regular view (MOT-05, v2 §11.4 / §11.6): a Space
   // switch brings the next Space's grid up in a slot of its own (`PaneSlot` keyed by `gridKey`,
-  // inside the view's) – the strip above stays and its indicator glides – while a still of the
+  // inside the view's) – the header above stays, its title following – while a still of the
   // grid that left fades over 120 ms (`PaneStills`, the view switch's mechanism) and the new
-  // grid comes in from the side the new Space stands on in the strip's order: after a SWIPE it
+  // grid comes in from the side the new Space stands on in the spaces' order: after a SWIPE it
   // springs the rest of the way on `SPRING_SNAPPY` from the finger's speed (§6; `enterSpace`),
   // after a tap – the Spaces sheet's row, the menu's Switch Space – it slides in over 250 ms
   // (`planSpaceSwitch`: later, from the trailing edge; earlier, from the leading), the window's
   // theme blending meanwhile (`useTheme`). Under reduced motion nothing travels (§11.3): the
-  // new grid fades in place over 120 ms and the indicator jumps; the blend stays, a colour blend
+  // new grid fades in place over 120 ms; the blend stays, a colour blend
   // being a fade and not travel (§11.6 as amended). The private view's grid is one slot for the
   // view's life (its key the view's), so it never slides.
   const gridKey = pane === 'tabs' ? space.id : `#${pane}`
@@ -2250,158 +2243,150 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
             />
           )}
           <PaneSlot
-            // Each view is a slot's worth of its own – the space strip, the grid or the empty
-            // view's note – coming up fresh on a 120 ms fade in while the still of the view
-            // before fades out over the same slot (v2 §11.4; §6: no slide); the cells start
-            // fresh with it.
+            // Each view is a slot's worth of its own – the grid or the empty view's note –
+            // coming up fresh on a 120 ms fade in while the still of the view before fades out
+            // over the same slot (v2 §11.4; §6: no slide); the cells start fresh with it.
             pane={pane}
             root={rootRef}
             onLeave={leavePane}
             className="zen-overview-pane relative flex min-h-0 flex-1 flex-col"
           >
-            {pane === 'tabs' && state.spaces.length > 1 && (
-              <SpaceStrip spaces={state.spaces} activeId={space.id} />
-            )}
-            {privatePane && count === 0 ? (
-              <PrivateEmpty />
-            ) : (
-              <PaneSlot
-                // The Space's slot (MOT-05): the grid comes up fresh per Space, sliding in from
-                // the side the Space stands on while the still of the last grid fades over it;
-                // the strip above is the pane's and stays. See `gridKey`.
-                pane={gridKey}
-                root={rootRef}
-                onLeave={leavePane}
-                onEnter={enterSpace}
-                className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
-              >
-                {tabsEmpty ? (
-                  <TabsEmpty slot={gridKey} gridDrawn={gridDrawn} />
-                ) : (
+            <PaneSlot
+              // The Space's slot (MOT-05): the grid comes up fresh per Space, sliding in from
+              // the side the Space stands on while the still of the last grid fades over it.
+              // See `gridKey`.
+              pane={gridKey}
+              root={rootRef}
+              onLeave={leavePane}
+              onEnter={enterSpace}
+              className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
+            >
+              {tabsEmpty ? (
+                <TabsEmpty slot={gridKey} gridDrawn={gridDrawn} />
+              ) : (
+                <div
+                  ref={gridRef}
+                  className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+                  data-pane={pane}
+                  // The Private pane under the lock cover (INC-05): its grid is out of reach – no
+                  // focus, no touch, nothing for a screen reader – until the cover lifts; the
+                  // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
+                  // So is the grid while Quick Delete's wipe runs over it (MOT-24, `wiping`).
+                  inert={(privatePane && locked) || wiping || undefined}
+                  aria-hidden={(privatePane && locked) || undefined}
+                  // The card the page morphs into is scrolled into view: keep it clear of the fades.
+                  style={{
+                    touchAction: 'pan-y',
+                    overscrollBehavior: 'contain',
+                    scrollPaddingBlock: 16
+                  }}
+                  onScroll={(e) => {
+                    noteOverviewScroll(pane, e.currentTarget.scrollTop)
+                    measure()
+                    rewindow(true)
+                  }}
+                >
+                  {searching && found === 0 && (
+                    // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
+                    // lists beneath it when they have rows – then the sentence names what is
+                    // missing, since the rows under it are tabs too.
+                    <p className="zen-overview-search-empty" data-testid="overview-search-empty">
+                      {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
+                    </p>
+                  )}
+                  {essentials.length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {essentials.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          className="zen-essential h-12 w-12"
+                          data-active={tab.id === active?.id}
+                          data-discarded={tab.discarded}
+                          aria-label={tabCardLabel(
+                            tabTitle(tab),
+                            placeOf(tab),
+                            ordered.length,
+                            tab.id === active?.id
+                          )}
+                          // An essential is no card: while tabs are being selected it takes no
+                          // pick and no tap (§9.30, laid out as it was).
+                          disabled={selecting}
+                          onClick={() => pick(tab)}
+                        >
+                          <Favicon tab={tab} size={22} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div
-                    ref={gridRef}
-                    className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-                    data-pane={pane}
-                    // The Private pane under the lock cover (INC-05): its grid is out of reach – no
-                    // focus, no touch, nothing for a screen reader – until the cover lifts; the
-                    // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
-                    // So is the grid while Quick Delete's wipe runs over it (MOT-24, `wiping`).
-                    inert={(privatePane && locked) || wiping || undefined}
-                    aria-hidden={(privatePane && locked) || undefined}
-                    // The card the page morphs into is scrolled into view: keep it clear of the fades.
-                    style={{
-                      touchAction: 'pan-y',
-                      overscrollBehavior: 'contain',
-                      scrollPaddingBlock: 16
-                    }}
-                    onScroll={(e) => {
-                      noteOverviewScroll(pane, e.currentTarget.scrollTop)
-                      measure()
-                      rewindow(true)
-                    }}
+                    // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                    // takes the shell out of the flow at its `offsetTop`, which is read against
+                    // the nearest positioned ancestor and ignores the scroller's scroll – against
+                    // this grid, which scrolls with the cells, the shell stands where the card
+                    // stood; against the pane outside the scroller it landed `scrollTop` px too
+                    // low, and the tracker held only the cells drawn under that lower box (#355's
+                    // finding, seed 49).
+                    className="relative grid gap-3"
+                    style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                   >
-                    {searching && found === 0 && (
-                      // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
-                      // lists beneath it when they have rows – then the sentence names what is
-                      // missing, since the rows under it are tabs too.
-                      <p className="zen-overview-search-empty" data-testid="overview-search-empty">
-                        {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
-                      </p>
-                    )}
-                    {essentials.length > 0 && (
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        {essentials.map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            className="zen-essential h-12 w-12"
-                            data-active={tab.id === active?.id}
-                            data-discarded={tab.discarded}
-                            aria-label={tabCardLabel(
-                              tabTitle(tab),
-                              placeOf(tab),
-                              ordered.length,
-                              tab.id === active?.id
-                            )}
-                            // An essential is no card: while tabs are being selected it takes no
-                            // pick and no tap (§9.30, laid out as it was).
-                            disabled={selecting}
-                            onClick={() => pick(tab)}
-                          >
-                            <Favicon tab={tab} size={22} />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div
-                      // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
-                      // takes the shell out of the flow at its `offsetTop`, which is read against
-                      // the nearest positioned ancestor and ignores the scroller's scroll – against
-                      // this grid, which scrolls with the cells, the shell stands where the card
-                      // stood; against the pane outside the scroller it landed `scrollTop` px too
-                      // low, and the tracker held only the cells drawn under that lower box (#355's
-                      // finding, seed 49).
-                      className="relative grid gap-3"
-                      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
-                    >
-                      {/*
+                    {/*
                     The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
                     is a card when this grid's window – the token's – holds it, a sized
                     placeholder until then. The group cards' members are the same cells, through
                     `card`.
                   */}
-                      <OverviewWindowContext.Provider value={token}>
-                        {pinned.map(card)}
-                        {groupCards.map(({ folder, tabs, gone }) => (
-                          <GroupCard
-                            key={folder.id}
-                            folder={folder}
-                            tabs={tabs}
-                            card={card}
-                            columns={columns}
-                            onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                            onNewTab={newTabInGroup}
-                            onCloseGroup={closeGroup}
-                            onDelete={deleteGroupOf}
-                            forming={tabs.length > 0 && forming(folder, tabs)}
-                            dissolving={tabs.length === 0}
-                            held={gone?.count}
-                            onDissolved={dissolvedGroup}
-                            onRelease={subscribeRelease}
-                          />
-                        ))}
-                        {loose.map(card)}
-                      </OverviewWindowContext.Provider>
-                      {/* The SAVED groups (§2): cards with the saved ring at the grid's end,
+                    <OverviewWindowContext.Provider value={token}>
+                      {pinned.map(card)}
+                      {groupCards.map(({ folder, tabs, gone }) => (
+                        <GroupCard
+                          key={folder.id}
+                          folder={folder}
+                          tabs={tabs}
+                          card={card}
+                          columns={columns}
+                          onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                          onNewTab={newTabInGroup}
+                          onCloseGroup={closeGroup}
+                          onDelete={deleteGroupOf}
+                          forming={tabs.length > 0 && forming(folder, tabs)}
+                          dissolving={tabs.length === 0}
+                          held={gone?.count}
+                          onDissolved={dissolvedGroup}
+                          onRelease={subscribeRelease}
+                        />
+                      ))}
+                      {loose.map(card)}
+                    </OverviewWindowContext.Provider>
+                    {/* The SAVED groups (§2): cards with the saved ring at the grid's end,
                           before New Tab; off the grid with it while a query stands (§9.34: a
                           saved page is no match) and while tabs are being selected they stand,
                           no card to pick. */}
-                      {!searching &&
-                        rows.saved.map((row) => (
-                          <SavedGroupCard
-                            key={`saved:${row.folder.id}`}
-                            row={row}
-                            onOpen={reopenSaved}
-                            onMenu={(r) => {
-                              noteSheetOpener()
-                              setSheet({ kind: 'group-row', folderId: r.folder.id })
-                            }}
-                          />
-                        ))}
-                      {!searching && <NewTabCard pane={pane} disabled={selecting} />}
-                    </div>
-                    {searching && !privatePane && (
-                      <OverviewSearchReach
-                        reach={reach}
-                        onRestore={restoreClosed}
-                        onOpenTab={openRemote}
-                      />
-                    )}
+                    {!searching &&
+                      rows.saved.map((row) => (
+                        <SavedGroupCard
+                          key={`saved:${row.folder.id}`}
+                          row={row}
+                          onOpen={reopenSaved}
+                          onMenu={(r) => {
+                            noteSheetOpener()
+                            setSheet({ kind: 'group-row', folderId: r.folder.id })
+                          }}
+                        />
+                      ))}
+                    {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                   </div>
-                )}
-              </PaneSlot>
-            )}
-            {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
+                  {searching && !privatePane && (
+                    <OverviewSearchReach
+                      reach={reach}
+                      onRestore={restoreClosed}
+                      onOpenTab={openRemote}
+                    />
+                  )}
+                </div>
+              )}
+            </PaneSlot>
+            {privatePane && <PrivateLockCover shown={locked} />}
           </PaneSlot>
           <PaneStills stills={stills} onDone={stillDone} />
           <SelectionActions shown={selecting} actions={selectionActions} />
@@ -2889,41 +2874,17 @@ function newTabOn(pane: OverviewPane): void {
 }
 
 /**
- * The private view with nothing in it (TAB-03): a standing state, not a message – a list's
- * empty room as §9.34 writes it for this view. §9.17's one sentence, "No private tabs", on the
- * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored),
- * its first line 48 under the header (`.zen-overview-private-empty` in main.css), with New
- * private tab as its one follow-up – the note's secondary button 16 beneath, 88 minimum at 40 –
- * never a message card, no title-plus-description pair. What private browsing keeps and does
- * not keep is the private new tab page's to say (§9.29, NTP-31), not the empty view's. In the
- * window family the private theme paints (§9.29): a child of the view's flow, so it stands
- * under the header whatever the view's height.
- */
-function PrivateEmpty(): JSX.Element {
-  return (
-    <div
-      className="zen-overview-private-empty relative min-h-0 flex-1"
-      data-pane="private"
-      data-testid="overview-private-empty"
-    >
-      <PhoneEmptyNote action={{ label: 'New private tab', onSelect: () => newTabOn('private') }}>
-        No private tabs
-      </PhoneEmptyNote>
-    </div>
-  )
-}
-
-/**
- * The regular view with nothing in it (TAB-34): the private view's chassis with this view's
- * words. §9.17's one sentence, "No open tabs", on the same note in the window ink, its first
- * line 48 under the header (or under the space strip, which stands above the Space's slot as it
- * does above the grid), with New tab as its one follow-up – the note's secondary button – in
- * place of the grid and its lone New Tab card, as the private view at none has no card; no title, no
- * glyph, no message card. Chrome's grid at none says the same. It stands inside the Space's slot,
- * so a Space with no tabs slides in as a grid would (MOT-05) and the strip above it stays. It is
- * the pane's state, not the search's: while a query stands the grid keeps the room with its "No
- * tabs found" and the reach's rows (`.zen-overview-tabs-empty` in main.css: the two rules the
- * Private pane's note has). Its 120 ms fade (§11.4) is the replacement's alone: the note that
+ * The regular view with nothing in it (TAB-34): §9.17's one sentence, "No open tabs", on the
+ * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored)
+ * in the window ink, its first line 48 under the header, with New tab as its one follow-up –
+ * the note's secondary button 16 beneath, 88 minimum at 40 – in place of the grid and its lone
+ * New Tab card; no title, no glyph, no message card (a standing state, not a message, as §9.34
+ * writes a list's empty room). Chrome's grid at none says the same. It stands inside the
+ * Space's slot, so a Space with no tabs slides in as a grid would (MOT-05). It is the pane's
+ * state, not the search's: while a query stands the grid keeps the room with its "No tabs
+ * found" and the reach's rows (`.zen-overview-tabs-empty` in main.css). The private view has no
+ * empty room: it stands only while a private tab is open (§4, `overviewPane`). Its 120 ms fade
+ * (§11.4) is the replacement's alone: the note that
  * takes the grid's place in its own slot – the last card gone – is marked `data-in-place`, the
  * fade rule's key; one that comes up with its pane, its Space or the overview carries no mark
  * and rides their motion (§11.1: one object, one move). The mark is decided once, at the mount,
@@ -2953,151 +2914,6 @@ function TabsEmpty({
       <PhoneEmptyNote action={{ label: 'New tab', onSelect: () => newTabOn('tabs') }}>
         No open tabs
       </PhoneEmptyNote>
-    </div>
-  )
-}
-
-/** The indicator's `scaleX` this frame, for its ends to keep their radius under it (`main.css`). */
-const STRIP_SCALE_VAR = '--zen-strip-indicator-scale'
-
-/**
- * The spaces as chips: pills, the current one in the accent tint, edges fading into the gutter.
- * The tint is the strip's INDICATOR (MOT-05, v2 §11.4): one pill under the chips – the current
- * chip draws no fill of its own, the others their element fill, each fill a 120 ms state change
- * – that GLIDES from the chip that was current to the one that is on `SPRING_SNAPPY`: a FLIP on
- * `transform` alone (`indicatorFrame`: laid out at the new chip's box, drawn from the old one's
- * by a translation and a `scaleX`, its radius held round under the scale), the new chip
- * scrolled into the strip's view. Under reduced motion the indicator jumps and the strip scrolls
- * at once (§11.3).
- */
-function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string }): JSX.Element {
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 24 })
-  const stripRef = useRef<HTMLDivElement | null>(null)
-  const indicatorRef = useRef<HTMLDivElement>(null)
-  // Where the indicator rests: the current chip's box, as of the last commit.
-  const lastBox = useRef<StripBox | null>(null)
-  // The glide in flight: from the box it left to the one it rests on, over `travel` px (the
-  // spring runs in px, `travel` → 0, as the grid's FLIP does; the frame is its progress).
-  const glide = useRef<{ from: StripBox; to: StripBox; travel: number } | null>(null)
-  const spring = useRef<SpringAnimation | null>(null)
-  const paintIndicator = (p: number): void => {
-    const el = indicatorRef.current
-    const g = glide.current
-    if (!el) return
-    const { dx, scale } = g ? indicatorFrame(g.from, g.to, p) : { dx: 0, scale: 1 }
-    el.style.transform = `translate3d(${dx}px, 0, 0) scaleX(${scale})`
-    // The ends stay round under the horizontal scale: the sheet divides the radius' x by it
-    // (`--zen-strip-indicator-scale`, `main.css`).
-    if (scale === 1) el.style.removeProperty(STRIP_SCALE_VAR)
-    else el.style.setProperty(STRIP_SCALE_VAR, String(scale))
-  }
-  /** The box the indicator is drawn at this frame, when a glide is in flight. */
-  const drawnBox = (): StripBox | null => {
-    const g = glide.current
-    const s = spring.current
-    if (!g || !s?.running) return null
-    const { dx, scale } = indicatorFrame(g.from, g.to, 1 - s.current.x / g.travel)
-    return { left: g.to.left + dx, width: g.to.width * scale }
-  }
-  const chipsKey = spaces.map((s) => `${s.id}:${s.name}`).join('|')
-  useLayoutEffect(() => {
-    const strip = stripRef.current
-    const el = indicatorRef.current
-    const chip = strip?.querySelector<HTMLElement>('[aria-current="true"]') ?? null
-    if (!strip || !el) return
-    if (!chip) {
-      // No current chip in the strip: nothing to mark.
-      el.style.opacity = '0'
-      lastBox.current = null
-      return
-    }
-    const to: StripBox = { left: chip.offsetLeft, width: chip.offsetWidth }
-    el.style.opacity = ''
-    el.style.left = `${to.left}px`
-    el.style.width = `${to.width}px`
-    el.style.top = `${chip.offsetTop}px`
-    el.style.height = `${chip.offsetHeight}px`
-    // A glide in flight (a third Space picked before the indicator rested) goes on from where
-    // it is drawn; otherwise from the chip that was current.
-    const from = drawnBox() ?? lastBox.current
-    lastBox.current = to
-    const reduced = reducedMotion()
-    const travel = from
-      ? Math.max(Math.abs(from.left - to.left), Math.abs(from.width - to.width))
-      : 0
-    const still = !from || reduced || travel < 0.5
-    // The current chip in the strip's view: the strip opens on it (no motion on the mount), and
-    // scrolls to a picked one off its edge as the indicator glides there.
-    chip.scrollIntoView({
-      inline: 'nearest',
-      block: 'nearest',
-      behavior: still ? 'auto' : 'smooth'
-    })
-    spring.current?.stop()
-    if (still) {
-      // The strip's first chip, a chip re-laid out in place, or reduced motion: at rest at once.
-      glide.current = null
-      paintIndicator(1)
-      return
-    }
-    glide.current = { from, to, travel }
-    // Drawn at the old chip before this commit paints: the spring's first frame is the next one.
-    paintIndicator(0)
-    spring.current ??= new SpringAnimation(
-      SPRING_SNAPPY,
-      (x) => paintIndicator(glide.current ? 1 - x / glide.current.travel : 1),
-      () => {
-        glide.current = null
-        paintIndicator(1)
-      }
-    )
-    spring.current.start(travel, 0, 0)
-  }, [activeId, chipsKey])
-  useEffect(
-    () => () => {
-      spring.current?.stop()
-    },
-    []
-  )
-  // One ref for the strip's life: made anew each render it would be called again each render,
-  // the fades measuring the strip again each time (a forced layout; see `gridRef`).
-  const stripFade = useCallback(
-    (el: HTMLDivElement | null) => {
-      stripRef.current = el
-      return fade(el)
-    },
-    [fade]
-  )
-  return (
-    <div
-      ref={stripFade}
-      className="zen-overview-strip relative flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2 pt-0.5"
-    >
-      <div
-        ref={indicatorRef}
-        className="zen-overview-strip-indicator pointer-events-none absolute"
-        aria-hidden
-        data-testid="overview-strip-indicator"
-      />
-      {spaces.map((s) => {
-        const active = s.id === activeId
-        return (
-          <button
-            key={s.id}
-            type="button"
-            className={cn(
-              'zen-overview-strip-chip relative flex h-9 shrink-0 snap-start items-center gap-2 rounded-full px-3.5 text-[13px] font-medium active:scale-[0.98]',
-              !active && 'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]'
-            )}
-            aria-current={active || undefined}
-            data-space-id={s.id}
-            onClick={() => run('space.activate', { spaceId: s.id })}
-          >
-            <SpaceGlyph icon={s.icon} size={14} />
-            <span className="max-w-[140px] truncate">{s.name}</span>
-          </button>
-        )
-      })}
     </div>
   )
 }

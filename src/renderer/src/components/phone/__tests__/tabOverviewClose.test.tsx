@@ -718,16 +718,17 @@ describe('on a host with private tabs', () => {
     expect(of('session.recentlyClosed')).toEqual([])
   })
 
-  it('the private view with no private tab open is the empty note with its New private tab (§3), no card; the menu asked for is the private view’s', async () => {
+  it('with no private tab open there is no private view to pick (§4): the pick reads as the regular view, whose rows the ⋯ menu is asked for', async () => {
     show(withPrivate(stateOf([tab('a', 'https://a.example/')])))
     act(() => pickOverviewPane('private'))
     await settle()
-    expect(view()).toBe('private')
-    expect(cells()).toEqual([])
-    expect(document.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
-    expect(buttonByText('New private tab')).toBeDefined()
-    // The core greys Close Private Tabs (0) on its template; the chrome's word is the view.
-    expect(overviewMenuRequest()).toEqual({ overview: { view: 'private' } })
+    expect(view()).toBe('tabs')
+    expect(cells()).toEqual(['a'])
+    expect(document.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(buttonByText('New private tab')).toBeUndefined()
+    // The menu is the regular view's: no "Private Tabs (N)" row while none is open is the
+    // template's to grey or drop; the chrome's word is the view that stands.
+    expect(overviewMenuRequest()).toEqual({ overview: { view: 'tabs' } })
   })
 
   it('from the private view the ⋯ menu’s Tabs (N) switches back, and the system back from a picked private view returns to the regular view (§3)', async () => {

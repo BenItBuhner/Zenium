@@ -95,13 +95,25 @@ export function privateTabsOf(state: UIState): Tab[] {
   return order
 }
 
-/** The view the overview shows: the one picked, else the one the tab in view belongs to. */
+/**
+ * The view the overview shows: the one picked, else the one the tab in view belongs to. The
+ * private view stands only while a private tab is open (cleanup spec §4: no "Private Tabs (N)"
+ * row while none is, and the last private close hands the regular view back), so a pick of it
+ * with none open – a stale pick, a caller's – reads as the regular view; there is no empty
+ * private view.
+ */
 export function overviewPane(
   state: UIState,
   picked: OverviewPane | null = privateTabsStore.get().pane
 ): OverviewPane {
+  if (picked === 'private') return anyPrivateTab(state) ? 'private' : 'tabs'
   if (picked) return picked
   return activeTabIsPrivate(state) ? 'private' : 'tabs'
+}
+
+/** Some tab of the window is a private one. */
+export function anyPrivateTab(state: UIState): boolean {
+  return Object.values(state.tabs).some(isPrivateTab)
 }
 
 export function pickOverviewPane(pane: OverviewPane): void {

@@ -18,15 +18,16 @@ import {
  * The Space switch in the tab overview (MOT-05, v2 §11.4 / §11.6), rendered for real through
  * `TabOverview` in happy-dom with the window suite's layout (rows of two, 272 pitch, a grid 800
  * tall) and a stand-in for the Web Animations API that records what is asked of it. Two Spaces
- * – Work, thirty tabs; Home, twelve – and the strip's chips laid out at boxes of the test's own.
- * The switch: a still of the grid that left fades 1 → 0 over 120 ms over its slot; the next
- * Space's grid comes up in a slot of its own and SLIDES in over 250 ms on the standard curve
- * from the side the Space stands on in the strip's order (+120 px forward, −120 back); its cards
+ * – Work, thirty tabs; Home, twelve – switched as the Spaces sheet's pick or the swipe switches
+ * them: the core's `activeSpaceId` moves and the overview renders the new Space. The switch: a
+ * still of the grid that left fades 1 → 0 over 120 ms over its slot; the next Space's grid
+ * comes up in a slot of its own and SLIDES in over 250 ms on the standard curve from the side
+ * the Space stands on in the spaces' order (+120 px forward, −120 back); its cards
  * in view and a row's margin are CARDS in that very commit and the rest placeholders (no
  * placeholder slides in); the window's store is the new grid's (its token, its cards alone); the
  * FLIP tracker measures the cells with the slot's transform held off and glides nothing from the
- * grid that left; the strip's indicator is drawn from the old chip's box towards the new one's;
- * the overview leaving mid-slide lands the grid first. Under reduced motion nothing travels –
+ * grid that left; the overview leaving mid-slide lands the grid first. Under reduced motion
+ * nothing travels –
  * the theme blend (`useTheme.ts`'s, pinned by the hook's own suite) stays, a colour blend being
  * a fade and not travel (§11.6 as amended).
  */
@@ -37,11 +38,6 @@ const AREA = { x: 0, y: 0, width: 426, height: 800 }
 const CARD_H = 260
 const PITCH = 272
 const GRID_H = 800
-/** The strip's chips: where each stands along the strip, and how wide. */
-const CHIPS: Record<string, { left: number; width: number }> = {
-  [WORK]: { left: 12, width: 80 },
-  [HOME]: { left: 100, width: 120 }
-}
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) =>
   name === 'session.recentlyClosed' ? [] : null
@@ -115,7 +111,7 @@ function space(id: string, name: string, tabs: Tab[]): Space {
   }
 }
 
-/** Two Spaces in the strip's order, Work then Home; `active` the current one. */
+/** Two Spaces in the spaces' order, Work then Home; `active` the current one. */
 function stateOf(active: string): UIState {
   const w = work()
   const h = home()
@@ -167,7 +163,7 @@ const measured = HTMLElement.prototype.getBoundingClientRect
 let cellReads: Array<{ id: string; held: boolean; slot: HTMLElement | null }> = []
 function installLayout(): void {
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
-    // The Space slot and its grid fill the area under the strip: the box a still is taken in.
+    // The Space slot and its grid fill the area under the header: the box a still is taken in.
     if (
       this.classList.contains('zen-overview-space') ||
       this.classList.contains('zen-overview-grid')
@@ -278,10 +274,6 @@ const placeholderIds = (): string[] =>
 const stills = (): HTMLElement[] => [
   ...host!.querySelectorAll<HTMLElement>('[data-testid="pane-still"]')
 ]
-const chip = (id: string): HTMLElement =>
-  host!.querySelector<HTMLElement>(`.zen-overview-strip-chip[data-space-id="${id}"]`)!
-const indicator = (): HTMLElement =>
-  host!.querySelector<HTMLElement>('[data-testid="overview-strip-indicator"]')!
 const newTabCell = (): HTMLElement => host!.querySelector<HTMLElement>('[data-cell="new-tab"]')!
 /** The group cells of the live grid (never a still's). */
 const groupCells = (): HTMLElement[] => [...grid().querySelectorAll<HTMLElement>('.zen-group')]
@@ -332,23 +324,16 @@ beforeEach(() => {
     configurable: true,
     get: () => GRID_H
   })
-  // The chips' boxes along the strip; everything else 36 tall at the top.
+  // Everything 36 tall at the top, the area wide.
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
     configurable: true,
     get: () => 36
   })
   Object.defineProperty(HTMLElement.prototype, 'offsetTop', { configurable: true, get: () => 2 })
-  Object.defineProperty(HTMLElement.prototype, 'offsetLeft', {
-    configurable: true,
-    get(this: HTMLElement) {
-      return CHIPS[this.dataset.spaceId ?? '']?.left ?? 0
-    }
-  })
+  Object.defineProperty(HTMLElement.prototype, 'offsetLeft', { configurable: true, get: () => 0 })
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
-    get(this: HTMLElement) {
-      return CHIPS[this.dataset.spaceId ?? '']?.width ?? AREA.width
-    }
+    get: () => AREA.width
   })
   HTMLElement.prototype.scrollIntoView = () => undefined
   uiStore.set({ toasts: [] })
@@ -385,17 +370,6 @@ afterEach(() => {
 // --- the switch --------------------------------------------------------------------------------
 
 describe('a Space switch in the overview', () => {
-  it('a chip tap activates the Space', () => {
-    render(stateOf(WORK))
-    act(() => chip(HOME).click())
-    expect(
-      invoke.mock.calls.some(
-        ([name, args]) =>
-          name === 'space.activate' && (args as { spaceId: string }).spaceId === HOME
-      )
-    ).toBe(true)
-  })
-
   it('the next grid slides in from the trailing side over 250 ms while a still of the last fades 120 ms; its cards are built before the slide draws them', () => {
     render(stateOf(WORK))
     expect(cardIds()).toEqual(ids('w', 0, 7))
@@ -421,7 +395,7 @@ describe('a Space switch in the overview', () => {
     expect([...store.filled].sort()).toEqual(expect.arrayContaining(ids('h', 0, 7)))
     expect([...store.filled].every((id) => id.startsWith('h'))).toBe(true)
     expect(pendingFill()).toBe(4)
-    // Its slide: from +120 px (Home stands after Work in the strip) to rest, 250 ms on the
+    // Its slide: from +120 px (Home stands after Work in the spaces' order) to rest, 250 ms on the
     // standard curve, the opacity solid by the slide's first half.
     const [slide] = slides()
     expect(slides()).toHaveLength(1)
@@ -453,9 +427,9 @@ describe('a Space switch in the overview', () => {
       expect(fade.options).toMatchObject({ duration: SPACE_FADE_MS, fill: 'forwards' })
     }
     expect(SPACE_FADE_MS).toBe(120)
-    // The strip stays: it is the pane's, not the slot's.
-    expect(host!.querySelectorAll('.zen-overview-strip')).toHaveLength(1)
-    expect(still.querySelector('.zen-overview-strip')).toBeNull()
+    // The header stays: it is the overview's, not the slot's.
+    expect(host!.querySelectorAll('.zen-overview > header')).toHaveLength(1)
+    expect(still.querySelector(':scope > header')).toBeNull()
     // The slot's own transform is the animation's: nothing inline is left on it after the
     // tracker's measurement.
     expect(slot().style.getPropertyValue('transform')).toBe('')
@@ -535,7 +509,7 @@ describe('a Space switch in the overview', () => {
     expect(grid().dataset.fadeAxis).toBeUndefined()
   })
 
-  it('the grid and the strip attach their edge fades once for their life, not again on each render of the overview; a switch attaches the new grid alone', async () => {
+  it('the grid attaches its edge fades once for its life, not again on each render of the overview; a switch attaches the new grid alone', async () => {
     // Every measurement `attachFadeEdges` makes writes `--zen-fade-end` (nothing else does): one
     // at each attach – a read of the scroller's size and scroll, a forced layout – and one per
     // frame after a scroll or a mutation (no frame runs here: the frame is stubbed).
@@ -552,21 +526,21 @@ describe('a Space switch in the overview', () => {
     })
     render(stateOf(WORK))
     await Promise.resolve()
-    // The strip's and the grid's: once each.
-    expect(measured).toBe(2)
+    // The grid's: once.
+    expect(measured).toBe(1)
     // The overview rendered again with the same Space – the state set anew, its props the same
     // values: nothing measured again.
     render(stateOf(WORK))
     render(stateOf(WORK))
     await Promise.resolve()
+    expect(measured).toBe(1)
+    // A switch: the next Space's grid is a new element and measures once.
+    render(stateOf(HOME))
+    await Promise.resolve()
     expect(measured).toBe(2)
-    // A switch: the next Space's grid is a new element and measures once; the strip stays as it is.
     render(stateOf(HOME))
     await Promise.resolve()
-    expect(measured).toBe(3)
-    render(stateOf(HOME))
-    await Promise.resolve()
-    expect(measured).toBe(3)
+    expect(measured).toBe(2)
   })
 
   it('the next grid fills the rest of its cards in idle time after the switch, as a mounting grid does', () => {
@@ -611,7 +585,7 @@ describe('a Space switch in the overview', () => {
     expect(placeholderIds()).toEqual([])
   })
 
-  it('slides in from the leading side going back in the strip order', () => {
+  it("slides in from the leading side going back in the spaces' order", () => {
     render(stateOf(HOME))
     animations = []
     render(stateOf(WORK))
@@ -756,44 +730,6 @@ describe('a Space switch in the overview', () => {
   })
 })
 
-describe('the strip indicator', () => {
-  it('rests on the current chip at the mount, and is drawn from the old chip towards the new one at the switch', () => {
-    render(stateOf(WORK))
-    const ind = indicator()
-    expect(ind.getAttribute('aria-hidden')).toBe('true')
-    expect([ind.style.left, ind.style.width, ind.style.top, ind.style.height]).toEqual([
-      '12px',
-      '80px',
-      '2px',
-      '36px'
-    ])
-    expect(ind.style.transform).toBe('translate3d(0px, 0, 0) scaleX(1)')
-    // The current chip draws no fill of its own; the other its element fill.
-    expect(chip(WORK).className).not.toContain('bg-[var(--zen-element-bg)]')
-    expect(chip(HOME).className).toContain('bg-[var(--zen-element-bg)]')
-    expect(chip(WORK).getAttribute('aria-current')).toBe('true')
-
-    render(stateOf(HOME))
-    // Laid out at Home's box, drawn at Work's on the spring's first frame: 88 px back, at
-    // 80 / 120 of the width, the ends' radius held round under the scale.
-    expect([ind.style.left, ind.style.width]).toEqual(['100px', '120px'])
-    expect(ind.style.transform).toBe(`translate3d(-88px, 0, 0) scaleX(${80 / 120})`)
-    expect(ind.style.getPropertyValue('--zen-strip-indicator-scale')).toBe(String(80 / 120))
-    expect(chip(HOME).getAttribute('aria-current')).toBe('true')
-    expect(chip(WORK).hasAttribute('aria-current')).toBe(false)
-  })
-
-  it('jumps under reduced motion', () => {
-    reduced = true
-    render(stateOf(WORK))
-    render(stateOf(HOME))
-    const ind = indicator()
-    expect([ind.style.left, ind.style.width]).toEqual(['100px', '120px'])
-    expect(ind.style.transform).toBe('translate3d(0px, 0, 0) scaleX(1)')
-    expect(ind.style.getPropertyValue('--zen-strip-indicator-scale')).toBe('')
-  })
-})
-
 describe('under reduced motion', () => {
   it('nothing travels: the next grid fades in place over 120 ms, the still fades the same, the slot is never held', () => {
     reduced = true
@@ -814,21 +750,9 @@ describe('under reduced motion', () => {
 
 describe('the stylesheet', () => {
   const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
-  const rule = (selector: string): string => {
-    const m = new RegExp(`${selector.replace(/[.[\]()]/g, '\\$&')}\\s*\\{([^}]*)\\}`).exec(css)
-    if (!m) throw new Error(`no rule for ${selector}`)
-    return m[1]!.replace(/\s+/g, ' ').trim()
-  }
 
-  it('the indicator is the accent tint scaled from its leading edge; the chips fills are 120 ms state changes', () => {
-    const ind = rule('.zen-overview-strip-indicator')
-    expect(ind).toContain('background: rgb(var(--zen-accent-rgb) / 0.16)')
-    expect(ind).toContain('transform-origin: left center')
-    expect(ind).toContain('border-radius: calc(18px / var(--zen-strip-indicator-scale, 1)) / 18px')
-    expect(ind).not.toMatch(/transition/)
-    expect(rule('.zen-overview-strip-chip')).toContain(
-      'transition: background-color 120ms var(--zen-ease)'
-    )
+  it('nothing of the space chip row is left in the sheet (the cleanup spec §1: the title is the switcher)', () => {
+    expect(css).not.toMatch(/zen-overview-strip/)
   })
 
   it('the Space slot has no entrance of its own in the sheet: the slide is the Web Animations one', () => {

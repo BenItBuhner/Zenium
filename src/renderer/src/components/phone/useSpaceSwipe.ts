@@ -9,12 +9,12 @@ import { claimTouchMoves } from './usePillGestures'
 /**
  * What a touch inside the grid is not allowed to start from: the elements with gestures of their
  * own – a card (its swipe closes it, its hold lifts it), an essential, a group or reach row (the
- * swipe reveals its delete), the space strip (it scrolls sideways), any control. Chrome's
+ * swipe reveals its delete), any control. Chrome's
  * `Pane.isTouchOnInteractiveElement` ("such as a tab card") excludes the same
  * (`chrome/browser/hub/android/.../hub/Pane.java` lines 30-41).
  */
 const INTERACTIVE =
-  '[data-cell], .zen-essential, .zen-overview-strip, button, a, input, textarea, select, ' +
+  '[data-cell], .zen-essential, button, a, input, textarea, select, ' +
   '[role="button"], [role="checkbox"], [role="tab"], [role="tablist"]'
 
 /** The slot the swipe moves: the Space's grid (`TabOverview`'s `PaneSlot` keyed by the Space). */
@@ -39,7 +39,7 @@ export interface SpaceSwipeHandoff {
 export interface SpaceSwipeOptions {
   /** The Space on show. */
   spaceId: string
-  /** The window's Spaces in their order (the strip's; a swipe left goes to the next). */
+  /** The window's Spaces in their order (the Spaces sheet's; a swipe left goes to the next). */
   spaceIds: readonly string[]
   /** The overview is settled and taking touches; a drag in flight when this goes false is dropped. */
   enabled: boolean
@@ -160,7 +160,7 @@ function drop(m: Machine): void {
  * grid's own background – not on a card or a row, not in the 32 px edge gutters – is nothing
  * until it moves 8 px; then a move with the horizontal winning towards a Space that exists
  * claims it (its touchmoves ours, the pointer captured), and the grid's touch is the scroller's
- * otherwise. In a right-to-left layout the strip's order runs the other way, so a swipe left
+ * otherwise. In a right-to-left layout the spaces' order runs the other way, so a swipe left
  * goes to the previous Space.
  *
  * While the finger is down the writes are input, not animation (v2 §11.3): the Space's slot
