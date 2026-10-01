@@ -24,11 +24,20 @@
  * ticket answers false and the stub imports the chunk plain, bracketed, as it was served before
  * the stub. A chunk that threw in the scope rejects the ticket with its error, so the `import()`
  * rejects as it would have.
+ *
+ * The same stub answers a script-shaped module of the graph (`isScriptShapedModule`,
+ * `extensionModuleChrome.ts`), and a one-realm host cannot tell a content script's `import()`
+ * of such a file from a `<script type="module" src>` element a script put in the page – the
+ * page's own module, which runs in the main world in Chrome. The element is in the document
+ * while its module evaluates, so the relay reads it there (`isModuleElement`) and lets the stub
+ * import the file plain, bracketed on the real global, as it was served before.
  */
 
 export interface ChunkRelayHost {
   /** Whether this copy can run a chunk of the extension in its content scope here (a top frame that made the scope). */
   canRun(extId: string): boolean
+  /** Whether a `<script type="module">` element of the document asks for `url`: the page's own module, kept on the real global. */
+  isModuleElement?(url: string): boolean
   /** Ask the host to run `url` in the scope; it answers through `ran` (the exec landed) or `done` (refused). */
   request(id: string, extId: string, url: string): void
   /** A console warning of the page's, for a chunk that ran plain after all. */
@@ -38,8 +47,8 @@ export interface ChunkRelayHost {
 export interface ChunkRelay {
   /**
    * `__zenExtChunk(extId, url)`: true once the chunk ran in the scope, false when it is to be
-   * imported plain (synchronously so when this copy cannot run it at all), the chunk's own error
-   * when it threw.
+   * imported plain (synchronously so when this copy cannot run it at all, or a module element
+   * of the page asks for it), the chunk's own error when it threw.
    */
   claim(extId: unknown, url: unknown): Promise<boolean> | false
   /** The exec of kind `chunk` ran the file in the scope: `error` null, or what the chunk threw. */
@@ -77,7 +86,7 @@ export function createChunkRelay(host: ChunkRelayHost): ChunkRelay {
     claim(extId, url) {
       const id = String(extId)
       const href = String(url)
-      if (!host.canRun(id)) {
+      if (!host.canRun(id) || host.isModuleElement?.(href) === true) {
         stats.plain++
         return false
       }

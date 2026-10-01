@@ -424,13 +424,16 @@ class UnitCompiler(
                     val g = groupsJson.optJSONObject(j) ?: continue
                     val ext = g.optString("ext", id)
                     val files = g.optJSONArray("js") ?: JSONArray()
+                    val isolation = g.optString("isolation", "with")
+                    // A `world: "MAIN"` group's `import()` is the page's own in Chrome too: the keyword stays.
+                    val ownImport = isolation != "none"
                     val sources = List(files.length()) { k ->
                         val path = files.optString(k, "")
                         if (path.startsWith(INLINE_CODE)) ExtensionScripts.Source(path.substring(INLINE_CODE.length))
-                        else source(entry, ext, path, read, lastUseHere(path))
+                        else source(entry, ext, path, read, lastUseHere(path), ownImport)
                             ?: ExtensionScripts.Source("console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});")
                     }
-                    groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
+                    groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, isolation))
                 }
                 val css = LinkedHashMap<String, String>()
                 for (j in 0 until cssJson.length()) {
@@ -646,15 +649,17 @@ class UnitCompiler(
     /**
      * A script file as the assembly takes it: held (small, soft-cached, a later unit of the plan
      * names it) or transient (large, or at its last use in the plan – released as it is copied
-     * in), its relative `import()` specifiers resolved to the file's own served URL on the way in
-     * ([RelativeImports]; the cached text stays as read, so the same file under another path or
-     * extension is not confused). The refusal estimate does not count the rewrite's few dozen
-     * characters per call; a loader's handful sits inside the estimate's room.
+     * in), its dynamic `import()` calls rewritten on the way in – the keyword to the bootstrap's
+     * helper unless the group runs in the page's main world (`ownImport`), a relative specifier
+     * to the file's own served URL ([RelativeImports]; the cached text stays as read, so the
+     * same file under another path, extension or isolation is not confused). The refusal
+     * estimate does not count the rewrite's few dozen characters per call; a loader's handful
+     * sits inside the estimate's room.
      */
-    private fun source(entry: ExtensionCache, ext: String, path: String, read: (String) -> String?, lastUse: Boolean): ExtensionScripts.Source? {
+    private fun source(entry: ExtensionCache, ext: String, path: String, read: (String) -> String?, lastUse: Boolean, ownImport: Boolean): ExtensionScripts.Source? {
         val text = text(entry, path, read, hold = !lastUse) ?: return null
         val transient = lastUse || text.length >= LARGE_SOURCE_CHARS
-        val edits = RelativeImports.edits(text, ext, path)
+        val edits = RelativeImports.edits(text, ext, path, ownImport)
         if (edits.isNotEmpty()) return RelativeImports.source(text, edits, transient)
         return if (transient) ExtensionScripts.Source.transient(text) else ExtensionScripts.Source(text)
     }

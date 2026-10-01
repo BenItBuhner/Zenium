@@ -4278,13 +4278,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * finds nothing) a popup the sheet shows despite its empty document is opened as rendered,
      * and when `expr` has no pass the sheet's accessibility labels carrying the row's own words –
      * three or more, of a tree that shows content ([shownDespiteEmptyDom]) – are the pass, as the
-     * popup stage and [accountGate] read such a popup.
+     * popup stage and [accountGate] read such a popup. An open that times out records what the
+     * chrome held as its popup view at that moment ([popupAtTimeout]; round 24 §7's Black Menu
+     * on 156: `popup did not render in the core check` at both ends while the popup STEP read 71
+     * accessibility nodes of the same page), and a row with `ownLabels` opens once more – its own
+     * second open, read the same way (`secondOpen`).
      */
     private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = "", apiHost: String? = null, apiProbePath: String? = null, ownLabels: Regex? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
-        val popup = openPopup(row, factor, orSeen = ownLabels != null)
+        var popup = openPopup(row, factor, orSeen = ownLabels != null)
+        if (popup == null) {
+            extra.put("popupAtTimeout", popupAtTimeout())
+            if (ownLabels != null) {
+                runCatching { coreCall("extension.closePopup", "null") }
+                SystemClock.sleep(scaled(1_500, factor))
+                popup = openPopup(row, factor, orSeen = true)
+                extra.put("secondOpen", if (popup != null) JSONObject().put("rendered", true) else popupAtTimeout())
+            }
+        }
         var found = JSONObject()
         if (popup != null) {
             found = pollExpr(popup, expr, scaled(settleMs, factor))
@@ -4598,9 +4611,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * redirect of the main frame to its hosted block page (`user.blocksite.co/app/blocked?site=`),
      * so the next load of the fixture lands there (or on a block page of the extension's own, or
      * its overlay): the pass, as the desktop's round 6 graded it. The worker's dynamic rules are
-     * read beside.
+     * read beside. Another site blocker with the same shape names its own words: `label`, the
+     * popup's block `control` (a label regex literal) and the `overlay` pattern of its in-page
+     * block (Block Site: Site Blocker & Focus Mode, round 25 – "Block current site", then its
+     * worker's `tabs.onUpdated` sends the tab to its own `index.html?page=WarningSite&site=…`, an
+     * extension page, which `landed` takes).
      */
-    private fun blockSite(row: Row, entry: JSONObject): Grade {
+    private fun blockSite(row: Row, entry: JSONObject, label: String = "BlockSite", control: String = "/block this site|block site|block$/i", overlay: String = "blocksite"): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (tab, view) = fixture("page-b.html?block", factor, 2_000)
@@ -4617,23 +4634,43 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 screenPoint(live, consent)?.let { tap(it.first, it.second) }
                 SystemClock.sleep(scaled(2_000, factor))
             }
-            val live = popupView()?.takeIf { it.context == "popup" }
+            var live = popupView()?.takeIf { it.context == "popup" }
             if (live != null) {
                 extra.put("popupText", json(tabEval(live, DEEP_TEXT)).optString("text").take(240))
-                // The promo sheet's own close control, when one covers the menu: pressed by finger.
-                val cover = json(tabEval(live, SHEET_CLOSE))
+                // The promo sheet's own close control, when one covers the menu (BlockSite's):
+                // pressed by finger – and only when the block control is out of reach, because
+                // [SHEET_CLOSE] takes any small unlabeled `svg` at the top-right for the close,
+                // and a menu with nothing over it has its own icon there: Block Site's settings
+                // gear, whose press opened its settings tab and took the popup with it, so the
+                // block press that followed landed on the chrome's address bar (round 25's
+                // BEFORE, 113).
+                val found = json(tabEval(live, FIND_LABEL.replace("__RE__", control)))
+                val covered = !found.optBoolean("clicked") || json(tabEval(live, CONTROL_COVERED.replace("__RE__", control).replace("__X__", found.optDouble("x", 0.0).toString()).replace("__Y__", found.optDouble("y", 0.0).toString()))).optBoolean("covered", true)
+                val cover = if (!covered) JSONObject().put("clicked", false).put("skipped", "the block control is in reach") else json(tabEval(live, SHEET_CLOSE))
                 steps.put("sheet: ${cover.toString().take(100)}")
                 if (cover.optBoolean("clicked")) {
                     screenPoint(live, cover)?.let { tap(it.first, it.second) }
                     SystemClock.sleep(scaled(1_500, factor))
+                    // The press may have been the menu's own control after all: the popup it
+                    // navigated away from is not the one to press the block in.
+                    live = popupView()?.takeIf { it.context == "popup" }
+                    if (live == null) steps.put("popup: gone after the sheet press (tabs ${tabUrls().values.joinToString(" ").take(160)})")
                 }
-                block = poll(scaled(8_000, factor), 1_000) { json(tabEval(live, FIND_LABEL.replace("__RE__", "/block this site|block site|block$/i"))).takeIf { it.optBoolean("clicked") } }
-                    ?: json(tabEval(live, FIND_LABEL.replace("__RE__", "/block this site|block site|block$/i")))
+            }
+            if (live != null) {
+                val popupNow = live
+                block = poll(scaled(8_000, factor), 1_000) { json(tabEval(popupNow, FIND_LABEL.replace("__RE__", control))).takeIf { it.optBoolean("clicked") } }
+                    ?: json(tabEval(popupNow, FIND_LABEL.replace("__RE__", control)))
                 steps.put("block: ${block.toString().take(100)}")
-                if (block.optBoolean("clicked")) {
-                    screenPoint(live, block)?.let { tap(it.first, it.second) }
+                // The finger goes where the popup is now, or nowhere: a popup that closed since
+                // the control was measured has the chrome under the point.
+                if (block.optBoolean("clicked") && popupView()?.takeIf { it.context == "popup" } != null) {
+                    screenPoint(popupNow, block)?.let { tap(it.first, it.second) }
                     SystemClock.sleep(scaled(3_000, factor))
                     popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupAfterBlock", json(tabEval(it, DEEP_TEXT)).optString("text").take(200)) }
+                } else if (block.optBoolean("clicked")) {
+                    block.put("clicked", false).put("pressed", false).put("why", "the popup closed before the press")
+                    steps.put("block: not pressed, the popup closed before the press")
                 }
             }
         }
@@ -4650,19 +4687,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val landed = poll(scaled(25_000, factor), 700) { tabUrls()[tab]?.takeIf { !it.startsWith(BASE) && (blockedUrl.containsMatchIn(it) || extensionPage(it, row.id)) } }
         SystemClock.sleep(scaled(1_500, factor))
         val page = json(tabEval(view, DOM_REPORT))
-        val overlay = json(tabEval(view, injectedAny("blocksite")))
-        extra.put("landed", tabUrls()[tab] ?: "").put("page", page).put("overlay", overlay).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        val overlayFound = json(tabEval(view, injectedAny(overlay)))
+        extra.put("landed", tabUrls()[tab] ?: "").put("page", page).put("overlay", overlayFound).put("console", JSONArray(consoleOf(view).takeLast(8)))
         bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
         snap("${entry.optString("slug")}-blocked")
         val text = page.optString("text")
         val blockedText = Regex("is blocked|blocked by|site blocked|stay focused", RegexOption.IGNORE_CASE).containsMatchIn(text)
         val note = "block control ${block.toString().take(80)}; dynamic rules ${rules.toString().take(120)}; fixture reload landed on ${(tabUrls()[tab] ?: "").take(90)} (\"${text.take(60)}\")"
         return when {
-            landed != null -> Grade("P", "BlockSite: the next load of the fixture was sent to its block page: $note", extra)
-            blockedText || overlay.optBoolean("pass") && overlay.optInt("visible") > 0 -> Grade("P", "BlockSite: the fixture shows its block ${if (blockedText) "page" else "overlay"}: $note", extra)
-            popup == null -> Grade("F", "BlockSite: popup did not render in the core check: $note", extra)
-            !block.optBoolean("clicked") -> Grade("F", "BlockSite: no \"Block this site\" control reached in the popup (steps ${steps.toString().take(200)}): $note", extra)
-            else -> Grade("F", "BlockSite: the block was pressed but the next load of the fixture was not blocked: $note", extra)
+            landed != null -> Grade("P", "$label: the next load of the fixture was sent to its block page: $note", extra)
+            blockedText || overlayFound.optBoolean("pass") && overlayFound.optInt("visible") > 0 -> Grade("P", "$label: the fixture shows its block ${if (blockedText) "page" else "overlay"}: $note", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check: $note", extra)
+            !block.optBoolean("clicked") -> Grade("F", "$label: no block control ($control) reached in the popup (steps ${steps.toString().take(200)}): $note", extra)
+            else -> Grade("F", "$label: the block was pressed but the next load of the fixture was not blocked: $note", extra)
         }
     }
 
@@ -8160,6 +8197,107 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("goficmpcgcnombioohjcgdhbaloknabb", "Note Board - Sticky Notes App", "note-board", core = actionPage("Note Board", Regex("popup\\.html"), NOTE_BOARD_PAGE, listOf("page-a.html?noteboard"))),
         Row("ggdpplfehdighdpleoegjefnpefgpgfh", "AdBlock Max - ad blocker", "adblock-max", core = ::adBlocker),
         Row("fooenmopnfaejehogdbmegaleanpdcea", "RoEarn: Custom Avatar Creator & Cashback", "roearn", core = attachedGate("RoEarn", "https://www.roblox.com/", "a Roblox account (its `#nav-roearn` sidebar entry, cashback and avatar tools go on the signed-in pages; signed out its injector still marks the page with `#__roearn_extension_url__`)")),
+        // --- compat round 25 (ranks 631-660 by installs; `.github/scripts/ext-compat/next30-round22.json`) ---
+        // Each core rule read off the unpacked bundle: Teal's click opens its side panel
+        // (`setPanelBehavior({openPanelOnActionClick: true})`, `sidepanel.html`), which signs in
+        // at app.tealhq.com; Web Scrobbler's one content script (`content/main.js`, every page)
+        // finds the page's connector in its table (YouTube: `*://www.youtube.com/*` and
+        // `*://m.youtube.com/*`), sets `window.Connector`, `Util`, `MetadataFilter` and
+        // `webScrobblerScripts`, then `await import(runtime.getURL('connectors/youtube.js'))` – a
+        // script-shaped module (`"use strict"; (() => { … Connector.playerSelector … })()`) that
+        // reads `Connector` bare – and starts its controller: its popup's base mode says "Play some
+        // music to get started" (`getStartedHeader`), a failed import leaves the tab unsupported
+        // ("This website is not supported"); Ad Remover blocks with its `declarativeNetRequest`
+        // rulesets; Block Site: Site Blocker & Focus Mode's popup (`src/popup.html`, React) has
+        // "Block current site", after which its worker's `tabs.onUpdated` sends a blocked tab to
+        // its own `index.html?page=WarningSite&site=…`; Weava's click broadcasts
+        // `BROADCAST_TOGGLE_SIDEBAR` to its content script, which mounts `app-weava-root`, whose
+        // sign-in is its Firebase account; StayFree's popup wraps its usage list in
+        // `RequireOnboarding` – `canMonitorUsage` needs a birth year, the terms and the
+        // data-collection consent from its dashboard's onboarding, until then "Get started"; WA
+        // Bulk Message Sender's content scripts run on web.whatsapp.com; ChatGPT Exporter's
+        // content script (chatgpt.com, `document_end`) puts its export buttons on a signed-in
+        // conversation and its popup is the export settings; Dark Mode - Dark Reader for Chrome's
+        // install stores `state: "dark"` and its content script inserts `<link id="dark-mode">` of
+        // `theme_general/dark_<n>.css` (the click toggles it); Diigo Web Collector's popup says
+        // "Sign in for more!"; News Feed Eradicator's click runs `runtime.openOptionsPage()`
+        // (`entrypoints/options-page/index.html`, its sites list and toggles; a feed to eradicate
+        // is a signed-in social site, enabled through `permissions.request` and
+        // `scripting.registerContentScripts`); Tiny Tycoon is a popup alone (`index.html`, a
+        // Three.js game on a canvas, no background); AI Sidebar for DeepSeek's click opens its
+        // consent page and then chat.deepseek.com in a popup window, its aitopia loader on every
+        // page its second sidebar; Knowt's click runs `sidePanel.open({tabId})` (`src/index.html`,
+        // signs in at knowt.com; its importer runs on Quizlet, Cram, Wayground and Google Docs);
+        // LINE Share's click opens `social-plugins.line.me/lineit/share?url=<the tab>` in a
+        // 510×525 popup window; rikaikun's click toggles it on (`inlineToggle` → `enableTab` in
+        // every tab: `window.rikaichan` set and a window `mousemove` listener), then a hover over
+        // Japanese text (`caretRangeFromPoint`) shows its dictionary popup –
+        // `#rikaichan-window` with an open shadow root holding `#rikaikun-shadow`; Web to PDF's
+        // popup converts through `chrome.debugger` (`Page.printToPDF`, pdf-lib merging the
+        // pages); Google Arts & Culture and Color Tab replace the new-tab page
+        // (`chrome_url_overrides.newtab`: `newtab/newtab.html`, `newtab.html`; Color Tab has no
+        // background); Stylebot's popup has "Style this page", which opens its editor in the page
+        // (`#stylebot`, a shadow host); WiseStamp's popup frames webapp.wisestamp.com's Links and
+        // Signatures signed in, its scripts act in Gmail, Outlook and Yahoo Mail; Url Shortener's
+        // popup (`data/popup/index.html`) fetches `tinyurl.com/api-create.php?url=<the tab>` and
+        // puts the short link in `#main-link` (its QR from chart.googleapis.com); VPN USA - Planet
+        // VPN lite's popup (Vue, `#app`) connects through `proxy.settings.set({value: {mode:
+        // "fixed_servers"}})` with `webRequestAuthProvider` for the proxy's credentials after its
+        // consent; Toucan's popup signs in through jointoucan.com's Google or Apple auth (its
+        // scripts run on Wikipedia and Google pages); ChatHub's click (`action.onClicked`) opens
+        // its side panel (`sidepanel.html`), which frames the vendors' chats behind its
+        // X-Frame-Options ruleset; Color Picker HEX's popup asks the tab's content script for the
+        // page's computed colours (`GetComputedColors` → `ComputedColors`, twenty hexes) and
+        // draws them as its palette – its pick is `new window.EyeDropper().open()`, an API the
+        // WebView has not (the content script's polyfill sends `EYE_DROPPER_OPEN` for a capture
+        // of the tab, read beside); Media Harvest's content script (x.com, `document_end`) puts
+        // its download buttons on the timeline's media; Mouse Tooltip Translator's content script
+        // (every frame, `document_start`) reads the word under the pointer on a `mousemove`
+        // (`caretRangeFromPoint`, debounced), translates it through its worker (Google by default,
+        // target `en`) and shows a tippy tooltip in its `#mttContainer` – once its move gate is
+        // open (a `touchstart`, or four moves apart; MTT_TOOLTIP); Super Simple
+        // Highlighter's action has no popup until its defaults are granted – its click runs
+        // `permissions.request({permissions: ["webNavigation", "scripting"], origins: [<the tab's
+        // origin>/*]})`, then `onCompleted` sets `popup.html` as the global popup and creates its
+        // selection context menu ("Highlight #1" … `contexts: ["selection"]`), which makes the
+        // highlights (`scripting.executeScript` of a `func` that `import()`s
+        // `/js/content_script/main.js` and marks the range); YouTube Dual Subtitles' MAIN-world
+        // content script (www.youtube.com, `document_start`) appends its React root `#dual-sub`
+        // to `#movie_player` on the watch page's `yt-page-data-updated` and hooks the player's
+        // `api/timedtext` XHR for its second subtitle line.
+        Row("opafjjlpbiaicbbgifbejoochmmeikep", "Teal - Job Search Companion", "teal", core = accountGate("Teal", Regex("tealhq\\.com", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "a Teal account (its click opens its side panel, `sidepanel.html`, which signs in at app.tealhq.com)")),
+        Row("hhinaapppaileiechjoiifaancjggfjm", "Web Scrobbler", "web-scrobbler", core = popupMarker("Web Scrobbler", WEB_SCROBBLER_POPUP, page = "https://www.youtube.com/watch?v=zV4uBH9S1KI", settleMs = 30_000, fixtureSettleMs = 6_000)),
+        Row("ojjjflcdgjegkdcojbahlbgeiinpbfgf", "Ad Remover - Ad Blocker for Chrome", "ad-remover", core = ::adBlocker),
+        Row("dpfofggmkhdbfcciajfdphofclabnogo", "Block Site: Site Blocker & Focus Mode", "block-site-focus-mode", core = { row, entry -> blockSite(row, entry, label = "Block Site", control = "/^block current site$/i", overlay = "blocksite|block-site|warning") }),
+        Row("cbnaodkpfinfiipjblikofhlhlcickei", "Weava Highlighter - PDF & Web", "weava", core = accountGate("Weava Highlighter", Regex("weavatools\\.com|firebase|accounts\\.google", RegexOption.IGNORE_CASE), injects = "#weava-root, app-weava-root, weava-root", gate = "a Weava account (its click's BROADCAST_TOGGLE_SIDEBAR mounts `app-weava-root`, whose sign-in is its Firebase account)")),
+        Row("fhkimgpddcmnleeaicdjggpedegolbkb", "WA Bulk Message Sender", "wa-bulk-message-sender", core = attachedGate("WA Bulk Message Sender", "https://web.whatsapp.com/", "a linked WhatsApp Web session (its sender acts on the chat list; signed out the page is the QR code)")),
+        Row("ilmdofdhpnhffldihboadndccenlnfll", "ChatGPT Exporter - ChatGPT to PDF, MD, and more", "chatgpt-exporter", core = accountGate("ChatGPT Exporter", Regex("chatgpt\\.com|chat\\.openai\\.com", RegexOption.IGNORE_CASE), gate = "a ChatGPT session (its export buttons draw on a signed-in conversation at chatgpt.com; the popup is its export settings)")),
+        Row("pjbgfifennfhnbkhoidkdchbflppjncb", "Dark Mode - Dark Reader for Сhrome", "dark-mode-dark-reader", core = domMarker("Dark Mode - Dark Reader for Chrome's theme on the light fixture", "styled-light.html?darkreaderfc", DARK_MODE_DR, settleMs = 25_000)),
+        Row("pnhplgjpclknigjpccbcnmicgcieojbh", "Diigo Web Collector - Capture and Annotate", "diigo", account = true, core = popupLogin("Diigo Web Collector")),
+        Row("fjcldmjmjhkklehbacihaiopjklihlgg", "News Feed Eradicator", "news-feed-eradicator", core = actionPage("News Feed Eradicator", Regex("options-page/index\\.html"), NFE_OPTIONS, listOf("page-a.html?nfe"))),
+        Row("bamdkjfjhhnjcgcjmmjdnncpglihepoi", "Tiny Tycoon", "tiny-tycoon", core = popupMarker("Tiny Tycoon", CANVAS_SHOWN, settleMs = 45_000)),
+        Row("inhcgfpbfdjbjogdfjbclgolkmhnooop", "AI Sidebar for DeepSeek", "ai-sidebar-for-deepseek", core = accountGate("AI Sidebar for DeepSeek", Regex("deepseek\\.com|consent-gate\\.html", RegexOption.IGNORE_CASE), gate = "a DeepSeek account (its click opens its consent page first, then chat.deepseek.com in a popup window; the aitopia loader on every page is its second sidebar)")),
+        Row("gljjiokipgajokbgfmoekcdmfceoijjh", "LINE Share", "line-share", core = accountGate("LINE Share", Regex("line\\.me", RegexOption.IGNORE_CASE), gate = "a LINE account (its click opens social-plugins.line.me/lineit/share?url=<the tab> in a 510×525 popup window)")),
+        Row("pamnlaoeobcmhkliljfaofekeddpmfoh", "Web to PDF", "web-to-pdf", core = notOnThePhone("Web to PDF: its conversion attaches chrome.debugger to the tab and runs Page.printToPDF (pdf-lib merges the pages); the Android runtime carries no chrome.debugger – the WebView exposes no DevTools protocol to the app that hosts it – and a printToPDF answered through WebView.createPrintDocumentAdapter is round 26's design (§7); its popup and settings render")),
+        Row("akimgimeeoiognljlfchpbkpfbmeapkh", "Google Arts & Culture", "google-arts-and-culture", core = newTabOverride("Google Arts & Culture")),
+        Row("oiaejidbmkiecgbjeifoejpgmdaleoha", "Stylebot", "stylebot", core = popupFlow("Stylebot", "styled-light.html?stylebot", listOf("/^style this page$/i"), injectedAny("stylebot"), settleMs = 25_000)),
+        Row("aacgdipdhmilcpcpbdcloifondogabco", "Url Shortener for Google Chrome™", "url-shortener", core = popupMarker("Url Shortener", URL_SHORTENER_POPUP, page = "page-a.html?shorten", settleMs = 25_000, apiHost = "tinyurl.com")),
+        Row("fhggeljlcambnphlgjbgnenndddhldkg", "VPN USA - Planet VPN lite Proxy", "vpn-usa-planet-vpn", core = vpn("VPN USA - Planet VPN lite", consent = true, tapConsent = true, connectWords = "/^(connect to vpn|connect|turn on|start|подключить)$/i")),
+        Row("hchlgfaicmddilenlflajnmomalehbom", "Color Tab", "color-tab", core = newTabOverride("Color Tab")),
+        Row("lokjgaehpcnlmkebpmjiofccpklbmoci", "Toucan by Babbel - Language Learning", "toucan", core = accountGate("Toucan by Babbel", Regex("jointoucan\\.com", RegexOption.IGNORE_CASE), gate = "a Toucan account (its popup signs in through jointoucan.com's Google or Apple auth; its scripts run on Wikipedia and Google pages)")),
+        Row("iaakpnchhognanibcahlpcplchdfmgma", "ChatHub - ChatGPT, Gemini, Claude side by side", "chathub", core = accountGate("ChatHub", Regex("chatgpt|openai|gemini|claude|bing|login|sign", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "the chatbots' accounts (its click opens its side panel, which frames the vendors' chats behind its X-Frame-Options ruleset)")),
+        Row("hagjjmpgfabjpcoklghamlpdamjljoeh", "Color Picker HEX | Eyedropper | Pick color from image", "color-picker-hex", core = popupMarker("Color Picker HEX", COLOR_PICKER_POPUP, page = "styled-light.html?colorpicker", settleMs = 25_000)),
+        Row("hpcgabhdlnapolkkjpejieegfpehfdok", "Media Harvest : X (twitter) Media Downloader", "media-harvest", core = attachedGate("Media Harvest", "https://x.com/", "an X session (its download buttons go on the timeline's media; signed out the page is the sign-in)")),
+        Row("hhlhjgianpocpoppaiihmlpgcoehlhio", "Super Simple Highlighter", "super-simple-highlighter", core = ::superSimpleHighlighter),
+        Row("hkbdddpiemdeibjoknnofflfgbgnebcm", "YouTube™ Dual Subtitles", "youtube-dual-subtitles", core = { row, entry -> youtube(row, entry, YDS_MOUNTED, "YouTube Dual Subtitles' root in the player", desktopSite = true, settleMs = 45_000) }),
+        // The five largest bundles last (rikaikun 29.8 MB – its dictionary files, data the
+        // runtime stores and never decodes as script –, WiseStamp 13.8, Knowt 13.7, StayFree 13.2,
+        // Mouse Tooltip Translator 12.4), as rounds 19 to 24 ordered their own.
+        Row("jipdnfibhldikgcjhfnomkfpcebammhp", "rikaikun", "rikaikun", core = actionMarker("rikaikun", "fonts-lang.html?rikaikun", RIKAIKUN_POPUP, settleMs = 30_000)),
+        Row("pbcgnkmbeodkmiijjfnliicelkjfcldg", "WiseStamp Email Signature Chrome Extension", "wisestamp", core = accountGate("WiseStamp", Regex("wisestamp\\.com", RegexOption.IGNORE_CASE), gate = "a WiseStamp account (its popup's Links and Signatures tabs come from webapp.wisestamp.com signed in; its scripts act in Gmail, Outlook and Yahoo Mail)")),
+        Row("akegecpdcdbkjioddaingaedacjgfjhm", "Knowt: Quizlet Import, AI Notes & Flashcards", "knowt", core = accountGate("Knowt", Regex("knowt\\.com", RegexOption.IGNORE_CASE), page = "src/index.html", gate = "a Knowt account (its click runs `sidePanel.open({tabId})`; the panel signs in at knowt.com; its importer runs on Quizlet, Cram, Wayground and Google Docs)")),
+        Row("elfaihghhjjoknimpccccmkioofjjfkf", "StayFree - Website Blocker, Web Usage Stats, Shorts Blocker", "stayfree", core = accountGate("StayFree", Regex("stayfreeapps\\.com|dashboard\\.html", RegexOption.IGNORE_CASE), gate = "its onboarding (a birth year, the terms and the data-collection consent on its dashboard page, `canMonitorUsage`; the popup says \"Get started\" until then)")),
+        Row("hmigninkgibhdckiaphhmbgcghochdjc", "Mouse Tooltip Translator - PDF & Netflix Youtube dual subs", "mouse-tooltip-translator", core = domMarker("Mouse Tooltip Translator's tooltip over the Japanese span", "fonts-lang.html?mtt", MTT_TOOLTIP, settleMs = 35_000)),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -8194,6 +8332,88 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
         Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
+
+    // --- the core checks of compat round 25 (ranks 631-660 by installs) --------------------------
+
+    /**
+     * Super Simple Highlighter (hhlhj…): its action has no popup until its defaults are granted –
+     * the click runs `permissions.request({permissions: ["webNavigation", "scripting"], origins:
+     * [the tab's origin with a wildcard path]})` from the gesture, and `onCompleted` sets `popup.html` as the
+     * global popup and creates its selection context menu ("Highlight #1" …, `contexts:
+     * ["selection"]`), which makes the highlights (a `scripting.executeScript` `func` that
+     * `import()`s `/js/content_script/main.js` and marks the range). The reading: the fixture,
+     * the action click as [actionMarker] clicks it, the chrome's permission sheet accepted
+     * ([acceptPrompt]: `webNavigation`'s and the site's lines, as Chrome's dialog), the worker's
+     * `permissions.getAll` read ([PERMISSIONS_HELD]), then the action's state as its own API
+     * reads it ([ACTION_STATE_PROBE]): `popup.html` set for every tab, and the action disabled on
+     * the fixture's tab, which its `onCompleted` does for a page without highlights
+     * (`setEnabled(documents.length > 0)`) in Chrome too – so a second click there opens nothing
+     * in Chrome (a disabled action's click falls to the context menu), and the tap is read for
+     * opening nothing. Where the tab has the action enabled, the second click's popup is polled
+     * for the fresh page's line ("This page contains no highlights.", [SSH_POPUP]). The highlight
+     * itself has no phone surface: a `selection` context-menu item never reaches the long-press
+     * sheet (`page.contextMenu` sends an empty `selectionText`) and the selection toolbar carries
+     * the chrome's actions alone – §7 of the round's report – so the grant and the action's
+     * Chrome-shaped state are `PARTIAL`; a popup on the disabled tab, the popup not set, or no
+     * grant, `F`.
+     */
+    private fun superSimpleHighlighter(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?ssh", factor, 2_500)
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val prompt = acceptPrompt(factor, 10_000)
+        extra.put("prompt", prompt)
+        SystemClock.sleep(scaled(1_500, factor))
+        popupView()?.let { extra.put("firstPopup", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        runCatching { coreCall("extension.closePopup", "null") }
+        val held = awakeBackground(row.id, factor)?.let { probe(it, PERMISSIONS_HELD, "__zenPermissions", scaled(8_000, factor)) } ?: JSONObject().put("err", "no background view")
+        extra.put("permissions", held)
+        val granted = held.optJSONArray("permissions")?.let { arr -> (0 until arr.length()).any { arr.optString(it) == "scripting" } } == true
+        // The state the grant left the action in, as the extension's own API reads it: `popup.html`
+        // set for every tab, and the action disabled on the fixture's tab – the page has no
+        // highlights (`setEnabled(documents.length > 0)` in its `onCompleted`), and Chrome's is
+        // disabled there the same way, so Chrome's click opens no popup on that tab (it falls to
+        // the context menu). The second click is due only where the tab has the action enabled;
+        // on a disabled tab the tap is read for what it opens, which must be nothing.
+        val action = backgroundView(row.id)?.let { probe(it, ACTION_STATE_PROBE, "__zenAction", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view")
+        extra.put("action", action)
+        val popupSet = action.optString("popup").endsWith("popup.html")
+        val disabledForTab = !action.isNull("enabledForTab") && !action.optBoolean("enabledForTab", true)
+        var found = JSONObject()
+        var popup: ExtensionWebView? = null
+        var onDisabledTab: String? = null
+        if (granted && disabledForTab) {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            SystemClock.sleep(scaled(2_000, factor))
+            onDisabledTab = popupView()?.takeIf { it.context == "popup" }?.let { json(tabEval(it, DEEP_TEXT)).optString("text").take(120).ifEmpty { "a popup view with no text" } }
+            extra.put("popupOnDisabledTab", onDisabledTab ?: "none, as Chrome's click on a disabled action")
+        } else {
+            popup = openPopup(row, factor)
+            if (popup != null) {
+                found = pollExpr(popup, SSH_POPUP, scaled(15_000, factor))
+                popupView()?.let { extra.put("popupConsole", JSONArray(consoleOf(it).takeLast(8))) }
+            } else {
+                popupView()?.let { extra.put("popupSeen", seenInView(it)) }
+            }
+        }
+        extra.put("popup", found).put("pageStyle", json(tabEval(view, SSH_PAGE_STYLE)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-ssh-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val menu = "the highlights come from its selection context menu (`contexts: [\"selection\"]`), which the phone's long-press sheet never offers – `page.contextMenu` sends an empty `selectionText` and the selection toolbar carries the chrome's items alone (§7)"
+        val note = "prompt ${prompt.toString().take(120)}; permissions ${held.toString().take(140)}; action ${action.toString().take(140)}; popup ${found.toString().take(160)}"
+        return when {
+            !granted -> Grade("F", "Super Simple Highlighter: its permission request from the click was not granted (${prompt.optString("prompt").ifEmpty { prompt.optString("how", "no answer") }}): $note", extra)
+            disabledForTab && popupSet && onDisabledTab == null -> Grade("PARTIAL", "Super Simple Highlighter: its defaults granted from the click through the chrome's permission sheet, `popup.html` set for every tab and its action disabled on the fixture's tab as Chrome's is on a page without highlights (`setEnabled(documents.length > 0)`), so the tap opens nothing there, as Chrome's; $menu: $note", extra)
+            disabledForTab && popupSet -> Grade("F", "Super Simple Highlighter: the tap opened a popup (\"$onDisabledTab\") on a tab the extension disabled its action for, which Chrome's does not: $note", extra)
+            found.optBoolean("pass") -> Grade("PARTIAL", "Super Simple Highlighter: its defaults granted from the click and its popup set and drawn past the permission alert; $menu: $note", extra)
+            else -> Grade("F", "Super Simple Highlighter: its defaults granted and its popup ${if (!popupSet) "not set (`action.getPopup` ${JSONObject.quote(action.optString("popup"))})" else if (popup == null) "did not render" else "still asks for its permission (or reads otherwise)"} within ${scaled(15_000, factor) / 1000} s: $note", extra)
+        }
+    }
 
     // --- the core checks of compat round 24 (ranks 601-630 by installs) --------------------------
 
@@ -8429,10 +8649,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * or "URL not supported" for an address its `excluded_urls` (`scripts/utils.js`) begins
      * with: `localhost`, `127.0.0.1`, `0.0.0.0`, `192.168.`, `10.` and the browsers' own schemes –
      * so the fixture's `http://10.0.2.2:8765/` is one (round 22's BEFORE read PARTIAL on both
-     * WebViews for it), and its bare public name `http://10.0.2.2.nip.io:8765/` is one as well.
+     * WebViews for it), and its dotted public name `http://10.0.2.2.nip.io:8765/` was one as well.
      * The fixture goes under [LABELLED_NAME_BASE], allowed over plaintext for the row (a unique
      * host HTTPS-only mode would upgrade) and forgotten after; a phone's user browses public
-     * names, and the extension's own list stands as it is. The fixture settles, the action is
+     * names, and the extension's own list stands as it is. Round 24 read the browser's lookalike
+     * check refusing the labelled dotted name (`fixture.10.0.2.2.nip.io` embeds the engaged
+     * fixture address as a run of labels) – the PARTIAL at both ends was its popup's "URL not
+     * supported" for the error page's `zen://` address, not for the fixture's; the dash form
+     * carries no such run. The fixture settles, the action is
      * clicked, the welcome page waited for and accepted from a script, the action clicked again
      * and the popup polled for the button. `P` on the popup's button enabled for the fixture's
      * address; `PARTIAL` when the popup came up saying the address is not supported (its check,
@@ -12243,6 +12467,28 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return v
     }
 
+    /**
+     * What the chrome held as its popup view when a core check's open timed out (round 24 §7,
+     * Black Menu for Google on WebView 156: `popup did not render in the core check` at both
+     * ends while the popup STEP's read of the same page graded P on 71 accessibility nodes): the
+     * view's context, whether its document read as rendered ([rendered]), its accessibility
+     * tree's node and label counts ([seenInView]), its size on screen ([sheetSize]) and its
+     * address – a popup that never came up told from one whose tree had not populated at the
+     * timeout. `view: none` when the chrome held no popup view at all.
+     */
+    private fun popupAtTimeout(): JSONObject {
+        val view = popupView() ?: return JSONObject().put("view", "none")
+        val seen = runCatching { seenInView(view) }.getOrDefault(JSONObject())
+        return JSONObject()
+            .put("context", view.context)
+            .put("rendered", runCatching { rendered(view) }.getOrDefault(false))
+            .put("nodes", seen.optInt("nodes"))
+            .put("labels", labelsOf(seen).size)
+            .put("shown", shownDespiteEmptyDom(seen))
+            .put("size", runCatching { sheetSize(view) }.getOrDefault(JSONObject()))
+            .put("url", runCatching { tabEval(view, "location.href", 5) }.getOrDefault("").trim('"').take(120))
+    }
+
     /** The row's `identity.launchWebAuthFlow` sheet when one is up, or null. */
     private fun authSheetView(id: String): WebView? {
         var v: WebView? = null
@@ -13671,25 +13917,32 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val LOCALHOST_BASE = "http://localhost:8765"
         /**
          * The same server under a public-looking name that resolves to the emulator's host address
-         * (nip.io's wildcard DNS: `10.0.2.2.nip.io` answers 10.0.2.2), for Chrono Download Manager,
-         * whose sniffer page refuses a private address before it asks its background for anything
-         * ("Cannot scan resources for this page."; its URL test excludes 10/8, 127/8, 172.16/12,
-         * 192.168/16 and 169.254/16 hosts and a bare `localhost` – compat round 15's 113 sniffer
-         * lane). Chrome shows the same over `http://10.0.2.2:8765/`; a phone's user browses public
-         * names. An image whose DNS does not answer the name fails to load the page, and the
-         * reading says so.
+         * (nip.io's wildcard DNS in its dash form: `10-0-2-2.nip.io` answers 10.0.2.2), for Chrono
+         * Download Manager, whose sniffer page refuses a private address before it asks its
+         * background for anything ("Cannot scan resources for this page."; its URL test excludes
+         * 10/8, 127/8, 172.16/12, 192.168/16 and 169.254/16 hosts and a bare `localhost` – compat
+         * round 15's 113 sniffer lane). Chrome shows the same over `http://10.0.2.2:8765/`; a
+         * phone's user browses public names. An image whose DNS does not answer the name fails to
+         * load the page, and the reading says so. The dotted form (`10.0.2.2.nip.io`, rounds 15
+         * to 24) embeds the fixture address as a run of labels, and once the sweep's visits make
+         * `10.0.2.2` a site with engagement the browser's lookalike check refuses the name
+         * (`zen://error?kind=lookalike&target=10.0.2.2&reason=embedding&source=engaged` – round 24
+         * read it on Image Downloader's gallery and Wayback Machine's page, rows late in the
+         * table, while Chrono's earlier rows loaded); the dash form embeds no label run, and its
+         * one label's hyphen-joined start (`10`) is shorter than the embedding rule's minimum.
          */
-        private const val PUBLIC_NAME_BASE = "http://10.0.2.2.nip.io:8765"
+        private const val PUBLIC_NAME_BASE = "http://10-0-2-2.nip.io:8765"
         /**
          * The same server under a public-looking name with a label ahead of the address (nip.io
-         * answers `<label>.<ip>.nip.io` with `<ip>` as it answers `<ip>.nip.io`), for an extension
-         * whose refusal of private addresses is a PREFIX list the bare name begins with as the
-         * address does: Wayback Machine's `excluded_urls` (`scripts/utils.js`) has `10.`, so
-         * `http://10.0.2.2.nip.io:8765/…` is "URL not supported" to its popup as
-         * `http://10.0.2.2:8765/…` is, and this name is not. A unique host to the browser as
-         * [PUBLIC_NAME_BASE] is: allowed over plaintext for the row ([allowPlaintext]).
+         * answers `<label>-<ip-with-dashes>.nip.io` with `<ip>` as it answers the bare form), for
+         * an extension whose refusal of private addresses is a PREFIX list the address begins with:
+         * Wayback Machine's `excluded_urls` (`scripts/utils.js`) has `10.`, so `http://10.0.2.2:8765/…`
+         * is "URL not supported" to its popup (and the dotted `10.0.2.2.nip.io` was as well), and
+         * this name is not. A unique host to the browser as [PUBLIC_NAME_BASE] is: allowed over
+         * plaintext for the row ([allowPlaintext]). Its label (`fixture`) names no site the browser
+         * knows, so the embedding rule's hyphen test passes it.
          */
-        private const val LABELLED_NAME_BASE = "http://fixture.10.0.2.2.nip.io:8765"
+        private const val LABELLED_NAME_BASE = "http://fixture-10-0-2-2.nip.io:8765"
 
         /**
          * The runtime's id for an unsigned zip without a `manifest.key`: SHA-256 of
@@ -14778,6 +15031,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var hit=cands.sort(function(a,b){var ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return (ra.top-rb.top)||(rb.right-ra.right)})[0]||null;if(!hit)return JSON.stringify({clicked:false,candidates:cands.length});var r=hit.getBoundingClientRect();" +
                 "return JSON.stringify({clicked:true,label:label(hit).replace(/\\s+/g,' ').trim().slice(0,50),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2})})()"
         /**
+         * Whether a control measured at a point (`__X__`, `__Y__` in CSS px) is under something
+         * else: the closest control to what `elementFromPoint` answers there must carry the
+         * control's label (`__RE__`). A sheet over the menu leaves the sheet's own element under
+         * the point; a menu with nothing over it has the control itself.
+         */
+        private const val CONTROL_COVERED =
+            "(function(){var re=__RE__;var e=document.elementFromPoint(__X__,__Y__);var c=e&&e.closest?e.closest('button, a, [role=button], input, label'):null;" +
+                "var t=function(n){return n?(((n.getAttribute&&(n.getAttribute('aria-label')||n.getAttribute('title')||n.getAttribute('value')))||'')+' '+(n.textContent||'')).replace(/\\s+/g,' ').trim().slice(0,80):''};" +
+                "return JSON.stringify({covered:!(c&&re.test(t(c))),under:e?e.tagName+' '+t(e).slice(0,40):null})})()"
+        /**
          * From an extension page: a `fetch` of Gmail's feed (`https://mail.google.com/mail/feed/atom`,
          * a 401 with `WWW-Authenticate: Basic` for a visitor without a session) with the status it
          * resolved to, or the error; a tab-less HTTP auth challenge Chrome gives up at once. Lands
@@ -15007,6 +15270,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** The permissions an extension holds (`permissions.getAll`), landed on `window.__zenPermissions`. */
         private const val PERMISSIONS_HELD =
             "(function(){window.__zenPermissions={done:false};try{chrome.permissions.getAll(function(p){window.__zenPermissions={done:true,origins:(p&&p.origins)||[],permissions:(p&&p.permissions)||[],err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenPermissions={done:true,err:String(e&&e.message||e)}}return 'asked'})()"
+        /**
+         * From a worker: its action's state as the extension's own API reads it – the popup set
+         * for every tab (`action.getPopup({})`), whether the action is enabled on the active tab
+         * (`action.isEnabled(tabId)`: the tab's own `enable` / `disable`) and globally. Lands on
+         * `window.__zenAction`.
+         */
+        private const val ACTION_STATE_PROBE =
+            "(function(){var p=window.__zenAction={done:false,popup:null,tabId:null,enabledForTab:null,enabledGlobal:null,error:null};" +
+                "(async function(){try{p.popup=await chrome.action.getPopup({});var tabs=await chrome.tabs.query({active:true,currentWindow:true});var t=tabs&&tabs[0];p.tabId=t?t.id:null;if(t)p.enabledForTab=await chrome.action.isEnabled(t.id);p.enabledGlobal=await chrome.action.isEnabled()}catch(e){p.error=String(e&&e.message||e)}p.done=true})();" +
+                "setTimeout(function(){if(!p.done){p.error='no answer within 8 s';p.done=true}},8000);return 'asked'})()"
 
         /** Markdown Viewer's rendering of `readme.md`: its `#_html` mount with a heading or text in it (the served `<pre>` hidden). */
         private const val MARKDOWN_RENDERED =
@@ -15785,6 +16058,119 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
                 "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
 
+        // --- the expressions of compat round 25 (ranks 631-660) ---------------------------------
+
+        /**
+         * Web Scrobbler's popup over the YouTube watch tab: its controller's mode drawn – the
+         * base header ("Play some music to get started", `getStartedHeader`) or a track's panel
+         * (a Scrobble/Edit/Skip control) pass; "This website is not supported"
+         * (`unsupportedWebsiteHeader`, what a failed `import()` of the connector leaves), "This
+         * website is turned off" and "Service error" fail. The flags beside the text.
+         */
+        private const val WEB_SCROBBLER_POPUP =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var base=/play some music to get started/i.test(t);var unsupported=/website is not supported|does not support/i.test(t);var off=/turned off/i.test(t);var err=/service error/i.test(t);var track=/\\b(scrobble|skip|love|edit)\\b/i.test(t)&&document.querySelectorAll('button, a, [role=button]').length>=2;" +
+                "return JSON.stringify({pass:(base||track)&&!unsupported&&!off&&!err,base:base,track:track,unsupported:unsupported,disabled:off,error:err,controls:document.querySelectorAll('button, a, [role=button]').length,text:t.slice(0,160)})})()"
+
+        /**
+         * Dark Mode - Dark Reader for Chrome's theme on the light fixture: its content script's
+         * `<link id="dark-mode">` of `theme_general/dark_<n>.css` in the head and the body drawn
+         * dark (the background's luminance under 0.5, as [LUMINANCE_REPORT] reads it).
+         */
+        private const val DARK_MODE_DR =
+            "(function(){var link=document.getElementById('dark-mode');var href=link?String(link.href||''):'';function lum(c){var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/.exec(c||'');if(!m)return null;if(m[4]!==undefined&&parseFloat(m[4])===0)return null;return (0.2126*m[1]+0.7152*m[2]+0.0722*m[3])/255}var bg=lum(getComputedStyle(document.body).backgroundColor);if(bg===null)bg=lum(getComputedStyle(document.documentElement).backgroundColor);var fg=lum(getComputedStyle(document.body).color);var sheets=document.querySelectorAll('link[rel=stylesheet], style').length;" +
+                "return JSON.stringify({pass:!!link&&/theme_general\\/dark_/.test(href)&&bg!==null&&bg<0.5,link:!!link,href:href.slice(-40),bg:bg===null?null:Math.round(bg*100)/100,fg:fg===null?null:Math.round(fg*100)/100,sheets:sheets,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,60)})})()"
+
+        /**
+         * News Feed Eradicator's options page (`entrypoints/options-page/index.html`, what its
+         * click opens): its sites list drawn – the social sites it eradicates named (Facebook,
+         * Twitter/X, YouTube, LinkedIn, Reddit, Instagram, Hacker News …) with their toggles
+         * (checkboxes or switches) – and its quote settings beside them.
+         */
+        private const val NFE_OPTIONS =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var sites=['facebook','twitter','youtube','linkedin','reddit','instagram','hacker news','github','pinterest','x.com'].filter(function(s){return t.toLowerCase().indexOf(s)>=0});var toggles=document.querySelectorAll('input[type=checkbox], [role=switch], [role=checkbox]').length;var quotes=/quote/i.test(t);" +
+                "return JSON.stringify({pass:sites.length>=3&&toggles>=3,sites:sites.join(' '),toggles:toggles,quotes:quotes,text:t.slice(0,160)})})()"
+
+        /**
+         * rikaikun's dictionary popup over `fonts-lang.html`'s Japanese span (`#ja`, 吾輩は猫である):
+         * a `mousemove` dispatched on the span at a point in its first glyphs each poll (its
+         * window listener reads the word under the pointer through `caretRangeFromPoint` once
+         * the action click enabled it), then `#rikaichan-window` with its open shadow root
+         * holding `#rikaikun-shadow` and the entry's text, shown.
+         */
+        private const val RIKAIKUN_POPUP =
+            "(function(){var s=document.getElementById('ja');if(!s)return JSON.stringify({pass:false,why:'no #ja span'});var r=s.getBoundingClientRect();var x=Math.round(r.left+10),y=Math.round(r.top+r.height/2);var ev=new MouseEvent('mousemove',{clientX:x,clientY:y,bubbles:true,cancelable:true,view:window});s.dispatchEvent(ev);var win=document.getElementById('rikaichan-window');var box=win&&win.shadowRoot?win.shadowRoot.getElementById('rikaikun-shadow'):null;var t=box?(box.textContent||'').replace(/\\s+/g,' ').trim():'';var shown=!!box&&box.style.display!=='none'&&t.length>0;" +
+                "return JSON.stringify({pass:shown,window:!!win,shadow:!!(win&&win.shadowRoot),text:t.slice(0,160),enabled:!!window.rikaichan,x:x,y:y})})()"
+
+        /**
+         * Url Shortener's popup (`data/popup/index.html`): the short link of the tab's address
+         * in `#main-link` (its fetch of `tinyurl.com/api-create.php?url=<the tab>`), a
+         * `tinyurl.com/<code>` value; the page's text beside it (its error line when the API
+         * refused a private-network address).
+         */
+        private const val URL_SHORTENER_POPUP =
+            "(function(){var m=document.getElementById('main-link')||document.querySelector('input[type=text], input:not([type])');var v=m?String(m.value||m.textContent||m.href||''):'';var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var ok=/tinyurl\\.com\\/[A-Za-z0-9]+/.test(v)||/tinyurl\\.com\\/[A-Za-z0-9]+/.test(t);" +
+                "return JSON.stringify({pass:ok,field:!!m,value:v.slice(0,80),text:t.slice(0,160)})})()"
+
+        /**
+         * Color Picker HEX's popup over the styled fixture: the page's computed colours drawn as
+         * its palette (its `GetComputedColors` ask of the tab's content script answered with up
+         * to twenty hexes, each a sized swatch under `#root`); `EyeDropper` in the popup's window
+         * read beside (its pick is `new window.EyeDropper().open()`, an API the WebView has not).
+         */
+        private const val COLOR_PICKER_POPUP =
+            "(function(){var all=Array.prototype.slice.call(document.querySelectorAll('#root *, body *'));var sw=all.filter(function(e){var st=getComputedStyle(e);var bg=st.backgroundColor;if(!bg||bg==='rgba(0, 0, 0, 0)'||bg==='transparent')return false;var r=e.getBoundingClientRect();return r.width>6&&r.height>6&&r.width<120&&r.height<120&&e.children.length===0});var hexes=(document.body?document.body.innerText:'').match(/#[0-9a-f]{6}\\b/ig)||[];var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:sw.length>=4||hexes.length>=4,swatches:sw.length,hexes:hexes.length,eyeDropper:'EyeDropper' in window,text:t.slice(0,160)})})()"
+
+        /**
+         * YouTube Dual Subtitles' root in the player: its MAIN-world content script appends
+         * `#dual-sub` (its React root) to `#movie_player` on the watch page's
+         * `yt-page-data-updated`; the root with children is the mount, the player's caption
+         * segments read beside it.
+         */
+        private const val YDS_MOUNTED =
+            "(function(){var p=document.querySelector('#movie_player');var d=document.querySelector('#dual-sub');var n=d?d.querySelectorAll('*').length:0;var caps=document.querySelectorAll('.ytp-caption-segment').length;" +
+                "return JSON.stringify({pass:!!d&&n>0,player:!!p,mounted:!!d,elements:n,captionSegments:caps,path:location.pathname,host:location.host})})()"
+
+        /**
+         * Mouse Tooltip Translator's tooltip over `fonts-lang.html`'s Japanese span. Its content
+         * script translates the word under the pointer only once its own move gate is open
+         * (`L` in its main module): a `touchstart` opens it at once (`we`, the phone's input), a
+         * mouse opens it after three `mousemove`s each more than 3 px from the last position and
+         * a fourth (`Ce`; `Ge` stores every move's point), and a text selection opens it too.
+         * Round 25's BEFORE dispatched every `mousemove` at one point, so the gate never opened
+         * on either WebView (`container: false` for 35 s with the script applied and no error).
+         * The first poll now arms the gate both ways – a `touchstart`/`touchend` pair on the span
+         * (a `Touch` at the point) and five `mousemove`s 8 px apart approaching the point – and
+         * every poll dispatches one `mousemove` on the span at the point (its `cT` listener on the
+         * window keeps the pointer's position and, 300 ms after the last move, raises its
+         * `mouseoverText` with the word read through `caretRangeFromPoint`; the poll's 700 ms is
+         * over that debounce), then its tippy box in `#mttContainer` shown with text is the pass.
+         * The arming is recorded (`gate`: `touch`, `approach`).
+         */
+        private const val MTT_TOOLTIP =
+            "(function(){var s=document.getElementById('ja');if(!s)return JSON.stringify({pass:false,why:'no #ja span'});var r=s.getBoundingClientRect();var x=Math.round(r.left+10),y=Math.round(r.top+r.height/2);" +
+                "var move=function(cx,cy){s.dispatchEvent(new MouseEvent('mousemove',{clientX:cx,clientY:cy,screenX:cx,screenY:cy,bubbles:true,cancelable:true,view:window}))};var g=window.__mttGate;" +
+                "if(!g){g=window.__mttGate={touch:false,approach:0};try{var tp=new Touch({identifier:1,target:s,clientX:x,clientY:y,pageX:x+window.scrollX,pageY:y+window.scrollY,screenX:x,screenY:y});" +
+                "s.dispatchEvent(new TouchEvent('touchstart',{touches:[tp],targetTouches:[tp],changedTouches:[tp],bubbles:true,cancelable:true,view:window}));s.dispatchEvent(new TouchEvent('touchend',{touches:[],targetTouches:[],changedTouches:[tp],bubbles:true,cancelable:true,view:window}));g.touch=true}catch(e){g.touchError=String(e&&e.message||e)}" +
+                "for(var i=5;i>=1;i--){move(x-8*i,y);g.approach++}}move(x,y);" +
+                "var c=document.getElementById('mttContainer');var box=document.querySelector('#mttContainer .tippy-box, [data-tippy-root] .tippy-box, .tippy-box');var t=box?(box.textContent||'').replace(/\\s+/g,' ').trim():'';var br=box?box.getBoundingClientRect():{width:0,height:0};" +
+                "return JSON.stringify({pass:!!box&&t.length>0&&br.width>0,container:!!c,box:!!box,text:t.slice(0,160),w:Math.round(br.width),h:Math.round(br.height),x:x,y:y,gate:g})})()"
+
+        /**
+         * Super Simple Highlighter's popup once its defaults are granted and `popup.html` set:
+         * the fresh page's line ("This page contains no highlights.", `popup_no_highlights`)
+         * passes; its permission alert ("Additional permissions are required to make highlights
+         * on this site." with "Request Permission") is the popup still asking.
+         */
+        private const val SSH_POPUP =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var none=/contains no highlights|no highlights/i.test(t);var asking=/additional permissions are required|request permission/i.test(t);" +
+                "return JSON.stringify({pass:none&&!asking,noHighlights:none,asking:asking,buttons:document.querySelectorAll('button, [role=button]').length,text:t.slice(0,160)})})()"
+
+        /** Super Simple Highlighter's style on a page it has highlighted (`.ssh-close` in a head style its content module inserts) – absent on a fresh page. */
+        private const val SSH_PAGE_STYLE =
+            "(function(){var styles=Array.prototype.slice.call(document.querySelectorAll('head style, style'));var own=styles.filter(function(s){return /ssh-close|ssh-highlight/.test(s.textContent||'')}).length;var marks=document.querySelectorAll('[class*=\"ssh\"], mark').length;" +
+                "return JSON.stringify({styled:own>0,styles:own,marks:marks})})()"
+
         // --- the expressions of compat round 24 (ranks 601-630) ---------------------------------
 
         /**
@@ -15855,11 +16241,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * click did mount is read beside the verdict (round 24's BEFORE found none of the three
          * on either lane with the module loaded and the click answered on 156): every tag of
          * theirs (`webhighlights-*`, `theirs`), the body's own children (`body`), the open
-         * shadow hosts met (`hosts`) and the nodes walked (`nodes`).
+         * shadow hosts met (`hosts`) and the nodes walked (`nodes`). Round 24's AFTER on 156
+         * listed five of its elements mounted after the click – `webhighlights-element-registry`,
+         * `webhighlights-popup-toolbox-mobile`, `webhighlights-marker-mobile`,
+         * `webhighlights-sidebar-mobile`, `webhighlights-icon` – the `-mobile` variants the
+         * extension picks from the phone's viewport, so the names take them (round 25's driver
+         * item): the mobile sidebar passes when it is drawn (its box measured, `width`/`height`),
+         * the desktop names as before.
          */
         private const val WEB_HIGHLIGHTS_SIDEBAR =
-            "(function(){var names=['webhighlights-sidebar','webhighlights-app-view','webhighlights-toggle-button'];var found={};var theirs={};var width=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if(tag==='webhighlights-sidebar'&&width===null)width=Math.round(n.getBoundingClientRect().width)}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));" +
-                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']),found:Object.keys(found),width:width,defined:typeof customElements!=='undefined'&&!!customElements.get('webhighlights-sidebar'),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
+            "(function(){var names=['webhighlights-sidebar','webhighlights-sidebar-mobile','webhighlights-app-view','webhighlights-toggle-button','webhighlights-popup-toolbox-mobile','webhighlights-marker-mobile'];var found={};var theirs={};var width=null;var height=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if((tag==='webhighlights-sidebar'||tag==='webhighlights-sidebar-mobile')&&width===null){var r=n.getBoundingClientRect();width=Math.round(r.width);height=Math.round(r.height)}}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));var mobileShown=!!found['webhighlights-sidebar-mobile']&&width>0&&height>0;" +
+                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']||mobileShown),found:Object.keys(found),mobile:!!found['webhighlights-sidebar-mobile'],mobileShown:mobileShown,width:width,height:height,defined:typeof customElements!=='undefined'&&!!(customElements.get('webhighlights-sidebar')||customElements.get('webhighlights-sidebar-mobile')),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
 
         /**
          * Black Menu's popup: its navigation list drawn – `.bm-ele-navlist__item` entries (its

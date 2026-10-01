@@ -761,6 +761,215 @@ describe('extension-origin stylesheets the page CSP refused', () => {
     expect(String(opaque.errors[0]?.[0])).toContain('with its nonce')
   })
 
+  describe("the content script's own import() (the rewritten keyword, `__zenExtImport`)", () => {
+    interface Call {
+      url: string
+      options: unknown
+      resolve: (namespace: unknown) => void
+      reject: (reason: unknown) => void
+    }
+    /** A world whose `import()` the test settles by hand, call by call. */
+    const importing = (): {
+      calls: Call[]
+      importModule: (url: string, options?: unknown) => Promise<unknown>
+    } => {
+      const calls: Call[] = []
+      return {
+        calls,
+        importModule: (url, options) =>
+          new Promise((resolve, reject) => void calls.push({ url, options, resolve, reject }))
+      }
+    }
+    const refused = (): TypeError => new TypeError('Failed to fetch dynamically imported module')
+    const connector = `${ORIGIN}/connectors/youtube.js`
+    const alias = `https://m.youtube.com/.zenium-ext/${EXT}/connectors/youtube.js`
+    const namespace = Object.freeze({ __proto__: null, [Symbol.toStringTag]: 'Module' })
+
+    it("is the world's import when that resolves, and the native call alone for a URL of no extension's", async () => {
+      const { host, errors } = harness()
+      const world = importing()
+      host.document = new FakeDocument(null)
+      host.pageModules = false
+      host.pageOrigin = 'https://m.youtube.com'
+      host.importModule = world.importModule
+      const recovery = createScriptRecovery(host)
+      const own = recovery.importModule(connector)
+      expect(world.calls.map((c) => c.url)).toEqual([connector])
+      world.calls[0]!.resolve(namespace)
+      await expect(own).resolves.toBe(namespace)
+      // Nothing refused: the served URL stands for `runtime.getURL`, nothing recorded.
+      expect(recovery.aliasFor(connector)).toBeNull()
+      expect(recovery.pending()).toBe(0)
+      // The page's own module, or a CDN's: the extension's error is its own, no alias tried.
+      const foreign = recovery.importModule('https://cdn.example/vendor.js')
+      expect(world.calls).toHaveLength(2)
+      world.calls[1]!.reject(refused())
+      await expect(foreign).rejects.toThrow('Failed to fetch dynamically imported module')
+      expect(world.calls).toHaveLength(2)
+      // A URL object, as the native call would stringify it.
+      void recovery.importModule(new URL(`${ORIGIN}/a.js`))
+      expect(world.calls[2]!.url).toBe(`${ORIGIN}/a.js`)
+      // The call's second argument rides along.
+      void recovery.importModule(`${ORIGIN}/data.json`, { with: { type: 'json' } })
+      expect(world.calls[3]!.options).toEqual({ with: { type: 'json' } })
+      expect(world.calls[0]!.options).toBeUndefined()
+      expect(errors).toEqual([])
+    })
+
+    it("imports the page-origin alias in the refused URL's place and hands its namespace to the extension's await (Web Scrobbler's connector on m.youtube.com, compat round 25)", async () => {
+      const { host, errors } = harness()
+      const world = importing()
+      host.document = new FakeDocument(null)
+      host.pageModules = false
+      host.pageOrigin = 'https://m.youtube.com'
+      host.importModule = world.importModule
+      const recovery = createScriptRecovery(host)
+      const own = recovery.importModule(connector)
+      expect(world.calls.map((c) => c.url)).toEqual([connector])
+      // The refusal's violation event arrives while the call is pending: the call's own to retry.
+      recovery.onViolation(violation(connector))
+      expect(world.calls).toHaveLength(1)
+      world.calls[0]!.reject(refused())
+      await tick()
+      expect(world.calls.map((c) => c.url)).toEqual([connector, alias])
+      world.calls[1]!.resolve(namespace)
+      await expect(own).resolves.toBe(namespace)
+      // From here the graph's own `runtime.getURL`-built chunks load from the alias too.
+      expect(recovery.aliasFor(`${ORIGIN}/connectors/util.js`)).toBe(
+        `https://m.youtube.com/.zenium-ext/${EXT}/connectors/util.js`
+      )
+      // A violation of the same refusal arriving late is not retried again.
+      recovery.onViolation(violation(connector))
+      expect(world.calls).toHaveLength(2)
+      expect(recovery.pending()).toBe(0)
+      expect(errors).toEqual([])
+      // A second module of the same extension goes the same way, its options kept.
+      const second = recovery.importModule(`${ORIGIN}/connectors/x.js`, { with: { type: 'json' } })
+      world.calls[2]!.reject(refused())
+      await tick()
+      expect(world.calls[3]).toMatchObject({
+        url: `https://m.youtube.com/.zenium-ext/${EXT}/connectors/x.js`,
+        options: { with: { type: 'json' } }
+      })
+      world.calls[3]!.resolve(namespace)
+      await expect(second).resolves.toBe(namespace)
+    })
+
+    it('leaves the extension its own error when the alias is refused too, recorded once, and an opaque page origin roots no alias', async () => {
+      const { host, errors } = harness()
+      const noted: unknown[][] = []
+      const world = importing()
+      host.document = new FakeDocument(null)
+      host.pageModules = false
+      host.pageOrigin = 'https://www.flipkart.com'
+      host.importModule = world.importModule
+      host.warn = (...args) => void noted.push(args)
+      const recovery = createScriptRecovery(host)
+      const entry = `${ORIGIN}/assets/preload-helper-DwIMeJeZ.js`
+      const own = recovery.importModule(entry)
+      const error = refused()
+      world.calls[0]!.reject(error)
+      await tick()
+      expect(world.calls[1]!.url).toBe(
+        `https://www.flipkart.com/.zenium-ext/${EXT}/assets/preload-helper-DwIMeJeZ.js`
+      )
+      world.calls[1]!.reject(new TypeError('Failed to fetch dynamically imported module'))
+      // The first rejection, as Chrome leaves a content script one for a file its manifest never exposed.
+      await expect(own).rejects.toBe(error)
+      expect(noted).toHaveLength(1)
+      expect(String(noted[0]?.[0])).toContain('page-origin alias')
+      expect(String(noted[0]?.[0])).toContain(
+        `/.zenium-ext/${EXT}/assets/preload-helper-DwIMeJeZ.js`
+      )
+      // Not retried again by the violation's path either, and `runtime.getURL` keeps the served spelling.
+      recovery.onViolation(violation(entry))
+      expect(world.calls).toHaveLength(2)
+      expect(recovery.aliasFor(`${ORIGIN}/assets/chunk.js`)).toBeNull()
+      expect(errors).toEqual([])
+      // An `about:blank` frame's "null" origin roots no alias: the error alone, nothing recorded.
+      const opaque = harness()
+      const opaqueWorld = importing()
+      opaque.host.document = new FakeDocument(null)
+      opaque.host.pageModules = false
+      opaque.host.pageOrigin = 'null'
+      opaque.host.importModule = opaqueWorld.importModule
+      opaque.host.warn = () => undefined
+      const bare = createScriptRecovery(opaque.host).importModule(entry)
+      opaqueWorld.calls[0]!.reject(error)
+      await expect(bare).rejects.toBe(error)
+      expect(opaqueWorld.calls).toHaveLength(1)
+      // A world that lends no `import()` at all: the call rejects as an import would where there is none.
+      const none = harness()
+      await expect(createScriptRecovery(none.host).importModule(entry)).rejects.toThrow(
+        'import() is not available'
+      )
+    })
+
+    it("on the one-realm WebView imports the alias through the bootstrap's own import() (the host brackets or stubs the served text) and takes the nonce path once when that is refused too", async () => {
+      const { host, errors } = harness()
+      const warnings: unknown[][] = []
+      host.warn = (...args) => void warnings.push(args)
+      const realm = importing()
+      const doc = new FakeDocument()
+      host.document = doc
+      host.pageModules = true
+      host.pageOrigin = 'https://m.youtube.com'
+      host.importModule = realm.importModule
+      const recovery = createScriptRecovery(host)
+      const own = recovery.importModule(connector)
+      recovery.onViolation(violation(connector))
+      realm.calls[0]!.reject(refused())
+      await tick()
+      expect(realm.calls.map((c) => c.url)).toEqual([connector, alias])
+      realm.calls[1]!.resolve(namespace)
+      await expect(own).resolves.toBe(namespace)
+      // No module element of the page's for it, and `runtime.getURL` keeps the served spelling here.
+      expect(doc.created).toEqual([])
+      expect(recovery.aliasFor(`${ORIGIN}/connectors/util.js`)).toBeNull()
+      // A page that refuses the alias too (a nonce-only policy): the nonced module script of the
+      // page's once, as the violation's path had it, and the extension's own error.
+      const entry = `${ORIGIN}/assets/preload-helper-DwIMeJeZ.js`
+      const error = refused()
+      const buyhatke = recovery.importModule(entry)
+      realm.calls[2]!.reject(error)
+      await tick()
+      realm.calls[3]!.reject(refused())
+      await expect(buyhatke).rejects.toBe(error)
+      expect(doc.created).toHaveLength(1)
+      expect(doc.created[0]).toMatchObject({
+        type: 'module',
+        nonce: 'nonce-of-the-page',
+        src: entry
+      })
+      recovery.onViolation(violation(entry))
+      expect(doc.created).toHaveLength(1)
+      doc.created[0]!.dispatchEvent(new Event('load'))
+      expect(recovery.pending()).toBe(0)
+      // The alias refusal is said once, as a warning naming both spellings; nothing is an error.
+      expect(warnings).toHaveLength(1)
+      expect(String(warnings[0]![0])).toContain(entry)
+      expect(String(warnings[0]![0])).toContain(
+        `https://m.youtube.com/.zenium-ext/${EXT}/assets/preload-helper-DwIMeJeZ.js`
+      )
+      expect(errors).toEqual([])
+    })
+
+    it('treats a synchronous throw of the world import as its rejection', async () => {
+      const { host } = harness()
+      host.document = new FakeDocument(null)
+      host.pageModules = false
+      host.pageOrigin = 'https://m.youtube.com'
+      let calls = 0
+      host.importModule = (url) => {
+        calls += 1
+        if (url === connector) throw new TypeError('import() is not available')
+        return Promise.resolve(namespace)
+      }
+      await expect(createScriptRecovery(host).importModule(connector)).resolves.toBe(namespace)
+      expect(calls).toBe(2)
+    })
+  })
+
   it('rebaseCssUrls leaves absolute, fragment, protocol-relative and data references alone', () => {
     const out = rebaseCssUrls(
       'a{b:url(x.png) url(\'../y.png\') url("https://h/z.png") url(#frag) url(//cdn/w.png) url( sub/v.png )}',
