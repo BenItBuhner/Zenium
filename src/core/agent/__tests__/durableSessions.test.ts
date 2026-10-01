@@ -468,6 +468,19 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     const { s: d } = await named(desktop, 'Invoice reconciliation')
     expect(listed(desktop, d)).toContain('browser_handle_dialog')
     expect(desktop.service.instructions(d)).toContain('browser_handle_dialog answers it')
+    // The dialogs handed to an agent are alert, confirm and prompt (`PageDialogRequest.kind`);
+    // "Leave site?" never reaches it – an agent's page leaves without a question
+    // (`PageDialogService.confirmLeave`; Android's `UnloadObjection` leaves silently) – so no
+    // text names it among them, and both hosts' instructions say so.
+    const handleDialog = desktop.service
+      .listTools(d)
+      .find((t) => t.name === 'browser_handle_dialog')
+    expect(handleDialog?.description).toContain('(alert, confirm or prompt)')
+    expect(handleDialog?.description).not.toContain('Leave site?')
+    expect(desktop.service.instructions(d)).toContain(
+      'Page dialogs (alert, confirm, prompt) on your tabs'
+    )
+    expect(desktop.service.instructions(d)).toContain('your tab leaves without a question')
 
     const android = browser({ agentDialogs: false })
     const { s: a } = await named(android, 'Invoice reconciliation')
@@ -475,6 +488,7 @@ describe("page dialogs on an agent's tab are the agent's", () => {
     expect(listed(android, a)).toContain('browser_snapshot')
     expect(android.service.instructions(a)).not.toContain('browser_handle_dialog')
     expect(android.service.instructions(a)).toContain('answered by this browser, not by you')
+    expect(android.service.instructions(a)).toContain('your tab leaves without a question')
     const res = await android.call(a, 'browser_handle_dialog', { accept: true })
     expect(res.isError).toBe(true)
     expect(textOf(res)).toContain('Unknown tool browser_handle_dialog')
