@@ -487,4 +487,44 @@ describe('the campaign promo (§9.23: a prompt about Zenium itself)', () => {
     expect(setDefault!.hasAttribute('data-primary')).toBe(true)
     expect(setDefault!.classList.contains('zen-v2-button')).toBe(true)
   })
+
+  // §5.7 as the Lead refined it on #750: the promo arrives on its own, so its dialog – modal,
+  // which focus must enter – takes the first focus on its container, not on Set as default:
+  // Enter must not perform an act nobody asked for, and the first Tab reaches Not now.
+  it('arrives on its own, so the dialog itself takes the first focus: Enter does nothing, the first Tab lands on Not now (§5.7)', async () => {
+    browserStore.set({ state: due('android') })
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet', coarse: true })
+    render(
+      <>
+        <FrameDialogHost frame />
+        <DefaultBrowserLayer />
+      </>
+    )
+    await raise()
+    const d = dialog()!
+    expect(d).not.toBeNull()
+    // The container is the first focus, declared out of the Tab order (`tabindex="-1"`); neither
+    // button holds it.
+    expect(document.activeElement).toBe(d)
+    expect(d.getAttribute('tabindex')).toBe('-1')
+    const [notNow, setDefault] = buttons(d)
+    expect(setDefault!.textContent).toBe('Set as default')
+    // Enter on the container has no default button to press: no request out, nothing
+    // dismissed, the dialog still standing.
+    act(() => {
+      d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await settle()
+    expect(requests()).toEqual([])
+    expect(run.mock.calls.filter(([c]) => c === 'defaultBrowser.dismiss')).toEqual([])
+    expect(dialog()).toBe(d)
+    expect(document.activeElement).toBe(d)
+    // The first Tab from the container lands on Not now, the first button in order (§9.22's
+    // wrap, from the root).
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    })
+    expect(document.activeElement).toBe(notNow)
+    expect(notNow!.textContent).toBe('Not now')
+  })
 })
