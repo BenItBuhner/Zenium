@@ -134,8 +134,32 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         } else if (sheet) {
             finding("FAIL no name field on the tree to touch")
         }
+        // Cancel closes the sheet. The sheet rides the keyboard's inset back down over a second or
+        // two on the software GPU and the tree's bounds for its row trail the motion: a tap read
+        // mid-way lands where Cancel is about to be and takes nothing (run 36821554537), and the
+        // sheet left standing is a cover the next scene's offer WAITS under at the band (motion
+        // spec §3.2) where the banner stack showed its card over it. So the row is read until it
+        // has held still, and the sheet is seen gone – a back closing it otherwise.
+        awaitStill("Cancel")
         if (!tapLabel(f, "Cancel", 3_000)) back()
+        if (sheet && !awaitSheetGone(4_000)) {
+            Log.w(tag, "the name-edit sheet stood after Cancel; a back closes it")
+            back()
+            awaitSheetGone(4_000)
+        }
         SystemClock.sleep(1_500)
+    }
+
+    /** Poll until the node reading `label` has kept the same bounds across two reads 400 ms apart (or `timeoutMs` passes). */
+    private fun awaitStill(label: String, timeoutMs: Long = 6_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = findByLabel(label)
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(400)
+            val now = findByLabel(label)
+            if (now != null && now == last) return
+            last = now
+        }
     }
 
     // --- 2. the ambient banner ---------------------------------------------------------------------
@@ -371,6 +395,16 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (json("String(!!document.querySelector('.zen-sheet.zen-install-sheet'))") == "true") return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** Poll until no install sheet is in the chrome's document; false when one still is at `timeoutMs`. */
+    private fun awaitSheetGone(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (json("String(!!document.querySelector('.zen-sheet.zen-install-sheet'))") == "false") return true
             SystemClock.sleep(200)
         }
         return false
