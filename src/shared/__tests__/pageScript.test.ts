@@ -452,13 +452,44 @@ describe('page script: the manifest subset the bridge carries (MW-63, share_targ
       expect(manifestSubset({ name: 'App', share_target: { action: 'share', params } })).toEqual({
         name: 'App'
       })
-    // A member of the wrong type is left out; the reader then reads the default, or nothing.
+    // An action or a field name of the wrong type is left out; the reader then reads nothing
+    // there, as it reads nothing of the original.
     expect(
       manifestSubset({
         name: 'App',
-        share_target: { action: 7, method: ['GET'], params: { title: 1, url: 'link' } }
+        share_target: { action: 7, params: { title: 1, url: 'link' } }
       })?.share_target
     ).toStrictEqual({ params: { url: 'link' } })
+    // A method or enctype that is present but no string drops the target whole (seed #41): left
+    // out, it would read as the default and let through a target the reader – and Chromium's
+    // parser – refuse when the manifest is fetched.
+    for (const method of [null, 7, ['GET'], { value: 'GET' }, true])
+      expect(
+        manifestSubset({
+          name: 'App',
+          share_target: { action: 'share', method, params: { title: 't' } }
+        })
+      ).toEqual({ name: 'App' })
+    for (const enctype of [null, 7, ['multipart/form-data'], {}, false])
+      expect(
+        manifestSubset({
+          name: 'App',
+          share_target: { action: 'share', method: 'POST', enctype, params: { title: 't' } }
+        })
+      ).toEqual({ name: 'App' })
+    // A string method or enctype still crosses, cut at the token cap; one the reader will refuse
+    // (an unknown token) crosses too, for the reader to refuse.
+    expect(
+      manifestSubset({
+        name: 'App',
+        share_target: {
+          action: 'share',
+          method: 'G'.repeat(100),
+          enctype: 'text/plain',
+          params: {}
+        }
+      })?.share_target
+    ).toStrictEqual({ action: 'share', method: 'G'.repeat(64), enctype: 'text/plain', params: {} })
     // A files entry that is no object crosses as null – the reader refuses the target, as it
     // refuses the original – and one entry crosses as a list of one, as the reader takes it.
     expect(
@@ -544,6 +575,29 @@ describe('page script: the manifest subset the bridge carries (MW-63, share_targ
     })
     expect(refused.straight?.shareTarget).toBeNull()
     expect(refused.viaBridge?.shareTarget).toBeNull()
+    // A method or enctype present but no string: the reader refuses the target whole from a
+    // fetch, so the bridge must not let it through as the default (seed #41 – the app is
+    // offered through neither way, as Chrome offers it through none).
+    for (const share_target of [
+      { action: 'share', method: null, params: { title: 't' } },
+      { action: 'share', method: 7, params: { title: 't' } },
+      { action: 'share', method: ['GET'], params: { title: 't' } },
+      { action: 'share', method: { value: 'GET' }, params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: null, params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: 7, params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: ['multipart/form-data'], params: { title: 't' } },
+      { action: 'share', method: 'POST', enctype: {}, params: { title: 't' } }
+    ]) {
+      const malformed = bothWays({ name: 'App', share_target })
+      expect(malformed.straight?.shareTarget).toBeNull()
+      expect(malformed.viaBridge?.shareTarget).toBeNull()
+      expect(malformed.viaBridge).toEqual(malformed.straight)
+    }
+    // The app itself is still installable either way: only its target is refused.
+    expect(
+      bothWays({ name: 'App', share_target: { action: 'share', method: null, params: {} } })
+        .viaBridge?.name
+    ).toBe('App')
   })
 
   it('leaves the other fields as they were: strings cut at 2048, lists capped with their known members, the rest out', () => {
