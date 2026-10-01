@@ -24,16 +24,17 @@ import { SyncPassphraseForm } from './syncForms'
  * carries the sync, Turn on sync (the passphrase form, the passphrase never leaving the device)
  * while sync is off, a fact while this device syncs another way – and the way to the full
  * controls under Sync; the other devices with their last-seen time (Sync's rows, `deviceRows`);
- * and Sign out, a destructive action that confirms first. An account that has signed this
- * device out is the §9.33 message row over Sign in again. A host that cannot reach the service
- * says so in one row and offers nothing else.
+ * and Sign out, which confirms first in the plain ink (this device keeps what it has). An
+ * account that has signed this device out is the §9.33 message row over Sign in again. A host
+ * that cannot reach the service says so in one row and offers nothing else. The paragraph is
+ * the same in every state; the invitation to sign in is the Sign in row's.
  */
 export function accountGroups({ state, navigate }: SectionContext): RowGroup[] {
   const sync = state.sync
   if (!sync.accountAvailable) return [unavailableGroup()]
   const signedIn = sync.account !== null && !sync.accountSignedOut
   if (!signedIn) return [signInGroup(sync)]
-  return [accountGroup(sync, navigate), devicesGroup(sync), signOutGroup(sync)]
+  return [accountGroup(sync, navigate), devicesGroup(sync), signOutGroup()]
 }
 
 function unavailableGroup(): RowGroup {
@@ -91,7 +92,7 @@ function accountGroup(sync: SyncStatus, navigate: SectionContext['navigate']): R
   return {
     id: 'account',
     heading: ACCOUNT_COPY.heading,
-    description: ACCOUNT_COPY.introSignedIn,
+    description: ACCOUNT_COPY.intro,
     rows: [
       {
         kind: 'info',
@@ -182,8 +183,8 @@ function syncRows(sync: SyncStatus): SettingsRow[] {
 
 /**
  * The other devices signed in to the account, most recently seen first, with their count as the
- * heading's aside (0 rather than nothing, §9.17); the empty line says why there are none – no
- * other device yet, or sync still off on this one, since the list is what sync carries.
+ * heading's aside while the account carries the sync (0 rather than nothing, §9.17); while sync
+ * is off there is no list to count, so the empty line alone says why.
  */
 function devicesGroup(sync: SyncStatus): RowGroup {
   const listing = sync.enabled && sync.transport === 'account'
@@ -191,18 +192,17 @@ function devicesGroup(sync: SyncStatus): RowGroup {
   return {
     id: 'account-devices',
     heading: ACCOUNT_COPY.devices,
-    aside: devices.length.toLocaleString(),
+    aside: listing ? devices.length.toLocaleString() : undefined,
     rows: deviceRows(devices, 'account'),
     empty: listing ? SYNC_COPY.noDevicesAccount : ACCOUNT_COPY.noDevicesOff
   }
 }
 
 /**
- * Sign out, a destructive action that confirms first (§10.4): the service forgets this device's
- * sign-in; while the account carried the sync, sync turns off with everything this device kept.
+ * Sign out, confirmed first with the verb in the plain ink (§9.23's third form): the service
+ * forgets this device's sign-in and nothing this device holds is lost.
  */
-function signOutGroup(sync: SyncStatus): RowGroup {
-  const syncing = sync.enabled && sync.transport === 'account'
+function signOutGroup(): RowGroup {
   return {
     id: 'account-sign-out',
     heading: null,
@@ -211,14 +211,14 @@ function signOutGroup(sync: SyncStatus): RowGroup {
         kind: 'action',
         id: 'account-sign-out',
         label: SYNC_COPY.accountSignOut,
-        description: syncing ? SYNC_COPY.accountSignOutSyncHint : SYNC_COPY.accountSignOutHint,
+        description: SYNC_COPY.accountSignOutSyncHint,
         keywords: ACCOUNT_KEYWORDS,
         button: `${SYNC_COPY.accountSignOut}…`,
-        destructive: true,
         confirm: {
           title: SYNC_COPY.accountSignOutTitle,
-          description: syncing ? SYNC_COPY.accountSignOutDescription : SYNC_COPY.accountSignOutHint,
-          action: SYNC_COPY.accountSignOut
+          description: SYNC_COPY.accountSignOutDescription,
+          action: SYNC_COPY.accountSignOut,
+          verbTone: 'plain'
         },
         onPress: () => {
           run('sync.accountSignOut', undefined)

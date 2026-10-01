@@ -9059,7 +9059,7 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(choices.options.map((o) => o.value)).toEqual(['folder', 'webdav'])
   })
 
-  it('the Zenium account: while the new tab waits, its code stands with “Waiting for you to sign in in the new tab…” over Cancel sign-in; leaving the account for another transport cancels it; a sign-in that did not finish says why in the page’s words', () => {
+  it('the Zenium account: while the new tab waits, its code stands with “Waiting for the sign-in to finish in the new tab…” over Cancel sign-in; leaving the account for another transport cancels it; a sign-in that did not finish says why in the page’s words', () => {
     invoke.mockClear()
     const waiting = section('sync', withAccount({ accountLink: LINK }))
     expect(waiting.groups[0]?.rows.map((r) => r.id)).toEqual([
@@ -9072,7 +9072,7 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(row(waiting, 'sync-account-code')).toMatchObject({
       kind: 'info',
       label: 'WXYZ-2345',
-      description: 'Waiting for you to sign in in the new tab…'
+      description: 'Waiting for the sign-in to finish in the new tab…'
     })
     const cancel = actionRow(waiting, 'sync-account-cancel')
     expect(cancel).toMatchObject({ label: 'Cancel sign-in', button: 'Cancel' })
@@ -9152,14 +9152,15 @@ describe('ID-08’s Sync category on a phone', () => {
     const signOut = actionRow(model, 'sync-account-sign-out')
     expect(signOut).toMatchObject({
       description: 'This device stops syncing and keeps what it has.',
-      destructive: true,
       confirm: {
         title: 'Sign out of your Zenium account?',
         description:
-          'This device stops syncing and keeps everything it has. Your other devices keep syncing.',
-        action: 'Sign out'
+          'This device stops syncing and keeps what it has. Your other devices keep syncing.',
+        action: 'Sign out',
+        verbTone: 'plain'
       }
     })
+    expect(signOut.destructive).toBeUndefined()
     syncSetupStore.set({ transport: 'webdav' })
     signOut.onPress?.()
     expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
@@ -9264,7 +9265,7 @@ describe('ID-08’s Sync category on a phone', () => {
 
   describe('the Account page', () => {
     const ACCOUNT_INTRO_LINE =
-      'Sign in to sync your bookmarks and settings across devices. Everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.'
+      'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.'
 
     it('is listed behind the `sync` capability right before Sync, on the phone and the desktop, and builds in every state with unique ids', () => {
       expect(phoneSections().map((m) => m.section.id)).not.toContain('account')
@@ -9287,6 +9288,7 @@ describe('ID-08’s Sync category on a phone', () => {
       ]) {
         const model = section('account', s)
         expect(model.groups.length).toBeGreaterThan(0)
+        if (s.sync.accountAvailable) expect(model.groups[0]?.description).toBe(ACCOUNT_INTRO_LINE)
         expect(model.groups.every(groupShows)).toBe(true)
         const ids = allRows(model.groups).map((r) => r.id)
         expect(new Set(ids).size).toBe(ids.length)
@@ -9318,7 +9320,7 @@ describe('ID-08’s Sync category on a phone', () => {
       expect(row(waiting, 'account-code')).toMatchObject({
         kind: 'info',
         label: 'WXYZ-2345',
-        description: 'Waiting for you to sign in in the new tab…'
+        description: 'Waiting for the sign-in to finish in the new tab…'
       })
 
       const failed = section('account', withAccount({ accountLinkFailure: 'expired' }))
@@ -9359,20 +9361,26 @@ describe('ID-08’s Sync category on a phone', () => {
       const devices = model.groups[1]!
       expect(devices).toMatchObject({
         heading: 'Devices',
-        aside: '0',
         rows: [],
         empty: 'Turn on sync to see your other devices'
       })
+      expect(devices.aside).toBeUndefined()
 
       const signOut = row(model, 'account-sign-out')
       if (signOut.kind !== 'action') throw new Error('not an action')
       expect(signOut).toMatchObject({
         label: 'Sign out',
-        description: 'This device forgets the sign-in.',
+        description: 'This device stops syncing and keeps what it has.',
         button: 'Sign out…',
-        destructive: true
+        confirm: {
+          title: 'Sign out of your Zenium account?',
+          description:
+            'This device stops syncing and keeps what it has. Your other devices keep syncing.',
+          action: 'Sign out',
+          verbTone: 'plain'
+        }
       })
-      expect(signOut.confirm?.title).toBe('Sign out of your Zenium account?')
+      expect(signOut.destructive).toBeUndefined()
       signOut.onPress?.()
       expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
     })
@@ -9401,9 +9409,15 @@ describe('ID-08’s Sync category on a phone', () => {
       ])
       expect(devices.empty).toBe('No other device has synced to this account yet')
 
-      expect(row(model, 'account-sign-out').description).toBe(
-        'This device stops syncing and keeps what it has.'
-      )
+      const signOut = row(model, 'account-sign-out')
+      if (signOut.kind !== 'action') throw new Error('not an action')
+      expect(signOut.description).toBe('This device stops syncing and keeps what it has.')
+      expect(signOut.confirm).toMatchObject({
+        description:
+          'This device stops syncing and keeps what it has. Your other devices keep syncing.',
+        verbTone: 'plain'
+      })
+      expect(signOut.destructive).toBeUndefined()
 
       // The merge question first while the first sync waits on it; Sync now waits too.
       const merging = section('account', syncState(onAccount({ pendingMerge: true })))
@@ -9458,7 +9472,8 @@ describe('ID-08’s Sync category on a phone', () => {
         description:
           'This device syncs through a folder, not your account. Turn off sync under Sync to sync through your account instead.'
       })
-      expect(folder.groups[1]).toMatchObject({ aside: '0', rows: [] })
+      expect(folder.groups[1]).toMatchObject({ rows: [] })
+      expect(folder.groups[1]?.aside).toBeUndefined()
 
       const none = section('account', syncState(syncStatus()))
       expect(none.groups.map((g) => g.id)).toEqual(['account'])

@@ -174,7 +174,7 @@ export const SYNC_COPY = {
   accountSignIn: 'Sign in',
   accountSignInHint: 'Opens the sign-in page in a new tab.',
   accountSignInAgain: 'Sign in again',
-  accountWaiting: 'Waiting for you to sign in in the new tab…',
+  accountWaiting: 'Waiting for the sign-in to finish in the new tab…',
   accountCancel: 'Cancel sign-in',
   accountCancelAction: 'Cancel',
   accountSignOut: 'Sign out',
@@ -182,7 +182,7 @@ export const SYNC_COPY = {
   accountSignOutSyncHint: 'This device stops syncing and keeps what it has.',
   accountSignOutTitle: 'Sign out of your Zenium account?',
   accountSignOutDescription:
-    'This device stops syncing and keeps everything it has. Your other devices keep syncing.',
+    'This device stops syncing and keeps what it has. Your other devices keep syncing.',
   accountSignedOut: 'You were signed out of your Zenium account',
   accountSignedOutHint: 'Sign in again to keep syncing.',
   accountCodeExpired: 'The code expired before the sign-in finished.',
@@ -213,9 +213,7 @@ export const SYNC_COPY = {
 export const ACCOUNT_COPY = {
   heading: 'Zenium account',
   intro:
-    'Sign in to sync your bookmarks and settings across devices. Everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.',
-  introSignedIn:
-    'Your Spaces, folders, pinned tabs, bookmarks, passwords and settings stay the same on every device you sign in on.',
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.',
   signedInAs: 'Signed in as',
   unavailable: 'Not available on this device',
   unavailableHint: 'This device cannot reach the Zenium account service.',

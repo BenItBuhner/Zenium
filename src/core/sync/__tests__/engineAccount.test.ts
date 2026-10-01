@@ -190,6 +190,17 @@ const sessionOf = (deviceName: string): ReturnType<FakeAccountServer['sessionsOf
   server.sessionsOf(EMAIL).filter((s) => s.deviceName === deviceName && !s.revoked)[0]!
 
 describe('the engine through the Zenium account', () => {
+  it('says each account error in a toast as the settings page does, too-large of the one thing it was', () => {
+    expect(accountErrorMessage('signed-out')).toBe('You were signed out of your Zenium account.')
+    expect(accountErrorMessage('quota')).toBe('Your Zenium account’s sync storage is full.')
+    expect(accountErrorMessage('too-large')).toBe('This is too large to sync.')
+    expect(accountErrorMessage('rate-limited')).toBe(
+      'Too many requests to your Zenium account. Try again in a moment.'
+    )
+    expect(accountErrorMessage('unavailable')).toBe('Your Zenium account could not be reached.')
+    expect(accountErrorMessage('refused')).toBe('Your Zenium account did not accept the request.')
+  })
+
   it('signs in with a code in a new tab, sets up, and two devices converge; the token lives in the secret store alone', async () => {
     const a = accountDevice('Desk (Linux)')
     const b = accountDevice('Pixel 9', { kind: 'phone' })

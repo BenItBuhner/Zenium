@@ -609,9 +609,9 @@ export function mergeRow(account: boolean, prefix = 'sync'): SettingsRow {
 /**
  * Connected through the Zenium account: while the service has signed this device out, the
  * sign-in rows first – Sign in again, the code and Cancel while it waits – the status row's
- * follow-up (§9.17); then the account by its email and Sign out, a destructive action that
- * confirms first (§10.4): the service forgets this device's sign-in, and sync turns off with
- * everything this device has kept.
+ * follow-up (§9.17); then the account by its email and Sign out, which confirms first with
+ * the verb in the plain ink (§9.23's third form): the service forgets this device's sign-in, and
+ * sync turns off with everything this device has kept.
  */
 function connectedAccountRows(sync: SyncStatus): SettingsRow[] {
   return [
@@ -624,11 +624,11 @@ function connectedAccountRows(sync: SyncStatus): SettingsRow[] {
       description: SYNC_COPY.accountSignOutSyncHint,
       keywords: ACCOUNT_KEYWORDS,
       button: `${SYNC_COPY.accountSignOut}…`,
-      destructive: true,
       confirm: {
         title: SYNC_COPY.accountSignOutTitle,
         description: SYNC_COPY.accountSignOutDescription,
-        action: SYNC_COPY.accountSignOut
+        action: SYNC_COPY.accountSignOut,
+        verbTone: 'plain'
       },
       onPress: () => {
         run('sync.accountSignOut', undefined)

@@ -233,15 +233,15 @@ export function accountErrorMessage(kind: AccountErrorKind): string {
     case 'signed-out':
       return 'You were signed out of your Zenium account.'
     case 'quota':
-      return 'Sync storage for your account is full.'
+      return 'Your Zenium account’s sync storage is full.'
     case 'too-large':
-      return 'That is too large to sync.'
+      return 'This is too large to sync.'
     case 'rate-limited':
       return 'Too many requests to your Zenium account. Try again in a moment.'
     case 'unavailable':
       return 'Your Zenium account could not be reached.'
     case 'refused':
-      return 'Your Zenium account refused the request.'
+      return 'Your Zenium account did not accept the request.'
   }
 }
 

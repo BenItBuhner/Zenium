@@ -362,7 +362,7 @@ describe('Settings › Sync on the phone, from the engine’s status (ID-32)', (
     expect(rowOf(el1, 'sync-account-code').querySelector('.zen-settings-label')?.textContent).toBe(
       'WXYZ-2345'
     )
-    expect(pageWords(el1)).toContain('Waiting for you to sign in in the new tab…')
+    expect(pageWords(el1)).toContain('Waiting for the sign-in to finish in the new tab…')
     expect(pageWords(el1)).toContain('Cancel sign-in')
 
     expect(setupRows(syncStatus({ ...available, account: { email: 'ada@example.com' } }))).toEqual([
