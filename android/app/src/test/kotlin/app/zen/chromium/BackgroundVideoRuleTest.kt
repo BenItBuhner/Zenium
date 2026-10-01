@@ -210,4 +210,56 @@ class BackgroundVideoRuleTest {
         assertFalse(hold.holding)
         assertEquals(true, hold.onBackground(false))
     }
+
+    // --- an allowed site behind another tab is visible to itself only while it plays video ------
+
+    @Test
+    fun aSilentAllowedSiteIsHiddenBehindAnotherTabLikeAnyOther() {
+        // The site is allowed but nothing plays (no session, or a paused one): the session's word
+        // keeps nothing, and the switch's hide goes to the engine – the page is hidden, its timers
+        // throttle, as on any other site.
+        val hold = BackgroundVideoHold()
+        assertNull(hold.onKeep(BackgroundVideoRule.keepsPlaying(null)))
+        assertEquals(false, hold.onBackground(true))
+        assertFalse(hold.engineVisible)
+        assertFalse(hold.holding)
+        assertEquals(true, hold.onBackground(false))
+        // Paused before the switch: the same.
+        val paused = BackgroundVideoHold()
+        assertNull(paused.onKeep(BackgroundVideoRule.keepsPlaying(session(playing = false))))
+        assertEquals(false, paused.onBackground(true))
+        assertFalse(paused.holding)
+    }
+
+    @Test
+    fun anAllowedSitesAudioAloneTakesNoHoldBehindAnotherTab() {
+        // Audio keeps playing hidden by the engine's own rule, so the allowed site playing audio
+        // alone is hidden behind another tab as Chrome hides it, and its audio runs on.
+        val hold = BackgroundVideoHold()
+        assertNull(hold.onKeep(BackgroundVideoRule.keepsPlaying(session(video = false))))
+        assertEquals(false, hold.onBackground(true))
+        assertFalse(hold.holding)
+    }
+
+    @Test
+    fun theVideoStoppingWhileBehindHidesTheAllowedSiteThenAndStartingAgainUnhidesNothing() {
+        val hold = BackgroundVideoHold()
+        // Playing video on an allowed site: the switch's hide is held, the page plays on visible to itself.
+        assertNull(hold.onKeep(BackgroundVideoRule.keepsPlaying(session())))
+        assertNull(hold.onBackground(true))
+        assertTrue(hold.holding)
+        assertTrue(hold.engineVisible)
+        // The sound stops while the tab is behind (the clip ended, the site or the notification
+        // paused it): the session's word turns, and the page is hidden then.
+        assertEquals(false, hold.onKeep(BackgroundVideoRule.keepsPlaying(session(playing = false))))
+        assertFalse(hold.engineVisible)
+        assertFalse(hold.holding)
+        // It starts again while still behind: a hidden page is not un-hidden for it – the engine's
+        // pause stands until the tab is shown, when the one VISIBLE goes through.
+        assertNull(hold.onKeep(BackgroundVideoRule.keepsPlaying(session())))
+        assertFalse(hold.engineVisible)
+        assertFalse(hold.holding)
+        assertEquals(true, hold.onBackground(false))
+        assertTrue(hold.engineVisible)
+    }
 }

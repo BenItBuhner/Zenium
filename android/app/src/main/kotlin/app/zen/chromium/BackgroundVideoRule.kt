@@ -24,6 +24,14 @@ package app.zen.chromium
  * hidden as it would have been; the return puts VISIBLE back in one step either way, so a page
  * that never heard it was hidden hears nothing on return, and one that did hears one change.
  *
+ * The hide a tab switch brings (OS-39, [BackgroundTabRule]) is held by the same word: an allowed
+ * site stays visible to itself behind another tab ONLY while its session is playing video – a
+ * silent allowed site (nothing playing, or paused) is hidden like any other site and its timers
+ * throttle; the sound stopping while the tab is behind hides the page then, and a session that
+ * starts again while the page is hidden un-hides nothing (the engine's pause stands until the tab
+ * is shown again). The session's word is re-read on every change `MediaSessions` hears, so the
+ * transition is evaluated at the switch and on every media-state change.
+ *
  * Picture-in-picture is untouched: the window stays on screen in the small window, no hide comes,
  * and its X pauses the tab's video (#481) before the task leaves – [keepsPlaying] is false by then.
  * The rule is pure so the unit tests run it without a WebView.

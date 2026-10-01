@@ -5,7 +5,7 @@ import org.junit.Test
 
 class BackgroundTabRuleTest {
     private fun view(tabId: String, onScreen: Boolean, shownBefore: Boolean = true, behind: Boolean = false) =
-        BackgroundTabRule.View(tabId, onScreen, shownBefore, behind)
+        BackgroundTabRule.Tab(tabId, onScreen, shownBefore, behind)
 
     @Test
     fun aSwitchLeavesTheTabThatWasOnScreenBehindTheOneThatIs() {
@@ -28,8 +28,8 @@ class BackgroundTabRuleTest {
 
     @Test
     fun aTabNeverOnScreenIsLeftAlone() {
-        // A tab opened in the background, a tab restored at boot and not yet visited: not behind,
-        // so nothing of the boot or the new-tab path changes.
+        // A tab opened in the background, a tab restored at boot and not yet visited: not behind –
+        // the boot's first show runs one pass that finds nobody behind, and nothing else changes.
         assertEquals(emptySet<String>(), BackgroundTabRule.behind(listOf(view("a", onScreen = true), view("b", onScreen = false, shownBefore = false))))
         // Visited once and left: behind from then on.
         assertEquals(setOf("b"), BackgroundTabRule.behind(listOf(view("a", onScreen = true), view("b", onScreen = false))))

@@ -367,7 +367,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.visibility = if (visible) View.VISIBLE else View.GONE
         readable(view, visible)
         // What is on screen changed for the tabs that have been on it: a view coming on, or one
-        // that has been on going off. A fresh view's first GONE ([create]) changes nothing.
+        // that has been on going off. A fresh view's first GONE ([create]) posts nothing; the
+        // first show (the boot's restored tab, a new tab) posts one trivial O(N) pass that finds
+        // nobody behind and writes no change.
         if (visible) shownOnce.add(view.tabId)
         if (view.tabId in shownOnce) postBackgroundPass()
     }
@@ -389,7 +391,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         container.post {
             backgroundPassPosted = false
             val behind = BackgroundTabRule.behind(views.values.map {
-                BackgroundTabRule.View(it.tabId, it.visibility == View.VISIBLE, it.tabId in shownOnce, it.backgroundTab)
+                BackgroundTabRule.Tab(it.tabId, it.visibility == View.VISIBLE, it.tabId in shownOnce, it.backgroundTab)
             })
             for (view in views.values) view.backgroundTab = view.tabId in behind
         }

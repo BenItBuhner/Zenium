@@ -23,26 +23,29 @@ package app.zen.chromium
  * behind stays behind until its own view is on screen again – the cover going up over the tab in
  * front (the overview opened after a switch) does not bring the one behind back, where its paused
  * video would resume under the cover. A view that was never on screen (a tab opened in the
- * background, a tab restored at boot and not yet visited) is left as it is, so nothing of the boot
- * or the new-tab path changes here. The hold that answers for the engine's word,
- * [BackgroundVideoHold], applies the session's background-video allow to this hide as it does to
- * the window's. Pure, so the unit tests run it without a view.
+ * background, a tab restored at boot and not yet visited) is left as it is: the boot's restored
+ * tabs and a new tab's first show cost one trivial O(N) pass over the views that finds nobody
+ * behind and writes no change, and nothing else of those paths changes here. The hold that
+ * answers for the engine's word, [BackgroundVideoHold], applies the session's background-video
+ * allow to this hide as it does to the window's – held only while the allowed site's video is
+ * playing ([BackgroundVideoRule.keepsPlaying]); a silent allowed site is hidden like any other.
+ * Pure, so the unit tests run it without a view.
  */
 object BackgroundTabRule {
     /**
      * One tab's view as the tab host has it: on screen now, whether it has ever been, and whether
      * the last pass had it behind another tab.
      */
-    class View(val tabId: String, val onScreen: Boolean, val shownBefore: Boolean, val behind: Boolean)
+    class Tab(val tabId: String, val onScreen: Boolean, val shownBefore: Boolean, val behind: Boolean)
 
     /**
      * The tabs behind another tab on screen after this pass: every view off the screen that was
      * behind already, and – while some tab's view is on the screen – every view off it that has
      * been on it before. A view on screen is behind nothing.
      */
-    fun behind(views: Collection<View>): Set<String> {
-        val someOnScreen = views.any { it.onScreen }
-        return views
+    fun behind(tabs: Collection<Tab>): Set<String> {
+        val someOnScreen = tabs.any { it.onScreen }
+        return tabs
             .filter { !it.onScreen && (it.behind || (someOnScreen && it.shownBefore)) }
             .mapTo(LinkedHashSet()) { it.tabId }
     }
