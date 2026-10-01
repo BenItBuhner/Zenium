@@ -45,7 +45,7 @@ describe('shareUnchanged', () => {
   })
 
   it('takes the fresh node wherever a key, its order, a length or a leaf differs', () => {
-    const prev = {
+    const prev: Record<string, unknown> = {
       added: { a: 1 },
       removed: { a: 1, b: 2 },
       reordered: { a: 1, b: 2 },
@@ -55,7 +55,7 @@ describe('shareUnchanged', () => {
       kind: { v: 1 },
       undef: { v: undefined }
     }
-    const next = {
+    const next: Record<string, unknown> = {
       added: { a: 1, b: 2 },
       removed: { a: 1 },
       reordered: { b: 2, a: 1 },
@@ -67,11 +67,11 @@ describe('shareUnchanged', () => {
     }
     const fresh = clone(next)
     const out = shareUnchanged(prev, next)
-    for (const key of Object.keys(next) as Array<keyof typeof next>) {
+    for (const key of Object.keys(next)) {
       expect(out[key]).toBe(next[key])
     }
     expect(out).toEqual(fresh)
-    expect(Object.keys(out.reordered)).toEqual(['b', 'a'])
+    expect(Object.keys(out.reordered as object)).toEqual(['b', 'a'])
   })
 
   it('shares the unchanged items of a changed array, and the unchanged fields of a changed object', () => {
