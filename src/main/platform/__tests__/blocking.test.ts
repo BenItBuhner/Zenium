@@ -835,7 +835,7 @@ describe('GhosteryTextMatcher', () => {
         for (const fn of pending.splice(0)) fn()
       },
       slots: 0,
-      asked: []
+      asked: [] as Array<{ capMs: number; quietMs: number | undefined }>
     }
     return state
   }
