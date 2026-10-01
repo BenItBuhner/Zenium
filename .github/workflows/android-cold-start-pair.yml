@@ -24,6 +24,11 @@ name: Android cold start pair
 # first-run tour, under which the first tab's path is not measured); the phone's pairs leave both
 # at their defaults. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (W6-S28-c, PR #763): the one N = 30 alternated cold-start pair the P0 ruling owes on the
+  # product head – TabHost.place is on the boot path (the dispatch API is closed to the builder's token);
+  # every input at its default (main, 34, pixel_6, 15 x 2). Removed before READY.
+  push:
+    branches: [cursor/android-webview-band-seat-9271]
   workflow_dispatch:
     inputs:
       base-ref:
