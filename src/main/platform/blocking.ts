@@ -414,8 +414,9 @@ function damagedCache(bin: string, reason: string, error?: unknown): null {
  * (W8-P1b): each scope's engine is its own blob, so a build of several scopes costs the main
  * thread several short stalls rather than one long one; a scope with no list compiled yet
  * takes the first idle moment, capped at {@link DESERIALISE_IDLE_CAP_MS}, and any other waits
- * for the loop to be quiet {@link IDLE_QUIET_MS}, capped at {@link IDLE_WAIT_CAP_MS}. Bytes a
- * newer build replaces before their slot fires are dropped unread.
+ * for the loop to be quiet {@link IDLE_QUIET_MS}, capped at {@link IDLE_WAIT_CAP_MS} – unless
+ * a scope with no list compiled yet arrives during that wait, which cuts it short (W8-P1c).
+ * Bytes a newer build replaces before their slot fires are dropped unread.
  */
 export class GhosteryTextMatcher implements TextMatcher, CspSource {
   /** The matcher of the unscoped sets: every partition no scoped text set names. */
@@ -440,6 +441,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   /** Compiled bytes back from the worker, by scope, until the idle slot deserialises them. */
   private readonly waiting = new Map<string, Waiting>()
   private cancelIdle: (() => void) | null = null
+  /** Whether the slot on its way was asked for as the urgent one (the first idle moment). */
+  private slotUrgent = false
   /** Builds so far, for tests and diagnostics. */
   builds = 0
   /** Whether the current unscoped matcher came out of the cache. */
@@ -797,13 +800,22 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
    * Ask for the idle slot for the next waiting scope, unless one is already on its way or
    * nothing waits. A scope with no list compiled yet gets the first idle moment, capped at
    * {@link DESERIALISE_IDLE_CAP_MS}; any other's bytes wait for {@link IDLE_QUIET_MS} of quiet,
-   * capped at {@link IDLE_WAIT_CAP_MS}, since the scope's requests are answered meanwhile.
+   * capped at {@link IDLE_WAIT_CAP_MS}, since the scope's requests are answered meanwhile. A
+   * slot on its way keeps what it was asked for, with one exception (W8-P1c): when the bytes
+   * that just arrived make the next scope one with no list compiled yet, a slot waiting for
+   * quiet is cancelled and asked for again as the urgent one, so that scope is not left
+   * unprotected for up to the quiet wait's cap.
    */
   private requestSlot(): void {
-    if (this.cancelIdle) return
     const next = this.nextWaiting()
     if (!next) return
     const urgent = this.unprotectedScope(next.partition)
+    if (this.cancelIdle) {
+      if (this.slotUrgent || !urgent) return
+      this.cancelIdle()
+      this.cancelIdle = null
+    }
+    this.slotUrgent = urgent
     this.cancelIdle = this.idle(
       () => {
         this.cancelIdle = null
