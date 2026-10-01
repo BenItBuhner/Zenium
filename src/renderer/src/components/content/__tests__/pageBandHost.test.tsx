@@ -39,7 +39,17 @@ const { framesPending } = await import('@renderer/lib/motion/clock')
 const { bandStore, chooseBand, dismissBandByKey, resetBands, showBand } =
   await import('@renderer/lib/band')
 type BandDismissReason = import('@renderer/lib/band').BandDismissReason
-const { bandSeat, resetPageBand } = await import('@renderer/lib/pageBand')
+const {
+  bandOffset,
+  bandSeat,
+  layoutBand,
+  moveChromePage,
+  movePage,
+  resetChromePageBand,
+  resetPageBand,
+  seatBand,
+  seatChromePage
+} = await import('@renderer/lib/pageBand')
 const { uiStore } = await import('@renderer/lib/ui')
 
 const FRAME_MS = 16
@@ -216,6 +226,7 @@ beforeEach(() => {
   run.mockClear()
   resetBands()
   resetPageBand()
+  resetChromePageBand()
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
@@ -227,6 +238,7 @@ afterEach(() => {
   mount?.remove()
   resetBands()
   resetPageBand()
+  resetChromePageBand()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -580,6 +592,85 @@ describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, 
     settle()
     expect(offsets().at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
     expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+  })
+
+  it("the layer's source: mounted with source=\"chrome-page\" (Android, `ContentArea`) it rides on the chrome page's pair alone – seated by `seatChromePage`, translated by `moveChromePage` against that seat – deaf to the desktop's pair, and the layout report hears nothing of it; the default rides on the page's pair, deaf to the chrome page's", () => {
+    act(() => {
+      root!.render(
+        <PageBandLayer source="chrome-page">
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      )
+    })
+    const el = layer()
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+    // The travel: the frames translate the layer at seat 0 (Android's host writes them per
+    // frame, no React in the way); the desktop's pair and the report stay silent.
+    act(() => {
+      moveChromePage(24)
+    })
+    expect(el.style.transform).toBe('translateY(24px)')
+    expect(el.style.top).toBe('')
+    act(() => {
+      moveChromePage(BAND_HEIGHT_ONE_LINE)
+    })
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_ONE_LINE}px)`)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    // The rest: seated – the box inset by the band's height, no transform (offset − seat = 0).
+    act(() => {
+      seatChromePage(BAND_HEIGHT_ONE_LINE)
+    })
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe('')
+    expect(layoutBand()).toBeUndefined()
+    expect(offsets()).toEqual([])
+    // The desktop's pair written beside it moves this layer not at all.
+    act(() => {
+      seatBand(BAND_HEIGHT_TWO_LINE)
+      movePage(BAND_HEIGHT_TWO_LINE)
+    })
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe('')
+    // The leave: unseated at the departure (the box full-frame, translated by the offset – the
+    // same place), the frames home, a plain box at the rest.
+    act(() => {
+      seatChromePage(0)
+    })
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_ONE_LINE}px)`)
+    act(() => {
+      moveChromePage(0)
+    })
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+    // The default source – the desktop's layer – is deaf to the chrome page's pair.
+    act(() => root!.render(null))
+    resetPageBand()
+    resetChromePageBand()
+    act(() => {
+      root!.render(
+        <PageBandLayer>
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      )
+    })
+    const desktop = layer()
+    act(() => {
+      moveChromePage(40)
+      seatChromePage(40)
+    })
+    expect(desktop.style.transform).toBe('')
+    expect(desktop.style.top).toBe('')
+    act(() => {
+      seatBand(BAND_HEIGHT_TWO_LINE)
+      movePage(30)
+    })
+    expect(desktop.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    expect(desktop.style.transform).toBe(`translateY(${30 - BAND_HEIGHT_TWO_LINE}px)`)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_TWO_LINE, offset: 30 })
   })
 })
 
