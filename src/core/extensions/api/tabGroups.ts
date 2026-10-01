@@ -28,6 +28,8 @@ export const ERROR_NO_PERMISSION = "The extension does not have the 'tabGroups' 
 export const ERROR_NO_TABS = 'No tabs given.'
 export const ERROR_GROUP_PARAMS = "Cannot specify 'createProperties' along with a 'groupId'."
 export const ERROR_ESSENTIAL_TAB = 'Essential tabs cannot be grouped in Zenium.'
+export const ERROR_AGENT_GROUP =
+  'Tabs cannot be moved into or out of a group an AI agent is working in.'
 export const ERROR_CROSS_WINDOW = 'Tabs can only be grouped within their own window in Zenium.'
 export const ERROR_LOCAL_WINDOW = 'Tabs of a blank or private window cannot be grouped in Zenium.'
 export const ERROR_MOVE_WINDOW = 'Groups can only be moved within their own window in Zenium.'

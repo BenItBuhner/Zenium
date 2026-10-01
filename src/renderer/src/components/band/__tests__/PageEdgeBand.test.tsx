@@ -62,6 +62,8 @@ interface HostTrace {
   offsets: number[]
   rests: number[]
   departs: number[]
+  /** Take-holds heard, each with how many offsets had arrived by then. */
+  dragStarts: number[]
 }
 
 let root: Root | null = null
@@ -70,18 +72,60 @@ let host: HostTrace
 let frames: ReturnType<typeof clockedFrames>
 
 /** Mount the band on the trace host; from here the model drives it. */
-function mount(): void {
+function mount(wordless = false): void {
   act(() => {
     root!.render(
       createElement(PageEdgeBand, {
         host: {
           translate: (o) => host.offsets.push(o),
           rest: (h) => host.rests.push(h),
-          depart: (to) => host.departs.push(to)
+          depart: (to) => host.departs.push(to),
+          // A host with the optional words left out (Android's today) is served the same.
+          ...(wordless ? {} : { dragStart: () => host.dragStarts.push(host.offsets.length) })
         }
       })
     )
   })
+}
+
+const MOUSE = 7
+const HOLD = { x: 200, y: 30 }
+
+/**
+ * A mouse on the band, as `useSwipeDismiss` hears it: `down` takes hold where the band is,
+ * `move(dy)` is the pointer `dy` px (negative up) from there, `up` lets go. happy-dom has no
+ * pointer capture, so the band's take and release of it are stubbed not to throw.
+ */
+function mouse(): { down: () => void; move: (dy: number) => void; up: (dy: number) => void } {
+  const captured = new Set<number>()
+  const at = (type: string, dy: number): void => {
+    const el = band()!
+    el.setPointerCapture = (id: number) => {
+      captured.add(id)
+    }
+    el.releasePointerCapture = (id: number) => {
+      captured.delete(id)
+    }
+    el.hasPointerCapture = (id: number) => captured.has(id)
+    act(() => {
+      el.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: MOUSE,
+          pointerType: 'mouse',
+          button: 0,
+          clientX: HOLD.x,
+          clientY: HOLD.y + dy
+        })
+      )
+    })
+  }
+  return {
+    down: () => at('pointerdown', 0),
+    move: (dy) => at('pointermove', dy),
+    up: (dy) => at('pointerup', dy)
+  }
 }
 
 /** The model's mutations, as the tenants and the host make them, flushed into the band. */
@@ -137,7 +181,7 @@ const offline = (): number =>
 beforeEach(() => {
   vi.useFakeTimers()
   frames = clockedFrames()
-  host = { offsets: [], rests: [], departs: [] }
+  host = { offsets: [], rests: [], departs: [], dragStarts: [] }
   resetBands()
   setBandFrame({ front: 't1', ok: true })
   mountEl = document.createElement('div')
@@ -316,6 +360,61 @@ describe('PageEdgeBand – the band’s content and its seam (motion spec §3)',
     expect(framesPending()).toBeGreaterThan(0)
     settle()
     expect(host.rests.at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+  })
+
+  it('a mouse taking hold of the band reaches the host as dragStart once, before the drag’s first frame – mid-travel too – and the release names its destination (depart) as any travel does; a host without the word is served the same', () => {
+    mount()
+    defaultBrowser()
+    settle()
+    const m = mouse()
+    // Taking hold moves nothing: the pointer has not left the slop circle.
+    m.down()
+    expect(host.dragStarts).toEqual([])
+    const heard = host.offsets.length
+    // The first frame: the take-hold first, then the frame – one word for the whole drag.
+    m.move(-20)
+    expect(host.dragStarts).toEqual([heard])
+    expect(host.offsets.slice(heard)).toEqual([BAND_HEIGHT_ONE_LINE - 20])
+    m.move(-25)
+    expect(host.dragStarts).toEqual([heard])
+    expect(host.offsets.at(-1)).toBe(BAND_HEIGHT_ONE_LINE - 25)
+    // Let go at 31 of 56, short of half: the return departs toward the height, and rests there.
+    const departs = host.departs.length
+    m.up(-25)
+    expect(host.departs.slice(departs)).toEqual([BAND_HEIGHT_ONE_LINE])
+    settle()
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
+    // Mid-travel: a taller tenant re-targets the band toward 76; the hand takes it after three
+    // frames – the word between the travel's last frame and the drag's first.
+    offline()
+    frames.tick(3)
+    const caught = host.offsets.length
+    expect(framesPending()).toBeGreaterThan(0)
+    m.down()
+    m.move(-20)
+    expect(framesPending()).toBe(0)
+    expect(host.dragStarts).toEqual([heard, caught])
+    expect(host.offsets.slice(caught)).toEqual([BAND_HEIGHT_TWO_LINE - 20])
+    m.up(-20)
+    settle()
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
+    // Without the word on the host: the same drag, nothing thrown, nothing heard of it.
+    act(() => root!.unmount())
+    resetBands()
+    setBandFrame({ front: 't1', ok: true })
+    root = createRoot(mountEl!)
+    host = { offsets: [], rests: [], departs: [], dragStarts: [] }
+    mount(true)
+    defaultBrowser()
+    settle()
+    const w = mouse()
+    w.down()
+    w.move(-20)
+    expect(host.dragStarts).toEqual([])
+    expect(host.offsets.at(-1)).toBe(BAND_HEIGHT_ONE_LINE - 20)
+    w.up(-20)
+    settle()
+    expect(host.rests.at(-1)).toBe(BAND_HEIGHT_ONE_LINE)
   })
 
   it('a tab-scoped band goes with its tab and stands again with it at once; a band arriving on the next tab travels in; a window-wide one stays through the switch', () => {

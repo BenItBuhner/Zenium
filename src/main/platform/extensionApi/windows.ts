@@ -4,12 +4,14 @@ import type { ZenWindow } from '../../../core/window'
 import { extensionPageOpenHandler } from '../extensionPopupOpen'
 import { ElectronTabViewHost } from '../views'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '../../../core/extensions/api/tabs'
+import { ERROR_AGENT_GROUP } from '../../../core/extensions/api/tabGroups'
 import {
   type ChromeWindow,
   type WindowQueryOptions,
   windowMatchesQuery
 } from '../../../core/extensions/api/windows'
 import type { ModelSnapshot } from './model'
+import { isAgentFolder } from './tabGroups'
 import {
   ApiError,
   WINDOW_ID_CURRENT,
@@ -161,7 +163,11 @@ export class WindowsApi {
 
   /**
    * The tab `windows.create({ tabId })` carries into the new window, with Chrome's checks
-   * (`WindowsCreateFunction::ValidateTab`): it must exist and stay in its profile.
+   * (`WindowsCreateFunction::ValidateTab`): it must exist and stay in its profile. A tab of an
+   * AI agent's folder is refused the tear-off that would take it out of the folder: the new
+   * window owns the tab in a space of its own (`moveTabToNewWindow`'s blank or private window),
+   * and the model drops a tab's folder with its space – unless, under "sync only pinned tabs", a
+   * regular tab of a synced window gets a synced window showing the shared strip, its folder kept.
    */
   private tabToMove(tabId: unknown, incognito: boolean): { tab: Tab; win: ZenWindow } {
     if (!isInteger(tabId)) throw new ApiError('Invalid tab id')
@@ -171,6 +177,14 @@ export class WindowsApi {
     if (!win) throw new ApiError(`No tab with id: ${tabId}.`)
     if (win.isPrivate !== incognito)
       throw new ApiError('Tabs can only be moved between windows in the same profile.')
+    if (tab.folderId && isAgentFolder(this.host, tab.folderId)) {
+      const keepsSpace =
+        !tab.pinned &&
+        !tab.essential &&
+        !win.localSpace &&
+        this.host.browser.state.settings.windowSync === 'pinned'
+      if (!keepsSpace) throw new ApiError(ERROR_AGENT_GROUP)
+    }
     return { tab, win }
   }
 
