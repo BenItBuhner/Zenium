@@ -29,8 +29,9 @@
 //                           its colour the same way
 //     shim                  MCP_SOAK.shimSessions of the same through `zenium --mcp`, one process
 //                           each (the build's own executable, the leg's --extra-args)
-//     drop                  a client quiet without DELETE; another lists its group as owned, adopts
-//                           it with force: true (soft until E), and after the DELETE for real
+//     drop                  a named agent goes quiet, then drops; another lists its group as its
+//                           own, then away, and can adopt it at no point (not with force: true,
+//                           not after the DELETE); the first resumes it with its session key
 //     resurrection          a made-up session id with the token is 200 + "resumed"; without, 404
 //     carry-across-restart  an HTTP session and a shim process that the restart must not lose
 //     tidy                  what the sessions left orphaned is adopted and closed (the quit
@@ -50,8 +51,8 @@
 // A step FAILS on a hard check that failed during it (the checks scripts/mcp-soak.mjs names:
 // a tool error, a session lost, no resurrection, a background snapshot without a viewport, a
 // screenshot without an image, a DELETE not 204 …); the soft checks – the ones named with the PR
-// they wait on, `drop-force-adopt (until E)` – are counted in the step's detail and never fail
-// it, so CI stays green until that PR lands. The whole verdict (counts, client latency per tool
+// they wait on (`SOFT_CHECKS`) – are counted in the step's detail and never fail it, so CI stays
+// green until that PR lands. The whole verdict (counts, client latency per tool
 // and leg, the server's diagnostics) is written to <out>/<label>/soak.json next to result.json
 // and printed as the soak's table into the log.
 import fs from 'node:fs'
@@ -402,7 +403,9 @@ export async function stageHandOff(s, ctx, h, stage) {
     return r
   }
   await client.initialize()
-  let r = await call('zen_mode', { mode: 'background' })
+  let r = await call('zen_session', { action: 'start', name: 'Smoke stage: hand-off check' })
+  verdict.hard('zen_session start', !r.isError, r.text)
+  r = await call('zen_mode', { mode: 'background' })
   verdict.hard('zen_mode background', !r.isError, r.text)
   const page = STAGE_PAGES.handOff
   const url = stage.pages.url(page)
@@ -460,6 +463,12 @@ export async function stageUserSwitch(s, ctx, h, stage) {
     stage.client = client
     verdict.sessions++
     await client.initialize()
+    const started = await client.call('zen_session', {
+      action: 'start',
+      name: 'Smoke stage: user-switch check'
+    })
+    verdict.calls++
+    verdict.hard('zen_session start', !started.isError, started.text)
   }
   const call = async (name, args) => {
     const r = await client.call(name, args)

@@ -175,6 +175,7 @@ function tabletState(name = 'Research'): UIState {
     folders: { [GROUP]: folder },
     essentialTabIds: [],
     agents: [],
+    awayAgents: [],
     containers: [],
     settings: {
       colorScheme: 'light',

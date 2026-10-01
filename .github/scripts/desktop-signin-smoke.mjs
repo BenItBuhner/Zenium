@@ -506,6 +506,7 @@ try {
     capabilities: {},
     clientInfo: { name: 'zenium-smoke', version: '1' }
   })
+  await tool('zen_session', { action: 'start', name: 'Sign-in smoke: browser fingerprint' })
   await tool('zen_mode', { mode: 'foreground' })
   await tool('browser_navigate', { url: siteUrl })
   await waitFor(`document.readyState === 'complete'`, Date.now() + 15_000)
