@@ -5796,6 +5796,53 @@ describe('the Extensions category', () => {
     expect(ids).toContain(`extension:${noisy.id}:error:2`)
   })
 
+  it('a synced landing waiting for approval (services pass 16, ID-44) reads the pending line in the warn ink for Off, and again under its Enabled switch; approved, the line goes', () => {
+    const pending = ext({
+      id: 'c'.repeat(32),
+      name: 'Adblock',
+      enabled: false,
+      pendingApproval: true
+    })
+    const model = section('extensions', extState([pending, ext({})]))
+    const item = row(model, `extension:${pending.id}`)
+    // The lead's words as ruled (round 4): a spaced en dash, U+2013, between the two halves.
+    expect(item).toMatchObject({
+      description: 'Synced from another device – needs your permission',
+      tone: 'warn'
+    })
+    expect(item.description).toContain(' \u2013 ')
+    expect(item.description).not.toContain('\u2014')
+    const enabled = row(model, `extension:${pending.id}:enabled`)
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(false)
+    expect(enabled.description).toBe('Synced from another device – needs your permission')
+    // The switch runs the same command as ever: the host's `setEnabled` opens the prompt.
+    enabled.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', { id: pending.id, enabled: true })
+    // The other extension, installed here, says nothing of the kind.
+    expect(row(model, `extension:${EXT_ID}`).tone).toBeUndefined()
+    const plainSwitch = row(model, `extension:${EXT_ID}:enabled`)
+    if (plainSwitch.kind !== 'switch') throw new Error('not a switch')
+    expect(plainSwitch.description).toBeUndefined()
+    // Approved (on, the flag gone) or merely off: the description is the extension's own, or Off.
+    const approved = section('extensions', extState([ext({ id: pending.id, name: 'Adblock' })]))
+    expect(row(approved, `extension:${pending.id}`).description).toBe(ext({}).description)
+    expect(row(approved, `extension:${pending.id}`).tone).toBeUndefined()
+    const off = section('extensions', extState([ext({ id: pending.id, enabled: false })]))
+    expect(row(off, `extension:${pending.id}`)).toMatchObject({ description: 'Off' })
+    // A load error outranks the line: one red line per row (the lead's ruling on #212).
+    const broken = section(
+      'extensions',
+      extState([
+        ext({ id: pending.id, enabled: false, pendingApproval: true, error: 'Bad manifest' })
+      ])
+    )
+    expect(row(broken, `extension:${pending.id}`)).toMatchObject({
+      description: 'Bad manifest',
+      tone: 'danger'
+    })
+  })
+
   it('the Errors detail row sums the console and lists it newest first, then Clear errors', () => {
     const noisy = ext({ errors: CONSOLE })
     const model = section('extensions', extState([noisy]))
@@ -7631,10 +7678,17 @@ describe('ID-08’s Sync category on a phone', () => {
       'Reading list',
       'Settings'
     ])
-    // Every key of the engine's scope is a switch here, once.
+    // Every key of the engine's scope is a switch here, once – on a host that has what the key
+    // names: the Extensions row (ID-44) sits behind the `extensions` capability, and this
+    // fixture's phone has none, so the list is every row but that one.
     const keys = SYNC_SCOPES.map((s) => s.key)
     expect([...keys].sort()).toEqual(Object.keys(defaultScope()).sort())
-    expect(scope?.rows.map((r) => r.id)).toEqual(keys.map((k) => `sync-scope:${k}`))
+    expect(SYNC_SCOPES.filter((s) => s.requires).map((s) => [s.key, s.requires])).toEqual([
+      ['extensions', 'extensions']
+    ])
+    expect(scope?.rows.map((r) => r.id)).toEqual(
+      keys.filter((k) => k !== 'extensions').map((k) => `sync-scope:${k}`)
+    )
     const openTabs = row(model, 'sync-scope:openTabs')
     if (openTabs.kind !== 'switch') throw new Error('not a switch')
     expect(openTabs.checked).toBe(false)
@@ -7695,6 +7749,52 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(
       scope?.rows.map((r) => r.id)
     )
+  })
+
+  it('What you sync › Extensions (services pass 16, ID-44): on every host that installs extensions, after Settings and before Spaces (the lead’s seat), on by default, the lead’s label and hint verbatim; absent where the host has no extensions', () => {
+    // A host with extensions – the desktop, or a phone whose build installs them.
+    const withExtensions = (sync: SyncStatus): UIState =>
+      state({
+        capabilities: { ...ANDROID, sync: true, extensions: true },
+        sync
+      } as Partial<UIState>)
+    for (const status of [syncStatus(), connected()]) {
+      const model = section('sync', withExtensions(status))
+      const scope = model.groups.find((g) => g.id === 'sync-scope')
+      expect(scope?.rows.map((r) => r.id)).toEqual(SYNC_SCOPES.map((s) => `sync-scope:${s.key}`))
+      // The seat (the lead's ruling, round 4): the last of Chrome's types – right after
+      // Settings, right before Spaces – not among Zenium's own after Mods, which stay last.
+      const labels = scope?.rows.map((r) => r.label) ?? []
+      expect(labels.slice(7, 10)).toEqual(['Settings', 'Extensions', 'Spaces'])
+      expect(labels.slice(-2)).toEqual(['Boosts', 'Mods'])
+      expect(labels.indexOf('Extensions')).toBe(labels.indexOf('Settings') + 1)
+      expect(labels.indexOf('Spaces')).toBe(labels.indexOf('Extensions') + 1)
+      const extensions = row(model, 'sync-scope:extensions')
+      if (extensions.kind !== 'switch') throw new Error('not a switch')
+      expect(extensions.label).toBe('Extensions')
+      expect(extensions.description).toBe(
+        'Store extensions and whether they are enabled and pinned; unpacked ones stay on this device.'
+      )
+      expect(extensions.checked).toBe(true)
+      expect(defaultScope().extensions).toBe(true)
+      invoke.mockClear()
+      extensions.onChange(false)
+      expect(invoke).toHaveBeenCalledWith('sync.setScope', { extensions: false })
+    }
+    // Off in the engine's scope: the switch shows it off.
+    const off = section(
+      'sync',
+      withExtensions(connected({ scope: { ...defaultScope(), extensions: false } }))
+    )
+    const offRow = row(off, 'sync-scope:extensions')
+    if (offRow.kind !== 'switch') throw new Error('not a switch')
+    expect(offRow.checked).toBe(false)
+    // A host without extensions has no row for the type, before setup and connected alike.
+    for (const status of [syncStatus(), connected()]) {
+      const model = section('sync', syncState(status))
+      expect(allRows(model.groups).map((r) => r.id)).not.toContain('sync-scope:extensions')
+      expect(allRows(model.groups).map((r) => r.label)).not.toContain('Extensions')
+    }
   })
 
   it('connected: the status with Sync now, the folder and device, the other devices newest first with their last-seen time, the toggles, and Turn off sync', async () => {

@@ -1,5 +1,6 @@
 import { FolderX, KeyRound } from 'lucide-react'
 import type {
+  HostCapabilities,
   SyncDeviceTabs,
   SyncRemoteTab,
   SyncStatus,
@@ -82,14 +83,16 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  */
 export function syncGroups({ state, formFactor }: SectionContext): RowGroup[] {
   const sync = state.sync
-  return sync.enabled ? connectedGroups(sync, state.tabs, formFactor) : setupGroups(sync)
+  return sync.enabled
+    ? connectedGroups(sync, state.tabs, formFactor, state.capabilities)
+    : setupGroups(sync, state.capabilities)
 }
 
 // ---------------------------------------------------------------------------
 // Before setup
 // ---------------------------------------------------------------------------
 
-function setupGroups(sync: SyncStatus): RowGroup[] {
+function setupGroups(sync: SyncStatus, caps: HostCapabilities): RowGroup[] {
   const draft = syncSetupStore.get()
   // The server is a choice only where the host can reach one; elsewhere the page is the folder's
   // and the draft's transport is read as the folder whatever it says.
@@ -142,7 +145,7 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
         }
       ]
     },
-    scopeGroup(sync)
+    scopeGroup(sync, caps)
   ]
 }
 
@@ -313,7 +316,8 @@ const FOLDER_KEYWORDS = [
 function connectedGroups(
   sync: SyncStatus,
   held: UIState['tabs'],
-  formFactor: SectionContext['formFactor']
+  formFactor: SectionContext['formFactor'],
+  caps: HostCapabilities
 ): RowGroup[] {
   const status: SettingsRow[] = []
   if (sync.folderLost) {
@@ -431,7 +435,7 @@ function connectedGroups(
       ],
       empty: SYNC_COPY.noDevices
     },
-    scopeGroup(sync),
+    scopeGroup(sync, caps),
     { id: 'sync-off', heading: null, rows: [turnOffRow()] }
   ]
 }
@@ -660,19 +664,25 @@ function remoteTabRow(device: SyncDeviceTabs, tab: SyncRemoteTab, held: boolean)
   }
 }
 
-/** What you sync: one switch per data type, in Chrome's order (`SYNC_SCOPES`). */
-function scopeGroup(sync: SyncStatus): RowGroup {
+/**
+ * What you sync: one switch per data type, in Chrome's order (`SYNC_SCOPES`). A type whose row
+ * `requires` a capability is drawn on the hosts that have it alone: the Extensions row (ID-44)
+ * where extensions install – the desktop and the phone – and nowhere a host holds none.
+ */
+function scopeGroup(sync: SyncStatus, caps: HostCapabilities): RowGroup {
   return {
     id: 'sync-scope',
     heading: SYNC_COPY.scope,
-    rows: SYNC_SCOPES.map(({ key, label, hint }) => ({
-      kind: 'switch',
-      id: syncScopeRowId(key),
-      label,
-      description: hint,
-      keywords: ['sync', 'data type'],
-      checked: sync.scope[key],
-      onChange: (checked) => run('sync.setScope', { [key]: checked })
-    }))
+    rows: SYNC_SCOPES.filter(({ requires }) => !requires || caps[requires]).map(
+      ({ key, label, hint }) => ({
+        kind: 'switch',
+        id: syncScopeRowId(key),
+        label,
+        description: hint,
+        keywords: ['sync', 'data type'],
+        checked: sync.scope[key],
+        onChange: (checked) => run('sync.setScope', { [key]: checked })
+      })
+    )
   }
 }
