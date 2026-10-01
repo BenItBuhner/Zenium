@@ -4,8 +4,12 @@ import { act, type JSX, type KeyboardEvent, type FocusEvent } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () => undefined) }))
+// The chrome's one close seam (§9.23): Undo on the toast on a touch layout, the bare `tab.close`
+// on the desktop – pinned where it lives; here Delete is held to it.
+vi.mock('../closeUndo', () => ({ closeTabFromChrome: vi.fn() }))
 
 import { run } from '../api'
+import { closeTabFromChrome } from '../closeUndo'
 import {
   refocusStripRow,
   setStripFocus,
@@ -308,6 +312,7 @@ afterEach(() => {
   document.body.innerHTML = ''
   uiStore.set({ stripFocus: null, selectedTabIds: [] })
   vi.mocked(run).mockClear()
+  vi.mocked(closeTabFromChrome).mockClear()
   vi.restoreAllMocks()
 })
 
@@ -359,11 +364,12 @@ describe('stripKeyDown', () => {
     expect(run).toHaveBeenCalledWith('tab.activate', { tabId: 'r2', keepFocus: true })
   })
 
-  it('Delete closes the row after moving the keyboard to its neighbour', () => {
+  it('Delete closes the row after moving the keyboard to its neighbour – through the chrome’s close seam, keeping the keyboard on the strip', () => {
     byId('r1').focus()
     expect(stripKeyDown(keyEvent(byId('r1'), 'Delete'))).toBe(true)
     expect(document.activeElement?.id).toBe('r2')
-    expect(run).toHaveBeenCalledWith('tab.close', { tabId: 'r1', keepFocus: true })
+    expect(closeTabFromChrome).toHaveBeenCalledWith('r1', { keepFocus: true })
+    expect(run).not.toHaveBeenCalledWith('tab.close', expect.anything())
     // The last row hands the keyboard to the one before it.
     byId('r2').focus()
     stripKeyDown(keyEvent(byId('r2'), 'Delete'))

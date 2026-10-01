@@ -3,9 +3,11 @@ package app.zen.chromium
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -56,8 +58,22 @@ import kotlin.math.roundToInt
  *     keeps the page (its URL and its script state), Leave lets the navigation go;
  * 11. `beforeunload` on a reload the core asked for: "Reload site?" with Cancel | Reload; Cancel
  *     keeps the page;
- * 12. `beforeunload` on the overview card's X: the same question over the overview; Cancel
- *     keeps the tab, its card standing where it was; Leave closes the tab, the card with it.
+ * 12. the overview card's X over an armed page: no question – the tab closes at once, its card
+ *     with it, and the toast reads "Closed <title>" with Undo (a close path never asks "Leave
+ *     site?" on a touch host: the close is undoable, and Undo is the protection, §9.23 /
+ *     [UnloadObjection.SettleCheck]); Undo brings the tab back, its card standing in the grid
+ *     again, the page a fresh document;
+ * 13. `beforeunload` on a typed address: "Leave site?" – the tab in front asks though its view
+ *     stood hidden under the URL field as the load was asked ([UnloadObjection.inFront]: the
+ *     tab's word, not the view's); Cancel keeps the page – judged only where Chromium's
+ *     beforeunload timeout had not let the navigation go before the sheet's answer (a NOTE
+ *     names that race otherwise: pre-existing on main, W6-S27-d's to fix);
+ * 14. `beforeunload` on Reload from the app menu: "Reload site?" the same way, the view under
+ *     the menu's sheet; Cancel keeps the page;
+ * 15. a background tab's objection: the reload the core asks of the armed page behind another
+ *     tab meets its handler, and no sheet comes over the tab in front – the page stays as a
+ *     Stay would leave it ([UnloadObjection.StayHidden]), and the return to it finds nothing
+ *     pending.
  *
  * The sheet is read from the accessibility tree: a native `BottomSheetDialog` is a window of its
  * own whose title is the sheet's ([AccessibilityWindowInfo.getTitle]), and its views report at
@@ -71,7 +87,10 @@ import kotlin.math.roundToInt
  * process ([DemoServer]: the site on 18138, the frame's origin on 18139); the profile
  * (`page-dialogs-demo-state.json`) holds the demo page (active) and one other tab, in the
  * colour scheme the `theme` argument names (`DEMO_THEME`: the workflow runs light and dark).
- * Driven by `android-page-dialogs-demo.yml`. See [DemoHarness].
+ * Where a scene asks whether the PAGE stayed (13 to 15), it reads the page's own address
+ * (`location.href`) and script state, never the core's word alone: the core takes a typed
+ * address or a reload as the tab's URL as it asks for it. Driven by
+ * `android-page-dialogs-demo.yml`. See [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialogs", "page-dialogs-demo") {
@@ -94,8 +113,8 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             PORT,
             mapOf(
                 "/" to ("text/html; charset=utf-8" to page.toByteArray()),
-                // The same page under another title: scenes 11 and 12 arm it after scene 10 left for it.
-                "/second.html" to ("text/html; charset=utf-8" to page.replace("Page dialogs", "Second page").toByteArray()),
+                // The same page under another title: scenes 11 to 15 arm it after scene 10 left for it.
+                "/second.html" to ("text/html; charset=utf-8" to page.replace("Page dialogs", SECOND_TITLE).toByteArray()),
                 "/other.html" to DemoServer.page("Another tab", "<p>No dialogs here.</p>")
             )
         ).also { it.start() }
@@ -144,7 +163,10 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         modalScene()
         leaveOnNavigation()
         reloadSite()
-        leaveOnCardClose()
+        closeWithUndo()
+        leaveOnTypedAddress()
+        reloadFromMenu()
+        backgroundObjection()
         still("end")
         finding("\nend: ${describeActive()}")
         finding(if (failures == 0) "ALL CHECKS PASSED" else "$failures CHECK(S) FAILED")
@@ -446,34 +468,269 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         expect("the page stayed as it was: ${activeUrl()}, its handler still armed", activeUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
     }
 
-    /** 12. beforeunload on the overview card's X: Cancel keeps the card standing, Leave closes the tab. */
-    private fun leaveOnCardClose() {
-        finding("\n12. beforeunload on the card's close: Cancel keeps the tab and its card, Leave closes it")
+    /**
+     * 12. The overview card's X over an armed page: no "Leave site?" – the tab closes at once
+     * (the check's objection is overruled, [UnloadObjection.SettleCheck]: a close path never
+     * asks on a touch host, the close is undoable and Undo is the protection), the toast reads
+     * "Closed <title>" with Undo, and Undo brings the tab back into the grid, the page a fresh
+     * document. The X is touched until the tab has gone or a sheet has come: a sheet would
+     * hold the chrome's word, so the windows are read before the chrome is asked.
+     */
+    private fun closeWithUndo() {
+        finding("\n12. The card's X over an armed page: no question, the tab closes at once; 'Closed <title>' with Undo; Undo brings it back")
         expect("the second page's handler is armed", pageLog().optBoolean("armed"))
         openOverview()
         expect("the overview shows the demo card", awaitDom("!!document.querySelector(${JSONObject.quote(CARD)})"))
         still("overview")
-        val asked = touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { sheetRoot(LEAVE) != null }, waitMs = SHEET_WAIT)
-        expect("a touch on the X asks 'Leave site?' over the overview", asked)
-        var sheet = sheet(LEAVE)
-        if (sheet == null) return
-        still("close-leave-site")
-        answer(sheet, CANCEL)
-        // The card's exit would have run 900 ms after a close the browser never showed: well past it.
-        SystemClock.sleep(3_000)
-        expect("the tab stays", tabExists(DEMO))
-        expect("its card stands in the grid", inDom(CARD))
-        expect("the page is intact: ${activeUrl()}, its handler still armed", activeUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
-        still("close-cancelled")
-        val again = touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { sheetRoot(LEAVE) != null }, waitMs = SHEET_WAIT)
-        expect("the X asks again", again)
-        sheet = sheet(LEAVE)
-        if (sheet != null) answer(sheet, "Leave")
-        expect("the tab closes", awaitUntil(10_000) { !tabExists(DEMO) })
+        touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { appWindows() > 1 || !inDom(CARD) }, waitMs = SHEET_WAIT)
+        val asked = sheetRoot(LEAVE) != null
+        expect("no 'Leave site?' over the overview: the close is undoable, and Undo is the protection", !asked)
+        if (asked) {
+            // Not the ruled behaviour; Leave lets the rest of the scene be read.
+            still("close-asked")
+            sheet(LEAVE)?.let { answer(it, "Leave") }
+        }
+        expect("the tab closes at once", awaitUntil(10_000) { !tabExists(DEMO) })
         expect("its card has left the grid", awaitDom("!document.querySelector(${JSONObject.quote(CARD)})", 10_000))
-        expect("the other tab is what is left", coreState().getJSONObject("tabs").let { it.length() == 1 && it.has(OTHER) })
+        val toast = awaitToast("Closed ")
+        expect("the toast reads 'Closed $SECOND_TITLE' with Undo: '${toast.orEmpty()}'", toast == "Closed $SECOND_TITLE" && domRect(UNDO) != null)
+        expect("the other tab is active meanwhile", activeTabId() == OTHER)
+        still("closed-toast")
+        // The toast rides in; the finger waits for it to stand ([TabCloseDemo] does the same).
+        awaitDom("(function(){var e=document.querySelector('.zen-message-toast');return !!e&&!e.hasAttribute('data-moving')})()", 1_500)
+        val undone = touchUntil("the toast's Undo", { domRect(UNDO) }, { tabExists(DEMO) })
+        expect("Undo brings the tab back", undone && awaitUntil(10_000) { tabExists(DEMO) })
+        expect("its card stands in the grid again", awaitDom("!!document.querySelector(${JSONObject.quote(CARD)})", 10_000))
+        expect("the tab is back on its page: ${tabUrl(DEMO)}", tabUrl(DEMO) == "$ORIGIN/second.html")
         SystemClock.sleep(1_500)
-        still("close-left")
+        still("undone")
+        leaveOverview()
+        expect("the demo tab is active again", awaitUntil(10_000) { activeTabId() == DEMO })
+        awaitLoaded(DEMO, "$ORIGIN/second.html")
+        SystemClock.sleep(1_500)
+        expect("the page came back as a fresh document: its handler not armed", awaitLog { it.has("armed") && !it.getBoolean("armed") })
+        still("undone-page")
+    }
+
+    /**
+     * 13. A typed address over an armed page asks "Leave site?": the tab in front asks though
+     * its view stood hidden under the URL field as the load was asked – the word is the tab's,
+     * not the view's ([UnloadObjection.inFront]); Cancel keeps the page. The page's own address
+     * says whether it stayed: the core took the typed address as the tab's as it asked. The
+     * Cancel is judged only where the navigation had not gone before the sheet's answer (the
+     * demo server's count of other.html answers): where Chromium's beforeunload timeout had let
+     * it go first, a NOTE names the race – pre-existing on main, W6-S27-d's to fix – and no
+     * verdict is given on the Cancel.
+     */
+    private fun leaveOnTypedAddress() {
+        finding("\n13. A typed address over an armed page: 'Leave site?' (the tab in front asks, its view under the URL field or not); Cancel keeps the page")
+        tapPage("#arm")
+        expect("the page armed its handler again", awaitLog { it.optBoolean("armed") })
+        val typed = typeAddress("$ORIGIN/other.html")
+        expect("the address went into the URL field: '$typed'", typed == "$ORIGIN/other.html")
+        if (typed.isEmpty()) {
+            back()
+            awaitIme(false, 4_000)
+            return
+        }
+        // The server's count of other.html answers says whether the navigation had gone before
+        // the sheet's answer: Chromium's beforeunload hang monitor lets a navigation go when the
+        // page's handler has not answered within its timeout (the renderer is one for every
+        // page and the chrome, and the typed address finds it busy now and then), and a sheet
+        // that rises afterwards no longer governs it – pre-existing on main, W6-S27-d's to fix.
+        val hitsBefore = server.hits("/other.html")
+        val enterAt = SystemClock.uptimeMillis()
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+        val sheet = awaitSheet(LEAVE)
+        finding("  (other.html answered ${server.hits("/other.html") - hitsBefore} time(s) between ENTER and the sheet, which ${if (sheet != null) "rose" else "did not rise"} +${SystemClock.uptimeMillis() - enterAt} ms after ENTER)")
+        expect("'Leave site?' rises for the typed address", sheet != null)
+        if (sheet == null) {
+            if (urlbarOpen()) back()
+            awaitIme(false, 4_000)
+            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")}; the core's word: ${activeUrl()})")
+            return
+        }
+        expect("with Chrome's line and Cancel | Leave", sheet.text(LEAVE_LINE) != null && sheet.peer(CANCEL) != null && sheet.peer("Leave") != null)
+        still("typed-leave-site")
+        val wentBeforeCancel = server.hits("/other.html") - hitsBefore
+        answer(sheet, CANCEL)
+        SystemClock.sleep(2_000)
+        val stayed = pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed")
+        if (wentBeforeCancel == 0) {
+            expect("the page stayed: ${pageUrl()}, its handler still armed", stayed)
+        } else {
+            finding(
+                "  NOTE: other.html was answered $wentBeforeCancel time(s) before Cancel was given – Chromium's beforeunload timeout had let " +
+                    "the typed address's navigation go while the renderer was busy, and the sheet's Cancel no longer governs it " +
+                    "(the page ${if (stayed) "stayed" else "went to ${pageUrl()}"}). Pre-existing on main (baseline run 36899085323, " +
+                    "debug run 36898943391); no verdict here – the fix and the unconditional \"Cancel keeps the page\" verdict are " +
+                    "W6-S27-d's (seed A7, \"Cancel on 'Leave site?' keeps the page\")."
+            )
+        }
+        finding("  (the core's word on the tab after the Cancel: ${activeUrl()}; the URL field ${if (urlbarOpen()) "open" else "closed"})")
+        if (urlbarOpen()) {
+            back()
+            awaitUntil(4_000) { !urlbarOpen() }
+        }
+        awaitIme(false, 4_000)
+        SystemClock.sleep(1_000)
+        still("typed-cancelled")
+    }
+
+    /**
+     * 14. Reload from the app menu over an armed page asks "Reload site?": the menu's sheet had
+     * the tab's view hidden as the reload was asked, and the tab in front asks all the same;
+     * Cancel keeps the page.
+     */
+    private fun reloadFromMenu() {
+        finding("\n14. Reload from the app menu over an armed page: 'Reload site?' (the tab in front asks, its view under the menu or not); Cancel keeps the page")
+        armedSecondPage()
+        expect("the page's handler is armed", pageLog().optBoolean("armed"))
+        tapMenuButton()
+        val opened = waitFor(MENU_HANDLE_LABEL, 6_000) != null
+        expect("the app menu opens", opened)
+        if (!opened) return
+        SystemClock.sleep(1_500)
+        still("menu")
+        val asked = touchUntil("the menu's $RELOAD_LABEL", { findByLabel(RELOAD_LABEL) }, { sheetRoot(RELOAD) != null }, waitMs = SHEET_WAIT)
+        expect("a touch on the menu's Reload asks 'Reload site?'", asked)
+        val sheet = sheet(RELOAD)
+        if (sheet == null) {
+            if (chromeSurfaceUp()) back()
+            awaitSurface(false)
+            finding("  (the page: ${pageUrl()}, armed ${pageLog().optBoolean("armed")})")
+            return
+        }
+        expect("with Chrome's line and Cancel | Reload", sheet.text(LEAVE_LINE) != null && sheet.peer(CANCEL) != null && sheet.peer("Reload") != null)
+        still("menu-reload-site")
+        answer(sheet, CANCEL)
+        SystemClock.sleep(2_000)
+        expect("the page stayed as it was: ${pageUrl()}, its handler still armed", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+        expect("the menu went with the touch on its row", awaitSurface(false, 4_000))
+        still("menu-reload-cancelled")
+    }
+
+    /**
+     * 15. A background tab's objection stays behind: the reload the core asks of the armed page
+     * behind the other tab meets its `beforeunload` handler, and no sheet comes over the tab in
+     * front – the page stays as a Stay would leave it ([UnloadObjection.StayHidden]) – and the
+     * swipe back to it finds nothing pending. The page is read through its own view (shown or
+     * not): its address and its script state.
+     */
+    private fun backgroundObjection() {
+        finding("\n15. A background tab's beforeunload objection: no sheet over the tab in front, the page stays")
+        armedSecondPage()
+        expect("the demo page's handler is armed", pageLog().optBoolean("armed"))
+        val switched = switchTo(OTHER, +1, "the pill swipe to the other tab")
+        expect("the other tab is active", switched)
+        if (!switched) return
+        // The host's background pass runs a frame after the switch: a quiet moment before the reload is asked.
+        SystemClock.sleep(2_000)
+        still("background-armed")
+        fireCore("tab.reload", JSONObject().put("tabId", DEMO).toString())
+        val seen = sheetsSeenFor(4_000)
+        val up = sheet(RELOAD) ?: sheet(LEAVE)
+        expect("no sheet comes over the other tab for it ($seen seen)", seen == 0 && up == null)
+        if (up != null) {
+            still("background-sheet")
+            answer(up, CANCEL)
+        }
+        expect("the demo page stays as it was behind: ${pageUrl()}, its handler still armed", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+        expect("the other tab stays active", activeTabId() == OTHER)
+        finding("  (the core's word on the demo tab: ${tabUrl(DEMO)}, loading ${coreState().getJSONObject("tabs").optJSONObject(DEMO)?.optBoolean("loading")})")
+        still("background-objection")
+        expect("the swipe back makes the demo tab active", switchTo(DEMO, -1, "the pill swipe back to the demo tab"))
+        SystemClock.sleep(1_500)
+        expect("nothing is pending for it: no sheet on the return", sheetRoot(RELOAD) == null && sheetRoot(LEAVE) == null)
+        expect("the page is as it was: ${pageUrl()}, its handler armed", pageUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+        still("background-returned")
+    }
+
+    /**
+     * Scenes 14 and 15 read the armed second page, and each scene's precondition is its own:
+     * where scene 13's race left the demo tab on other.html, the tab is taken back to
+     * second.html first (a clean navigation – other.html has no handler), and the page is armed
+     * again where it is not. Nothing is done where the page stands armed on second.html already.
+     */
+    private fun armedSecondPage() {
+        if (pageUrl() != "$ORIGIN/second.html") {
+            finding("  (the page stands at ${pageUrl()}: the demo tab goes back to second.html first)")
+            fireCore("tab.navigate", JSONObject().put("tabId", DEMO).put("input", "$ORIGIN/second.html").toString())
+            SystemClock.sleep(500)
+            awaitLoaded(DEMO, "$ORIGIN/second.html")
+            SystemClock.sleep(1_000)
+        }
+        if (!pageLog().optBoolean("armed")) {
+            tapPage("#arm")
+            awaitLog { it.optBoolean("armed") }
+        }
+    }
+
+    // --- the URL field, the toast, the overview's exit -------------------------------------------
+
+    /**
+     * Open the URL field with a tap on the address pill and type `text` into it ([ErrorPagesDemo]'s
+     * way): the field read back, and set outright when the keys the IME dropped left it reading
+     * something else. "" when the field never opened (two taps: the emulator reads a tap as a
+     * hold now and then, and a hold opens something else, dismissed with a back).
+     */
+    private fun typeAddress(text: String): String {
+        var open: OmniboxOpen? = null
+        for (attempt in 1..2) {
+            val p = pillPoint()
+            finding("  touch at ${p.x.roundToInt()},${p.y.roundToInt()} on the address pill")
+            Finger().tap(p.x, p.y)
+            open = awaitOmniboxOpen()
+            finding("  the URL field: ${open.describe()}")
+            if (open.ok) break
+            if (attempt == 1) {
+                back()
+                awaitUntil(4_000) { !chromeSurfaceUp() }
+                SystemClock.sleep(1_000)
+            }
+        }
+        if (open?.ok != true) return ""
+        SystemClock.sleep(1_500)
+        instrumentation.sendStringSync(text)
+        SystemClock.sleep(900)
+        var value = awaitOmniboxOpen(1_000).value
+        if (value != text) {
+            finding("  (the field reads '$value' after the keys; set outright)")
+            val field = findNodeWhere { it.isEditable && it.isFocused } ?: findNodeWhere { it.isEditable }
+            if (field != null) {
+                val arguments = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                SystemClock.sleep(900)
+                value = awaitOmniboxOpen(1_000).value
+            }
+        }
+        return value
+    }
+
+    /** The toast's text once one reads from `prefix`, within `timeoutMs`; null when none does. */
+    private fun awaitToast(prefix: String, timeoutMs: Long = LOOKUP_WAIT): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            val text = jsString("(function(){var e=document.querySelector(${JSONObject.quote(TOAST_TEXT)});return e?e.textContent:''})()")
+            if (text.startsWith(prefix)) return text
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(150)
+        }
+    }
+
+    /** The system back until the overview is gone (a sheet over it goes first). */
+    private fun leaveOverview() {
+        for (attempt in 1..6) {
+            if (!inDom(".zen-overview")) break
+            back()
+            awaitUntil(4_000) { !inDom(".zen-overview") }
+            SystemClock.sleep(700)
+        }
+        expect("the overview leaves on back", !inDom(".zen-overview"))
+        awaitIme(false, 4_000)
+        SystemClock.sleep(600)
     }
 
     // --- the sheet: the dialog's own window in the accessibility tree ------------------------------
@@ -648,6 +905,10 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         latch.await(10, TimeUnit.SECONDS)
         return result
     }
+
+    /** The demo page's own address (`location.href`, its view shown or not); "" when the page did not answer. */
+    private fun pageUrl(): String =
+        runCatching { JSONTokener(pageJs("location.href")).nextValue() as String }.getOrDefault("")
 
     /** The page's record of its calls (`window.__log`); empty when the page did not answer. */
     private fun pageLog(): JSONObject =
@@ -949,6 +1210,9 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
 
     private fun tabExists(tabId: String): Boolean = coreState().getJSONObject("tabs").has(tabId)
 
+    /** The core's word on `tabId`'s URL; "" for a tab it does not have. */
+    private fun tabUrl(tabId: String): String = coreState().getJSONObject("tabs").optJSONObject(tabId)?.optString("url").orEmpty()
+
     private fun describeActive(): String {
         val state = coreState()
         val tab = activeCoreTab(state)
@@ -996,6 +1260,13 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val BUTTON = "android.widget.Button"
         private const val CARD = ".zen-overview-grid [data-tab-id=\"tab_demo\"]"
         private const val CARD_CLOSE = ".zen-overview-grid [data-tab-id=\"tab_demo\"] [aria-label^=\"Close \"]"
+        /** The second page's title (`/second.html`): what the close toast names the tab by. */
+        private const val SECOND_TITLE = "Second page"
+        /** The close toast (ToastCard.tsx; TabCloseDemo reads it the same way): its text and its Undo. */
+        private const val TOAST_TEXT = ".zen-message-toast .zen-message-text"
+        private const val UNDO = ".zen-message-toast .zen-message-button"
+        /** The app menu's icon-row Reload (barItems.tsx `reload`, idle). */
+        private const val RELOAD_LABEL = "Reload"
         private const val RECT_JS = "var r=e.getBoundingClientRect();" +
             "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})"
         /** The `theme` argument: `dark`, else light (the shared script's `DEMO_THEME`). */

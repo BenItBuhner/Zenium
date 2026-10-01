@@ -7740,6 +7740,19 @@ export type ToastAction = {
 
 export type UrlbarOpenMode = 'new-tab' | 'edit' | 'search'
 
+/**
+ * The core command a touch host's close row closes its tabs with (`Events['tab.closeUndoable']`,
+ * §9.23): the row's one tab (`tab.close`; `force` is Remove Tab's – a pinned or essential tab
+ * closed outright rather than reset), the directed and other closes from the row
+ * (`tab.closeAbove` / `tab.closeBelow` / `tab.closeOthers`), or the selection's tabs
+ * (`tab.closeMany`, one page after the other as the desktop's "Close N Tabs" loop). Typed per
+ * command, so the chrome runs the command with the args that are its own.
+ */
+export type UndoableTabClose =
+  | { command: 'tab.close'; tabId: string; force: boolean }
+  | { command: 'tab.closeAbove' | 'tab.closeBelow' | 'tab.closeOthers'; tabId: string }
+  | { command: 'tab.closeMany'; tabIds: string[] }
+
 export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
@@ -7982,6 +7995,18 @@ export interface Events {
    * "Close Folder (N Tabs)" calls the core's `closeFolder` directly, with no toast.
    */
   'folder.closeUndoable': { folderId: string }
+  /**
+   * Close tabs with Undo on the toast (the touch hosts' tab menus; OS-40 part B, §9.23: on a
+   * touch host, closing a tab never asks "Leave site?" – the page is let go – and the toast's
+   * Undo is the protection). `tabIds` are the tabs the close takes, as the core's own rule reads
+   * them (the row's tab; `closeScope(tabId, 'above' | 'below' | 'others')` – the space's regular
+   * tabs in the window, pinned and Essentials exempt; the selection's tabs), so the chrome
+   * counts and holds the right ones; `close` is the core command that closes them, which the
+   * chrome runs through its one close-with-undo (`lib/closeUndo.ts`), the toast reading "Closed
+   * <title>" or "N tabs closed", Undo bringing them back. The desktop's menus never emit it:
+   * their rows call the core directly, with no toast.
+   */
+  'tab.closeUndoable': { tabIds: string[]; close: UndoableTabClose }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
