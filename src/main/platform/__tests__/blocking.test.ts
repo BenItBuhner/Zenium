@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock, type MockInstance } from 'vitest'
 import {
   existsSync,
   mkdirSync,
@@ -30,11 +30,14 @@ const {
   ElectronBundledLists,
   GhosteryTextMatcher,
   IDLE_PROBE_MS,
+  IDLE_QUIET_MS,
+  IDLE_WAIT_CAP_MS,
   LIST_SETTLE_CAP_MS,
   LIST_SETTLE_MS,
   idleSlot
 } = await import('../blocking')
-const { GHOSTERY_COMPILE_TASK } = await import('../blockingCompile')
+const { GHOSTERY_CACHE_FORMAT, GHOSTERY_COMPILE_TASK, cacheDigest } =
+  await import('../blockingCompile')
 
 const dirs: string[] = []
 function tempDir(): string {
@@ -45,6 +48,28 @@ function tempDir(): string {
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+
+/** The metadata one scope's cache should carry: its fingerprint, version and the files' digests. */
+function expectedMeta(
+  cacheDir: string,
+  fingerprint: string,
+  version: string,
+  tag = ''
+): Record<string, unknown> {
+  return {
+    format: GHOSTERY_CACHE_FORMAT,
+    fingerprint,
+    version,
+    engine: cacheDigest(readFileSync(join(cacheDir, `engine${tag}.bin`))),
+    documents: cacheDigest(readFileSync(join(cacheDir, `documents${tag}.txt`)))
+  }
+}
+
+/** Wait (real timers) until `matcher.ready` – the idle slot's quiet wait is a real-time wait. */
+async function settled(matcher: { ready: boolean }): Promise<void> {
+  const deadline = Date.now() + IDLE_WAIT_CAP_MS + 1000
+  while (!matcher.ready && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+}
 
 function memoryIo(): StoreIO & { files: Map<string, string> } {
   const files = new Map<string, string>()
@@ -501,10 +526,9 @@ describe('GhosteryTextMatcher', () => {
     expect(readFileSync(join(cacheDir, 'documents.txt'), 'utf8')).toBe(
       '||phish.example^$all\n@@||trusted.example^$document'
     )
-    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual({
-      fingerprint: 'excerpt:1000:10',
-      version: 'v1'
-    })
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual(
+      expectedMeta(cacheDir, 'excerpt:1000:10', 'v1')
+    )
 
     // Same sets on the next start: deserialised, and still matching.
     const s2 = source()
@@ -572,6 +596,10 @@ describe('GhosteryTextMatcher', () => {
     gates.shift()!()
     await new Promise((r) => setTimeout(r, 20))
     expect(matcher.builds).toBe(2)
+    // The scope has a list compiled now: its bytes wait for the loop to be quiet a while.
+    expect(matcher.ready).toBe(false)
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    await settled(matcher)
     expect(matcher.ready).toBe(true)
     expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
     expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
@@ -713,14 +741,12 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.match(from(ad, 'default'))).toMatchObject({ action: 'block' })
     expect(matcher.match(from(ad))).toMatchObject({ action: 'block' })
     // Each scope's serialised form under its own name, fingerprinted by the sets it holds.
-    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual({
-      fingerprint: 'easylist:1000:1',
-      version: 'v1'
-    })
-    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.private.json'), 'utf8'))).toEqual({
-      fingerprint: 'easylist:1000:1|ubo-privacy:1000:1',
-      version: 'v1'
-    })
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual(
+      expectedMeta(cacheDir, 'easylist:1000:1', 'v1')
+    )
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.private.json'), 'utf8'))).toEqual(
+      expectedMeta(cacheDir, 'easylist:1000:1|ubo-privacy:1000:1', 'v1', '.private')
+    )
     expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
     expect(existsSync(join(cacheDir, 'documents.private.txt'))).toBe(true)
 
@@ -775,6 +801,8 @@ describe('GhosteryTextMatcher', () => {
     slot: IdleSlot
     fireSlot(): void
     slots: number
+    /** The cap and quiet wait each slot was asked for, in order. */
+    asked: Array<{ capMs: number; quietMs: number | undefined }>
   } {
     const gates: Array<() => void> = []
     const compile = vi.fn(async (scopes: GhosteryCompileScope[]) => {
@@ -793,18 +821,21 @@ describe('GhosteryTextMatcher', () => {
         await new Promise((r) => setTimeout(r, 0))
         await new Promise((r) => setImmediate(r))
       },
-      slot: ((fn: () => void) => {
+      slot: ((fn: () => void, capMs: number, quietMs?: number) => {
         pending.push(fn)
         state.slots++
+        state.asked.push({ capMs, quietMs })
         return () => {
           const at = pending.indexOf(fn)
           if (at >= 0) pending.splice(at, 1)
         }
       }) as IdleSlot,
+      // Fires the slots pending now; a slot asked for by one of them waits for the next call.
       fireSlot: (): void => {
         for (const fn of pending.splice(0)) fn()
       },
-      slots: 0
+      slots: 0,
+      asked: [] as Array<{ capMs: number; quietMs: number | undefined }>
     }
     return state
   }
@@ -868,13 +899,33 @@ describe('GhosteryTextMatcher', () => {
     ])
     await h.release(0)
     expect(matcher.waitingScopes).toBe(2)
+    // One scope per slot (W8-P1b): the unscoped matcher's bytes first – no list is compiled
+    // yet, so its slot is the urgent one – then the private partition's in a slot of its own,
+    // asked for once the first has adopted; the private window answers from the unscoped
+    // matcher between the two.
+    expect(h.slots).toBe(1)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(1)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(matcher.scopedPartitions).toEqual([])
+    expect(matcher.match(ctx('https://ads.example/', { partition: 'private' }))).toMatchObject({
+      action: 'block'
+    })
+    expect(matcher.match(ctx('https://fp.example/', { partition: 'private' }))).toBeNull()
+    expect(h.slots).toBe(2)
+    expect(h.asked).toEqual([
+      { capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 },
+      { capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS }
+    ])
     h.fireSlot()
     expect(matcher.compiledInBackground).toBe(2)
+    expect(matcher.waitingScopes).toBe(0)
     expect(matcher.scopedPartitions).toEqual(['private'])
     expect(matcher.match(ctx('https://fp.example/', { partition: 'private' }))).toMatchObject({
       action: 'block'
     })
     expect(matcher.match(ctx('https://fp.example/', { partition: 'default' }))).toBeNull()
+    expect(matcher.ready).toBe(true)
   })
 
   it('folds N flips during a compile into one follow-up build of the final state; a flip back to a cached state adopts nothing new (W8-P1 pins)', async () => {
@@ -1156,6 +1207,123 @@ describe('GhosteryTextMatcher', () => {
       expect(ran.length).toBe(1)
       expect(ran[0]!).toBeLessThan(DESERIALISE_IDLE_CAP_MS)
     })
+
+    it('with a quiet wait, runs once the probes have been on time for that long; a late probe starts the count over; the cap runs it regardless (W8-P1b)', () => {
+      vi.useFakeTimers()
+      const now = (): number => Date.now()
+      let late = false
+      const idle = idleSlot({ busy: () => late, now })
+      const ran: number[] = []
+      const start = Date.now()
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      // Probes every 4 ms, all on time: the first one at or past 50 ms of quiet runs it.
+      vi.advanceTimersByTime(IDLE_QUIET_MS - 2)
+      expect(ran).toEqual([])
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran).toEqual([52])
+
+      // A late probe 40 ms in: the quiet window starts over from it.
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const second = Date.now()
+      vi.advanceTimersByTime(36)
+      late = true
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      late = false
+      expect(ran.length).toBe(1)
+      vi.advanceTimersByTime(IDLE_QUIET_MS - 2)
+      expect(ran.length).toBe(1)
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran.length).toBe(2)
+      expect(ran[1]! - (second - start)).toBe(40 + 52)
+
+      // Never quiet: the cap.
+      late = true
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const third = Date.now()
+      vi.advanceTimersByTime(IDLE_WAIT_CAP_MS - 1)
+      expect(ran.length).toBe(2)
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      expect(ran.length).toBe(3)
+      expect(ran[2]! - (third - start)).toBeGreaterThanOrEqual(IDLE_WAIT_CAP_MS)
+      expect(ran[2]! - (third - start)).toBeLessThan(IDLE_WAIT_CAP_MS + IDLE_PROBE_MS)
+
+      // Quiet for 30 ms, busy once, then quiet: 30 ms of the window are not enough.
+      late = false
+      idle(() => ran.push(Date.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const fourth = Date.now()
+      vi.advanceTimersByTime(28)
+      late = true
+      vi.advanceTimersByTime(IDLE_PROBE_MS)
+      late = false
+      vi.advanceTimersByTime(IDLE_QUIET_MS - 4)
+      expect(ran.length).toBe(3)
+      vi.advanceTimersByTime(IDLE_PROBE_MS * 2)
+      expect(ran.length).toBe(4)
+      expect(ran[3]! - (fourth - start)).toBe(32 + 52)
+    })
+
+    it('with a quiet wait, runs no sooner than the quiet on an idle loop', async () => {
+      vi.useRealTimers()
+      const idle = idleSlot()
+      const ran: number[] = []
+      const start = performance.now()
+      idle(() => ran.push(performance.now() - start), IDLE_WAIT_CAP_MS, IDLE_QUIET_MS)
+      const deadline = Date.now() + IDLE_WAIT_CAP_MS + 500
+      while (ran.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+      expect(ran.length).toBe(1)
+      expect(ran[0]!).toBeGreaterThanOrEqual(IDLE_QUIET_MS)
+    })
+  })
+
+  it('takes the first idle moment for a scope with no list compiled, waits for quiet for every later build of it, and still drops superseded bytes unread (W8-P1b pins)', async () => {
+    const s = source()
+    const h = handDriven()
+    const matcher = new GhosteryTextMatcher(s, join(tempDir(), 'cache'), 'v1', 0, h.compile, h.slot)
+    // The first list: nothing answers for the scope yet, so the slot is the urgent one.
+    s.engine.setRuleSet(textSet('a', '||a.example^'))
+    matcher.rebuild()
+    await h.release(0)
+    expect(h.asked).toEqual([{ capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 }])
+    h.fireSlot()
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+
+    // Every build after it: the scope is protected, the bytes wait for a quiet main thread.
+    s.engine.setRuleSet(textSet('b', '||b.example^'))
+    matcher.rebuild()
+    await h.release(1)
+    expect(h.asked).toEqual([
+      { capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 },
+      { capMs: IDLE_WAIT_CAP_MS, quietMs: IDLE_QUIET_MS }
+    ])
+    expect(matcher.match(ctx('https://b.example/'))).toBeNull()
+    // A newer build comes back before the slot fires: its bytes replace the waiting ones, and
+    // the slot already asked for serves them – no second slot, one deserialise.
+    s.engine.setRuleSet(textSet('c', '||c.example^'))
+    matcher.rebuild()
+    await h.release(2)
+    expect(matcher.superseded).toBe(1)
+    expect(matcher.waitingScopes).toBe(1)
+    expect(h.slots).toBe(2)
+    h.fireSlot()
+    expect(matcher.compiledInBackground).toBe(2)
+    expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://c.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.ready).toBe(true)
+    expect(h.slots).toBe(2)
+
+    // The master switch off and on again: the scope's matcher is the empty one meanwhile
+    // (built from no sets), so the list's return is urgent again.
+    s.engine.setEnabled('a', false)
+    s.engine.setEnabled('b', false)
+    s.engine.setEnabled('c', false)
+    matcher.rebuild()
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    s.engine.setEnabled('a', true)
+    matcher.rebuild()
+    await h.release(3)
+    expect(h.asked.at(-1)).toEqual({ capMs: DESERIALISE_IDLE_CAP_MS, quietMs: 0 })
+    h.fireSlot()
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
   })
 
   describe("the worker's cache write", () => {
@@ -1179,10 +1347,9 @@ describe('GhosteryTextMatcher', () => {
       await new Promise((r) => setImmediate(r))
       expect(Buffer.from(readFileSync(target.bin))).toEqual(bytes)
       expect(readFileSync(target.documents, 'utf8')).toBe('||phish.example^$all')
-      expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual({
-        fingerprint: 'a:1:1',
-        version: 'v1'
-      })
+      expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual(
+        expectedMeta(cacheDir, 'a:1:1', 'v1')
+      )
       expect(readdirSync(cacheDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
 
       // Temp file + rename: the bytes go to `engine.bin.<pid>.tmp` first. With that path taken
@@ -1237,6 +1404,144 @@ describe('GhosteryTextMatcher', () => {
       expect(next.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
       expect(quiet).toHaveBeenCalledTimes(1)
       quiet.mockRestore()
+    })
+  })
+
+  describe("the loader's checks on the cache (W8-P1b)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    /**
+     * A cache written by one start (the excerpt alone), and the next start's matcher over the
+     * same source – the store holds the text, so a miss recompiles through `compile`, whose
+     * calls count the recompiles; `fromCache` says whether the cache was adopted.
+     */
+    function cached(): {
+      cacheDir: string
+      paths: { bin: string; meta: string; documents: string }
+      next(): { matcher: InstanceType<typeof GhosteryTextMatcher>; compile: Mock }
+      warn: MockInstance<typeof console.warn>
+    } {
+      const cacheDir = join(tempDir(), 'cache')
+      const s = source()
+      s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+      new GhosteryTextMatcher(s, cacheDir, 'v1', 0).rebuild()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      return {
+        cacheDir,
+        paths: {
+          bin: join(cacheDir, 'engine.bin'),
+          meta: join(cacheDir, 'engine.json'),
+          documents: join(cacheDir, 'documents.txt')
+        },
+        next: () => {
+          const compile = vi.fn((scopes: GhosteryCompileScope[]) =>
+            Promise.resolve(GHOSTERY_COMPILE_TASK.run({ scopes }))
+          )
+          const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0, compile)
+          matcher.rebuild()
+          return { matcher, compile }
+        },
+        warn
+      }
+    }
+
+    it('adopts an intact cache without a compile, and what it adopts matches', () => {
+      const c = cached()
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(true)
+      expect(compile).not.toHaveBeenCalled()
+      expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+      expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+        action: 'block'
+      })
+      expect(c.warn).not.toHaveBeenCalled()
+    })
+
+    it('recompiles on a `documents.txt` cut short – a prefix that parses as a smaller set – and on an empty one, before anything is deserialised', async () => {
+      const { FiltersEngine } = await import('@ghostery/adblocker')
+      const c = cached()
+      const whole = readFileSync(c.paths.documents, 'utf8')
+      expect(whole).toBe('||phish.example^$all\n@@||trusted.example^$document')
+      // The first line alone: a valid set, missing the exception. Never adopted.
+      writeFileSync(c.paths.documents, whole.split('\n')[0]!)
+      const deserialize = vi.spyOn(FiltersEngine, 'deserialize')
+      const short = c.next()
+      expect(short.matcher.fromCache).toBe(false)
+      expect(short.compile).toHaveBeenCalledTimes(1)
+      expect(deserialize).not.toHaveBeenCalled()
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![0]).toBe('[zenium] filter engine cache not read')
+      expect(c.warn.mock.calls[0]![2]).toBe('document filters do not match the metadata')
+      // Zero bytes: the empty set parses too. Never adopted; the warning for the path is spent.
+      writeFileSync(c.paths.documents, '')
+      const empty = c.next()
+      expect(empty.matcher.fromCache).toBe(false)
+      expect(empty.compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      // The recompile's write puts the cache right again; the start after adopts it.
+      await new Promise((r) => setTimeout(r, 20))
+      await new Promise((r) => setImmediate(r))
+      expect(readFileSync(c.paths.documents, 'utf8')).toBe(whole)
+      const after = c.next()
+      expect(after.matcher.fromCache).toBe(true)
+      expect(after.compile).not.toHaveBeenCalled()
+    })
+
+    it('recompiles when `engine.bin` is not the file the metadata names: another length, or the same length with other bytes', () => {
+      const c = cached()
+      const bytes = readFileSync(c.paths.bin)
+      writeFileSync(c.paths.bin, bytes.subarray(0, bytes.length - 1))
+      expect(c.next().matcher.fromCache).toBe(false)
+      const flipped = Buffer.from(bytes)
+      flipped[Math.floor(flipped.length / 2)] ^= 0xff
+      writeFileSync(c.paths.bin, flipped)
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(false)
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![2]).toBe('engine bytes do not match the metadata')
+    })
+
+    it('recompiles on metadata without the digests, metadata of an older format (silently), and metadata that is not JSON', () => {
+      const c = cached()
+      const meta = JSON.parse(readFileSync(c.paths.meta, 'utf8')) as Record<string, unknown>
+      // The current format claimed, the digests missing: damage.
+      writeFileSync(
+        c.paths.meta,
+        JSON.stringify({ format: meta['format'], fingerprint: meta['fingerprint'], version: 'v1' })
+      )
+      expect(c.next().matcher.fromCache).toBe(false)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      expect(c.warn.mock.calls[0]![2]).toBe('engine bytes do not match the metadata')
+      // A digest of the wrong shape counts as missing.
+      writeFileSync(
+        c.paths.meta,
+        JSON.stringify({ ...meta, engine: { bytes: String(meta['engine']), sha1: 'x' } })
+      )
+      expect(c.next().matcher.fromCache).toBe(false)
+      // What a build before this format wrote: a miss, not damage – recompiled once, no warning.
+      writeFileSync(
+        c.paths.meta,
+        JSON.stringify({ fingerprint: meta['fingerprint'], version: meta['version'] })
+      )
+      const { matcher, compile } = c.next()
+      expect(matcher.fromCache).toBe(false)
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(c.warn).toHaveBeenCalledTimes(1)
+      // Not JSON (a torn metadata file): damage, on another cache path, so logged once there.
+      const otherDir = join(tempDir(), 'cache')
+      const s = source()
+      s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+      new GhosteryTextMatcher(s, otherDir, 'v1', 0).rebuild()
+      writeFileSync(join(otherDir, 'engine.json'), '{"format":2,"fingerp')
+      const torn = new GhosteryTextMatcher(s, otherDir, 'v1', 0)
+      torn.rebuild()
+      expect(torn.fromCache).toBe(false)
+      expect(c.warn).toHaveBeenCalledTimes(2)
+      expect(c.warn.mock.calls[1]![2]).toBe('metadata unreadable')
+      expect(torn.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
     })
   })
 

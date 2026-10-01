@@ -10,11 +10,19 @@
  * One request compiles every scope of one build (the unscoped matcher's and each named
  * partition's), one after the other, and answers once with all of them (W8-P1: never two
  * compiles side by side). The cache write happens here too, where the bytes already are: after
- * the answer is posted – the adopt never waits on the disk – each scope's files land atomically
- * (temp file + rename), and a write that fails is logged once per path and otherwise forgotten:
- * the next start finds no cache (or a stale one) and recompiles, as it does for any miss.
+ * the answer is posted – the adopt never waits on the disk – each of a scope's three files lands
+ * atomically (temp file + rename, the metadata last), and a write that fails is logged once per
+ * path and otherwise forgotten: the next start finds no cache (or a stale one) and recompiles,
+ * as it does for any miss.
+ *
+ * The metadata names the files it stands for by byte length and SHA-1 ({@link GhosteryCacheMeta}),
+ * and the loader checks both before it deserialises or parses anything (W8-P1b): a rename makes
+ * each file whole or absent, but a file system that reorders writes under power loss can leave
+ * one short, and a short `documents.txt` – or an empty one – still parses, as a prefix of a
+ * filter list is a filter list. The digests are what tells that apart from the real thing.
  */
 import { FiltersEngine } from '@ghostery/adblocker'
+import { createHash } from 'node:crypto'
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { BackgroundTask } from '../../core/background/tasks'
@@ -52,6 +60,41 @@ export interface GhosteryCacheTarget extends GhosteryCachePaths {
   version: string
 }
 
+/**
+ * The cache's on-disk layout, recorded in the metadata; a bump means every cache written before
+ * it misses once and is recompiled. 2: the metadata carries the files' digests (W8-P1b).
+ */
+export const GHOSTERY_CACHE_FORMAT = 2
+
+/** One cached file as the metadata names it: its byte length and the SHA-1 of its bytes. */
+export interface GhosteryCacheDigest {
+  bytes: number
+  sha1: string
+}
+
+/** What `engine.json` holds: the sets' fingerprint, the app version and the two files' digests. */
+export interface GhosteryCacheMeta {
+  format: number
+  fingerprint: string
+  version: string
+  engine: GhosteryCacheDigest
+  documents: GhosteryCacheDigest
+}
+
+/** The digest the metadata records for `data`. */
+export function cacheDigest(data: Uint8Array): GhosteryCacheDigest {
+  return { bytes: data.byteLength, sha1: createHash('sha1').update(data).digest('hex') }
+}
+
+/** Whether `digest` is well-formed and `data` is the file it describes (the length first: cheap). */
+export function matchesCacheDigest(data: Uint8Array, digest: unknown): boolean {
+  if (!digest || typeof digest !== 'object') return false
+  const { bytes, sha1 } = digest as Partial<GhosteryCacheDigest>
+  if (!Number.isInteger(bytes) || bytes !== data.byteLength) return false
+  if (typeof sha1 !== 'string' || !/^[0-9a-f]{40}$/.test(sha1)) return false
+  return createHash('sha1').update(data).digest('hex') === sha1
+}
+
 /** One scope of a build: its key (the partition, or null for the unscoped matcher) and text. */
 export interface GhosteryCompileScope {
   partition: string | null
@@ -82,33 +125,52 @@ export interface GhosteryCompileOutput {
 const warnedCachePaths = new Set<string>()
 
 /**
- * Write one scope's compiled form under `target`, atomically: the bytes go to a temp file that
- * is renamed into place, so a crash mid-write never leaves a torn `engine.bin` for the next
- * start; the documents and the metadata follow (the metadata last, so a reader that finds the
- * fingerprint finds the files it names). A failure is logged once per path; nothing is retried.
+ * `data` at `path`, whole or not at all: written to `<path>.<pid>.tmp` and renamed into place,
+ * so a crash mid-write leaves the old file (or none) rather than a torn one. The temp file is
+ * removed on a failure, which is rethrown for the caller to log.
  */
-export function writeGhosteryCache(
-  target: GhosteryCacheTarget,
-  engine: Uint8Array,
-  documents: string
-): boolean {
-  const tmp = `${target.bin}.${process.pid}.tmp`
+function writeWhole(path: string, data: Uint8Array): void {
+  const tmp = `${path}.${process.pid}.tmp`
   try {
-    mkdirSync(dirname(target.bin), { recursive: true })
-    writeFileSync(tmp, engine)
-    renameSync(tmp, target.bin)
-    writeFileSync(target.documents, documents)
-    writeFileSync(
-      target.meta,
-      JSON.stringify({ fingerprint: target.fingerprint, version: target.version })
-    )
-    return true
+    writeFileSync(tmp, data)
+    renameSync(tmp, path)
   } catch (error) {
     try {
       unlinkSync(tmp)
     } catch {
       // Never written, or already renamed.
     }
+    throw error
+  }
+}
+
+/**
+ * Write one scope's compiled form under `target`: the engine's bytes, the documents and the
+ * metadata, each whole or not at all ({@link writeWhole}), the metadata last, so a reader that
+ * finds the fingerprint finds the files it names – and finds their digests in it, so a file
+ * the file system left short behind a completed rename is told from the real thing at load.
+ * A failure is logged once per path; nothing is retried.
+ */
+export function writeGhosteryCache(
+  target: GhosteryCacheTarget,
+  engine: Uint8Array,
+  documents: string
+): boolean {
+  try {
+    mkdirSync(dirname(target.bin), { recursive: true })
+    const documentBytes = Buffer.from(documents, 'utf8')
+    writeWhole(target.bin, engine)
+    writeWhole(target.documents, documentBytes)
+    const meta: GhosteryCacheMeta = {
+      format: GHOSTERY_CACHE_FORMAT,
+      fingerprint: target.fingerprint,
+      version: target.version,
+      engine: cacheDigest(engine),
+      documents: cacheDigest(documentBytes)
+    }
+    writeWhole(target.meta, Buffer.from(JSON.stringify(meta), 'utf8'))
+    return true
+  } catch (error) {
     if (!warnedCachePaths.has(target.bin)) {
       warnedCachePaths.add(target.bin)
       console.warn('[zenium] filter engine cache not written', target.bin, error)

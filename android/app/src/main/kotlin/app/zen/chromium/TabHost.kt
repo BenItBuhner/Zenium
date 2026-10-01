@@ -203,8 +203,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         host.extensions?.attach(view)
         view.applyAutofillProvider()
         view.tabId = viewId
-        // The core's view for the new tab says whether an agent drives it (OS-40).
+        // The core's view for the new tab says whether an agent drives it (OS-40) and whether
+        // it holds the page's prompts for one (AgentPrompts.kt).
         view.agentDriven = false
+        view.setInterceptAgentPrompts(false)
         show(view, false)
         view.translationX = 0f
         container.addView(view, FrameLayout.LayoutParams(0, 0))
@@ -225,8 +227,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // The list and the state pushed under the provisional id are not kept under it.
         host.viewBound(viewId, tabId)
         view.tabId = tabId
-        // The tab is the core's from here: its word on an agent driving the page comes with it (OS-40).
+        // The tab is the core's from here: its word on an agent driving the page comes with it
+        // (OS-40), as does its word on holding the page's prompts for one (AgentPrompts.kt).
         view.agentDriven = false
+        view.setInterceptAgentPrompts(false)
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
         heldBack.remove(viewId)?.let { heldBack[tabId] = it }

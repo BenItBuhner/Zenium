@@ -1266,6 +1266,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
+            // An AI agent's native prompts (AgentPrompts.kt): while on, the page's file choosers
+            // and the view's client-certificate requests are held for the core's answer.
+            "view.interceptAgentPrompts" -> { tab?.setInterceptAgentPrompts(args.bool("on")); reply(null) }
+            "view.fileChooserAnswer" -> { tab?.answerFileChooser(args.str("requestId"), args); reply(null) }
             "view.postMessage" -> { tab?.postToPage(args.obj("message").toString()); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
@@ -1475,6 +1479,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 security.respondAuth(args.str("requestId"), args.strOrNull("username"), args.strOrNull("password"))
                 reply(null)
             }
+            "certificate.respond" -> { security.respondClientCertificate(args.str("requestId"), args); reply(null) }
             "security.forgetSession" -> { security.forgetSession(); reply(null) }
             "security.allowCertificate" -> {
                 security.allowCertificate(args.str("containerId"), args.str("url"), args.str("fingerprint"))
