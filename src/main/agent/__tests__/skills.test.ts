@@ -103,7 +103,8 @@ const CONTRACT_V2_TOOLS = [
   'browser_wait_for',
   'browser_take_screenshot',
   'browser_read_page',
-  'browser_evaluate'
+  'browser_evaluate',
+  'browser_handle_dialog'
 ]
 
 /** The frontmatter's top-level scalars and the `metadata` block, without a YAML library. */
