@@ -1751,7 +1751,7 @@ const browserHandleDialog: AgentTool = {
     const accept = raw === undefined ? true : bool(args, 'accept')
     const answered = ctx.agents.answerDialog(tab.id, accept, str(args, 'promptText'))
     await sleep(150)
-    const said = `Answered the ${answered.kind === 'beforeunload' ? '"Leave site?"' : answered.kind} dialog (${JSON.stringify(answered.message.slice(0, 120))}) with ${accept ? 'OK' : 'Cancel'}.`
+    const said = `Answered the ${answered.kind} dialog (${JSON.stringify(answered.message.slice(0, 120))}) with ${accept ? 'OK' : 'Cancel'}.`
     const next = ctx.agents.pendingDialog(tab.id)
     if (next) return text(`${said} The page opened another one: ${describeDialog(next)}.`)
     const view = await ctx.agents.prepare(ctx.session, tab.id, { activate: false })

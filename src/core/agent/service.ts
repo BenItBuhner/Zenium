@@ -3179,6 +3179,7 @@ export class AgentService implements SessionStore, McpHandlers {
       this.absorbAnswered(owner, dialog, 'accept', this.dialogPolicyScope(owner, dialog.tabId))
       return { accepted: true, value: null }
     }
+    // Never through `ask` (`PageDialogRequest.kind`): a "Leave site?" is `confirmLeave`'s.
     if (kind === 'beforeunload') return null
     const hit = this.dialogRuleFor(owner, dialog.tabId, kind)
     if (!hit) return null
