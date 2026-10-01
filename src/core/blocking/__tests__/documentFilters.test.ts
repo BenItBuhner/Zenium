@@ -1,5 +1,11 @@
+// eslint-disable-next-line no-restricted-imports
+import { readFileSync } from 'node:fs'
+// eslint-disable-next-line no-restricted-imports
+import { join } from 'node:path'
+// eslint-disable-next-line no-restricted-imports
+import { gunzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { DocumentFilters, optionsIndex } from '../documentFilters'
+import { DOCUMENT_FILTERS_FORMAT, DocumentFilters, optionsIndex } from '../documentFilters'
 
 const LIST = [
   '[Adblock Plus 2.0]',
@@ -111,4 +117,232 @@ describe('DocumentFilters', () => {
     expect(again.lines).toEqual(two.lines)
     expect(again.decide('https://a.example/')).toMatchObject({ action: 'block' })
   })
+
+  it('matches a `||host/path` pattern by its host first, and a `||host*` pattern against the URL', () => {
+    const f = DocumentFilters.parse([
+      [
+        '||cdn.example/payload/x.exe$all',
+        '||Mixed.Example^trail$document',
+        '||port.example:8080/admin$document',
+        '||end.example|$document',
+        '||prefix.exam*$document',
+        '||short.exampl$document',
+        '||192.168.0.1/login$document',
+        '@@||cdn.example/payload/safe.exe$document'
+      ].join('\n')
+    ])
+    expect(f.size).toBe(8)
+    // The path still has to match: the host alone is not enough.
+    expect(f.decide('https://cdn.example/payload/x.exe')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://files.cdn.example/payload/x.exe')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://cdn.example/payload/other.exe')).toBeNull()
+    expect(f.decide('https://cdn.example/')).toBeNull()
+    expect(f.decide('https://notcdn.example/payload/x.exe')).toBeNull()
+    expect(f.decide('https://cdn.example/payload/safe.exe')).toMatchObject({ action: 'allow' })
+    expect(f.exception('https://cdn.example/payload/safe.exe')).toBe(
+      '@@||cdn.example/payload/safe.exe$document'
+    )
+    expect(f.decide('https://mixed.example/trail')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://mixed.example/other')).toBeNull()
+    expect(f.decide('https://port.example:8080/admin')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://port.example/admin')).toBeNull()
+    expect(f.decide('https://end.example')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://end.example/')).toBeNull()
+    expect(f.decide('http://192.168.0.1/login')).toMatchObject({ action: 'block' })
+    expect(f.decide('http://192.168.0.10/login')).toBeNull()
+    // `||prefix.exam*` is a prefix of a hostname, not a host: matched as a pattern against the
+    // whole URL, as the regular expression it translates to says.
+    expect(f.decide('https://prefix.example/')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://prefix.exam.other/')).toMatchObject({ action: 'block' })
+    // `||short.exampl` with nothing after the hostname is a host-only filter, as it always was.
+    expect(f.decide('https://short.exampl/')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://sub.short.exampl/path')).toMatchObject({ action: 'block' })
+    expect(f.decide('https://short.example/')).toBeNull()
+    expect(f.decide('https://other.example/short.exampl')).toBeNull()
+  })
+})
+
+describe('the serialised form', () => {
+  /** Every decision the two make for `url`, side by side. */
+  function same(a: DocumentFilters, b: DocumentFilters, url: string): void {
+    expect(b.decide(url)).toEqual(a.decide(url))
+    expect(b.exception(url)).toEqual(a.exception(url))
+  }
+
+  it('round-trips the test list: the same lines in the same order, deciding the same', () => {
+    const parsed = DocumentFilters.parse([LIST])
+    const bytes = parsed.serialize()
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    const read = DocumentFilters.deserialize(bytes)
+    expect(read.lines).toEqual(parsed.lines)
+    expect(read.size).toBe(parsed.size)
+    for (const url of [
+      'https://ads.example/',
+      'https://malware.example/landing',
+      'https://cdn.phish.example/',
+      'https://phish.example.evil/',
+      'https://shop.example/checkout/step-2',
+      'https://shop.example/basket',
+      'https://x1.lander.example/offer',
+      'https://lander.example/offer',
+      'https://scam.example/',
+      'https://trusted.example/',
+      'https://www.trusted.example/page?x=1',
+      'https://partly.example/safe/index.html',
+      'https://partly.example/other/',
+      'https://www.regional.example/',
+      'https://eu.regional.example/',
+      'https://notdoc.example/',
+      'https://csp.example/',
+      'https://third.example/',
+      'https://gone.example/',
+      'about:blank'
+    ])
+      same(parsed, read, url)
+    // Read back and written again: the same bytes.
+    expect(Buffer.from(read.serialize())).toEqual(Buffer.from(bytes))
+    // The empty set has a form too.
+    expect(DocumentFilters.deserialize(DocumentFilters.EMPTY.serialize()).size).toBe(0)
+    expect(new TextDecoder().decode(DocumentFilters.EMPTY.serialize())).toBe('[1,[],[],[],[],[]]')
+  })
+
+  it('writes the same bytes for the same lines (the pin: a change here is a format change)', () => {
+    const lines = [
+      '||malware.example^$all',
+      '@@||scam.example^$document',
+      '||cdn.example/payload/x.exe$all,important',
+      '||regional.example^$document,domain=regional.example|~eu.regional.example',
+      '||case.example/Path$document,match-case',
+      '/^https?:\\/\\/[a-z0-9-]+\\.lander\\.example\\//$document',
+      'plain-substring$document,denyallow=safe.example'
+    ]
+    const once = DocumentFilters.parse([lines.join('\n')]).serialize()
+    const twice = DocumentFilters.parse(lines).serialize()
+    expect(Buffer.from(twice)).toEqual(Buffer.from(once))
+    // The format, the lines, then per line: flags (1 exception, 2 important, 4 match-case,
+    // 8 host-only), where the pattern ends, the anchor host's length; then the domain lists.
+    expect(new TextDecoder().decode(once)).toBe(
+      '[1,' +
+        '["||malware.example^$all",' +
+        '"@@||scam.example^$document",' +
+        '"||cdn.example/payload/x.exe$all,important",' +
+        '"||regional.example^$document,domain=regional.example|~eu.regional.example",' +
+        '"||case.example/Path$document,match-case",' +
+        '"/^https?:\\\\/\\\\/[a-z0-9-]+\\\\.lander\\\\.example\\\\//$document",' +
+        '"plain-substring$document,denyallow=safe.example"],' +
+        '[8,9,2,8,4,0,0],' +
+        '[18,17,27,19,19,43,15],' +
+        '[15,12,11,16,12,0,0],' +
+        '[[3,["regional.example"],["eu.regional.example"]],[6,null,["safe.example"]]]' +
+        ']'
+    )
+    const read = DocumentFilters.deserialize(once)
+    expect(read.decide('https://case.example/Path')).toMatchObject({ action: 'block' })
+    expect(read.decide('https://case.example/path')).toBeNull()
+    expect(read.decide('https://x.example/plain-substring')).toMatchObject({ action: 'block' })
+    expect(read.decide('https://safe.example/plain-substring')).toBeNull()
+    expect(read.decide('https://cdn.example/payload/x.exe')).toEqual({
+      action: 'block',
+      filter: '||cdn.example/payload/x.exe$all,important'
+    })
+  })
+
+  it('refuses bytes of another format or shape, naming the reason, so a caller can parse the text instead', () => {
+    const encode = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
+    expect(() => DocumentFilters.deserialize(encode([DOCUMENT_FILTERS_FORMAT + 1, []]))).toThrow(
+      `document filters: format ${DOCUMENT_FILTERS_FORMAT + 1}, this build reads ${DOCUMENT_FILTERS_FORMAT}`
+    )
+    expect(() => DocumentFilters.deserialize(encode([0, []]))).toThrow(/format 0/)
+    expect(() => DocumentFilters.deserialize(encode({ v: 1 }))).toThrow('not a serialised form')
+    expect(() => DocumentFilters.deserialize(encode([]))).toThrow('not a serialised form')
+    expect(() => DocumentFilters.deserialize(encode([1]))).toThrow('malformed form')
+    expect(() => DocumentFilters.deserialize(encode([1, {}]))).toThrow('malformed form')
+    expect(() => DocumentFilters.deserialize(new TextEncoder().encode('[1,["x'))).toThrow()
+    expect(() => DocumentFilters.deserialize(new Uint8Array(0))).toThrow()
+    const line = '||a.example^$document'
+    // A form whose columns do not describe filters: the wrong types or lengths, offsets that do
+    // not fit the line, a host-only filter without a host (it would match every URL).
+    for (const form of [
+      [1, [line], [8], [12], [9]],
+      [1, [line], [8], [12], [9], [], 'extra'],
+      [1, line, [8], [12], [9], []],
+      [1, [0], [8], [12], [9], []],
+      [1, [line], ['8'], [12], [9], []],
+      [1, [line], [8], [12.5], [9], []],
+      [1, [line], [8], [-1], [9], []],
+      [1, [line], [], [12], [9], []],
+      [1, [line], [8], [12], [9, 0], []],
+      [1, [line], [8], [99], [9], []],
+      [1, [`@@${line}`], [1], [1], [0], []],
+      [1, [line], [8], [12], [11], []],
+      [1, [line], [8], [12], [0], []],
+      [1, [line], [8], [12], [9], {}],
+      [1, [line], [8], [12], [9], [[0, null]]],
+      [1, [line], [8], [12], [9], [[1, null, null]]],
+      [1, [line], [8], [12], [9], [[0, 'a.example', null]]],
+      [1, [line], [8], [12], [9], [[0, null, [1]]]]
+    ])
+      expect(() => DocumentFilters.deserialize(encode(form))).toThrow('malformed form')
+    // Every flag at once, read back as written.
+    const full = DocumentFilters.deserialize(
+      encode([1, ['@@||a.example^$document,important,match-case'], [15], [14], [9], []])
+    )
+    expect(full.lines).toEqual(['@@||a.example^$document,important,match-case'])
+    expect(full.decide('https://a.example/')).toEqual({
+      action: 'allow',
+      filter: '@@||a.example^$document,important,match-case'
+    })
+    expect(full.decide('https://b.example/')).toBeNull()
+    // A regular expression the form carries that does not compile matches nothing.
+    const bad = DocumentFilters.deserialize(encode([1, ['/(/$document'], [0], [3], [0], []]))
+    expect(bad.size).toBe(1)
+    expect(bad.decide('https://a.example/(')).toBeNull()
+  })
+
+  it('round-trips the bundled lists: every decision on a sample built from their lines is the same', () => {
+    const dir = join(__dirname, '../../../../resources/blocking')
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as {
+      lists: Array<{ file: string }>
+    }
+    const texts = manifest.lists.map((l) =>
+      gunzipSync(readFileSync(join(dir, l.file))).toString('utf8')
+    )
+    const parsed = DocumentFilters.parse(texts)
+    expect(parsed.size).toBeGreaterThan(1000)
+    const bytes = parsed.serialize()
+    const read = DocumentFilters.deserialize(bytes)
+    expect(read.lines).toEqual(parsed.lines)
+    expect(Buffer.from(read.serialize())).toEqual(Buffer.from(bytes))
+    expect(Buffer.from(DocumentFilters.parse(texts).serialize())).toEqual(Buffer.from(bytes))
+    // The sample: for every seventh accepted line – at most four lines per host, since a few
+    // hosts (raw.githubusercontent.com) carry thousands of them – its own target URL, that URL
+    // under `www.`, its host's root and a sibling path; plus a few unrelated navigations.
+    const urls: string[] = [
+      'https://example.com/',
+      'https://www.google.com/search?q=1',
+      'https://user:pw@example.com/path',
+      'about:blank'
+    ]
+    const OPTIONS = /\$[^$]*$/
+    const perHost = new Map<string, number>()
+    parsed.lines.forEach((line, index) => {
+      if (index % 7 !== 0) return
+      const body = (line.startsWith('@@') ? line.slice(2) : line).replace(OPTIONS, '')
+      if (!body.startsWith('||')) return
+      const [host = '', ...path] = body.slice(2).replace(/\^$/, '').split('/')
+      const seen = perHost.get(host) ?? 0
+      if (seen >= 4) return
+      perHost.set(host, seen + 1)
+      const p = path.length ? `/${path.join('/')}` : '/'
+      urls.push(`https://${host}${p}`, `https://www.${host}${p}`, `https://${host}/`)
+      urls.push(`https://${host}${p}-other`)
+    })
+    expect(urls.length).toBeGreaterThan(1000)
+    let blocked = 0
+    for (const url of urls) {
+      same(parsed, read, url)
+      if (read.decide(url)?.action === 'block') blocked++
+    }
+    expect(blocked).toBeGreaterThan(100)
+  }, 60_000)
 })
