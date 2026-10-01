@@ -4576,6 +4576,7 @@ describe('the extensions across devices – the #715 follow-ups (seed #38)', () 
     const off = (await extensionRecords(a)).find((r) => r.id === EXT_A)!
     const t1 = (off.data as { enabledAt: number }).enabledAt
     expect(t1).toBeGreaterThan(approvedAt)
+    expect((off.data as { toolbarPinnedAt: number }).toolbarPinnedAt).toBe(t0)
 
     // The laptop's round takes it and hands it to the applier, which holds it (the startup
     // hold, the attach, the id's busy work).
