@@ -8,12 +8,13 @@
   "scripts": {
     "dev": "convex dev",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit -p convex && tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p convex && tsc --noEmit -p tsconfig.json && tsc --noEmit -p web",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "check": "npm run typecheck && npm run lint && npm run test",
-    "web:dev": "vite web",
-    "web:build": "vite build web"
+    "web:dev": "vite --config web/vite.config.ts",
+    "web:build": "vite build --config web/vite.config.ts --mode development",
+    "web:build:prod": "vite build --config web/vite.config.ts --mode production"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.10",
