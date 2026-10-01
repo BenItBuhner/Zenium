@@ -9,6 +9,7 @@ import type { Browser } from '../browser'
 import type { ImportDatabase, ImportHost } from '../platform'
 import type { ZenWindow } from '../window'
 import { parseImport } from '../credentials/csv'
+import { chromiumAddresses, dedupeAddresses } from './chromiumAddresses'
 import { parseChromiumBookmarks } from './chromiumBookmarks'
 import { chromiumKeys, chromiumLogins } from './chromiumLogins'
 import { FirefoxLoginsError, deriveFirefoxKey, firefoxLogins } from './firefoxLogins'
@@ -45,7 +46,7 @@ import {
 /** A bookmarks HTML with its favicons inline runs to tens of megabytes; Chrome reads it whole. */
 export const MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024
 
-export const KIND_ORDER: ImportKind[] = ['bookmarks', 'history', 'passwords']
+export const KIND_ORDER: ImportKind[] = ['bookmarks', 'history', 'passwords', 'addresses']
 
 /** Chrome's importer lock dialog, Zenium's wording: the browser named, the way out stated. */
 export function lockedMessage(browserName: string): string {
@@ -222,6 +223,7 @@ export class ImportService {
       try {
         if (kind === 'bookmarks') await this.importBookmarks(source, outcome, progress)
         else if (kind === 'history') await this.importHistory(source, outcome)
+        else if (kind === 'addresses') await this.importAddresses(source, outcome)
         else await this.importPasswords(source, outcome, primaryPassword)
       } catch (error) {
         outcome.error = messageOf(error)
@@ -445,6 +447,31 @@ export class ImportService {
     outcome.imported += result.added + result.replaced
     outcome.duplicates += result.skipped
     outcome.invalid += result.invalid
+  }
+
+  /**
+   * The saved addresses of a Chromium profile's `Web Data` (ID-57), into the vault the way the
+   * passwords go: the database is read from a temp copy, the vault must be unlocked, each row
+   * becomes one `addAddress` (with its clipping), and a row already in the vault or seen earlier
+   * in the run is counted as a duplicate, not written. `Web Data` needs no key – addresses are
+   * stored in the clear on every OS – so nothing here is per-OS. Only Chromium sources offer the
+   * kind (`sources.ts`); a `Web Data` gone since discovery, or one whose tables the reader does
+   * not know, fails the kind through `readFailure`'s wording.
+   */
+  private async importAddresses(source: ImportSource, outcome: ImportKindOutcome): Promise<void> {
+    const read = await this.withDatabase(
+      source,
+      joinPath(source.path, CHROMIUM_FILES.addresses),
+      (db) => chromiumAddresses(db)
+    )
+    outcome.invalid += read.invalid
+    if (read.addresses.length === 0) return
+    await this.ensureVaultUnlocked()
+    const store = this.browser.passwords.store
+    const deduped = dedupeAddresses(store.listAddresses(), read.addresses)
+    outcome.duplicates += deduped.duplicates
+    for (const address of deduped.addresses) store.addAddress(address, this.now())
+    outcome.imported += deduped.addresses.length
   }
 
   private async ensureVaultUnlocked(): Promise<void> {

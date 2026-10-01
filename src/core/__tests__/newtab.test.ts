@@ -4,14 +4,15 @@ import type {
   NewTabPageState,
   Platform as PlatformOs,
   SpaceTheme,
-  Tab
+  Tab,
+  TopSite
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { EXTENSION_SETTING_KEYS } from '../../shared/extensionSettings'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { emptyEducationalTipMemory } from '../../shared/educationalTips'
-import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
+import { DEFAULT_NEW_TAB_SETTINGS, composeTiles, openTabFavicons } from '../../shared/newTab'
 import { emptySafetyHubCardMemory } from '../../shared/safetyHubCard'
 import { makeTheme, resolveTheme, unfollowedTheme } from '../../shared/theme'
 import { Browser } from '../browser'
@@ -891,6 +892,147 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(c).toMatch(/^zen:\/\/favicon\//)
     expect(view.pushes.length).toBeGreaterThan(pushes)
     expect(view.pushes.at(-1)!.shortcuts.map((s) => s.favicon)).toEqual([c])
+  })
+
+  it("the omnibox's tile row on the tablet is the served page's own list (OMN-04): the grid `stateFor()` builds, in either mode, eight at most, the icons by the tiles' rule; nothing while the section is hidden", () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    for (let i = 0; i < 10; i += 1)
+      for (let v = 0; v <= i; v += 1)
+        f.browser.history.visit(
+          `https://site${i}.example/`,
+          `Site ${i}`,
+          `https://site${i}.example/icon.png`
+        )
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const page = (): string[] => {
+      const state = svc.stateFor(tab.id)!
+      return [...state.shortcuts, ...state.topSites].map((s) => s.url)
+    }
+    const urls = (): string[] => svc.pageTiles('tablet').map((s) => s.url)
+    // "Most visited": the eight most visited sites, as the page lays them.
+    expect(urls()).toEqual([9, 8, 7, 6, 5, 4, 3, 2].map((i) => `https://site${i}.example/`))
+    expect(urls()).toEqual(page())
+    // A site removed from the page is gone here too; the next most visited takes the slot.
+    svc.remove('https://site9.example/')
+    expect(urls()).toEqual([8, 7, 6, 5, 4, 3, 2, 1].map((i) => `https://site${i}.example/`))
+    expect(urls()).toEqual(page())
+    // A pinned shortcut fronts the row as it fronts the grid, in place of its host's tile.
+    svc.addShortcut('Mine', 'https://mine.example/')
+    svc.addShortcut('Site 3', 'https://www.site3.example/')
+    expect(urls()).toEqual([
+      'https://mine.example/',
+      'https://www.site3.example/',
+      ...[8, 7, 6, 5, 4, 2].map((i) => `https://site${i}.example/`)
+    ])
+    expect(urls()).toEqual(page())
+    // The icon is the tiles' (HB-47): uncached and no tab open on the site → none (the letter).
+    expect(svc.pageTiles('tablet').map((s) => s.favicon)).toEqual(Array(8).fill(null))
+    expect(svc.pageTiles('tablet')[2]).toMatchObject({ title: 'Site 8' })
+    // "My shortcuts": the shortcuts alone, as the page shows them.
+    f.browser.handleCommand(win, 'settings.update', { newTab: { mode: 'my-shortcuts' } })
+    expect(urls()).toEqual(['https://mine.example/', 'https://www.site3.example/'])
+    expect(urls()).toEqual(page())
+    // The shortcuts section off: the page has no grid, the omnibox no row.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { preset: 'custom', modules: { shortcuts: false } }
+    })
+    expect(svc.stateFor(tab.id)!.shortcutsMode).toBe('hidden')
+    expect(urls()).toEqual([])
+    expect(page()).toEqual([])
+  })
+
+  it("on the phone the row is the chrome-drawn page's own list (OMN-04, #725's second fold): `composeTiles` from the page's inputs – one tile per pinned host, a pin's icon from its host's history or an open tab, the most visited sites of other hosts filling, eight at most; the shortcuts alone under 'my shortcuts'; nothing while the section is hidden", () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    for (let i = 0; i < 10; i += 1)
+      for (let v = 0; v <= i; v += 1)
+        f.browser.history.visit(
+          `https://site${i}.example/`,
+          `Site ${i}`,
+          `https://site${i}.example/icon.png`
+        )
+    const win = f.browser.focusedWindow()
+    const site = (i: number): string => `https://site${i}.example/`
+    /** The grid as `NewTabPage.tsx`'s `TopSites` composes it, from the state the chrome holds. */
+    const page = (): Pick<TopSite, 'url' | 'title' | 'favicon'>[] => {
+      const device = f.browser.state.newTabDevice
+      return composeTiles({
+        pinned: device.shortcuts,
+        ranked: f.browser.history.topSites(MAX_NEW_TAB_SHORTCUTS, device.hiddenHosts),
+        style: f.browser.state.settings.newTab.mode,
+        n: MAX_NEW_TAB_SHORTCUTS,
+        favicons: openTabFavicons(Object.values(f.browser.state.model.tabs))
+      }).map(({ url, title, favicon }) => ({ url, title, favicon }))
+    }
+    const phone = (): Pick<TopSite, 'url' | 'title' | 'favicon'>[] => svc.pageTiles('phone')
+    const urls = (tiles: Pick<TopSite, 'url'>[]): string[] => tiles.map((s) => s.url)
+    // "Most visited", nothing pinned: the eight most visited sites, the icons as the page hands
+    // its tiles – history's addresses, which the chrome's `TileIcon` resolves by HB-47.
+    expect(urls(phone())).toEqual([9, 8, 7, 6, 5, 4, 3, 2].map(site))
+    expect(phone().map((s) => s.favicon)).toEqual(
+      [9, 8, 7, 6, 5, 4, 3, 2].map((i) => `https://site${i}.example/icon.png`)
+    )
+    expect(phone()).toEqual(page())
+    // A removed site is gone here too; the next most visited takes the slot.
+    svc.remove(site(9))
+    expect(urls(phone())).toEqual([8, 7, 6, 5, 4, 3, 2, 1].map(site))
+    expect(phone()).toEqual(page())
+    // Two shortcuts on one host: the phone page draws the first alone (`composeTiles` collapses
+    // a host's pins), the served page both – each layout's row is its page's.
+    svc.addShortcut('Docs', 'https://docs.example/a')
+    svc.addShortcut('Docs too', 'https://www.docs.example/b')
+    expect(urls(phone())).toEqual(['https://docs.example/a', ...[8, 7, 6, 5, 4, 3, 2].map(site)])
+    expect(phone()).toEqual(page())
+    expect(urls(svc.pageTiles('tablet'))).toEqual([
+      'https://docs.example/a',
+      'https://www.docs.example/b',
+      ...[8, 7, 6, 5, 4, 3].map(site)
+    ])
+    // A pinned site's icon is its host's in the history (site 3, pinned under another address),
+    // else an open tab's on that host (a site never visited): the page's rule for a pin, which
+    // only knows its address and title.
+    svc.addShortcut('Site 3', 'https://www.site3.example/')
+    svc.addShortcut('Fresh', 'https://fresh.example/')
+    f.browser.handleCommand(win, 'tab.create', { url: 'https://fresh.example/', active: false })
+    const fresh = Object.values(f.browser.state.model.tabs).find(
+      (t) => t.url === 'https://fresh.example/'
+    )!
+    fresh.favicon = 'https://fresh.example/favicon.ico'
+    expect(phone()).toEqual([
+      { url: 'https://docs.example/a', title: 'Docs', favicon: null },
+      {
+        url: 'https://www.site3.example/',
+        title: 'Site 3',
+        favicon: 'https://site3.example/icon.png'
+      },
+      {
+        url: 'https://fresh.example/',
+        title: 'Fresh',
+        favicon: 'https://fresh.example/favicon.ico'
+      },
+      ...[8, 7, 6, 5, 4].map((i) => ({
+        url: site(i),
+        title: `Site ${i}`,
+        favicon: `https://site${i}.example/icon.png`
+      }))
+    ])
+    expect(phone()).toEqual(page())
+    // "My shortcuts": the pins alone, one per host, as the page shows them.
+    f.browser.handleCommand(win, 'settings.update', { newTab: { mode: 'my-shortcuts' } })
+    expect(urls(phone())).toEqual([
+      'https://docs.example/a',
+      'https://www.site3.example/',
+      'https://fresh.example/'
+    ])
+    expect(phone()).toEqual(page())
+    // The shortcuts section off: the page draws no grid, the omnibox gets no row.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { preset: 'custom', modules: { shortcuts: false } }
+    })
+    expect(phone()).toEqual([])
   })
 
   it("the phone's tile menu pins, unpins and removes through the same device state", () => {
