@@ -146,12 +146,13 @@ object WakeFrames {
      * on this recipe; where even the warm control cannot (the emulator's software GPU), the bar is
      * RELATIVE: the sleeping scene's p95 within [P95_RATIO] of the control's, its longest frame
      * within [LONGEST_RATIO] of the control's (and never under the absolute two-vsync line: a
-     * control with no long frame does not forbid one of 20 ms), and its share of frames over two
-     * vsyncs no more than [OVER32_POINTS] above the control's – or one frame of the smaller window
-     * where that is more, since a window of six frames cannot tell a tenth (see [shareAllowance]).
-     * The ratios are the lane's (`JankBudget`'s gesture and spring budgets): a scene has two to
-     * fourteen frames and HWUI's whole frames run 100 ms and more, so one frame of run-to-run
-     * noise is already 1.3x.
+     * control with no long frame does not forbid one of 20 ms), and – where both windows have
+     * [SHARE_MIN_FRAMES] frames or more, so that ten points are a frame – its share of frames over
+     * two vsyncs no more than [OVER32_POINTS] above the control's. A window of six frames moves
+     * its share in steps of 17 points: there the share is reported beside the verdict and the p95
+     * and longest ratios carry the window. The ratios are the lane's (`JankBudget`'s gesture and
+     * spring budgets): a scene has two to fourteen frames and HWUI's whole frames run 100 ms and
+     * more, so one frame of run-to-run noise is already 1.3x.
      */
     sealed class Bar {
         object Absolute : Bar() {
@@ -161,21 +162,18 @@ object WakeFrames {
         data class Relative(val p95Ratio: Double, val longestRatio: Double, val over32Points: Double) : Bar() {
             override fun toString(): String = String.format(
                 Locale.ROOT,
-                "relative to the warm control (p95 <= %.2fx, longest <= %.2fx or <= 32 ms, frames > 32 ms share <= control + %.0f points or one frame)",
-                p95Ratio, longestRatio, over32Points * 100
+                "relative to the warm control (p95 <= %.2fx, longest <= %.2fx or <= 32 ms, frames > 32 ms share <= control + %.0f points where both windows have %d frames or more)",
+                p95Ratio, longestRatio, over32Points * 100, SHARE_MIN_FRAMES
             )
         }
     }
 
-    /**
-     * The share allowance (0..1) for two windows of `subjectFrames` and `controlFrames`: `points`,
-     * or one frame of the smaller window where that is more. With six frames a window's share
-     * moves in steps of 17 points, so a ten-point allowance would be a zero-frame one.
-     */
-    fun shareAllowance(points: Double, subjectFrames: Int, controlFrames: Int): Double {
-        val smaller = minOf(subjectFrames, controlFrames)
-        return if (smaller <= 0) points else maxOf(points, 1.0 / smaller)
-    }
+    /** The frames both windows need before their shares of frames over two vsyncs are compared: ten, so that [OVER32_POINTS] is a frame. */
+    const val SHARE_MIN_FRAMES = 10
+
+    /** Whether the share test reads for windows of `subjectFrames` and `controlFrames`. */
+    fun shareReads(subjectFrames: Int, controlFrames: Int): Boolean =
+        subjectFrames >= SHARE_MIN_FRAMES && controlFrames >= SHARE_MIN_FRAMES
 
     const val P95_RATIO = 2.0
     const val LONGEST_RATIO = 2.0
@@ -206,14 +204,14 @@ object WakeFrames {
                 if (sleeping.p95 > p95Cap) reasons += String.format(Locale.ROOT, "p95 %.1f ms over %.1f (%.2fx the control's %.1f)", sleeping.p95, p95Cap, bar.p95Ratio, control.p95)
                 val longestCap = maxOf(control.longest * bar.longestRatio, HITCH_MS)
                 if (sleeping.longest > longestCap) reasons += String.format(Locale.ROOT, "longest %.1f ms over %.1f (the control's %.1f)", sleeping.longest, longestCap, control.longest)
-                val allowance = shareAllowance(bar.over32Points, sleeping.frames, control.frames)
-                val shareCap = control.over32Share + allowance
-                if (sleeping.over32Share > shareCap + 1e-9) {
-                    reasons += String.format(
-                        Locale.ROOT, "%.0f%% of frames over 32 ms, cap %.0f%% (the control's %.0f%% + %.0f points%s)",
-                        sleeping.over32Share * 100, shareCap * 100, control.over32Share * 100, allowance * 100,
-                        if (allowance > bar.over32Points) ", one frame of ${minOf(sleeping.frames, control.frames)}" else ""
-                    )
+                if (shareReads(sleeping.frames, control.frames)) {
+                    val shareCap = control.over32Share + bar.over32Points
+                    if (sleeping.over32Share > shareCap + 1e-9) {
+                        reasons += String.format(
+                            Locale.ROOT, "%.0f%% of frames over 32 ms, cap %.0f%% (the control's %.0f%% + %.0f points)",
+                            sleeping.over32Share * 100, shareCap * 100, control.over32Share * 100, bar.over32Points * 100
+                        )
+                    }
                 }
             }
         }
