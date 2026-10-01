@@ -40,7 +40,7 @@ const sceneOf = (s: { scene: string | null }): string | null => s.scene
  * The page-edge band (motion spec §3): one prompt about the page, between the content frame's
  * top edge and the page's top edge, in the frame's own surface. `[glyph] Title · detail [Action]
  * [×]` – the glyph in the status ink for a state, the accent for an offer; one action at most;
- * the × refuses, named "Dismiss" on every band (the Design Lead's ruling on item 8). The page
+ * the × refuses, named "Dismiss" on every band (the Design Lead's ruling on #740). The page
  * travels down to make room (`BandMotion` on the one animation clock,
  * through the host's seam) and the content fades in over the last 120 ms; a swipe up takes the
  * page with the finger 1:1; Escape with focus in the band dismisses it; `role="status"` reads the
