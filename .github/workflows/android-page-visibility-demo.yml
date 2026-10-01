@@ -6,7 +6,8 @@ name: Android page visibility demo
 # `tab.activate` and read from behind (document.visibilityState, the visibilitychange events
 # heard, paused and currentTime, the 100 ms interval's and requestAnimationFrame's cadence), then
 # switched back; the control, Home with the clip with sound (the engine's own pause, MED-08's
-# fact a); and the OS-08 case, the site allowed background-video and switched away. Every reading
+# fact a); the OS-08 cases, the site allowed background-video and switched away – playing, silent,
+# and stopping while behind; and the tab overview over the page, as facts. Every reading
 # is a FACT line and every check a PASS/FAIL line of android-w6-s26-page-visibility-notes.txt in
 # the artifact; a FAIL fails the run once the stills are taken. Dispatch-only, like the other
 # demos: it says nothing about a change being correct beyond what the notes record. The build,
