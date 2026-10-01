@@ -1432,6 +1432,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             .toList()
     }.getOrDefault(emptyList())
 
+    /**
+     * Every logcat line of one tag (any priority) since a moment, off `logcat -d -v epoch -s
+     * <tag>:V` (the shell's uid reads the whole buffer, the WebView's own tags included); empty
+     * when the buffer has turned over past the moment or the shell refuses.
+     */
+    private fun logcatSince(sinceEpochMs: Long, tag: String): List<String> = runCatching {
+        shell("logcat -d -v epoch -s $tag:V").lineSequence()
+            .map { it.trim() }
+            .filter { line -> ((line.substringBefore(' ').toDoubleOrNull() ?: 0.0) * 1000).toLong() >= sinceEpochMs }
+            .toList()
+    }.getOrDefault(emptyList())
+
     private fun cleanupSteps(row: Row, entry: JSONObject) {
         runCatching { coreCall("extension.closePopup", "null") }
         val installed = runCatching { extensions().firstOrNull { it.getString("id") == row.id } }
@@ -1838,9 +1850,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * YouTube will not play for the runner ([YT_PLAYABILITY]: a `playabilityStatus` other than
      * `OK`, or a bot check's wording – round 20's BEFORE read `video unstarted, src: false` after
      * the tap and the page's own `playVideo()` on both lanes) is `n/m` when `play` was asked and
-     * nothing started; the reading goes to `extra.playability` on every row.
+     * nothing started, and when `playerGated` names the control as one that mounts only on a
+     * page YouTube plays for the viewer (YouTube Dual Subtitles' root, appended to `#movie_player`
+     * on `yt-page-data-updated` and fed by the player's caption tracks: round 25 read
+     * `LOGIN_REQUIRED` – "Sign in to confirm you're not a bot" – against `player true, mounted
+     * false` on both lanes while the same row mounted 18 elements when the page played); the
+     * reading goes to `extra.playability` on every row.
      */
-    private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000, play: Boolean = false): Grade {
+    private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000, play: Boolean = false, playerGated: Boolean = false): Grade {
         val tab = createTab(YOUTUBE_URL)
         if (desktopSite) {
             coreCall("tab.setDesktopSite", JSONObject().put("tabId", tab).put("on", true).toString())
@@ -1866,14 +1883,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val url = where.optString("url")
         val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
         // A page YouTube would not play for the runner (its bot check, a sign-in wall, an
-        // unplayable response): a control that waits for playback has nothing to wait for.
-        val gated = play && played?.optString("by") == "none" &&
-            (playability.optBoolean("bot") || playability.optString("status").let { it.isNotEmpty() && it != "OK" })
+        // unplayable response): a control that waits for playback has nothing to wait for, and a
+        // control the player's response feeds (`playerGated`) has nothing to mount on.
+        val notPlayable = playability.optBoolean("bot") || playability.optString("status").let { it.isNotEmpty() && it != "OK" }
+        val neverStarted = play && played?.optString("by") == "none"
+        val gated = notPlayable && (neverStarted || playerGated)
+        val gate = "${playability.optString("status").ifEmpty { "no status" }}${playability.optString("reason").takeIf { it.isNotEmpty() }?.let { ": \"$it\"" } ?: ""}${if (playability.optBoolean("bot")) ", a bot check" else ""}"
         return when {
             host.contains("consent") || url.contains("consent.youtube") -> Grade("n/m", "$label: YouTube served its consent interstitial instead of the watch page ($url)", extra)
             !(host == "youtube.com" || host.endsWith(".youtube.com")) -> Grade("n/m", "$label: the tab landed on ${host.ifEmpty { "nowhere" }}, not a watch page (network)", extra)
             found.optBoolean("pass") -> Grade("P", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host", extra)
-            gated -> Grade("n/m", "$label${if (desktopSite) " (desktop site)" else ""}: YouTube's playability gate on the runner (${playability.optString("status").ifEmpty { "no status" }}${playability.optString("reason").takeIf { it.isNotEmpty() }?.let { ": \"$it\"" } ?: ""}${if (playability.optBoolean("bot")) ", a bot check" else ""}) – the video never started (${played?.optString("by")}), the control waits for playback (not measurable here)", extra)
+            gated && neverStarted -> Grade("n/m", "$label${if (desktopSite) " (desktop site)" else ""}: YouTube's playability gate on the runner ($gate) – the video never started (${played?.optString("by")}), the control waits for playback (not measurable here)", extra)
+            gated -> Grade("n/m", "$label${if (desktopSite) " (desktop site)" else ""}: YouTube's playability gate on the runner ($gate) – the player's response is withheld (video ${where.optString("video")}) and the control mounts only on a page YouTube plays for the viewer (the environment's, not measurable here): ${found.toString().take(160)}", extra)
             else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")}${playability.optString("status").takeIf { it.isNotEmpty() }?.let { ", playability $it" } ?: ""})", extra)
         }
     }
@@ -8010,7 +8031,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // `desktopCapture.chooseDesktopMedia` (the shape of rank 213's Screen Recorder).
         Row("kpmjjdhbcfebfjgdnpjagcndoelnidfj", "Control Panel for Twitter", "control-panel-for-twitter", core = popupMarker("Control Panel for Twitter", CONTROL_PANEL_FORM, settleMs = 25_000)),
         Row("ihpiinojhnfhpdmmacgmpoonphhimkaj", "Open in VLC media player", "open-in-vlc", core = serviceBacked("Open in VLC media player", "its click runs `extract.player` in the tab and hands the address to VLC through `runtime.connectNative('com.add0n.node')`, a desktop host; without it the port disconnects and it opens its `/data/helper/index.html` installer page", native = true)),
-        Row("gmloihcgbhbonllenincdakeijmikcne", "QR Code Reader for Google Chrome", "qr-code-reader", core = popupTapMarker("QR Code Reader", "qr.html?qrreader", ".btn-tab", QR_READER_RESULT, settleMs = 30_000)),
+        Row("gmloihcgbhbonllenincdakeijmikcne", "QR Code Reader for Google Chrome", "qr-code-reader", core = popupTapMarker("QR Code Reader", "qr.html?qrreader", ".btn-tab", QR_READER_RESULT, settleMs = 30_000, environment = ::visionModuleAbsent)),
         Row("ddaloccgjfibfpkalenodgehlhkgoahe", "Dragon Web Extension", "dragon-web-extension-ddal", core = serviceBacked("Dragon Web Extension", "its dictation is Dragon's desktop host over `runtime.connectNative('com.nuance.dgnria')`; the content scripts on every page relay to it", native = true)),
         Row("ajhmfdgkijocedmfjonnpjfojldioehi", "Silk - Privacy Pass Client", "silk-privacy-pass", core = ownPage("Silk - Privacy Pass Client", "options/index.html", SILK_OPTIONS, gate = "a Privacy Pass challenge (a `WWW-Authenticate: PrivateToken` header from an origin behind Cloudflare's attester at pp-attester-turnstile.research.cloudflare.com), which no fixture of the sweep's issues")),
         Row("djbgadolfboockbofalipohdncimebic", "Animalese Typing", "animalese-typing", core = ::animaleseTyping),
@@ -8224,7 +8245,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("mbflpfaamifmmmkdjkcmpofpccfmlmap", "Video Downloader - MPMux", "video-downloader-mpmux", core = mediaPopup("Video Downloader - MPMux", "hls.html?mpmux", "/stream\\.m3u8|\\.m3u8|hls/i", probe = true, listener = "webRequest.onBeforeSendHeaders and onResponseStarted (media, xmlhttprequest, object, other; responseHeaders)")),
         Row("hbdkkfheckcdppiaiabobmennhijkknn", "Open SEO Stats(Formerly: PageRank Status)", "open-seo-stats", core = popupMarker("Open SEO Stats", OPEN_SEO_POPUP, page = "page-a.html?openseo", settleMs = 25_000, gate = "an Open SEO Stats account and its plan (its first launch opens its Google sign-in over the popup; its Page Info and Links tabs are blurred behind its paid level; the SEO Stats tab asks user.openadmintools.com for the tab's host)", apiHost = "user.openadmintools.com")),
         Row("djnhkfljnimcpelfndpcjcgngmefaobl", "Talk & Comment: Voice Notes & Audio Feedback", "talk-and-comment", core = accountGate("Talk & Comment", Regex("talkandcomment\\.com", RegexOption.IGNORE_CASE), injects = "#tac-extension-root, #tac-ExtensionRoot", gate = "a Talk & Comment account and the microphone (its recorder uploads the voice note to its service)")),
-        Row("hldjnlbobkdkghfidgoecgmklcemanhm", "Web Highlights: PDF & Web Highlighter + Notes & AI Summary", "web-highlights", core = actionMarker("Web Highlights", "article.html?webhighlights", WEB_HIGHLIGHTS_SIDEBAR, settleMs = 35_000)),
+        Row("hldjnlbobkdkghfidgoecgmklcemanhm", "Web Highlights: PDF & Web Highlighter + Notes & AI Summary", "web-highlights", core = ::webHighlights),
         Row("jajilbjjinjmgcibalaakngmkilboobh", "Astar VPN - Free and fast VPN for everyone", "astar-vpn", core = vpn("Astar VPN", pac = true, consent = true)),
         Row("iphblfpnippelmibidfaejanmnhcjdee", "GNTD: Glass New Tab Dashboard", "gntd", core = newTabOverride("GNTD")),
         Row("defekohaofmambflfpfoojkmfdpcbgko", "YouTube DJ effects / EQ / Volume Booster / Bass Booster", "youtube-dj", core = captureLimit("YouTube DJ", "/\\bon\\b|\\boff\\b|volume|bass|\\beq\\b/i")),
@@ -8335,7 +8356,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("hagjjmpgfabjpcoklghamlpdamjljoeh", "Color Picker HEX | Eyedropper | Pick color from image", "color-picker-hex", core = popupMarker("Color Picker HEX", COLOR_PICKER_POPUP, page = "styled-light.html?colorpicker", settleMs = 25_000)),
         Row("hpcgabhdlnapolkkjpejieegfpehfdok", "Media Harvest : X (twitter) Media Downloader", "media-harvest", core = attachedGate("Media Harvest", "https://x.com/", "an X session (its download buttons go on the timeline's media; signed out the page is the sign-in)")),
         Row("hhlhjgianpocpoppaiihmlpgcoehlhio", "Super Simple Highlighter", "super-simple-highlighter", core = ::superSimpleHighlighter),
-        Row("hkbdddpiemdeibjoknnofflfgbgnebcm", "YouTube™ Dual Subtitles", "youtube-dual-subtitles", core = { row, entry -> youtube(row, entry, YDS_MOUNTED, "YouTube Dual Subtitles' root in the player", desktopSite = true, settleMs = 45_000) }),
+        Row("hkbdddpiemdeibjoknnofflfgbgnebcm", "YouTube™ Dual Subtitles", "youtube-dual-subtitles", core = { row, entry -> youtube(row, entry, YDS_MOUNTED, "YouTube Dual Subtitles' root in the player", desktopSite = true, settleMs = 45_000, playerGated = true) }),
         // The five largest bundles last (rikaikun 29.8 MB – its dictionary files, data the
         // runtime stores and never decodes as script –, WiseStamp 13.8, Knowt 13.7, StayFree 13.2,
         // Mouse Tooltip Translator 12.4), as rounds 19 to 24 ordered their own.
@@ -8554,6 +8575,79 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
     }
 
+    /**
+     * Web Highlights on the phone, read against the bundle's MOBILE branch (round 25 §7's item;
+     * `content.js` 13.0.47: `Nd = () => window.innerWidth <= 767` picks the `-mobile` elements
+     * on the phone's viewport). What a viewer does: SELECTS text, and the extension's
+     * `webhighlights-marker-mobile` – the selection toolbox, listening to `selectionchange` –
+     * shows its `.marker-bar` (a `role=toolbar` strip of `.color-btn` colours and a `.note-btn`)
+     * 100 ms later when the selection is non-empty and its `showMarkerPopup` setting (default
+     * true) stands; a colour's tap dispatches `color-selected` → `saveMark(color)` →
+     * `createMark`, which persists the mark (local, no account) and paints the selection as
+     * `<web-highlight markid="…">` elements (`Fh.WEB_HIGHLIGHT`, `rc.markIdAttrKey`). The action
+     * click sends `toggleSidebar`, which the mobile sidebar (`webhighlights-sidebar-mobile`)
+     * answers by setting its `open` attribute and drawing its `.bottom-sheet` – the custom
+     * element's own box stays 0×0 under fixed children, which is why round 25's desktop rule
+     * (the host's rect) read `mobileShown false` with the elements mounted. The pass: the toolbox
+     * shown after the selection AND a highlight mounted after the colour's tap; the sidebar's
+     * state after the action click is recorded beside them (`extra.sidebar`), not graded. The
+     * selection is made from a script over the article's first paragraph (the WebView's own
+     * long-press selection UI is the browser's, not the row's); the colour is tapped at its
+     * centre through the shadow root's box, a script click the fallback (recorded as such).
+     */
+    private fun webHighlights(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("article.html?webhighlights", factor, 2_500)
+        val since = StepEvidence(row)
+        val mounted = pollExpr(view, WEB_HIGHLIGHTS_MOUNT, scaled(30_000, factor))
+        extra.put("mounted", mounted)
+        var toolbox = JSONObject()
+        var marks = JSONObject()
+        var how = "none"
+        if (mounted.optBoolean("pass")) {
+            extra.put("selection", json(tabEval(view, WEB_HIGHLIGHTS_SELECT)))
+            toolbox = pollExpr(view, WEB_HIGHLIGHTS_TOOLBOX, scaled(15_000, factor))
+            if (toolbox.optBoolean("pass")) {
+                SystemClock.sleep(400)
+                snap("${entry.optString("slug")}-toolbox")
+                val button = toolbox.optJSONObject("button") ?: JSONObject()
+                val point = screenPoint(view, button)
+                if (point != null && onScreen("Web Highlights: the colour")) {
+                    tap(point.first, point.second)
+                    how = "tap"
+                    marks = pollExpr(view, WEB_HIGHLIGHTS_MARKS, scaled(15_000, factor))
+                }
+                if (!marks.optBoolean("pass")) {
+                    extra.put("scriptClick", tabEval(view, WEB_HIGHLIGHTS_CLICK_COLOUR))
+                    how = "script"
+                    marks = pollExpr(view, WEB_HIGHLIGHTS_MARKS, scaled(10_000, factor))
+                }
+            }
+        }
+        extra.put("toolbox", toolbox).put("marks", marks).put("how", how)
+        // The action click: the mobile sidebar's `open` state, recorded.
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val sidebar = pollExpr(view, WEB_HIGHLIGHTS_SIDEBAR, scaled(12_000, factor))
+        extra.put("sidebar", sidebar).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-mobile-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val branch = if (mounted.optBoolean("mobile")) "mobile branch, ${mounted.optInt("viewport")} px" else "desktop branch, ${mounted.optInt("viewport")} px"
+        val sidebarNote = "the action click: sidebar ${if (sidebar.optBoolean("mobileShown") || sidebar.optBoolean("pass")) "shown" else "not shown"} (open ${sidebar.optBoolean("open")}, sheet ${sidebar.optInt("sheetHeight")} px)"
+        val pressed = if (how == "tap") "tapped" else "clicked by script"
+        return when {
+            toolbox.optBoolean("pass") && marks.optBoolean("pass") -> Grade("P", "Web Highlights ($branch): the selection raised its marker toolbox (${toolbox.optInt("colours")} colours), the colour $pressed painted a highlight (`web-highlight[markid]` ×${marks.optInt("count")}: ${JSONObject.quote(marks.optString("text").take(60))}); $sidebarNote", extra)
+            !mounted.optBoolean("pass") -> Grade("F", "Web Highlights ($branch): its content script mounted no marker within ${scaled(30_000, factor) / 1000} s: ${mounted.toString().take(200)}", extra)
+            !toolbox.optBoolean("pass") -> Grade("F", "Web Highlights ($branch): the selection (${extra.optJSONObject("selection")?.optString("text")?.take(40)?.let { JSONObject.quote(it) }}) raised no marker toolbox within ${scaled(15_000, factor) / 1000} s: ${toolbox.toString().take(200)}; $sidebarNote", extra)
+            else -> Grade("F", "Web Highlights ($branch): the toolbox showed and the colour was $pressed, no highlight mounted within ${scaled(15_000, factor) / 1000} s: ${marks.toString().take(160)}; $sidebarNote", extra)
+        }
+    }
+
     // --- the core checks of compat round 25 (ranks 631-660 by installs) --------------------------
 
     /**
@@ -8747,10 +8841,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * did not take is followed by a script click (recorded as such) and the poll once more. `F`
      * with the popup's text and console when no control was found or the reading never passed;
      * the popup gone before the reading (a control that navigates it) is `F` on that line.
+     * `environment`, asked with the evidence and the step's start (epoch ms) when the reading
+     * never passed, names a cause that is the image's rather than the extension's or the
+     * runtime's ([visionModuleAbsent]) – the grade is `n/m` with it then.
      */
-    private fun popupTapMarker(label: String, page: String, control: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupTapMarker(label: String, page: String, control: String, expr: String, settleMs: Long = 25_000, environment: ((JSONObject, Long) -> String?)? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
+        val startedEpoch = System.currentTimeMillis()
         fixture(page, factor, 2_500)
         val since = StepEvidence(row)
         val popup = openPopup(row, factor)
@@ -8795,13 +8893,35 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-tap-core")
         runCatching { coreCall("extension.closePopup", "null") }
         val pressed = if (how == "tap") "tapped" else "clicked by script"
+        val imageCause = if (found.optBoolean("pass")) null else environment?.invoke(extra, startedEpoch)
         when {
             found.optBoolean("pass") -> Grade("P", "$label: the popup's `$control` ($pressed) left its reading in the popup: ${found.toString().take(220)}", extra)
             popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            imageCause != null -> Grade("n/m", "$label: `$control` was $pressed and the popup shows no reading within ${scaled(settleMs, factor) / 1000} s – $imageCause", extra)
             !hit.has("x") -> Grade("F", "$label: no `$control` control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
             extra.optBoolean("popupGone") -> Grade("F", "$label: the popup was gone before the reading after `$control` was $pressed", extra)
             else -> Grade("F", "$label: `$control` was $pressed and the popup shows no reading within ${scaled(settleMs, factor) / 1000} s: ${found.toString().take(200)}", extra)
         }
+    }
+
+    /**
+     * QR Code Reader's scan on an image whose Play services lack the Vision barcode module: its
+     * `qr-scanner` library takes the WebView's `BarcodeDetector` whenever `getSupportedFormats()`
+     * lists `qr_code` (Chromium answers the formats from Play services' presence alone) and
+     * never falls back to its worker; the WebView's detector then logs `E/cr_BarcodeDetectionImpl:
+     * BarcodeDetector is not operational` on every `detect()` and answers no code (the module's
+     * download never completes on the runner – round 25 §7). On the AOSP image, with no Play
+     * services, the formats come back empty and the library's own worker decodes (P). A phone
+     * with Play downloads the module on first use. The cause is named from the WebView's own
+     * line in logcat since the step began (`extra.visionModule`); null when the line is absent,
+     * so a reading that failed for another reason stays `F`.
+     */
+    private fun visionModuleAbsent(extra: JSONObject, sinceEpochMs: Long): String? {
+        val lines = logcatSince(sinceEpochMs, "cr_BarcodeDetectionImpl")
+        val notOperational = lines.filter { it.contains("not operational", ignoreCase = true) }
+        extra.put("visionModule", JSONObject().put("lines", JSONArray(lines.takeLast(6))).put("notOperational", notOperational.size))
+        if (notOperational.isEmpty()) return null
+        return "the image's Play services lack the Vision barcode module: the WebView's `BarcodeDetector` answered `${notOperational.last().substringAfter("cr_BarcodeDetectionImpl: ").take(80)}` ${notOperational.size} time(s) in logcat during the step and the extension's qr-scanner library, which takes the detector whenever its formats list `qr_code`, never reaches its own worker – the environment's (a phone with Play downloads the module on first use; the AOSP image, with no Play services, decodes through the library's worker)"
     }
 
     /**
@@ -8879,9 +8999,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * supported" for the error page's `zen://` address, not for the fixture's; the dash form
      * carries no such run. The fixture settles, the action is
      * clicked, the welcome page waited for and accepted from a script, the action clicked again
-     * and the popup polled for the button. `P` on the popup's button enabled for the fixture's
-     * address; `PARTIAL` when the popup came up saying the address is not supported (its check,
-     * read); `F` when the welcome page never opened, the second click opened no popup, or the
+     * and the popup polled for the button ([WAYBACK_POPUP] – the front face's label, since the
+     * card's own box is 0 px high unless it is flipped to its refusal: round 25's AFTER read
+     * `button false` with "Save Page Now" drawn on both lanes, this round's driver item). `P` on
+     * the popup's button enabled for the fixture's address; `PARTIAL` when the popup came up
+     * saying the address is not supported (its check, read: the card flipped or the message
+     * shown); `F` when the welcome page never opened, the second click opened no popup, or the
      * popup showed neither.
      */
     private fun waybackMachine(row: Row, entry: JSONObject): Grade {
@@ -8935,7 +9058,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val note = "welcome ${if (welcome == null) "never opened" else "opened and $accepted"}; popup ${if (popup == null) "absent" else found.toString().take(200)}"
         return when {
             found.optBoolean("pass") -> Grade("P", "Wayback Machine: the terms accepted, its popup offers Save Page Now for the fixture's address: $note", extra)
-            found.optBoolean("notSupported") -> Grade("PARTIAL", "Wayback Machine: its popup came up but calls the fixture's address not supported: $note", extra)
+            found.optBoolean("notSupported") || found.optBoolean("flipped") -> Grade("PARTIAL", "Wayback Machine: its popup came up but calls the fixture's address not supported (the card flipped to \"${found.optString("backLabel")}\"): $note", extra)
             welcome == null -> Grade("F", "Wayback Machine: the first click opened no welcome.html within ${scaled(20_000, factor) / 1000} s: $note", extra)
             popup == null -> Grade("F", "Wayback Machine: the click after the terms opened no popup: $note", extra)
             else -> Grade("F", "Wayback Machine: its popup rendered without Save Page Now: $note", extra)
@@ -16257,14 +16380,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({sent:n,target:t.tagName,id:t.id||null})})()"
 
         /**
-         * Wayback Machine's popup (`index.html`) over the fixture: `#spn-btn` ("Save Page Now")
-         * drawn and enabled (not `flip-inside`, its disabled face) for the tab's address, the
-         * capture count (`#wayback-count-msg`) or last-saved line read beside it; the
-         * `#url-not-supported-msg` shown is its own refusal of the address (`notSupported`).
+         * Wayback Machine's popup (`index.html`) over the fixture: the "Save Page Now" card is a
+         * flip – `#spn-btn` holds two absolutely positioned faces, `.flip-front` with the
+         * `#spn-front-label` button and `.flip-back` with `#spn-back-label` ("URL not supported")
+         * – and `showUrlNotSupported(true)` turns it by adding `flip-inside` to `#spn-btn` (the
+         * class that also gives it `height: 100%`; without it the card's own box is 0 px high
+         * over its absolute faces, which is why round 25 read `button false` with the button
+         * drawn on both lanes – the driver's). The button `shown` is the FRONT LABEL's box
+         * (`#spn-front-label`, drawn either way at `rotateX(0)`); `flipped` is the refusal state
+         * (`#spn-btn.flip-inside`, its click handler off); `notSupported` is the
+         * `#url-not-supported-msg` shown with its text; the capture count (`#wayback-count-msg`),
+         * the last-saved line and both labels' text read beside them.
          */
         private const val WAYBACK_POPUP =
-            "(function(){var b=document.getElementById('spn-btn');var r=b?b.getBoundingClientRect():null;var shown=!!b&&r.width>0&&r.height>0;var flipped=!!b&&b.classList.contains('flip-inside');var ns=document.getElementById('url-not-supported-msg');var nsShown=!!ns&&ns.getBoundingClientRect().height>0&&(ns.textContent||'').trim().length>0;var count=document.getElementById('wayback-count-msg');var last=document.getElementById('last-saved-msg');" +
-                "return JSON.stringify({pass:shown&&!flipped&&!nsShown,button:shown,flipped:flipped,notSupported:nsShown,count:count?(count.textContent||'').trim().slice(0,60):null,lastSaved:last?(last.textContent||'').trim().slice(0,60):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+            "(function(){var b=document.getElementById('spn-btn');var f=document.getElementById('spn-front-label');var fr=f?f.getBoundingClientRect():null;var shown=!!f&&fr.width>0&&fr.height>0;var flipped=!!b&&b.classList.contains('flip-inside');var ns=document.getElementById('url-not-supported-msg');var nsShown=!!ns&&ns.getBoundingClientRect().height>0&&(ns.textContent||'').trim().length>0;var count=document.getElementById('wayback-count-msg');var last=document.getElementById('last-saved-msg');var back=document.getElementById('spn-back-label');var br=b?b.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:shown&&!flipped&&!nsShown,button:shown,frontLabel:f?(f.textContent||'').trim().slice(0,40):null,card:br?Math.round(br.width)+'x'+Math.round(br.height):null,flipped:flipped,backLabel:back?(back.textContent||'').trim().slice(0,40):null,notSupported:nsShown,count:count?(count.textContent||'').trim().slice(0,60):null,lastSaved:last?(last.textContent||'').trim().slice(0,60):null,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
 
         /**
          * SAML-tracer's trace window: its toolbar buttons (`#button-clear`, `#button-pause`,
@@ -16410,6 +16540,53 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SELECTEXT_TOGGLE =
             "(function(){var v=document.getElementById('clip')||document.querySelector('video');if(v&&v.style.height!=='420px'){v.style.maxWidth='none';v.style.width='100%';v.style.height='420px'}if(v&&!v.paused&&v.readyState>=2){v.pause()}var own=document.querySelectorAll('.selectextShadowHost, [class*=\"selectext\"]');var r=v?v.getBoundingClientRect():null;" +
                 "return JSON.stringify({pass:own.length>0,elements:own.length,paused:v?v.paused:null,readyState:v?v.readyState:null,video:r?[Math.round(r.width),Math.round(r.height),Math.round(r.width*r.height)]:null})})()"
+
+        /**
+         * Web Highlights' content script mounted ([webHighlights]): its selection toolbox host
+         * – `webhighlights-marker-mobile` on the phone's viewport (`innerWidth <= 767`, the
+         * bundle's `Nd()`), `webhighlights-marker` otherwise – in the body with its shadow root
+         * attached (upgraded); the other `webhighlights-*` hosts met beside it, the branch
+         * (`mobile`, `viewport`) read off the window.
+         */
+        private const val WEB_HIGHLIGHTS_MOUNT =
+            "(function(){var names=['webhighlights-marker-mobile','webhighlights-marker','webhighlights-sidebar-mobile','webhighlights-sidebar','webhighlights-popup-toolbox-mobile','webhighlights-mobile-fab'];var found={};var hosts=0;var all=document.querySelectorAll('*');for(var i=0;i<all.length&&i<4000;i++){var n=all[i];var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0){if(names.indexOf(tag)>=0)found[tag]=!!n.shadowRoot;if(n.shadowRoot)hosts++}}var marker=!!(found['webhighlights-marker-mobile']||found['webhighlights-marker']);" +
+                "return JSON.stringify({pass:marker,marker:marker,found:Object.keys(found),hosts:hosts,mobile:window.innerWidth<=767,viewport:window.innerWidth,touch:'ontouchstart' in window})})()"
+
+        /**
+         * The viewer's selection, made from a script: the article's first paragraph scrolled to
+         * the middle of the viewport and its first text node selected from its first word for
+         * 90 characters (a `Range` on the one text node, `Selection.addRange`), which fires
+         * `selectionchange` as a finger's selection would; the selected text and its box read
+         * back.
+         */
+        private const val WEB_HIGHLIGHTS_SELECT =
+            "(function(){var ps=document.querySelectorAll('article p:not(.byline)');var p=ps[0];if(!p)return JSON.stringify({ok:false,why:'no paragraph'});p.scrollIntoView({block:'center'});var node=null;for(var i=0;i<p.childNodes.length;i++){var c=p.childNodes[i];if(c.nodeType===3&&c.textContent.trim().length>60){node=c;break}}if(!node)return JSON.stringify({ok:false,why:'no text node'});var text=node.textContent;var start=text.search(/\\S/);var end=Math.min(text.length,start+90);var range=document.createRange();range.setStart(node,start);range.setEnd(node,end);var sel=window.getSelection();sel.removeAllRanges();sel.addRange(range);var r=range.getBoundingClientRect();" +
+                "return JSON.stringify({ok:true,text:sel.toString().slice(0,60),length:sel.toString().length,top:Math.round(r.top),height:Math.round(r.height)})})()"
+
+        /**
+         * Web Highlights' selection toolbox shown: the marker host's shadow `.marker-bar` (its
+         * `role=toolbar` strip) with a box, its `.color-btn` colours counted (the custom
+         * `color-picker-btn` left out) and the first drawn colour's centre returned for the tap
+         * (`button: {x, y, w, h}` in CSS px, [screenPoint]'s shape), the `.note-btn` read beside
+         * them and the live selection's text.
+         */
+        private const val WEB_HIGHLIGHTS_TOOLBOX =
+            "(function(){var m=document.querySelector('webhighlights-marker-mobile')||document.querySelector('webhighlights-marker');var root=m&&m.shadowRoot;var bar=root&&(root.querySelector('.marker-bar')||root.querySelector('[role=toolbar]'));var br=bar?bar.getBoundingClientRect():null;var shown=!!bar&&br.width>0&&br.height>0;var btns=root?Array.prototype.slice.call(root.querySelectorAll('.color-btn')).filter(function(b){return !b.classList.contains('color-picker-btn')}):[];var b=null;for(var i=0;i<btns.length;i++){var r=btns[i].getBoundingClientRect();if(r.width>0&&r.height>0){b={x:r.left+r.width/2,y:r.top+r.height/2,w:Math.round(r.width),h:Math.round(r.height)};break}}" +
+                "return JSON.stringify({pass:shown&&!!b,shown:shown,bar:br?[Math.round(br.left),Math.round(br.top),Math.round(br.width),Math.round(br.height)]:null,colours:btns.length,button:b,note:!!(root&&root.querySelector('.note-btn')),host:m?m.tagName.toLowerCase():null,selection:(window.getSelection()?window.getSelection().toString():'').trim().slice(0,40)})})()"
+
+        /** The fallback when the tap did not take: the toolbox's first colour clicked from a script through the shadow root. */
+        private const val WEB_HIGHLIGHTS_CLICK_COLOUR =
+            "(function(){var m=document.querySelector('webhighlights-marker-mobile')||document.querySelector('webhighlights-marker');var root=m&&m.shadowRoot;if(!root)return 'no marker';var btns=Array.prototype.slice.call(root.querySelectorAll('.color-btn')).filter(function(b){return !b.classList.contains('color-picker-btn')});if(!btns.length)return 'no colour button';btns[0].click();return 'clicked'})()"
+
+        /**
+         * A highlight mounted: the `<web-highlight markid="…">` elements `createMark` paints over
+         * the selection (`Fh.WEB_HIGHLIGHT` = `web-highlight`, `rc.markIdAttrKey` = `markid` in
+         * the bundle), their count, distinct marks, text and the first one's colour; the
+         * selection's length after (its `createFromSelection` clears the range).
+         */
+        private const val WEB_HIGHLIGHTS_MARKS =
+            "(function(){var els=document.querySelectorAll('web-highlight[markid]');var ids={};var text='';for(var i=0;i<els.length;i++){ids[els[i].getAttribute('markid')]=true;if(text.length<120)text+=els[i].textContent}var marks=Object.keys(ids);" +
+                "return JSON.stringify({pass:els.length>0,count:els.length,marks:marks.length,text:text.replace(/\\s+/g,' ').trim().slice(0,80),color:els[0]?(els[0].style.backgroundColor||getComputedStyle(els[0]).backgroundColor):null,selection:(window.getSelection()?window.getSelection().toString():'').trim().length})})()"
 
         // --- the expressions of compat round 25 (ranks 631-660) ---------------------------------
 
@@ -16599,12 +16776,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * `webhighlights-popup-toolbox-mobile`, `webhighlights-marker-mobile`,
          * `webhighlights-sidebar-mobile`, `webhighlights-icon` – the `-mobile` variants the
          * extension picks from the phone's viewport, so the names take them (round 25's driver
-         * item): the mobile sidebar passes when it is drawn (its box measured, `width`/`height`),
-         * the desktop names as before.
+         * item): the mobile sidebar passes when it is drawn, the desktop names as before. Round
+         * 26: the mobile sidebar's host is 0×0 under its fixed children (round 25 read
+         * `mobileShown false` with it mounted), so it is read as the bundle draws it – its `open`
+         * attribute (`toggleShow()` sets it, `dismiss()` removes it) and its shadow
+         * `.bottom-sheet`'s box (`sheetHeight`); the host's box stays beside them.
          */
         private const val WEB_HIGHLIGHTS_SIDEBAR =
-            "(function(){var names=['webhighlights-sidebar','webhighlights-sidebar-mobile','webhighlights-app-view','webhighlights-toggle-button','webhighlights-popup-toolbox-mobile','webhighlights-marker-mobile'];var found={};var theirs={};var width=null;var height=null;var hosts=0;var walked=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if((tag==='webhighlights-sidebar'||tag==='webhighlights-sidebar-mobile')&&width===null){var r=n.getBoundingClientRect();width=Math.round(r.width);height=Math.round(r.height)}}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));var mobileShown=!!found['webhighlights-sidebar-mobile']&&width>0&&height>0;" +
-                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']||mobileShown),found:Object.keys(found),mobile:!!found['webhighlights-sidebar-mobile'],mobileShown:mobileShown,width:width,height:height,defined:typeof customElements!=='undefined'&&!!(customElements.get('webhighlights-sidebar')||customElements.get('webhighlights-sidebar-mobile')),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
+            "(function(){var names=['webhighlights-sidebar','webhighlights-sidebar-mobile','webhighlights-app-view','webhighlights-toggle-button','webhighlights-popup-toolbox-mobile','webhighlights-marker-mobile'];var found={};var theirs={};var width=null;var height=null;var hosts=0;var walked=0;var open=false;var sheetHeight=0;function scan(root,depth){if(!root||depth>4)return;var nodes=root.querySelectorAll('*');for(var i=0;i<nodes.length&&i<3000;i++){var n=nodes[i];walked++;var tag=n.tagName.toLowerCase();if(tag.indexOf('webhighlights-')===0)theirs[tag]=true;if(names.indexOf(tag)>=0){found[tag]=true;if((tag==='webhighlights-sidebar'||tag==='webhighlights-sidebar-mobile')&&width===null){var r=n.getBoundingClientRect();width=Math.round(r.width);height=Math.round(r.height)}if(tag==='webhighlights-sidebar-mobile'){open=open||n.hasAttribute('open');var sh=n.shadowRoot&&n.shadowRoot.querySelector('.bottom-sheet');if(sh){var sr=sh.getBoundingClientRect();sheetHeight=Math.max(sheetHeight,Math.round(sr.height))}}}if(n.shadowRoot){hosts++;scan(n.shadowRoot,depth+1)}}}scan(document,0);var body=[];var kids=document.body?document.body.children:[];for(var j=0;j<kids.length&&j<15;j++)body.push(kids[j].tagName.toLowerCase()+(kids[j].id?'#'+kids[j].id:''));var mobileShown=!!found['webhighlights-sidebar-mobile']&&(open||sheetHeight>0||(width>0&&height>0));" +
+                "return JSON.stringify({pass:!!(found['webhighlights-sidebar']||found['webhighlights-app-view']||mobileShown),found:Object.keys(found),mobile:!!found['webhighlights-sidebar-mobile'],mobileShown:mobileShown,open:open,sheetHeight:sheetHeight,width:width,height:height,defined:typeof customElements!=='undefined'&&!!(customElements.get('webhighlights-sidebar')||customElements.get('webhighlights-sidebar-mobile')),theirs:Object.keys(theirs).slice(0,12),body:body,hosts:hosts,nodes:walked})})()"
 
         /**
          * Black Menu's popup: its navigation list drawn – `.bm-ele-navlist__item` entries (its
