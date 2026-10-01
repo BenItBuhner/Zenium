@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { NEW_TAB_PAGE_STYLE } from '@shared/newTabPage'
 import { REDUCED_FADE_MS } from '../motion/fade'
+import { MOTION_MESSAGE_MS, MOTION_POP_MS, MOTION_STATE_MS } from '../motion/tokens'
 
 /**
  * Reduced motion is no transition, not a short one (design language v2 §11.3 as amended): a
@@ -177,7 +178,20 @@ function keyframeProps(css: string): Map<string, Set<string>> {
 
 const isMotion = (d: Decl): boolean => /^(transition|animation)(-|$)/.test(d.prop)
 const isRemover = (r: Rule): boolean => r.selector.split(',').some((s) => s.trim() === '*')
-const times = (value: string): string[] => value.match(/\d*\.?\d+m?s\b/g) ?? []
+/**
+ * The durations' CSS face (main.css `:root`, held equal to the tokens by `motionTokens.test.ts`),
+ * read at the times they stand for: a fade declared `opacity var(--zen-motion-state)` is a
+ * 120 ms fade to this guard, as a stylesheet rule reads the face and never digits (§1).
+ */
+const DURATION_VARS: Record<string, string> = {
+  '--zen-motion-state': `${MOTION_STATE_MS}ms`,
+  '--zen-motion-pop': `${MOTION_POP_MS}ms`,
+  '--zen-motion-message': `${MOTION_MESSAGE_MS}ms`
+}
+const times = (value: string): string[] =>
+  value
+    .replace(/var\((--zen-motion-[a-z]+)\)/g, (whole, name: string) => DURATION_VARS[name] ?? whole)
+    .match(/\d*\.?\d+m?s\b/g) ?? []
 const where = (name: string, r: Rule, d: Decl): string =>
   `${name}: ${r.selector} { ${d.prop}: ${d.value}${d.important ? ' !important' : ''} }`
 
@@ -211,6 +225,15 @@ describe('the walk over the reduced-motion blocks', () => {
         .flatMap((d) => times(d.value).filter((t) => t !== `${REDUCED_FADE_MS}ms`))
     )
     expect(shortened).toEqual(['1ms', '0.01ms', '1ms', '1ms'])
+  })
+
+  it('reads a duration token’s CSS face at the token’s time, and digits as they are', () => {
+    expect(times('opacity var(--zen-motion-state) var(--zen-ease)')).toEqual(['120ms'])
+    expect(times('zen-pop var(--zen-motion-pop) var(--zen-ease) both')).toEqual(['180ms'])
+    expect(times('zen-fade-out var(--zen-motion-message) linear')).toEqual(['200ms'])
+    expect(times('opacity 120ms var(--zen-ease), transform .3s')).toEqual(['120ms', '.3s'])
+    // An unknown custom property is no time: the guard reads nothing it cannot resolve.
+    expect(times('opacity var(--zen-motion-other) var(--zen-ease)')).toEqual([])
   })
 })
 

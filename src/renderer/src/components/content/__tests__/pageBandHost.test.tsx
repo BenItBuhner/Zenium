@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -22,7 +24,9 @@ import { BLANK_URL } from '@shared/url'
  * – no travel – when the frame's page changes; and what the tabs
  * tell the model (a tab closing, a document changing). Its tenants: the default-browser state
  * stands while the OS names another browser; the crash-restore state while the session holds the
- * last run's pages for an answer.
+ * last run's pages for an answer. With the band it mounts the two corner masks that ride the
+ * page's offset (`PageBandCorners`; W8-M2c): the frame's radius at the top corners of a page
+ * the chrome draws under the band, hidden at home, taking no pointer.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -173,6 +177,17 @@ function renderWithLayer(s: UIState): void {
   })
 }
 const layer = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-band-layer]')!
+/** The two corner masks the host mounts with the band (`PageBandCorners`), or null without the host. */
+const corners = (): HTMLElement | null => mount!.querySelector<HTMLElement>('[data-band-corners]')
+
+const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+const bare = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ')
+/** The first rule at `selector` in main.css, comments and runs of whitespace gone. */
+const rule = (selector: string): string => {
+  const at = bare.indexOf(`${selector} {`)
+  expect(at, selector).toBeGreaterThanOrEqual(0)
+  return bare.slice(at, bare.indexOf('}', at))
+}
 
 /** Run the clock until it goes idle (the spring rested) or `limit` frames pass. */
 function settle(limit = 200): void {
@@ -903,6 +918,152 @@ describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, 
     expect(desktop.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
     expect(desktop.style.transform).toBe(`translateY(${30 - BAND_HEIGHT_TWO_LINE}px)`)
     expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_TWO_LINE, offset: 30 })
+  })
+})
+
+describe('PageBandHost – the corner masks under the band (motion spec §3.1, §3.4; W8-M2c)', () => {
+  const H = BAND_HEIGHT_TWO_LINE
+
+  it("the masks follow the offset store: translated per frame to the very offset the core hears and the layer rides on – the page's top edge, whatever the seat – at the rest the seat itself, and home again as the page comes home; a frame of the travel re-renders nothing", () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    const el = corners()!
+    expect(el).not.toBeNull()
+    expect(el.getAttribute('aria-hidden')).toBe('true')
+    expect(el.querySelectorAll('.zen-band-corner')).toHaveLength(2)
+    expect(el.querySelector('.zen-band-corner[data-side="left"]')).not.toBeNull()
+    expect(el.querySelector('.zen-band-corner[data-side="right"]')).not.toBeNull()
+    // Before the first frame: home, hidden, no transform.
+    expect(el.hasAttribute('data-home')).toBe(true)
+    expect(el.style.transform).toBe('')
+    frames.tick(3)
+    const travelling = offsets()
+    expect(travelling).toHaveLength(3)
+    // Unseated while the page travels: the masks stand at the offset – the layer's translate
+    // against a seat of 0 is the same number.
+    expect(bandSeat()).toBe(0)
+    expect(el.hasAttribute('data-home')).toBe(false)
+    expect(el.style.transform).toBe(`translateY(${travelling.at(-1)}px)`)
+    expect(layer().style.transform).toBe(`translateY(${travelling.at(-1)}px)`)
+    settle()
+    // At the rest the page is laid out under the seat and the masks stand at it: the page's
+    // top edge, where the layer's box begins.
+    expect(bandSeat()).toBe(H)
+    expect(bandOffset()).toBe(H)
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    expect(el.hasAttribute('data-home')).toBe(false)
+    expect(layer().style.top).toBe(`${H}px`)
+    // The leave: the page comes home per frame and the masks with it; home, they hide.
+    run.mockClear()
+    act(() => dismissBandByKey('connectivity'))
+    frames.tick(2)
+    const leaving = offsets()
+    expect(leaving).toHaveLength(2)
+    expect(el.style.transform).toBe(`translateY(${leaving.at(-1)}px)`)
+    expect(el.hasAttribute('data-home')).toBe(false)
+    settle()
+    expect(bandOffset()).toBe(0)
+    expect(band()).toBeNull()
+    expect(el.style.transform).toBe('')
+    expect(el.hasAttribute('data-home')).toBe(true)
+    // The same element throughout: written to, never re-rendered into another.
+    expect(corners()).toBe(el)
+  })
+
+  it('a drag moves them as it moves the page: at the offset of every frame, the seat gone; a cut lands them where the band stands at once', () => {
+    offline()
+    render(state())
+    settle()
+    const el = corners()!
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    const m = mouse()
+    m.down()
+    m.move(-20)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 20)
+    expect(el.style.transform).toBe(`translateY(${H - 20}px)`)
+    m.move(-35)
+    expect(el.style.transform).toBe(`translateY(${H - 35}px)`)
+    // Let go short of half-way: the band travels back to its rest and the masks to the seat.
+    m.up(-35)
+    settle()
+    expect(bandSeat()).toBe(H)
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    // A cut: the page's fullscreen takes the band at once – the masks home at once, no travel.
+    render(state({ htmlFullscreenTabId: 'page' }))
+    expect(framesPending()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(el.hasAttribute('data-home')).toBe(true)
+    expect(el.style.transform).toBe('')
+    // Its exit: the band stands again at once, the masks at the seat.
+    render(state())
+    expect(framesPending()).toBe(0)
+    expect(bandOffset()).toBe(H)
+    expect(el.style.transform).toBe(`translateY(${H}px)`)
+    expect(el.hasAttribute('data-home')).toBe(false)
+  })
+
+  it('home where no band stands – the empty frame, a fullscreen, a page shown in another window – and absent where the host is not mounted: the layer alone, as Android mounts it, carries none', () => {
+    offline()
+    render(state({ front: null }))
+    expect(standing()).toBeNull()
+    expect(corners()!.hasAttribute('data-home')).toBe(true)
+    expect(corners()!.style.transform).toBe('')
+    render(state({ fullscreen: true }))
+    expect(model()).toMatchObject({ ok: false })
+    expect(corners()!.hasAttribute('data-home')).toBe(true)
+    render(state({ foreign: ['page'] }))
+    expect(model()).toMatchObject({ ok: false })
+    expect(corners()!.hasAttribute('data-home')).toBe(true)
+    expect(bandOffset()).toBe(0)
+    // The chrome page's layer without the desktop's host: no masks, and the chrome page's pair
+    // moves none.
+    act(() => root!.render(null))
+    resetBands()
+    resetPageBand()
+    act(() => {
+      root!.render(
+        <PageBandLayer source="chrome-page">
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      )
+    })
+    expect(corners()).toBeNull()
+    act(() => {
+      moveChromePage(24)
+      seatChromePage(BAND_HEIGHT_ONE_LINE)
+    })
+    expect(corners()).toBeNull()
+    expect(layer().style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+  })
+
+  it("the masks' chrome (main.css): a strip the frame's radius tall over the band's layer and the page's picture, under the band, taking no pointer, hidden at home; each box the inverse of the frame's corner – rounded at the outer top corner alone, the frame's ground in its spread shadow", () => {
+    const strip = rule('.zen-band-corners')
+    expect(strip).toContain('position: absolute;')
+    expect(strip).toContain('inset: 0 0 auto 0;')
+    expect(strip).toContain('height: var(--zen-content-radius);')
+    expect(strip).toContain('pointer-events: none;')
+    // Over the layer and the cover (no `z-index` of their own), under the band's 6.
+    expect(strip).toContain('z-index: 5;')
+    expect(rule('.zen-band')).toContain('z-index: 6;')
+    expect(rule('.zen-band-corners[data-home]')).toContain('display: none;')
+    const box = rule('.zen-band-corner')
+    expect(box).toContain('width: var(--zen-content-radius);')
+    expect(box).toContain('height: var(--zen-content-radius);')
+    expect(box).toContain('overflow: hidden;')
+    expect(rule(".zen-band-corner[data-side='left']")).toContain('left: 0;')
+    expect(rule(".zen-band-corner[data-side='right']")).toContain('right: 0;')
+    // The ground outside the arc: the frame's own background, light and dark alike.
+    expect(rule('.zen-band-corner::before')).toContain(
+      'box-shadow: 0 0 0 var(--zen-content-radius) var(--zen-bg-solid);'
+    )
+    expect(rule('.zen-content-frame')).toContain('background: var(--zen-bg-solid);')
+    expect(rule(".zen-band-corner[data-side='left']::before")).toContain(
+      'border-radius: var(--zen-content-radius) 0 0 0;'
+    )
+    expect(rule(".zen-band-corner[data-side='right']::before")).toContain(
+      'border-radius: 0 var(--zen-content-radius) 0 0;'
+    )
   })
 })
 

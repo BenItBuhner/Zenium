@@ -6191,12 +6191,17 @@ describe('the Apps category (shortcuts-menus-138)', () => {
     expect(availableSections(PAGE, PINS, 'phone', 'android').map((s) => s.id)).not.toContain('apps')
   })
 
-  it('lists the installed apps by name, A to Z, each with its icon, its site and the row’s ⋯ of Open and Uninstall', () => {
+  it('lists the installed apps by name, A to Z, each with its icon, its site and the row’s ⋯ of Open and Uninstall, under "Apps and shortcuts" and the Design Lead’s description (#767)', () => {
     const model = section('apps', appsState([NOTES, ATLAS]))
     expect(model.groups.map((g) => g.id)).toEqual(['apps'])
     const list = model.groups[0]!
-    expect(list.heading).toBe('Installed apps')
-    expect(list.description).toContain('Save and Share')
+    // The heading and the description are true of a shortcut as of an app; the apostrophe is
+    // the straight one, the ellipses the one character.
+    expect(list.heading).toBe('Apps and shortcuts')
+    expect(list.description).toBe(
+      "Sites installed as apps open in a window of their own; a shortcut opens its page as a tab or in a window, as you chose when you made it. To add one, open the site and pick Install… or Create Shortcut… from the app menu's Save and Share."
+    )
+    expect(list.description).not.toContain('’')
     expect(list.rows.map((r) => r.id)).toEqual(['app:atlas', 'app:notes'])
     const notes = row(model, 'app:notes')
     expect(notes).toMatchObject({
@@ -6273,6 +6278,83 @@ describe('the Apps category (shortcuts-menus-138)', () => {
     expect(invoke).toHaveBeenLastCalledWith('webapp.uninstall', { appId: 'notes' })
   })
 
+  it('a shortcut to a page (`kind` shortcut, W8-M3c) is a row among the apps, A to Z with them, its second line what its launcher does – "Shortcut · opens as a tab" with "Open as window" off, "Shortcut · opens in a window" with it on or unsaid – with the same ⋯ of Open and Uninstall; an app’s row is as before', () => {
+    const shortcut = (
+      id: string,
+      name: string,
+      mode: { openAsWindow?: boolean },
+      windows = 0
+    ): InstalledWebApp => ({
+      id,
+      kind: 'shortcut',
+      name,
+      startUrl: id,
+      scope: id,
+      pinnedAt: 3,
+      icon: 'file:///icons/shortcut.png',
+      bounds: null,
+      windows,
+      ...mode
+    })
+    const tab = shortcut('https://daily.example/today', 'Today', { openAsWindow: false })
+    const window = shortcut('https://board.example/', 'Board', { openAsWindow: true }, 1)
+    const unsaid = shortcut('https://pad.example/notes', 'Pad', {})
+    const model = section('apps', appsState([NOTES, tab, window, unsaid, ATLAS]))
+    expect(model.groups[0]!.rows.map((r) => r.id)).toEqual([
+      'app:atlas',
+      `app:${window.id}`,
+      'app:notes',
+      `app:${unsaid.id}`,
+      `app:${tab.id}`
+    ])
+    // The middle dot (U+00B7) with a space either side; absent `openAsWindow` is a window, the
+    // host's rule for a launcher made without the box (`WebAppService.opensWindow`).
+    expect(row(model, `app:${tab.id}`)).toMatchObject({
+      kind: 'item',
+      label: 'Today',
+      description: 'Shortcut \u00b7 opens as a tab',
+      menu: 'Options for Today'
+    })
+    expect(row(model, `app:${window.id}`)).toMatchObject({
+      label: 'Board',
+      description: 'Shortcut \u00b7 opens in a window'
+    })
+    expect(row(model, `app:${unsaid.id}`)).toMatchObject({
+      label: 'Pad',
+      description: 'Shortcut \u00b7 opens in a window'
+    })
+    // An app's second line is still its site, whichever way its own box stood.
+    expect(row(model, 'app:notes')).toMatchObject({ description: 'notes.example' })
+    expect(
+      row(section('apps', appsState([{ ...NOTES, openAsWindow: false }])), 'app:notes')
+    ).toMatchObject({ description: 'notes.example' })
+    // The shortcut's ⋯ is the apps' two rows, on the record's id; a window of it open, the
+    // notice first, as for an app.
+    const today = row(model, `app:${tab.id}`)
+    if (today.kind !== 'item') throw new Error('not an item')
+    const menu = itemMenuItems(today, vi.fn())
+    expect(menu.map((i) => i.label)).toEqual(['Open', 'Uninstall'])
+    menu[0]!.onSelect()
+    expect(invoke).toHaveBeenLastCalledWith('webapp.launch', { appId: tab.id })
+    const board = row(model, `app:${window.id}`)
+    if (board.kind !== 'item') throw new Error('not an item')
+    const uninstall = allRows(board.sheet.groups).find((r) => r.id === `app:${window.id}:uninstall`)
+    if (uninstall?.kind !== 'action') throw new Error('not an action')
+    expect(uninstall.confirm).toMatchObject({
+      title: 'Uninstall Board?',
+      description: 'Its open window closes.'
+    })
+    // Found by its name, by what it is and still by its site (a keyword, off the second line).
+    const caps: HostCapabilities = { ...PINS, extensions: false }
+    const s = state({ platform: 'linux', capabilities: caps, webApps: [tab, NOTES] })
+    const models = buildSections(availableSections(PAGE, caps, 'desktop', 'linux'), {
+      ...context(s).ctx,
+      formFactor: 'desktop'
+    })
+    expect(searchRows(models, 'shortcut').map((h) => h.row.id)).toContain(`app:${tab.id}`)
+    expect(searchRows(models, 'daily.example').map((h) => h.row.id)).toEqual([`app:${tab.id}`])
+  })
+
   it('with nothing installed: the one group’s empty line, naming where an app is installed from', () => {
     const model = section('apps', appsState([]))
     const list = model.groups[0]!
@@ -6291,8 +6373,9 @@ describe('the Apps category (shortcuts-menus-138)', () => {
     })
     expect(searchRows(models, 'notes').map((h) => h.row.id)).toContain('app:notes')
     expect(searchRows(models, 'atlas.example').map((h) => h.row.id)).toEqual(['app:atlas'])
+    // The caption is the nav's label and the group's heading, the latter the Lead's (#767).
     expect(searchRows(models, 'notes').find((h) => h.row.id === 'app:notes')?.caption).toBe(
-      'Apps › Installed apps'
+      'Apps › Apps and shortcuts'
     )
   })
 })

@@ -61,12 +61,17 @@ describe('motion tokens (§1)', () => {
     const zeta =
       SPRING_FOLLOW.damping / (2 * Math.sqrt(SPRING_FOLLOW.stiffness * SPRING_FOLLOW.mass))
     expect(zeta).toBeCloseTo(0.981, 2)
-    // Neither reader writes a follow spring of its own any more: the dock (outside the
-    // vocabulary pin's walk) imports the token, and so does the overview's card in the hand.
+    // Neither reader writes a follow spring of its own any more: the dock imports the token (and
+    // the state duration its lift rises over, W8-M1b), and so does the overview's card in the hand.
     const dock = read('../gestures/dock.ts')
-    expect(dock).toMatch(/import \{ SPRING_FOLLOW \} from '\.\.\/motion\/tokens'/)
+    expect(dock).toMatch(/import \{ MOTION_STATE_MS, SPRING_FOLLOW \} from '\.\.\/motion\/tokens'/)
     expect(dock).not.toMatch(/const SPRING_FOLLOW\b/)
     expect(dock).not.toMatch(/stiffness: 1200/)
+    // The pill's lift is no spring of its own either (§1: never a spring): the dock's sim eases
+    // it in time on the curve, `liftAt`, and the lift spring it replaced (k 520, c 34) is gone.
+    expect(dock).not.toMatch(/SPRING_LIFT\b/)
+    expect(dock).not.toMatch(/stiffness: 520/)
+    expect(dock).toMatch(/import \{ zenEase \} from '\.\.\/motion\/ease'/)
     const lift = read('../../components/phone/useCardLift.ts')
     expect(lift).toMatch(/SPRING_FOLLOW \} from '@renderer\/lib\/motion\/tokens'/)
     expect(lift).not.toMatch(/const SPRING_FOLLOW\b/)
@@ -148,13 +153,14 @@ describe('motion tokens (§1)', () => {
     expect(ghost).toContain(`transform: scale(${LIFT_SCALE})`)
     expect(ghost).toContain(`opacity: ${LIFT_OPACITY}`)
     expect(ghost).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
-    expect(ghost).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    // The rise reads the state duration's CSS face (held equal to `MOTION_STATE_MS` above).
+    expect(ghost).toContain('transform var(--zen-motion-state) var(--zen-ease)')
     // The overview's card in the hand (`.zen-overview-ghost`, stepped by `useCardLift`): the
     // same rise, no scale spring (the lead's call on #734).
     const card = css.match(/\.zen-overview-ghost\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(card).toContain(`opacity: ${LIFT_OPACITY}`)
     expect(card).toContain(`box-shadow: var(--zen-shadow-${LIFT_SHADOW_LEVEL})`)
-    expect(card).toContain(`transform ${MOTION_STATE_MS}ms var(--zen-ease)`)
+    expect(card).toContain('transform var(--zen-motion-state) var(--zen-ease)')
     const cardLift = read('../../components/phone/useCardLift.ts')
     expect(cardLift).not.toMatch(/scaleSpring/)
     expect(cardLift).toMatch(/scale: reduced \? LIFT_SCALE : 1/)
