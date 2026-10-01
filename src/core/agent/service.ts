@@ -2128,13 +2128,13 @@ export class AgentService implements SessionStore, McpHandlers {
     if (o?.claimId)
       throw new RpcError(
         UNAUTHORIZED,
-        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(o.name)}, a named session that owns its groups until it ends its session – no other agent can adopt or force it. The user can release it from the browser. ${list()}`
+        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(o.name)}, a named session that owns its groups until it ends its session – no other agent can adopt or force it; only the user can close it. ${list()}`
       )
     const held = this.heldBy(folder.id)
     if (held)
       throw new RpcError(
         UNAUTHORIZED,
-        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(held.name)}, which is away and keeps it until it ends its session – no other agent can adopt or force it. The user can release it from the browser. ${list()}`
+        `Group ${folder.id} ${JSON.stringify(folder.name)} belongs to agent ${JSON.stringify(held.name)}, which is away and keeps it until it ends its session – no other agent can adopt or force it; only the user can close it. ${list()}`
       )
     if (o) {
       if (opts.force || this.isGhost(o)) return { folder, from: o }
