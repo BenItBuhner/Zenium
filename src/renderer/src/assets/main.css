@@ -2928,9 +2928,10 @@
   /*
    * The page-load bar: 2 px of accent hugging the top edge of the content frame, over its
    * hairline and clear of its rounded corners (the live page covers everything inside the
-   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades. No sweep
-   * or shimmer (v2 §9.33): the creep is the sign of life, and a looping highlight would be the
-   * one perpetual animation on the chrome.
+   * frame). Per frame only the fill's scaleX moves; the bar as a whole only ever fades, over the
+   * state's 120 ms (`MOTION_STATE_MS`; `LoadProgress.tsx` waits the same length before it puts
+   * the fill away). No sweep or shimmer (v2 §9.33): the creep is the sign of life, and a looping
+   * highlight would be the one perpetual animation on the chrome.
    */
   .zen-load-progress {
     position: absolute;
@@ -2939,7 +2940,7 @@
     right: var(--zen-content-radius);
     height: 2px;
     opacity: 0;
-    transition: opacity 200ms var(--zen-ease);
+    transition: opacity 120ms var(--zen-ease);
   }
   /* Its appearance and departure stay an opacity fade under reduced motion, at v2 §11.3's 120 ms. */
   @media (prefers-reduced-motion: reduce) {

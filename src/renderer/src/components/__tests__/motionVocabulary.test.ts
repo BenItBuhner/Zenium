@@ -77,12 +77,6 @@ const S_IN_STRING = /(^|[\s,(])\d*\.?\d+s(?![\w-])/
  * one struck from its file fails here until its count is lowered.
  */
 const LEFT: Record<string, { count: number; why: string }> = {
-  // The load bar's fade, matching the stylesheet's `.zen-load-progress` (200 ms): a 200 that
-  // is not a message's travel, so not `MOTION_MESSAGE_MS` by meaning.
-  'components/content/LoadProgress.tsx': {
-    count: 1,
-    why: 'the load bar’s 200 ms fade, the stylesheet’s; which token it is (the state’s 120?) is the lead’s call'
-  },
   // Two waits for the onboarding overlay to leave before Settings opens behind it.
   'components/overlays/Onboarding.tsx': {
     count: 2,
