@@ -24,6 +24,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { tabAlertTooltip, type TabAlert } from '@shared/captureState'
 import { run } from '@renderer/lib/api'
+import { closeTabFromChrome } from '@renderer/lib/closeUndo'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow, useHoverCardUp } from '@renderer/lib/hoverCard'
@@ -219,10 +220,11 @@ export const TabItem = memo(function TabItem({
     run('tab.contextMenu', { tabId: tab.id, ...anchor })
   }
 
+  // The middle-click closes as the × does: with Undo on the toast on a touch layout (§9.23).
   const onAuxClick = (e: React.MouseEvent): void => {
     if (e.button === 1) {
       e.preventDefault()
-      run('tab.close', { tabId: tab.id })
+      closeTabFromChrome(tab.id)
     }
   }
 
@@ -559,7 +561,9 @@ function CloseButton({ tab }: { tab: Tab }): JSX.Element {
     <RowControl
       className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
       title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
-      onClick={() => run('tab.close', { tabId: tab.id })}
+      // On a touch layout (the tablet's strip) with Undo on the toast, as the overview's cards'
+      // closes (lib/closeUndo.ts, §9.23); the desktop's close as it was, its page free to ask.
+      onClick={() => closeTabFromChrome(tab.id)}
     >
       <X className={V2_TRAILING_GLYPH} />
     </RowControl>

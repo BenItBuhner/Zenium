@@ -70,7 +70,8 @@ import {
   type ShortcutAction,
   type SuggestionKind,
   type SyncRemoteTab,
-  type Tab
+  type Tab,
+  type UndoableTabClose
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import {
@@ -339,6 +340,26 @@ export class Menus {
       this.applicationMenuTimer = null
       this.syncApplicationMenu()
     }, APPLICATION_MENU_DEBOUNCE_MS)
+  }
+
+  /**
+   * A tab menu's close row (§9.23, OS-40 part B). On a touch host the row closes nothing itself:
+   * its click emits `tab.closeUndoable` with the tabs the close takes (`tabIds`, read as the row
+   * is picked) and the core command that closes them (`close`), and the chrome runs that command
+   * through its one close-with-undo (`lib/closeUndo.ts`): the pages are let go without "Leave
+   * site?", and the toast's Undo is the protection. On the desktop the row runs `direct` in the
+   * core, as it always did – its page may still ask.
+   */
+  private closeRow(
+    win: ZenWindow,
+    tabIds: () => string[],
+    close: UndoableTabClose,
+    direct: () => void
+  ): () => void {
+    return () => {
+      if (!touchLayout(win.formFactor)) return direct()
+      this.browser.emit('tab.closeUndoable', { tabIds: tabIds(), close }, win)
+    }
   }
 
   private popup(
@@ -2639,31 +2660,58 @@ export class Menus {
         // nothing to close is greyed, not gone (§9.30).
         label: 'Close Multiple Tabs',
         submenu: [
+          // Every close row: with Undo on the toast on a touch host, the core's own close on the
+          // desktop (`closeRow`, §9.23).
           {
             label: direction.closeBefore,
             enabled: tabs.closeScope(tabId, 'above', win).length > 0,
-            click: () => tabs.closeAbove(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'above', win),
+              { command: 'tab.closeAbove', tabId },
+              () => tabs.closeAbove(tabId, win)
+            )
           },
           {
             label: direction.closeAfter,
             enabled: tabs.closeScope(tabId, 'below', win).length > 0,
-            click: () => tabs.closeBelow(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'below', win),
+              { command: 'tab.closeBelow', tabId },
+              () => tabs.closeBelow(tabId, win)
+            )
           },
           {
             label: 'Close Other Tabs',
             enabled: tabs.closeScope(tabId, 'others', win).length > 0,
-            click: () => tabs.closeOthers(tabId, win)
+            click: this.closeRow(
+              win,
+              () => tabs.closeScope(tabId, 'others', win),
+              { command: 'tab.closeOthers', tabId },
+              () => tabs.closeOthers(tabId, win)
+            )
           }
         ]
       },
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
         ...key('tab.close'),
-        click: () => void tabs.requestClose(tabId, false, win)
+        click: this.closeRow(
+          win,
+          () => [tabId],
+          { command: 'tab.close', tabId, force: false },
+          () => void tabs.requestClose(tabId, false, win)
+        )
       },
       ...when(tab.pinned || tab.essential, {
         label: 'Remove Tab',
-        click: () => void tabs.requestClose(tabId, true, win)
+        click: this.closeRow(
+          win,
+          () => [tabId],
+          { command: 'tab.close', tabId, force: true },
+          () => void tabs.requestClose(tabId, true, win)
+        )
       })
     ]
 
@@ -2831,11 +2879,18 @@ export class Menus {
         { type: 'separator' },
         {
           label: `Close ${n} Tabs`,
-          click: () =>
-            // One at a time, so a page that objects asks before the next one is touched.
-            void (async () => {
-              for (const t of selected) await tabs.requestClose(t.id, false, win)
-            })()
+          // With Undo on the toast on a touch host, through the core's `tab.closeMany` (`closeRow`,
+          // §9.23); the desktop's loop as it was.
+          click: this.closeRow(
+            win,
+            () => selected.map((t) => t.id),
+            { command: 'tab.closeMany', tabIds: selected.map((t) => t.id) },
+            () =>
+              // One at a time, so a page that objects asks before the next one is touched.
+              void (async () => {
+                for (const t of selected) await tabs.requestClose(t.id, false, win)
+              })()
+          )
         }
       ],
       win,
