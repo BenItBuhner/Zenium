@@ -910,35 +910,51 @@ async function sceneLoad(session, origin, ids) {
           `states ${omni.stateEvents}+${close.stateEvents}; lag max ${omni.mainLag?.max?.toFixed(1)}`
       )
       if (heavyTab) {
-        // The whole load's picture: events per second, send sizes, chrome frames until it ends.
-        await probeStart(session, { sizes: true })
-        const t0 = Date.now()
         await waitForIdle(chrome, 15000)
-        const r = await probeStop(session)
-        const span = (Date.now() - t0) / 1000
-        runs.load.push({
-          seconds: span,
-          frames: frameStats(r.chrome.frames),
-          longTasks: longTaskStats(r.chrome.longTasks),
-          stateEvents: r.chrome.states.length,
-          mainLag: r.main?.lag ?? null,
-          sends: r.main
-            ? {
-                count: r.main.sends.length,
-                stateCount: r.main.sends.filter((s) => s.name === 'state').length,
-                totalMs: r.main.sends.reduce((a, s) => a + s.ms, 0),
-                maxMs: r.main.sends.reduce((a, s) => Math.max(a, s.ms), 0),
-                maxSize: r.main.sends.reduce((a, s) => Math.max(a, s.size ?? 0), 0),
-                meanSize: r.main.sends.length
-                  ? r.main.sends.reduce((a, s) => a + (s.size ?? 0), 0) / r.main.sends.length
-                  : 0
-              }
-            : null
-        })
         await invoke(chrome, 'tab.close', { tabId: heavyTab, force: true })
         await sleep(300)
       }
     }
+  }
+  // The whole load on its own, no motion over it: how long it runs, the state events and sends
+  // it raises on main, and the chrome's frames while it carries them.
+  for (let i = 0; i < RUNS; i++) {
+    await probeStart(session, { sizes: true })
+    const t0 = Date.now()
+    const heavyTab = await invoke(chrome, 'tab.create', {
+      url: `${origin}/heavy?l=${i}`,
+      active: true
+    })
+    await sleep(500)
+    await waitForIdle(chrome, 15000)
+    const r = await probeStop(session)
+    const span = (Date.now() - t0) / 1000
+    const sample = {
+      seconds: span,
+      frames: frameStats(r.chrome.frames),
+      longTasks: longTaskStats(r.chrome.longTasks),
+      stateEvents: r.chrome.states.length,
+      mainLag: r.main?.lag ?? null,
+      sends: r.main
+        ? {
+            count: r.main.sends.length,
+            stateCount: r.main.sends.filter((s) => s.name === 'state').length,
+            totalMs: r.main.sends.reduce((a, s) => a + s.ms, 0),
+            maxMs: r.main.sends.reduce((a, s) => Math.max(a, s.ms), 0),
+            maxSize: r.main.sends.reduce((a, s) => Math.max(a, s.size ?? 0), 0),
+            meanSize: r.main.sends.length
+              ? r.main.sends.reduce((a, s) => a + (s.size ?? 0), 0) / r.main.sends.length
+              : 0
+          }
+        : null
+    }
+    runs.load.push(sample)
+    log(
+      `load alone #${i + 1}: ${span.toFixed(1)} s, ${sample.stateEvents} state events, ` +
+        `frames p95 ${sample.frames.p95?.toFixed(1)} max ${sample.frames.max?.toFixed(1)} dropped ${sample.frames.dropped}, lag max ${sample.mainLag?.max?.toFixed(1)}`
+    )
+    await invoke(chrome, 'tab.close', { tabId: heavyTab, force: true })
+    await sleep(300)
   }
   for (const phase of ['idle', 'loading']) {
     out[phase] = {
@@ -946,7 +962,7 @@ async function sceneLoad(session, origin, ids) {
       close: summarizeMotion(runs.close.filter((r) => r.phase === phase))
     }
   }
-  out.loadTail = runs.load
+  out.loadAlone = runs.load
   return out
 }
 
@@ -1247,9 +1263,9 @@ function printTable(result) {
         )
       }
     }
-    for (const t of ld.loadTail) {
+    for (const t of ld.loadAlone) {
       lines.push(
-        `load tail ${t.seconds.toFixed(1)} s: ${t.stateEvents} state events, sends ${t.sends?.stateCount} state / ${t.sends?.count} total, ` +
+        `load alone ${t.seconds.toFixed(1)} s: ${t.stateEvents} state events, sends ${t.sends?.stateCount} state / ${t.sends?.count} total, ` +
           `${t.sends?.totalMs.toFixed(1)} ms serialising (max ${t.sends?.maxMs.toFixed(2)}), mean size ${Math.round(t.sends?.meanSize ?? 0)} B, ` +
           `chrome frames p95 ${t.frames.p95?.toFixed(1)} max ${t.frames.max?.toFixed(1)} dropped ${t.frames.dropped}, long tasks ${t.longTasks.count} (${t.longTasks.totalMs.toFixed(0)} ms), main lag max ${t.mainLag?.max?.toFixed(1)}`
       )
