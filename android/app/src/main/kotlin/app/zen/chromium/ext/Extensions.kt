@@ -1166,10 +1166,12 @@ class Extensions(private val host: Host) {
                 // The page a message speaks of, when it names one (a content script's report of
                 // what it found on its page carries the page's address: the sweep reads the
                 // discovery off this line), at the top or one level down in a `data`, `payload`,
-                // `message` or `params` object (RSS Feed Reader's `{type, data: {feeds, url}}`).
+                // `message` or `params` object (RSS Feed Reader's `{type, data: {feeds, url}}`),
+                // under `url` or `location` (Save Page WE's `{type: "loadResource", location}`:
+                // the resources a saver asks its background for, read off these lines).
                 val about = (data as? JSONObject)?.let { d ->
                     (listOf(d) + listOf("data", "payload", "message", "params").mapNotNull { d.optJSONObject(it) })
-                        .firstNotNullOfOrNull { o -> o.optString("url", "").ifEmpty { null } }
+                        .firstNotNullOfOrNull { o -> listOf("url", "location").firstNotNullOfOrNull { k -> o.optString(k, "").ifEmpty { null } } }
                 }
                 listOfNotNull(
                     target?.opt("tabId")?.let { "tab=$it" },

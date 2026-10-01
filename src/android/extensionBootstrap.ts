@@ -540,20 +540,34 @@ declare const __zenExtBoot: Boot
       // counters, for the compat sweep's reading of what a popup's burst met at the page.
       const flow: Record<string, FlowStats> = {}
       for (const [ep, running] of engines) flow[ep] = running.flow
-      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills'> & {
+      // The page's first uncaught errors, as the content world keeps them: a console line gives
+      // an error of the document-start script as `<document URL>:2` (the bootstrap's own line,
+      // the config on line 1), which names neither the code nor the caller; the event's stack
+      // carries the column that does (Save Page WE's worker, compat round 27).
+      const errors: BootErrorStat[] = []
+      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills' | 'errors'> & {
         page: EngineContextKind
       } = {
         frame: frame.url,
         world: 'page',
         page: context,
         flow,
-        polyfills
+        polyfills,
+        errors
       }
       Object.defineProperty(g, '__zenExtStats', {
         value: pageStats,
         enumerable: false,
         configurable: true
       })
+      window.addEventListener(
+        'error',
+        (event) => {
+          const record = bootErrorStat(event, null)
+          if (record && errors.length < 12) errors.push(record)
+        },
+        true
+      )
     }
     const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
     let lifecycle: (() => Promise<void>) | null = null

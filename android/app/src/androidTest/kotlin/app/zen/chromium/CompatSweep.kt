@@ -912,6 +912,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // this column says so (Paperpile's worker reads `SharedArrayBuffer.prototype` at its start).
         val isolation = runCatching { json(tabEval(view, ISOLATION_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) }
         detail.put("isolation", isolation)
+        if (uncaught.isNotEmpty()) {
+            // A console line names an error thrown inside the document-start script as
+            // `<document URL>:2` – the bootstrap's own line (the config on line 1) – which says
+            // neither the code nor the caller; the page's debug record keeps the event's stack
+            // with the column (`__zenExtStats.errors`, compat round 27: Save Page WE's worker),
+            // and the row's bridge since its install shows what the host sent the worker in its
+            // first seconds.
+            detail.put("uncaughtStacks", runCatching { targetErrors(view) }.getOrElse { JSONArray().put(JSONObject().put("kept", "unread").put("message", it.toString().take(200))) })
+            var trace: List<String> = emptyList()
+            instrumentation.runOnMainSync { trace = host.extensions.traceSnapshot(row.id) }
+            val name = "bridge-${entry.optString("slug")}-background.txt"
+            File(out, name).writeText(trace.joinToString("\n"))
+            detail.put("bridgeFile", name).put("bridgeLines", trace.size)
+        }
         stage(
             entry, "background",
             if (uncaught.isEmpty()) "P" else "PARTIAL",
@@ -8838,6 +8852,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * resources could not be loaded" panel's Save, raised on 156 for the fixture's missing
      * favicon): pressed by a script click once it has a box, as the user would press it in
      * Chrome, and recorded in `presses` with the panel's text.
+     *
+     * The page's realm as the saver's content script sees it, read before the click (`realm`,
+     * [REALM_SHAPE]; on the 113 lane a content script runs in the page world, so this is its
+     * view too): the document's script, style, link and frame elements, its style sheets and
+     * adopted sheets, its resource timing entries, the runtime's names on the window, and how
+     * often the runtime's own addresses occur in the markup or the resource list – what a saver
+     * that gathers the document's resources would gather of ours (compat round 27, the owner
+     * question of Save Page WE's runaway on 113: a page-world script seeing the runtime's
+     * globals, the runtime's elements or alias addresses in the page's resource lists, or a
+     * loop the extension runs on its own content). Every sample tick also records what the
+     * host can read while the page's thread is held by the saver (a sample the page cannot
+     * answer is `unreadable`): the WebView's renderer processes' resident size (`rendererKb`;
+     * a renderer lost to V8's heap limit comes back as a new pid, `rendererPids` before and
+     * after) and the row's bridge so far (`bridge`: its line count, the saver's resource
+     * requests and the last state it reported). The resources the saver asked its background
+     * for are listed from the bridge at the end (`loadResources`), and the renderer's own
+     * logcat lines of the wait (`rendererLog`: V8's heap-limit line, the chrome's renderer-gone
+     * line) place a crash in time.
      */
     private fun pageDownload(label: String, page: String, name: Regex, probe: String? = null, press: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -8846,6 +8878,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val before = downloadRows().map { it.optString("id") }.toSet()
         val tabsBefore = tabUrls().keys
         val since = StepEvidence(row)
+        val sinceEpochMs = System.currentTimeMillis()
+        extra.put("realm", json(runCatching { tabEval(view, REALM_SHAPE, 8) }.getOrDefault("{}")))
+        extra.put("rendererPids", JSONObject().put("before", JSONArray(rendererPids())))
         val samples = JSONArray()
         val presses = JSONArray()
         val started = SystemClock.uptimeMillis()
@@ -8854,6 +8889,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var b=document.querySelector(${JSONObject.quote(it)});if(!b||!b.getClientRects().length)return JSON.stringify({pressed:false});" +
                 "var p=document.querySelector('#savepage-message-panel-text, #savepage-message-panel-header');b.click();" +
                 "return JSON.stringify({pressed:true,label:(b.textContent||'').trim().slice(0,40),text:p?(p.textContent||'').replace(/\\s+/g,' ').trim().slice(0,200):''})})()"
+        }
+        val bridgeNow = {
+            val trace = since.trace()
+            JSONObject().put("lines", trace.size)
+                .put("loadResources", trace.count { it.contains("type=loadResource") })
+                .put("lastState", trace.lastOrNull { it.contains("type=stateChanged") }?.substringAfter("type=")?.take(60) ?: JSONObject.NULL)
         }
         val sample = {
             if (samples.length() < 40 && SystemClock.uptimeMillis() - lastSample >= 2_500) {
@@ -8870,6 +8911,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         if (pressed.optBoolean("pressed")) presses.put(pressed.put("t", SystemClock.uptimeMillis() - started))
                     }
                 }
+                entry.put("rendererKb", rendererRssKb()).put("bridge", bridgeNow())
                 samples.put(entry)
             }
         }
@@ -8902,6 +8944,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size)
             .put("contentHellos", trace.count { it.contains("/content hello") })
             .put("stateChanges", JSONArray(trace.filter { it.contains("type=stateChanged") }.map { it.take(160) }))
+            // The saver's resource requests to its background, each with the address it named
+            // (the bridge prints a message's `location` as it does its `url`).
+            .put("loadResources", JSONArray(trace.filter { it.contains("type=loadResource") }.map { it.substringAfter("url=", "<no address on the line>").take(160) }.take(60)))
+        extra.getJSONObject("rendererPids").put("after", JSONArray(rendererPids()))
+        extra.put(
+            "rendererLog",
+            JSONArray(
+                (logcatSince(sinceEpochMs, "chromium") + logcatSince(sinceEpochMs, "ZenChrome"))
+                    .filter { it.contains("OOM") || it.contains("heap limit") || it.contains("renderer gone") || it.contains("Render process") || it.contains("rebuilding") }
+                    .sorted().takeLast(12).map { it.take(220) }
+            )
+        )
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-saved-download")
         runCatching { coreCall("extension.closePopup", "null") }
@@ -14690,12 +14744,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return runCatching { JSONObject(json) }.getOrNull() ?: JSONObject.NULL
     }
 
-    /** `VmRSS` (kB) of the WebView's sandboxed renderer processes summed (`ps`, then `/proc/<pid>/status` through the shell); 0 when none is seen. */
-    private fun rendererRssKb(): Long = runCatching {
+    /** The pids of the WebView's sandboxed renderer processes (`ps` through the shell); empty when none is seen. */
+    private fun rendererPids(): List<Long> = runCatching {
         shell("ps -A -o PID,NAME").lineSequence()
             .filter { it.contains("sandboxed_process") }
             .mapNotNull { it.trim().split(Regex("\\s+")).firstOrNull()?.toLongOrNull() }
-            .sumOf { pid -> Regex("""VmRSS:\s+(\d+)\s+kB""").find(shell("cat /proc/$pid/status"))?.groupValues?.get(1)?.toLongOrNull() ?: 0L }
+            .toList()
+    }.getOrDefault(emptyList())
+
+    /** `VmRSS` (kB) of the WebView's sandboxed renderer processes summed ([rendererPids], then `/proc/<pid>/status` through the shell); 0 when none is seen. */
+    private fun rendererRssKb(): Long = runCatching {
+        rendererPids().sumOf { pid -> Regex("""VmRSS:\s+(\d+)\s+kB""").find(shell("cat /proc/$pid/status"))?.groupValues?.get(1)?.toLongOrNull() ?: 0L }
     }.getOrDefault(0L)
 
     private fun shell(command: String): String {
@@ -15899,6 +15958,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val PAGE_WORK_SAMPLE =
             "(function(){var m=(performance&&performance.memory)||null;var d=document.documentElement;return JSON.stringify({els:document.querySelectorAll('*').length,html:d?d.outerHTML.length:0," +
                 "blobs:document.querySelectorAll('a[href^=\"blob:\"], a[download]').length,heapMb:m?Math.round(m.usedJSHeapSize/1048576):null,heapLimitMb:m?Math.round(m.jsHeapSizeLimit/1048576):null,ready:document.readyState})})()"
+
+        /**
+         * A page's realm as a script in its main world reads it, for [pageDownload]'s `realm`: the
+         * document's size (`els`, `html` = `outerHTML`'s length, `inner` = `innerHTML`'s), its
+         * script elements (address, type, an inline body's length), its style sheets (address,
+         * owner element, rule count; -1 where the rules are closed to the page), the sheets adopted
+         * by script (the runtime's CSS injection lands there, outside `document.styleSheets`), its
+         * `style` bodies' lengths, its links and frames, its resource timing entries (the count, and
+         * those naming the runtime's own addresses – the served origin `*.ext.zenium.invalid`, the
+         * page-origin alias `/.zenium-ext/`), how often those addresses or the runtime's names occur
+         * in the markup (`oursInHtml`), the window's own property names that are the runtime's or
+         * double-underscored (`windowExtras`: what a page-world script could enumerate of ours),
+         * the page's `chrome` object's keys, the font set's size and Save Page WE's frame key.
+         */
+        private const val REALM_SHAPE =
+            "(function(){var ours=/zenium|__zen|ext\\.zenium\\.invalid|\\.zenium-ext\\//i;var html=document.documentElement?document.documentElement.outerHTML:'';" +
+                "var scripts=[].slice.call(document.scripts).map(function(s){return {src:(s.src||'').slice(0,120),type:s.type||'',inline:s.src?0:(s.textContent||'').length}});" +
+                "var sheets=[].slice.call(document.styleSheets).map(function(s){var n;try{n=s.cssRules.length}catch(e){n=-1}return {href:(s.href||'').slice(0,120),owner:s.ownerNode?s.ownerNode.localName:'',rules:n}});" +
+                "var styles=[].slice.call(document.querySelectorAll('style')).map(function(e){return (e.textContent||'').length});" +
+                "var links=[].slice.call(document.querySelectorAll('link')).map(function(e){return {rel:e.rel,href:(e.getAttribute('href')||'').slice(0,120)}});" +
+                "var frames=[].slice.call(document.querySelectorAll('iframe, frame')).map(function(e){return {id:e.id,src:(e.getAttribute('src')||'').slice(0,120)}});" +
+                "var res=performance.getEntriesByType('resource').map(function(r){return r.name.slice(0,120)});var ch=window.chrome;" +
+                "return JSON.stringify({els:document.querySelectorAll('*').length,html:html.length,inner:document.documentElement?document.documentElement.innerHTML.length:0," +
+                "scripts:scripts.slice(0,20),sheets:sheets.slice(0,20),adopted:(document.adoptedStyleSheets||[]).length,styles:styles.slice(0,20),links:links.slice(0,20),frames:frames.slice(0,10)," +
+                "resources:res.length,oursResources:res.filter(function(n){return ours.test(n)}).slice(0,20),oursInHtml:(html.match(/zenium|__zen|ext\\.zenium\\.invalid|\\.zenium-ext\\//gi)||[]).length," +
+                "windowExtras:Object.getOwnPropertyNames(window).filter(function(k){return ours.test(k)||k.indexOf('__')===0}).slice(0,24),chromeKeys:ch?Object.keys(ch).slice(0,20):null," +
+                "fonts:document.fonts?document.fonts.size:null,key:document.documentElement?document.documentElement.getAttribute('data-savepage-key'):null})})()"
 
         /**
          * Save Page WE's marks in the page under its save: the frames (`iframes`, and whether its
