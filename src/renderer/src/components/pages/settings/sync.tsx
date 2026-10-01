@@ -1,4 +1,4 @@
-import { FolderX, KeyRound } from 'lucide-react'
+import { FolderX, KeyRound, UserX } from 'lucide-react'
 import type {
   SyncDeviceTabs,
   SyncRemoteTab,
@@ -19,8 +19,11 @@ import {
 import {
   SYNC_COPY,
   SYNC_SCOPES,
+  accountLinkFailureLine,
+  clearSyncSetup,
   editWebDavDraft,
   probeLine,
+  setupTransport,
   syncScopeRowId,
   syncErrorLine,
   syncSetupRefusalLine,
@@ -79,6 +82,16 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  * server's answers reach the user in the page's sentences alone (`webDavOutcomeLine`, one
  * mapping for the Test row, the Turn on refusal and the line under Sync now); the engine's
  * method names and status codes never do (§9.33).
+ *
+ * A host that reaches the Zenium account service (`accountAvailable`: the same fetch and secret
+ * store) offers the account first in Sync through, picked unless the user picks another: Sign
+ * in opens the service's page in a new tab, the code that tab shows stands with "Waiting for you
+ * to sign in in the new tab…" over Cancel sign-in until it is approved, and the account's email
+ * with Sign out follows; Turn on sync's passphrase form is the step after, the passphrase never
+ * leaving the device. Connected through it, the second group is Account and device – the email
+ * and Sign out, which confirms and turns sync off – and an account that has signed this device
+ * out is the §9.33 message row over Sign in again. The service's answers reach the user in the
+ * page's sentences alone (`accountOutcomeLine`, `accountLinkFailureLine`).
  */
 export function syncGroups({ state, formFactor }: SectionContext): RowGroup[] {
   const sync = state.sync
@@ -91,18 +104,33 @@ export function syncGroups({ state, formFactor }: SectionContext): RowGroup[] {
 
 function setupGroups(sync: SyncStatus): RowGroup[] {
   const draft = syncSetupStore.get()
-  // The server is a choice only where the host can reach one; elsewhere the page is the folder's
-  // and the draft's transport is read as the folder whatever it says.
-  const server = sync.webdavAvailable && draft.transport === 'webdav'
-  const ready = server ? webDavDraftComplete(draft.webdav) : draft.folder !== null
+  // The account and the server are choices only where the host can reach them; elsewhere the
+  // page is the folder's and the draft's transport is read as the folder whatever it says.
+  const transport = setupTransport(sync, draft.transport)
+  const server = transport === 'webdav'
+  const account = transport === 'account'
+  const ready = account
+    ? sync.account !== null && !sync.accountSignedOut
+    : server
+      ? webDavDraftComplete(draft.webdav)
+      : draft.folder !== null
+  const choices = sync.accountAvailable || sync.webdavAvailable
   return [
     {
       id: 'sync-setup',
       heading: 'Set up sync',
-      description: sync.webdavAvailable ? SYNC_COPY.introServer : SYNC_COPY.intro,
+      description: sync.accountAvailable
+        ? SYNC_COPY.introAccount
+        : sync.webdavAvailable
+          ? SYNC_COPY.introServer
+          : SYNC_COPY.intro,
       rows: [
-        ...(sync.webdavAvailable ? [transportRow(draft.transport)] : []),
-        ...(server ? webDavRows(draft) : [folderDraftRow(draft.folder)]),
+        ...(choices ? [transportRow(sync, transport)] : []),
+        ...(account
+          ? accountSetupRows(sync)
+          : server
+            ? webDavRows(draft)
+            : [folderDraftRow(draft.folder)]),
         deviceNameRow(sync),
         {
           kind: 'action',
@@ -110,9 +138,11 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
           label: SYNC_COPY.turnOn,
           description: ready
             ? SYNC_COPY.turnOnHint
-            : server
-              ? SYNC_COPY.turnOnNeedsServer
-              : SYNC_COPY.turnOnNeedsFolder,
+            : account
+              ? SYNC_COPY.turnOnNeedsAccount
+              : server
+                ? SYNC_COPY.turnOnNeedsServer
+                : SYNC_COPY.turnOnNeedsFolder,
           keywords: ['set up', 'enable', 'passphrase', 'encrypt'],
           button: 'Turn on…',
           // Nothing to set up without a folder, or a server filled in: laid out at 40 %, not
@@ -122,7 +152,15 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
             title: SYNC_COPY.passphraseTitle,
             description: SYNC_COPY.passphraseDescription,
             render: (close) =>
-              server && ready ? (
+              account && ready ? (
+                <SyncPassphraseForm
+                  folder=""
+                  account
+                  deviceName={sync.deviceName}
+                  scope={sync.scope}
+                  close={close}
+                />
+              ) : server && ready ? (
                 <SyncPassphraseForm
                   folder=""
                   webdav={webDavCredentials(draft.webdav)}
@@ -130,7 +168,7 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
                   scope={sync.scope}
                   close={close}
                 />
-              ) : !server && draft.folder ? (
+              ) : transport === 'folder' && draft.folder ? (
                 <SyncPassphraseForm
                   folder={draft.folder}
                   deviceName={sync.deviceName}
@@ -170,32 +208,129 @@ function folderDraftRow(pending: string | null): SettingsRow {
 
 /**
  * Sync through (ID-32): where the encrypted records go. A value row – the phone's §9.13 picker,
- * the current option as the row's line – that the desktop draws as §9.14's two radios, since the
- * two options' second lines are the choice. Picking one swaps the rows under it and drops the
- * last test's answer with the form it answered.
+ * the current option as the row's line – that the desktop draws as §9.14's radios, since the
+ * options' second lines are the choice: the Zenium account first, the recommended one, where the
+ * host reaches the service; then a folder; then a WebDAV server where the host reaches one.
+ * Picking one swaps the rows under it, drops the last test's answer with the form it answered,
+ * and leaving the account stops a sign-in still waiting for its tab.
  */
-function transportRow(transport: SyncTransportKind): SettingsRow {
+function transportRow(sync: SyncStatus, transport: SyncTransportKind): SettingsRow {
+  const options: Array<{ value: SyncTransportKind; label: string; description: string }> = []
+  if (sync.accountAvailable)
+    options.push({
+      value: 'account',
+      label: SYNC_COPY.transportAccount,
+      description: SYNC_COPY.transportAccountHint
+    })
+  options.push({
+    value: 'folder',
+    label: SYNC_COPY.transportFolder,
+    description: SYNC_COPY.transportFolderHint
+  })
+  if (sync.webdavAvailable)
+    options.push({
+      value: 'webdav',
+      label: SYNC_COPY.transportWebDav,
+      description: SYNC_COPY.transportWebDavHint
+    })
   return choice({
     id: 'sync-transport',
     label: SYNC_COPY.transport,
     value: transport,
-    keywords: ['transport', 'webdav', 'nextcloud', 'server', 'cloud drive', 'folder'],
-    radios: true,
-    options: [
-      {
-        value: 'folder',
-        label: SYNC_COPY.transportFolder,
-        description: SYNC_COPY.transportFolderHint
-      },
-      {
-        value: 'webdav',
-        label: SYNC_COPY.transportWebDav,
-        description: SYNC_COPY.transportWebDavHint
-      }
+    keywords: [
+      'transport',
+      ...(sync.accountAvailable ? ['zenium account', 'account', 'sign in'] : []),
+      ...(sync.webdavAvailable ? ['webdav', 'nextcloud', 'server'] : []),
+      'cloud drive',
+      'folder'
     ],
-    onChange: (value) => syncSetupStore.set({ transport: value, probe: { state: 'idle' } })
+    radios: true,
+    options,
+    onChange: (value) => {
+      if (value !== 'account' && sync.accountLink) run('sync.accountCancel', undefined)
+      syncSetupStore.set({ transport: value, probe: { state: 'idle' } })
+    }
   })
 }
+
+/**
+ * The Zenium account before setup: Sign in until the service has approved this device, then the
+ * account's email and Sign out (this device forgets the sign-in; nothing else is kept yet). The
+ * passphrase is Turn on sync's step, as for a folder or a server.
+ */
+function accountSetupRows(sync: SyncStatus): SettingsRow[] {
+  if (sync.account && !sync.accountLink && !sync.accountSignedOut) {
+    return [
+      accountRow(sync.account.email),
+      {
+        kind: 'action',
+        id: 'sync-account-sign-out',
+        label: SYNC_COPY.accountSignOut,
+        description: SYNC_COPY.accountSignOutHint,
+        keywords: ACCOUNT_KEYWORDS,
+        button: SYNC_COPY.accountSignOut,
+        onPress: () => run('sync.accountSignOut', undefined)
+      }
+    ]
+  }
+  return accountSignInRows(sync, SYNC_COPY.accountSignIn)
+}
+
+/**
+ * Signing in, the same rows before setup and once the service has signed this device out: Sign
+ * in (or Sign in again) opens the service's page in a new tab – the browser itself is where the
+ * user signs in – and while the engine waits for its approval the code that tab shows stands in
+ * its place with the wait as its line, over Cancel sign-in. A sign-in that did not finish says
+ * why under the row in the page's words, never the service's (§9.33).
+ */
+function accountSignInRows(sync: SyncStatus, label: string): SettingsRow[] {
+  const link = sync.accountLink
+  if (link) {
+    return [
+      {
+        kind: 'info',
+        id: 'sync-account-code',
+        label: link.userCode,
+        description: SYNC_COPY.accountWaiting,
+        keywords: [...ACCOUNT_KEYWORDS, 'code']
+      },
+      {
+        kind: 'action',
+        id: 'sync-account-cancel',
+        label: SYNC_COPY.accountCancel,
+        keywords: ACCOUNT_KEYWORDS,
+        button: SYNC_COPY.accountCancelAction,
+        onPress: () => run('sync.accountCancel', undefined)
+      }
+    ]
+  }
+  const failure = sync.accountLinkFailure
+  return [
+    {
+      kind: 'action',
+      id: 'sync-account-sign-in',
+      label,
+      description: failure ? accountLinkFailureLine(failure) : SYNC_COPY.accountSignInHint,
+      tone: failure ? 'danger' : undefined,
+      keywords: ACCOUNT_KEYWORDS,
+      button: label,
+      onPress: () => run('sync.accountSignIn', undefined)
+    }
+  ]
+}
+
+/** The account this device is signed in to, by its email: a fact to read. */
+function accountRow(email: string): SettingsRow {
+  return {
+    kind: 'info',
+    id: 'sync-account',
+    label: SYNC_COPY.account,
+    description: email,
+    keywords: [...ACCOUNT_KEYWORDS, 'email']
+  }
+}
+
+const ACCOUNT_KEYWORDS = ['zenium account', 'account', 'sign in', 'sign out'] as const
 
 /**
  * The server form as rows (§9.12's fields in rows on the desktop – the address stacked, since
@@ -346,28 +481,44 @@ function connectedGroups(
       trailing: <KeyRound className="zen-settings-trailing-glyph" aria-hidden="true" />
     })
   }
+  const account = sync.transport === 'account'
+  const signedOut = account && sync.accountSignedOut
+  if (signedOut) {
+    // The service ended this device's sign-in (signed out on the website, the account deleted):
+    // the same lone status row, Sign in again first in the group under it (§9.17).
+    status.push({
+      kind: 'info',
+      id: 'sync-account-signed-out',
+      label: SYNC_COPY.accountSignedOut,
+      description: SYNC_COPY.accountSignedOutHint,
+      tone: 'danger',
+      keywords: ['error', 'signed out', 'account', 'sign in'],
+      trailing: <UserX className="zen-settings-trailing-glyph" aria-hidden="true" />
+    })
+  }
   if (sync.pendingMerge) {
     status.push({
       kind: 'action',
       id: 'sync-merge',
-      label: SYNC_COPY.mergeRow,
+      label: account ? SYNC_COPY.mergeRowAccount : SYNC_COPY.mergeRow,
       description: SYNC_COPY.mergeRowHint,
       keywords: ['merge', 'first sync', 'replace', 'combine'],
       button: 'Choose…',
       form: {
-        title: SYNC_COPY.mergeTitle,
-        description: SYNC_COPY.mergeDescription,
+        title: account ? SYNC_COPY.mergeTitleAccount : SYNC_COPY.mergeTitle,
+        description: account ? SYNC_COPY.mergeDescriptionAccount : SYNC_COPY.mergeDescription,
         render: (close) => <SyncMergeForm close={close} />
       }
     })
   }
-  // The error the engine keeps is the folder-lost sentence while the folder is lost, and the
-  // server's answer while the sign-in is refused: the row above says it, so the status line does
-  // not say it twice. A server's or the account's other answer is the page's sentence for its
-  // class (`lastErrorKind` through `syncErrorLine`), never the engine's method and status; an
-  // error with no class – the folder transport's, a record that would not decrypt – is the
-  // engine's line, as before.
-  const error = sync.folderLost || sync.authRefused ? null : syncErrorLine(sync)
+  // The error the engine keeps is the folder-lost sentence while the folder is lost, the
+  // server's answer while the sign-in is refused, and the account's signed-out line while the
+  // service has signed this device out: the row above says it, so the status line does not say
+  // it twice. A server's or the account's other answer is the page's sentence for its class
+  // (`lastErrorKind` through `syncErrorLine`), never the engine's method and status; an error
+  // with no class – the folder transport's, a record that would not decrypt – is the engine's
+  // line, as before.
+  const error = sync.folderLost || sync.authRefused || signedOut ? null : syncErrorLine(sync)
   status.push({
     kind: 'action',
     id: 'sync-now',
@@ -377,9 +528,9 @@ function connectedGroups(
     keywords: ['last synced', 'status', 'refresh'],
     button: SYNC_COPY.syncNow,
     busy: sync.syncing,
-    // Nothing to sync to until the folder is chosen again, the server takes the sign-in again
-    // or the merge is answered.
-    disabled: sync.folderLost || sync.authRefused || sync.pendingMerge,
+    // Nothing to sync to until the folder is chosen again, the server or the account takes the
+    // sign-in again, or the merge is answered.
+    disabled: sync.folderLost || sync.authRefused || signedOut || sync.pendingMerge,
     onPress: () => run('sync.now', undefined)
   })
   const server = sync.transport === 'webdav' && sync.webdav !== null ? sync.webdav : null
@@ -387,27 +538,33 @@ function connectedGroups(
     { id: 'sync-status', heading: 'Status', rows: status },
     {
       id: 'sync-where',
-      heading: server ? SYNC_COPY.whereServer : SYNC_COPY.whereFolder,
+      heading: account
+        ? SYNC_COPY.whereAccount
+        : server
+          ? SYNC_COPY.whereServer
+          : SYNC_COPY.whereFolder,
       rows: [
-        ...(server
-          ? serverRows(server, sync.authRefused, formFactor)
-          : [
-              {
-                kind: 'action',
-                id: 'sync-folder',
-                label: SYNC_COPY.folder,
-                description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
-                // A path while a folder is set (§9.2's exception); "Not set" is prose.
-                address: Boolean(sync.folderName ?? sync.folder),
-                keywords: FOLDER_KEYWORDS,
-                button: 'Change…',
-                onPress: () => {
-                  void cmd('sync.chooseFolder', undefined).then((folder) => {
-                    if (folder) run('sync.setFolder', { folder })
-                  })
-                }
-              } satisfies SettingsRow
-            ]),
+        ...(account
+          ? connectedAccountRows(sync)
+          : server
+            ? serverRows(server, sync.authRefused, formFactor)
+            : [
+                {
+                  kind: 'action',
+                  id: 'sync-folder',
+                  label: SYNC_COPY.folder,
+                  description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
+                  // A path while a folder is set (§9.2's exception); "Not set" is prose.
+                  address: Boolean(sync.folderName ?? sync.folder),
+                  keywords: FOLDER_KEYWORDS,
+                  button: 'Change…',
+                  onPress: () => {
+                    void cmd('sync.chooseFolder', undefined).then((folder) => {
+                      if (folder) run('sync.setFolder', { folder })
+                    })
+                  }
+                } satisfies SettingsRow
+              ]),
         deviceNameRow(sync)
       ]
     },
@@ -424,10 +581,42 @@ function connectedGroups(
         // screen – it appears when its state does (§10.4).
         ...(sync.devices.length > 0 ? [remoteTabsRow(sync, held)] : [])
       ],
-      empty: SYNC_COPY.noDevices
+      empty: account ? SYNC_COPY.noDevicesAccount : SYNC_COPY.noDevices
     },
     scopeGroup(sync),
-    { id: 'sync-off', heading: null, rows: [turnOffRow()] }
+    { id: 'sync-off', heading: null, rows: [turnOffRow(account)] }
+  ]
+}
+
+/**
+ * Connected through the Zenium account: while the service has signed this device out, the
+ * sign-in rows first – Sign in again, the code and Cancel while it waits – the status row's
+ * follow-up (§9.17); then the account by its email and Sign out, a destructive action that
+ * confirms first (§10.4): the service forgets this device's sign-in, and sync turns off with
+ * everything this device has kept.
+ */
+function connectedAccountRows(sync: SyncStatus): SettingsRow[] {
+  return [
+    ...(sync.accountSignedOut ? accountSignInRows(sync, SYNC_COPY.accountSignInAgain) : []),
+    ...(sync.account ? [accountRow(sync.account.email)] : []),
+    {
+      kind: 'action',
+      id: 'sync-account-sign-out',
+      label: SYNC_COPY.accountSignOut,
+      description: SYNC_COPY.accountSignOutSyncHint,
+      keywords: ACCOUNT_KEYWORDS,
+      button: `${SYNC_COPY.accountSignOut}…`,
+      destructive: true,
+      confirm: {
+        title: SYNC_COPY.accountSignOutTitle,
+        description: SYNC_COPY.accountSignOutDescription,
+        action: SYNC_COPY.accountSignOut
+      },
+      onPress: () => {
+        run('sync.accountSignOut', undefined)
+        clearSyncSetup()
+      }
+    }
   ]
 }
 
@@ -515,7 +704,7 @@ function serverRows(
  * remove this device's data from the folder"). Never a row of its own: removing the data only
  * means something together with turning off.
  */
-function turnOffRow(): SettingsRow {
+function turnOffRow(account: boolean): SettingsRow {
   return {
     kind: 'action',
     id: 'sync-disconnect',
@@ -527,7 +716,7 @@ function turnOffRow(): SettingsRow {
     form: {
       title: SYNC_COPY.turnOffTitle,
       description: SYNC_COPY.turnOffDescription,
-      render: (close) => <SyncDisconnectForm close={close} />
+      render: (close) => <SyncDisconnectForm close={close} account={account} />
     }
   }
 }

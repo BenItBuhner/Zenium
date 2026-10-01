@@ -8764,10 +8764,10 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(searchRows(on, 'webdav server').map((h) => h.row.id)).toContain('sync-server')
   })
 
-  it('ID-32: the draft starts empty – the folder transport, the engine’s default folder by its name, Zenium, no test asked – and is cleared whole, the typed app password with it', () => {
+  it('ID-32: the draft starts empty – no transport picked (the host’s default), the engine’s default folder by its name, Zenium, no test asked – and is cleared whole, the typed app password with it', () => {
     expect(emptySyncSetup()).toEqual({
       folder: null,
-      transport: 'folder',
+      transport: null,
       webdav: { url: '', username: '', password: '', folder: 'Zenium' },
       probe: { state: 'idle' }
     })
@@ -8780,6 +8780,297 @@ describe('ID-08’s Sync category on a phone', () => {
     })
     clearSyncSetup()
     expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+  })
+
+  // The Zenium account (the third transport): offered first, and picked, where the host reaches
+  // the service (`accountAvailable`: the same fetch and secret store as a WebDAV server).
+  const EMAIL = 'ada@example.com'
+  const ACCOUNT_INTRO =
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Sign in to your Zenium account – or pick a folder that your cloud drive keeps in sync, or a WebDAV server such as Nextcloud – and choose a passphrase: everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.'
+  const LINK = {
+    userCode: 'WXYZ-2345',
+    verificationUrl: 'https://zenium.techlitnow.com/link?code=WXYZ-2345',
+    expiresAt: Date.now() + 600_000
+  }
+
+  function withAccount(patch: Partial<SyncStatus> = {}): UIState {
+    return syncState(syncStatus({ webdavAvailable: true, accountAvailable: true, ...patch }))
+  }
+
+  function onAccount(patch: Partial<SyncStatus> = {}): SyncStatus {
+    return connected({
+      transport: 'account',
+      webdavAvailable: true,
+      accountAvailable: true,
+      account: { email: EMAIL },
+      folder: 'https://accounts.example.convex.cloud',
+      folderName: EMAIL,
+      ...patch
+    })
+  }
+
+  it('the Zenium account: a host that reaches the service opens Sync through with the account first, picked and recommended, then the folder and the server; Sign in is the setup’s one row and Turn on sync waits for it', () => {
+    invoke.mockClear()
+    const model = section('sync', withAccount())
+    expect(model.groups[0]?.description).toBe(ACCOUNT_INTRO)
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-account-sign-in',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const transport = row(model, 'sync-transport')
+    if (transport.kind !== 'value') throw new Error('not a value row')
+    expect(transport.value).toBe('account')
+    expect(transport.options).toEqual([
+      {
+        value: 'account',
+        label: 'Zenium account',
+        description: 'Recommended – nothing else to set up'
+      },
+      {
+        value: 'folder',
+        label: 'A folder on this device',
+        description: 'Shared through your own cloud drive'
+      },
+      { value: 'webdav', label: 'A WebDAV server', description: 'Nextcloud and others' }
+    ])
+    const signIn = actionRow(model, 'sync-account-sign-in')
+    expect(signIn).toMatchObject({
+      label: 'Sign in',
+      description: 'Opens the sign-in page in a new tab.',
+      button: 'Sign in'
+    })
+    expect(signIn.tone).toBeUndefined()
+    signIn.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignIn', undefined)
+    const turnOn = actionRow(model, 'sync-turn-on')
+    expect(turnOn.disabled).toBe(true)
+    expect(turnOn.description).toBe('Sign in to your Zenium account first.')
+    expect(turnOn.form?.render(() => undefined)).toBeNull()
+    expect(desktopButtons(withAccount())).toEqual([
+      ['sync-account-sign-in', 'Sign in'],
+      ['sync-turn-on', 'Turn on…']
+    ])
+
+    // The other two stay a pick away, their rows as before.
+    transport.onChange('folder')
+    expect(section('sync', withAccount()).groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-folder',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    transport.onChange('webdav')
+    expect(findRow(section('sync', withAccount()).groups, 'sync-webdav-url')).not.toBeNull()
+    expect(findRow(section('sync', withAccount()).groups, 'sync-account-sign-in')).toBeNull()
+
+    // A host that cannot reach the service never offers it, whatever the draft says.
+    syncSetupStore.set({ transport: 'account' })
+    const serverOnly = section('sync', withServer())
+    expect(serverOnly.groups[0]?.description).toBe(SERVER_INTRO)
+    const choices = row(serverOnly, 'sync-transport')
+    if (choices.kind !== 'value') throw new Error('not a value row')
+    expect(choices.value).toBe('folder')
+    expect(choices.options.map((o) => o.value)).toEqual(['folder', 'webdav'])
+  })
+
+  it('the Zenium account: while the new tab waits, its code stands with “Waiting for you to sign in in the new tab…” over Cancel sign-in; leaving the account for another transport cancels it; a sign-in that did not finish says why in the page’s words', () => {
+    invoke.mockClear()
+    const waiting = section('sync', withAccount({ accountLink: LINK }))
+    expect(waiting.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-account-code',
+      'sync-account-cancel',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(row(waiting, 'sync-account-code')).toMatchObject({
+      kind: 'info',
+      label: 'WXYZ-2345',
+      description: 'Waiting for you to sign in in the new tab…'
+    })
+    const cancel = actionRow(waiting, 'sync-account-cancel')
+    expect(cancel).toMatchObject({ label: 'Cancel sign-in', button: 'Cancel' })
+    cancel.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountCancel', undefined)
+    invoke.mockClear()
+    const transport = row(waiting, 'sync-transport')
+    if (transport.kind !== 'value') throw new Error('not a value row')
+    transport.onChange('folder')
+    expect(invoke).toHaveBeenCalledWith('sync.accountCancel', undefined)
+    clearSyncSetup()
+
+    const lines: Array<[NonNullable<SyncStatus['accountLinkFailure']>, string]> = [
+      ['expired', 'The code expired before the sign-in finished.'],
+      ['unavailable', 'Your Zenium account could not be reached.'],
+      ['rate-limited', 'Too many requests to your Zenium account. Try again in a moment.'],
+      ['secrets', 'The sign-in could not be kept on this device.']
+    ]
+    for (const [failure, line] of lines) {
+      const signIn = actionRow(
+        section('sync', withAccount({ accountLinkFailure: failure })),
+        'sync-account-sign-in'
+      )
+      expect(signIn.description).toBe(line)
+      expect(signIn.tone).toBe('danger')
+      expect(signIn.description).not.toMatch(/\d{3}|sync:|devices:|auth\//)
+    }
+  })
+
+  it('the Zenium account: approved, the setup names the account by its email with Sign out, and Turn on sync opens the passphrase form for the account', () => {
+    invoke.mockClear()
+    const model = section('sync', withAccount({ account: { email: EMAIL } }))
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-transport',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    expect(row(model, 'sync-account')).toMatchObject({
+      kind: 'info',
+      label: 'Zenium account',
+      description: EMAIL
+    })
+    const signOut = actionRow(model, 'sync-account-sign-out')
+    expect(signOut).toMatchObject({
+      label: 'Sign out',
+      description: 'This device forgets the sign-in.'
+    })
+    expect(signOut.destructive).toBeUndefined()
+    signOut.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
+    const turnOn = actionRow(model, 'sync-turn-on')
+    expect(turnOn.disabled).toBe(false)
+    expect(turnOn.description).toBe('Create the passphrase every device will share.')
+    const form = turnOn.form?.render(() => undefined)
+    if (!isValidElement<{ folder: string; account?: boolean; webdav?: unknown }>(form))
+      throw new Error('no form')
+    expect(form.props).toMatchObject({ folder: '', account: true })
+    expect(form.props.webdav).toBeUndefined()
+    expect(searchRows(phoneSections(withAccount()), 'zenium account').map((h) => h.row.id)).toEqual(
+      expect.arrayContaining(['sync-transport', 'sync-account-sign-in'])
+    )
+  })
+
+  it('the Zenium account, connected: Account and device names the email, Sign out confirms first and turns sync off, the empty devices line and the merge and Turn off prompts name the account; the account’s errors are the page’s sentences', () => {
+    invoke.mockClear()
+    const model = section('sync', syncState(onAccount()))
+    const where = model.groups.find((g) => g.id === 'sync-where')
+    expect(where?.heading).toBe('Account and device')
+    expect(where?.rows.map((r) => r.id)).toEqual([
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name'
+    ])
+    expect(row(model, 'sync-account').description).toBe(EMAIL)
+    const signOut = actionRow(model, 'sync-account-sign-out')
+    expect(signOut).toMatchObject({
+      description: 'This device stops syncing and keeps what it has.',
+      destructive: true,
+      confirm: {
+        title: 'Sign out of your Zenium account?',
+        description:
+          'This device stops syncing and keeps everything it has. Your other devices keep syncing.',
+        action: 'Sign out'
+      }
+    })
+    syncSetupStore.set({ transport: 'webdav' })
+    signOut.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignOut', undefined)
+    expect(syncSetupStore.get()).toEqual(emptySyncSetup())
+    expect(desktopButtons(syncState(onAccount()))).toEqual([
+      ['sync-now', 'Sync now'],
+      ['sync-account-sign-out', 'Sign out…'],
+      ['sync-disconnect', 'Turn off…']
+    ])
+
+    const alone = section('sync', syncState(onAccount({ devices: [] })))
+    expect(alone.groups.find((g) => g.id === 'sync-devices')?.empty).toBe(
+      'No other device has synced to this account yet'
+    )
+    const merge = actionRow(
+      section('sync', syncState(onAccount({ pendingMerge: true }))),
+      'sync-merge'
+    )
+    expect(merge.label).toBe('Your Zenium account already has synced data')
+    expect(merge.form?.title).toBe('Combine with the data in your account?')
+    const off = actionRow(model, 'sync-disconnect').form?.render(() => undefined)
+    if (!isValidElement<{ account?: boolean }>(off)) throw new Error('no form')
+    expect(off.props.account).toBe(true)
+
+    const lines: Array<[NonNullable<SyncStatus['lastErrorKind']>, string]> = [
+      ['quota', 'Your Zenium account’s sync storage is full.'],
+      ['too-large', 'Some of this device’s data is too large to sync.'],
+      ['unavailable', 'Your Zenium account could not be reached.'],
+      ['refused', 'Your Zenium account did not accept the request.']
+    ]
+    for (const [kind, line] of lines) {
+      const now = actionRow(
+        section(
+          'sync',
+          syncState(onAccount({ lastError: 'sync:write quota (HTTP 200)', lastErrorKind: kind }))
+        ),
+        'sync-now'
+      )
+      expect(now.description).toBe(line)
+      expect(now.tone).toBe('danger')
+    }
+  })
+
+  it('the Zenium account, signed out by the service: the §9.33 message row, Sync now waiting and saying nothing twice, and Sign in again first under it – the code and Cancel while it waits', () => {
+    invoke.mockClear()
+    const model = section(
+      'sync',
+      syncState(
+        onAccount({
+          accountSignedOut: true,
+          lastError: 'You were signed out of your Zenium account.',
+          lastErrorKind: 'signed-out'
+        })
+      )
+    )
+    const status = model.groups.find((g) => g.id === 'sync-status')
+    expect(status?.rows.map((r) => r.id)).toEqual(['sync-account-signed-out', 'sync-now'])
+    expect(row(model, 'sync-account-signed-out')).toMatchObject({
+      kind: 'info',
+      label: 'You were signed out of your Zenium account',
+      description: 'Sign in again to keep syncing.',
+      tone: 'danger'
+    })
+    const now = actionRow(model, 'sync-now')
+    expect(now.disabled).toBe(true)
+    expect(now.tone).toBeUndefined()
+    expect(model.groups.find((g) => g.id === 'sync-where')?.rows.map((r) => r.id)).toEqual([
+      'sync-account-sign-in',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name'
+    ])
+    const again = actionRow(model, 'sync-account-sign-in')
+    expect(again).toMatchObject({ label: 'Sign in again', button: 'Sign in again' })
+    again.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.accountSignIn', undefined)
+
+    const waiting = section(
+      'sync',
+      syncState(onAccount({ accountSignedOut: true, accountLink: LINK }))
+    )
+    expect(waiting.groups.find((g) => g.id === 'sync-where')?.rows.map((r) => r.id)).toEqual([
+      'sync-account-code',
+      'sync-account-cancel',
+      'sync-account',
+      'sync-account-sign-out',
+      'sync-device-name'
+    ])
+    // A folder device's page never shows the account's rows, whatever an older status carries.
+    expect(
+      findRow(
+        section('sync', syncState(connected({ accountSignedOut: true }))).groups,
+        'sync-account-signed-out'
+      )
+    ).toBeNull()
   })
 })
 

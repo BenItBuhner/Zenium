@@ -1,5 +1,6 @@
 import type {
   AccountErrorKind,
+  SyncAccountLinkFailure,
   SyncScope,
   SyncSetupRefusal,
   SyncStatus,
@@ -159,6 +160,40 @@ export const SYNC_COPY = {
   wipeRemote: 'Also remove this device’s data from the folder',
   wipeRemoteHint: 'Other devices forget what this one synced; what they have of their own stays.',
   turnOffAction: 'Turn off',
+  // The Zenium account (the third transport, first among them where the host reaches the
+  // service): the paragraph that names it before the folder and the server, its option in Sync
+  // through, and the sign-in's rows – Sign in opens the service's page in a new tab, the code
+  // stands with the wait and Cancel until the tab is approved, then the account's email with
+  // Sign out; the passphrase step is Turn on sync's, as for the other two.
+  introAccount:
+    'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Sign in to your Zenium account – or pick a folder that your cloud drive keeps in sync, or a WebDAV server such as Nextcloud – and choose a passphrase: everything is encrypted on this device before it is sent, so what is stored is only ever ciphertext.',
+  transportAccount: 'Zenium account',
+  transportAccountHint: 'Recommended – nothing else to set up',
+  account: 'Zenium account',
+  accountSignIn: 'Sign in',
+  accountSignInHint: 'Opens the sign-in page in a new tab.',
+  accountSignInAgain: 'Sign in again',
+  accountWaiting: 'Waiting for you to sign in in the new tab…',
+  accountCancel: 'Cancel sign-in',
+  accountCancelAction: 'Cancel',
+  accountSignOut: 'Sign out',
+  accountSignOutHint: 'This device forgets the sign-in.',
+  accountSignOutSyncHint: 'This device stops syncing and keeps what it has.',
+  accountSignOutTitle: 'Sign out of your Zenium account?',
+  accountSignOutDescription:
+    'This device stops syncing and keeps everything it has. Your other devices keep syncing.',
+  accountSignedOut: 'You were signed out of your Zenium account',
+  accountSignedOutHint: 'Sign in again to keep syncing.',
+  accountCodeExpired: 'The code expired before the sign-in finished.',
+  accountNotKept: 'The sign-in could not be kept on this device.',
+  turnOnNeedsAccount: 'Sign in to your Zenium account first.',
+  whereAccount: 'Account and device',
+  noDevicesAccount: 'No other device has synced to this account yet',
+  mergeRowAccount: 'Your Zenium account already has synced data',
+  mergeTitleAccount: 'Combine with the data in your account?',
+  mergeDescriptionAccount:
+    'Another device has already synced to your Zenium account. The first sync brings the two together the way you choose.',
+  wipeRemoteAccount: 'Also remove this device’s data from your Zenium account',
   // The account's outcomes as the page says them (`accountOutcomeLine`): what happened, stated
   // of the account, a full stop each, never a code or a status (§9.33).
   accountSignedOutLine: 'You were signed out of your Zenium account.',
@@ -263,9 +298,25 @@ export type SyncProbeState =
  */
 export interface SyncSetupDraft {
   folder: string | null
-  transport: SyncTransportKind
+  /** The transport picked in Sync through; null until one is, the host's default (`setupTransport`). */
+  transport: SyncTransportKind | null
   webdav: WebDavSyncCredentials
   probe: SyncProbeState
+}
+
+/**
+ * The transport the setup rows are for: the one picked, if the host can reach it, else the
+ * host's first – the Zenium account where it reaches the service, a folder elsewhere. A draft
+ * that names a transport the host cannot reach is read as the folder.
+ */
+export function setupTransport(
+  sync: Pick<SyncStatus, 'accountAvailable' | 'webdavAvailable'>,
+  picked: SyncTransportKind | null
+): SyncTransportKind {
+  const transport = picked ?? (sync.accountAvailable ? 'account' : 'folder')
+  if (transport === 'account' && !sync.accountAvailable) return 'folder'
+  if (transport === 'webdav' && !sync.webdavAvailable) return 'folder'
+  return transport
 }
 
 /**
@@ -280,7 +331,7 @@ export const WEBDAV_FOLDER_DEFAULT = DEFAULT_WEBDAV_FOLDER
 export function emptySyncSetup(): SyncSetupDraft {
   return {
     folder: null,
-    transport: 'folder',
+    transport: null,
     webdav: { url: '', username: '', password: '', folder: WEBDAV_FOLDER_DEFAULT },
     probe: { state: 'idle' }
   }
@@ -427,6 +478,24 @@ export function accountOutcomeLine(kind: AccountErrorKind): string {
       return SYNC_COPY.accountUnreachable
     case 'refused':
       return SYNC_COPY.accountRefused
+  }
+}
+
+/**
+ * Why the last sign-in did not finish (`SyncStatus.accountLinkFailure`), as the Sign in row's
+ * line: the code ran out, the service could not be reached or asked to slow down, or this
+ * device's secret store would not keep the sign-in.
+ */
+export function accountLinkFailureLine(failure: SyncAccountLinkFailure): string {
+  switch (failure) {
+    case 'expired':
+      return SYNC_COPY.accountCodeExpired
+    case 'unavailable':
+      return SYNC_COPY.accountUnreachable
+    case 'rate-limited':
+      return SYNC_COPY.accountRateLimited
+    case 'secrets':
+      return SYNC_COPY.accountNotKept
   }
 }
 
