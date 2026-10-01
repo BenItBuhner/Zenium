@@ -311,32 +311,21 @@ class TabWebView(
      * said before each of the agent's actions and taken back when it lets the tab go; OS-40).
      * The page's `beforeunload` objection is then the agent's question, not the user's
      * ([UnloadObjection]): the agent's input is trusted input, so a page it drives may raise
-     * one. Its `alert` / `confirm` / `prompt` go to the agent too ([AgentPageDialogs]: the
-     * `pageDialog` view event, the `JsResult` held for `view.pageDialogAnswer`). Hidden, the view
-     * runs as any hidden one does (nothing pauses a GONE WebView; [TabHost.setVisible]). A show
-     * clears it: a tab brought in front is the user's again, sheet and all, until the agent's
-     * next action says otherwise (§9.23). Cleared too when the view is bound to another tab
-     * ([TabHost.bind], [TabHost.adopt]). A dialog held for the agent when the flag goes is
-     * dismissed – the page the user now looks at (or another tab's) must not sit in a call
-     * nobody will answer – and the core hears so (`pageDialogGone`).
+     * one. Hidden, the view runs as any hidden one does (nothing pauses a GONE WebView;
+     * [TabHost.setVisible]). A show clears it: a tab brought in front is the user's again, sheet
+     * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
+     * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
+     *
+     * TODO(OS-40 part B): the page's `alert` / `confirm` / `prompt` still go to [pageDialog]'s
+     * dismissal for a hidden agent-driven page. They cannot be round-tripped to the core while
+     * the page waits in the call: the chrome WebView's JavaScript shares the one renderer with
+     * the pages and is frozen for as long as the call lasts (`PageDialogsDemo` scenario 9), so a
+     * `pageDialog` view event would never be answered and the browser would hang. The viable
+     * design is a standing per-tab policy the agent sets ahead of the call (accept / dismiss /
+     * a prompt's text), answered here at once and reported to the agent after – a core change
+     * (`AgentService`, `browser_handle_dialog`) for a later PR.
      */
     var agentDriven = false
-        set(value) {
-            field = value
-            if (!value) dropAgentDialog()
-        }
-    /** The page's dialog held for its agent's answer ([AgentPageDialogs]), if any; one at a time, the renderer waits in the call. */
-    private var agentDialog: HeldAgentDialog? = null
-    private var agentDialogSeq = 0
-
-    private class HeldAgentDialog(
-        val id: String,
-        val kind: PageDialogKind,
-        val frameUrl: String,
-        val message: String,
-        val defaultValue: String,
-        val result: JsResult
-    )
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
@@ -445,7 +434,6 @@ class TabWebView(
             up.sheet.dismiss()
             up.result.cancel()
         }
-        dropAgentDialog()
         unloadCheck?.settle(leave = true, destroyView = false)
         cancelHeldFileChoosers()
         clearAgentUploads()
@@ -2002,23 +1990,14 @@ class TabWebView(
 
     /**
      * The page called `alert`, `confirm` or `prompt` from the frame at `frameUrl` and waits in
-     * the call (PUI-27). A page an agent drives ([agentDriven]) has its dialog routed to the
-     * agent ([askAgent], OS-40 part B): the core says whose it is and answers, and only a tab
-     * that turns out not to be an agent's comes back here as `user`. A page the user is not
-     * looking at – a hidden tab's, or the shown tab's under the overview – has its dialog
-     * answered as a dismissal at once: the WebView's one renderer waits in the call for every
-     * page and for the chrome, so nothing could bring the tab forward for the dialog to wait on,
-     * as Chrome's would (`PageDialogSpec`). So is a dialog of a page told to open no more this
-     * visit ([PageDialogVisit]); the checkbox that tells it so is offered from its second dialog
-     * on.
+     * the call (PUI-27). A page the user is not looking at – a hidden tab's, or the shown tab's
+     * under the overview – has its dialog answered as a dismissal at once: the WebView's one
+     * renderer waits in the call for every page and for the chrome, so nothing could bring the
+     * tab forward for the dialog to wait on, as Chrome's would (`PageDialogSpec`). So is a
+     * dialog of a page told to open no more this visit ([PageDialogVisit]); the checkbox that
+     * tells it so is offered from its second dialog on.
      */
     private fun pageDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
-        if (agentDriven && askAgent(kind, frameUrl, message ?: "", defaultValue ?: "", result)) return
-        userDialog(kind, frameUrl, message, defaultValue, result)
-    }
-
-    /** The user's path of [pageDialog]: the dismissal of a page they are not looking at, the visit's silence, or the sheet. */
-    private fun userDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
         if (!isShown) {
             result.cancel()
             return
@@ -2030,65 +2009,6 @@ class TabWebView(
         }
         val spec = PageDialogSpec.page(kind, frameUrl, currentDocument ?: url ?: "", message ?: "", defaultValue ?: "", offer)
         showDialog(spec, result) { _, suppress -> dialogVisit.answered(suppress) }
-    }
-
-    // --- an AI agent's page dialogs (AgentPageDialogs.kt, OS-40 part B) -----------------------------
-
-    /**
-     * The page an agent drives opened a dialog: nothing opens; the core hears of it
-     * (`pageDialog`) and answers with [answerPageDialog] – the agent's word, the core's
-     * two-minute default (a dismissal), or `user` for a tab that is not an agent's. The
-     * `JsResult` waits meanwhile; [dropAgentDialog] dismisses one left waiting when the flag
-     * goes or the view does. False for a kind the core is never asked about (none of the
-     * page's three), and for a second dialog while one is held – it cannot be, the renderer
-     * waits in the call – which is dismissed rather than left to wait on an answer that would
-     * name the first.
-     */
-    private fun askAgent(kind: PageDialogKind, frameUrl: String, message: String, defaultValue: String, result: JsResult): Boolean {
-        val id = "pd_${++agentDialogSeq}"
-        val event = AgentPageDialogs.event(id, kind, frameUrl, currentDocument ?: url ?: "", message, defaultValue) ?: return false
-        if (agentDialog != null) {
-            result.cancel()
-            return true
-        }
-        agentDialog = HeldAgentDialog(id, kind, frameUrl, message, defaultValue, result)
-        host.viewEvent(tabId, "pageDialog", event)
-        return true
-    }
-
-    /**
-     * The core's answer to a held dialog (`view.pageDialogAnswer`): the agent accepted (a
-     * prompt with its text) or dismissed it, or `user` – the tab is not an agent's, and Zenium's
-     * sheet opens as it would have ([userDialog], which counts it for the visit as any of the
-     * user's). An answer to a dialog no longer held (the flag went, the page did) is nothing.
-     * The visit's count and its silencing never see an agent's dialog: nothing the agent
-     * answers is remembered for the user.
-     */
-    fun answerPageDialog(dialogId: String, args: JSONObject) {
-        val held = agentDialog?.takeIf { it.id == dialogId } ?: return
-        agentDialog = null
-        when (val answer = AgentPageDialogs.answer(args, held.kind)) {
-            AgentPageDialogs.Answer.User -> userDialog(held.kind, held.frameUrl, held.message, held.defaultValue, held.result)
-            AgentPageDialogs.Answer.Cancel -> held.result.cancel()
-            is AgentPageDialogs.Answer.Accept -> {
-                val result = held.result
-                if (result is JsPromptResult) result.confirm(answer.value) else result.confirm()
-            }
-        }
-    }
-
-    /**
-     * A dialog held for the agent goes with the flag ([agentDriven] off: the tab brought in
-     * front, the agent letting it go, the view bound to another tab) or with the view: the page
-     * hears a dismissal – §9.23's default, no sheet for a page nobody asked to see one on – and
-     * the core hears the dialog is gone (`pageDialogGone`), so the agent's answer, when it
-     * comes, names nothing.
-     */
-    private fun dropAgentDialog() {
-        val held = agentDialog ?: return
-        agentDialog = null
-        held.result.cancel()
-        host.viewEvent(tabId, "pageDialogGone", json("dialogId" to held.id))
     }
 
     /**

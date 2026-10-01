@@ -1121,7 +1121,6 @@ export function createPreviewBridge(): NativeBridge {
     'view.setDesktopMode': () => undefined,
     'view.setDarkening': () => undefined,
     'view.setAgentDriven': () => undefined,
-    'view.pageDialogAnswer': () => undefined,
     'view.setPageRules': () => undefined,
     // Find in page: a same-origin frame is searched for real; a cross-origin one (any live site)
     // cannot be read, so it gets a stand-in count derived from the text (0 to 9 matches, so both

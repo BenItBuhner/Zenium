@@ -1227,8 +1227,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
             // The agent's word on driving the page while the layout hides it (OS-40; `TabWebView.agentDriven`).
             "view.setAgentDriven" -> { tab?.agentDriven = args.bool("driven"); reply(null) }
-            // The core's answer to a dialog held for the agent driving the page (OS-40 part B; `AgentPageDialogs`).
-            "view.pageDialogAnswer" -> { tab?.answerPageDialog(args.str("dialogId"), args); reply(null) }
             // The image-search upload (CT-32): an urlencoded body through `postUrl`, a multipart
             // one as the self-submitting form document the core built (`ImagePostNavigation`).
             "view.post" -> {

@@ -255,12 +255,8 @@ export function androidCapabilities({
     // The chrome lies under the page views: `Host.kt` answers `view.shown` from the view's own
     // drawn frame (Q1, `views.ts` `askShown`), and the chrome's stand-ins leave on that answer.
     placementAnswered: true,
-    // The `alert` / `confirm` / `prompt` of a page an agent drives hidden (`view.setAgentDriven`)
-    // comes to the core as Kotlin's `pageDialog` view event with the `JsResult` held, and the
-    // agent answers it with `browser_handle_dialog` (`agentDialogs.ts`, OS-40 part B); a user's
-    // page keeps Kotlin's native sheet. A `beforeunload` is Kotlin's own decision
-    // (`UnloadObjection`): an agent's page leaves, as the core's `confirmLeave` answers for one.
-    agentDialogs: true,
+    // Kotlin's WebChromeClient answers page dialogs itself, so none reaches an agent yet.
+    agentDialogs: false,
     // The prompts the core itself raises for the WebView (sign-in, site permissions, opening
     // another app) go to an agent's tab's agent, and so do the three Kotlin would otherwise
     // answer with system UI over the page: the file chooser (`onShowFileChooser`), the
@@ -1927,12 +1923,6 @@ export class AndroidPlatform implements Platform {
     // A view's word for the agent driving its tab (a chooser answer refused on this device) goes
     // with the agent's next result, as the core's own notices do.
     this.views.agentNotices = (tabId, line) => browser.agents.driver(tabId)?.notices.push(line)
-    // The page dialogs Kotlin holds for an agent-driven view (OS-40 part B): the service says
-    // whose each is before the core routes it, and hears of one Kotlin dropped.
-    this.views.agentDialogs = {
-      takes: (tabId) => browser.agents.takesDialog(tabId),
-      dismiss: (tabId) => browser.agents.dismissAgentDialog(tabId)
-    }
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
