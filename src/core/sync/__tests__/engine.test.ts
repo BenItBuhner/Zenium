@@ -4274,9 +4274,8 @@ describe('the extensions across devices – the #715 follow-ups (seed #38)', () 
     (await published(d)).filter((r) => r.type === 'extension')
   const declinedOf = (d: Device): Record<string, number> | undefined => {
     d.engine.flushSync()
-    return (
-      JSON.parse(d.io.files['sync.json']!) as { declinedExtensions?: Record<string, number> }
-    ).declinedExtensions
+    return (JSON.parse(d.io.files['sync.json']!) as { declinedExtensions?: Record<string, number> })
+      .declinedExtensions
   }
   const metaOf = (d: Device): MetaMap => {
     d.engine.flushSync()
