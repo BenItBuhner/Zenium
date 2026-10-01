@@ -1,5 +1,6 @@
 import type { Suggestion } from '@shared/types'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
+import { ZEN_EASE } from '@renderer/lib/motion/tokens'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 
 /**
@@ -16,8 +17,6 @@ import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/mot
 export const EXIT_TRAVEL = 120
 /** How far the row shrinks on its way out. */
 export const EXIT_SCALE = 0.1
-/** `--zen-ease`, for the Web Animations API (which cannot read a custom property). */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
 /** Where a ghost stands: offsets from the list's padding edge, as `position: absolute` draws it. */
 export interface GhostBox {
@@ -100,7 +99,7 @@ export function runRowExit(
       (el) =>
         el.animate?.([{ opacity: 1 }, { opacity: 0 }], {
           duration: REDUCED_FADE_MS,
-          easing: EASE,
+          easing: ZEN_EASE,
           fill: 'forwards'
         }) ?? null
     )

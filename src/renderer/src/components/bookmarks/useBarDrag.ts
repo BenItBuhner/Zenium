@@ -4,6 +4,7 @@ import type { BookmarkNode } from '@shared/types'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
 import type { ChipMotion } from './chipMotion'
 import { forbiddenTargets } from './tree'
 
@@ -259,10 +260,10 @@ export function useBarDrag({
       if (!settleTo) {
         // Into a folder: the ghost dissolves where it is.
         if (ghost) {
-          ghost.style.transition = 'opacity 120ms var(--zen-ease)'
+          ghost.style.transition = `opacity ${MOTION_STATE_MS}ms var(--zen-ease)`
           ghost.style.opacity = '0'
         }
-        setTimeout(settled, 130)
+        setTimeout(settled, MOTION_STATE_MS + 10)
         return
       }
       const from = live.current

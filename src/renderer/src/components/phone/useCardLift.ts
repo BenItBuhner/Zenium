@@ -20,6 +20,7 @@ import {
 } from '@renderer/lib/gestures/dropTarget'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
+import { LIFT_SCALE } from '@renderer/lib/motion/tokens'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { createStore } from '@renderer/lib/store'
 import { CardSwipe } from './cardSwipe'
@@ -45,8 +46,7 @@ const SPRING_FOLLOW: SpringConfig = {
   restDelta: 0.3,
   restSpeed: 6
 }
-/** Scale of the card in the hand (v2 §11.4); over a merge target it tucks in further. */
-const LIFT_SCALE = 1.02
+/** The card in the hand is drawn at the lift's scale (v2 §11.4, `LIFT_SCALE`); over a merge target it tucks in further. */
 const TUCK_SCALE = 0.84
 
 /**
