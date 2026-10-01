@@ -1,110 +1,106 @@
-import {
-  heldPageOffset,
-  holdPage,
-  pageHeldByPull,
-  setPageHold,
-  type PageHold
-} from '@renderer/lib/pull'
-import { bandSignals, subscribeBandSignals, type BandSignals } from './signals'
+import { bandStore, chooseBand, dismissBand, setBandFront, shownBand } from '@renderer/lib/band'
+import type { BandSeam } from '@renderer/lib/motion/band'
+import { holdPage, setPageHold, type PageHold } from '@renderer/lib/pull'
+import { bandMayShow, subscribeBandSignals } from './signals'
 
 /**
- * The page-edge band's host on Android (motion spec §3.4 Android): the seam the band's shared
- * model drives, implemented over the pull-to-refresh channel. The band's spring writes the
- * page's offset here; it travels the one channel the pull uses (`lib/pull.ts` → the bridge's
- * `view.setPullOffset` → `Host.kt` → `TabWebView.setPullOffset`), so Kotlin moves the page the
- * same way for both and one source has it at a time: a hold is refused while a pull has the
- * page, and a pull that begins on the held page takes it over where it sits – the band is
- * {@link BandHost.onDisplaced told} and lets go without the page moving. No per-frame work of
- * the host's own: the model's driver calls {@link BandHost.setOffset} per frame and the stores
+ * The page-edge band's host on Android (motion spec §3.4 Android): the {@link BandSeam} the
+ * band's motion driver (`lib/motion/band.ts`) writes to, implemented over the pull-to-refresh
+ * channel, and the host's word to the band's model (`lib/band.ts`) on which tab is in front and
+ * whether a band may show on it.
+ *
+ * The band's spring writes the page's offset here; it travels the one channel the pull uses
+ * (`lib/pull.ts` → the bridge's `view.setPullOffset` → `Host.kt` → `TabWebView.setPullOffset`),
+ * so Kotlin moves the page the same way for both and one source has it at a time: a frame is
+ * refused while a pull has the page, and a pull that begins on the held page takes it over
+ * where it sits – the model hears the frame is not the band's (`pulling` → not eligible), the
+ * shown offer is taken down as the chrome's doing (`program`: no tenant counts it as the user's
+ * refusal), and a state waits for the pull to end and returns on its own entrance. No per-frame
+ * work of the host's own: the driver calls {@link BandSeam.translate} per frame, the stores
  * publish at rest.
+ *
+ * The page the band stands on is the front tab's. A tab leaving the front with its page held
+ * has it put home at once – a view in the back must not keep its translation for its return –
+ * and the page coming to the front is put where the band stands if the band stands on it (a
+ * window-wide band stands on every page tab, §3.2); a leave the model asks for after the switch
+ * (a tab-scoped band's, or the new page's being no place for a band) moves no page the band
+ * does not hold.
  */
-export interface BandHost {
+export interface AndroidBandHost extends BandSeam {
+  /** The page's offset the band last asked for (0 shut) – what a tab change re-targets. */
+  readonly offset: number
   /**
-   * Put `tabId`'s page `offset` CSS px below the frame's top edge (0: home). False when the
-   * page is not the band's to move right now – a pull has it, or another tab's page is held;
-   * the band waits (`signals().pulling`, {@link BandHost.subscribe}).
-   */
-  setOffset(tabId: string, offset: number): boolean
-  /** Where the band has `tabId`'s page right now (0 when it holds nothing of it). */
-  offset(tabId: string): number
-  /** The chrome around the page: the front tab, the page's kind, what stands over it. */
-  signals(): BandSignals
-  /** Hear the signals change (once at once with the current reading); returns the unsubscribe. */
-  subscribe(listener: (signals: BandSignals) => void): () => void
-  /**
-   * A pull-to-refresh began on the held page and carries on from `offset`: the band lets go –
-   * its content fades, its spring stops – and must not move the page. Returns the unsubscribe.
-   */
-  onDisplaced(listener: (tabId: string, offset: number) => void): () => void
-  /**
-   * The band left the host (unmounted): the page comes home at once and the host stops
-   * listening. Not for a dismissal – the band's own spring brings the page home for those.
+   * The band left the host (unmounted): the held page comes home at once, the model hears no
+   * front, and the host stops listening. Not for a dismissal – the band's own spring brings the
+   * page home for those.
    */
   release(): void
 }
 
 /**
- * The one Android host. A tab leaving the front with its page held has the page put home at
- * once – a view in the back must not keep its translation for its return (the band comes back
- * on its own terms, §3.2) – whether or not the model asks for it.
+ * The one Android host; the touch shell creates it when the band's layer mounts and
+ * {@link AndroidBandHost.release releases} it when the layer goes.
  */
-export function createAndroidBandHost(): BandHost {
-  const displaced = new Set<(tabId: string, offset: number) => void>()
-  const listeners = new Set<(signals: BandSignals) => void>()
-  let held: string | null = null
+export function createAndroidBandHost(): AndroidBandHost {
   let front: string | null = null
+  /** The tab whose page the host holds translated (an accepted frame above 0). */
+  let held: string | null = null
+  let offset = 0
+
+  const write = (tabId: string, x: number): boolean => {
+    if (!holdPage(tabId, x)) return false
+    if (x > 0) held = tabId
+    else if (held === tabId) held = null
+    return true
+  }
 
   const hold: PageHold = {
-    displaced: (tabId, offset) => {
+    displaced: (tabId) => {
       if (held === tabId) held = null
-      for (const listener of displaced) listener(tabId, offset)
+      // §3.4 Android: a pull while a band stands dismisses the band first – an offer goes (not
+      // the user's answer: `program`); a state holds and waits for the pull to end. The pull
+      // has already told the model the frame is not the band's, so the band that stood is read
+      // as if it were.
+      const stood = chooseBand({ ...bandStore.get(), eligible: true })
+      if (stood?.form === 'offer') dismissBand(stood.id, 'program')
     }
   }
   setPageHold(hold)
 
-  const setOffset = (tabId: string, offset: number): boolean => {
-    const ok = holdPage(tabId, offset)
-    if (ok) held = offset > 0 ? tabId : null
-    return ok
-  }
-
-  // One reading of the signals for the host's own rule and every listener of the model's.
   const off = subscribeBandSignals((signals) => {
-    if (signals.tabId !== front) {
-      if (front !== null && held === front) setOffset(front, 0)
-      front = signals.tabId
-    }
-    for (const listener of listeners) listener(signals)
+    // The model first: it decides whether a band stands on the page coming to the front.
+    setBandFront(signals.tabId, bandMayShow(signals, 'state'))
+    if (signals.tabId === front) return
+    if (front !== null && held === front) write(front, 0)
+    front = signals.tabId
+    if (front !== null && offset > 0 && shownBand() !== null) write(front, offset)
   })
 
   return {
-    setOffset,
-    offset: (tabId) => heldPageOffset(tabId),
-    signals: bandSignals,
-    subscribe: (listener) => {
-      listeners.add(listener)
-      listener(bandSignals())
-      return () => {
-        listeners.delete(listener)
-      }
+    get offset() {
+      return offset
     },
-    onDisplaced: (listener) => {
-      displaced.add(listener)
-      return () => {
-        displaced.delete(listener)
-      }
+    translate: (x) => {
+      offset = Math.max(0, x)
+      if (front === null) return
+      // A frame moves the page the band holds, or the page a band stands on (its entrance);
+      // a leave after a tab switch – the band gone from the new page – moves nothing.
+      if (held !== front && shownBand() === null) return
+      write(front, offset)
+    },
+    rest: (height) => {
+      // Android lays nothing out at rest: the page stays where the hold has it. At 0 the hold
+      // is let go (the page is home; the pull is free to take it).
+      if (height === 0 && held !== null) write(held, 0)
+    },
+    paint: () => {
+      // The band's content writes its own opacity; the page's chrome has nothing to paint.
     },
     release: () => {
-      if (held !== null) setOffset(held, 0)
+      if (held !== null) write(held, 0)
       off()
-      listeners.clear()
-      displaced.clear()
       setPageHold(null)
+      setBandFront(null, false)
     }
   }
-}
-
-/** Whether a pull has the page right now (the band's driver waits before its first frame). */
-export function pageBusy(): boolean {
-  return pageHeldByPull()
 }
