@@ -28,6 +28,15 @@ export const LINK_TTL_MS = 10 * 60 * 1000
  * previous token counts as reuse and revokes the session.
  */
 export const RETRY_GRACE_MS = 60 * 1000
+/**
+ * How long a device that names its attempt may repeat it: a refresh that carries the same
+ * `attempt` id as the rotation it never received the answer to is a retry, however long the
+ * device was offline or backgrounded meanwhile – up to this cap, past which the previous token is
+ * reuse like any other. A refresh without an attempt id keeps `RETRY_GRACE_MS`.
+ */
+export const RETRY_ATTEMPT_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+/** An attempt id's length as the client sends it (`newAttemptId`: 16 random bytes in base64url). */
+export const MAX_ATTEMPT_ID = 64
 export const ACCESS_TOKEN_TTL_S = 60 * 60
 export const REVOKED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 export const DELETE_BATCH = 200

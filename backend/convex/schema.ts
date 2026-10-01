@@ -53,6 +53,11 @@ export default defineSchema({
     prevRefreshHash: v.optional(v.string()),
     /** When `prevRefreshHash` stopped being current: the start of its retry grace. */
     rotatedAt: v.optional(v.number()),
+    /**
+     * The client's id for the attempt that rotated `prevRefreshHash` away: a refresh presenting
+     * that token with the same id is the device retrying, not a copy (`tokens.rotate`).
+     */
+    rotateAttempt: v.optional(v.string()),
     deviceName: v.string(),
     kind: deviceKind,
     createdAt: v.number(),

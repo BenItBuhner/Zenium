@@ -13,7 +13,7 @@ import {
   signJwt,
   verifySvix
 } from './lib/crypto'
-import { ACCESS_TOKEN_TTL_S, DEVICE_AUDIENCE } from './lib/limits'
+import { ACCESS_TOKEN_TTL_S, DEVICE_AUDIENCE, MAX_ATTEMPT_ID } from './lib/limits'
 
 const http = httpRouter()
 
@@ -168,12 +168,21 @@ http.route({
     const presented = body?.['refreshToken']
     if (typeof presented !== 'string' || presented.length < 32)
       return json({ error: 'bad-request' }, 400)
+    // The client's id for this rotation attempt, optional: the same id again with the previous
+    // token is a retry (`tokens.rotate`). Anything but a short string is a request we cannot read.
+    const attempt = body?.['attempt']
+    if (
+      attempt !== undefined &&
+      (typeof attempt !== 'string' || attempt.length === 0 || attempt.length > MAX_ATTEMPT_ID)
+    )
+      return json({ error: 'bad-request' }, 400)
     const next = randomToken()
     let result
     try {
       result = await ctx.runMutation(internal.tokens.rotate, {
         refreshHash: await sha256Hex(presented),
-        nextRefreshHash: await sha256Hex(next)
+        nextRefreshHash: await sha256Hex(next),
+        ...(attempt !== undefined ? { attempt } : {})
       })
     } catch (error) {
       if (rateLimited(error)) return json({ error: 'rate-limited' }, 429)
