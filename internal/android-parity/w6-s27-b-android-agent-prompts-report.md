@@ -21,7 +21,7 @@ Related store report (not edited here): `internal/mcp-reliability/native-prompts
 
 ## Status
 
-Built, tested locally, draft PR open. Waiting on GitHub Actions for the PR (see `## Tests run`).
+Built, tested locally, draft PR open and green on GitHub Actions (see `## READY`).
 
 - #743's `agentDriven` flag landed on `main` while this was open and is merged in. It is **not**
   reused: the core has two distinct hooks with different lifetimes. `TabView.setAgentDriven` is said
@@ -100,17 +100,23 @@ Rule-(b) value: `git diff b5de02664 HEAD -- <file> | grep '^[+-][^+-]' | sha1sum
 
 ## Tests run
 
-Local, on the merged tree (`b9e1bb1ee`):
+Local, on the tree with `main` merged (`944196b87`, after #743/#752):
 
 | Command                                                                                                                                                 | Result                                                                |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `npm run typecheck`                                                                                                                                     | pass                                                                  |
 | `npm run lint`                                                                                                                                          | exit 0; 16 pre-existing prettier warnings, none in files touched here |
-| `npm test` (full vitest)                                                                                                                                | 1148 files passed, 3 skipped; 16217 tests passed, 5 skipped           |
-| `npx vitest run src/android/__tests__/agentPrompts.test.ts src/android/__tests__/views.test.ts`                                                         | 27 passed                                                             |
-| `cd android && ANDROID_HOME=$HOME/android-sdk ./gradlew testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin -PskipWeb --no-daemon` (CI's set) | BUILD SUCCESSFUL in 2m 39s; `AgentPromptsTest` tests=10 failures=0    |
+| `npm test` (full vitest)                                                                                                                                | 1148 files passed, 3 skipped; 16220 tests passed, 5 skipped           |
+| `npx vitest run src/android/__tests__/agentPrompts.test.ts src/android/__tests__/views.test.ts`                                                         | 28 passed                                                             |
+| `cd android && ANDROID_HOME=$HOME/android-sdk ./gradlew testDebugUnitTest assembleDebug compileDebugAndroidTestKotlin -PskipWeb --no-daemon` (CI's set) | BUILD SUCCESSFUL; `AgentPromptsTest` tests=10 failures=0 errors=0     |
 
-CI: GitHub Actions run ids for PR #755 are recorded in `## READY` once they report.
+CI (PR #755, head `944196b87`): run [36840613003](https://github.com/BenItBuhner/Zenium/actions/runs/36840613003)
+— Typecheck, lint, test / Android debug APK / Desktop boot smoke (Linux) / Bundle on a case-insensitive
+filesystem / Accounts backend and website / Workflow lint (actionlint): all pass.
+
+Note: the first three pushes produced no Actions run because `main` had moved (#743, #752) and the PR
+was `mergeable_state: dirty`; GitHub creates no `pull_request` run for a conflicting PR. Merging `main`
+(`9c5c8cafc`) fixed that.
 
 ## WORDS
 
@@ -126,3 +132,12 @@ none — no new user-facing strings. The one new sentence is the agent-facing no
 - If a `KeyChain` enumeration ever appears (or Zenium gains its own cert store), `Security.askAgent`
   should describe that list instead of the session's picked aliases.
 - Consider a size cap / streaming path for inline agent uploads if agents start sending large files.
+
+## READY
+
+- Head at the green run: `944196b87a62ae00506d4ad31f3b8dae962b40e3` (`cursor/android-agent-prompts-9271`,
+  draft PR #755 against `main`). The commit adding this section touches only this report.
+- CI: run 36840613003 — success on all six jobs.
+- One line: on Android, the file chooser, the client-certificate pick and the download's Save As of a tab an
+  agent drives now go to the agent through `agentPrompts` (2-minute default, nothing remembered, no OS UI
+  over the agent's tab); print and File System Access pickers are recorded as WebView limits, not listed.
