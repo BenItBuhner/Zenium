@@ -317,8 +317,11 @@ describe('a scroll', () => {
     mount()
     pointer('pointerdown', 40, 20)
     pointer('pointermove', 40, 40)
+    // The list's scroll: the move is not cancelled (no `touch-action` stands in its way).
+    expect(touchMove()).toBe(false)
     hold()
     expect(liftTabByTouch).not.toHaveBeenCalled()
+    expect(touchMove()).toBe(false)
     pointer('pointerup', 40, 40)
     // The browser sends no click after a scroll; were one to come it would be the row's.
     click()
