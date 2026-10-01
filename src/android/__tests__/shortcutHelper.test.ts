@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { defaultShortcuts } from '../../shared/shortcuts'
+import { CHROMES_HELPER_ROWS, defaultShortcuts } from '../../shared/shortcuts'
+import { S } from '../../shared/strings'
 import type { Platform, Shortcut } from '../../shared/types'
 import { helperShortcuts } from '../shortcutHelper'
 
@@ -26,35 +27,26 @@ function chromesRows(): Set<string> {
 }
 
 /**
- * Chrome's register (§9.1): the first word capitalised, the rest lowercase but for a product's
- * name or an acronym, which keeps its capitals (Compact Mode, Reader View, Glance, URL, Markdown,
- * Chrome's "Bookmarks bar"); 'Space' keeps its capital in any position; 'split view' is a common
- * noun written lower-case; no row ends in an ellipsis (Chrome's helper rows carry none – the
- * Settings label keeps its own).
+ * Chrome's register (§9.1 v2): the first word capitalised, the rest lowercase but for a coined
+ * sense, a proper noun or an acronym, which keeps its capitals (Glance, Space, URL, Markdown,
+ * JavaScript, the hyphenated Picture-in-Picture); a common noun goes lower-case – compact mode,
+ * reader view, split view, bookmarks bar (P-45); no row ends in an ellipsis (Chrome's helper
+ * rows carry none – the Settings label keeps its own). Checked independently of the string
+ * table's `sentence()`, so the two agree on the register rather than one repeating the other.
  */
-const KEEPS_CAPITALS = new Set([
-  'Compact',
-  'Mode',
-  'Reader',
-  'Glance',
-  'URL',
-  'Markdown',
-  'Bookmarks',
-  'Space'
-])
+const KEEPS_CAPITALS = new Set(['Glance', 'Space', 'URL', 'Markdown', 'JavaScript'])
 function isSentenceForm(words: string): boolean {
   if (/…|\.\.\./.test(words)) return false
   if (/\bspace\b/.test(words)) return false
-  if (/split view/i.test(words) && !/split view/.test(words)) return false
   const parts = words.split(' ')
   const first = parts[0]
   if (!first || first[0] !== first[0]?.toUpperCase()) return false
+  // 'split view' after the first word is lower-case ("Split view grid" leads with it; "Toggle
+  // Split View grid" does not pass).
+  const rest = parts.slice(1).join(' ')
+  if (/split view/i.test(rest) && !/split view/.test(rest)) return false
   return parts.every(
-    (word, i) =>
-      i === 0 ||
-      word[0] === word[0]?.toLowerCase() ||
-      KEEPS_CAPITALS.has(word) ||
-      (word === 'View' && parts[i - 1] === 'Reader')
+    (word, i) => i === 0 || word[0] === word[0]?.toLowerCase() || KEEPS_CAPITALS.has(word)
   )
 }
 
@@ -150,8 +142,10 @@ describe('helperShortcuts (TABLET-20)', () => {
     expect(rows.find((r) => r.action === 'tab.new')?.unsupported).toBe(false)
   })
 
-  it("carries the table's helper words: one register on the sheet, Chrome's sentence form, never a case transform of the Settings label", () => {
+  it("carries the table's helper words: one register on the sheet, Chrome's sentence form – the string table's sentence face, never a second typed label", () => {
     const chromes = chromesRows()
+    // The core's mirror of Chrome's rows is the Kotlin table, row for row.
+    expect([...CHROMES_HELPER_ROWS].sort()).toEqual([...chromes].sort())
     const rows = helperShortcuts(TABLE)
     let withWords = 0
     for (const shortcut of TABLE) {
@@ -162,18 +156,20 @@ describe('helperShortcuts (TABLET-20)', () => {
         expect(shortcut.helperLabel, shortcut.action).toBeUndefined()
         continue
       }
-      // Zenium's own: the words the sheet prints are in Chrome's sentence form – the table's
-      // `helperLabel` where the Settings label is not already so – and a helperLabel is a second
-      // register, never the label repeated.
+      // Zenium's own: the words the sheet prints are in Chrome's sentence form – the string
+      // table's sentence face (`S.title`), carried as `helperLabel` where the Settings label is
+      // not already so – and a helperLabel is a second register, never the label repeated.
       const words = shortcut.helperLabel ?? shortcut.label
       expect(isSentenceForm(words), `${shortcut.action}: "${words}"`).toBe(true)
+      expect(words).toBe(S.title(shortcut.action))
       if (shortcut.helperLabel !== undefined) {
         withWords++
         expect(shortcut.helperLabel).not.toBe(shortcut.label)
       }
     }
     expect(withWords).toBeGreaterThanOrEqual(45)
-    // The lead's samples, verbatim.
+    // The lead's samples, verbatim (the string table's words where the D7 pairs renamed an act:
+    // P-2/P-3's Copy Link, P-23's nouns without "Toggle").
     const words = (action: string): string | undefined =>
       TABLE.find((s) => s.action === action)?.helperLabel
     const label = (action: string): string | undefined =>
@@ -181,12 +177,12 @@ describe('helperShortcuts (TABLET-20)', () => {
     expect(words('tab.duplicate')).toBe('Duplicate tab')
     expect(words('tab.moveToStart')).toBe('Move tab to start')
     expect(words('bookmark.allTabs')).toBe('Bookmark all tabs')
-    expect(words('tab.copyUrlMarkdown')).toBe('Copy current URL as Markdown')
+    expect(words('tab.copyUrlMarkdown')).toBe('Copy link as Markdown')
     expect(words('tab.togglePin')).toBe('Pin or unpin tab')
     // The lead's two §9.1 nouns: 'Space' with its capital in any position, 'split view' lower-case.
-    expect(words('split.grid')).toBe('Toggle split view grid')
-    expect(words('split.vertical')).toBe('Toggle split view vertical')
-    expect(words('split.horizontal')).toBe('Toggle split view horizontal')
+    expect(words('split.grid')).toBe('Split view grid')
+    expect(words('split.vertical')).toBe('Split view vertical')
+    expect(words('split.horizontal')).toBe('Split view horizontal')
     expect(words('space.new')).toBe('Create new Space')
     expect(words('space.next')).toBe('Jump to the next Space')
     expect(words('space.prev')).toBe('Jump to the previous Space')
@@ -210,13 +206,22 @@ describe('helperShortcuts (TABLET-20)', () => {
     ]) {
       expect(label(action), action).toMatch(/…$/)
     }
-    // A label already in the register carries none: a product's name with its capitals, and the
-    // ten Switch to Space rows, whose label reads as the sheet would print it.
-    for (const action of ['page.readerMode', 'glance.expand', 'compact.toggle', 'space.switch3']) {
+    // A label already in the register carries none: a coined sense or a hyphenated name with its
+    // capitals, and the ten Switch to Space rows, whose label reads as the sheet would print it.
+    for (const action of ['glance.expand', 'page.pip', 'space.switch3']) {
       expect(words(action), action).toBeUndefined()
     }
     expect(label('space.switch3')).toBe('Switch to Space 3')
-    expect(isSentenceForm('Toggle Reader View')).toBe(true)
+    // P-23's nouns are common nouns: the sheet lower-cases them (§9.1 v2), the label keeps its case.
+    expect(words('page.readerMode')).toBe('Reader view')
+    expect(words('compact.toggle')).toBe('Compact mode')
+    expect(label('compact.toggle')).toBe('Compact Mode')
+    // The sidebar row knows no state here, so it reads the pair's stateless face (the Lead's
+    // re-word of P-23's "Sidebar").
+    expect(label('sidebar.toggle')).toBe('Expand Sidebar')
+    expect(words('sidebar.toggle')).toBe('Expand sidebar')
+    expect(isSentenceForm('Reader view')).toBe(true)
+    expect(isSentenceForm('Toggle Reader View')).toBe(false)
     expect(isSentenceForm('Duplicate Tab')).toBe(false)
     expect(isSentenceForm('Switch to space 3')).toBe(false)
     expect(isSentenceForm('Toggle Split View grid')).toBe(false)

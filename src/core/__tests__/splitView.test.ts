@@ -299,7 +299,9 @@ describe('the ways into a split (split-01)', () => {
       'Vertical',
       'Horizontal',
       '-',
-      'Swap Panes',
+      // The string table's words for `split.swap` – the key table's and the palette's; the pane
+      // header's own menu still says Swap Panes (below) until its family lands.
+      'Swap Split Panes',
       'Unsplit View',
       'New Empty Split View'
     ])
@@ -359,7 +361,7 @@ describe('the ways into a split (split-01)', () => {
       'Vertical',
       'Horizontal',
       '-',
-      'Swap Panes',
+      'Swap Split Panes',
       'Unsplit View',
       'New Empty Split View'
     ])

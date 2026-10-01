@@ -47,7 +47,7 @@ export const TAB_MENU_CHORDS = {
   'Pin Tab': 'Cmd+Ctrl+P',
   'Unpin Tab': 'Cmd+Ctrl+P',
   'Add Tab to New Split View': 'Cmd+Shift+*',
-  'Search Tabs…': 'Cmd+Shift+A'
+  'Search Tabs': 'Cmd+Shift+A'
 }
 
 /**
@@ -82,7 +82,7 @@ export function tabMenuRows(orientation = 'vertical') {
     direction.closeAfter,
     'Move Tab to New Window',
     'Add Tab to New Split View',
-    'Search Tabs…'
+    'Search Tabs'
   ]
 }
 
@@ -136,7 +136,7 @@ export function expectedTabMenu(state, orientation = 'vertical') {
     [direction.closeAfter]: site,
     'Move Tab to New Window': site,
     'Add Tab to New Split View': true,
-    'Search Tabs…': true
+    'Search Tabs': true
   }
   return tabMenuRows(orientation).map((label) => ({
     label,

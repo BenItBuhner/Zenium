@@ -55,9 +55,12 @@ export function replaceConflicts(
   return updates
 }
 
-/** "Already used by Reload: replace?" – the prompt of a conflicting chord. */
+/**
+ * "Already used by Reload: replace?" – the prompt of a conflicting chord. A holder is named
+ * without its ask's ellipsis: the prose names the act ("Find in Page"), not its row.
+ */
 export function conflictPrompt(conflicts: Shortcut[]): string {
-  const names = conflicts.map((s) => s.label)
+  const names = conflicts.map((s) => s.label.replace(/…$/, ''))
   const list =
     names.length <= 2
       ? names.join(' and ')

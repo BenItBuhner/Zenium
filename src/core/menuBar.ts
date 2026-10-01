@@ -11,7 +11,8 @@ import type {
 } from '../shared/types'
 import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
 import { HELP_URL, ISSUES_URL } from '../shared/links'
-import { isHorizontalTabs } from '../shared/toolbarLayout'
+import { S } from '../shared/strings'
+import { forcesRail, isHorizontalTabs } from '../shared/toolbarLayout'
 import { displayUrl } from '../shared/url'
 import { openHelp, openReportUnsafeSite, reportUnsafeSiteUrl } from './help'
 import { clipLabel } from './menus'
@@ -20,7 +21,11 @@ import { permissionSite } from './permissions'
 
 type Template = MenuItemTemplate[]
 
-/** The layouts as the "Split View" submenu lists them: the chords' order, Ctrl+Alt+G / V / H. */
+/**
+ * The layouts as the "Split View" submenu lists them: the chords' order, Ctrl+Alt+G / V / H.
+ * The words are the parent's children – "Grid" under "Split View" – not the acts' table labels
+ * ("Split View Grid"), which would say the parent's words again; the table has no child face.
+ */
 const SPLIT_LAYOUT_ITEMS: ReadonlyArray<{
   layout: SplitLayout
   label: string
@@ -37,10 +42,11 @@ const SPLIT_LAYOUT_ITEMS: ReadonlyArray<{
  * toolbar icon, which here is a shell-pass decision, so the menus carry the entry points).
  * Grid / Vertical / Horizontal run the chords' actions: out of a split they split the active
  * tab with the tab below it in that layout; in a split they turn it to that layout, and the
- * layout the split has is checked – choosing it again leaves the split, as the chord does.
- * Swap Panes (split-07, on the active pane), Unsplit View and New Empty Split View follow, named
- * as the key table names them. Items name their `action`, so each shows its chord and the click
- * runs the same code as the key.
+ * layout the split has is checked – choosing it again leaves the split, as the chord does. The
+ * three read as the parent's children (the string table's "Split View Grid" would say the
+ * parent's words again). Swap Split Panes (split-07, on the active pane), Unsplit View and New
+ * Empty Split View follow, the table's words (`S.menu`), as the key table says them. Items name
+ * their `action`, so each shows its chord and the click runs the same code as the key.
  */
 export function splitViewSubmenu(
   active: Tab | undefined,
@@ -57,9 +63,11 @@ export function splitViewSubmenu(
         enabled: Boolean(active)
       })),
       { type: 'separator' },
-      { label: 'Swap Panes', action: 'split.swap', enabled: Boolean(group) },
-      { label: 'Unsplit View', action: 'split.unsplit', enabled: Boolean(group) },
-      { label: 'New Empty Split View', action: 'split.newEmpty', enabled: Boolean(active) }
+      // "Swap Split Panes" – the key table's and the palette's words for `split.swap`; the pane
+      // header's own menu says "Swap Panes" (`menus.ts`) and resolves with its family.
+      { label: S.menu('split.swap'), action: 'split.swap', enabled: Boolean(group) },
+      { label: S.menu('split.unsplit'), action: 'split.unsplit', enabled: Boolean(group) },
+      { label: S.menu('split.newEmpty'), action: 'split.newEmpty', enabled: Boolean(active) }
     ]
   }
 }
@@ -125,9 +133,19 @@ export function runFromMenuBar(browser: Browser, action: ShortcutAction): void {
  * commands, Zoom and Bring All to Front) are the host's roles. Rebuilt when what it shows
  * changed; `click`s look the front window up when they run, so a menu built while one window
  * was in front works from another.
+ *
+ * Every action row's words are the string table's (`S.menu`, §9 item 10). The bar's standard
+ * items take the platform's own words through the `os` axis (Q4: "Settings…", Window ▸
+ * "Minimize", Edit ▸ Find ▸ "Find…", and Chrome's mac words where they differ from the house
+ * label – Open Location…, Actual Size, Show Full History, Inspect Element, Downloads, Select
+ * Next Tab); Zenium's own acts keep the house label, and View says "Hard Reload". A row that
+ * knows its state reads the state pair (Enter / Exit Full Screen, Enter / Exit Reader View,
+ * Expand / Collapse Sidebar, Bookmark This Tab… / Edit Bookmark…) or is a checkbox (Compact
+ * Mode).
  */
 export function applicationMenu(browser: Browser): Template {
   const { state, tabs } = browser
+  const os = browser.platform.info.os
   const win = frontWindow(browser)
   const active = win ? tabs.activeTabFor(win) : undefined
   const web = Boolean(active) && /^https?:/i.test(active!.url)
@@ -161,8 +179,8 @@ export function applicationMenu(browser: Browser): Template {
       // had drew Electron's generic panel (the icon, the name and the version) instead.
       { label: 'About Zenium', click: settings('about') },
       { type: 'separator' },
-      { label: 'Settings…', action: 'settings.open' },
-      { label: 'Delete Browsing Data…', action: 'privacy.clearBrowsingData' },
+      { label: S.menu('settings.open', { os }), action: 'settings.open' },
+      { label: S.menu('privacy.clearBrowsingData'), action: 'privacy.clearBrowsingData' },
       // The Bookmarks menu's row again, where Chrome's application menu also keeps it.
       {
         label: 'Import Bookmarks and Settings…',
@@ -199,21 +217,21 @@ export function applicationMenu(browser: Browser): Template {
   const file: MenuItemTemplate = {
     label: 'File',
     submenu: [
-      { label: 'New Tab', action: 'tab.new' },
-      { label: 'New Window', action: 'window.new' },
-      { label: 'New Blank Window', action: 'window.newUnsynced' },
-      { label: 'New Private Window', action: 'window.newPrivate' },
-      { label: 'Reopen Closed Tab', action: 'tab.reopenClosed' },
-      { label: 'Open File…', action: 'page.openFile' },
-      { label: 'Open Location…', action: 'urlbar.focus' },
+      { label: S.menu('tab.new'), action: 'tab.new' },
+      { label: S.menu('window.new'), action: 'window.new' },
+      { label: S.menu('window.newUnsynced'), action: 'window.newUnsynced' },
+      { label: S.menu('window.newPrivate'), action: 'window.newPrivate' },
+      { label: S.menu('tab.reopenClosed'), action: 'tab.reopenClosed' },
+      { label: S.menu('page.openFile'), action: 'page.openFile' },
+      { label: S.menu('urlbar.focus', { os }), action: 'urlbar.focus' },
       { type: 'separator' },
-      { label: 'Close Window', action: 'window.close', enabled: Boolean(win) },
-      { label: 'Close Tab', action: 'tab.close', enabled: Boolean(active) },
-      { label: 'Save Page As…', action: 'page.savePage', enabled: web },
+      { label: S.menu('window.close'), action: 'window.close', enabled: Boolean(win) },
+      { label: S.menu('tab.close'), action: 'tab.close', enabled: Boolean(active) },
+      { label: S.menu('page.savePage'), action: 'page.savePage', enabled: web },
       { type: 'separator' },
-      { label: 'Email Page Link…', action: 'page.emailLink', enabled: web },
+      { label: S.menu('page.emailLink'), action: 'page.emailLink', enabled: web },
       { type: 'separator' },
-      { label: 'Print…', action: 'page.printPreview', enabled: Boolean(active) }
+      { label: S.menu('page.printPreview'), action: 'page.printPreview', enabled: Boolean(active) }
     ]
   }
 
@@ -233,10 +251,10 @@ export function applicationMenu(browser: Browser): Template {
       {
         label: 'Find',
         submenu: [
-          { label: 'Find…', action: 'find.open', enabled: Boolean(active) },
-          { label: 'Find Next', action: 'find.next', enabled: Boolean(active) },
-          { label: 'Find Previous', action: 'find.prev', enabled: Boolean(active) },
-          { label: 'Use Selection for Find', action: 'find.useSelection', enabled: web }
+          { label: S.menu('find.open', { os }), action: 'find.open', enabled: Boolean(active) },
+          { label: S.menu('find.next'), action: 'find.next', enabled: Boolean(active) },
+          { label: S.menu('find.prev'), action: 'find.prev', enabled: Boolean(active) },
+          { label: S.menu('find.useSelection'), action: 'find.useSelection', enabled: web }
         ]
       },
       {
@@ -256,6 +274,8 @@ export function applicationMenu(browser: Browser): Template {
     { mode: 'never', label: 'Never' }
   ]
   const fullScreen = Boolean(win?.host.isFullScreen())
+  const railFixed = forcesRail(state.settings.toolbarLayout)
+  const sidebarExpanded = state.settings.sidebarExpanded && !railFixed
   const view: MenuItemTemplate = {
     label: 'View',
     submenu: [
@@ -268,31 +288,43 @@ export function applicationMenu(browser: Browser): Template {
           click: withWindow((w) => browser.setBookmarksBarMode(mode, w))
         }))
       },
-      { label: 'Toggle Sidebar', action: 'sidebar.toggle', enabled: Boolean(win) },
+      // The sidebar's width: the state pair's side the act would take – Collapse Sidebar while
+      // it is expanded, Expand Sidebar at the rail. A layout that fixes the rail (`forcesRail`)
+      // leaves the act nothing to change, so the row greys there.
       {
-        label: 'Compact Mode',
+        label: S.menu('sidebar.toggle', { state: sidebarExpanded }),
+        action: 'sidebar.toggle',
+        enabled: Boolean(win) && !railFixed
+      },
+      {
+        label: S.menu('compact.toggle'),
         type: 'checkbox',
         action: 'compact.toggle',
         checked: Boolean(win?.compactEnabled),
         enabled: Boolean(win)
       },
       { type: 'separator' },
-      { label: 'Stop', action: 'nav.stop', enabled: Boolean(active?.loading) },
-      { label: 'Reload', action: 'nav.reload', enabled: Boolean(active) },
-      { label: 'Reload (Override Cache)', action: 'nav.reloadSkipCache', enabled: Boolean(active) },
+      { label: S.menu('nav.stop'), action: 'nav.stop', enabled: Boolean(active?.loading) },
+      { label: S.menu('nav.reload'), action: 'nav.reload', enabled: Boolean(active) },
+      {
+        label: S.menu('nav.reloadSkipCache'),
+        action: 'nav.reloadSkipCache',
+        enabled: Boolean(active)
+      },
       { type: 'separator' },
       {
-        label: fullScreen ? 'Exit Full Screen' : 'Enter Full Screen',
+        label: S.menu('page.fullscreen', { state: fullScreen }),
         action: 'page.fullscreen',
         enabled: Boolean(win)
       },
-      { label: 'Actual Size', action: 'zoom.reset', enabled: Boolean(active) },
-      { label: 'Zoom In', action: 'zoom.in', enabled: Boolean(active) },
-      { label: 'Zoom Out', action: 'zoom.out', enabled: Boolean(active) },
+      { label: S.menu('zoom.reset', { os }), action: 'zoom.reset', enabled: Boolean(active) },
+      { label: S.menu('zoom.in'), action: 'zoom.in', enabled: Boolean(active) },
+      { label: S.menu('zoom.out'), action: 'zoom.out', enabled: Boolean(active) },
       { type: 'separator' },
       {
-        label:
-          active && browser.reader.isReaderUrl(active.url) ? 'Exit Reader View' : 'Reader View',
+        label: S.menu('page.readerMode', {
+          state: Boolean(active && browser.reader.isReaderUrl(active.url))
+        }),
         action: 'page.readerMode',
         enabled:
           Boolean(active) &&
@@ -306,10 +338,18 @@ export function applicationMenu(browser: Browser): Template {
       {
         label: 'Developer',
         submenu: [
-          { label: 'View Source', action: 'page.viewSource', enabled: web },
-          { label: 'Developer Tools', action: 'devtools.toggle', enabled: Boolean(active) },
-          { label: 'Inspect Element', action: 'devtools.inspector', enabled: Boolean(active) },
-          { label: 'JavaScript Console', action: 'devtools.console', enabled: Boolean(active) }
+          { label: S.menu('page.viewSource'), action: 'page.viewSource', enabled: web },
+          { label: S.menu('devtools.toggle'), action: 'devtools.toggle', enabled: Boolean(active) },
+          {
+            label: S.menu('devtools.inspector', { os }),
+            action: 'devtools.inspector',
+            enabled: Boolean(active)
+          },
+          {
+            label: S.menu('devtools.console'),
+            action: 'devtools.console',
+            enabled: Boolean(active)
+          }
         ]
       }
     ]
@@ -318,31 +358,35 @@ export function applicationMenu(browser: Browser): Template {
   const history: MenuItemTemplate = {
     label: 'History',
     submenu: [
-      { label: 'Home', action: 'nav.home', enabled: Boolean(active) },
-      { label: 'Back', action: 'nav.back', enabled: Boolean(active?.canGoBack) },
-      { label: 'Forward', action: 'nav.forward', enabled: Boolean(active?.canGoForward) },
+      { label: S.menu('nav.home'), action: 'nav.home', enabled: Boolean(active) },
+      { label: S.menu('nav.back'), action: 'nav.back', enabled: Boolean(active?.canGoBack) },
+      {
+        label: S.menu('nav.forward'),
+        action: 'nav.forward',
+        enabled: Boolean(active?.canGoForward)
+      },
       { type: 'separator' },
-      { label: 'Reopen Closed Tab', action: 'tab.reopenClosed' },
+      { label: S.menu('tab.reopenClosed'), action: 'tab.reopenClosed' },
       recentlyClosed(browser),
       ...recentlyVisited(browser),
       ...tabsFromOtherDevices(browser),
       { type: 'separator' },
-      { label: 'Show Full History', action: 'history.sidebar' }
+      { label: S.menu('history.sidebar', { os }), action: 'history.sidebar' }
     ]
   }
 
   const bookmarks: MenuItemTemplate = {
     label: 'Bookmarks',
     submenu: [
-      { label: 'Bookmark Manager', action: 'bookmark.library' },
+      { label: S.menu('bookmark.library'), action: 'bookmark.library' },
       {
-        label: active?.bookmarked ? 'Edit Bookmark…' : 'Bookmark This Page…',
+        label: S.menu('bookmark.add', { state: Boolean(active?.bookmarked) }),
         action: 'bookmark.add',
         enabled: Boolean(active) && !active!.url.startsWith('zen://')
       },
-      { label: 'Bookmark All Tabs…', action: 'bookmark.allTabs', enabled: Boolean(win) },
+      { label: S.menu('bookmark.allTabs'), action: 'bookmark.allTabs', enabled: Boolean(win) },
       { type: 'separator' },
-      { label: 'Show Bookmarks', action: 'bookmark.sidebar' },
+      { label: S.menu('bookmark.sidebar'), action: 'bookmark.sidebar' },
       // Chrome's Bookmarks menu entry: Settings > Import with the dialog up (the bookmark
       // manager's own menu keeps the plain "Import Bookmarks…" file pick, as Chrome's does).
       {
@@ -378,7 +422,11 @@ export function applicationMenu(browser: Browser): Template {
     label: 'Window',
     role: 'window',
     submenu: [
-      { label: 'Minimize', action: 'window.minimize', enabled: Boolean(win) },
+      {
+        label: S.menu('window.minimize', { os }),
+        action: 'window.minimize',
+        enabled: Boolean(win)
+      },
       { label: 'Zoom', role: 'zoom' },
       ...closePrivateWindows,
       { type: 'separator' },
@@ -387,20 +435,22 @@ export function applicationMenu(browser: Browser): Template {
       // first – then Duplicate Window (session-19), the verb that makes another, greyed for a
       // popup or an app window, which have no tab strip to duplicate, as a menu bar greys rather
       // than hides. A group of its own, as Chrome's menu has it.
-      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
+      { label: S.menu('window.name'), action: 'window.name', enabled: Boolean(win) },
       {
-        label: 'Duplicate Window',
+        label: S.menu('window.duplicate'),
         action: 'window.duplicate',
         enabled: Boolean(win) && win!.chrome === 'full'
       },
       { type: 'separator' },
-      { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
-      { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },
+      { label: S.menu('space.next'), action: 'space.next', enabled: Boolean(win) && !local },
+      { label: S.menu('space.prev'), action: 'space.prev', enabled: Boolean(win) && !local },
+      // The app menu's words for `space.new`, whose key table row says "Create New Space": the
+      // act's two labels resolve with the app menu (PR-2b), and the row keeps its words till then.
       { label: 'New Space…', action: 'space.new', enabled: !local },
       { type: 'separator' },
-      { label: 'Downloads', action: 'downloads.open' },
+      { label: S.menu('downloads.open', { os }), action: 'downloads.open' },
       ...(state.capabilities.extensions
-        ? [{ label: 'Add-ons and Themes', action: 'addons.open' as const }]
+        ? [{ label: S.menu('addons.open'), action: 'addons.open' as const }]
         : []),
       { type: 'separator' },
       { label: 'Bring All to Front', role: 'front' }
@@ -430,7 +480,7 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Zenium Help', click: withWindow((w) => openHelp(browser, w), true) },
       { label: 'Keyboard Shortcuts', click: settings('shortcuts') },
       {
-        label: 'Report an Issue…',
+        label: S.menu('help.reportIssue'),
         action: 'help.reportIssue',
         click: () => browser.platform.shell.openExternal(ISSUES_URL)
       },
@@ -483,6 +533,7 @@ function tabMenu(
   withActiveTab: (fn: (tab: Tab, win: ZenWindow) => void) => () => void
 ): MenuItemTemplate {
   const { state, tabs } = browser
+  const os = browser.platform.info.os
   const m = state.model
   const has = Boolean(active)
   const direction = tabDirectionLabels(
@@ -546,15 +597,17 @@ function tabMenu(
         enabled: has && !active!.essential,
         click: withActiveTab((t, w) => browser.newTabAfter(t.id, w))
       },
-      { label: 'Select Next Tab', action: 'tab.next', enabled: has },
-      { label: 'Select Previous Tab', action: 'tab.prev', enabled: has },
-      { label: 'Duplicate Tab', action: 'tab.duplicate', enabled: has },
+      { label: S.menu('tab.next', { os }), action: 'tab.next', enabled: has },
+      { label: S.menu('tab.prev', { os }), action: 'tab.prev', enabled: has },
+      { label: S.menu('tab.duplicate'), action: 'tab.duplicate', enabled: has },
       {
-        label: active && tabs.siteMuted(active.url) ? 'Unmute Site' : 'Mute Site',
+        label: S.menu('page.toggleMuteSite', {
+          state: Boolean(active && tabs.siteMuted(active.url))
+        }),
         enabled: site,
         click: withActiveTab((t) => tabs.toggleMuteSite(t.id))
       },
-      { label: pinned ? 'Unpin Tab' : 'Pin Tab', action: 'tab.togglePin', enabled: has },
+      { label: S.menu('tab.togglePin', { state: pinned }), action: 'tab.togglePin', enabled: has },
       ...folderRows,
       {
         label: 'Close Other Tabs',
@@ -569,18 +622,21 @@ function tabMenu(
       ...(state.capabilities.windows
         ? [
             {
-              label: 'Move Tab to New Window',
+              label: S.menu('tab.moveToNewWindow'),
               enabled: has && shown > 1,
               click: withActiveTab((t, w) => void tabs.moveTabToNewWindow(t.id, null, w))
             }
           ]
         : []),
+      // Chrome's words over the key table's New Empty Split View (`split.newEmpty`): the one
+      // act's second row of this bar, which the string table names once – left as it is till
+      // the Lead rules on the pair.
       {
         label: 'Add Tab to New Split View',
         action: 'split.newEmpty',
         enabled: has && !active!.essential && !active!.splitGroupId
       },
-      { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) }
+      { label: S.menu('tab.search'), action: 'tab.search', enabled: Boolean(win) }
     ]
   }
 }
@@ -604,16 +660,16 @@ export interface TabDirectionLabels {
  * layout (`isHorizontalTabs`) is the one strip that runs along the top; every sidebar layout,
  * the phone's and the tablet's strips included, runs down, so their rows keep "Below" (the
  * lead's ruling, wave 7's backlog under §9.37). Close Tabs Above is the vertical strip's
- * "before" row, which reads "to the Left" along a horizontal one.
+ * "before" row, which reads "to the Left" along a horizontal one. The words are the string
+ * table's orientation axis (P-34: `tab.newAfter`, `tab.closeAfter`, `tab.closeBefore`).
  */
 export function tabDirectionLabels(horizontal: boolean): TabDirectionLabels {
-  return horizontal
-    ? {
-        newTab: 'New Tab to the Right',
-        closeAfter: 'Close Tabs to the Right',
-        closeBefore: 'Close Tabs to the Left'
-      }
-    : { newTab: 'New Tab Below', closeAfter: 'Close Tabs Below', closeBefore: 'Close Tabs Above' }
+  const orientation = horizontal ? 'horizontal' : 'vertical'
+  return {
+    newTab: S.menu('tab.newAfter', { orientation }),
+    closeAfter: S.menu('tab.closeAfter', { orientation }),
+    closeBefore: S.menu('tab.closeBefore', { orientation })
+  }
 }
 
 /** "Recently Closed": newest first, ten at most; the newest is what the reopen chord brings back. */

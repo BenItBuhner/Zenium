@@ -522,13 +522,15 @@ export class AndroidTabView implements TabView {
 
   /**
    * Whether the page may be unloaded (`TabView.confirmUnload`): Kotlin runs its `beforeunload`
-   * handlers through a navigation the page may object to (`TabWebView.confirmUnload`) – an
-   * objection asks "Leave site?" as Zenium's native sheet there (PUI-28; the page's `alert` /
-   * `confirm` / `prompt` are that sheet too, PUI-27: the WebView's one renderer waits in the
-   * page's call for the chrome as well, so nothing the core draws could answer it), and the
-   * answer settles the check – and destroys a view whose page did not object (the core hears
-   * `destroyed`). Only an explicit false keeps the page: a host without the method (an older
-   * APK, the preview host) does not object.
+   * handlers through a navigation the page may object to (`TabWebView.confirmUnload`). On a
+   * touch host an objection under the check is overruled at once (§9.23, `UnloadObjection`): a
+   * close path never puts a "Leave site?" sheet in front of the user – the close is undoable,
+   * and Undo is the protection – so the check settles as leave and destroys the view (the core
+   * hears `destroyed`), as it does for a page that did not object. (The page's `alert` /
+   * `confirm` / `prompt` are Zenium's native sheet there, PUI-27: the WebView's one renderer
+   * waits in the page's call for the chrome as well, so nothing the core draws could answer
+   * it.) Only an explicit false keeps the page: a host without the method (an older APK, the
+   * preview host) does not object.
    */
   async confirmUnload(): Promise<boolean> {
     if (this.destroyed) return true
