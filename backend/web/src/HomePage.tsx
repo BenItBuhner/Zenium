@@ -7,9 +7,8 @@ import { MAX_BYTES } from '../../convex/lib/limits'
 import { describeError } from './errors'
 
 const METHOD_LABEL: Record<string, string> = {
+  email: 'Email',
   password: 'Password',
-  email_code: 'Email code',
-  email_link: 'Email link',
   oauth_google: 'Google'
 }
 

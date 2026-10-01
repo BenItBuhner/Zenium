@@ -44,8 +44,16 @@ const clerkUser = {
   id: 'user_a',
   primary_email_address_id: 'idn_2',
   email_addresses: [
-    { id: 'idn_1', email_address: 'old@example.com', verification: { strategy: 'email_code' } },
-    { id: 'idn_2', email_address: 'primary@example.com', verification: { strategy: 'email_link' } }
+    {
+      id: 'idn_1',
+      email_address: 'pending@example.com',
+      verification: { status: 'unverified', strategy: 'email_code' }
+    },
+    {
+      id: 'idn_2',
+      email_address: 'primary@example.com',
+      verification: { status: 'verified', strategy: 'admin' }
+    }
   ],
   password_enabled: true
 }
@@ -61,7 +69,7 @@ describe('account', () => {
   })
 
   it('maps Clerk sign-in methods, ready for providers added later', () => {
-    expect(authMethodsOf(clerkUser)).toEqual(['email_code', 'email_link', 'password'])
+    expect(authMethodsOf(clerkUser)).toEqual(['email', 'password'])
     expect(
       authMethodsOf({
         id: 'u',
@@ -69,7 +77,7 @@ describe('account', () => {
           {
             id: 'e',
             email_address: 'g@example.com',
-            verification: { strategy: 'from_oauth_google' }
+            verification: { status: 'verified', strategy: 'from_oauth_google' }
           }
         ],
         external_accounts: [{ provider: 'oauth_google' }]
@@ -85,13 +93,13 @@ describe('Clerk webhook', () => {
     const web = asClerkUser(t, 'user_a', 'primary@example.com')
     expect(await web.query(api.account.me, {})).toMatchObject({
       email: 'primary@example.com',
-      authMethods: ['email_code', 'email_link', 'password']
+      authMethods: ['email', 'password']
     })
     expect(
       await webhook(t, { type: 'user.updated', data: { ...clerkUser, password_enabled: false } })
     ).toBe(200)
     expect(await web.query(api.account.me, {})).toMatchObject({
-      authMethods: ['email_code', 'email_link']
+      authMethods: ['email']
     })
   })
 

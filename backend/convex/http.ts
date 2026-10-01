@@ -192,7 +192,7 @@ http.route({
 interface ClerkEmail {
   id: string
   email_address: string
-  verification?: { strategy?: string | null } | null
+  verification?: { status?: string | null; strategy?: string | null } | null
 }
 
 interface ClerkUserData {
@@ -203,13 +203,18 @@ interface ClerkUserData {
   external_accounts?: { provider?: string }[]
 }
 
-/** The account's sign-in methods as Clerk reports them (`password`, `email_code`, `oauth_google`…). */
+/**
+ * The account's sign-in methods (`email`, `password`, `oauth_google`…). A verified address signs
+ * in by code or link, whichever the instance offers; how it was verified (`admin`,
+ * `email_link`…) is not a method. OAuth providers arrive as external accounts.
+ */
 export function authMethodsOf(user: ClerkUserData): string[] {
   const methods = new Set<string>()
   if (user.password_enabled) methods.add('password')
   for (const e of user.email_addresses ?? []) {
-    const strategy = e.verification?.strategy
-    if (strategy) methods.add(strategy === 'from_oauth_google' ? 'oauth_google' : strategy)
+    if (e.verification?.status !== 'verified') continue
+    const strategy = e.verification.strategy ?? ''
+    methods.add(strategy.startsWith('from_oauth_') ? strategy.slice('from_'.length) : 'email')
   }
   for (const a of user.external_accounts ?? []) if (a.provider) methods.add(a.provider)
   return [...methods].sort()
