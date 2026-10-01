@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useLayoutEffect, useMemo } from 'react'
 import type { UIState } from '@shared/types'
-import { BLANK_URL } from '@shared/url'
+import { isEmptyTabUrl } from '@shared/url'
 import { setBandFrame } from '@renderer/lib/band'
 import { bandSeat, movePage, seatBand } from '@renderer/lib/pageBand'
 import { isPageTab } from '@renderer/lib/pages'
@@ -23,8 +23,9 @@ interface Props {
  * rect the chrome reports. The host tells the model what the frame shows (`setBandFrame`): the
  * tab in front and the scene that is (the tab, a page's fullscreen, the window's, a page shown
  * in another window – a standing that changes with any of these is a cut, not a travel); whether
- * a band may stand on it (§3.2's never-on list: not on the empty frame, the blank page or a
- * chrome page, not on a page shown in another window, not in a fullscreen); whether offers may
+ * a band may stand on it (§3.2's never-on list: not on the empty frame, the new tab page or the
+ * blank page – `isEmptyTabUrl`, with the slash a load adds – or a chrome page, not on a page
+ * shown in another window, not in a fullscreen); whether offers may
  * (not on a private tab); and what covers the page – a chrome overlay, a frame dialog, the URL
  * bar, Web capture, the gesture stage – under which a prompt arriving waits and one standing
  * stays (the frame dialog host's scrim dims it with the page's picture). It fills the band's
@@ -48,7 +49,7 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
   const ok =
     tab !== null &&
     !isPageTab(tab) &&
-    tab.url !== BLANK_URL &&
+    !isEmptyTabUrl(tab.url) &&
     !foreign &&
     !windowFullscreen &&
     !pageFullscreen

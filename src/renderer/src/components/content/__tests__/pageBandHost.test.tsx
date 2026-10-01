@@ -73,6 +73,9 @@ const TABS: Record<string, Tab> = {
   page: tab('page', 'https://example.com/'),
   other: tab('other', 'https://other.example/'),
   blank: tab('blank', BLANK_URL),
+  // The new tab page as a load leaves it, and the blank page as Chromium reports it loaded.
+  ntp: tab('ntp', 'zen://newtab/'),
+  loadedBlank: tab('loadedBlank', `${BLANK_URL}/`),
   settings: tab('settings', 'zen://settings'),
   secret: tab('secret', 'https://secret.example/', 'private')
 }
@@ -203,7 +206,7 @@ afterEach(() => {
 })
 
 describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
-  it('a page tab in front welcomes a band; the empty frame, the blank page, a chrome page, a page shown in another window and a fullscreen do not – each a scene of its own', () => {
+  it('a page tab in front welcomes a band; the empty frame, the blank page, the new tab page, a chrome page, a page shown in another window and a fullscreen do not – each a scene of its own', () => {
     render(state())
     expect(model()).toEqual({
       front: 'page',
@@ -216,6 +219,13 @@ describe('PageBandHost – what the frame shows (motion spec §3.2)', () => {
     expect(model()).toMatchObject({ front: null, scene: ':::', ok: false })
     render(state({ front: 'blank' }))
     expect(model()).toMatchObject({ front: 'blank', ok: false })
+    // The window opens on the new tab page – `zen://newtab/` once loaded – and a loaded blank
+    // page carries the slash too: neither is a page the band stands on (the W8-M2 drive found
+    // the band standing on the NTP at launch when the host compared the bare blank address).
+    render(state({ front: 'ntp' }))
+    expect(model()).toMatchObject({ front: 'ntp', ok: false })
+    render(state({ front: 'loadedBlank' }))
+    expect(model()).toMatchObject({ front: 'loadedBlank', ok: false })
     render(state({ front: 'settings' }))
     expect(model()).toMatchObject({ front: 'settings', ok: false })
     render(state({ foreign: ['page'] }))
