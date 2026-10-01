@@ -448,7 +448,7 @@ export class WebAppService {
     this.save()
     if (!shouldPrompt(record, now)) return
     // Every surface is offered: the phone draws the banner as its card, the desktop as the
-    // pill's "Install <app>?" popover (#740). A window whose chrome draws neither gives no word
+    // pill's "Install <app>?" popover (#754). A window whose chrome draws neither gives no word
     // inside the grace, and the cooldown is not spent on it (`bannerUndrawn`, seed #42).
     this.schedule(`banner:${tabId}`, DEFER_GRACE_MS, () => {
       const current = this.browser.tabs.tab(tabId)
