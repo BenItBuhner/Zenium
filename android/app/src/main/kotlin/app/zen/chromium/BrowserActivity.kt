@@ -221,8 +221,13 @@ abstract class BrowserActivity : AppCompatActivity() {
      * ones old enough that no page is still sending them.
      */
     private fun sweepCaptures(cacheDir: File) {
-        val dir = File(cacheDir, CapturedPhotos.DIR)
-        Thread { CapturedPhotos.sweep(dir, System.currentTimeMillis()) }.start()
+        val captures = File(cacheDir, CapturedPhotos.DIR)
+        val uploads = File(cacheDir, AgentUploads.DIR)
+        Thread {
+            val now = System.currentTimeMillis()
+            CapturedPhotos.sweep(captures, now)
+            AgentUploads.sweep(uploads, now)
+        }.start()
     }
 
     fun requestRuntimePermissions(permissions: List<String>, callback: (Map<String, Boolean>) -> Unit) {

@@ -92,6 +92,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
          * save dialog says, whatever the ask-where-to-save setting ([DownloadLogic.placement]).
          */
         var saveAs = false
+        /** The agent of the tab named the file (`Downloads.bind`): the response's suggestion no longer renames it. */
+        var namedByAgent = false
         var referrer = ""
         /** Name the server, the page or the URL suggested. */
         var filename = "download"
@@ -213,7 +215,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
                 "token" to l.token, "url" to l.url, "referrer" to l.referrer, "filename" to l.filename,
                 "totalBytes" to l.total.coerceAtLeast(0), "mimeType" to l.mimeType, "sourceTabId" to l.sourceTabId,
                 "containerId" to l.containerId, "resumes" to l.resumes,
-                "navigation" to l.navigation, "disposition" to l.disposition
+                "navigation" to l.navigation, "disposition" to l.disposition, "saveAs" to l.saveAs
             )
         )
     }
@@ -235,6 +237,14 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         if (l.sink != null) {
             launch(l)
             return
+        }
+        // The agent driving the tab answered where the save dialog would have asked (the core's
+        // `downloadDestination`, `AgentPrompts.kt`): no dialog – the setting's folder or the
+        // default – and the file takes the agent's name, which the response's own no longer replaces.
+        destination.optJSONObject("agent")?.let { agent ->
+            l.saveAs = false
+            l.filename = AgentPrompts.downloadName(agent.strOrNull("filename"), l.filename)
+            l.namedByAgent = true
         }
         // The setting's mode, or the save dialog for the one download the menu's Save As… started.
         when (DownloadLogic.placement(destination.str("mode"), l.saveAs)) {
@@ -717,7 +727,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         if (!contentType.isNullOrEmpty() && contentType != "application/octet-stream" &&
             (l.mimeType.isEmpty() || l.mimeType == "application/octet-stream")
         ) l.mimeType = contentType
-        if (l.sink == null) {
+        if (l.sink == null && !l.namedByAgent) {
             val fromHeader = DownloadLogic.dispositionFilename(connection.getHeaderField("Content-Disposition"))
             if (!fromHeader.isNullOrEmpty()) {
                 l.filename = DownloadLogic.filenameFor(l.url, connection.getHeaderField("Content-Disposition"), l.mimeType.ifEmpty { null }, DownloadSink::extensionFor)
