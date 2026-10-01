@@ -323,3 +323,109 @@ describe("createXhrRelay: a content script's XMLHttpRequest of its extension's o
     expect(xhr.status).toBe(200)
   })
 })
+
+/*
+ * The second class (compat round 26, R26-2): a cross-origin request to an origin the page's
+ * policy has refused in this document rides the relay's `fetch` too, which asks the host first
+ * and judges the answer as Chrome's renderer would; its headers, body and `withCredentials` go
+ * along. The first request to such an origin, and any other cross-origin one, is the native's.
+ */
+describe("createXhrRelay: a content script's cross-origin XMLHttpRequest to an origin the page's policy refused", () => {
+  const CONFIG = 'https://www.rovalra.com/RoValra/Settings/config.json'
+
+  function refusedHarness(refused: (url: string) => boolean): Harness {
+    const fetches: Array<{ url: string; init: RequestInit }> = []
+    const answer = {
+      current: (): Promise<Response> =>
+        Promise.resolve(
+          Object.defineProperties(
+            new win.Response('{"version":"2.6.13"}', {
+              status: 200,
+              statusText: 'OK',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': '20' }
+            }),
+            { url: { value: CONFIG }, type: { value: 'cors' } }
+          )
+        )
+    }
+    const host: XhrRelayHost = {
+      owns: (url) => url.startsWith(extensionOrigin(EXT) + '/'),
+      refused,
+      fetch: (url, init) => {
+        fetches.push({ url, init })
+        return answer.current()
+      }
+    }
+    const Xhr = createXhrRelay(win, host)
+    if (!Xhr) throw new Error('the realm has an XMLHttpRequest')
+    return { Xhr, fetches, answer }
+  }
+
+  it("relays a request to a refused origin with its headers, body and credentials, and plays the host's CORS answer back", async () => {
+    const { Xhr, fetches } = refusedHarness((url) => url.startsWith('https://www.rovalra.com/'))
+    const xhr = new Xhr()
+    const seen = record(xhr)
+    xhr.open('POST', CONFIG)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Accept', 'application/json')
+    xhr.setRequestHeader('x-rovalra-user-agent', 'RoValra/2.6.13')
+    xhr.send('{"a":1}')
+    expect(fetches).toEqual([
+      {
+        url: CONFIG,
+        init: {
+          method: 'POST',
+          headers: [
+            ['Accept', 'application/json'],
+            ['x-rovalra-user-agent', 'RoValra/2.6.13']
+          ],
+          credentials: 'include',
+          body: '{"a":1}'
+        }
+      }
+    ])
+    await settled(xhr)
+    expect(xhr.status).toBe(200)
+    expect(xhr.responseURL).toBe(CONFIG)
+    expect(xhr.responseText).toBe('{"version":"2.6.13"}')
+    expect(xhr.getResponseHeader('content-type')).toBe('application/json')
+    expect(seen.at(-2)).toBe('load@4')
+
+    // A GET's body goes nowhere, and `withCredentials` off is `same-origin`, as fetch's default.
+    const bare = new Xhr()
+    bare.open('GET', `${CONFIG}?x=1`)
+    bare.send('ignored')
+    expect(fetches[1]).toEqual({
+      url: `${CONFIG}?x=1`,
+      init: { method: 'GET', headers: [], credentials: 'same-origin' }
+    })
+    await settled(bare)
+  })
+
+  it("a cross-origin request to an origin the page has not refused is the native's, as before – its first refusal teaches the relay", () => {
+    const refused = vi.fn((url: string) => url.startsWith('https://www.rovalra.com/'))
+    const { Xhr, fetches } = refusedHarness(refused)
+    const nativeOpen = vi
+      .spyOn(win.XMLHttpRequest.prototype, 'open')
+      .mockImplementation(() => undefined)
+    const nativeSend = vi
+      .spyOn(win.XMLHttpRequest.prototype, 'send')
+      .mockImplementation(() => undefined)
+    try {
+      const xhr = new Xhr()
+      xhr.open('GET', 'https://apis.rovalra.com/v1/servers')
+      xhr.send()
+      expect(refused).toHaveBeenCalledWith('https://apis.rovalra.com/v1/servers')
+      expect(nativeOpen).toHaveBeenCalledWith('GET', 'https://apis.rovalra.com/v1/servers')
+      expect(nativeSend).toHaveBeenCalledTimes(1)
+      // A synchronous request to a refused origin cannot wait for the bridge: the native's too.
+      const sync = new Xhr()
+      sync.open('GET', CONFIG, false)
+      expect(nativeOpen).toHaveBeenLastCalledWith('GET', CONFIG, false, undefined, undefined)
+      expect(fetches).toHaveLength(0)
+    } finally {
+      nativeOpen.mockRestore()
+      nativeSend.mockRestore()
+    }
+  })
+})

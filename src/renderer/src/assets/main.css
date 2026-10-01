@@ -7747,7 +7747,8 @@
    * above is that gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls
    * should it outgrow the frame; the footer stays. Chrome's "Open as window" check row under the
    * name runs edge to edge as the confirm dialog's does (§9.25: the row's own 16 is the dialog's
-   * one gutter) – the rule waits for the row, withheld until `webapp.pin` carries its two states
+   * one gutter); unchecked, Chrome's default, the shortcut opens as a tab in Zenium, checked, in
+   * an app window of its own – the box travels with Create as `webapp.pin`'s `openAsWindow`
    * (W8-M3b). The install of an app is the pill's popover (`install/InstallPopover.tsx`), on the
    * popover chassis with the same `.zen-install-app` row.
    */
@@ -11985,6 +11986,15 @@
   text-align: left;
   white-space: nowrap;
   transition: background 120ms var(--zen-ease);
+}
+/*
+ * On a tablet the list is the same anchored popover with the coarse pointer's rows (§9.36 as
+ * amended on #750: an anchored panel that fits is the desktop popover with 44 rows): the row's
+ * floor is the form factor's menu row token – 44 at the body line, as the tablet's menus are –
+ * the 28 above being the mouse's. The token is the form factor's, so DeX keeps it.
+ */
+:root[data-form-factor='tablet'] .zen-v2-menulist-option {
+  min-height: var(--v2-menu-row);
 }
 .zen-v2-menulist-option:focus,
 .zen-v2-menulist-option:active {

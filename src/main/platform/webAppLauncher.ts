@@ -3,8 +3,8 @@
  * no Electron here, so the rules are unit-tested: the `.desktop` entry Linux menus read, the
  * `Info.plist` and launcher script of a macOS `.app` bundle, the ICO and ICNS containers the
  * Windows and macOS shells want their icons in, the command a launcher runs (`zenium
- * --app=<url>`, Chrome's app mode) and the HTML the icon is rendered from. `shortcuts.ts` writes
- * them where each OS looks.
+ * --app=<url>`, Chrome's app mode, or `zenium <url>` for a shortcut that opens a tab) and the
+ * HTML the icon is rendered from. `shortcuts.ts` writes them where each OS looks.
  */
 import { createHash } from 'node:crypto'
 import { tileInk, tileLetter, type ShortcutIconKind } from '../../shared/webApp'
@@ -30,7 +30,10 @@ export function launcherFileName(name: string): string {
   return noDots || 'Web app'
 }
 
-/** What a launcher runs: the program and its arguments (the last being `--app=<url>`). */
+/**
+ * What a launcher runs: the program and its arguments, the last naming the page – `--app=<url>`
+ * for a window of the app's own, the bare URL for a tab.
+ */
 export interface LaunchCommand {
   program: string
   args: string[]
@@ -47,14 +50,21 @@ export interface LaunchEnvironment {
 }
 
 /**
- * The command that opens `url` in an app window of its own. A packaged copy is its executable
- * (the AppImage itself on Linux, since the mounted binary under /tmp is gone after the run); a
- * development copy is Electron with the app's path.
+ * The command that opens `url`: in an app window of its own (`--app=<url>`, the default – an
+ * installed app's launcher, a taskbar pin's relaunch), or, with `openAsWindow` false, as a tab
+ * in Zenium – the bare URL, which the running copy's second-instance path (or a cold start's
+ * argv) opens in the current browser window as `zenium <url>` from a shell does. A packaged
+ * copy is its executable (the AppImage itself on Linux, since the mounted binary under /tmp is
+ * gone after the run); a development copy is Electron with the app's path.
  */
-export function launchCommand(url: string, env: LaunchEnvironment): LaunchCommand {
-  const appArg = `--app=${url}`
-  if (env.isPackaged) return { program: env.appImage || env.execPath, args: [appArg] }
-  return { program: env.execPath, args: [env.appPath, appArg] }
+export function launchCommand(
+  url: string,
+  env: LaunchEnvironment,
+  openAsWindow = true
+): LaunchCommand {
+  const pageArg = openAsWindow ? `--app=${url}` : url
+  if (env.isPackaged) return { program: env.appImage || env.execPath, args: [pageArg] }
+  return { program: env.execPath, args: [env.appPath, pageArg] }
 }
 
 /**
@@ -174,8 +184,8 @@ function xml(text: string): string {
 /**
  * The bundle's executable: a shell script that opens the app in the running Zenium (or starts
  * it). A packaged copy goes through `open -n` on the browser's bundle, so LaunchServices
- * launches the real binary and its single-instance lock forwards `--app=` to the running copy; a
- * development copy runs Electron directly.
+ * launches the real binary and its single-instance lock forwards the page argument (`--app=` or
+ * the bare URL) to the running copy; a development copy runs Electron directly.
  */
 export function macLauncherScript(command: LaunchCommand, browserBundle: string | null): string {
   const args = command.args.map(shellQuote).join(' ')

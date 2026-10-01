@@ -2908,15 +2908,22 @@ export interface ShortcutRequest {
   themeColor?: string | null
   /** The manifest's `background_color` as `#rrggbb`, the window's colour before the page paints. */
   backgroundColor?: string | null
+  /**
+   * The desktop's "Open as window" (Chrome's box in "Create shortcut?"): true, the launcher
+   * runs `zenium --app=<url>` and the page opens in an app window of its own; false, it runs
+   * `zenium <url>` and the page opens as a tab in the running Zenium (the second-instance
+   * path). Absent, the host's own rule – a window on the desktop; Android reads `display`.
+   */
+  openAsWindow?: boolean
 }
 
 /**
  * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`; on desktop a
  * launcher – Start menu / desktop `.lnk`, `.desktop` entry, `.app` bundle – that runs the app in
- * a window of its own, `zenium --app=<url>`). `pin` resolves once the request reached the
- * launcher; the launcher's confirmation arrives later through `Browser.webApps.onPinned` because
- * Android's system dialog has no cancel callback (desktop hosts confirm as soon as the files are
- * written, with the icon they kept).
+ * a window of its own, `zenium --app=<url>`, or as a tab, `zenium <url>`, as `openAsWindow`
+ * says). `pin` resolves once the request reached the launcher; the launcher's confirmation
+ * arrives later through `Browser.webApps.onPinned` because Android's system dialog has no cancel
+ * callback (desktop hosts confirm as soon as the files are written, with the icon they kept).
  */
 export interface ShortcutHost {
   pin(request: ShortcutRequest): Promise<boolean>

@@ -4010,13 +4010,16 @@ export class Menus {
 
   /**
    * "Open in <app>" inside an installed app's scope: the desktop launches the app's own window
-   * (Chrome), the phone goes to the app's start URL in this tab.
+   * (Chrome), the phone goes to the app's start URL in this tab. An app whose shortcut opens a
+   * tab ("Open as window" off, `openAsWindow` false) has no row: its launcher opens a tab like
+   * this one, and Chrome offers none for it (the Design Lead's ruling on #761's second seam).
+   * The phone's flat row and the sidebar layouts' More Tools row are both this one.
    */
   private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
     const pinned = webApps.pinnedFor(active.url)
-    if (!pinned) return []
+    if (!pinned || pinned.openAsWindow === false) return []
     return [
       {
         label: openAppMenuLabel(webApps.surface, pinned.name),

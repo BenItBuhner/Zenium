@@ -261,6 +261,7 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.observeResponses':
       case 'ext.popup.open':
       case 'ext.popup.close':
+      case 'ext.contextMenuEvent':
         return undefined
       case 'ext.offscreen.open':
         this.offscreens.set(String(args.id), String(args.url))

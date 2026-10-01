@@ -4504,7 +4504,8 @@ export class Browser {
       'spellcheck.removeWord': ({ word }) => this.spellcheck.removeWord(word),
       'spellcheck.openKeyboardSettings': () => this.spellcheck.openKeyboardSettings(),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
-      'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
+      'webapp.pin': ({ tabId, title, openAsWindow }, win) =>
+        this.webApps.pin(tabId, title, win, openAsWindow),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
       'webapp.bannerShown': ({ tabId }) => this.webApps.bannerShown(tabId),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),

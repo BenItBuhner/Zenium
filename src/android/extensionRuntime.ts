@@ -2,7 +2,8 @@ import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
   type ExtensionControl,
-  type ExtensionInfo
+  type ExtensionInfo,
+  type Tab
 } from '@shared/types'
 import { pdfPageDownloadId } from '@shared/pdfPage'
 import { PDF_VIEWER_ORIGIN } from '@shared/pdfViewerProtocol'
@@ -127,7 +128,7 @@ import type { WebViewPrivacyLayer } from './extensionPrivacy'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
-import { RequestLedger } from './extensionRequestLedger'
+import { RequestLedger, type NotedRequest } from './extensionRequestLedger'
 import { scriptObservation, type RequestObservation } from './requestObserver'
 import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
@@ -2151,6 +2152,24 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
+   * `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the
+   * finger), and the page's own `contextmenu` event with them: Chrome dispatches one at the
+   * hold's point before it shows its menu, and the embedder's long press (`TabWebView.onLongPress`
+   * answers a link or image hold itself; a handled hold never reaches the renderer) leaves the
+   * page without – a content script listening for it hears nothing (Auto Clicker keeps the last
+   * one for the element its menu item acts on). The host dispatches a synthetic one at the point
+   * (`ext.contextMenuEvent`, Kotlin's `ContextMenuEvent`) whatever the extensions hold, as Chrome
+   * does; the keyboard's menu has no point under a finger. The page cannot prevent the sheet
+   * through it: the items are gathered here, before the event lands.
+   */
+  pageContextMenuItems(tab: Tab, params: PageContextParams): MenuItemTemplate[] {
+    if (params.menuSourceType !== 'keyboard') {
+      this.bridge.send('ext.contextMenuEvent', { tabId: tab.id, x: params.x, y: params.y })
+    }
+    return this.api.pageContextMenuItems(tab, params)
+  }
+
+  /**
    * `offscreen.createDocument`: Kotlin puts up a hidden `ExtensionWebView` on the URL (the same
    * kind of view as the background page's); the promise settles when the page reports `ready`
    * as an `offscreen` endpoint – its load event, its listeners registered – or when
@@ -2661,25 +2680,43 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const tab = event.tabId ?? null
     const type = resourceTypeNamed(event.type)
     const now = this.now()
-    // A document's server redirect reaches the runtime only as its follow-up, stamped with the
-    // URL before it: the hop is told first, as `onBeforeRedirect` of the tab's open main-frame
-    // request at that URL, and the follow-up then continues under the hop's id.
-    if (this.observingResponses && event.mainFrame && typeof event.redirectedFrom === 'string')
-      this.documentRedirected(tab, tabId, event.redirectedFrom, event.url, now)
+    // A document's redirect target the runtime reported already off the navigation hook's
+    // notice ([documentHop]): this decision is that request's, not a second one. WebView
+    // offers no such intercept (compat round 26, R26-1); the branch keeps the two paths one
+    // request should it ever do so.
+    const adopted =
+      event.mainFrame && this.observingResponses
+        ? this.ledger.adopt(tab, event.requestId, event.url, now)
+        : null
+    // The engine's stamp of a document's hop on the target's decision (`redirectedFrom`,
+    // services' #707): the hop is told first, as `onBeforeRedirect` of the tab's open
+    // main-frame request at that URL, and the follow-up then continues under the hop's id. On
+    // every WebView measured the target's decision never comes (the hook's notice is the hop's
+    // witness instead); the branch is the contract's, kept for an engine that does report it.
+    if (event.mainFrame && typeof event.redirectedFrom === 'string' && !adopted) {
+      if (this.observingResponses)
+        this.documentRedirected(tab, tabId, event.redirectedFrom, event.url, now)
+      else if (this.debug)
+        console.info(
+          `[zen] extensions: redirect pair ${event.redirectedFrom} -> ${event.url} (tab ${tab}) made no onBeforeRedirect: the response stage is not observed`
+        )
+    }
     // While the response stage is observed the request is remembered for it (the observer's
     // pairing, its initiator), and a redirect target continues under the hop's id (§7.3: WebView
     // followed the redirect itself and the target came through the intercept as a new request).
-    const requestId = this.observingResponses
-      ? this.ledger.noted(
-          tab,
-          event.requestId,
-          event.url,
-          event.method,
-          type,
-          event.initiator ?? undefined,
-          now
-        )
-      : event.requestId
+    const requestId = adopted
+      ? adopted.requestId
+      : this.observingResponses
+        ? this.ledger.noted(
+            tab,
+            event.requestId,
+            event.url,
+            event.method,
+            type,
+            event.initiator ?? undefined,
+            now
+          )
+        : event.requestId
     const details: RequestDetails = {
       requestId,
       url: event.url,
@@ -2690,7 +2727,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       timeStamp: now
     }
     if (event.initiator) details.initiator = event.initiator
-    this.emitRequest(tab, 'onBeforeRequest', details)
+    if (!adopted) this.emitRequest(tab, 'onBeforeRequest', details)
     if (event.action === 'block')
       this.emitRequest(tab, 'onErrorOccurred', {
         ...details,
@@ -2700,12 +2737,62 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
-   * `webRequest.onBeforeRedirect` of a document's server redirect, made of the pair the engine
-   * reports (`ExtRequestEvent.redirectedFrom`, services' #670): WebView follows a navigation's
-   * redirect itself and never tells its status, so the hop reaches the runtime only as the
-   * target's main-frame request stamped with the URL before it. The hop's request is the tab's
-   * LATEST open main-frame request in the ledger, and only when its URL is the stamped one – a
-   * newer navigation in flight, or a request the ledger never noted (the observation switched on
+   * A document's server redirect as the navigation hook sees it (`shouldOverrideUrlLoading`
+   * with `isRedirect`, the `redirected` view event; compat round 26, R26-1): WebView follows
+   * the hop itself and never offers the redirected request to `shouldInterceptRequest`
+   * (Chromium's `InterceptedRequest::ShouldNotInterceptRequest` is true once the request was
+   * redirected – 113.0.5672.136 and main alike), so the engine's stamp on the target's decision
+   * (#707) never reaches the runtime and this notice is the hop's only witness. The hop is told
+   * as `onBeforeRedirect` of the tab's open main-frame request at `from` ([documentRedirected]),
+   * and the target's own request stage – a request that does go out, which Chrome reports as
+   * `onBeforeRequest` under the chain's id – is told from here as well, noted as the runtime's
+   * own ([RequestLedger.adopt] for an intercept that comes after all), `GET` as a 302's
+   * follow-up is. Its header and response stages the phone has nothing of: a document's
+   * `onCompleted` never forms (the stated ceiling). Nothing while no `webRequest` listener
+   * exists, and no hop while the response stage is not observed (the switch is the gate, as
+   * for the stamped path).
+   */
+  private documentHop(tab: string, chromeTabId: number, from: string, to: string): void {
+    if (!this.observing) return
+    const now = this.now()
+    let hop: NotedRequest | null = null
+    if (this.observingResponses) hop = this.documentRedirected(tab, chromeTabId, from, to, now)
+    else if (this.debug)
+      console.info(
+        `[zen] extensions: redirect pair ${from} -> ${to} (tab ${tab}) made no onBeforeRedirect: the response stage is not observed`
+      )
+    const details: RequestDetails = {
+      requestId: this.observingResponses
+        ? this.ledger.noted(
+            tab,
+            this.ledger.mint(),
+            to,
+            'GET',
+            'main_frame',
+            hop?.initiator,
+            now,
+            true
+          )
+        : this.ledger.mint(),
+      url: to,
+      method: 'GET',
+      ...OUTERMOST_FRAME,
+      tabId: chromeTabId,
+      type: 'main_frame',
+      timeStamp: now
+    }
+    if (hop?.initiator) details.initiator = hop.initiator
+    this.emitRequest(tab, 'onBeforeRequest', details)
+  }
+
+  /**
+   * `webRequest.onBeforeRedirect` of a document's server redirect, made of the pair the
+   * navigation hook names (the `redirected` view event, [documentHop]) or the engine stamps on
+   * the target's decision (`ExtRequestEvent.redirectedFrom`, services' #670/#707): WebView
+   * follows a navigation's redirect itself and never tells its status, so the hop reaches the
+   * runtime only as the URL before and the URL after. The hop's request is the tab's LATEST
+   * open main-frame request in the ledger, and only when its URL is the named one – a newer
+   * navigation in flight, or a request the ledger never noted (the observation switched on
    * after it), makes no pair and no event, and the target is reported as a plain load. The event
    * carries that request's id, URL, method and initiator, the target as `redirectUrl`,
    * `fromCache` false, and `statusCode: 302` / `statusLine: 'HTTP/1.1 302 Found'` – the STATED
@@ -2713,7 +2800,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * has none of a document's, so a listener asking for them gets the event without. The ledger
    * then marks the target so its `onBeforeRequest` continues under the hop's id, as Chrome keeps
    * one `requestId` across a chain, and the hop's own entry ends – the chain lives on in the
-   * target's, which the next hop of the chain pairs with in turn.
+   * target's, which the next hop of the chain pairs with in turn. Returns the hop's request;
+   * null when none paired.
    */
   private documentRedirected(
     tab: string | null,
@@ -2721,9 +2809,19 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     redirectedFrom: string,
     targetUrl: string,
     now: number
-  ): void {
+  ): NotedRequest | null {
     const from = this.ledger.openMainFrame(tab, redirectedFrom, now)
-    if (!from) return
+    if (!from) {
+      if (this.debug)
+        console.info(
+          `[zen] extensions: redirect pair ${redirectedFrom} -> ${targetUrl} (tab ${tab}) made no onBeforeRedirect: the tab's latest open main_frame request is ${this.ledger.latestMainFrameUrl(tab) ?? 'none'}`
+        )
+      return null
+    }
+    if (this.debug)
+      console.info(
+        `[zen] extensions: onBeforeRedirect ${from.url} -> ${targetUrl} (tab ${tab}, request ${from.requestId}) emitted`
+      )
     const details: RequestDetails = {
       requestId: from.requestId,
       url: from.url,
@@ -2741,6 +2839,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.emitRequest(tab, 'onBeforeRedirect', details)
     this.ledger.redirected(tab, from.requestId, targetUrl, now)
     this.ledger.ended(from.ownId)
+    return from
   }
 
   /**
@@ -3099,6 +3198,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         // The page script's observer (7.10): its report of a fetch / XHR's response stage.
         const observation = scriptObservation(payload)
         if (observation) this.onObservation(tabId, observation)
+        return
+      }
+      case 'redirected': {
+        // The navigation hook's word on a document's server redirect: the hop's only witness
+        // on WebView ([documentHop]). The addresses are the request's own, as webRequest
+        // reports them, not the tab's presented ones.
+        const p = payload as ViewEventPayloads['redirected']
+        if (typeof p.from === 'string' && typeof p.to === 'string')
+          this.documentHop(tabId, chromeTabId, p.from, p.to)
         return
       }
       case 'destroyed':
@@ -3604,10 +3712,10 @@ export class AndroidExtensionsWithRuntime extends AndroidExtensions {
     this.runtime.closePopup()
   }
 
-  /** `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the finger). */
+  /** `chrome.contextMenus` items for the long-press menu of a tab (a link or image under the finger), and the page's `contextmenu` event. */
   override pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {
     const tab = this.browser.tabs.tab(tabId)
-    return tab ? this.runtime.api.pageContextMenuItems(tab, params) : []
+    return tab ? this.runtime.pageContextMenuItems(tab, params) : []
   }
 
   override actionContextMenuItems(id: string): MenuItemTemplate[] {

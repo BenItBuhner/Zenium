@@ -360,4 +360,39 @@ describe('chrome.contextMenus persistence (Chrome MenuManager semantics)', () =>
     expect(h.runtime.api.contextMenus.size(ID)).toBe(1)
     expect(h.saved('extensions-runtime.json').contextMenus ?? {}).toEqual({})
   })
+
+  it('has the host dispatch the page’s contextmenu event at the hold’s point with the items, whatever they hold, not for the keyboard', async () => {
+    // Chrome fires `contextmenu` into the page before its menu shows; the embedder's long press
+    // on a link or image never reaches the renderer, so the runtime has the host dispatch one
+    // when the sheet's items are gathered (compat round 26, Auto Clicker's `lastContextMenuEvent`).
+    const h = harness()
+    await withMenus(h)
+    await call(h, 'bg1', 'contextMenus', 'create', [
+      { id: 'save', title: 'Save', contexts: ['link'] },
+      'save'
+    ])
+    const menu = h.runtime.pageContextMenuItems(h.tabs.t1, longPress({ x: 120.5, y: 340 }))
+    expect(menu).toHaveLength(1)
+    expect(h.kt.calledWith('ext.contextMenuEvent')).toEqual([{ tabId: 't1', x: 120.5, y: 340 }])
+    // No item for an image hold: the page is still told, as Chrome tells it with no extension at all.
+    expect(
+      h.runtime.pageContextMenuItems(
+        h.tabs.t1,
+        longPress({
+          x: 1,
+          y: 2,
+          linkURL: '',
+          srcURL: 'https://example.com/a.png',
+          mediaType: 'image'
+        })
+      )
+    ).toEqual([])
+    expect(h.kt.calledWith('ext.contextMenuEvent')).toEqual([
+      { tabId: 't1', x: 120.5, y: 340 },
+      { tabId: 't1', x: 1, y: 2 }
+    ])
+    // The keyboard's menu has no finger on the page.
+    h.runtime.pageContextMenuItems(h.tabs.t1, longPress({ menuSourceType: 'keyboard' }))
+    expect(h.kt.calledWith('ext.contextMenuEvent')).toHaveLength(2)
+  })
 })
