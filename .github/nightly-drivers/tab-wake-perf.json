@@ -11,6 +11,6 @@
     "DEMO_RECORD": "0"
   },
   "timeout": 900,
-  "estimate": 7,
-  "note": "W6-S26-b: waking a sleeping tab from the overview, profiled and asserted (the switch and the swipe back out against the warm control of the same run; PASS / FAIL lines in tab-wake-findings.txt). No recording in the nightly (the encoder is a load of its own on the software GPU). On the api33 shard for its headroom: every phone shard stands at the 60-minute line, and the bar is read relative to the same run's warm control, so the WebView the shard runs does not move the verdict."
+  "estimate": 9,
+  "note": "W6-S26-b: waking a sleeping tab from the overview, profiled and asserted – the tab warm (the control), sleeping with the host's spare page view on (the fix) and sleeping with it off (the before-reading), each tapped, pulled back out and backed out while the page loads; PASS / FAIL lines in tab-wake-findings.txt (every sleeping wake took the spare with create under 5 ms; the switch and the swipe-out within the bar on the UI thread's own work, relative to the same run's warm control where the software GPU cannot hold 60 fps). No recording in the nightly (the encoder is a load of its own on the software GPU). On the api33 shard for its headroom: every phone shard stands at the 60-minute line, and the bar is read relative to the same run's warm control, so the WebView the shard runs does not move the verdict."
 }
