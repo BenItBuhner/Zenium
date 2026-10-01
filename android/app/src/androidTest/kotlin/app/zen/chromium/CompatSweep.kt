@@ -2904,25 +2904,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      */
     private fun domMarker(label: String, fixture: String, expr: String, settleMs: Long = 25_000, prepare: ((WebView) -> Unit)? = null, onMiss: ((WebView, Row, Double) -> JSONObject)? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
-        val tab = createTab(fixtureUrl(fixture))
-        val view = waitForView(tab)
-        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
-        SystemClock.sleep(scaled(1_500, factor))
-        prepare?.invoke(view)
-        val found = pollExpr(view, expr, scaled(settleMs, factor))
-        val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
-        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        if (!found.optBoolean("pass")) {
-            extra.put("errors", targetErrors(view))
-            // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading
-            // joins the grade's word, and its `pass` is the row's where the probe's read is the
-            // truer one (the served-resource record where the page's timeline is blind).
-            onMiss?.let { extra.put("probe", it(view, row, factor)) }
+        val extra = JSONObject()
+        val url = fixtureUrl(fixture)
+        // A fixture under a public-looking name ([PUBLIC_NAME_BASE]) is a unique host HTTPS-only
+        // mode (`ask`, the default) upgrades on the way in – the plain fixture server answers no
+        // TLS and the tab shows the mode's page instead (round 26's BEFORE, PDF Editor for Chrome:
+        // `host: ""`, no links, the "Secure connection not available" page in the capture) – so
+        // the row allows it over plaintext first and forgets it after, as [imageList] does; the
+        // address and the loopback name are non-unique and need nothing ([allowPlaintext]).
+        val restorePlaintext = allowPlaintext(listOf(url), factor, extra)
+        try {
+            val tab = createTab(url)
+            val view = waitForView(tab)
+            poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+            SystemClock.sleep(scaled(1_500, factor))
+            prepare?.invoke(view)
+            val found = pollExpr(view, expr, scaled(settleMs, factor))
+            extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+            if (!found.optBoolean("pass")) {
+                extra.put("errors", targetErrors(view))
+                // A row's own discriminating probe after the miss (AdGuard Extra's inserts); its reading
+                // joins the grade's word, and its `pass` is the row's where the probe's read is the
+                // truer one (the served-resource record where the page's timeline is blind).
+                onMiss?.let { extra.put("probe", it(view, row, factor)) }
+            }
+            val probe = extra.optJSONObject("probe")
+            val probeWord = probe?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
+            val pass = found.optBoolean("pass") || probe?.optBoolean("pass") == true
+            Grade(if (pass) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
+        } finally {
+            restorePlaintext?.invoke()
         }
-        val probe = extra.optJSONObject("probe")
-        val probeWord = probe?.optString("reading")?.takeIf { it.isNotEmpty() }?.let { "; the probe: $it" } ?: ""
-        val pass = found.optBoolean("pass") || probe?.optBoolean("pass") == true
-        Grade(if (pass) "P" else "F", "$label: ${found.toString().take(240)}$probeWord", extra)
     }
 
     /**
@@ -8525,6 +8538,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val levels = JSONArray()
         var sheet: List<String> = emptyList()
         var reached = 0
+        var offScreen: String? = null
         if (point != null && onScreen("$label: the long press")) {
             Finger().apply {
                 down(point.first, point.second)
@@ -8538,16 +8552,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     found = findByLabel { item.containsMatchIn(it) }
                     if (found != null) true else null
                 }
-                levels.put(JSONObject().put("depth", depth).put("item", item.pattern).put("sheets", JSONArray(sheet)).put("found", found?.toShortString() ?: JSONObject.NULL))
+                val level = JSONObject().put("depth", depth).put("item", item.pattern).put("sheets", JSONArray(sheet)).put("found", found?.toShortString() ?: JSONObject.NULL)
+                levels.put(level)
                 val first = found ?: break
-                val screenHeight = app.resources.displayMetrics.heightPixels
-                var last: android.graphics.Rect? = null
-                val settled = poll(scaled(5_000, factor), 250) {
-                    val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
-                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
-                    last = now
-                    if (steady) now else null
-                } ?: first
+                val settled = sheetRowOnScreen(item, factor)
+                level.put("onScreen", settled?.toShortString() ?: JSONObject.NULL)
+                if (settled == null) {
+                    offScreen = first.toShortString()
+                    break
+                }
                 SystemClock.sleep(300)
                 if (depth == path.lastIndex) snap("${entry.optString("slug")}-menu")
                 tap(settled.exactCenterX(), settled.exactCenterY())
@@ -8571,8 +8584,43 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             reached == path.size -> Grade("F", "$label: its item tapped, the page shows no effect within ${scaled(settleMs, factor) / 1000} s: ${found.toString().take(200)}", extra)
             point == null -> Grade("F", "$label: the fixture's `$selector` has no on-screen centre (driver): ${centre.toString().take(80)}", extra)
             reached == 0 && sheet.isEmpty() -> Grade("F", "$label: the long press opened no menu sheet (driver: the press was not read as a long press)", extra)
+            offScreen != null -> Grade("F", "$label: the menu's level $reached lists `${path[reached].pattern}` below the sheet's visible edge ($offScreen) and the driver could not scroll it on screen", extra)
             else -> Grade("F", "$label: the menu's level $reached is up without `${path[reached].pattern}` (sheets ${sheet.joinToString().take(80)})", extra)
         }
+    }
+
+    /**
+     * A long-press sheet's row steady on the screen, scrolled to when needed. The link sheet
+     * lists the extensions' items after its own, so a row of theirs can sit below the sheet's
+     * visible edge, where the tree reads its bounds clipped – `[0,1627][721,1602]` on a 720 px
+     * screen whose sheet ended at 1602 (round 26's BEFORE, Auto Clicker: the tap at that centre
+     * landed under the edge and the level never opened). A row whose bounds are not a steady
+     * box inside the screen is scrolled to – a swipe up inside the sheet, which expands a
+     * half-open sheet and scrolls a full one – and read again, three times at most. The steady
+     * bounds, or null when the row never came on screen.
+     */
+    private fun sheetRowOnScreen(item: Regex, factor: Double): android.graphics.Rect? {
+        val metrics = app.resources.displayMetrics
+        val screenHeight = metrics.heightPixels
+        fun inside(r: android.graphics.Rect) = r.height() > 8 && r.top >= 0 && r.bottom <= screenHeight
+        for (attempt in 0..3) {
+            var last: android.graphics.Rect? = null
+            val settled = poll(scaled(if (attempt == 0) 5_000 else 2_500, factor), 250) {
+                val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
+                val steady = inside(now) && now == last
+                last = now
+                if (steady) now else null
+            }
+            if (settled != null) return settled
+            if (attempt == 3) break
+            Finger().apply {
+                down(metrics.widthPixels / 2f, screenHeight * 0.82f)
+                moveBy(0f, -(screenHeight * 0.45f), 420)
+                up()
+            }
+            SystemClock.sleep(scaled(700, factor))
+        }
+        return null
     }
 
     /**
@@ -9928,14 +9976,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 if (found != null) true else null
             }
             if (found != null) {
-                val screenHeight = app.resources.displayMetrics.heightPixels
-                var last: android.graphics.Rect? = null
-                val settled = poll(scaled(5_000, factor), 250) {
-                    val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
-                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
-                    last = now
-                    if (steady) now else null
-                }
+                // The row steady inside the screen, the sheet scrolled to it when it sits below
+                // the visible edge ([sheetRowOnScreen]); the first read stands when it never came.
+                val settled = sheetRowOnScreen(item, factor)
                 extra.put("itemSettled", settled != null).put("itemFirstRead", found?.toShortString())
                 if (settled != null) found = settled
             }
@@ -16529,10 +16572,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var nav=(performance.getEntriesByType?performance.getEntriesByType('navigation'):[])[0];" +
                 "return JSON.stringify({pass:false,jsRunning:true,navigation:nav?nav.type:null,title:document.title,host:location.host})})()"
 
-        /** SEO Minion's sidebar after the action click: `#smin-widget`, an iframe of its `html/sidebar.html`. */
+        /**
+         * SEO Minion's sidebar after the action click: `#smin-widget` is the container its
+         * `Widget` mounts on the body (`SidebarController.initWidget`), the iframe of its
+         * `html/sidebar.html` a child of it (`#smin-widget iframe` in its `cs-main.css`) – round
+         * 26's BEFORE read the container's own `src` (none) under a drawn sidebar and graded F.
+         * The pass: the container with its iframe, the iframe's src its sidebar page or the
+         * frame drawn with a size.
+         */
         private const val SEO_MINION_WIDGET =
-            "(function(){var w=document.getElementById('smin-widget');var src=w?String(w.src||w.getAttribute('src')||''):'';var r=w?w.getBoundingClientRect():null;" +
-                "return JSON.stringify({pass:!!w&&/sidebar\\.html/.test(src),widget:!!w,src:src.slice(-60),size:r?[Math.round(r.width),Math.round(r.height)]:null,own:document.querySelectorAll('[id^=\"smin-\"], [class*=\"smin-\"]').length,bodyClass:String(document.body?document.body.className:'').slice(0,80)})})()"
+            "(function(){var w=document.getElementById('smin-widget');var f=w?(w.tagName==='IFRAME'?w:w.querySelector('iframe')):null;var src=f?String(f.src||f.getAttribute('src')||''):'';var box=f||w;var r=box?box.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:!!w&&!!f&&(/sidebar\\.html/.test(src)||(r.width>0&&r.height>0)),widget:!!w,iframe:!!f,src:src.slice(-60),size:r?[Math.round(r.width),Math.round(r.height)]:null,own:document.querySelectorAll('[id^=\"smin-\"], [class*=\"smin-\"]').length,bodyClass:String(document.body?document.body.className:'').slice(0,80)})})()"
 
         /** zkPass TransGate's popup: its React `#root` drawn with its onboarding (text or a control). */
         private const val ZKPASS_POPUP =
