@@ -29,7 +29,10 @@ function queue(): {
   return { q, opened, ended }
 }
 
-const chooser = (tabId: string, mode: 'single' | 'multiple' | 'folder' = 'single') => ({
+const chooser = (
+  tabId: string,
+  mode: 'single' | 'multiple' | 'folder' = 'single'
+): ReturnType<typeof fileChooserSpec> & { ttlMs: number } => ({
   ...fileChooserSpec(tabId, { mode, accept: ['.pdf'], source: 'input' }),
   ttlMs: 120_000
 })
@@ -104,12 +107,12 @@ describe('AgentPromptQueue', () => {
 
   it('lets the caller update details and withdraw the request', async () => {
     const { q } = queue()
-    let devices = [{ id: 'd1', name: 'Pen' }]
+    let devices = [{ id: 'd1', name: 'Pen', detail: '' }]
     const h = q.open({
       ...deviceChooserSpec('t1', 'usb', 'https://x.test', () => devices),
       ttlMs: 1000
     })
-    devices = [...devices, { id: 'd2', name: 'Key' }]
+    devices = [...devices, { id: 'd2', name: 'Key', detail: '' }]
     h.update({ candidates: devices })
     expect(q.get(h.id)?.details.candidates).toHaveLength(2)
     q.answer(h.id, { action: 'connect', deviceId: 'd2' })
