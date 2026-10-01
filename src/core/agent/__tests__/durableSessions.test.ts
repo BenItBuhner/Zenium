@@ -691,13 +691,13 @@ describe("the dialog policy: an agent says ahead how its tabs' dialogs are answe
       `Dialog policy for tab ${tab} (billing.test): confirm → Cancel (for every tab); prompt → OK with the page's default; "Leave site?" → stay (for every tab); alerts → OK. Kinds marked (for every tab) follow your policy for every tab you own. In force once per kind – each kind's rule is spent by the first dialog it answers – for 120 s at most, or until you clear it (action: "clear"), let the tab go or end the session. Every dialog it answers is reported in your next result with the page's words.`
     )
     expect(await policy(fake, a, { tabId: tab, action: 'clear' })).toBe(
-      `Cleared the dialog policy of tab ${tab} (billing.test); your policy for every tab you own applies to it now.`
+      `Dropped the dialog policy of tab ${tab} (billing.test); your policy for every tab you own applies to it now.`
     )
     expect(await policy(fake, a, { tabId: tab, action: 'clear' })).toBe(
       `Tab ${tab} (billing.test) had no dialog policy of its own; your policy for every tab you own applies to it.`
     )
     expect(await policy(fake, a, { action: 'clear' })).toBe(
-      'Cleared your dialog policy for every tab you own.'
+      'Dropped your dialog policy for every tab you own.'
     )
     expect(await policy(fake, a, { action: 'clear' })).toBe(
       'You had no dialog policy for every tab you own.'

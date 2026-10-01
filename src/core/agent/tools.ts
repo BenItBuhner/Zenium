@@ -1923,7 +1923,7 @@ const browserDialogPolicy: AgentTool = {
           : 'dialogs there are answered as without a policy again'
         return text(
           had
-            ? `Cleared the dialog policy of ${policyTabName(tab)}; ${rest}.`
+            ? `Dropped the dialog policy of ${policyTabName(tab)}; ${rest}.`
             : `${policyTabName(tab)[0].toUpperCase()}${policyTabName(tab).slice(1)} had no dialog policy of its own; ${after.all ? 'your policy for every tab you own applies to it' : 'nothing changed'}.`
         )
       }
@@ -1933,7 +1933,7 @@ const browserDialogPolicy: AgentTool = {
         : ''
       return text(
         had
-          ? `Cleared your dialog policy for every tab you own${keep}.`
+          ? `Dropped your dialog policy for every tab you own${keep}.`
           : `You had no dialog policy for every tab you own${keep}.`
       )
     }
