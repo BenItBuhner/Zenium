@@ -104,4 +104,52 @@ class BarHidePlacementTest {
         assertEquals(placement(top, bottom + travel, clip = 44), BarHidePlacement.of(top, bottom, frame, held = false))
         assertEquals(placement(top, bottom), BarHidePlacement.of(top, bottom, null, held = false))
     }
+
+    // --- the page-edge band's seat (TabHost.setBandSeat) ----------------------------------------
+
+    /** The one-line band's height at density 1.75: 56 CSS px. */
+    private val seat = 98
+
+    @Test
+    fun aSeatedViewIsPlacedASeatLowerAndASeatShorterWithNoBarToHide() {
+        // At rest under a standing band the view's top is the band's bottom and its height the
+        // frame's less the band: translation 0, the page's last line above the frame's bottom edge.
+        val p = BarHidePlacement.of(top, bottom, null, seatPx = seat)!!
+        assertEquals(placement(top + seat, bottom), p)
+        assertEquals(bottom - top - seat, p.height)
+        // Seat 0 is the placement as before; a seat below 0 is read as 0.
+        assertEquals(placement(top, bottom), BarHidePlacement.of(top, bottom, null, seatPx = 0))
+        assertEquals(placement(top, bottom), BarHidePlacement.of(top, bottom, null, seatPx = -10))
+    }
+
+    @Test
+    fun theSeatIsASecondTopInsetOnTheBarsPlacementNotAReplacementOfIt() {
+        val b = BarHideFrame.Edge.BOTTOM
+        // The bottom-docked bar mid-way: the tall layout and its clip stand, the top a seat lower.
+        assertEquals(placement(top + seat, bottom + travel, clip = 44), BarHidePlacement.of(top, bottom, frame(b, 44f), seatPx = seat))
+        // Hidden: tall, unclipped, seated.
+        assertEquals(placement(top + seat, bottom + travel), BarHidePlacement.of(top, bottom, frame(b, 88f), seatPx = seat))
+        val t = BarHideFrame.Edge.TOP
+        // The top-docked bar mid-way: the slide and clip stand; the seat comes off the slid top –
+        // the view's top on screen is `top + seat + shift + (offset − seat)` = `top + offset + shift`,
+        // the same as with no seat and the whole offset translated (PageSeat.translation).
+        val p = BarHidePlacement.of(top, bottom, frame(t, 30f), seatPx = seat)!!
+        assertEquals(placement(top + seat, bottom + travel, shift = -30f, clip = 58), p)
+        val offset = 98f
+        assertEquals(top + offset + p.shiftPx, p.top + PageSeat.translation(offset, seat, p.shiftPx), 0.001f)
+        // Hidden: the tall layout a band above, seated.
+        assertEquals(placement(top - travel + seat, bottom), BarHidePlacement.of(top, bottom, frame(t, 88f), seatPx = seat))
+    }
+
+    @Test
+    fun aViewFillingTheWindowTakesNoSeatUntilItIsPutBack() {
+        assertNull(BarHidePlacement.of(top, bottom, null, held = true, seatPx = seat))
+        assertEquals(placement(top + seat, bottom), BarHidePlacement.of(top, bottom, null, held = false, seatPx = seat))
+    }
+
+    @Test
+    fun aSeatTallerThanTheFrameLeavesAViewOfNoHeightNeverANegativeOne() {
+        val p = BarHidePlacement.of(top, top + 50, null, seatPx = seat)!!
+        assertEquals(0, p.height)
+    }
 }

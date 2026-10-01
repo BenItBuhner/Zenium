@@ -1280,6 +1280,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
+            // The page-edge band's seat for a document under it (`lib/band/androidHost.ts`): the
+            // view laid out that much lower and shorter at rest, the offset less it translated.
+            "view.setBandSeat" -> { tabs.setBandSeat(args.str("tabId"), args.num("seat")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
             "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible"), args.bool("switched")); reply(null) }
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).

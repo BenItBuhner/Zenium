@@ -938,6 +938,129 @@ describe('WebAppService', () => {
     expect(engagement(h).promptedAt).toBeNull()
   })
 
+  /** The banner raised and emitted; `h.now` is the emit's moment. */
+  function raised(h: Harness): void {
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1200)
+    expect(bannerEvents(h)).toHaveLength(1)
+    expect(engagement(h).promptedAt).toBeNull()
+  }
+
+  it('a cover is not a view (seed #43): the band’s word that it accepted the card but holds it back spends the grace, not the cooldown – the stamp lands on the plain word at the first drawn frame, once, at the show’s time', () => {
+    const h = harness()
+    raised(h)
+    const postedAt = h.now.value
+    h.service.bannerShown(h.tab.id, false)
+    expect(engagement(h).promptedAt).toBeNull()
+    // The grace is cancelled, not run out: the card is in good hands, so the prompt is never
+    // counted undrawn and the chrome hears no take-down – a minute under the cover included.
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    vi.advanceTimersByTime(60_000)
+    expect(bannerHides(h)).toEqual([])
+    expect(engagement(h).promptedAt).toBeNull()
+    // A second word of the cover changes nothing.
+    h.service.bannerShown(h.tab.id, false)
+    expect(engagement(h).promptedAt).toBeNull()
+    // The cover lifts and the band draws the card: the cooldown counts from this moment.
+    h.now.value += 45_000
+    h.service.bannerShown(h.tab.id)
+    const shownAt = h.now.value
+    expect(shownAt).toBeGreaterThan(postedAt)
+    expect(engagement(h).promptedAt).toBe(shownAt)
+    // One stamp per banner: a later word, with or without `visible`, stamps nothing more.
+    h.now.value += 5000
+    h.service.bannerShown(h.tab.id)
+    h.service.bannerShown(h.tab.id, true)
+    h.service.bannerShown(h.tab.id, false)
+    expect(engagement(h).promptedAt).toBe(shownAt)
+    // The band's clock running out after the show records no dismissal, as today.
+    h.service.dismissBanner(h.tab.id, 'timeout')
+    expect(engagement(h)).toMatchObject({ promptedAt: shownAt, dismissedAt: null })
+    expect(bannerHides(h)).toEqual([])
+    // ...and the stamp keeps the prompt away for the rest of the day.
+    postManifest(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+  })
+
+  it('an explicit `visible: true` is today’s word: the stamp at once, the grace spent', () => {
+    const h = harness()
+    raised(h)
+    h.service.bannerShown(h.tab.id, true)
+    expect(engagement(h).promptedAt).toBe(h.now.value)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+  })
+
+  it('a card held back and taken down before it is seen stamps nothing and leaves no timer: the chrome’s dismissal, the page leaving the app, a new document inside it, the tab closing – the record keeps counting', () => {
+    const takeDowns: Array<[string, (h: Harness) => void, { hides: number }]> = [
+      // The band put away unanswered under the cover (the Back, a swipe up) or its clock ran
+      // out once uncovered with the word lost: the chrome's word, no take-down of the core's.
+      [
+        'dismissed by the chrome',
+        (h) => h.service.dismissBanner(h.tab.id, 'timeout'),
+        { hides: 0 }
+      ],
+      [
+        'the page left the app',
+        (h) => h.service.onNavigated(h.tab.id, 'https://elsewhere.example/', false),
+        { hides: 1 }
+      ],
+      [
+        'a new document inside the app',
+        (h) => h.service.onNavigated(h.tab.id, 'https://app.example/page', false),
+        { hides: 1 }
+      ],
+      ['the tab closed', (h) => h.service.onTabRemoved(h.tab.id), { hides: 0 }]
+    ]
+    for (const [what, takeDown, { hides }] of takeDowns) {
+      const h = harness()
+      raised(h)
+      h.service.bannerShown(h.tab.id, false)
+      vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+      takeDown(h)
+      expect(bannerHides(h), what).toHaveLength(hides)
+      expect(engagement(h), what).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+      // A late word of the show – the band drawing a card the core has let go of – is nothing,
+      // and nothing of the banner is left ticking.
+      h.now.value += 30_000
+      h.service.bannerShown(h.tab.id)
+      h.service.bannerShown(h.tab.id, false)
+      vi.advanceTimersByTime(60_000)
+      expect(bannerHides(h), what).toHaveLength(hides)
+      expect(engagement(h), what).toMatchObject({ promptedAt: null, dismissedAt: null })
+    }
+    // The record kept counting: the offer comes back on the next visit, unspent.
+    const h = harness()
+    raised(h)
+    h.service.bannerShown(h.tab.id, false)
+    h.service.onTabRemoved(h.tab.id)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(2)
+    expect(engagement(h)).toMatchObject({ visits: 3, promptedAt: null })
+  })
+
+  it('the cover’s word for a tab with no banner awaiting one is nothing: none up, the grace already run out, a card never raised', () => {
+    const h = harness()
+    // Nothing up.
+    h.service.bannerShown(h.tab.id, false)
+    h.service.bannerShown(h.tab.id)
+    raised(h)
+    // The grace ran out first: the prompt is undrawn and the late cover's word revives nothing.
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 1)
+    expect(bannerHides(h)).toEqual([{ tabId: 't1' }])
+    h.service.bannerShown(h.tab.id, false)
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+    // A card never raised by the core (the preview host's): no word of it does anything.
+    h.service.bannerShown('t-preview', false)
+    h.service.bannerShown('t-preview')
+    expect(engagement(h).promptedAt).toBeNull()
+  })
+
   it('swiping the banner away starts the cooldown; a timeout does not', () => {
     const h = harness()
     postManifest(h)

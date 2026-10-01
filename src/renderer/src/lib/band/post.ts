@@ -22,13 +22,15 @@ import { bandRequestFromBanner, type BandExtras, type BandForm, type BandRequest
 /**
  * The band's model as the door sees it (the seam the shared band implements and registers
  * with {@link setBandDoor} when it mounts on a touch host): show a request, take one down, and
- * say which stand – the standing ones by their own id and by their tenant's `key`.
+ * say which stand – the standing ones by their own id and by their tenant's `key` – and which
+ * one the band draws (`shown`: a standing request held back under a cover is up, not shown).
  */
 export interface BandDoor {
   show(request: BandRequest): number
   dismiss(id: number, reason: BannerDismissReason): void
   up(id: number): boolean
   upByKey(key: string): boolean
+  shown(id: number): boolean
   subscribe(listener: () => void): () => void
 }
 
@@ -63,9 +65,33 @@ export function bandIsTheDoor(): boolean {
 }
 
 /**
+ * Watch a request the band holds back (not shown at its post) for its first drawn frame and
+ * tell the tenant once (`BandExtras.onShown`); the watch ends with the word, or with the
+ * request if it goes before it is ever drawn. Returns the stop.
+ */
+function watchShown(door: BandDoor, innerId: number, onShown: () => void): () => void {
+  let done = false
+  let off: (() => void) | null = null
+  const stop = (): void => {
+    done = true
+    off?.()
+    off = null
+  }
+  off = door.subscribe(() => {
+    if (done || (door.up(innerId) && !door.shown(innerId))) return
+    const drawn = door.up(innerId)
+    stop()
+    if (drawn) onShown()
+  })
+  if (done) off()
+  return stop
+}
+
+/**
  * Post a tenant's message; `form` is the band's form for it (§3.1), `extras` what the band
  * takes beyond the banner – a state's tone, what the tenant does when the band is put away
- * unanswered. Returns the id {@link dismissPosted} and {@link postedUp} take.
+ * unanswered, what it does when a post held back first draws. Returns the id
+ * {@link dismissPosted}, {@link postedUp} and {@link postedShown} take.
  */
 export function postBanner(opts: BannerOptions, form: BandForm, extras?: BandExtras): number {
   const id = nextId++
@@ -77,12 +103,18 @@ export function postBanner(opts: BannerOptions, form: BandForm, extras?: BandExt
     const door = bandDoor
     const request = bandRequestFromBanner(opts, form, extras)
     const onEnd = request.onEnd
+    let unwatch: (() => void) | null = null
     request.onEnd = (reason) => {
+      unwatch?.()
       forget()
       onEnd?.(reason)
     }
     const innerId = door.show(request)
     posted.set(id, { door: 'band', innerId, key: opts.key })
+    // Held back at the post (a cover stands): the tenant hears of the first drawn frame once.
+    const onShown = extras?.onShown
+    if (onShown && door.up(innerId) && !door.shown(innerId))
+      unwatch = watchShown(door, innerId, onShown)
     publish()
     return id
   }
@@ -112,6 +144,18 @@ export function postedUp(id: number): boolean {
   if (!entry) return false
   if (entry.door === 'band') return bandDoor?.up(entry.innerId) === true
   return uiStore.get().banners.some((b) => b.id === entry.innerId && b.leaving !== true)
+}
+
+/**
+ * Whether the message posted as `id` is on screen: at the band, the one the band draws (a post
+ * the model holds back under a cover is up, not shown – `BandExtras.onShown` tells its tenant
+ * when it is); at the stack, up – its card is drawn as it is posted.
+ */
+export function postedShown(id: number): boolean {
+  const entry = posted.get(id)
+  if (!entry) return false
+  if (entry.door === 'band') return bandDoor?.shown(entry.innerId) === true
+  return postedUp(id)
 }
 
 /**

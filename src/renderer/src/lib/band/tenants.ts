@@ -38,9 +38,10 @@ export interface BandAction {
 export type BandTone = 'ok' | 'warn' | 'danger'
 
 /**
- * What a tenant adds to its banner for the band: a state's tone, and what it does when the band
- * is put away UNANSWERED (`onAway`). The × has no name of a tenant's own: every band's × is the
- * content component's "Dismiss" (the Design Lead's ruling – one word, no tenant an exception).
+ * What a tenant adds to its banner for the band: a state's tone, what it does when the band
+ * is put away UNANSWERED (`onAway`), and what it does when a post the band held back first
+ * draws (`onShown`). The × has no name of a tenant's own: every band's × is the content
+ * component's "Dismiss" (the Design Lead's ruling – one word, no tenant an exception).
  */
 export interface BandExtras {
   tone?: BandTone
@@ -53,6 +54,15 @@ export interface BandExtras {
    * the reader offer marks its standing offer spent – or nothing.
    */
   onAway?(): void
+  /**
+   * The band held the post back at its posting (§3.2: under a cover – a sheet, the keyboard,
+   * the open tab overview – a prompt arriving waits; a pull holding the frame likewise) and now
+   * draws it: its first frame on screen. Called once, and only after such a wait – a post the
+   * band shows at once gets no call, its tenant reads `postedShown` at the post instead. The
+   * install prompt's word to the core that the card is seen (seed #43: the cooldown counts from
+   * a shown offer, not a posted one); the stack's cards, drawn as they are posted, never call it.
+   */
+  onShown?(): void
 }
 
 /**

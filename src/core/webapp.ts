@@ -88,6 +88,12 @@ export class WebAppService {
   private readonly installOpen = new Set<string>()
   /** Tabs with an ambient banner up (value: the app it advertises). */
   private readonly banners = new Map<string, string>()
+  /**
+   * Tabs whose banner a surface ACCEPTED but has not drawn yet (`bannerShown` with `visible`
+   * false: the page-edge band holding the card back under a cover): the grace is spent, the
+   * cooldown is not – it waits for the card's first drawn frame (seed #43).
+   */
+  private readonly unseen = new Set<string>()
   /** Pin requests the launcher has not confirmed yet, by shortcut id. */
   private readonly pendingPins = new Map<
     string,
@@ -538,6 +544,7 @@ export class WebAppService {
     this.sitePrompts.delete(tabId)
     this.installOpen.delete(tabId)
     this.banners.delete(tabId)
+    this.unseen.delete(tabId)
     this.clear(`banner:${tabId}`)
     this.clear(`banner-shown:${tabId}`)
   }
@@ -550,6 +557,7 @@ export class WebAppService {
     const win = this.browser.tabs.windowFor(tabId)
     if (this.browser.tabs.activeTabFor(win)?.id !== tabId) return
     this.banners.set(tabId, info.id)
+    this.unseen.delete(tabId)
     const banner: WebAppBanner = {
       tabId,
       name: launcherName(info, this.surface),
@@ -572,10 +580,23 @@ export class WebAppService {
    * before the next offer; a swipe later lengthens it to the dismissal's). One stamp per banner;
    * a word for a tab with no banner awaiting one – none up, the grace already run out, or the
    * preview host's card, which the core never raised – changes nothing.
+   *
+   * A cover is not a view: a surface that ACCEPTED the card but holds it back (`visible` false
+   * – the page-edge band under a sheet, the keyboard or the open tab overview) spends the grace,
+   * so the prompt is not undrawn and the card stays the core's, but stamps nothing. The cooldown
+   * is spent on a card seen: the stamp lands on the word with `visible` true (or absent) at the
+   * card's first drawn frame, once – or never, if a take-down (the chrome's dismissal, another
+   * tab to the front, a navigation, the tab closing) comes first (seed #43, the Lead's S3).
    */
-  bannerShown(tabId: string): void {
-    if (!this.timers.has(`banner-shown:${tabId}`)) return
+  bannerShown(tabId: string, visible = true): void {
+    const inGrace = this.timers.has(`banner-shown:${tabId}`)
+    if (!inGrace && !this.unseen.has(tabId)) return
     this.clear(`banner-shown:${tabId}`)
+    if (!visible) {
+      this.unseen.add(tabId)
+      return
+    }
+    this.unseen.delete(tabId)
     const appId = this.banners.get(tabId)
     const record = appId ? this.engagement[appId] : undefined
     if (!appId || !record) return
@@ -593,6 +614,7 @@ export class WebAppService {
   private bannerUndrawn(tabId: string): void {
     if (!this.banners.has(tabId)) return
     this.banners.delete(tabId)
+    this.unseen.delete(tabId)
     this.browser.emit('webapp.bannerHide', { tabId }, this.browser.tabs.windowFor(tabId))
   }
 
@@ -604,6 +626,7 @@ export class WebAppService {
   dismissBanner(tabId: string, reason: 'swipe' | 'timeout'): void {
     const appId = this.banners.get(tabId)
     this.banners.delete(tabId)
+    this.unseen.delete(tabId)
     this.clear(`banner-shown:${tabId}`)
     if (!appId) return
     const record = this.engagement[appId]

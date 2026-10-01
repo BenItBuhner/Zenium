@@ -246,25 +246,27 @@ export function createPreviewBridge(): NativeBridge {
   const views = new Map<string, HTMLIFrameElement>()
   const density = 1
   /**
-   * What clips each page's frame: how far a pull has moved it down, the covered strips, and the
+   * What clips each page's frame: how far a pull has moved it down, how much of that the layout
+   * carries under a standing band (`seat`, see `view.setBandSeat`), the covered strips, and the
    * strip the hiding bar has not yet left (`bar`, from the frame's bottom, see `chrome.setBarHide`).
    */
   interface Clip {
     pull: number
+    seat: number
     cover: ContentCover
     bar: number
   }
   const clips = new Map<string, Clip>()
   const clipOf = (tabId: string): Clip => {
     let clip = clips.get(tabId)
-    if (!clip) clips.set(tabId, (clip = { pull: 0, cover: { top: 0, bottom: 0 }, bar: 0 }))
+    if (!clip) clips.set(tabId, (clip = { pull: 0, seat: 0, cover: { top: 0, bottom: 0 }, bar: 0 }))
     return clip
   }
   // Like Kotlin's outline: the page shows between the strips, and no lower than the frame's
-  // bottom edge while a pull holds it down.
+  // bottom edge while a pull holds it down (a band seated at rest hangs nothing: `PageSeat.kt`).
   const applyClip = (frame: HTMLIFrameElement, clip: Clip): void => {
     const radius = frame.style.borderRadius || '0px'
-    const bottom = Math.max(clip.cover.bottom, clip.pull, clip.bar)
+    const bottom = Math.max(clip.cover.bottom, Math.max(0, clip.pull - clip.seat), clip.bar)
     frame.style.clipPath =
       clip.cover.top > 0 || bottom > 0
         ? `inset(${clip.cover.top}px 0 ${bottom}px 0 round ${radius})`
@@ -318,11 +320,14 @@ export function createPreviewBridge(): NativeBridge {
         if (tall && o < t) clip.bar = t - o
       }
     }
+    // A band's seat is a second inset on the top (`TabHost.place`): the frame that much lower
+    // and shorter, translated by the pull channel's offset less it – its top the offset either way.
+    top += clip.seat
     frame.style.left = `${r.x / density}px`
     frame.style.top = `${top / density}px`
     frame.style.width = `${r.width / density}px`
-    frame.style.height = `${(bottom - top) / density}px`
-    const y = clip.pull + shift
+    frame.style.height = `${Math.max(0, bottom - top) / density}px`
+    const y = clip.pull - clip.seat + shift
     frame.style.transform = y !== 0 ? `translate3d(0, ${y}px, 0)` : ''
     applyClip(frame, clip)
   }
@@ -995,6 +1000,14 @@ export function createPreviewBridge(): NativeBridge {
       const clip = clipOf(String(tabId))
       clip.pull = y
       // The pull follows the finger per frame; nothing eases it.
+      frame.style.transition = ''
+      applyFrame(String(tabId))
+    },
+    // The band's seat for a document under it (`lib/band/seat.ts`; Kotlin: `TabHost.setBandSeat`).
+    'view.setBandSeat': ({ tabId, seat }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      clipOf(String(tabId)).seat = Math.max(0, Number(seat) || 0)
       frame.style.transition = ''
       applyFrame(String(tabId))
     },
