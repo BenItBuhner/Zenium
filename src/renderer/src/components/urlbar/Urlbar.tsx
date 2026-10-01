@@ -27,6 +27,13 @@ import { internalPageAliasUrl } from '@shared/internalPages'
 import { ERROR_URL_PREFIX, displayUrl, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
+import {
+  MOST_VISITED_GROUP,
+  RECENT_SEARCHES_GROUP,
+  RECENT_SEARCH_SCAN,
+  searchEnginesInOrder,
+  searchVisitUrls
+} from '@shared/zeroSuggest'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
@@ -38,7 +45,7 @@ import { useFaviconSrc } from '@renderer/lib/favicons'
 import { regularMembers } from '@renderer/lib/groupRows'
 import { DEFAULT_GROUP_COLOR } from '@renderer/lib/groups'
 import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
-import { viewportStore } from '@renderer/lib/formFactor'
+import { isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { MOTION_STATE_MS } from '@renderer/lib/motion/tokens'
@@ -70,6 +77,7 @@ import { V2_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
 import { EngineFieldGlyph } from './EngineFieldGlyph'
 import { matchRanges } from './highlight'
+import { MostVisitedTiles } from './MostVisitedTiles'
 import { isShareableUrl, showsPageHeader } from './omniboxHeader'
 import {
   ghostBox,
@@ -251,8 +259,18 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // controls), while the phone AND the tablet – Chrome Android's both – keep no draft.
   const formFactor = viewportStore.use((v) => v.formFactor)
   const keepsDrafts = urlbarKeepsTabDrafts(formFactor)
+  // A touch layout's bar (the phone's sheet, the tablet's popup; OMN-04): the zero-suggest list
+  // comes with the most visited tiles and reads the history's searches, whose rows wear the
+  // clock and whose removal forgets the search's visits too. The desktop's list is as it was.
+  const touch = phone || isTouchLayout(formFactor)
   const [text, setText] = useState(() => initialTextFor(state, urlbar, phone, keepsDrafts))
   const [results, setResults] = useState<Suggestion[]>([])
+  /**
+   * The most visited sites over the zero-suggest list (OMN-04, `MostVisitedTiles`): the core's
+   * `Most visited` rows, kept apart from the rows the keyboard and the highlight run over, and
+   * drawn as one row of tiles at the list's head.
+   */
+  const [tiles, setTiles] = useState<Suggestion[]>([])
   /**
    * The clipboard row's content once the user revealed it (Chrome's "Link you copied" shows the
    * kind alone until the Show tap); read once, and reused when the row is then picked.
@@ -423,8 +441,15 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     })
   }, [keepsDrafts])
 
+  /**
+   * The list is the on-focus zero-suggest one while the tablet's field still holds the page's
+   * address, untyped (OMN-04, below): a pick then teaches the shortcuts provider nothing, as
+   * nothing was typed for it. Cleared by every other request.
+   */
+  const [restZero, setRestZero] = useState(false)
+
   const fetchSuggestions = useCallback(
-    async (query: string, autofill: boolean, engine?: SearchEngine | null) => {
+    async (query: string, autofill: boolean, engine?: SearchEngine | null, atRest = false) => {
       const seq = ++requestSeq.current
       // The engine the rows are for: the one given (entering or leaving keyword mode, ahead of
       // the state), else the keyword mode's.
@@ -437,16 +462,23 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         ...(phone ? { grouped: true } : {})
       }).catch(() => [] as Suggestion[])
       if (seq !== requestSeq.current) return
+      setRestZero(atRest)
       // A fresh list is laid out whole: an exit in flight has nothing left to leave from.
       exitStop.current?.()
       exitStop.current = null
       setExit(null)
-      setResults(list)
+      // The most visited sites (OMN-04) are the zero-suggest list's head on the touch layouts,
+      // drawn as tiles apart from the rows; the desktop's list never carries them.
+      const mostVisited = list.filter((row) => row.group === MOST_VISITED_GROUP)
+      const rows =
+        mostVisited.length > 0 ? list.filter((row) => row.group !== MOST_VISITED_GROUP) : list
+      setTiles(mostVisited)
+      setResults(rows)
       setPopupClosed(false)
       setAction(-1)
       // A fresh list may carry a fresh clipboard row: what was revealed is not vouched for.
       setClip(null)
-      const first = list[0]
+      const first = rows[0]
       const el = inputRef.current
       // Inline completion of the default match (Chrome's rule, decided in the core: the top row
       // outranks the verbatim query and extends what was typed): what was typed stays as typed,
@@ -482,8 +514,28 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     // into the text on the leave – and is completed anew by no one: Chrome's `RestoreState` sets
     // the user text back without running autocomplete over it. The rows come up as ever.
     const autofill = Boolean(urlbar.typed) && !urlbar.draft && !/\s/.test(lastTyped.current)
-    const timer = setTimeout(() => void fetchSuggestions(lastTyped.current, autofill), 0)
+    // The tablet's bar on focus over a page (OMN-04): the field holds the address, selected and
+    // untyped, and the rows are the zero-suggest list – the most visited sites, the recent
+    // searches, the recent pages – not the address's own matches, as Chrome's on-focus
+    // zero-suggest runs with the page's URL in the box (`OmniboxFocusType::kInteractionFocus`)
+    // until a key is typed. The phone's field is empty here already; the desktop bar asks for
+    // the address's rows, as it did.
+    const rest = tab ? pageTextFor(tab) : ''
+    const atRest =
+      touch &&
+      !phone &&
+      urlbar.mode === 'edit' &&
+      !urlbar.typed &&
+      !urlbar.draft &&
+      urlbar.initialText === undefined &&
+      rest !== '' &&
+      lastTyped.current === rest
+    const timer = setTimeout(
+      () => void fetchSuggestions(atRest ? '' : lastTyped.current, autofill, undefined, atRest),
+      0
+    )
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the rest test is the mount's
   }, [fetchSuggestions, urlbar.typed, urlbar.draft])
 
   // Keys the new tab page's search box received while this bar was already open (a keystroke
@@ -761,7 +813,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     const where = opts.where ?? 'current'
     const value = (opts.input ?? text).trim()
     const newTab = where === 'tab' || where === 'background' || submitsToNewTab()
-    const typed = typedText.trim()
+    // Nothing was typed for the on-focus zero-suggest list (OMN-04): nothing is learned from it.
+    const typed = restZero ? '' : typedText.trim()
     const navigate = (
       input: string,
       learn?: { title: string; kind?: 'url' | 'search' } | null
@@ -935,9 +988,25 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     if (!removable(row)) return false
     if (row.kind === 'history' && row.url) run('history.delete', { url: row.url })
     else if (row.kind === 'omnibox') run('urlbar.deleteSuggestion', { input: row.fill })
-    else if (row.url) run('urlbar.forgetShortcut', { url: row.url })
-    else return false
+    else if (row.url) {
+      run('urlbar.forgetShortcut', { url: row.url })
+      if (touch && row.kind === 'search' && row.group === RECENT_SEARCHES_GROUP)
+        void forgetSearchVisits(row.fill)
+    } else return false
     return true
+  }
+
+  /**
+   * A recent search removed on a touch layout (OMN-04) goes from the history too: the results
+   * pages its terms left on any of the user's engines, which the zero-suggest list reads the
+   * search back from – else the row would be back on the next focus. Chrome's
+   * `LocalHistoryZeroSuggestProvider::DeleteMatch` deletes the search term and its visits alike.
+   */
+  const forgetSearchVisits = async (terms: string): Promise<void> => {
+    const entries = await cmd('history.recent', { limit: RECENT_SEARCH_SCAN }).catch(() => null)
+    if (!entries) return
+    const urls = searchVisitUrls(entries, searchEnginesInOrder(engines, defaultEngine), terms)
+    if (urls.length > 0) run('history.deleteUrls', { urls })
   }
 
   /**
@@ -1041,7 +1110,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   /** PageDown / PageUp: as many rows as the list shows at once, the whole list when it fits. */
   const movePage = (dir: 1 | -1): void => {
     const list = document.getElementById('zen-omnibox-results')
-    const row = list?.querySelector<HTMLElement>('li')
+    const row = list?.querySelector<HTMLElement>('li:not([data-tiles])')
     const pageSize =
       list && row && row.offsetHeight > 0
         ? Math.max(1, Math.floor(list.clientHeight / row.offsetHeight))
@@ -1184,6 +1253,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
             rememberTyped(rest)
             setText(rest)
             setResults([])
+            setTiles([])
             setSelected(-1)
             setAction(-1)
             if (el) {
@@ -1366,6 +1436,32 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     while (results[j] && results[j].id === exit?.id) j += dir
     return results[j]?.group
   }
+  /**
+   * The most visited sites' row of tiles (OMN-04) at the list's head – first in the DOM, so on a
+   * bottom-docked card, whose list runs in reverse, it stands nearest the field as well: Chrome
+   * for Android's carousel is the first thing under the field wherever the bar is.
+   */
+  const tilesRow = (sheet: boolean): JSX.Element[] =>
+    tiles.length > 0
+      ? [
+          <MostVisitedTiles
+            key="most-visited"
+            tiles={tiles}
+            sheet={sheet}
+            phone={phone}
+            onPick={(item, e) =>
+              submit(item, {
+                where: clickTarget({
+                  button: e.button,
+                  ctrl: e.ctrlKey || e.metaKey,
+                  shift: e.shiftKey,
+                  alt: e.altKey
+                })
+              })
+            }
+          />
+        ]
+      : []
   const rows = (sheet: boolean): JSX.Element[] =>
     results.flatMap((item, i) => {
       const leaving = exit?.id === item.id
@@ -1376,6 +1472,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           item={item}
           selected={i === selected}
           sheet={sheet}
+          touchLayout={touch}
           typed={sheet ? undefined : typedQuery}
           bare={!sheet && item.kind === 'search' && i !== firstSearch}
           group={groupOf(item)}
@@ -1502,8 +1599,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
               />
             ) : null
           }
-          rows={rows(true)}
-          hint={results.length === 0 && !text ? placeholder : null}
+          rows={[...tilesRow(true), ...rows(true)]}
+          hint={results.length === 0 && tiles.length === 0 && !text ? placeholder : null}
           field={
             <div
               // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
@@ -1686,7 +1783,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
             role="combobox"
             aria-label="Search or enter address"
             aria-autocomplete="both"
-            aria-expanded={results.length > 0 && !popupClosed}
+            aria-expanded={(results.length > 0 || tiles.length > 0) && !popupClosed}
             aria-controls="zen-omnibox-results"
             aria-activedescendant={activeRow}
             data-zen-menu="urlbar"
@@ -1698,13 +1795,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
               Alt↵ New tab" is where the destination is told (pr-123's deferred badge verdict,
               closed by the lead's check on #289). */}
         </div>
-        {results.length > 0 && !popupClosed && (
+        {(results.length > 0 || tiles.length > 0) && !popupClosed && (
           <ul
             ref={fadeResults}
             id="zen-omnibox-results"
             role="listbox"
             className="zen-omnibox-results min-h-0 max-h-[520px] flex-1 overflow-y-auto"
           >
+            {tilesRow(false)}
             {rows(false)}
           </ul>
         )}
@@ -2069,7 +2167,8 @@ function SuggestionRow({
   typed = '',
   bare = false,
   group,
-  groupNoun = 'folder'
+  groupNoun = 'folder',
+  touchLayout = false
 }: {
   id: string
   item: Suggestion
@@ -2077,6 +2176,12 @@ function SuggestionRow({
   selected: boolean
   /** A row of the phone sheet: touch height (44); the desktop list's rows are §6's one line at 50. */
   sheet: boolean
+  /**
+   * A touch layout's row (the phone sheet's, the tablet popup's; OMN-04): a remembered search
+   * in zero-suggest wears the clock, as Chrome for Android's search-history rows do; the desktop
+   * row keeps the magnifier it has.
+   */
+  touchLayout?: boolean
   onPick: (e: React.MouseEvent) => void
   /**
    * A tab group row's group (OMN-15), for its glyph – the one group glyph (`GroupGlyph`, §9.37)
@@ -2135,7 +2240,7 @@ function SuggestionRow({
   const touch = useRef(false)
   // A favicon that fails to load leaves the kind's glyph, as Chrome's globe (never a blank cell).
   const [faviconBroken, setFaviconBroken] = useState(false)
-  const { Icon, page } = suggestionIcon(item)
+  const { Icon, page } = suggestionIcon(item, { recentSearchClock: touchLayout })
   const hold = useLongPress(onLongPress ? () => onLongPress(item) : noop)
   const pointerProps = {
     onPointerDown: (e: React.PointerEvent) => {
