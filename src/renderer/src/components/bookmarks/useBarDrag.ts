@@ -276,14 +276,15 @@ export function useBarDrag({
         SPRING_GENTLE,
         (v) => placeGhost(live.current.x, v),
         () => {
+          // Home: the ghost fades over the state's length, as it dissolves into a folder.
           if (ghost) ghost.style.opacity = '0'
-          setTimeout(settled, 100)
+          setTimeout(settled, MOTION_STATE_MS + 10)
         }
       )
       springs.current = { x, y }
       x.start(from.x, 0, settleTo.x)
       y.start(from.y, 0, settleTo.y)
-      if (ghost) ghost.style.transition = 'opacity 100ms var(--zen-ease)'
+      if (ghost) ghost.style.transition = `opacity ${MOTION_STATE_MS}ms var(--zen-ease)`
     },
     [placeGhost]
   )

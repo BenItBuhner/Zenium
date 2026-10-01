@@ -77,12 +77,6 @@ const S_IN_STRING = /(^|[\s,(])\d*\.?\d+s(?![\w-])/
  * one struck from its file fails here until its count is lowered.
  */
 const LEFT: Record<string, { count: number; why: string }> = {
-  // The ghost's fade at the end of its glide home, and the wait for it: 100 ms, no token's
-  // length (the state's 120 would lengthen it).
-  'components/bookmarks/useBarDrag.ts': {
-    count: 2,
-    why: 'a 100 ms fade at the glide’s end; the token would change its length – the lead’s call'
-  },
   // The load bar's fade, matching the stylesheet's `.zen-load-progress` (200 ms): a 200 that
   // is not a message's travel, so not `MOTION_MESSAGE_MS` by meaning.
   'components/content/LoadProgress.tsx': {
