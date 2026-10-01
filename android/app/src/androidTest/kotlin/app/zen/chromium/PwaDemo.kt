@@ -170,8 +170,10 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
             finding("FAIL the banner's title is not in the accessibility tree")
             return
         }
-        // A fling: the card leaves the way it was thrown and the core hears 'swipe' – the page-edge
-        // band (the phone's door for the offer, motion spec §3.2) up off the page, a banner card sideways.
+        // A fling: the offer leaves the way it was thrown – the page-edge band (the phone's door for
+        // the offer, motion spec §3.2) up off the page, where the swipe is UNANSWERED and starts no
+        // cooldown (§9 item 6, BandDemo's reading); a banner card sideways, where the core hears
+        // 'swipe' and the cooldown starts.
         val door = MessageProbe.parse(chromeJs(MessageProbe.PROBE_JS))
         f.down(card.exactCenterX(), card.exactCenterY())
         if (MessageProbe.isBand(door)) f.moveBy(0f, -MessageProbe.swipeUp(door, density), 140)
@@ -180,7 +182,8 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         val gone = awaitNoBanner(5_000)
         SystemClock.sleep(1_000)
         shot("04-banner-swiped-away")
-        finding("${verdict(gone)} the banner (${door.optString("door").ifEmpty { "no door" }}) left on the swipe (cooldown starts)")
+        val reading = if (MessageProbe.isBand(door)) "unanswered: no cooldown" else "cooldown starts"
+        finding("${verdict(gone)} the banner (${door.optString("door").ifEmpty { "no door" }}) left on the swipe ($reading)")
     }
 
     // --- 3. the install sheet and the launcher's pin dialog ---------------------------------------

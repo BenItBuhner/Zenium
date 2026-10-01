@@ -51,11 +51,14 @@ import java.util.concurrent.TimeUnit
  *     its life on the banner stack read from a `MutationObserver` in the chrome's document
  *     ([armBannerLog]), its paint to its going – and the timeout is a refusal remembered for the
  *     site as the X is: site A's `/second` brings no offer.
- *  4. THE MEMORY: a swipe off the strip (site E) mutes the site – its `/second` article shows no
- *     offer though the probe reads it as an article; the X (site B) does the same; leaving the
- *     page with the offer standing (site D: another document without an answer) does the same,
- *     Chrome's `ReaderModeManager` rule; and `/plain` (site B), which the probe does not read as
- *     an article, shows no strip at all.
+ *  4. THE MEMORY: the swipe (site E) is read the door's way – on the page-edge band it puts the
+ *     offer away UNANSWERED (motion spec §9 item 6, as [BandDemo] reads it): the site's `/second`
+ *     article brings the offer again, and the X on it mutes the site, so `/` then shows no offer
+ *     though the probe reads it as an article; on the banner stack a card's swipe is the refusal
+ *     and `/second` shows none. The X (site B) mutes the site; leaving the page with the offer
+ *     standing (site D: another document without an answer) does the same, Chrome's
+ *     `ReaderModeManager` rule; and `/plain` (site B), which the probe does not read as an
+ *     article, shows no strip at all.
  *  5. THE SITE-INFORMATION SHEET'S ROW (site B, muted by then: no offer stands, the sheet's row
  *     is the door; §9.29 names the reader chip among the sheet's rows, always): on `/plain` the
  *     sheet the pill's site icon opens lists no Reader View row; on the article it lists one,
@@ -375,11 +378,14 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     private fun memory() {
         finding("\nPUI-14 the memory: a refusal is remembered per site for the session")
-        // Site E: a fresh site's article, its offer standing to be swiped (within its clock).
+        // Site E: a fresh site's article, its offer standing to be swiped (within its clock). What
+        // the swipe means is the door's: unanswered on the band (§9 item 6), a refusal on the stack.
         navigate("$SITE_E/")
         poll(15_000) { tab()?.optBoolean("readerable") == true }
         val title = waitFor(STRIP_TITLE, 10_000)
         check("site E: an offer stands to be swiped", title != null)
+        // Which door the offer stood at: the band reads the swipe one way, the stack the other.
+        var band = false
         if (title != null) {
             // From the title, not the action: a touch on a control stays the control's (FirstRunDemo's swipe).
             // The band is swiped up off the page (motion spec §3.2); a banner card sideways.
@@ -400,8 +406,36 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
             if (!gone) touchFault("a swipe on the strip did not take it off")
             check("site E: the swipe takes the strip off", gone)
             SystemClock.sleep(600)
+            band = MessageProbe.isBand(door)
         }
-        mutedCheck("site E after the swipe", "$SITE_E/second")
+        if (band) {
+            // The band's reading (motion spec §9 item 6, as BandDemo reads site C): the swipe put
+            // the offer away UNANSWERED – no refusal is remembered, so the site's second article
+            // brings the offer again – and the explicit × on it is the refusal that mutes the site.
+            navigate("$SITE_E/second")
+            val secondReaderable = poll(15_000) { tab()?.optBoolean("readerable") == true }
+            val again = poll(10_000) { stripUp() }
+            finding("  site E's second article after the swipe: ${describeTab()}; readerable=$secondReaderable; strip within 10 s=$again")
+            check("site E: the swipe was no refusal – another article of the site brings the offer again (§9 item 6: the site is not muted)", secondReaderable && again)
+            snap("site-e-offer-again")
+            if (again) {
+                val x = fingerOnButton(DISMISS_LABEL)
+                if (x == null) {
+                    check("site E: a finger can reach the X", false)
+                } else {
+                    Finger().tap(x)
+                    val xGone = waitForGone(STRIP_TITLE, 4_000)
+                    finding("  the X on site E's second article: strip gone=$xGone; stack: ${bannerProbe()}")
+                    if (!xGone) touchFault("a touch on the X did not take the strip off")
+                    check("site E: the X takes the strip off", xGone)
+                    SystemClock.sleep(600)
+                }
+            }
+            mutedCheck("site E after the X", "$SITE_E/")
+        } else {
+            // The banner stack's reading: a card's swipe is a refusal, remembered for the site.
+            mutedCheck("site E after the swipe", "$SITE_E/second")
+        }
         snap("site-e-muted")
         beat()
 
