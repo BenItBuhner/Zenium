@@ -20,12 +20,13 @@ export const DEFAULT_BROWSER_BAND_KEY = 'default-browser'
  * raises the prompt that says what the OS will do before the hand-off (`askDefaultBrowser`,
  * `DefaultBrowserPrompt.tsx`), and the band HOLDS through it – the prompt's own "Set as default"
  * ends the state through the settings, its Not now or Escape leaves the band standing, as the
- * strip stood. The × is the strip's "Not now", by that name, and the × ALONE remembers the
- * refusal for this feature release (`dismissDefaultBrowserBanner`; the Design Lead's ruling on
- * the prompt band, §3.2 / §9.6, one rule for both hosts): a swipe up, Escape, the clock, a
- * navigation or the tab leaving the front put the band away for now and remember nothing – it
- * may stand again at the next eligible moment – and the band's going for any other reason (the
- * window closing, a replacement) remembers nothing either.
+ * strip stood. The × is every band's "Dismiss" (the Design Lead's ruling on #740: the one name
+ * on every band, no tenant's own), and the × ALONE remembers the refusal for this feature
+ * release (`dismissDefaultBrowserBanner`; the Lead's ruling on the prompt band, §3.2 / §9.6, one
+ * rule for both hosts): a swipe up, Escape, the clock, a navigation or the tab leaving the front
+ * put the band away for now and remember nothing – it may stand again at the next eligible
+ * moment – and the band's going for any other reason (the window closing, a replacement)
+ * remembers nothing either.
  *
  * The strip across the frame's top (`content/DefaultBrowserBanner.tsx`) retired to this band;
  * the prompt's flow and the Settings row are as they were.
@@ -43,7 +44,6 @@ export function useDefaultBrowserBand(state: UIState): void {
       icon: Globe,
       title: DEFAULT_BROWSER_PROMPT_TITLE,
       action: { label: 'Set as default', holds: true, onPick: () => askDefaultBrowser('banner') },
-      closeLabel: 'Not now',
       onDismiss: (reason) => {
         if (reason === 'close') dismissDefaultBrowserBanner({ version })
       }
