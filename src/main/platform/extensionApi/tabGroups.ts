@@ -360,7 +360,8 @@ function hasTabGroups(host: ApiHost, ext: LoadedExtension): boolean {
  * A folder an AI agent session holds is the agent's working set: a tab inside it is the agent's
  * to drive (its hidden dialogs, its leave prompts, its listing, its close with the session), so
  * an extension may read it as a group but may not move tabs into or out of it – through
- * `tabs.group` / `tabs.ungroup` here, or a `tabs.move` to another space (`tabs.ts`), which the
+ * `tabs.group` / `tabs.ungroup` here, or a `tabs.move` to another space (`tabs.ts`) or a
+ * `windows.create({ tabId })` into a window of its own space (`windows.ts`), both of which the
  * model answers by dropping the tab's folder. The core's word on the hold: a live session's group
  * (`groupOwner`), or a durable session's while its agent is away (`heldBy`). The user's own drag
  * and menu moves are not on these paths.

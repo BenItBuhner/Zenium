@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Space, Tab } from '../../../shared/types'
+import type { Space, Tab, WindowSyncMode } from '../../../shared/types'
 import { BLANK_URL } from '../../../shared/url'
 import type { ZenWindow } from '../../../core/window'
 import { ERROR_AGENT_GROUP } from '../../../core/extensions/api/tabGroups'
@@ -37,6 +37,8 @@ interface World {
   t2: Tab
   /** Folders an AI agent session holds, by the core's word. */
   agentFolders: Set<string>
+  /** The browser's settings as the host reads them (`windowSync` decides a tear-off's window). */
+  settings: { windowSync: WindowSyncMode }
   /** The window `moveTabToNewWindow` hands back, and what it was asked. */
   tearOffs: Array<{ tabId: string; at: unknown; from: FakeWindow }>
   moves: Array<{ tabId: string; target: unknown; win: FakeWindow }>
@@ -84,6 +86,7 @@ function world({ ownPrivate = false } = {}): World {
   const chromeIdOf = (t: Tab): number =>
     t.id === 't1' ? 7 : t.id === 't2' ? 8 : 100 + made.indexOf(t)
   const agentFolders = new Set<string>()
+  const settings: { windowSync: WindowSyncMode } = { windowSync: 'all' }
   const w: Partial<World> = {
     tearOffs: [],
     moves: [],
@@ -94,7 +97,8 @@ function world({ ownPrivate = false } = {}): World {
     torn,
     t1: tab,
     t2: other,
-    agentFolders
+    agentFolders,
+    settings
   }
   const model = {
     zenWindow: (id: number) => windows.get(id),
@@ -127,6 +131,7 @@ function world({ ownPrivate = false } = {}): World {
   }
   const browser = {
     extensions: { list: () => [{ id: EXT, path: '/ext/' + EXT, allowFileAccess: false }] },
+    state: { settings },
     agents: {
       groupOwner: (folderId: string) => (agentFolders.has(folderId) ? { id: 's1' } : undefined),
       heldBy: () => undefined
@@ -320,5 +325,28 @@ describe('windows.create({ tabId }) and tabs.move across windows', () => {
     w.tabs.handlers.move(w.ctx, 7, { windowId: 2, index: 0 })
     expect(w.moves).toHaveLength(2)
     expect(w.moves[1]).toMatchObject({ tabId: 't1', target: { spaceId: 'local-w2' }, win: w.torn })
+  })
+
+  it("refuses windows.create({ tabId }) a tab of an AI agent's folder when the new window would own it in a space of its own, before any window is made", () => {
+    const w = world()
+    w.t1.spaceId = 'space-1'
+    w.t1.folderId = 'agent'
+    w.agentFolders.add('agent')
+    // The default (every window shows the strip): the tear-off gives the tab a blank window of
+    // its own space, and the model drops the folder with the space – refused, nothing made.
+    expect(() => w.windows.handlers.create(w.ctx, { tabId: 7 })).toThrow(ERROR_AGENT_GROUP)
+    expect(w.tearOffs).toEqual([])
+    expect(w.newWindows).toBe(0)
+    expect(w.t1.folderId).toBe('agent')
+    // "Sync only pinned tabs": a regular tab's new window is a synced one showing the shared
+    // strip, the tab's space and folder kept – allowed.
+    w.settings.windowSync = 'pinned'
+    w.windows.handlers.create(w.ctx, { tabId: 7 })
+    expect(w.tearOffs).toEqual([{ tabId: 't1', at: null, from: w.own }])
+    // The agent's session over: the default tear-off goes through.
+    const released = world()
+    released.t1.folderId = 'agent'
+    released.windows.handlers.create(released.ctx, { tabId: 7 })
+    expect(released.tearOffs).toHaveLength(1)
   })
 })
