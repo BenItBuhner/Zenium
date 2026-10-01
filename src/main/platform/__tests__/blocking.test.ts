@@ -34,7 +34,8 @@ const {
   LIST_SETTLE_MS,
   idleSlot
 } = await import('../blocking')
-const { GHOSTERY_COMPILE_TASK } = await import('../blockingCompile')
+const { GHOSTERY_CACHE_FORMAT, GHOSTERY_COMPILE_TASK, cacheDigest } =
+  await import('../blockingCompile')
 
 const dirs: string[] = []
 function tempDir(): string {
@@ -45,6 +46,22 @@ function tempDir(): string {
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+
+/** The metadata one scope's cache should carry: its fingerprint, version and the files' digests. */
+function expectedMeta(
+  cacheDir: string,
+  fingerprint: string,
+  version: string,
+  tag = ''
+): Record<string, unknown> {
+  return {
+    format: GHOSTERY_CACHE_FORMAT,
+    fingerprint,
+    version,
+    engine: cacheDigest(readFileSync(join(cacheDir, `engine${tag}.bin`))),
+    documents: cacheDigest(readFileSync(join(cacheDir, `documents${tag}.txt`)))
+  }
+}
 
 function memoryIo(): StoreIO & { files: Map<string, string> } {
   const files = new Map<string, string>()
@@ -501,10 +518,9 @@ describe('GhosteryTextMatcher', () => {
     expect(readFileSync(join(cacheDir, 'documents.txt'), 'utf8')).toBe(
       '||phish.example^$all\n@@||trusted.example^$document'
     )
-    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual({
-      fingerprint: 'excerpt:1000:10',
-      version: 'v1'
-    })
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual(
+      expectedMeta(cacheDir, 'excerpt:1000:10', 'v1')
+    )
 
     // Same sets on the next start: deserialised, and still matching.
     const s2 = source()
@@ -713,14 +729,12 @@ describe('GhosteryTextMatcher', () => {
     expect(matcher.match(from(ad, 'default'))).toMatchObject({ action: 'block' })
     expect(matcher.match(from(ad))).toMatchObject({ action: 'block' })
     // Each scope's serialised form under its own name, fingerprinted by the sets it holds.
-    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual({
-      fingerprint: 'easylist:1000:1',
-      version: 'v1'
-    })
-    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.private.json'), 'utf8'))).toEqual({
-      fingerprint: 'easylist:1000:1|ubo-privacy:1000:1',
-      version: 'v1'
-    })
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.json'), 'utf8'))).toEqual(
+      expectedMeta(cacheDir, 'easylist:1000:1', 'v1')
+    )
+    expect(JSON.parse(readFileSync(join(cacheDir, 'engine.private.json'), 'utf8'))).toEqual(
+      expectedMeta(cacheDir, 'easylist:1000:1|ubo-privacy:1000:1', 'v1', '.private')
+    )
     expect(existsSync(join(cacheDir, 'engine.private.bin'))).toBe(true)
     expect(existsSync(join(cacheDir, 'documents.private.txt'))).toBe(true)
 
@@ -1179,10 +1193,9 @@ describe('GhosteryTextMatcher', () => {
       await new Promise((r) => setImmediate(r))
       expect(Buffer.from(readFileSync(target.bin))).toEqual(bytes)
       expect(readFileSync(target.documents, 'utf8')).toBe('||phish.example^$all')
-      expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual({
-        fingerprint: 'a:1:1',
-        version: 'v1'
-      })
+      expect(JSON.parse(readFileSync(target.meta, 'utf8'))).toEqual(
+        expectedMeta(cacheDir, 'a:1:1', 'v1')
+      )
       expect(readdirSync(cacheDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
 
       // Temp file + rename: the bytes go to `engine.bin.<pid>.tmp` first. With that path taken

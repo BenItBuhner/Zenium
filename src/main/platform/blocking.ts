@@ -37,9 +37,12 @@ import type {
 } from '../../core/blocking/rules'
 import { BLOCKING_DIR, type RuleSetStore } from '../../core/blocking/store'
 import {
+  GHOSTERY_CACHE_FORMAT,
   GHOSTERY_COMPILE_TASK,
   compileGhosteryEngine,
+  matchesCacheDigest,
   writeGhosteryCache,
+  type GhosteryCacheMeta,
   type GhosteryCachePaths,
   type GhosteryCompileOutput,
   type GhosteryCompileScope
@@ -346,6 +349,22 @@ function sameList(a: readonly string[] | undefined, b: readonly string[] | undef
 /** The key one scope's bytes wait under. */
 function scopeKey(partition: string | null): string {
   return partition === null ? '' : `.${partition}`
+}
+
+/** Cache paths whose damage was already logged this session: the warning is not repeated. */
+const warnedDamagedCaches = new Set<string>()
+
+/**
+ * A cache that is there but cannot be trusted (`readCache` names the reason): a miss, logged
+ * once per path – the files are not removed, since the build that follows overwrites them.
+ */
+function damagedCache(bin: string, reason: string, error?: unknown): null {
+  if (!warnedDamagedCaches.has(bin)) {
+    warnedDamagedCaches.add(bin)
+    if (error === undefined) console.warn('[zenium] filter engine cache not read', bin, reason)
+    else console.warn('[zenium] filter engine cache not read', bin, reason, error)
+  }
+  return null
 }
 
 /**
@@ -798,22 +817,50 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }
   }
 
+  /**
+   * One scope's cached matcher for `fingerprint`, or null – a miss, and the build compiles the
+   * lists' text instead. Every path to null: a file of the three missing; metadata that is not
+   * JSON or not an object; metadata of another {@link GHOSTERY_CACHE_FORMAT} (a cache an older
+   * build wrote: one recompile); another fingerprint or app version (the lists moved); metadata
+   * without a well-formed digest for either file; `engine.bin` or `documents.txt` of another
+   * length or SHA-1 than the metadata names (a file left short or stale under a completed
+   * rename – a short `documents.txt`, or an empty one, would parse as a smaller set, and is
+   * never adopted); the engine's bytes not deserialising. The files are checked against their
+   * digests before any of them is deserialised or parsed. A miss that means damage – anything
+   * past the fingerprint and version – is logged once per cache path, like a failed write.
+   */
   private readCache(partition: string | null, fingerprint: string): Compiled | null {
     const { bin, meta, documents } = this.cachePaths(partition)
+    if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
+    let info: Partial<GhosteryCacheMeta> | null
     try {
-      if (!existsSync(bin) || !existsSync(meta) || !existsSync(documents)) return null
-      const info = JSON.parse(readFileSync(meta, 'utf8')) as {
-        fingerprint?: unknown
-        version?: unknown
-      }
-      if (info.fingerprint !== fingerprint || info.version !== this.cacheVersion) return null
+      info = JSON.parse(readFileSync(meta, 'utf8')) as Partial<GhosteryCacheMeta> | null
+    } catch (error) {
+      return damagedCache(bin, 'metadata unreadable', error)
+    }
+    if (!info || typeof info !== 'object') return damagedCache(bin, 'metadata malformed')
+    if (info.format !== GHOSTERY_CACHE_FORMAT) return null
+    if (info.fingerprint !== fingerprint || info.version !== this.cacheVersion) return null
+    let engineBytes: Uint8Array
+    let documentBytes: Buffer
+    try {
+      engineBytes = new Uint8Array(readFileSync(bin))
+      documentBytes = readFileSync(documents)
+    } catch (error) {
+      return damagedCache(bin, 'files unreadable', error)
+    }
+    if (!matchesCacheDigest(engineBytes, info.engine))
+      return damagedCache(bin, 'engine bytes do not match the metadata')
+    if (!matchesCacheDigest(documentBytes, info.documents))
+      return damagedCache(bin, 'document filters do not match the metadata')
+    try {
       return {
-        engine: FiltersEngine.deserialize(new Uint8Array(readFileSync(bin))),
-        documents: DocumentFilters.parse([readFileSync(documents, 'utf8')]),
+        engine: FiltersEngine.deserialize(engineBytes),
+        documents: DocumentFilters.parse([documentBytes.toString('utf8')]),
         fingerprint
       }
-    } catch {
-      return null
+    } catch (error) {
+      return damagedCache(bin, 'engine not deserialised', error)
     }
   }
 
