@@ -79,11 +79,6 @@ const S_IN_STRING = /(^|[\s,(])\d*\.?\d+s(?![\w-])/
 const LEFT: Record<string, { count: number; why: string }> = {
   // A keystroke debounce before the history is queried.
   'components/phone/PhoneHistoryPanel.tsx': { count: 1, why: 'an 80 ms debounce, not a motion' },
-  // A Space row stepping between slots while another is held: 220 ms, no token's length.
-  'components/phone/SpacesDrawer.tsx': {
-    count: 1,
-    why: 'a row’s 220 ms step between slots; the spring or the token for it is the lead’s call'
-  },
   // Tailwind arbitrary values (`duration-[120ms]`) in class strings, which cannot read a TS
   // token: a `--zen-motion-state` custom property in main.css is the follow-up.
   'components/print/PreviewPane.tsx': {
