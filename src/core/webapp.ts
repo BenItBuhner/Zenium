@@ -69,7 +69,8 @@ export interface WebAppServiceOptions {
 /**
  * Web apps: the manifest a page declares becomes `tab.webApp`; "Add to Home screen" (from the
  * app menu, the ambient banner or a site's deferred `prompt()`) opens the install sheet, whose
- * "Add" asks the host to pin a launcher shortcut; the launcher's confirmation lands in
+ * "Add" asks the host to pin a launcher shortcut (on the desktop with the dialog's "Open as
+ * window" – a window of the app's own or a tab in Zenium); the launcher's confirmation lands in
  * `onPinned`, which toasts, records the app for the "Open <app>" menu label and fires the page's
  * `appinstalled`. The engagement counter behind the ambient banner lives here too.
  */
@@ -85,7 +86,10 @@ export class WebAppService {
   /** Tabs with an ambient banner up (value: the app it advertises). */
   private readonly banners = new Map<string, string>()
   /** Pin requests the launcher has not confirmed yet, by shortcut id. */
-  private readonly pendingPins = new Map<string, { tabId: string; title: string; url: string }>()
+  private readonly pendingPins = new Map<
+    string,
+    { tabId: string; title: string; url: string; openAsWindow?: boolean }
+  >()
   /** The manifests behind pending pins, so a confirmation can register the app after the tab moved on. */
   private readonly pendingApps = new Map<string, WebAppInfo>()
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -180,12 +184,14 @@ export class WebAppService {
 
   /**
    * Open an installed app the way its launcher does: in an app window of its own on hosts with
-   * windows (MW-23), as a tab at its start URL elsewhere. An id that is no app's does nothing.
+   * windows (MW-23), as a tab at its start URL elsewhere – and on the desktop too for an app
+   * whose shortcut was made with "Open as window" off (`openAsWindow` false), whose launcher
+   * opens a tab. An id that is no app's does nothing.
    */
   launch(appId: string, win?: ZenWindow): void {
     const app = this.pinnedById(appId)
     if (!app) return
-    if (this.surface === 'desktop') {
+    if (this.opensWindow(app)) {
       // An open window of the app comes forward rather than a second one (Chrome's behaviour).
       const open = this.browser.allWindows().find((w) => w.app?.appId === app.id && !w.isClosing)
       if (open) {
@@ -202,6 +208,15 @@ export class WebAppService {
     if (active && isWithinScope(active.url, app.scope))
       this.browser.tabs.navigate(active.id, app.startUrl)
     else this.browser.tabs.createTab({ url: app.startUrl, active: true }, win)
+  }
+
+  /**
+   * Whether the app opens in a window of its own here: a host with windows, unless the record
+   * says its launcher opens a tab (`openAsWindow` false). A record from before the box
+   * travelled, or installed from the pill's popover, has no say and opens a window.
+   */
+  private opensWindow(app: Pick<PinnedWebApp, 'openAsWindow'>): boolean {
+    return this.surface === 'desktop' && app.openAsWindow !== false
   }
 
   // ---------------------------------------------------------------------------
@@ -221,9 +236,9 @@ export class WebAppService {
   /**
    * Hand a share to an installed app: its target's launch – a GET of the action with the
    * fields as the query, or a POST with them as the form body – opened the way the app's
-   * launcher opens it (`launch`): an app window of its own on hosts with windows, a tab
-   * another app sent (`fromIntent`) elsewhere. An id that is no app's, or an app whose target
-   * takes none of the share, does nothing and says so.
+   * launcher opens it (`launch`): an app window of its own on hosts with windows (unless the
+   * shortcut was made to open a tab), a tab another app sent (`fromIntent`) elsewhere. An id
+   * that is no app's, or an app whose target takes none of the share, does nothing and says so.
    */
   launchShare(appId: string, fields: SharedFields, win?: ZenWindow): boolean {
     const app = this.pinnedById(appId)
@@ -233,7 +248,7 @@ export class WebAppService {
     if (!app?.shareTarget || !shareTargetAccepts(app.shareTarget, kind)) return false
     const launch = shareTargetLaunch(app.shareTarget, fields)
     const post = launch.method === 'POST' ? launch.post : undefined
-    if (this.surface === 'desktop') {
+    if (this.opensWindow(app)) {
       const opened = this.browser.openAppWindow(launch.url, { from: win, post })
       opened?.host.show()
       opened?.host.focus()
@@ -610,8 +625,15 @@ export class WebAppService {
     this.browser.emit('webapp.install', prompt, win)
   }
 
-  /** The sheet's "Add": ask the host to pin the page. */
-  async pin(tabId: string, title: string, win: ZenWindow): Promise<void> {
+  /**
+   * The sheet's "Add" / the dialog's "Create": ask the host to pin the page. `openAsWindow` is
+   * the desktop dialog's "Open as window" box, handed to the host as it stands – a window of
+   * the app's own (`--app=`) or a tab in Zenium – and kept on the record the confirmation
+   * writes, so `launch` opens the app the way its launcher does. A caller without the box (the
+   * phone sheet, the pill's popover) sends none and the request reads as before: the host's
+   * own rule.
+   */
+  async pin(tabId: string, title: string, win: ZenWindow, openAsWindow?: boolean): Promise<void> {
     this.installOpen.delete(tabId)
     const tab = this.browser.tabs.tab(tabId)
     const host = this.browser.platform.shortcuts
@@ -639,9 +661,15 @@ export class WebAppService {
             themeColor: hexColor(info.themeColor),
             backgroundColor: hexColor(info.backgroundColor)
           }
-        : {})
+        : {}),
+      ...(openAsWindow === undefined ? {} : { openAsWindow })
     }
-    this.pendingPins.set(request.id, { tabId, title: name, url: request.url })
+    this.pendingPins.set(request.id, {
+      tabId,
+      title: name,
+      url: request.url,
+      ...(openAsWindow === undefined ? {} : { openAsWindow })
+    })
     if (info) this.pendingApps.set(request.id, { ...info, name })
     let ok = false
     try {
@@ -668,7 +696,8 @@ export class WebAppService {
    * chrome toast "Added <name> to Home screen" with an Open action for the shortcut's URL. A
    * desktop host confirms with the icon it kept (`details.icon`); an app with a manifest then
    * opens in its own window at once and the installing tab goes with it, as Chrome moves the
-   * tab into the new app window.
+   * tab into the new app window – unless the shortcut was made to open a tab ("Open as window"
+   * off), when the tab stays where it is, as Chrome leaves it.
    */
   onPinned(id: string, details: { icon?: string | null } = {}): void {
     const pending = this.pendingPins.get(id)
@@ -691,7 +720,11 @@ export class WebAppService {
         // none (Android), the manifest's own icon address, so the record can be drawn.
         icon: details.icon ?? previous?.icon ?? displayIcon(info),
         bounds: previous?.bounds ?? null,
-        shareTarget: info.shareTarget ?? null
+        shareTarget: info.shareTarget ?? null,
+        // The mode this pin asked of the launcher, so `launch` opens the app the same way; a
+        // pin without the box (the popover, the phone) rewrote the launcher on the host's rule
+        // and the record says nothing, whatever an earlier shortcut asked.
+        ...(pending?.openAsWindow === undefined ? {} : { openAsWindow: pending.openAsWindow })
       })
       this.save()
     }
@@ -712,7 +745,8 @@ export class WebAppService {
       this.browser.tabs.view(pending.tabId)?.postToPage?.({ type: 'webapp', action: 'installed' })
     }
     this.browser.state.commitVolatile()
-    if (info && surface === 'desktop' && pending) this.moveIntoAppWindow(pending.tabId, id)
+    if (info && surface === 'desktop' && pending && pending.openAsWindow !== false)
+      this.moveIntoAppWindow(pending.tabId, id)
   }
 
   /**

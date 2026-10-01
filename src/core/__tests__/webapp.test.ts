@@ -61,7 +61,8 @@ function harness(
     isPrivate: false,
     chrome: 'full',
     app: null,
-    surfaces: new Set(options.installSurface === false ? [] : ['install'])
+    surfaces: new Set(options.installSurface === false ? [] : ['install']),
+    host: { show: () => {}, focus: () => {} }
   } as unknown as ZenWindow
   const tab = {
     id: 't1',
@@ -403,6 +404,108 @@ describe('WebAppService', () => {
     h.service.launch(MANIFEST_ID, h.win)
     expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
     expect(h.appWindows).toEqual([])
+  })
+
+  it('hands the launcher the dialog’s "Open as window" as it stands, and no word of it from a caller without the box (the phone sheet, the pill’s popover)', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    expect(h.pins.map((p) => p.openAsWindow)).toEqual([false, true, undefined])
+    // Absent means absent: Android's bridge forwards the request's own keys to the launcher.
+    expect('openAsWindow' in h.pins[2]).toBe(false)
+  })
+
+  it('a shortcut made to open a tab ("Open as window" off): the installing tab stays where it is, the record keeps the mode – across a reload – and the app launches as a tab, not a window', async () => {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    expect(h.events.filter((e) => e.name === 'webapp.pinned').map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL, surface: 'desktop', appId: MANIFEST_ID }
+    ])
+    // Chrome leaves the page in its tab: no app window opens and the tab does not close.
+    expect(h.appWindows).toEqual([])
+    expect(h.closedTabs).toEqual([])
+    expect(h.service.pinnedById(MANIFEST_ID)).toMatchObject({
+      icon: 'file:///icons/sketch.png',
+      openAsWindow: false
+    })
+    // "Open <app>" follows the launcher: inside the app the tab goes to the start URL, elsewhere
+    // a tab opens; never a window.
+    h.tab.url = 'https://app.example/deep/page'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.navigations).toEqual([{ tabId: 't1', url: DOCUMENT_URL }])
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
+    expect(h.appWindows).toEqual([])
+    // The mode is on the record the store keeps, so a later launch knows it.
+    h.service.flushSync()
+    const doc = JSON.parse(h.files.get('webapps.json') ?? '{}') as { pinned: unknown[] }
+    expect(doc.pinned).toEqual([expect.objectContaining({ id: MANIFEST_ID, openAsWindow: false })])
+    const reloaded = new WebAppService(
+      h.browser,
+      {
+        readSync: (name: string) => h.files.get(name) ?? null,
+        write: async () => {},
+        writeSync: () => {}
+      } as unknown as StoreIO,
+      { now: () => h.now.value }
+    )
+    expect(reloaded.pinnedById(MANIFEST_ID)?.openAsWindow).toBe(false)
+  })
+
+  it('a share to an app whose shortcut opens a tab goes to a tab too (`launchShare`), not an app window', async () => {
+    const h = harness({ desktop: true })
+    h.service.handleMessage(h.tab.id, {
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: MANIFEST_URL,
+      manifest: {
+        ...MANIFEST,
+        share_target: { action: '/share', params: { title: 'title', text: 'text', url: 'url' } }
+      }
+    })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[0].id)
+    h.tab.url = 'https://elsewhere.example/'
+    const link = 'https://news.example/story?id=7'
+    expect(h.service.launchShare(MANIFEST_ID, { title: null, text: null, url: link }, h.win)).toBe(
+      true
+    )
+    expect(h.createdTabs).toEqual([
+      { url: `https://app.example/share?url=${encodeURIComponent(link)}` }
+    ])
+    expect(h.appWindows).toEqual([])
+  })
+
+  it('a shortcut made with the box checked opens a window as an install always did, and the record says so; a later pin without the box (the popover) rewrote the launcher on the host’s rule and the record forgets the tab mode', async () => {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id)
+    expect(h.appWindows.map((w) => w.url)).toEqual([DOCUMENT_URL])
+    expect(h.closedTabs).toEqual(['t1'])
+    expect(h.service.pinnedById(MANIFEST_ID)?.openAsWindow).toBe(true)
+
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[1].id)
+    expect(h.service.pinnedById(MANIFEST_ID)?.openAsWindow).toBe(false)
+    expect(h.appWindows).toHaveLength(1)
+
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[2].id)
+    const record = h.service.pinnedById(MANIFEST_ID)!
+    expect('openAsWindow' in record).toBe(false)
+    // Without the box the host's rule stands – a window – and the app launches as one: the
+    // first open window of the app comes forward.
+    expect(h.appWindows).toHaveLength(2)
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.appWindows).toHaveLength(2)
+    expect(h.appWindows.map((w) => w.shown)).toEqual([2, 1])
+    expect(h.createdTabs).toEqual([])
   })
 
   it('remembers where the app window stood and reopens it there', async () => {
