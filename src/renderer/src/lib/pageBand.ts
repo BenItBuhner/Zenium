@@ -18,12 +18,17 @@
  * same number through `content/PageBandLayer.tsx`, which reads the store without React, so a
  * frame of the travel re-renders nothing.
  *
- * Android leaves the seat at 0: its band host moves the WebView by the pull channel, and a
- * report with nothing seated carries no band. For a page the chrome draws itself – a
- * `render: 'chrome'` page, the phone's new tab page – it writes the OFFSET alone
- * (`moveChromePage`): `PageBandLayer` rides on it as on the desktop, and the core is not told,
- * since there is no view under such a page for it to move (`core/pages.ts`) and the band's
- * offset there is a translation of the chrome's own layer, never a layout.
+ * Android's band host (`lib/band/androidHost.ts`) moves the WebView by the pull channel and
+ * leaves the seat at 0 for it: a document is translated at rest, never laid out under the band,
+ * and a report with nothing seated carries no band. For a page the chrome draws itself – a
+ * `render: 'chrome'` page, the phone's new tab page – it writes the OFFSET per frame
+ * (`moveChromePage`) and the SEAT as the desktop host does (`seatBand`: the lesser of the seat
+ * and the destination as a travel departs, the band's height at its rest), so `PageBandLayer`
+ * rides on both as on the desktop – translated through a travel, seated at rest with its box
+ * inset by the band's height, so a long chrome page scrolls to its last row. The core is not
+ * told the offset, since there is no view under such a page for it to move (`core/pages.ts`);
+ * the seat it hears in the layout report lays out no WebView there either (a chrome page has no
+ * view, is never a split's member, and the phone's blank tab is not placed).
  */
 import type { LayoutBand, Rect } from '@shared/types'
 import { run } from './api'
