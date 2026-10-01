@@ -37,6 +37,10 @@ on:
         description: Record the screen too (the encoder is a load of its own on the emulator; off for the numbers)
         type: boolean
         default: true
+  # TEMPORARY (W6-S26-b): the one granted run after the ruling and the review's folds; removed right after.
+  push:
+    branches:
+      - cursor/android-tab-wake-perf-9271
 
 permissions:
   contents: read
