@@ -974,6 +974,89 @@ describe('RuleEngine partition scope', () => {
       matched: { setId: 'ext:a:static:one' }
     })
   })
+
+  it('keeps a set with excludedPartitions out of the named partitions and nowhere else (PS-49)', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('builtin:global-off', [{ id: 1, action: { type: 'allow' }, condition: {} }], {
+        source: 'builtin',
+        priority: RULE_SET_PRIORITY.globalOff,
+        excludedPartitions: ['private']
+      })
+    )
+    e.setRuleSet(
+      set('ubo-privacy', [block(1, { urlFilter: '||ads.example^' })], {
+        source: 'filter-list',
+        priority: RULE_SET_PRIORITY.filterList,
+        partitions: ['private']
+      })
+    )
+    // The private partition is left to its list; every other window meets the allow-all.
+    expect(e.decide(ad('private'))).toMatchObject({
+      action: 'block',
+      matched: { setId: 'ubo-privacy' }
+    })
+    expect(e.decide(ad('default'))).toMatchObject({
+      action: 'allow',
+      matched: { setId: 'builtin:global-off' }
+    })
+    expect(e.decide(ad('work')).matched?.setId).toBe('builtin:global-off')
+    // A request of no known partition is excluded from nothing, as `excludedTabIds` excludes no tabless request.
+    expect(e.decide(ad()).matched?.setId).toBe('builtin:global-off')
+    expect(e.summary('builtin:global-off')?.excludedPartitions).toEqual(['private'])
+    expect(e.summary('ubo-privacy')?.excludedPartitions).toBeUndefined()
+    // Both scopes on one set: the allow-list admits, the exclusion overrides it.
+    e.setRuleSet(
+      set('both', [block(1, { urlFilter: '||ads.example^' })], {
+        priority: RULE_SET_PRIORITY.dnr,
+        partitions: ['default', 'private'],
+        excludedPartitions: ['private']
+      })
+    )
+    expect(e.decide(ad('default')).matched?.setId).toBe('both')
+    expect(e.decide(ad('private')).matched?.setId).toBe('ubo-privacy')
+    // The linear scan agrees with the indexed one, both ways.
+    for (const partition of ['default', 'private', 'work', undefined])
+      expect(e.decideLinear(ad(partition))).toEqual(e.decide(ad(partition)))
+  })
+
+  it('names the text sets of a partition and the partitions that need a matcher of their own (PS-49)', () => {
+    const e = new RuleEngine()
+    const text = (id: string, extra: Partial<RuleSet> = {}): RuleSet => ({
+      id,
+      source: 'filter-list',
+      priority: RULE_SET_PRIORITY.filterList,
+      enabled: true,
+      filterText: `||${id}.example^`,
+      ...extra
+    })
+    e.setRuleSet(text('easylist'))
+    expect(e.textPartitions()).toEqual([])
+    expect(e.textSetsFor(undefined).map((s) => s.id)).toEqual(['easylist'])
+    expect(e.textSetsFor('private').map((s) => s.id)).toEqual(['easylist'])
+
+    e.setRuleSet(text('ubo-privacy', { partitions: ['private'] }))
+    e.setRuleSet(
+      text('ext:a:text', { priority: RULE_SET_PRIORITY.dnr, partitions: ['default', 'work'] })
+    )
+    e.setRuleSet(text('off', { enabled: false, partitions: ['other'] }))
+    e.setRuleSet(text('aside', { excludedPartitions: ['banking'] }))
+    // First-seen order over the enabled text sets (highest priority first, then by id); a disabled set names nothing.
+    expect(e.textPartitions()).toEqual(['default', 'work', 'banking', 'private'])
+    expect(e.textSetsFor(undefined).map((s) => s.id)).toEqual(['aside', 'easylist'])
+    expect(e.textSetsFor('private').map((s) => s.id)).toEqual(['aside', 'easylist', 'ubo-privacy'])
+    expect(e.textSetsFor('default').map((s) => s.id)).toEqual(['ext:a:text', 'aside', 'easylist'])
+    expect(e.textSetsFor('banking').map((s) => s.id)).toEqual(['easylist'])
+    expect(e.textSetsFor('other').map((s) => s.id)).toEqual(['aside', 'easylist'])
+
+    // The private list switched off, or re-scoped to everywhere, drops the private partition's own matcher.
+    e.setEnabled('ubo-privacy', false)
+    expect(e.textPartitions()).toEqual(['default', 'work', 'banking'])
+    e.setEnabled('ubo-privacy', true)
+    e.setPartitions('ubo-privacy', undefined)
+    expect(e.textPartitions()).toEqual(['default', 'work', 'banking'])
+    expect(e.textSetsFor(undefined).map((s) => s.id)).toEqual(['aside', 'easylist', 'ubo-privacy'])
+  })
 })
 
 describe('RuleEngine extension pages', () => {

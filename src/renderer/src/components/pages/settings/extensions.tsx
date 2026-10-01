@@ -8,6 +8,7 @@ import {
 } from '@core/extensions/permissionMessages'
 import { run } from '@renderer/lib/api'
 import { errorDetail, errorSummary, newestFirst } from '@renderer/lib/extensions/errorText'
+import { SYNCED_PENDING_LINE } from '@renderer/lib/extensions/promptCopy'
 import { sourceLabel, storePageUrl } from '@renderer/lib/extensions/storeInput'
 import { warningGlyph } from '@renderer/lib/extensions/warningGlyph'
 import { relativeTime } from '@renderer/lib/utils'
@@ -53,17 +54,26 @@ export function extensionsGroups({ state }: SectionContext): RowGroup[] {
 /**
  * One installed extension: its 20 px icon in the leading column, its name, and on the second
  * line the one thing the list is scanned for – the load error in the danger ink, "Off" while it
- * is disabled, else its own description (which the details sheet repeats in its title block).
+ * is disabled (the synced landing's line in the warn ink while it waits for approval, ID-44),
+ * else its own description (which the details sheet repeats in its title block).
  */
+/** Installed here by sync and not yet approved (`ExtensionInfo.pendingApproval`): off until the user says so. */
+function awaitingApproval(ext: ExtensionInfo): boolean {
+  return ext.pendingApproval === true && !ext.enabled
+}
+
 function extensionRow(ext: ExtensionInfo, state: UIState): ItemRow {
   const id = `extension:${ext.id}`
   const name = ext.name || ext.id
+  const pending = awaitingApproval(ext)
   return {
     kind: 'item',
     id,
     label: name,
-    description: ext.error ?? (ext.enabled ? ext.description || undefined : 'Off'),
-    tone: ext.error ? 'danger' : undefined,
+    description:
+      ext.error ??
+      (ext.enabled ? ext.description || undefined : pending ? SYNCED_PENDING_LINE : 'Off'),
+    tone: ext.error ? 'danger' : pending ? 'warn' : undefined,
     keywords: ['add-on', ext.id, ext.version],
     leading: extensionIcon(ext),
     sheet: {
@@ -99,6 +109,9 @@ function detailsGroups(ext: ExtensionInfo, state: UIState): RowGroup[] {
       kind: 'switch',
       id: `${id}:enabled`,
       label: 'Enabled',
+      // The synced landing's line under the switch that approves it (ID-44): turning it on
+      // opens the install prompt with the permission warnings first.
+      description: awaitingApproval(ext) ? SYNCED_PENDING_LINE : undefined,
       checked: ext.enabled,
       onChange: (v) => run('extension.setEnabled', { id: ext.id, enabled: v })
     }

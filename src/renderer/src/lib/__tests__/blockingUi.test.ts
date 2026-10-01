@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { BlockedSite, Tab } from '@shared/types'
+import { PRIVATE_CONTAINER_ID, type BlockedSite, type Tab } from '@shared/types'
 import {
   DEFAULT_BLOCKING_SETTINGS,
   emptyBlockingStatus,
@@ -24,8 +24,8 @@ import {
   trackerReportRows
 } from '../blockingUi'
 
-function tab(url: string, blockedCount = 0): Tab {
-  return { url, blockedCount } as unknown as Tab
+function tab(url: string, blockedCount = 0, containerId = 'default'): Tab {
+  return { url, blockedCount, containerId } as unknown as Tab
 }
 
 function list(over: Partial<FilterListStatus>): FilterListStatus {
@@ -52,7 +52,8 @@ const ago = (): string => '2 h ago'
 
 describe('siteBlockingState', () => {
   const status = { enabled: true, siteExceptions: ['https://news.example'] }
-  const level = { level: 'balanced' as const }
+  const level = { level: 'balanced' as const, levelPrivate: 'default' as const }
+  const off = { level: 'off' as const, levelPrivate: 'default' as const }
 
   it('has no site for zen:// pages and empty tabs', () => {
     expect(siteBlockingState(null, status, level)).toBe('no-site')
@@ -63,13 +64,38 @@ describe('siteBlockingState', () => {
     expect(siteBlockingState(tab('https://a.example/'), { ...status, enabled: false }, level)).toBe(
       'off'
     )
-    expect(siteBlockingState(tab('https://a.example/'), status, { level: 'off' })).toBe('off')
+    expect(siteBlockingState(tab('https://a.example/'), status, off)).toBe('off')
   })
 
   it('tells excepted origins from blocked ones by the stored origin', () => {
     expect(siteBlockingState(tab('https://news.example/story'), status, level)).toBe('excepted')
     expect(siteBlockingState(tab('https://www.news.example/'), status, level)).toBe('blocking')
     expect(siteBlockingState(tab('http://news.example/'), status, level)).toBe('blocking')
+  })
+
+  it('reads a private tab at the level its window evaluates at: Strict under "Always use Strict in private windows", the level above Off included (PS-49)', () => {
+    const on = { level: 'off' as const, levelPrivate: 'strict' as const }
+    const privateTab = (url: string): Tab => tab(url, 0, PRIVATE_CONTAINER_ID)
+    // Level Off with the switch on: the engine blocks at Strict in the private window, so its
+    // chip says so; a regular window's page is still at Off.
+    expect(siteBlockingState(privateTab('https://a.example/'), status, on)).toBe('blocking')
+    expect(siteBlockingState(tab('https://a.example/'), status, on)).toBe('off')
+    expect(siteBlockingState(tab('https://a.example/', 0, 'work'), status, on)).toBe('off')
+    // The switch off: a private tab follows the level above.
+    expect(siteBlockingState(privateTab('https://a.example/'), status, off)).toBe('off')
+    // The master switch off beats everything, the private window included.
+    expect(
+      siteBlockingState(privateTab('https://a.example/'), { ...status, enabled: false }, on)
+    ).toBe('off')
+    // A site exception still wins on a private tab the switch keeps at Strict.
+    expect(siteBlockingState(privateTab('https://news.example/story'), status, on)).toBe('excepted')
+    // Above Off the switch changes nothing the chip reads: Strict blocks like Balanced.
+    expect(
+      siteBlockingState(privateTab('https://a.example/'), status, {
+        ...level,
+        levelPrivate: 'strict'
+      })
+    ).toBe('blocking')
   })
 })
 
