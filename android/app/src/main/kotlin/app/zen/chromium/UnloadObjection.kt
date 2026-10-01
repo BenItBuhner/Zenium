@@ -9,7 +9,10 @@ package app.zen.chromium
  * Under an unload check ([TabWebView.confirmUnload]: a tab's close from the overview, a strip's
  * ×, Back closing a tab, Close Others / All, the app's exit) the question is not asked on a
  * touch host: the leave is confirmed at once and the check settles as leave, the view destroyed
- * – the close is undoable ("Closed <title>"), and Undo is the protection. A page an agent drives
+ * – the chrome's close paths run with Undo on the toast ("Closed <title>", `lib/closeUndo.ts`),
+ * and that Undo is the protection; the app's exit keeps the tab with its stack, and the one
+ * close that comes to the core past the chrome (a hardware keyboard's shortcut) is named in
+ * [TabWebView.confirmUnload]. A page an agent drives
  * (`TabWebView.agentDriven`) leaves silently: the WebView raises the question only after a user
  * gesture, but an agent's input is trusted input, so a page it works on may object, and the
  * core's own answer for an agent's page is to leave (`PageDialogService.confirmLeave`). A user

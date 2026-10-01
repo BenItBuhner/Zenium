@@ -2038,7 +2038,11 @@ class TabWebView(
      * – no objection, an objection overruled, the page gone or silent for
      * [UNLOAD_CHECK_TIMEOUT_MS] (a hung renderer holds no close up, as in Chrome). On a touch
      * host it never hears false: a close path never asks "Leave site?" (§9.23,
-     * [UnloadObjection.SettleCheck]) – the close is undoable, and Undo is the protection.
+     * [UnloadObjection.SettleCheck]). The chrome's close paths run with Undo on the toast
+     * (`lib/closeUndo.ts`: the overview's cards, the strip's rows and tiles, the tab search's
+     * rows, the tablet menu's close rows, Back), and that Undo is the protection; the app's
+     * exit keeps the tab with its stack. A close that comes to the core past the chrome – a
+     * hardware keyboard's shortcut – has neither (named for the Lead in #759's gate addendum).
      *
      * The WebView runs the handlers for a navigation only, so the check is one: a load of
      * `about:blank` the page may object to, started past this view's own [loadUrl] (nothing of
@@ -3453,7 +3457,8 @@ class TabWebView(
          * A page the user is not looking at never puts the sheet in front of them
          * ([UnloadObjection], §9.23 on touch hosts): under a check – every touch close path –
          * the leave is confirmed at once and the check settles as leave, the view destroyed
-         * (the close is undoable, and Undo is the protection); a page an agent drives (OS-40:
+         * (the chrome's close paths run with Undo on the toast, and that Undo is the
+         * protection; [confirmUnload] names the one that comes without it); a page an agent drives (OS-40:
          * the WebView raises the question only after a user gesture, but an agent's input is
          * trusted input, so a page it works on may object, and the question is the agent's,
          * not the user's) leaves silently, with the bookkeeping a Leave runs; a user page that
