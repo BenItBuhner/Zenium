@@ -15,7 +15,10 @@ package app.zen.chromium
  * [TabWebView.confirmUnload]. A page an agent drives
  * (`TabWebView.agentDriven`) leaves silently: the WebView raises the question only after a user
  * gesture, but an agent's input is trusted input, so a page it works on may object, and the
- * core's own answer for an agent's page is to leave (`PageDialogService.confirmLeave`). A user
+ * core's own answer for an agent's page is to leave (`PageDialogService.confirmLeave`); while
+ * such a page is hidden its objection is the agent's dialog policy's before this table is
+ * read ([DialogPolicyAnswer]: leave by default, or the agent's stay, reported to it), so
+ * [LeaveSilently] is what is left of it – the agent's page drawn on the screen. A user
  * page that is not in front – behind another tab, or under the tab overview – objecting to a
  * navigation it started itself, or to a reload the chrome asked of it, stays: the objection is
  * upheld at once, no sheet. Only the tab the user is on asks – "Leave site?", "Reload site?" –

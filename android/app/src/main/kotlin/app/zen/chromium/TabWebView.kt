@@ -321,16 +321,25 @@ class TabWebView(
      * and all, until the agent's next action says otherwise (§9.23). Cleared too when the view
      * is bound to another tab ([TabHost.bind], [TabHost.adopt]).
      *
-     * TODO(OS-40 part B): the page's `alert` / `confirm` / `prompt` still go to [pageDialog]'s
-     * dismissal for a hidden agent-driven page. They cannot be round-tripped to the core while
-     * the page waits in the call: the chrome WebView's JavaScript shares the one renderer with
-     * the pages and is frozen for as long as the call lasts (`PageDialogsDemo` scenario 9), so a
-     * `pageDialog` view event would never be answered and the browser would hang. The viable
-     * design is a standing per-tab policy the agent sets ahead of the call (accept / dismiss /
-     * a prompt's text), answered here at once and reported to the agent after – a core change
-     * (`AgentService`, `browser_handle_dialog`) for a later PR.
+     * The page's `alert` / `confirm` / `prompt` and its "Leave site?" on such a page are the
+     * agent's dialog policy's ([dialogPolicy], [DialogPolicyAnswer]): they cannot be
+     * round-tripped to the core while the page waits in the call – the chrome WebView's
+     * JavaScript shares the one renderer with the pages and is frozen for as long as the call
+     * lasts (`PageDialogsDemo` scenario 9) – so they are answered here at once from the policy
+     * the agent set ahead of the call, and reported to it after.
      */
     var agentDriven = false
+    /**
+     * The agent's dialog policy for this tab as the core resolved it (`view.setDialogPolicy`,
+     * said beside [agentDriven] at each of the agent's actions and whenever the policy changes;
+     * null when no rule covers the tab). A dialog of the page while an agent drives it hidden
+     * is answered from it at once, the default for a kind it leaves out, and reported to the
+     * core (`pageDialogAnswered`; [DialogPolicyAnswer.decide]); the tab in front of the user
+     * keeps its sheet. Never spent here: the core spends a `once` rule on the report and sends
+     * what is left. Cleared when the view is bound to another tab ([TabHost.bind],
+     * [TabHost.adopt]): the policy is the core's word on that tab, and comes with it.
+     */
+    var dialogPolicy: DialogPolicyAnswer.Policy? = null
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
@@ -2023,8 +2032,33 @@ class TabWebView(
      * tab forward for the dialog to wait on, as Chrome's would (`PageDialogSpec`). So is a
      * dialog of a page told to open no more this visit ([PageDialogVisit]); the checkbox that
      * tells it so is offered from its second dialog on.
+     *
+     * A page an agent drives hidden is the agent's dialog policy's first ([dialogPolicy],
+     * [DialogPolicyAnswer]): its dialog is answered from the policy at once – the default,
+     * Cancel, for a kind the policy leaves out, OK for an alert – and reported to the core for
+     * the agent's next result; the visit's count is not the agent's. The tab in front of the
+     * user is not the policy's, and takes the path above.
      */
     private fun pageDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
+        val policyAnswer = DialogPolicyAnswer.decide(
+            kind = kind,
+            policy = dialogPolicy,
+            agentDriven = agentDriven,
+            shown = isShown,
+            userUnload = unloadCheck != null,
+            url = frameUrl,
+            message = message,
+            defaultValue = defaultValue
+        )
+        if (policyAnswer is DialogPolicyAnswer.Decision.Answer) {
+            when {
+                !policyAnswer.accepted -> result.cancel()
+                result is JsPromptResult -> result.confirm(policyAnswer.text ?: "")
+                else -> result.confirm()
+            }
+            host.viewEvent(tabId, "pageDialogAnswered", policyAnswer.report.toJson())
+            return
+        }
         if (!isShown) {
             result.cancel()
             return
@@ -3466,7 +3500,10 @@ class TabWebView(
          * protection; [confirmUnload] names the one that comes without it); a page an agent drives (OS-40:
          * the WebView raises the question only after a user gesture, but an agent's input is
          * trusted input, so a page it works on may object, and the question is the agent's,
-         * not the user's) leaves silently, with the bookkeeping a Leave runs; a user page that
+         * not the user's) is answered by the agent's dialog policy while hidden – leave by
+         * default, or stay – and reported to the agent ([DialogPolicyAnswer]), and leaves
+         * silently, with the bookkeeping a Leave runs, where the policy does not reach (its
+         * view drawn: a split's second pane, the frame of a show); a user page that
          * is not in front – behind another tab, or under the tab overview – objecting to its
          * own navigation, or to the reload the chrome asked of it, stays, the navigation
          * cancelled as a Stay cancels it ([stayedOnPage]). The tab the user is on asks as it
@@ -3488,11 +3525,38 @@ class TabWebView(
                 result.confirm()
                 return true
             }
+            val reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+            // A page an agent drives hidden is its dialog policy's first ([DialogPolicyAnswer]):
+            // leave – the default – or stay, answered at once and reported to the core. Never
+            // under a check (the user's close is the user's: the table below settles it), never
+            // for the tab in front (its sheet is the user's). The bookkeeping is a Leave's or a
+            // Stay's, as at the sheet.
+            val policyAnswer = DialogPolicyAnswer.decide(
+                kind = if (reloadAsked) PageDialogKind.RELOAD else PageDialogKind.LEAVE,
+                policy = dialogPolicy,
+                agentDriven = agentDriven,
+                shown = isShown,
+                userUnload = check != null,
+                url = url,
+                message = message,
+                defaultValue = null
+            )
+            if (policyAnswer is DialogPolicyAnswer.Decision.Answer) {
+                if (policyAnswer.accepted) {
+                    result.confirm()
+                    leaveChosen(askedAt = now, chosenAt = now, reload = reloadAsked)
+                } else {
+                    result.cancel()
+                    stayedOnPage()
+                }
+                host.viewEvent(tabId, "pageDialogAnswered", policyAnswer.report.toJson())
+                return true
+            }
             val decision = UnloadObjection.decide(
                 inFront = UnloadObjection.inFront(shown = isShown, behind = backgroundTab),
                 agentDriven = agentDriven,
                 checkInFlight = check != null,
-                reloadAsked = now - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+                reloadAsked = reloadAsked
             )
             when (decision) {
                 is UnloadObjection.SettleCheck -> {
