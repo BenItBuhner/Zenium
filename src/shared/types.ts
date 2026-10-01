@@ -7570,8 +7570,15 @@ export interface Commands {
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
   /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */
   'webapp.openInstall': { args: { tabId: string }; result: void }
-  /** Pin the tab's page to the Home screen under `title` (the sheet's primary button). */
-  'webapp.pin': { args: { tabId: string; title: string }; result: void }
+  /**
+   * Pin the tab's page to the Home screen under `title` (the sheet's primary button).
+   * `openAsWindow` is the desktop's "Create shortcut?" box (Chrome's "Open as window"): true,
+   * the launcher opens the page in an app window of its own (`--app=<url>`); false, as a tab in
+   * Zenium. Absent – the phone sheet, the pill's "Install <app>?" popover – the host keeps its
+   * own rule: the desktop's launcher opens a window, Android's tile reads the manifest's
+   * display mode (`ShortcutRequest.display`).
+   */
+  'webapp.pin': { args: { tabId: string; title: string; openAsWindow?: boolean }; result: void }
   /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
   'webapp.cancelInstall': { args: { tabId: string }; result: void }
   /**
