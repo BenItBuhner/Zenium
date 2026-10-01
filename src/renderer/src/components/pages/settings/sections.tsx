@@ -1856,20 +1856,8 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     : []
-  // The inverse: the tab overview's Close all tabs and its "Close N tabs?" prompt are the phone
-  // host's (a windowed host has no overview), so the switch that turns the prompt off is too.
-  const overviewRows: SettingsRow[] = windows
-    ? []
-    : [
-        {
-          kind: 'switch',
-          id: 'confirm-close-all',
-          label: 'Confirm before closing all tabs',
-          description: 'The tab overview asks before it closes every tab of a Space.',
-          checked: s.confirmCloseAll,
-          onChange: (v) => set({ confirmCloseAll: v })
-        }
-      ]
+  // No switch for the phone's Close all tabs: it asks nothing, and one toast undoes the lot (the
+  // Lead's A3/S1 ruling).
   // The startup on a host without windows: the phone's boot knows two – the last session back,
   // or one fresh tab – so its row stays the switch it was (`startup.mode` underneath: on is
   // "Continue where you left off", off "Open the New Tab page"; a synced `pages` reads as on,
@@ -1914,7 +1902,6 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.ctrlTabCyclesWithinSection,
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
-        ...overviewRows,
         ...startupRows,
         ...sessionRows
       ]
@@ -3307,7 +3294,7 @@ export const PRIVATE_LOCK_ROW = {
  * is confirmed by the device first, on or off (`setPrivateLockOnLeave`: the system's prompt,
  * else turning the lock off would be the way past it); without a screen lock the row is
  * disabled at .4 and its description says a screen lock is needed (§9.30). Phone-host-only,
- * as `confirmCloseAll` is: a desktop private window has no lock.
+ * as the Tabs section's startup switch is (`startupRows`): a desktop private window has no lock.
  */
 function privateLockGroups({ state, screenLock }: SectionContext): RowGroup[] {
   if (state.capabilities.windows || !state.capabilities.privateTabs) return []

@@ -307,6 +307,8 @@ export const DEFAULT_SETTINGS: Settings = {
   caretBrowsing: false,
   caretBrowsingConfirm: true,
   showSelectionMenu: true,
+  // Retired (the Lead's A3/S1 ruling): leaves with the type field in S1's STAGE 2, once Android's
+  // A3 has taken the phone's last reads – until then the phone's confirm reads this default.
   confirmCloseAll: true,
   crashRestore: 'ask',
   askWhereToSave: false,

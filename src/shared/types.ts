@@ -3556,10 +3556,14 @@ export interface Settings {
    */
   showSelectionMenu?: boolean
   /**
-   * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
-   * again" turns this off. Absent in profiles from before it existed (read as true).
+   * @deprecated Retired with the undoable Close All (the Lead's A3/S1 ruling, 10-01): the phone's
+   * "Close all tabs" closes at once and one toast offers to undo the lot, so nothing asks first
+   * and nothing reads this after Android's A3; removed in STAGE 2 of S1. Optional meanwhile so the
+   * phone's last reads still compile on either branch. A profile or a peer's settings record
+   * from an older build still carries the key; it rides along unread (`applyPersisted`,
+   * `applyRemote`) – no migration, no sync kind.
    */
-  confirmCloseAll: boolean
+  confirmCloseAll?: boolean
   /** After an unclean exit: offer the last session's pages, bring them back, or start fresh. */
   crashRestore: CrashRestoreMode
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */

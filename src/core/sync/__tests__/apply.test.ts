@@ -33,8 +33,13 @@ import {
   SITE_DATA_RECORD_ID,
   collectLocal,
   defaultScope,
+  diffLocal,
+  hashData,
+  metaFromRemote,
   modData,
   readingListEntryData,
+  settingsKeyTime,
+  winningRemote,
   withoutDeviceLocalSettings,
   type SyncRecord
 } from '../records'
@@ -762,6 +767,59 @@ describe('applyRemote: the settings record and Settings › On startup', () => {
     expect(data.startup).toEqual({ mode: 'pages', pages: MINE })
     expect(data).not.toHaveProperty('restoreSession')
     expect(Object.keys(data).filter((key) => !(key in b.state.settings))).toEqual([])
+  })
+})
+
+describe('applyRemote: the settings record and the retired confirmCloseAll (the Lead\u2019s A3/S1 ruling, services pass 17)', () => {
+  it("an older peer's record still carries the key: it applies cleanly, the key lands unread and rides on at the peer's time – no stamp, no second win, no fold", () => {
+    // This device as the build after the retirement holds it: no `confirmCloseAll` among its
+    // settings (the default left with the type field), per-key entries for the rest.
+    const b = browser()
+    const settings = b.state.settings as unknown as Record<string, unknown>
+    delete settings.confirmCloseAll
+    const sources = (): Parameters<typeof collectLocal>[0] => ({
+      model: b.state.model,
+      settings: b.state.settings,
+      shortcutOverrides: {},
+      bookmarks: [],
+      boosts: []
+    })
+    const first = diffLocal({}, collectLocal(sources(), defaultScope()), 500)
+    const mine = diffLocal(first.meta, collectLocal(sources(), defaultScope()), 600, {
+      stamp: null
+    })
+    expect(mine.meta[SETTINGS_RECORD_ID]!.keys).not.toHaveProperty('confirmCloseAll')
+
+    // The peer's record as an older build writes it: this device's values and, beside them, the
+    // retired switch – at the peer's time, 1000 (`settingsRecord`).
+    const peer = settingsRecord({
+      ...withoutDeviceLocalSettings(b.state.settings),
+      confirmCloseAll: true
+    })
+    const remote = new Map([[SETTINGS_RECORD_ID, peer]])
+    const won = winningRemote(mine.meta, remote)
+    // Nothing else differs, so the key alone wins (a group this device holds nothing of).
+    expect(won.map((r) => r.data)).toEqual([{ confirmCloseAll: true }])
+    expect(() => applyRemote(b, won)).not.toThrow()
+    // Carried, not read: it lands as any key this build does not know would (`Object.assign`),
+    // the way a newer peer's key does; no reader is left (the phone's Close all asks nothing).
+    expect(settings.confirmCloseAll).toBe(true)
+
+    // The re-snapshot after the apply (`SyncEngine.run`, `stamp: null`) publishes the key at the
+    // peer's time: this device made no edit, so no stamp – and the next round finds nothing to
+    // win, so the record does not bounce between the two builds.
+    const applied = { ...mine.meta, ...metaFromRemote(won, mine.meta) }
+    const next = diffLocal(applied, collectLocal(sources(), defaultScope()), 2000, {
+      stamp: null
+    })
+    const record = next.records.find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect((record.data as Record<string, unknown>).confirmCloseAll).toBe(true)
+    expect(settingsKeyTime(record, 'confirmCloseAll')).toBe(1000)
+    expect(next.meta[SETTINGS_RECORD_ID]!.keys!.confirmCloseAll).toEqual({
+      hash: hashData(true),
+      modified: 1000
+    })
+    expect(winningRemote(next.meta, remote)).toEqual([])
   })
 })
 

@@ -771,31 +771,6 @@ describe('the section model', () => {
     ])
   })
 
-  it('carries the overview’s "Confirm before closing all tabs" switch in Tabs, bound to confirmCloseAll (TAB-06)', () => {
-    const c = context(state({}, { confirmCloseAll: false }))
-    const tabs = buildSection(
-      PAGE.sections.find((x) => x.id === 'tabs')!,
-      c.ctx
-    )
-    const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
-    // A row among the tab rows, right before the session ones; no card of its own (§9.17).
-    expect(ids.indexOf('confirm-close-all')).toBe(ids.indexOf('restore-session') - 1)
-    const confirm = row(tabs, 'confirm-close-all')
-    if (confirm.kind !== 'switch') throw new Error('not a switch')
-    expect(confirm.label).toBe('Confirm before closing all tabs')
-    expect(confirm.checked).toBe(false)
-    confirm.onChange(true)
-    expect(c.patches).toEqual([{ confirmCloseAll: true }])
-    expect(DEFAULT_SETTINGS.confirmCloseAll).toBe(true)
-
-    // A windowed host has no tab overview and no Close all tabs: the switch stays off its Tabs.
-    const desktop = buildSection(
-      PAGE.sections.find((x) => x.id === 'tabs')!,
-      context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
-    )
-    expect(findRow(desktop.groups, 'confirm-close-all')).toBeNull()
-  })
-
   it('carries "Lock private tabs when you leave Zenium" in Privacy and Security, device-local and off by default, confirmed by the device before the core keeps it (INC-05, SET-17)', async () => {
     const { privateLockStore, resetPrivateLock, setPrivateLockHost } =
       await import('@renderer/lib/privateLock')
@@ -848,7 +823,7 @@ describe('the section model', () => {
       await Promise.resolve()
       expect(invoke).not.toHaveBeenCalled()
 
-      // Phone-host-only, as `confirmCloseAll`: a windowed host's private window has no lock.
+      // Phone-host-only, as the startup switch is: a windowed host's private window has no lock.
       const desktop = buildSection(
         PAGE.sections.find((x) => x.id === 'privacy')!,
         context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
@@ -866,6 +841,9 @@ describe('the section model', () => {
     expect(findRow(phone.groups, 'warn-close-window')).toBeNull()
     // The phone's startup row is the switch it was (W6-3): the windowed hosts have On startup.
     expect(findRow(phone.groups, 'restore-session')?.kind).toBe('switch')
+    // No "Confirm before closing all tabs" on any host: the phone's Close all asks nothing and
+    // undoes (the Lead's A3/S1 ruling; the row was the phone host's alone).
+    expect(findRow(phone.groups, 'confirm-close-all')).toBeNull()
 
     const c = context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } }))
     const tabs = buildSection(
@@ -874,6 +852,7 @@ describe('the section model', () => {
     )
     const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
     expect(findRow(tabs.groups, 'restore-session')).toBeNull()
+    expect(findRow(tabs.groups, 'confirm-close-all')).toBeNull()
     expect(ids.slice(ids.indexOf('crash-restore'))).toEqual(['crash-restore', 'warn-close-window'])
     const crash = row(tabs, 'crash-restore')
     if (crash.kind !== 'value') throw new Error('not a value row')
