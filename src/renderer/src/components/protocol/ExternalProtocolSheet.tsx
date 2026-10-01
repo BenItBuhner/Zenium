@@ -12,11 +12,13 @@ import {
 } from 'lucide-react'
 import type { ExternalProtocolRequest } from '@shared/types'
 import { useEscapeUnlessLeaving } from '@renderer/hooks/useEscape'
+import { usePopover } from '@renderer/hooks/usePopover'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
+import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { answerExternalProtocol, uiStore } from '@renderer/lib/ui'
-import { Button } from '../ui/button'
+import { V2Button, V2CheckRow, V2TitleBlock } from '../extensions/v2'
 import { Switch } from '../ui/switch'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -25,16 +27,18 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * core asks before it lets go: on the phone a sheet on the menu's chassis with the app that
  * would open, the address, and for the schemes that have one answer ("always allow phone
  * numbers") a toggle to remember it; on a tablet and under a mouse (DeX, a trackpad) the same
- * content as the centred 400 dialog over a scrim, as the share chooser draws it (v2 draft §9.36
- * as the lead read it on #727: the split is the form factor's, not the pointer's alone – a
- * tablet's finger gets the dialog, the phone's the sheet). Dismissing either is "not now".
- * Mounted once, above whichever shell is up.
+ * question as the prompt dialog in the frame's dialog host – §9.20's `zen-v2-dialog` at 400 over
+ * §9.5's scrim on the content frame alone (v2 draft §9.36 as the lead amended it on #750: a
+ * prompt on the tablet is a dialog, not a sheet, in the coarse pointer's sizes; the split is the
+ * form factor's, not the pointer's alone – a tablet's finger gets the dialog, the phone's the
+ * sheet). Dismissing either is "not now". Mounted once, above whichever shell is up.
  *
  * The sheet's leave outlives its request (`SheetPresence`, v2 draft §11.1): the core withdraws
  * a question with `externalProtocol.cancel` – the tab closed, its view gone, a newer request
  * from the same page taking the sheet over – and the store's `null` is a leave, the sheet
  * running its own way down before it unmounts; a new request meanwhile is a new sheet above it.
- * The dialog reads no leave and goes with its request, as before.
+ * The dialog reads no leave and goes with its request, as before: the host keeps its panel
+ * through the pop exit (lib/portals.tsx).
  */
 export function ExternalProtocolLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.externalProtocol)
@@ -46,7 +50,7 @@ export function ExternalProtocolLayer(): JSX.Element | null {
       {!request ? null : sheet ? (
         <ProtocolSheet key={request.requestId} request={request} />
       ) : (
-        <ProtocolPanel key={request.requestId} request={request} />
+        <ProtocolDialog key={request.requestId} request={request} />
       )}
     </SheetPresence>
   )
@@ -124,12 +128,15 @@ const DESCRIPTION_CLAMP_CLASS = 'line-clamp-2 wrap-anywhere'
 function Header({
   request,
   phone,
-  titleId
+  titleId,
+  descriptionId
 }: {
   request: ExternalProtocolRequest
   phone: boolean
-  /** The phone title's id, the sheet's `aria-labelledby`. */
+  /** The title's id, the sheet's or the dialog's `aria-labelledby`. */
   titleId?: string
+  /** The dialog's description id, its `aria-describedby`. */
+  descriptionId?: string
 }): JSX.Element {
   const Icon = wordsFor(request.scheme).icon
   const subtitle = subtitleOf(request)
@@ -147,27 +154,21 @@ function Header({
       </div>
     )
   }
-  // The row is 56 for one line and grows with a second (§9.2): a minimum, never a fixed height.
+  // The dialog's title block (§9.23): the scheme's glyph inline at the title's start – sized by
+  // the block to `--v2-icon`, 16 under a mouse and 20 on a tablet (extensions.css; no tile) –
+  // the title on one line, the sentence as the description wrapping to two.
   return (
-    <div className="flex min-h-14 items-center gap-3 px-3 py-1.5">
-      <span
-        className="zen-sheet-badge flex h-10 w-10 shrink-0 items-center justify-center"
-        aria-hidden
-      >
-        <Icon className="h-5 w-5" strokeWidth={1.75} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]">
-          {titleOf(request)}
-        </div>
-        <div
-          className={`${DESCRIPTION_CLAMP_CLASS} text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]`}
-          title={subtitle}
-        >
+    <V2TitleBlock
+      id={titleId}
+      title={<span className="block truncate">{titleOf(request)}</span>}
+      glyph={<Icon aria-hidden />}
+      description={
+        <span className={DESCRIPTION_CLAMP_CLASS} title={subtitle}>
           {subtitle}
-        </div>
-      </div>
-    </div>
+        </span>
+      }
+      descriptionId={descriptionId}
+    />
   )
 }
 
@@ -185,19 +186,22 @@ function Body({
   phone: boolean
 }): JSX.Element {
   const words = wordsFor(request.scheme)
+  // The dialog's body runs at the prompt primitive's rhythm (`.zen-confirm-dialog-body`): 16
+  // between the address, the remember row and the footer, 16 under the footer; the title block
+  // above brings its own 16 (§9.23).
   return (
-    <div className={phone ? 'flex flex-col' : 'flex flex-col gap-4 pb-1 pt-1'}>
+    <div className={phone ? 'flex flex-col' : 'flex flex-col gap-4 pb-4'}>
       <div
         className={
           phone
             ? 'truncate px-4 pb-2 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]'
-            : 'truncate px-3 text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]'
+            : 'truncate px-4 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]'
         }
         title={request.url}
       >
         {displayAddress(request.url)}
       </div>
-      {request.canRemember && (
+      {request.canRemember && phone && (
         <label className="zen-sheet-item zen-sheet-item-two-line cursor-pointer">
           <span className="min-w-0 flex-1">
             <span className="block truncate">Always open {words.plural}</span>
@@ -207,6 +211,17 @@ function Body({
           </span>
           <Switch checked={always} onCheckedChange={onAlways} aria-label="Always allow" />
         </label>
+      )}
+      {request.canRemember && !phone && (
+        // §9.23: a prompt's remember-choice is a checkbox row, submitted with Open – edge to
+        // edge, its own 16 the prompt's gutter (§9.25), the box 16 under a mouse and 20 on a
+        // tablet (`--v2-checkbox`).
+        <V2CheckRow
+          label={`Always open ${words.plural}`}
+          description="Without asking again"
+          checked={always}
+          onChange={onAlways}
+        />
       )}
       {phone ? (
         // §9.11: two peers split the width, the primary trailing.
@@ -224,13 +239,13 @@ function Body({
           </button>
         </div>
       ) : (
-        <div className="flex justify-end gap-2 px-3">
-          <Button variant="secondary" onClick={() => onAnswer(false)}>
-            Not now
-          </Button>
-          <Button variant="default" onClick={() => onAnswer(true)}>
+        // §9.11: the pair hugs right at the pointer's control height (`--v2-control`: 32 under a
+        // mouse, 40 under a finger) with an 8 gap, Open the primary in the v2 inks.
+        <div className="flex justify-end gap-2 px-4">
+          <V2Button onClick={() => onAnswer(false)}>Not now</V2Button>
+          <V2Button variant="primary" data-accept onClick={() => onAnswer(true)}>
             Open
-          </Button>
+          </V2Button>
         </div>
       )}
     </div>
@@ -280,34 +295,67 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
 }
 
 // ---------------------------------------------------------------------------
-// Tablets and a mouse (DeX, a trackpad): a centred dialog
+// Tablets and a mouse (DeX, a trackpad): the prompt dialog in the frame's host
 // ---------------------------------------------------------------------------
 
-function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.Element {
+/**
+ * The prompt as §9.36 has it on a tablet and under a mouse: §9.20's `zen-v2-dialog` at the form
+ * width, 400 – it carries the remember row – placed through the frame's dialog host
+ * (lib/portals.tsx, `FrameDialogPortal`: the layer mounts above the shells, outside the host),
+ * whose §9.5 scrim dims the content frame alone and leaves the sidebar and the toolbar lit and
+ * inert; the host centres the panel, takes the pointer and keeps the panel through its pop exit.
+ * The dialog meets §9.23 as the prompt moves onto it: the title block with the scheme's glyph
+ * inline at the title's start (`--v2-icon`, 16 under a mouse and 20 on a tablet – the tokens are
+ * the form factor's, so DeX keeps the tablet's), the sentence as the description wrapping to two
+ * lines, the decoded address 13 at 69 % on one line, the remember choice as a checkbox row
+ * submitted with Open, then the §9.11 footer hugging right – Not now, then Open as the primary –
+ * at the pointer's control height (`--v2-control`: 32 under a mouse, 40 under a finger). Escape,
+ * a press on the scrim and the system back gesture are "not now"; focus lands on Open and Tab
+ * wraps (§9.22), and the answer gives the focus back to the page (`answerExternalProtocol`).
+ */
+function ProtocolDialog({ request }: { request: ExternalProtocolRequest }): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <HostedProtocolDialog request={request} />
+    </FrameDialogPortal>
+  )
+}
+
+function HostedProtocolDialog({ request }: { request: ExternalProtocolRequest }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const id = useId()
+  const titleId = `${id}title`
+  const descriptionId = `${id}description`
   const [always, setAlways] = useState(false)
   const answer = (allow: boolean): void =>
     answerExternalProtocol(request.requestId, allow, allow && always)
+  useFrameDialog({ onScrimPress: () => answer(false) })
   useBackSurface({ name: 'external-protocol', onCommit: () => answer(false) })
-  useEscapeUnlessLeaving(() => answer(false))
+  usePopover(ref, {
+    onClose: () => answer(false),
+    initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
+    // A page's link raised it: no control of the chrome's to return the focus to (§9.22).
+    returnTo: null
+  })
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
-      <div className="zen-sheet-scrim absolute inset-0" onClick={() => answer(false)} />
-      <div
-        role="dialog"
-        // Modal: the scrim behind it takes every press, and Escape is its Cancel.
-        aria-modal="true"
-        aria-label={titleOf(request)}
-        className="zen-panel zen-animate-pop relative w-full max-w-[400px] px-3 pb-3 pt-2"
-      >
-        <Header request={request} phone={false} />
-        <Body
-          request={request}
-          always={always}
-          onAlways={setAlways}
-          onAnswer={answer}
-          phone={false}
-        />
-      </div>
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      data-external-protocol=""
+      className="zen-v2 zen-v2-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
+      style={{ width: POPOVER_WIDTH.form }}
+    >
+      <Header request={request} phone={false} titleId={titleId} descriptionId={descriptionId} />
+      <Body
+        request={request}
+        always={always}
+        onAlways={setAlways}
+        onAnswer={answer}
+        phone={false}
+      />
     </div>
   )
 }
