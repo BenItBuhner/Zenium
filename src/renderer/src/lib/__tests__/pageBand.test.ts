@@ -8,11 +8,18 @@ import {
   bandOffsetStore,
   bandSeat,
   bandSeatStore,
+  chromePageOffset,
+  chromePageOffsetStore,
+  chromePageSeat,
+  chromePageSeatStore,
   layoutBand,
+  moveChromePage,
   movePage,
   pageRectUnderBand,
+  resetChromePageBand,
   resetPageBand,
-  seatBand
+  seatBand,
+  seatChromePage
 } from '../pageBand'
 
 /*
@@ -28,10 +35,14 @@ const AREA = { x: 260, y: 48, width: 1000, height: 740 }
 
 beforeEach(() => {
   resetPageBand()
+  resetChromePageBand()
   vi.mocked(run).mockClear()
 })
 
-afterEach(() => resetPageBand())
+afterEach(() => {
+  resetPageBand()
+  resetChromePageBand()
+})
 
 describe('the seat', () => {
   it('starts at 0, is a store the reporter can read, and is written once per change', () => {
@@ -113,5 +124,88 @@ describe('the offset', () => {
     expect(bandSeat()).toBe(0)
     expect(bandOffset()).toBe(0)
     expect(layoutBand()).toBeUndefined()
+  })
+})
+
+/*
+ * The chrome page's pair (Android's band host, `lib/band/androidHost.ts`): the seat and the
+ * offset of a page the chrome draws itself on the host that moves its page views another way
+ * (the pull channel) and lays nothing out by rects. The layer's alone (`PageBandLayer` with
+ * `source="chrome-page"`): the core is never told, the layout report never carries it, and the
+ * desktop's pair above is untouched by it – in effect, and in what the report says.
+ */
+describe("the chrome page's pair", () => {
+  it('is seated and moved on its own stores under the same contract, the core never told', () => {
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    const seats: number[] = []
+    const offsets: number[] = []
+    const offSeat = chromePageSeatStore.subscribe(() => seats.push(chromePageSeat()))
+    const offOffset = chromePageOffsetStore.subscribe(() => offsets.push(chromePageOffset()))
+    expect(moveChromePage(12.5)).toBe(true)
+    expect(moveChromePage(12.5)).toBe(false)
+    expect(moveChromePage(56)).toBe(true)
+    seatChromePage(56)
+    seatChromePage(56)
+    seatChromePage(0)
+    expect(moveChromePage(0)).toBe(true)
+    offSeat()
+    offOffset()
+    expect(offsets).toEqual([12.5, 56, 0])
+    expect(seats).toEqual([56, 0])
+    expect(vi.mocked(run)).not.toHaveBeenCalled()
+  })
+
+  it("reports NOTHING to the layout: a chrome page's travel and rest leave the desktop's pair at 0 and layoutBand() silent", () => {
+    moveChromePage(30)
+    expect(layoutBand()).toBeUndefined()
+    moveChromePage(56)
+    seatChromePage(56)
+    expect(chromePageSeat()).toBe(56)
+    expect(chromePageOffset()).toBe(56)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    seatChromePage(0)
+    moveChromePage(0)
+    expect(layoutBand()).toBeUndefined()
+  })
+
+  it("leaves the desktop's travel and rest reported exactly as before, with the chrome page's pair written beside them", () => {
+    // The desktop's open: seated at the departure, the frames to the host, the rest at the
+    // height – `{seat, offset}` named in the report throughout, as the test above pins.
+    seatBand(56)
+    movePage(30)
+    expect(layoutBand()).toEqual({ seat: 56, offset: 30 })
+    // A chrome page's pair written (as if Android's host ran beside – it never does on one
+    // platform): the report does not hear it, before or after.
+    seatChromePage(76)
+    moveChromePage(76)
+    expect(layoutBand()).toEqual({ seat: 56, offset: 30 })
+    movePage(56)
+    expect(layoutBand()).toEqual({ seat: 56, offset: 56 })
+    expect(vi.mocked(run).mock.calls).toEqual([
+      ['layout.pageOffset', { offset: 30 }],
+      ['layout.pageOffset', { offset: 56 }]
+    ])
+    // At rest under the seated band the report holds `{56, 56}`; the leave's departure lays the
+    // page out home while it is still down; home says nothing.
+    seatBand(0)
+    expect(layoutBand()).toEqual({ seat: 0, offset: 56 })
+    movePage(0)
+    expect(layoutBand()).toBeUndefined()
+    expect(chromePageSeat()).toBe(76)
+    expect(chromePageOffset()).toBe(76)
+  })
+
+  it('resets on its own (tests), the desktop’s pair untouched by it', () => {
+    seatBand(56)
+    movePage(56)
+    seatChromePage(76)
+    moveChromePage(76)
+    resetChromePageBand()
+    expect(chromePageSeat()).toBe(0)
+    expect(chromePageOffset()).toBe(0)
+    expect(layoutBand()).toEqual({ seat: 56, offset: 56 })
   })
 })
