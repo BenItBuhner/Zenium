@@ -43,6 +43,21 @@ import {
  * `180ms` (main.css), Tailwind's `duration-*` classes and the dock's own lift spring
  * (`lib/gestures/dock.ts`'s `SPRING_LIFT`) are outside `components/**` and `lib/motion/**`: the
  * wave report's debt, not this pin's.
+ *
+ * The rule, then – what a file under the walk must do to pass: every duration it moves by is a
+ * token read from `lib/motion/tokens.ts` (or a `*_MS` of a value that is none of the four);
+ * every spring it starts is `SPRING_SNAPPY`, `SPRING_GENTLE` or `SPRING_FOLLOW` (or spread from
+ * one), never an object literal with a numeric `stiffness` / `damping`; its curve is `ZEN_EASE`
+ * / `var(--zen-ease)`, never a `cubic-bezier(` in a string; a time in a string is a template
+ * over a token (`${MOTION_STATE_MS}ms`), never digits before `ms` (or before `s` in a
+ * `transition*` / `animation*` seat); a numeric `duration` / `delay` / `endDelay` – in an object
+ * literal, a JSX attribute, `animate()`'s second argument – is a token, not a literal; and a
+ * `setTimeout` / `setInterval` with a literal delay of 1..1000 ms is a wait that paces a motion
+ * and reads a token instead (an identifier – `MOTION_STATE_MS + 10`, `REORDER_GRACE_MS` – is
+ * not read). A wait that is not a motion (a debounce, a grace, a dwell) is not converted: it is
+ * listed in `LEFT` by file, with its count and its reason, and only the listed files may carry
+ * what the scanner finds, in exactly the listed counts. Android's sweep (#731) passes the same
+ * way: its files under the walk carry nothing the scanner reads, or are listed here.
  */
 
 type Kind = 'css' | 'curve' | 'duration' | 'named' | 'wait' | 'spring'
@@ -73,27 +88,34 @@ const S_IN_STRING = /(^|[\s,(])\d*\.?\d+s(?![\w-])/
 
 /**
  * The literals left, by file (relative to `src/renderer/src`), each with its count and its
- * reason – the debt by name, a follow-up in the wave report. A new one anywhere else fails here;
- * one struck from its file fails here until its count is lowered.
+ * reason, in two groups: the follow-ups (motions whose length is written where no TS token can
+ * be read – the wave report's debt), and the waits that are not motions, which stay as they are
+ * by name (the lead's ruling on #734). A new literal anywhere else fails here; one struck from
+ * its file fails here until its count is lowered.
  */
 const LEFT: Record<string, { count: number; why: string }> = {
-  // A keystroke debounce before the history is queried.
-  'components/phone/PhoneHistoryPanel.tsx': { count: 1, why: 'an 80 ms debounce, not a motion' },
-  // Tailwind arbitrary values (`duration-[120ms]`) in class strings, which cannot read a TS
-  // token: a `--zen-motion-state` custom property in main.css is the follow-up.
+  // --- Follow-ups. Tailwind arbitrary values (`duration-[120ms]`) in class strings, which
+  // cannot read a TS token: a `--zen-motion-state` custom property in main.css is the
+  // follow-up – not #734's, by the lead's ruling; the wave report lists the three.
   'components/print/PreviewPane.tsx': {
     count: 1,
-    why: 'a Tailwind `duration-[120ms]`; a stylesheet token is the follow-up'
+    why: 'a Tailwind `duration-[120ms]`; the `--zen-motion-state` stylesheet token is the follow-up'
   },
   'components/security/BlockedPopupsPanel.tsx': {
     count: 1,
-    why: 'a Tailwind `duration-[120ms]`; a stylesheet token is the follow-up'
+    why: 'a Tailwind `duration-[120ms]`; the `--zen-motion-state` stylesheet token is the follow-up'
   },
   'components/siteControls/primitives.tsx': {
     count: 1,
-    why: 'a Tailwind `duration-[120ms]`; a stylesheet token is the follow-up'
+    why: 'a Tailwind `duration-[120ms]`; the `--zen-motion-state` stylesheet token is the follow-up'
   },
-  // Two `_MS` constants that happen to equal the cap and are not motions.
+  // --- Not motions, kept by name. The scanner reads a wait under a second as a motion's pacing
+  // and a `*_MS` equal to a token's value as the token under another name; these are neither –
+  // a debounce, a grace, a dwell – and are not converted (the lead's ruling on #734).
+  'components/phone/PhoneHistoryPanel.tsx': {
+    count: 1,
+    why: 'an 80 ms keystroke debounce before the history is queried: a wait, not a motion'
+  },
   'components/sidebar/TabItem.tsx': {
     count: 1,
     why: 'RENAME_FOCUS_GRACE_MS: a focus grace, not a motion; the number coincides with the cap'
