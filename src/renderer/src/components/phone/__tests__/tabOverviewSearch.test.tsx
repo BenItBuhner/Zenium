@@ -140,7 +140,12 @@ function sync(enabled: boolean, openTabs = true): UIState['sync'] {
     transport: 'folder',
     webdav: null,
     webdavAvailable: false,
-    authRefused: false
+    authRefused: false,
+    accountAvailable: false,
+    account: null,
+    accountLink: null,
+    accountLinkFailure: null,
+    accountSignedOut: false
   } as UIState['sync']
 }
 

@@ -10,6 +10,7 @@ import android.graphics.Outline
 import android.graphics.Rect
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
@@ -947,7 +948,7 @@ class TabWebView(
         host.viewSized(this, w, h)
     }
 
-    // --- background video (MED-08 / EDGE-32) ----------------------------------------------------
+    // --- background video (MED-08 / EDGE-32) and background tabs (OS-39) -------------------------
 
     private val backgroundVideo = BackgroundVideoHold()
 
@@ -966,7 +967,19 @@ class TabWebView(
             backgroundVideo.onKeep(value)?.let { visible -> forwardWindowVisibility(visible) }
         }
 
-    /** A hide of the window is being held from the engine for this tab's video (diagnostics, the demo). */
+    /**
+     * The tab is behind another tab on screen, by the tab host's pass over what is on screen
+     * ([TabHost], [BackgroundTabRule]): the engine hears GONE – the page is hidden, as Chrome's
+     * switched-away tab is – and VISIBLE once the tab is back on screen; the hide is held like the
+     * window's while the tab's video keeps playing (OS-39).
+     */
+    var backgroundTab: Boolean
+        get() = backgroundVideo.background
+        set(value) {
+            backgroundVideo.onBackground(value)?.let { visible -> forwardWindowVisibility(visible) }
+        }
+
+    /** A hide – the window's, or a tab switch's – is being held from the engine for this tab's video (diagnostics, the demo). */
     val holdingWindowHide: Boolean get() = backgroundVideo.holding
 
     /**
@@ -974,13 +987,15 @@ class TabWebView(
      * activity's window leaves the screen, VISIBLE when it is back. `WebView` hands it to
      * `AwContents`, whose WebContents is shown or hidden by it – the hide that pauses a video and
      * tells the page `visibilitychange` – so a hide is held here while the tab's video may keep
-     * playing, and the return goes through as it always does.
+     * playing, the return goes through as it always does, and the VISIBLE the system dispatches
+     * to a view attached while its tab is behind another is not the tab's: the engine keeps the
+     * GONE the tab is owed ([backgroundTab]).
      */
     override fun onWindowVisibilityChanged(visibility: Int) {
-        if (backgroundVideo.onWindow(visibility == View.VISIBLE) != null) super.onWindowVisibilityChanged(visibility)
+        backgroundVideo.onWindow(visibility == View.VISIBLE)?.let { visible -> forwardWindowVisibility(visible) }
     }
 
-    /** The word the engine gets once a held hide goes through (or a show, were one ever held). */
+    /** The word the engine gets: a show, a hide going through (held or not), or a switch's. */
     private fun forwardWindowVisibility(visible: Boolean) {
         super.onWindowVisibilityChanged(if (visible) View.VISIBLE else View.GONE)
     }
@@ -1377,11 +1392,32 @@ class TabWebView(
                     contentDescription = item.title
                 }
             }
-            return prepared || !plan.isEmpty
+            // Copy link to highlight (PUI-40), the last of Zenium's rows, for a text selection in
+            // a web page: the link the page script makes for the passage (`TextFragmentLink`). It
+            // is placed as the core's rows are – in the bar while there is room, else where the
+            // toolbar puts the rows that did not fit, at the head of its overflow – and not as an
+            // overflow-only item, which the toolbar sorts under the system's own rows, under the
+            // fold of a phone's overflow list (the sixth row on a Pixel 6). Not for a `zen://`
+            // page or a file, where the link means nothing to whoever gets it; not for a Paste
+            // toolbar or a password field; not in a custom tab, which runs no page script to make
+            // the link; not in the PDF viewer, whose text layer sits under the document's http URL
+            // but whose link would highlight nothing.
+            val copyLink = TextFragmentLink.offered(plan.anchored, host.pageScript, this@TabWebView.url, pdfPage != null)
+            if (copyLink) {
+                menu.add(SelectionToolbar.GROUP, R.id.zen_selection_copy_link, plan.order, TextFragmentLink.TITLE).apply {
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    contentDescription = TextFragmentLink.TITLE
+                }
+            }
+            return prepared || !plan.isEmpty || copyLink
         }
 
         override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
             if (item.groupId != SelectionToolbar.GROUP) return system.onActionItemClicked(mode, item)
+            if (item.itemId == R.id.zen_selection_copy_link) {
+                copyLinkToHighlight(mode)
+                return true
+            }
             val action = SelectionToolbar.itemAt(listing.items, item.itemId) ?: return true
             val originX = SelectionToolbar.fraction(selectionRect.exactCenterX(), width)
             val originY = SelectionToolbar.fraction(selectionRect.exactCenterY(), height)
@@ -1391,6 +1427,34 @@ class TabWebView(
                 if (!finished) mode.finish()
             }
             return true
+        }
+
+        /**
+         * Copy link to highlight: the page's directive for its selection – asked through the DOM
+         * (`TextFragmentLink.GENERATE_SCRIPT`), where the selection the mode just collapsed stands
+         * in for the page script (`selectionMemory.withCleared`) – and the page's URL with it onto
+         * the clipboard. The page must still be the one the item was offered for when the answer
+         * lands. Android 13 shows its own chip for a copy; below it the chrome's toast says so,
+         * and a selection that cannot be linked to gets the desktop's word for it.
+         */
+        private fun copyLinkToHighlight(mode: ActionMode) {
+            val pageUrl = this@TabWebView.url
+            evaluateJavascript(TextFragmentLink.GENERATE_SCRIPT) { raw ->
+                val link = TextFragmentLink.linkTo(pageUrl, TextFragmentLink.directiveOf(raw))?.takeIf { this@TabWebView.url == pageUrl }
+                if (link != null) {
+                    SecretClipboard.write(context, link, sensitive = false)
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) toast("Link copied")
+                } else {
+                    toast(TextFragmentLink.NO_LINK_TOAST)
+                }
+                Log.d(SELECTION_TAG, "copy link to highlight in $tabId: ${if (link != null) "copied" else "no link"}")
+                if (!finished) mode.finish()
+            }
+        }
+
+        /** A word to the user through the chrome's toast (the one toast the app has). */
+        private fun toast(message: String) {
+            host.hostEvent("toast", json("message" to message, "kind" to "info", "action" to null))
         }
 
         override fun onDestroyActionMode(mode: ActionMode) {

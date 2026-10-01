@@ -16,12 +16,14 @@ import type {
  */
 
 /** The kinds in the dialog's order with Chrome's labels ("Favorites/Bookmarks" is "Bookmarks" here). */
-export const KIND_ORDER: readonly ImportKind[] = ['bookmarks', 'history', 'passwords']
+export const KIND_ORDER: readonly ImportKind[] = ['bookmarks', 'history', 'passwords', 'addresses']
 
 export const KIND_LABEL: Record<ImportKind, string> = {
   bookmarks: 'Bookmarks',
   history: 'Browsing history',
-  passwords: 'Saved passwords'
+  passwords: 'Saved passwords',
+  /** The Autofill page's name for them (ID-57). */
+  addresses: 'Addresses'
 }
 
 /** Chrome's dialog title, and its success headline. */
@@ -131,7 +133,8 @@ function plural(n: number, one: string, many = `${one}s`): string {
 const ITEM: Record<ImportKind, [string, string]> = {
   bookmarks: ['bookmark', 'bookmarks'],
   history: ['visit', 'visits'],
-  passwords: ['password', 'passwords']
+  passwords: ['password', 'passwords'],
+  addresses: ['address', 'addresses']
 }
 
 /**

@@ -1527,7 +1527,7 @@ export class Menus {
   private async copyHighlightLink(tab: Tab, win: ZenWindow): Promise<void> {
     const url = await this.browser.textFragments.highlightUrl(tab.id)
     if (url) this.browser.copyText(url, 'Link copied', win, 'Link copied')
-    else this.browser.toast("Couldn't make a link to this text", 'info', win)
+    else this.browser.toast('Could not make a link to this text', 'info', win)
   }
 
   /**

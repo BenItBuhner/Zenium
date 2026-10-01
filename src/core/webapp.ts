@@ -23,6 +23,13 @@ import {
   type WebAppInfo
 } from '../shared/webApp'
 import { appBadgeOf, sameAppBadge, type AppBadge } from '../shared/appBadge'
+import {
+  shareTargetAccepts,
+  shareTargetLaunch,
+  type ShareChooserApp,
+  type ShareKind,
+  type SharedFields
+} from '../shared/shareTarget'
 import type { Browser } from './browser'
 import { getSpace } from './model'
 import type { PageMessage, ShortcutRequest, StoreIO } from './platform'
@@ -190,6 +197,48 @@ export class WebAppService {
     if (active && isWithinScope(active.url, app.scope))
       this.browser.tabs.navigate(active.id, app.startUrl)
     else this.browser.tabs.createTab({ url: app.startUrl, active: true }, win)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Share targets (MW-63)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The installed apps a share of `kind` can go to – those whose manifest declared a
+   * `share_target` with a field for it – as the chooser's rows, in the order of installing.
+   */
+  shareTargetsFor(kind: ShareKind): ShareChooserApp[] {
+    return this.pinned
+      .filter((app) => app.shareTarget && shareTargetAccepts(app.shareTarget, kind))
+      .map((app) => ({ id: app.id, name: app.name, icon: app.icon ?? null }))
+  }
+
+  /**
+   * Hand a share to an installed app: its target's launch – a GET of the action with the
+   * fields as the query, or a POST with them as the form body – opened the way the app's
+   * launcher opens it (`launch`): an app window of its own on hosts with windows, a tab
+   * another app sent (`fromIntent`) elsewhere. An id that is no app's, or an app whose target
+   * takes none of the share, does nothing and says so.
+   */
+  launchShare(appId: string, fields: SharedFields, win?: ZenWindow): boolean {
+    const app = this.pinnedById(appId)
+    // The share's kind as the chooser offered it: a link when it carries one, text otherwise.
+    // The chooser only offers apps that take the kind, so this guard is the comment's word.
+    const kind: ShareKind = fields.url !== null ? 'url' : 'text'
+    if (!app?.shareTarget || !shareTargetAccepts(app.shareTarget, kind)) return false
+    const launch = shareTargetLaunch(app.shareTarget, fields)
+    const post = launch.method === 'POST' ? launch.post : undefined
+    if (this.surface === 'desktop') {
+      const opened = this.browser.openAppWindow(launch.url, { from: win, post })
+      opened?.host.show()
+      opened?.host.focus()
+      return true
+    }
+    const target = win ?? this.browser.focusedWindow()
+    this.browser.tabs.createTab({ url: launch.url, active: true, fromIntent: true, post }, target)
+    target.host.show()
+    target.host.focus()
+    return true
   }
 
   /**
@@ -597,8 +646,11 @@ export class WebAppService {
         startUrl: info.startUrl,
         scope: info.scope,
         pinnedAt: this.now(),
-        icon: details.icon ?? previous?.icon ?? null,
-        bounds: previous?.bounds ?? null
+        // The host's kept icon first; where the launcher owns the tile and the host keeps
+        // none (Android), the manifest's own icon address, so the record can be drawn.
+        icon: details.icon ?? previous?.icon ?? displayIcon(info),
+        bounds: previous?.bounds ?? null,
+        shareTarget: info.shareTarget ?? null
       })
       this.save()
     }
