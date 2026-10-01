@@ -267,7 +267,7 @@ describe("the overview's wiring of the drag-to-group hint (the first-line review
     expect(takeOverviewGroupsHintRequest()).toBe(false)
   })
 
-  it('never on the Private pane – its cards group nothing – nor on the Groups pane, which has no cards (M7)', () => {
+  it('never on the private view – its cards group nothing (M7; cleanup spec §3)', () => {
     const state = stateOf(
       [...grouped(), tab('p', 'https://p.example/', { containerId: PRIVATE_CONTAINER_ID })],
       true
@@ -281,12 +281,7 @@ describe("the overview's wiring of the drag-to-group hint (the first-line review
     expect(haloed()).toEqual([])
     expect(writes()).toEqual([])
     expect(takeOverviewGroupsHintRequest()).toBe(false)
-    remount()
-    pickOverviewPane('groups')
-    openFromTip(state)
-    expect(bubble()).toBeNull()
-    expect(writes()).toEqual([])
-    // The Tabs pane of the same profile: the rule as above.
+    // The regular view of the same profile: the rule as above.
     remount()
     pickOverviewPane('tabs')
     openFromTip(state)

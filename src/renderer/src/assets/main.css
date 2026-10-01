@@ -604,24 +604,20 @@
  * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
 /*
- * On the window (the first run, the tab overview's backdrop and the content frame's strips,
- * `data-surface="window"`) the secondary reads the window family through the control roles
- * (§9.29): a fill of the window's ink, not the page's – beside the rule and unlayered like it,
- * since a layered override would lose to it. The primary keeps the rule's `--v2-accent`, the
- * clamped mix, for its contrast on a gradient of the accent's own hue. The strip is a mouse
- * surface, so its secondary's hover is the window's hover fill (the shared hover rule reads the
- * page's).
+ * On the window (the first run and the tab overview's backdrop, `data-surface="window"`) the
+ * secondary reads the window family through the control roles (§9.29): a fill of the window's
+ * ink, not the page's – beside the rule and unlayered like it, since a layered override would
+ * lose to it. The primary keeps the rule's `--v2-accent`, the clamped mix, for its contrast on
+ * a gradient of the accent's own hue. (The content frame's strips read these too until W8-M2
+ * and W8-M3 retired them to the page-edge band, whose button is its own.)
  */
 .zen-firstrun .zen-v2-button:not([data-primary]),
-.zen-overview .zen-v2-button:not([data-primary]),
-.zen-frame-strip .zen-v2-button:not([data-primary]) {
+.zen-overview .zen-v2-button:not([data-primary]) {
   background: var(--v2-control-fill);
   color: var(--v2-control-text);
 }
 .zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled),
-.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled),
-.zen-frame-strip .zen-v2-button:not([data-primary]):hover:not(:disabled),
-.zen-frame-strip .zen-v2-button:not([data-primary]):active:not(:disabled) {
+.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled) {
   background: var(--v2-control-fill-hover);
 }
 /*
@@ -4357,10 +4353,102 @@
   .zen-group[data-clip] {
     overflow: hidden;
   }
-  /* Collapsed at rest, the card is its header (the spring writes the height inline on the way
-     there and clears it once it has landed), so a text-size change while it stands reaches it. */
+  /*
+   * Folded (the cleanup spec §2), the group is ONE CARD in its place: a cell at the grid's card
+   * aspect among the tab cards, at the card's own radius (the +6 is the open card's, whose
+   * corners wrap the members' – a cut at the fold, as radii are, §11.4). At rest the stylesheet
+   * holds the height through the aspect (the spring writes it inline on the way and clears it
+   * once landed), so a width or text-size change while it stands reaches it; `min-height: 0`
+   * with the clip keeps the member cards drawn under the mosaic from stretching the cell.
+   */
   .zen-group[data-collapsed] {
-    height: var(--zen-overview-group-header);
+    min-height: 0;
+    aspect-ratio: var(--zen-overview-card-aspect, 3 / 4);
+    border-radius: var(--zen-card-radius);
+  }
+  .zen-group[data-collapsed] > .zen-group-header {
+    border-radius: var(--zen-card-radius);
+  }
+  /*
+   * The folded face and the open body cross-fade (120 ms, opacity alone – kept under reduced
+   * motion as the header's and tint's fades are, below) while the height runs on its spring:
+   * the mosaic sits under the header over the members' place, the members under it go
+   * weightless – no taps, nothing for the tree (`aria-hidden`) – and the whole folded card is
+   * one tap (`.zen-group-tap`).
+   */
+  .zen-group-mosaic {
+    position: absolute;
+    top: var(--zen-overview-group-header);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 0 6px 6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-group[data-collapsed] > .zen-group-mosaic {
+    opacity: 1;
+  }
+  .zen-group-members {
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-group[data-collapsed] > .zen-group-members {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .zen-group[data-chrome='off'] > .zen-group-mosaic {
+    opacity: 0;
+  }
+  /* A tile: a capture's frame in the surface tone, round at 8 inside the card's 14 (§9.20). */
+  .zen-group-tile {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--zen-bg-solid);
+  }
+  .zen-group-tile-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--zen-muted);
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: rgb(var(--zen-fg-rgb) / 0.06);
+  }
+  .zen-group-tile-empty {
+    background: rgb(var(--zen-fg-rgb) / 0.04);
+  }
+  /* A saved group's tile (`SavedGroupCard`): the kept page's favicon alone, centred on the
+     placeholder's fill, as an open group's uncaptured member draws (§2: no text at tile size). */
+  .zen-group-tile-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-group-tile-favicon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 4px;
+  }
+  .zen-group-tile-favicon-none {
+    background: rgb(var(--zen-fg-rgb) / 0.12);
+  }
+  .zen-group-options {
+    z-index: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-group-mosaic,
+    .zen-group-members {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
   }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
@@ -4396,7 +4484,7 @@
     background: rgb(var(--zen-group-rgb) / 0.12);
   }
   /* The header's mark is the one group glyph (`.zen-group-row-glyph`, §9.37), as the strip's
-     chip, the ribbon and the Groups pane's rows draw it: no dot or badge of the card's own. */
+     chip, the ribbon and the saved group's card draw it: no dot or badge of the card's own. */
   /* A card being swiped off the grid is positioned per frame; the press transition would lag it. */
   .zen-overview-card[data-swiping] {
     transition: none;
@@ -4589,33 +4677,6 @@
     font-weight: 600;
     letter-spacing: -0.012em;
     line-height: 1.25;
-  }
-  /* Its edges fade through `useFadeEdges`, only where there is more to scroll to. */
-  .zen-overview-strip {
-    scrollbar-width: none;
-    scroll-snap-type: x proximity;
-  }
-  .zen-overview-strip::-webkit-scrollbar {
-    display: none;
-  }
-  /*
-   * The strip's INDICATOR (MOT-05, `SpaceStrip`): the current chip's accent tint is one pill
-   * under the chips that glides from the chip that was current to the one that is, on
-   * `SPRING_SNAPPY`, by a transform alone (`translate3d` and `scaleX` from the old chip's box;
-   * the ends stay round under the scale, the radius' x divided by the frame's
-   * `--zen-strip-indicator-scale`); the chips draw their own fills over it – the current one
-   * none, the others the element fill – as 120 ms state changes (v2 §11.4), so the tint reads
-   * as leaving one chip for the other. The chips are positioned to paint over the indicator.
-   * Under reduced motion the indicator jumps (`SpaceStrip`, §11.3) and the fills cut with the
-   * sheet's closing rule.
-   */
-  .zen-overview-strip-indicator {
-    border-radius: calc(18px / var(--zen-strip-indicator-scale, 1)) / 18px;
-    background: rgb(var(--zen-accent-rgb) / 0.16);
-    transform-origin: left center;
-  }
-  .zen-overview-strip-chip {
-    transition: background-color 120ms var(--zen-ease);
   }
   /*
    * The overview's panes (TAB-02, TAB-03): a pane switch is a cross-fade – the one coming up
@@ -7680,11 +7741,16 @@
     object-fit: cover;
   }
   /*
-   * The desktop's install dialog (`install/InstallDialog.tsx`): a `--v2-dialog` whose title block
-   * brings its own 16 to the body (§9.23), so the body has none above, the dialog's 16 gutter to
-   * the sides, 16 between its parts (§9.7) and none below – the §9.11 footer's 16 above is that
-   * gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls should the
-   * shots and a long description outgrow the frame; the footer stays.
+   * The desktop's "Create shortcut" dialog (`install/ShortcutDialog.tsx`): a `--v2-dialog` whose
+   * title block brings its own 16 to the body (§9.23), so the body has none above, the dialog's
+   * 16 gutter to the sides, 16 between its parts (§9.7) and none below – the §9.11 footer's 16
+   * above is that gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls
+   * should it outgrow the frame; the footer stays. Chrome's "Open as window" check row under the
+   * name runs edge to edge as the confirm dialog's does (§9.25: the row's own 16 is the dialog's
+   * one gutter); unchecked, Chrome's default, the shortcut opens as a tab in Zenium, checked, in
+   * an app window of its own – the box travels with Create as `webapp.pin`'s `openAsWindow`
+   * (W8-M3b). The install of an app is the pill's popover (`install/InstallPopover.tsx`), on the
+   * popover chassis with the same `.zen-install-app` row.
    */
   .zen-install-dialog-body {
     display: flex;
@@ -7696,6 +7762,10 @@
     overflow-y: auto;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
+  }
+  .zen-install-dialog-body > .zen-v2-check-row {
+    width: calc(100% + 32px);
+    margin: 0 -16px;
   }
   .zen-install-dialog-footer {
     display: flex;
@@ -10215,11 +10285,11 @@
  * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
  * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
  * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, the 10 as a ring at a 2
- * stroke for a SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a
+ * stroke for a SAVED one, its tabs closed and its pages kept (the overview's two group cards); a
  * folder given its own icon on the desktop keeps it, as a glyph at 14 that holds while text
  * scales (§4). This is THE group glyph (§9.37; the lead on #360: one glyph everywhere), the
- * shared `GroupGlyph` component: the phone's card header and Departures ghost, the Groups
- * pane's rows, the strip's chip face, the swipe track's ribbon and the sheets' leading boxes
+ * shared `GroupGlyph` component: the phone's card header and Departures ghost, the saved
+ * group's card, the strip's chip face, the swipe track's ribbon and the sheets' leading boxes
  * draw these same rules – no 8 or 12 dot, no halo, no badge of a host's own.
  * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
  * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
@@ -10404,16 +10474,42 @@
   z-index: -1;
 }
 /*
- * The tablet header's tab search (TABLET-14): the phone's field (`.zen-overview-search-field`,
- * 40 tall in `--v2-urlbar` with the panel's shadow) standing in the header row itself, in the
- * magnifier's place, at a fixed span that gives way before the title does; no gutter padding of
- * its own – the header's gap places it. Its clear stands only over a query: an empty field in
- * the header has nothing to close.
+ * The overview's one header row's title (tab overview cleanup spec §1, `OverviewHeader.tsx`):
+ * the space's dot and name with the count, and THE SPACE SWITCHER – a tap opens the Spaces
+ * sheet. A control on the window backdrop (§9.29): no fill at rest, the window family's fill
+ * for the press, on the 120 ms the other window controls take. At a space switch (GN-19, the
+ * sheet, the menu's Switch Space) the words that were stand over the words that are as a still
+ * fading out over 120 ms (§6: the title cross-fades, opacity alone), the new words beneath from
+ * the first frame; the still takes no touch. Reduced motion keeps the fade (§11.3: a change in
+ * place on a window strip, §11.4).
+ *
+ * The title's one mark that it is a control (§1): a 16 chevron-down after the count, in the
+ * window's 69 % ink as the count is, turned over while the Spaces sheet stands – the button's
+ * `aria-expanded` – on the state change's 120 ms. The turn is a move, not a fade: under reduced
+ * motion the global remover at the foot of this sheet takes the transition and the chevron cuts
+ * (§11.3). The private view's heading, no control, draws none.
  */
-.zen-overview-search.zen-overview-search-inline {
-  flex: 0 1 360px;
-  min-width: 160px;
-  padding: 0;
+.zen-overview-title {
+  transition: background 120ms var(--zen-ease);
+}
+.zen-overview-title:active {
+  background: var(--v2-control-fill);
+}
+.zen-overview-title-chevron {
+  color: var(--zen-muted);
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-overview-title[aria-expanded='true'] > .zen-overview-title-chevron {
+  transform: rotate(180deg);
+}
+.zen-overview-title-still {
+  animation: zen-fade-out 120ms var(--zen-ease) forwards;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-overview-title-still {
+    animation: zen-fade-out 120ms var(--zen-ease) forwards !important;
+  }
 }
 
 /*
@@ -10952,14 +11048,6 @@
 .zen-v2-icon-button.zen-print-page-step {
   border-radius: 9999px;
 }
-/* The tab overview's Inactive tabs entry (TAB-20; §9.34 modifier): the icon button let grow past
-   its square for the §9.19 count badge trailing the glyph after 8, the pair inset 12 so the
-   glyph's edge stands at the segment row's 16 gutter. */
-.zen-v2-icon-button.zen-overview-inactive {
-  width: auto;
-  gap: 8px;
-  padding: 0 12px;
-}
 
 /*
  * The shared v2 link (§9.10; the first surface to land it was the extension details' Source
@@ -11077,52 +11165,10 @@
   }
 }
 /*
- * The overview's pane swipe (GN-19, `components/phone/usePaneSwipe.ts`): the overview's
- * modifier beside the segment primitive, never a copy of it. While a swipe is live the tablist
- * carries `data-swipe`: the primitive's lines under the labels go out at once and one line of
- * the same make – 2 px, the accent, the 1 px radius, laid out in the tablist's box – rides the
- * finger from under the current label to under the neighbour's, on a transform per frame
- * (`translate3d` and `scaleX` from its box under the current label: the two are input while the
- * finger is down, v2 §11.3, and the spring's after). When the swipe is over the attribute goes:
- * this line fades out over the primitive's 120 ms as the picked label's own line fades in over
- * the same place, so the two read as one line. Nothing else moves; the labels' ink switches at
- * the pick as it does on a tap.
- */
-.zen-overview-segment {
-  position: relative;
-}
-.zen-overview-segment-line {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--v2-control-accent, var(--v2-accent));
-  opacity: 0;
-  transform-origin: left center;
-  transition: opacity 120ms var(--zen-ease);
-  pointer-events: none;
-}
-.zen-v2-segment[data-swipe] > .zen-overview-segment-line {
-  opacity: 1;
-  transition: none;
-  will-change: transform;
-}
-.zen-v2-segment[data-swipe] > [role='tab']::after {
-  opacity: 0;
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .zen-overview-segment-line {
-    transition: opacity 120ms var(--zen-ease) !important;
-  }
-}
-
-/*
  * The overview's tab search (TAB-21, `components/phone/OverviewSearch.tsx`): the phone panels'
  * §9.12 field (`.zen-phone-field`, 40 tall with its glyph and its clear, phonePanels.css)
- * pinned under the overview's header in the grid's 12 gutter, 8 to the segment. A field is a
+ * pinned under the overview's one header row in the grid's 12 gutter, 8 to the grid, while the
+ * ⋯ menu's "Search Tabs" has it standing (cleanup spec §4; on the tablet too, §7). A field is a
  * page surface; standing on the window backdrop (§9.29) it takes the new tab page's resting
  * field's treatment (`.zen-ntp-field`): the `--v2-urlbar` fill and the panel's shadow for its
  * edge in place of the hairline, the page's ink inside as the primitive gives it; the control's
@@ -11130,7 +11176,7 @@
  * The ring on focus is the primitive's, inside the edge. Under it, when a query drops every
  * card – the New Tab card leaves with them (§9.34) – the grid's one line (§9.17's sentence at
  * 15 and 69% in the window's ink, centred in the 32 gutter, its first line 48 below the
- * segment) stands where the grid was, over the reach's lists when they have rows.
+ * field) stands where the grid was, over the reach's lists when they have rows.
  */
 .zen-phone-field.zen-overview-search-field {
   background: var(--v2-urlbar);
@@ -11241,69 +11287,32 @@
 }
 
 /*
- * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
- * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
- * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
- * overview's window backdrop, so they draw in the window family (§9.29): the pane resolves the
- * page ink and fills the primitives read to the control roles the overview root's
- * `data-surface="window"` sets – the theme's ink, its 69% for the count and the time, the
- * window fill for the press – and the primitives' own rules draw them, gates and all (§9.34's
- * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
- * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
- * gutter's end; the first heading stands under the segment (or the space strip), which already
- * carries its air, at 4. The row's glyph in the 20 box is the one group glyph
- * (`.zen-group-row-glyph`, §9.37: the 10 dot for an open group, the 10 ring at a 2 stroke for a
- * saved one, whose tabs are closed; the §9.14 pair on the glyph, `--zen-group-rgb` the theme's
- * pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
- * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
- * own 40 is for a list whose field carries 8 under it, and the segment carries none. The Private
- * pane at none (TAB-03, `PrivateEmpty` in TabOverview.tsx; `.zen-overview-private-empty`) is the
- * same note under the same two rules – "No private tabs" in the window ink the private theme
- * paints, its New private tab follow-up the note's own secondary button (§9.17: 16 beneath, 88
- * minimum at 40), which `.zen-overview .zen-v2-button` above already reads to the window fill –
- * never a message card (§9.34). One rule for both panes, the Groups pane's selector last where
- * its test pins it. The Tabs pane at none (TAB-34, `TabsEmpty`; `.zen-overview-tabs-empty`) is
- * the same note under the same two rules – "No open tabs" with New tab as its follow-up – in
- * place of the grid inside the Space's slot. Its 120 ms fade is keyed to the replacement, not
- * the mount (`[data-in-place]`, the gate's ruling on #562; §11.1): the note that takes the
- * grid's place in its own slot fades in as a state change in place does (§11.4), which reduced
- * motion keeps (§11.3); the note that comes up with its pane, its Space or the overview carries
- * no mark and rides their motion – one object, one move.
+ * The overview's empty note (the cleanup spec's §3 and TAB-34): the regular view at none
+ * (`TabsEmpty` in TabOverview.tsx; `.zen-overview-tabs-empty`) is a list's §9.17 sentence – the
+ * phone panels' `.zen-phone-empty` note in the window ink, in the view's flow – its first line
+ * 48 under the header: the note's own 40 is for a list whose field carries 8 under it, and the
+ * header carries none. The note stands on the overview's window backdrop, so it draws in the
+ * window family (§9.29): it resolves the page ink and fills the primitives read to the control
+ * roles the overview root's `data-surface="window"` sets – the theme's ink, its 69% for the
+ * secondary line, the window fill for the press – and the primitives' own rules draw it. "No
+ * open tabs" with New tab as its follow-up, the note's own secondary button (§9.17: 16 beneath,
+ * 88 minimum at 40), which `.zen-overview .zen-v2-button` above already reads to the window
+ * fill – never a message card (§9.34) – in place of the grid inside the Space's slot. Its 120
+ * ms fade is keyed to the replacement, not the mount (`[data-in-place]`, the gate's ruling on
+ * #562; §11.1): the note that takes the grid's place in its own slot fades in as a state change
+ * in place does (§11.4), which reduced motion keeps (§11.3); the note that comes up with its
+ * view, its Space or the overview carries no mark and rides their motion – one object, one
+ * move. (The private view has no empty note: it stands only while a private tab is open, §4;
+ * and the Groups pane that once shared these rules is gone – §2 and §9: a group is one card in
+ * its place.)
  */
-.zen-overview-private-empty,
-.zen-overview-tabs-empty,
-.zen-overview-groups {
+.zen-overview-tabs-empty {
   --v2-text: var(--v2-control-text);
   --v2-text-deemphasized: var(--v2-control-text-deemphasized);
   --v2-fill: var(--v2-control-fill);
   --v2-fill-hover: var(--v2-control-fill-hover);
 }
-.zen-overview-groups .zen-v2-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.zen-overview-groups > :first-child > .zen-v2-heading {
-  margin-top: 4px;
-}
-.zen-overview-groups-aside {
-  flex-shrink: 0;
-  color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-small);
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-small);
-  font-variant-numeric: tabular-nums;
-}
-/* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
-.zen-overview-groups .zen-overview-group-rename {
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-body);
-}
-.zen-overview-private-empty > .zen-phone-empty,
-.zen-overview-tabs-empty > .zen-phone-empty,
-.zen-overview-groups > .zen-phone-empty {
+.zen-overview-tabs-empty > .zen-phone-empty {
   padding-top: 48px;
 }
 .zen-overview-tabs-empty[data-in-place] {
@@ -11977,6 +11986,15 @@
   text-align: left;
   white-space: nowrap;
   transition: background 120ms var(--zen-ease);
+}
+/*
+ * On a tablet the list is the same anchored popover with the coarse pointer's rows (§9.36 as
+ * amended on #750: an anchored panel that fits is the desktop popover with 44 rows): the row's
+ * floor is the form factor's menu row token – 44 at the body line, as the tablet's menus are –
+ * the 28 above being the mouse's. The token is the form factor's, so DeX keeps it.
+ */
+:root[data-form-factor='tablet'] .zen-v2-menulist-option {
+  min-height: var(--v2-menu-row);
 }
 .zen-v2-menulist-option:focus,
 .zen-v2-menulist-option:active {
@@ -15514,70 +15532,19 @@ ol.zen-page-prose-list {
 }
 
 /*
- * The frame's strip – "Restore pages?" (content/CrashRestoreBanner.tsx) – and the desktop's
- * default-browser prompt's icon, on design language v2 (docs/design-language-v2-draft.md §1–§3,
- * §9): the strip as a window surface (§9.29) around the shared v2 button. v1 motion only. They
- * read the token block and nothing else. (Settings → Default Browser and the prompt's title
- * block draw on the §9.34 primitives; the flat card and rows they once had here went with them.
- * "Make Zenium your default browser" was a strip here too – content/DefaultBrowserBanner.tsx –
- * until it moved to the page-edge band below (motion spec §3.4, W8-M2).)
+ * The default-browser promo's icon on design language v2 (docs/design-language-v2-draft.md
+ * §1–§3, §9). v1 motion only; it reads the token block and nothing else. (Settings → Default
+ * Browser and the promo's title block draw on the §9.34 primitives; the flat card and rows they
+ * once had here went with them. The frame's strips stood here too – "Make Zenium your default
+ * browser", content/DefaultBrowserBanner.tsx, and "Restore pages?", content/
+ * CrashRestoreBanner.tsx, window surfaces around the shared v2 button – until they moved to the
+ * page-edge band below (motion spec §3.4; W8-M2 and W8-M3).)
  */
 @layer components {
-  /* The frame's strips stay in layout but vanish under an open overlay: `visibility` inherits
-     through the `display: contents` wrapper. */
-  .zen-frame-strips[data-under-overlay] {
-    visibility: hidden;
-  }
   /*
-   * A strip across the top of the content frame (content/CrashRestoreBanner.tsx): a window
-   * surface (§9.29, `data-surface="window"` on it) –
-   * the theme's ink on the frame's own solid (`--zen-bg-solid`, the frame's background showing
-   * through: the strip paints no fill of its own) – with §9.7's hairline at its bottom edge, the
-   * one line it draws. A band of `--v2-window-fill` under its secondary button put the same
-   * translucent fill on itself (`--v2-control-fill` is the window fill on this surface): the
-   * button's rest a doubled tint over the frame and its hover, `-hover` over the band, a step
-   * of ~30 from that rest – the fill-on-fill the shell pass captured for the lead (PR #295); on
-   * the solid the secondary is one fill and its hover the token's own step. It grows around its
-   * 32 px buttons to 40 (§9.21: the 4 above and below are its own padding, the control + 8 its
-   * own statement, so no strip sets `data-control` by hand – §9.34 leaves that to a row wrapper
-   * rendering a control), 16 px gutters, the sentence at 15 on 20 in the full ink (an action's
-   * line, not supplementary text), the buttons 8 apart.
-   */
-  .zen-frame-strip {
-    position: relative;
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 8px;
-    min-height: calc(var(--v2-control) + 8px);
-    padding: 4px var(--v2-card-padding);
-    color: var(--v2-control-text);
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-  }
-  /*
-   * The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7) –
-   * the window hairline `--zen-border` (§9.29's `--v2-window-border`, fg .12 light / .2 dark),
-   * as the strip sits on the frame and a hairline on the window never draws `--v2-border`.
-   */
-  .zen-frame-strip::after {
-    content: '';
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 1px;
-    background: var(--zen-border);
-  }
-  .zen-frame-strip-text {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /*
-   * The desktop prompt's app icon (defaultbrowser/DefaultBrowserPrompt.tsx): 48, at the top of
-   * the title block – 16 in from the dialog's edges, 16 to the title under it, the block's own
-   * rhythm (§9.23). Content drawn inside chrome: it keeps the icon's own colours (§9.29).
+   * The promo's mouse dialog app icon (defaultbrowser/DefaultBrowserPrompt.tsx): 48, at the top
+   * of the title block – 16 in from the dialog's edges, 16 to the title under it, the block's
+   * own rhythm (§9.23). Content drawn inside chrome: it keeps the icon's own colours (§9.29).
    */
   .zen-default-browser-prompt-icon {
     display: block;

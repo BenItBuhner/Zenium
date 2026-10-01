@@ -17,6 +17,7 @@ import type { UpdateDotRecord } from '../core/updateDot'
 import type { SafetyHubCardMemories } from './safetyHubCard'
 import type { EducationalTipMemory } from './educationalTips'
 import type { ToolbarPins } from './toolbarPins'
+import type { OverviewChromeCommand, OverviewView } from './overviewMenu'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { BookmarkRowDisplay, BookmarkRowSortOrder } from './bookmarkRows'
 import type {
@@ -5458,6 +5459,18 @@ export interface MenuAnchor {
  * thumbnail. The sheet draws it as a two-line row in the §9.16 header's place; a tap expands the
  * address to its full length, a long-press copies it.
  */
+/**
+ * The chrome's word to `app.menu` while the tab overview stands (tab overview cleanup spec §4):
+ * which VIEW the overview shows – the space's tabs, or the private session's under the mask –
+ * and, in the select-tabs mode (§5), how many cards are picked of how many, so the menu is the
+ * selection's three rows. The counts the rows carry (the view's tabs, the inactive and recently
+ * closed lists, the spaces) are the core's own.
+ */
+export interface OverviewMenuRequest {
+  view: OverviewView
+  selection?: { selected: number; total: number }
+}
+
 export interface MenuHeader {
   /** The address the header names; what a long-press copies. */
   url: string
@@ -5933,7 +5946,17 @@ export interface Commands {
    * reads the fold from the button's box; the core builds the menu without the toolbar's width.
    */
   'app.menu': {
-    args: { anchor?: Rect; keyboard?: boolean; mediaHubFolded?: boolean }
+    args: {
+      anchor?: Rect
+      keyboard?: boolean
+      mediaHubFolded?: boolean
+      /**
+       * The tab overview stands (tab overview cleanup spec §1, §4): the bar's ⋯ opens the
+       * overview's menu – the chrome's word on its view and its selection, the core's on the
+       * counts – in place of the app menu; absent, the app menu.
+       */
+      overview?: OverviewMenuRequest
+    }
     result: void
   }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
@@ -7570,16 +7593,28 @@ export interface Commands {
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
   /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */
   'webapp.openInstall': { args: { tabId: string }; result: void }
-  /** Pin the tab's page to the Home screen under `title` (the sheet's primary button). */
-  'webapp.pin': { args: { tabId: string; title: string }; result: void }
+  /**
+   * Pin the tab's page to the Home screen under `title` (the sheet's primary button).
+   * `openAsWindow` is the desktop's "Create shortcut?" box (Chrome's "Open as window"): true,
+   * the launcher opens the page in an app window of its own (`--app=<url>`); false, as a tab in
+   * Zenium. Absent – the phone sheet, the pill's "Install <app>?" popover – the host keeps its
+   * own rule: the desktop's launcher opens a window, Android's tile reads the manifest's
+   * display mode (`ShortcutRequest.display`).
+   */
+  'webapp.pin': { args: { tabId: string; title: string; openAsWindow?: boolean }; result: void }
   /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
   'webapp.cancelInstall': { args: { tabId: string }; result: void }
   /**
    * The ambient banner's card is mounted on a surface that draws banners: the prompt counts as
    * shown now and the app's cooldown starts on this word, not on the core's emit (#740). Without
    * it inside the core's grace the prompt counts as undrawn and the cooldown is not spent.
+   * `visible` (absent: true – today's word, the card on screen as it is posted) says whether the
+   * card is on screen: false, a surface ACCEPTED the card but holds it back – the page-edge band
+   * under a cover (a sheet, the keyboard, the open tab overview) – so the core keeps the banner
+   * up, stamps no cooldown yet and waits for the same word with `visible` true (or absent) at
+   * the card's first drawn frame; a cover is not a view (seed #43, the Lead's S3).
    */
-  'webapp.bannerShown': { args: { tabId: string }; result: void }
+  'webapp.bannerShown': { args: { tabId: string; visible?: boolean }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
   /**
@@ -7701,6 +7736,12 @@ export interface Events {
    * within the minute suggests closing other tabs): the phone chrome opens its overview.
    */
   'overview.open': void
+  /**
+   * A row of the tab overview's ⋯ menu (tab overview cleanup spec §4; `app.menu` with
+   * `overview`) that the chrome acts on – its view, its selection, its search, its sheets, the
+   * New Tab card's tap – handed back as the command; the mounted overview runs it.
+   */
+  'overview.command': { command: OverviewChromeCommand }
   /**
    * The app menu's "Media Controls…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's

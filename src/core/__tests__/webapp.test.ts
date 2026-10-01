@@ -4,7 +4,7 @@ import type { Browser } from '../browser'
 import type { PageHostMessage, ShortcutRequest, StoreIO } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
-import { MIN_VISIT_GAP_MS, type EngagementRecord } from '../../shared/webApp'
+import { MIN_VISIT_GAP_MS, installedMessage, type EngagementRecord } from '../../shared/webApp'
 import type { AppBadge } from '../../shared/appBadge'
 
 const DOCUMENT_URL = 'https://app.example/'
@@ -61,7 +61,8 @@ function harness(
     isPrivate: false,
     chrome: 'full',
     app: null,
-    surfaces: new Set(options.installSurface === false ? [] : ['install'])
+    surfaces: new Set(options.installSurface === false ? [] : ['install']),
+    host: { show: () => {}, focus: () => {} }
   } as unknown as ZenWindow
   const tab = {
     id: 't1',
@@ -405,6 +406,157 @@ describe('WebAppService', () => {
     expect(h.appWindows).toEqual([])
   })
 
+  it('hands the launcher the dialog’s "Open as window" as it stands, and no word of it from a caller without the box (the phone sheet, the pill’s popover)', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    expect(h.pins.map((p) => p.openAsWindow)).toEqual([false, true, undefined])
+    // Absent means absent: Android's bridge forwards the request's own keys to the launcher.
+    expect('openAsWindow' in h.pins[2]).toBe(false)
+  })
+
+  it('a shortcut made to open a tab ("Open as window" off): the installing tab stays where it is, the record keeps the mode – across a reload – and the app launches as a tab, not a window', async () => {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    expect(h.events.filter((e) => e.name === 'webapp.pinned').map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL, surface: 'desktop', appId: MANIFEST_ID }
+    ])
+    // Chrome leaves the page in its tab: no app window opens and the tab does not close.
+    expect(h.appWindows).toEqual([])
+    expect(h.closedTabs).toEqual([])
+    expect(h.service.pinnedById(MANIFEST_ID)).toMatchObject({
+      icon: 'file:///icons/sketch.png',
+      openAsWindow: false
+    })
+    // "Open <app>" follows the launcher: inside the app the tab goes to the start URL, elsewhere
+    // a tab opens; never a window.
+    h.tab.url = 'https://app.example/deep/page'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.navigations).toEqual([{ tabId: 't1', url: DOCUMENT_URL }])
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
+    expect(h.appWindows).toEqual([])
+    // The mode is on the record the store keeps, so a later launch knows it.
+    h.service.flushSync()
+    const doc = JSON.parse(h.files.get('webapps.json') ?? '{}') as { pinned: unknown[] }
+    expect(doc.pinned).toEqual([expect.objectContaining({ id: MANIFEST_ID, openAsWindow: false })])
+    const reloaded = new WebAppService(
+      h.browser,
+      {
+        readSync: (name: string) => h.files.get(name) ?? null,
+        write: async () => {},
+        writeSync: () => {}
+      } as unknown as StoreIO,
+      { now: () => h.now.value }
+    )
+    expect(reloaded.pinnedById(MANIFEST_ID)?.openAsWindow).toBe(false)
+  })
+
+  it('a share to an app whose shortcut opens a tab goes to a tab too (`launchShare`), not an app window', async () => {
+    const h = harness({ desktop: true })
+    h.service.handleMessage(h.tab.id, {
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: MANIFEST_URL,
+      manifest: {
+        ...MANIFEST,
+        share_target: { action: '/share', params: { title: 'title', text: 'text', url: 'url' } }
+      }
+    })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[0].id)
+    h.tab.url = 'https://elsewhere.example/'
+    const link = 'https://news.example/story?id=7'
+    expect(h.service.launchShare(MANIFEST_ID, { title: null, text: null, url: link }, h.win)).toBe(
+      true
+    )
+    expect(h.createdTabs).toEqual([
+      { url: `https://app.example/share?url=${encodeURIComponent(link)}` }
+    ])
+    expect(h.appWindows).toEqual([])
+  })
+
+  it('a shortcut made with the box checked opens a window as an install always did, and the record says so; a later pin without the box (the popover) rewrote the launcher on the host’s rule and the record forgets the tab mode', async () => {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id)
+    expect(h.appWindows.map((w) => w.url)).toEqual([DOCUMENT_URL])
+    expect(h.closedTabs).toEqual(['t1'])
+    expect(h.service.pinnedById(MANIFEST_ID)?.openAsWindow).toBe(true)
+
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[1].id)
+    expect(h.service.pinnedById(MANIFEST_ID)?.openAsWindow).toBe(false)
+    expect(h.appWindows).toHaveLength(1)
+
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[2].id)
+    const record = h.service.pinnedById(MANIFEST_ID)!
+    expect('openAsWindow' in record).toBe(false)
+    // Without the box the host's rule stands – a window – and the app launches as one: the
+    // first open window of the app comes forward.
+    expect(h.appWindows).toHaveLength(2)
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.appWindows).toHaveLength(2)
+    expect(h.appWindows.map((w) => w.shown)).toEqual([2, 1])
+    expect(h.createdTabs).toEqual([])
+  })
+
+  it('a page without a manifest pinned on the desktop is a shortcut, not an install: the core toasts "Shortcut created" itself and sends the chrome no `webapp.pinned`, whichever way the box stood', async () => {
+    const h = harness({ desktop: true })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, true)
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    expect(h.toasts).toEqual(['Shortcut created'])
+    expect(h.events.filter((e) => e.name === 'webapp.pinned')).toEqual([])
+    // No record to open, no app window, the tab where it was.
+    expect(h.service.pinnedFor(DOCUMENT_URL)).toBeNull()
+    expect(h.appWindows).toEqual([])
+    expect(h.closedTabs).toEqual([])
+    // The page still hears the launcher took it, as before.
+    expect(h.pageMessages.at(-1)).toEqual({ type: 'webapp', action: 'installed' })
+    await h.service.pin(h.tab.id, 'Sketch', h.win, false)
+    h.service.onPinned(h.pins[1].id)
+    expect(h.toasts).toEqual(['Shortcut created', 'Shortcut created'])
+    expect(h.events.filter((e) => e.name === 'webapp.pinned')).toEqual([])
+  })
+
+  it('a page with a manifest leaves the toast to the chrome through `webapp.pinned` – "Installed <name>" on the desktop, "Added <name> to Home screen" on the phone, where a plain page reads the same', async () => {
+    const desktop = harness({ desktop: true })
+    postManifest(desktop)
+    await desktop.service.pin(desktop.tab.id, 'Sketch', desktop.win, true)
+    desktop.service.onPinned(desktop.pins[0].id)
+    expect(desktop.toasts).toEqual([])
+    const installed = desktop.events.filter((e) => e.name === 'webapp.pinned')
+    expect(installed.map((e) => e.payload)).toEqual([
+      { tabId: 't1', name: 'Sketch', url: DOCUMENT_URL, surface: 'desktop', appId: MANIFEST_ID }
+    ])
+    const [app] = installed.map((e) => e.payload as { surface: 'desktop'; name: string })
+    expect(installedMessage(app.surface, app.name)).toBe('Installed Sketch')
+
+    // The phone's words are the launcher's, with or without a manifest; the core toasts nothing.
+    const phone = harness()
+    await phone.service.pin(phone.tab.id, 'Sketch', phone.win)
+    phone.service.onPinned(phone.pins[0].id)
+    postManifest(phone)
+    await phone.service.pin(phone.tab.id, 'Sketch', phone.win)
+    phone.service.onPinned(phone.pins[1].id)
+    expect(phone.toasts).toEqual([])
+    const added = phone.events
+      .filter((e) => e.name === 'webapp.pinned')
+      .map((e) => e.payload as { surface: 'homeScreen'; name: string; appId: string | null })
+    expect(added.map((p) => p.appId)).toEqual([null, MANIFEST_ID])
+    expect(added.map((p) => installedMessage(p.surface, p.name))).toEqual([
+      'Added Sketch to Home screen',
+      'Added Sketch to Home screen'
+    ])
+  })
+
   it('remembers where the app window stood and reopens it there', async () => {
     const h = harness({ desktop: true })
     postManifest(h)
@@ -485,21 +637,31 @@ describe('WebAppService', () => {
     expect(h.service.installed().map((a) => [a.id, a.windows])).toEqual([[MANIFEST_ID, 0]])
   })
 
-  it('raises no ambient banner on the desktop, whose chrome draws none: the visit counts and the cooldown stays unspent (#740, seed #42)', () => {
+  it('raises the ambient banner on the desktop as on the phone, now that its chrome draws it as the pill’s popover (#740, seed #42): the word stamps, and a window with no word is the grace’s case', () => {
     const h = harness({ desktop: true })
     postManifest(h)
     revisit(h)
-    vi.advanceTimersByTime(5000)
-    expect(bannerEvents(h)).toEqual([])
-    expect(bannerHides(h)).toEqual([])
-    // The page still hears it is installable; the engagement counts without a prompt.
-    expect(h.pageMessages).toContainEqual({ type: 'webapp', action: 'installable' })
+    vi.advanceTimersByTime(1500)
+    // The desktop's launcher name, the full one.
+    expect(bannerEvents(h)).toEqual([
+      expect.objectContaining({ tabId: 't1', name: 'Sketch Studio', origin: 'app.example' })
+    ])
     expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
-    // A later visit counts too, so a drawn desktop promotion finds the engagement there.
-    revisit(h)
-    vi.advanceTimersByTime(5000)
-    expect(bannerEvents(h)).toEqual([])
-    expect(engagement(h)).toMatchObject({ visits: 3, promptedAt: null })
+    // The chrome's word – the popover opened – stamps the cooldown, as the phone's card does,
+    // and the grace running out after it takes nothing back.
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBe(h.now.value)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    // A desktop window whose chrome gave no word – nothing drew the offer – is the grace's case
+    // as anywhere: the banner withdrawn, the cooldown unspent, the record still counting.
+    const quiet = harness({ desktop: true })
+    postManifest(quiet)
+    revisit(quiet)
+    vi.advanceTimersByTime(1200 + BANNER_SHOWN_GRACE_MS)
+    expect(bannerEvents(quiet)).toHaveLength(1)
+    expect(bannerHides(quiet)).toEqual([{ tabId: 't1' }])
+    expect(engagement(quiet)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
   })
 
   it('stamps the cooldown on the chrome’s word that the card is drawn, not on the emit; the core runs no clock of its own – the band’s running out, reported by the chrome, records no dismissal and the day’s stamp holds', () => {
@@ -572,6 +734,129 @@ describe('WebAppService', () => {
     vi.advanceTimersByTime(60_000)
     expect(bannerHides(h)).toEqual([])
     h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBeNull()
+  })
+
+  /** The banner raised and emitted; `h.now` is the emit's moment. */
+  function raised(h: Harness): void {
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1200)
+    expect(bannerEvents(h)).toHaveLength(1)
+    expect(engagement(h).promptedAt).toBeNull()
+  }
+
+  it('a cover is not a view (seed #43): the band’s word that it accepted the card but holds it back spends the grace, not the cooldown – the stamp lands on the plain word at the first drawn frame, once, at the show’s time', () => {
+    const h = harness()
+    raised(h)
+    const postedAt = h.now.value
+    h.service.bannerShown(h.tab.id, false)
+    expect(engagement(h).promptedAt).toBeNull()
+    // The grace is cancelled, not run out: the card is in good hands, so the prompt is never
+    // counted undrawn and the chrome hears no take-down – a minute under the cover included.
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    vi.advanceTimersByTime(60_000)
+    expect(bannerHides(h)).toEqual([])
+    expect(engagement(h).promptedAt).toBeNull()
+    // A second word of the cover changes nothing.
+    h.service.bannerShown(h.tab.id, false)
+    expect(engagement(h).promptedAt).toBeNull()
+    // The cover lifts and the band draws the card: the cooldown counts from this moment.
+    h.now.value += 45_000
+    h.service.bannerShown(h.tab.id)
+    const shownAt = h.now.value
+    expect(shownAt).toBeGreaterThan(postedAt)
+    expect(engagement(h).promptedAt).toBe(shownAt)
+    // One stamp per banner: a later word, with or without `visible`, stamps nothing more.
+    h.now.value += 5000
+    h.service.bannerShown(h.tab.id)
+    h.service.bannerShown(h.tab.id, true)
+    h.service.bannerShown(h.tab.id, false)
+    expect(engagement(h).promptedAt).toBe(shownAt)
+    // The band's clock running out after the show records no dismissal, as today.
+    h.service.dismissBanner(h.tab.id, 'timeout')
+    expect(engagement(h)).toMatchObject({ promptedAt: shownAt, dismissedAt: null })
+    expect(bannerHides(h)).toEqual([])
+    // ...and the stamp keeps the prompt away for the rest of the day.
+    postManifest(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+  })
+
+  it('an explicit `visible: true` is today’s word: the stamp at once, the grace spent', () => {
+    const h = harness()
+    raised(h)
+    h.service.bannerShown(h.tab.id, true)
+    expect(engagement(h).promptedAt).toBe(h.now.value)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+  })
+
+  it('a card held back and taken down before it is seen stamps nothing and leaves no timer: the chrome’s dismissal, the page leaving the app, a new document inside it, the tab closing – the record keeps counting', () => {
+    const takeDowns: Array<[string, (h: Harness) => void, { hides: number }]> = [
+      // The band put away unanswered under the cover (the Back, a swipe up) or its clock ran
+      // out once uncovered with the word lost: the chrome's word, no take-down of the core's.
+      [
+        'dismissed by the chrome',
+        (h) => h.service.dismissBanner(h.tab.id, 'timeout'),
+        { hides: 0 }
+      ],
+      [
+        'the page left the app',
+        (h) => h.service.onNavigated(h.tab.id, 'https://elsewhere.example/', false),
+        { hides: 1 }
+      ],
+      [
+        'a new document inside the app',
+        (h) => h.service.onNavigated(h.tab.id, 'https://app.example/page', false),
+        { hides: 1 }
+      ],
+      ['the tab closed', (h) => h.service.onTabRemoved(h.tab.id), { hides: 0 }]
+    ]
+    for (const [what, takeDown, { hides }] of takeDowns) {
+      const h = harness()
+      raised(h)
+      h.service.bannerShown(h.tab.id, false)
+      vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+      takeDown(h)
+      expect(bannerHides(h), what).toHaveLength(hides)
+      expect(engagement(h), what).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+      // A late word of the show – the band drawing a card the core has let go of – is nothing,
+      // and nothing of the banner is left ticking.
+      h.now.value += 30_000
+      h.service.bannerShown(h.tab.id)
+      h.service.bannerShown(h.tab.id, false)
+      vi.advanceTimersByTime(60_000)
+      expect(bannerHides(h), what).toHaveLength(hides)
+      expect(engagement(h), what).toMatchObject({ promptedAt: null, dismissedAt: null })
+    }
+    // The record kept counting: the offer comes back on the next visit, unspent.
+    const h = harness()
+    raised(h)
+    h.service.bannerShown(h.tab.id, false)
+    h.service.onTabRemoved(h.tab.id)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(2)
+    expect(engagement(h)).toMatchObject({ visits: 3, promptedAt: null })
+  })
+
+  it('the cover’s word for a tab with no banner awaiting one is nothing: none up, the grace already run out, a card never raised', () => {
+    const h = harness()
+    // Nothing up.
+    h.service.bannerShown(h.tab.id, false)
+    h.service.bannerShown(h.tab.id)
+    raised(h)
+    // The grace ran out first: the prompt is undrawn and the late cover's word revives nothing.
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 1)
+    expect(bannerHides(h)).toEqual([{ tabId: 't1' }])
+    h.service.bannerShown(h.tab.id, false)
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+    // A card never raised by the core (the preview host's): no word of it does anything.
+    h.service.bannerShown('t-preview', false)
+    h.service.bannerShown('t-preview')
     expect(engagement(h).promptedAt).toBeNull()
   })
 

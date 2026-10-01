@@ -21,6 +21,7 @@ import { isPhone, isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
 import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
+import { autoOpenInstall, retireInstallOffer } from '@renderer/lib/installOffer'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { returnKeyboardMenuFocus, trackKeyboardMenuSource } from '@renderer/lib/menuKeys'
 import { afterPageShown } from '@renderer/lib/sharePanel'
@@ -68,12 +69,13 @@ import {
   showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
-import { activeTab, isEmptySplitPane, regularOf } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { closeUndoable, closeWithUndo } from '@renderer/lib/closeUndo'
+import { closeGroupUndoable, closeUndoable } from '@renderer/lib/closeUndo'
 import { requestAgentRelease } from '@renderer/lib/agentRelease'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
-import { tabsOnPane } from '@renderer/lib/privateTabs'
+import { dispatchOverviewCommand } from '@renderer/lib/overviewCommands'
+import { overviewMenuRequest } from '@renderer/lib/overviewMenuRequest'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
@@ -92,28 +94,6 @@ import {
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
   return state ? (activeTab(state)?.id ?? null) : null
-}
-
-/**
- * Close the group's tabs with Undo on the toast (`folder.closeUndoable`, TAB-16): the group's
- * live members as the phone's overview reads them for its own Close Group (`liveMembersOf`: the
- * space's regular tabs in the group, a private one none of them), the close the core's
- * `folder.close` – the group stays, saved with their pages – and the toast the group's words.
- */
-function closeGroupUndoable(folderId: string): void {
-  const state: UIState | null = browserStore.get().state
-  const folder = state?.folders[folderId]
-  if (!state || !folder) return
-  const space = state.spaces.find((s) => s.id === folder.spaceId)
-  if (!space) return
-  const tabs = tabsOnPane(regularOf(state, space), 'tabs').filter((t) => t.folderId === folderId)
-  closeWithUndo({
-    tabs,
-    settings: state.settings,
-    activeTabId: activeTab(state)?.id ?? null,
-    close: () => run('folder.close', { folderId }),
-    group: folder
-  })
 }
 
 function followsCover(): boolean {
@@ -298,7 +278,12 @@ export function useMainEvents(): void {
         // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
-        if (!claimed) run('app.menu', { keyboard: true, mediaHubFolded: mediaHubFolded() })
+        if (!claimed)
+          run('app.menu', {
+            keyboard: true,
+            mediaHubFolded: mediaHubFolded(),
+            ...overviewMenuRequest()
+          })
       }),
       // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
       // and the page (lib/panes.ts).
@@ -494,6 +479,9 @@ export function useMainEvents(): void {
         )
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
+      // A row of the tab overview's ⋯ menu that is the chrome's to act on (tab overview cleanup
+      // spec §4): the mounted overview hears it (`onOverviewCommand`).
+      onEvent('overview.command', ({ command }) => dispatchOverviewCommand(command)),
       onEvent('menu.hide', ({ menuId }) => {
         if (uiStore.get().menu?.id === menuId) closeMenu(false)
       }),
@@ -516,8 +504,19 @@ export function useMainEvents(): void {
         retireInstallBanner(prompt.tabId)
         void openInstallSheet(prompt)
       }),
-      onEvent('webapp.banner', (banner) => presentInstallBanner(banner)),
-      onEvent('webapp.bannerHide', ({ tabId }) => retireInstallBanner(tabId)),
+      // The core's install offer (PWA-03): the phone's banner card, or – on a host with windows,
+      // which has no card – the pill's Install chip opening its popover of its own accord
+      // (`lib/installOffer.ts`, the Design Lead's ruling on W8-M3's item 3); each is the core's
+      // banner in its chrome's form, and each answers the core as the banner's card does. The
+      // take-down retires whichever is up for the tab.
+      onEvent('webapp.banner', (banner) => {
+        if (browserStore.get().state?.capabilities.windows) autoOpenInstall(banner)
+        else presentInstallBanner(banner)
+      }),
+      onEvent('webapp.bannerHide', ({ tabId }) => {
+        retireInstallBanner(tabId)
+        retireInstallOffer(tabId)
+      }),
       // NOT-20, with Chrome's "Open" (v2 §9.33: one action): the tab goes to the shortcut's URL;
       // on desktop an installed app opens in its own window instead (a plain shortcut's page
       // came up in the app window already, so its toast has no action).

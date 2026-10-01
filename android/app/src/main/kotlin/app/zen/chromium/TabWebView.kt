@@ -111,6 +111,11 @@ class TabWebView(
         private set
     /** How far the page sits below the top of its frame during a pull-to-refresh (device px). */
     private var pullOffsetPx = 0f
+    /**
+     * How much of [pullOffsetPx] the layout carries under a standing page-edge band – the view
+     * placed that much lower and shorter (`TabHost.place`) – rather than the translation ([PageSeat]).
+     */
+    private var seatPx = 0
     /** The bar that hides on scroll: what of the touches and the scroll it hears (see `BarHideGesture`). */
     val barHide = BarHideGesture(this) { phase, payload -> host.barScroll(tabId, phase, payload) }
     /**
@@ -738,6 +743,22 @@ class TabWebView(
         invalidateOutline()
     }
 
+    /**
+     * The page-edge band's seat (device px; `TabHost.place` has laid the view out a seat lower
+     * and shorter for it): that much of the pull channel's offset leaves the translation, so the
+     * page stays where it is on screen and sits in its frame at rest ([PageSeat]).
+     */
+    fun setBandSeat(px: Int) {
+        val seat = px.coerceAtLeast(0)
+        if (seat == seatPx) return
+        seatPx = seat
+        applyTranslation()
+        invalidateOutline()
+    }
+
+    /** The band's seat the view is laid out under right now, device px (diagnostics, the band demo). */
+    val bandSeatPx: Int get() = seatPx
+
     // --- the bar that hides on scroll ---------------------------------------------------------------
 
     /**
@@ -753,9 +774,12 @@ class TabWebView(
         invalidateOutline()
     }
 
-    /** The page sits below its frame's top during a pull and above it behind a hiding top bar. */
+    /**
+     * The page sits below its frame's top during a pull and above it behind a hiding top bar;
+     * the part of a band's offset the layout carries ([seatPx]) is not translated ([PageSeat]).
+     */
     private fun applyTranslation() {
-        translationY = pullOffsetPx + barShiftPx
+        translationY = PageSeat.translation(pullOffsetPx, seatPx, barShiftPx)
     }
 
     /**
@@ -858,27 +882,30 @@ class TabWebView(
 
     /**
      * Where the page's visible part starts and ends (device px): inside the covered strips,
-     * above the frame's bottom edge while the page sits lower during a pull, and above the strip
-     * the bar that hides on scroll still holds (see [setBarHideShift]).
+     * above the frame's bottom edge while the page hangs lower during a pull (or under a band's
+     * travel – a band seated at rest hangs nothing, [PageSeat.hangPx]), and above the strip the
+     * bar that hides on scroll still holds (see [setBarHideShift]).
      */
     private fun visibleTop(): Int = cover.topPx.coerceAtMost(height)
     private fun visibleBottom(): Int =
-        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx, barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
+        (height - maxOf(cover.bottomPx.toFloat(), PageSeat.hangPx(pullOffsetPx, seatPx), barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
 
     /**
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
      * The card's whole gesture (down, moves, up) is handed to the view under the page (the chrome
      * WebView, [PageHost.underlay]) in its own coordinates; the page never sees it. A host with
      * nothing under the page (a custom tab) covers nothing, so its pages keep every touch. The
-     * strip the page's own displacement opens is the chrome's too: held down by a band or a pull
-     * ([setPullOffset]) the page hangs over a bottom-docked bar – the parent hit-tests it by its
-     * translated rect – and the clipped strip there is the bar's row, not the page's; the copy
-     * carries the translation so the chrome sees the touch where the bar is ([StripTouchRule]).
+     * strip the page's own displacement opens is the chrome's too: held down by a pull or a
+     * band's travel ([setPullOffset]) the page hangs over a bottom-docked bar – the parent
+     * hit-tests it by its translated rect – and the clipped strip there is the bar's row, not the
+     * page's; the copy carries the translation so the chrome sees the touch where the bar is
+     * ([StripTouchRule]). A band seated at rest ([setBandSeat]) hangs nothing: the view ends at
+     * its frame's bottom edge and the bar's row is never its to receive.
      */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val chrome = host.underlay
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            coverTouch = StripTouchRule.chromesTouch(chrome != null, cover.active, pullOffsetPx > 0f, event.y, visibleTop(), visibleBottom())
+            coverTouch = StripTouchRule.chromesTouch(chrome != null, cover.active, PageSeat.hangPx(pullOffsetPx, seatPx) > 0f, event.y, visibleTop(), visibleBottom())
         }
         if (!coverTouch || chrome == null) return super.dispatchTouchEvent(event)
         val copy = MotionEvent.obtain(event)

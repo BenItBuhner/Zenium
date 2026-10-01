@@ -265,32 +265,35 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
                 else "(this capture path ignores FLAG_SECURE; Recents and screenrecord honour the flag)"
         )
 
-        // 6. The overview from the private tab: its Private pane, the segment to Tabs and back
-        //    (TAB-02, TAB-03); each pane shows its own cards alone.
+        // 6. The overview from the private tab: its private view, the menu's "Tabs (N)" row to the
+        //    regular view and "Private Tabs (N)" back (TAB-02, TAB-03; the tab overview cleanup
+        //    spec's §3/§4: the views switch through the BAR's ⋯, the overview draws no segment
+        //    row); each view shows its own cards alone.
         expect("the overview opens", openOverview())
         SystemClock.sleep(1_500)
         val paneAtOpen = pane()
         val privateCards = cards()
         expect("the overview opens on the Private pane from a private tab", paneAtOpen == "private")
         expect("the Private pane shows the private card alone", privateCards == listOf(private1))
-        shot("08-overview-private-pane")
+        shot("08-overview-private-view")
         finding("\noverview from the private tab: pane '$paneAtOpen', cards $privateCards")
-        tapSegment("tabs")
-        expect("a finger on Tabs shows the regular pane", awaitPane("tabs"))
+        pickView("tabs")
+        expect("a finger on the menu's Tabs (N) row shows the regular view", awaitPane("tabs"))
         SystemClock.sleep(1_500)
         val regularCards = cards()
         expect("the Tabs pane shows the regular cards and no private one", regularCards.toSet() == setOf(REGULAR_TAB, NOTES_TAB))
-        shot("09-overview-tabs-pane")
-        finding("after the Tabs segment: pane '${pane()}', cards $regularCards")
-        tapSegment("private")
-        expect("a finger on Private shows the private pane again", awaitPane("private"))
+        shot("09-overview-tabs-view")
+        finding("after the menu's Tabs row: pane '${pane()}', cards $regularCards")
+        pickView("private")
+        expect("a finger on the menu's Private Tabs (N) row shows the private view again", awaitPane("private"))
         SystemClock.sleep(1_200)
-        finding("after the Private segment: pane '${pane()}', cards ${cards()}")
+        finding("after the menu's Private Tabs row: pane '${pane()}', cards ${cards()}")
 
         // 7. The last private card's close ends the session: the profile is wiped (INC-04) and the
-        //    overview returns to the Tabs pane (as Chrome's switcher does when the last incognito
-        //    tab goes); the empty Private pane's explainer is a pick away (TAB-03); the regular
-        //    tab comes back with its cookie.
+        //    overview returns to the Tabs view (as Chrome's switcher does when the last incognito
+        //    tab goes); the menu offers no Private Tabs row while none is open (the cleanup
+        //    spec's §4: the row only while private tabs exist – TAB-03's empty view is not a
+        //    pick away any more); the regular tab comes back with its cookie.
         val close = chromeRect(closeButton(private1))
         expect("the private card has its close button", close != null)
         close?.let { Finger().tap(it.exactCenterX(), it.exactCenterY()) }
@@ -301,12 +304,15 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         SystemClock.sleep(1_500)
         shot("10-overview-back-on-tabs")
         finding("\nafter the last close: pane '${pane()}', cards ${cards()}, private profile ${privateProfileState()}, default jar '${defaultJar()}'")
-        tapSegment("private")
-        expect("the empty Private pane explains itself (TAB-03)", awaitPane("private") && waitFor(EMPTY_TITLE, 6_000) != null)
-        SystemClock.sleep(1_200)
-        shot("11-private-empty-explainer")
-        finding("after picking Private with none open: pane '${pane()}', cards ${cards()}")
-        tapSegment("tabs")
+        tapMenuButton()
+        val menuUp = awaitTrue(6_000) { overviewMenuRows().isNotEmpty() }
+        SystemClock.sleep(1_000)
+        shot("11-menu-without-private-row")
+        val rows = overviewMenuRows()
+        expect("with none open the menu offers no Private Tabs row (§4), New Private Tab still: $rows", menuUp && rows.none { it.startsWith("Private Tabs (") } && rows.contains("New Private Tab"))
+        finding("after the last close the menu reads: $rows (view '${pane()}', cards ${cards()})")
+        back()
+        awaitTrue(6_000) { overviewMenuRows().isEmpty() }
         awaitPane("tabs")
         SystemClock.sleep(1_000)
         chromeRect(card(REGULAR_TAB))?.let { Finger().tap(it.exactCenterX(), it.exactCenterY()) }
@@ -1545,13 +1551,16 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         return (0 until array.length()).map { array.getString(it) }
     }
 
-    /** A real touch on the segment's tab `id` (`tabs` or `private`). */
-    private fun tapSegment(id: String) {
-        val r = chromeRect("[data-testid=\"overview-pane-$id\"]") ?: run {
-            finding("no segment tab for $id on screen")
-            return
+    /**
+     * A real touch on the overview's menu row that switches to the view `id` (`tabs` or
+     * `private`): the BAR's ⋯ opens the overview's menu (the cleanup spec's §4), its "Tabs (N)"
+     * row from the private view, "Private Tabs (N)" from the regular one.
+     */
+    private fun pickView(id: String) {
+        if (!switchOverviewView(id)) {
+            finding("no ${if (id == "private") "Private Tabs (N)" else "Tabs (N)"} row in the overview's menu: ${overviewMenuRows()}")
+            back()
         }
-        Finger().tap(r.exactCenterX(), r.exactCenterY())
     }
 
     /** The on-screen box of the first chrome element `selector` matches (device px); null when none does. */
@@ -1666,7 +1675,6 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         private const val MENU_NEW_PRIVATE = "New Private Tab"
         private const val MENU_CLOSE_PRIVATE = "Close Private Tabs"
         private const val PRIVATE_TITLE = "You're browsing privately"
-        private const val EMPTY_TITLE = "No private tabs"
         /** The pill's label on a tab with no page (`PhoneShell`), where the address would be. */
         private const val EMPTY_PILL_LABEL = "Search or enter address"
         /** The private new tab page's Block third-party cookies row: the whole row is the switch (NTP-31). */

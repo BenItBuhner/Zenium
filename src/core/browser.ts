@@ -252,6 +252,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.app',
   'tabsearch.open',
   'overview.open',
+  'overview.command',
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
@@ -3818,12 +3819,13 @@ export class Browser {
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title, tabId }, win) =>
         this.menus.showTopSiteContextMenu(url, title, tabId ?? null, win),
-      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) => {
+      'app.menu': ({ anchor, keyboard, mediaHubFolded, overview }, win) => {
         const show = (): void =>
           this.menus.showAppMenu(win, {
             anchor,
             keyboard: Boolean(keyboard),
-            mediaHubFolded: Boolean(mediaHubFolded)
+            mediaHubFolded: Boolean(mediaHubFolded),
+            overview
           })
         // The first build reads the host's app-restrictions bundle (the "Managed Browser" row,
         // TB-13) and no later one does; hosts without a bundle never wait. The one wait is
@@ -4502,9 +4504,10 @@ export class Browser {
       'spellcheck.removeWord': ({ word }) => this.spellcheck.removeWord(word),
       'spellcheck.openKeyboardSettings': () => this.spellcheck.openKeyboardSettings(),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
-      'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
+      'webapp.pin': ({ tabId, title, openAsWindow }, win) =>
+        this.webApps.pin(tabId, title, win, openAsWindow),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
-      'webapp.bannerShown': ({ tabId }) => this.webApps.bannerShown(tabId),
+      'webapp.bannerShown': ({ tabId, visible }) => this.webApps.bannerShown(tabId, visible),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
       'webapp.launch': ({ appId }, win) => this.webApps.launch(appId, win),
       'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),

@@ -1,4 +1,5 @@
 import type { Tab } from '@shared/types'
+import { selectionTitle } from '@shared/overviewMenu'
 import { isEmptyTabUrl } from '@shared/url'
 import { tabTitle } from './selectors'
 
@@ -87,10 +88,11 @@ export function selectedTabs(selection: OverviewSelection, ordered: readonly Tab
   return ordered.filter((tab) => isSelected(selection, tab.id))
 }
 
-/** What the header says: the mode's name until something is picked, then the count. */
-export function selectionTitle(count: number): string {
-  return count === 0 ? 'Select tabs' : `${count} selected`
-}
+/**
+ * What the header says: the mode's name until something is picked, then the count – the shared
+ * spelling, which the core titles the mode's ⋯ sheet with (cleanup spec §4, `overviewMenuTitle`).
+ */
+export { selectionTitle }
 
 // --- the actions' targets ----------------------------------------------------------------------
 

@@ -18,11 +18,12 @@ import java.io.File
  * `inactive-tabs-findings.txt` next to the frames (one `PASS` or `FAIL` per check; the test
  * itself fails only when the driver could not run or a touch it injected did not take):
  *
- *  1. the overview as seeded: nothing archived, so the segment row carries no entry (§9.34:
- *     the entry is the row's trailing control, never a fourth segment; hidden at zero as
- *     Chrome hides its card);
+ *  1. the overview as seeded: nothing archived, so the overview's menu carries no entry (the
+ *     tab overview cleanup spec's §4 and its §9 ruling: the entry is a row of the overview's
+ *     menu – the BAR's ⋯ while the overview stands – "Inactive Tabs (N)", only while any;
+ *     hidden at zero as Chrome hides its card);
  *  2. the archive pass at +22 days through the drivers' clock (`inactiveTabs.runPasses {now}`,
- *     never a wait): five idle tabs leave the grid, the entry reads "Inactive tabs, 5";
+ *     never a wait): five idle tabs leave the grid, the entry reads "Inactive Tabs (5)";
  *  3. the entry under a finger: the Inactive tabs sheet, its §10.3 rows and its footer
  *     (Restore all | Close all, §9.11 peers; their tones a finding for the gate, not a claim);
  *  4. one row's Close under a finger: the row leaves for Recently closed;
@@ -32,7 +33,7 @@ import java.io.File
  *  7. dark: the list, Close all's §9.23 prompt stacked over it (the lower sheet recessed and
  *     inert, the title without a glyph, Chrome's words), Cancel;
  *  8. each row's Close in turn: the list empties to its §9.17 sentence (dark, then light),
- *     a back leaves the sheet and the entry is gone from the row;
+ *     a back leaves the sheet and the entry is gone from the menu;
  *  9. Settings › Tab Management: the Inactive tabs group beside Sleeping tabs (light and dark),
  *     Chrome's values;
  * 10. Move to inactive › Never under a finger: the archived tabs come back into the grid
@@ -88,17 +89,21 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
         val later = System.currentTimeMillis() + ARCHIVE_CLOCK_DAYS * DAY_MS
         val barBefore = tabsLabel()
 
-        // 1. The grid as seeded: nothing archived, so the segment row carries no entry.
+        // 1. The grid as seeded: nothing archived, so the overview's menu carries no entry.
         step("1. The overview before the pass: no entry at zero") {
             openOverview()
             SystemClock.sleep(1_200)
             val count = archivedCount()
-            val entry = inDom(ENTRY)
-            val segments = domCount(SEGMENTS)
             still("overview-no-entry-light")
+            val opened = openMenu()
+            val rows = menuRows()
+            val entry = entryLabel()
+            val segments = domCount(SEGMENTS)
+            still("menu-no-entry-light")
+            closeMenu()
             expect(
-                "archivedTabCount $count; the entry ${if (entry) "IN" else "not in"} the segment row; $segments segments (never a fourth)",
-                count == 0 && !entry && segments == 2
+                "archivedTabCount $count; the menu ${if (opened) "up" else "NEVER UP"}, its rows $rows; the entry ${if (entry.isEmpty()) "not in" else "IN ('$entry')"} the menu; $segments segments in the overview (the segment row is gone)",
+                count == 0 && opened && entry.isEmpty() && rows.contains("Select Tabs") && segments == 0
             )
             finding("  the bar read '$barBefore'; grid cards: ${cardIds()}")
         }
@@ -107,15 +112,16 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
         step("2. The archive pass at +$ARCHIVE_CLOCK_DAYS days (the drivers' clock, never a wait)") {
             val before = cardIds()
             val result = runPasses(later)
-            val shown = awaitDom("(function(){var e=document.querySelector('$ENTRY');return !!e&&e.getAttribute('aria-label')==='Inactive tabs, 5'})()", 8_000)
             SystemClock.sleep(1_500)
-            still("entry-with-badge-light")
-            val label = attr(ENTRY, "aria-label")
-            val badge = textOf("$ENTRY .zen-v2-badge")
+            val opened = openMenu()
+            val shown = opened && awaitUntil(8_000) { entryLabel() == "Inactive Tabs (5)" }
+            SystemClock.sleep(800)
+            still("entry-in-menu-light")
+            val label = entryLabel()
             val after = cardIds()
             expect(
-                "the pass archived ${result.optInt("archived")} (closed ${result.optInt("closed")}); the entry reads '$label', badge '$badge'",
-                result.optInt("archived") == 5 && shown && badge == "5"
+                "the pass archived ${result.optInt("archived")} (closed ${result.optInt("closed")}); the entry reads '$label' (the count in parentheses, TAB-20's row in the menu)",
+                result.optInt("archived") == 5 && shown
             )
             expect(
                 "the grid: ${before.size} cards -> ${after.size} ($after): the archived cards gone, Example Domain kept",
@@ -123,16 +129,16 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
             )
             val titles = archivedList().map { it.optString("title") }
             expect("the archive, newest first: $titles", titles.size == 5 && titles.contains("Hacker News") && titles.contains("Tea - Wikipedia"))
-            val node = awaitFresh(TREE_MS, "the entry in the tree") { it == "Inactive tabs, 5" }
-            finding("  the tree ${if (node != null) "lists" else "did not list"} the entry as 'Inactive tabs, 5'; the segment row's controls: ${segmentRowControls()}")
+            val node = awaitFresh(TREE_MS, "the entry in the tree") { it == "Inactive Tabs (5)" }
+            finding("  the tree ${if (node != null) "lists" else "did not list"} the entry as 'Inactive Tabs (5)'; the menu's rows: ${menuRows()}")
         }
 
-        // 3. The entry under a finger: the sheet, its rows, its footer.
+        // 3. The entry under a finger (the menu is up from step 2): the sheet, its rows, its footer.
         step("3. The entry under a finger: the Inactive tabs sheet, its rows and its footer") {
-            val touched = touchDom("Inactive tabs, 5", q(ENTRY))
+            val touched = touchEntry("Inactive Tabs (5)")
             val up = touched && awaitSheet(LIST_TITLE, 8_000)
             val rested = up && awaitSheetAtRest(8_000)
-            if (touched && !up) touchFault("a finger on the segment row's Inactive tabs entry did not present the sheet")
+            if (touched && !up) touchFault("a finger on the menu's Inactive Tabs row did not present the sheet")
             still("list-populated-light")
             val rows = rowLabels()
             val footer = footerButtons()
@@ -142,7 +148,7 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
             )
             expect("the footer's peers (§9.11): $footer", footer == listOf("Restore all", "Close all"))
             finding("  the footer's tones (the gate's reading, not a claim): ${footerTones()}")
-            expect("the entry says it is expanded: aria-expanded '${attr(ENTRY, "aria-expanded")}'", attr(ENTRY, "aria-expanded") == "true")
+            expect("the menu has left for the sheet (one sheet mounted: ${sheetCount()})", awaitUntil(6_000) { menuRows().isEmpty() && sheetCount() == 1 })
             finding("  a row's name: '${rows.firstOrNull()}'; the row's Close: '${attr("$SHEET .zen-list-trailing button", "aria-label")}'")
         }
 
@@ -198,20 +204,23 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
         }
 
         // 6. Dark: the entry with three archived.
-        step("6. Dark: the entry with the badge") {
+        step("6. Dark: the entry in the menu with its count") {
             setColorScheme("dark")
             openOverview()
             SystemClock.sleep(1_500)
-            still("entry-with-badge-dark")
-            val label = attr(ENTRY, "aria-label")
-            expect("the entry reads '$label' under data-theme '${themeAttribute()}'", label == "Inactive tabs, 3" && themeAttribute() == "dark")
+            still("overview-dark")
+            val opened = openMenu()
+            SystemClock.sleep(800)
+            still("entry-in-menu-dark")
+            val label = entryLabel()
+            expect("the menu up $opened; the entry reads '$label' under data-theme '${themeAttribute()}'", opened && label == "Inactive Tabs (3)" && themeAttribute() == "dark")
         }
 
         // 7. Dark: the list, Close all's prompt over it, Cancel.
         step("7. Dark: the list, Close all's prompt stacked over it, Cancel") {
-            val touched = touchDom("Inactive tabs, 3", q(ENTRY))
+            val touched = touchEntry("Inactive Tabs (3)")
             val up = touched && awaitSheet(LIST_TITLE, 8_000) && awaitSheetAtRest(8_000)
-            if (touched && !up) touchFault("a finger on the Inactive tabs entry did not present the sheet (dark)")
+            if (touched && !up) touchFault("a finger on the menu's Inactive Tabs row did not present the sheet (dark)")
             still("list-populated-dark")
             expect("the sheet up $up with ${rowLabels().size} rows: ${rowLabels().map { it.substringBefore(',') }}", up && rowLabels().size == 3)
             val asked = touchDomExpecting("Close all", footerButton("Close all"), "the prompt '$PROMPT_3' is presented") { sheetPresented(PROMPT_3) }
@@ -259,9 +268,10 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
             back()
             val gone = awaitUntil(8_000) { sheetCount() == 0 }
             SystemClock.sleep(1_000)
+            val entry = readEntry()
             expect(
-                "back: the sheet gone $gone; the entry ${if (inDom(ENTRY)) "STILL in" else "out of"} the segment row; archivedTabCount ${archivedCount()}",
-                gone && !inDom(ENTRY) && archivedCount() == 0
+                "back: the sheet gone $gone; the entry ${if (entry.isEmpty()) "out of" else "STILL in ('$entry')"} the menu; archivedTabCount ${archivedCount()}",
+                gone && entry.isEmpty() && archivedCount() == 0
             )
             still("overview-after-empty-light")
         }
@@ -338,9 +348,9 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
             openOverview()
             SystemClock.sleep(1_200)
             val n = archivedCount()
-            val touched = touchDom("Inactive tabs, $n", q(ENTRY))
+            val touched = touchEntry("Inactive Tabs ($n)")
             val up = touched && awaitSheet(LIST_TITLE, 8_000) && awaitSheetAtRest(8_000)
-            if (touched && !up) touchFault("a finger on the Inactive tabs entry did not present the sheet (the last act)")
+            if (touched && !up) touchFault("a finger on the menu's Inactive Tabs row did not present the sheet (the last act)")
             val asked = up && touchDomExpecting("Close all", footerButton("Close all"), "the prompt is presented") { sheetPresented("Close ", prefix = true) }
             awaitStacked(8_000)
             SystemClock.sleep(800)
@@ -354,9 +364,10 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
             SystemClock.sleep(1_500)
             still("overview-after-close-all-light")
             val tabsAfter = coreState().getJSONObject("tabs").length()
+            val entry = readEntry()
             expect(
-                "Close all: archivedTabCount ${archivedCount()}; tabs $tabsBefore -> $tabsAfter; Recently closed $closedBefore -> ${recentlyClosedTitles().size} (a Close all discards; History keeps the pages); the entry ${if (inDom(ENTRY)) "STILL in" else "out of"} the row",
-                confirmed && n == 3 && tabsAfter == tabsBefore && !inDom(ENTRY) && recentlyClosedTitles().size == closedBefore
+                "Close all: archivedTabCount ${archivedCount()}; tabs $tabsBefore -> $tabsAfter; Recently closed $closedBefore -> ${recentlyClosedTitles().size} (a Close all discards; History keeps the pages); the entry ${if (entry.isEmpty()) "out of" else "STILL in ('$entry')"} the menu",
+                confirmed && n == 3 && tabsAfter == tabsBefore && entry.isEmpty() && recentlyClosedTitles().size == closedBefore
             )
             leaveOverview()
         }
@@ -497,11 +508,55 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
     private fun cardIds(): List<String> =
         jsList("Array.prototype.map.call(document.querySelectorAll('.zen-overview [data-tab-id]'),function(e){return e.getAttribute('data-tab-id')})")
 
-    /** The segment row's controls by their accessible names: the two segments, then the entry. */
-    private fun segmentRowControls(): List<String> =
-        jsList(
-            "Array.prototype.map.call(document.querySelectorAll('$SEGMENTS, $ENTRY'),function(e){return e.getAttribute('aria-label')||e.textContent.trim()})"
-        )
+    // --- the overview's menu (the bar's ⋯ while the overview stands, the cleanup spec's §4) ----
+
+    /** The open menu's rows by their labels (`MenuSheet`'s rows in the bar's sheet, the one with the Resize menu handle); empty while no menu is up. */
+    private fun menuRows(): List<String> =
+        jsList("(function(){var s=$MENU_SHEET;return s?Array.prototype.map.call(s.querySelectorAll('.zen-sheet-item'),function(e){return e.textContent.trim()}):[]})()")
+
+    /** The entry's label in the open menu – "Inactive Tabs (5)" – or "" while the menu carries no such row. */
+    private fun entryLabel(): String = menuRows().firstOrNull { it.startsWith(ENTRY_PREFIX) } ?: ""
+
+    /**
+     * Open the overview's menu with a finger on the bar's ⋯ ([tapMenuButton]) and pull it to
+     * its full height so every row is in reach; false when it never came up.
+     */
+    private fun openMenu(): Boolean {
+        if (menuRows().isNotEmpty()) return true
+        tapMenuButton()
+        if (!awaitUntil(8_000) { menuRows().isNotEmpty() }) {
+            finding("  the overview's menu never opened from the bar's ⋯")
+            return false
+        }
+        SystemClock.sleep(1_200)
+        pullMenuUp()
+        return true
+    }
+
+    /** The menu put away unanswered by the system back (the motion spec's §9 item 6). */
+    private fun closeMenu() {
+        if (menuRows().isEmpty()) return
+        back()
+        awaitUntil(6_000) { menuRows().isEmpty() }
+        SystemClock.sleep(500)
+    }
+
+    /** Open the menu, read the entry's label and put the menu away: "" when it carries no entry. */
+    private fun readEntry(): String {
+        if (!openMenu()) return ""
+        val label = entryLabel()
+        closeMenu()
+        return label
+    }
+
+    /**
+     * A finger on the entry – the menu opened for it when it is not up – which presents the
+     * Inactive tabs sheet in the menu's place. False when nothing was touched.
+     */
+    private fun touchEntry(label: String): Boolean {
+        if (!openMenu()) return false
+        return touchDom(label, ENTRY_ROW)
+    }
 
     // --- the sheets ------------------------------------------------------------------------------
 
@@ -716,9 +771,13 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
         /** How long the tree gets to list the entry (a note, never a claim). */
         private const val TREE_MS = 6_000L
 
-        /** The segment row's trailing entry (TabOverview.tsx). */
-        private const val ENTRY = "[data-testid=\"overview-inactive-tabs\"]"
-        /** The segment row's segments: two or three text tabs, never four (§9.34). */
+        /** The overview's menu: the bar's sheet, the one with the Resize menu handle (`MenuSheet`; `shared/overviewMenu.ts` writes its rows). */
+        private const val MENU_SHEET = "(function(){var h=document.querySelector('.zen-sheet [aria-label=\"Resize menu\"]');return h?h.closest('.zen-sheet'):null})()"
+        /** The entry: the menu's "Inactive Tabs (N)" row (the cleanup spec's §4; TAB-20), only while any. */
+        private const val ENTRY_PREFIX = "Inactive Tabs ("
+        /** The entry's element in the open menu, for a finger. */
+        private const val ENTRY_ROW = "(function(){var s=$MENU_SHEET;return s?(Array.prototype.find.call(s.querySelectorAll('.zen-sheet-item'),function(e){return e.textContent.trim().indexOf('$ENTRY_PREFIX')===0})||null):null})()"
+        /** The overview's old segment row (gone with the cleanup spec's §1): nothing of it is to be in the DOM. */
         private const val SEGMENTS = ".zen-overview [role=\"tab\"]"
         private const val SHEET = "[data-sheet-layer] [role=\"dialog\"]"
         /** The top sheet: the last `.zen-sheet` mounted (a prompt over the list). */

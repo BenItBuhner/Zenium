@@ -228,7 +228,7 @@ declare const __zenExtBoot: Boot
       )
       return
     }
-    if (message.t === 'extFetchDone') {
+    if (message.t === 'extFetchDone' || message.t === 'extProxyDone') {
       fetchRelay?.done(String(message.id), message)
       return
     }
@@ -735,14 +735,17 @@ declare const __zenExtBoot: Boot
   /** What the host's `exec` and a late boot run as: the extension's content scope. */
   const contentUnit: UnitContext = { world: 'isolated', messaging: true }
 
-  // A content script's `fetch` of its extension's own file under the page's `connect-src`: the
+  // A content script's `fetch` under the page's `connect-src`: of its extension's own file, the
   // host's answer over the bridge first, which no page policy governs, the page's fetch when
-  // the host cannot (`extensionFetchRelay.ts`). It is the content scripts' `fetch` in both
-  // isolations: the `with` scope's, and the isolated world's own, which a WebView's world runs
-  // under the document's policy too (Chrome's isolated world carries the extension's). The
-  // scope's `XMLHttpRequest` rides on it for the same files (`extensionXhrRelay.ts`).
+  // the host cannot; of a cross-origin URL the page's policy refused, the host's request framed
+  // as the page's own CORS request, judged here as Chrome's renderer judges it
+  // (`extensionFetchRelay.ts`, `extensionCorsRelay.ts`). It is the content scripts' `fetch` in
+  // both isolations: the `with` scope's, and the isolated world's own, which a WebView's world
+  // runs under the document's policy too (Chrome's isolated world carries the extension's). The
+  // scope's `XMLHttpRequest` rides on it for the same URLs (`extensionXhrRelay.ts`).
   fetchRelay = createFetchRelay(window, {
     attachedIds: () => attached.map((e) => e.id),
+    hostPermissions: (extId) => attached.find((e) => e.id === extId)?.hostPermissions ?? [],
     request: (id, extId, url) =>
       post(
         primordials.stringify({
@@ -754,11 +757,36 @@ declare const __zenExtBoot: Boot
           url
         })
       ),
-    error: primordials.error
+    // The envelope the host reads keeps a big message's top-level scalars alone, so the headers
+    // travel as one JSON text beside the base64 body.
+    proxy: (id, extId, request) =>
+      post(
+        primordials.stringify({
+          t: 'extProxyFetch',
+          token: content.token,
+          ep: endpointIdFor(extId),
+          ext: extId,
+          id,
+          method: request.method,
+          url: request.url,
+          headers: primordials.stringify(request.headers),
+          body: request.body,
+          credentials: request.credentials,
+          origin: request.origin,
+          referer: request.referer
+        })
+      ),
+    maxMessageChars:
+      typeof content.messageLimit === 'number' && content.messageLimit > 0
+        ? content.messageLimit
+        : undefined,
+    error: primordials.error,
+    warn: primordials.warn
   })
   const relay = fetchRelay
   xhrRelay = createXhrRelay(window, {
     owns: (url) => relay.owns(url),
+    refused: (url) => relay.refused(url),
     fetch: (url, init) => relay.fetch(url, init)
   })
   // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
@@ -802,7 +830,11 @@ declare const __zenExtBoot: Boot
   window.addEventListener('error', (event) => recovery.onError(event), true)
   window.addEventListener(
     'securitypolicyviolation',
-    (event) => recovery.onViolation(event as unknown as ViolationEventLike),
+    (event) => {
+      recovery.onViolation(event as unknown as ViolationEventLike)
+      // A `connect-src` refusal: the relay's cue to send the content script's request through the host.
+      relay.onViolation(event as unknown as ViolationEventLike)
+    },
     true
   )
   const builtins = collectBuiltins(realWindow)
@@ -847,6 +879,15 @@ declare const __zenExtBoot: Boot
         for (const [ep, engine] of engines) unanswered[ep] = engine.unanswered()
         return unanswered
       },
+      enumerable: true,
+      configurable: true
+    })
+    // The fetch relay's requests still waiting for the host (an own file over the bridge, a
+    // refused cross-origin request sent as the page's), read beside `unanswered`: a content
+    // script's `await fetch(chrome.runtime.getURL(…))` that never settles shows here, not in
+    // the engines' counts – both at zero, and a core check's run-out wait is the page's own.
+    Object.defineProperty(stats, 'relay', {
+      get: (): BootStats['relay'] => (fetchRelay ? { pending: fetchRelay.pending() } : undefined),
       enumerable: true,
       configurable: true
     })

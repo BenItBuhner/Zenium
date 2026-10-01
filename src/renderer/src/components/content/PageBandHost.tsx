@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useLayoutEffect, useMemo } from 'react'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import { isBandPageUrl, setBandFrame } from '@renderer/lib/band'
 import { bandSeat, movePage, seatBand } from '@renderer/lib/pageBand'
@@ -8,6 +8,7 @@ import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import type { UiState } from '@renderer/lib/ui'
 import { PageEdgeBand, type BandHost } from '../band/PageEdgeBand'
 import { useBandTabs } from '../band/useBandTabs'
+import { useCrashRestoreBand } from './useCrashRestoreBand'
 import { useDefaultBrowserBand } from './useDefaultBrowserBand'
 
 interface Props {
@@ -34,14 +35,20 @@ interface Props {
  * resize), and – the same number, from the same store – to the layer a page the chrome draws
  * itself rides on (`PageBandLayer`); a travel's departure seats the band at the lesser of its
  * seat and the destination and its rest at the height, and the layout reporter lays the page
- * out under the seat – once per travel (`lib/pageBand.ts`). Tabs closing and documents changing
- * take their bands with them (`useBandTabs`).
+ * out under the seat – once per travel (`lib/pageBand.ts`). A drag announces no departure
+ * (`BandSeam.depart`): its first frame below the seat unseats the band, so the page – laid out
+ * full-frame once, translated from there – keeps covering the frame under it as the mouse
+ * takes it up, as Android's host unseats its layer (`lib/band/androidHost.ts`; the Design
+ * Lead's ruling on W8-M2b: the two hosts the same, never a bare strip under a dragged band).
+ * Tabs closing and documents changing take their bands with them (`useBandTabs`).
  *
- * Its tenants: the default-browser state (`useDefaultBrowserBand`). The strip across the
- * frame's top that asked before it (`DefaultBrowserBanner.tsx`) retired here.
+ * Its tenants: the default-browser state (`useDefaultBrowserBand`) and the crash-restore state
+ * (`useCrashRestoreBand`). The strips across the frame's top that asked before them
+ * (`DefaultBrowserBanner.tsx` in W8-M2, `CrashRestoreBanner.tsx` in W8-M3) retired here.
  */
 export function PageBandHost({ state, ui }: Props): JSX.Element {
   useDefaultBrowserBand(state)
+  useCrashRestoreBand(state)
   useBandTabs(state)
   const tab = activeTab(state)
   const front = tab?.id ?? null
@@ -66,11 +73,28 @@ export function PageBandHost({ state, ui }: Props): JSX.Element {
   useLayoutEffect(() => {
     setBandFrame({ front, scene, ok, offers, covered })
   }, [front, scene, ok, offers, covered])
+  /** A `depart` was heard and no `rest` yet: the frames are a travel's, not a drag's. */
+  const travelling = useRef(false)
   const host = useMemo<BandHost>(
     () => ({
-      translate: movePage,
-      rest: seatBand,
-      depart: (to) => seatBand(Math.min(bandSeat(), to))
+      translate: (x) => {
+        // A frame below the seat with no travel announced is a drag's: the band is unseated
+        // for it – the one relayout the drag costs, the page full-frame and moved by the offset
+        // from here on – so the page keeps covering the frame under it instead of riding up
+        // seated and baring a strip. A frame at or past the seat (a drag pulling the band down
+        // to its rest) leaves the seat as it is; a travel's frames below it (a spring's
+        // undershoot) were seated for by `depart`.
+        if (!travelling.current && x < bandSeat()) seatBand(0)
+        movePage(x)
+      },
+      rest: (height) => {
+        travelling.current = false
+        seatBand(height)
+      },
+      depart: (to) => {
+        travelling.current = true
+        seatBand(Math.min(bandSeat(), to))
+      }
     }),
     []
   )

@@ -59,6 +59,7 @@ import {
   type MenuItemDescriptor,
   type NavigationDirection,
   type NavigationSnapshotEntry,
+  type OverviewMenuRequest,
   type PhoneBarItemId,
   type Platform as PlatformOs,
   type Rect,
@@ -92,6 +93,8 @@ import { languageName, sortedByName } from '../shared/languageNames'
 import { orderMediaEntries } from '../shared/mediaHub'
 import { toolbarPinned, withToolbarPin, type ToolbarControl } from '../shared/toolbarPins'
 import { serialiseMenu } from './rendererMenus'
+import { overviewMenuTemplate } from './overviewMenu'
+import { overviewMenuTitle, type OverviewMenuContext } from '../shared/overviewMenu'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
@@ -365,7 +368,8 @@ export class Menus {
     source: MenuSource,
     anchor?: MenuAnchor,
     header?: MenuHeader,
-    defaultOrder?: string[]
+    defaultOrder?: string[],
+    title?: string
   ): void {
     const items = withAccelerators(
       tidySeparators(template),
@@ -378,7 +382,8 @@ export class Menus {
       win,
       ...anchor,
       ...(header ? { header } : {}),
-      ...(defaultOrder ? { defaultOrder } : {})
+      ...(defaultOrder ? { defaultOrder } : {}),
+      ...(title ? { title } : {})
     })
   }
 
@@ -2484,6 +2489,23 @@ export class Menus {
     // "Remove from Folder" beside it), the domain's route, and – Chrome's pair (tabs-23,
     // context-menus-93) – to a new window or to another, listed by their active tab, most
     // recently focused first and greyed with none to go to.
+    // The four folder rows' words by the window's layout (TABLET-22, parity-android.md; the
+    // overview cleanup spec §7): a touch host says GROUP, as Chrome for Android's tab menu does
+    // and as the phone's own sheets do; the desktop says Folder, its labels byte for byte as
+    // before. One block, so the string table absorbs it whole.
+    const folderRows = touchLayout(win.formFactor)
+      ? {
+          addToNew: 'Add Tab to New Group',
+          moveTo: 'Move to Group',
+          newOne: 'New Group…',
+          remove: 'Remove from Group'
+        }
+      : {
+          addToNew: 'Add Tab to New Folder',
+          moveTo: 'Move to Folder',
+          newOne: 'New Folder…',
+          remove: 'Remove from Folder'
+        }
     const moveTab: Template = joinGroups([
       [
         {
@@ -2507,16 +2529,16 @@ export class Menus {
           !local,
           folders.length === 0
             ? {
-                label: 'Add Tab to New Folder',
+                label: folderRows.addToNew,
                 enabled: !tab.essential && !tab.pinned,
                 click: () => this.browser.newFolderWithTab(space.id, tabId, win)
               }
             : {
-                label: 'Move to Folder',
+                label: folderRows.moveTo,
                 enabled: !tab.essential && !tab.pinned,
                 submenu: [
                   {
-                    label: 'New Folder…',
+                    label: folderRows.newOne,
                     click: () => this.browser.newFolderWithTab(space.id, tabId, win)
                   },
                   { type: 'separator' as const },
@@ -2529,7 +2551,7 @@ export class Menus {
                 ]
               },
           ...when(Boolean(tab.folderId), {
-            label: 'Remove from Folder',
+            label: folderRows.remove,
             click: () => tabs.moveToFolder(tabId, null)
           }),
           {
@@ -2768,6 +2790,12 @@ export class Menus {
     const folders = Object.values(m.folders).filter(
       (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
     )
+    // The group rows' words by the window's layout, as the tab menu's (the overview cleanup
+    // spec §7; the Lead's fold on #731): a touch host says GROUP, the desktop says Folder, its
+    // labels byte for byte as before.
+    const groupRows = touchLayout(win.formFactor)
+      ? { addTo: `Add ${n} Tabs to Group`, newOne: 'New Group…' }
+      : { addTo: `Add ${n} Tabs to Folder`, newOne: 'New Folder…' }
     this.popup(
       [
         {
@@ -2808,7 +2836,7 @@ export class Menus {
                 })
               },
               {
-                label: `Add ${n} Tabs to Folder`,
+                label: groupRows.addTo,
                 enabled: nonEssential.some((t) => !t.pinned),
                 submenu: [
                   ...folders.map((f) => ({
@@ -2819,7 +2847,7 @@ export class Menus {
                   })),
                   ...(folders.length ? [{ type: 'separator' as const }] : []),
                   {
-                    label: 'New Folder…',
+                    label: groupRows.newOne,
                     click: () => {
                       const folder = this.browser.createFolder(
                         space.id,
@@ -2956,13 +2984,15 @@ export class Menus {
         ...(local
           ? []
           : [
+              // The strip's group rows say GROUP on a touch host, as the tab menu's do (the
+              // overview cleanup spec §7; the Lead's fold on #731); the desktop's say Folder.
               {
-                label: 'New Folder',
+                label: touchLayout(win.formFactor) ? 'New Group' : 'New Folder',
                 click: () =>
                   this.browser.createFolder(space.id, newFolderName(win.formFactor), '📁', win)
               },
               {
-                label: 'New Live Folder…',
+                label: touchLayout(win.formFactor) ? 'New Live Group…' : 'New Live Folder…',
                 click: () => this.browser.emit('overlay.open', { kind: 'live-folder' }, win)
               },
               {
@@ -4035,13 +4065,16 @@ export class Menus {
 
   /**
    * "Open in <app>" inside an installed app's scope: the desktop launches the app's own window
-   * (Chrome), the phone goes to the app's start URL in this tab.
+   * (Chrome), the phone goes to the app's start URL in this tab. An app whose shortcut opens a
+   * tab ("Open as window" off, `openAsWindow` false) has no row: its launcher opens a tab like
+   * this one, and Chrome offers none for it (the Design Lead's ruling on #761's second seam).
+   * The phone's flat row and the sidebar layouts' More Tools row are both this one.
    */
   private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
     const pinned = webApps.pinnedFor(active.url)
-    if (!pinned) return []
+    if (!pinned || pinned.openAsWindow === false) return []
     return [
       {
         label: openAppMenuLabel(webApps.surface, pinned.name),
@@ -4065,6 +4098,86 @@ export class Menus {
         click: () => webApps.openInstall(active.id, win)
       }
     ]
+  }
+
+  /**
+   * The tab overview's ⋯ menu (tab overview cleanup spec §4, §5; `shared/overviewMenu.ts` has
+   * the rows and their rules, `core/overviewMenu.ts` the template): while the overview stands
+   * the bar's ⋯ opens this in place of the app menu, through the bar's own surface – the
+   * phone's sheet, the tablet's popover at the button. The counts are the core's: the view's
+   * tabs as the overview lists them (the regular view the active space's tabs less the private
+   * ones, Essentials with them in the count the "Tabs (N)" row names; the private view the
+   * private session's across the spaces), the cards a selection could take (a folded group's
+   * members and the essentials are no cards), the archive, the recently closed tabs and the
+   * window's spaces in their order. A space switch is the core's own (`Tabs.switchSpace`, the
+   * app menu's row); every other row is the chrome's to act on, handed back as one
+   * `overview.command` event to the mounted overview.
+   */
+  private showOverviewMenu(
+    win: ZenWindow,
+    request: OverviewMenuRequest,
+    options: { anchor?: Rect; keyboard: boolean }
+  ): void {
+    const { state, tabs } = this.browser
+    const m = state.model
+    const space = tabs.activeSpaceFor(win)
+    const isPrivate = (tab: Tab): boolean => tab.containerId === PRIVATE_CONTAINER_ID
+    const tabsOf = (s: { tabIds: string[] }): Tab[] =>
+      s.tabIds.map((id) => m.tabs[id]).filter((t): t is Tab => Boolean(t))
+    const essentials = m.essentialTabIds
+      .map((id) => m.tabs[id])
+      .filter((t): t is Tab => Boolean(t))
+      .filter(
+        (t) => !state.settings.containerSpecificEssentials || t.containerId === space.containerId
+      )
+      .filter((t) => !isPrivate(t))
+    const regularOf = (s: { tabIds: string[] }): Tab[] => tabsOf(s).filter((t) => !isPrivate(t))
+    const spaceTabs = regularOf(space)
+    const pinned = spaceTabs.filter((t) => t.pinned)
+    const loose = spaceTabs.filter((t) => !t.pinned)
+    const privateTabs = tabs.privateTabs()
+    const privateView = request.view === 'private'
+    // The cards a selection could pick: the pinned cards, the open groups' members, the loose
+    // cards (a folded group is one card and takes no check); the private view's are its tabs.
+    const foldedAway = (t: Tab): boolean => Boolean(t.folderId && m.folders[t.folderId]?.collapsed)
+    const selectable = privateView
+      ? privateTabs.length
+      : pinned.length + loose.filter((t) => !foldedAway(t)).length
+    const ctx: OverviewMenuContext = {
+      view: request.view,
+      privateTabs: state.capabilities.privateTabs,
+      counts: {
+        closable: privateView ? privateTabs.length : loose.length,
+        selectable,
+        regular: essentials.length + spaceTabs.length,
+        private: privateTabs.length,
+        inactive: state.archivedTabs.length,
+        recentlyClosed: state.recentlyClosed.filter((entry) => entry.kind === 'tab').length
+      },
+      spaces: m.spaces.map((s) => ({
+        id: s.id,
+        label: spaceLabel(s),
+        current: s.id === space.id
+      })),
+      selection: request.selection ?? null
+    }
+    const anchor = options.anchor
+      ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
+      : undefined
+    // The sheet is titled as the overview is – "Work · 10 tabs", "Private · 1 tab",
+    // "1 selected" – never "Zenium", the app menu's (§4).
+    this.popup(
+      overviewMenuTemplate(ctx, {
+        switchSpace: (spaceId) => tabs.switchSpace(spaceId, win),
+        chrome: (command) => this.browser.emit('overview.command', { command }, win)
+      }),
+      win,
+      'app',
+      { ...anchor, keyboard: options.keyboard },
+      undefined,
+      undefined,
+      overviewMenuTitle(ctx, space.name)
+    )
   }
 
   /**
@@ -4094,13 +4207,25 @@ export class Menus {
    */
   showAppMenu(
     win: ZenWindow,
-    options: { anchor?: Rect; keyboard: boolean; mediaHubFolded?: boolean }
+    options: {
+      anchor?: Rect
+      keyboard: boolean
+      mediaHubFolded?: boolean
+      overview?: OverviewMenuRequest
+    }
   ): void {
     const { state, tabs } = this.browser
     const caps = state.capabilities
     const active = tabs.activeTabFor(win)
     const local = Boolean(win.localSpace)
     const phone = win.formFactor === 'phone'
+    // The tab overview stands (tab overview cleanup spec §1, §4): the bar's ⋯ is the overview's
+    // menu – its rows in place of the app menu's, through the same surface – and the overview
+    // draws no ⋯ of its own. The chrome says which view and whether tabs are being selected.
+    if (options.overview) {
+      this.showOverviewMenu(win, options.overview, options)
+      return
+    }
     /** Items the host must be able to act on; left out rather than greyed where it cannot. */
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     /** Items of the sidebar layouts (desktop and tablet) only. */

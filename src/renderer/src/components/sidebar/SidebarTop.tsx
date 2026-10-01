@@ -354,7 +354,13 @@ export function NavRow({
     pinnedAppFor(tab.url, state.webApps ?? []) === null
   const installUp = installable && installPinned
   const installName = manifest ? launcherName(manifest, 'desktop') : ''
-  const installOpen = uiStore.use((s) => s.install !== null && s.install.tabId === tab?.id)
+  // The chip's popover is up for this tab: the prompt the user asked for, or the core's offer
+  // (`lib/installOffer.ts`), which hangs from the same chip.
+  const installOpen = uiStore.use(
+    (s) =>
+      (s.install !== null && s.install.tabId === tab?.id) ||
+      (s.installOffer !== null && s.installOffer.banner.tabId === tab?.id)
+  )
   // The Share chip (W8-6): Chrome's desktop omnibox has no share page action now (its sharing
   // hub is the app menu's), so the chip is the house's – a hover-only utility beside Copy URL,
   // never a resident chip – on a page of the web where the chrome has a share sheet to show
@@ -892,10 +898,10 @@ export function NavRow({
             unfocusable in the instant between blurring the old chip and focusing the next, and
             only `:focus-within` on their common ancestor holds through that instant. They stay
             as well while a chip has a popover up that HANGS FROM THE PILL – the zoom bubble,
-            the share popover, site information, the star's bubble: a chip marked
-            `data-zen-anchored` (`PillChip`'s `anchored`) with `aria-expanded` – so the chips do
-            not shift under a surface that was placed on one of them (§9.20); never while a chip
-            has opened a FRAME DIALOG (the Install chip's install dialog, the Boosts dialog),
+            the share popover, site information, the star's bubble, the Install chip's "Install
+            <app>?" popover: a chip marked `data-zen-anchored` (`PillChip`'s `anchored`) with
+            `aria-expanded` – so the chips do not shift under a surface that was placed on one of
+            them (§9.20); never while a chip has opened a FRAME DIALOG (the Boosts dialog),
             whose surface stands over the window with nothing hung from the pill – the
             utilities drawn under its scrim as if hovered were the FIRST LINE's L7 on #589.
             Every tool after the address – Reader View, Boost, Copy, the zoom, the star – carries
@@ -1226,26 +1232,30 @@ export function NavRow({
               // `action_ids.h` order): the install-desktop glyph, the "Install" of its suggestion
               // chip while the pill has the label's room (`zen-pill-label`, the "Not secure"
               // tier), named "Install <app>" as its tooltip is (`IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP`).
-              // Its popup is the install dialog – Chrome's simple install dialog is tab-modal,
-              // so the house's frame dialog stands – and the chip keeps its pressed fill while
-              // the dialog is up (§9.20); a frame dialog hangs from nothing, so the chip carries
-              // no `anchored` mark and its open state never holds the pill's hover-only run
-              // (L7). The tier folds it after Translate and Reader View and
-              // before the shield (`pillChipTiers.ts`); folded or unpinned, the app menu's
-              // "Install <app>…" row runs the same command. A pinnable control, it carries the
-              // pinned button's right-click menu marks (context-menus-112; W8-1's
-              // `toolbarMenuMarks` – Unpin, Customise Toolbar…) as Reader View and Translate do.
+              // Its popup is Chrome's form of the install prompt (the Design Lead's ruling on
+              // W8-M3's item 3): the 320 "Install <app>?" popover hung from this chip
+              // (`install/InstallPopover.tsx`), which the core's offer opens of its own accord
+              // once per site and the chip reopens; the chip keeps its pressed fill while the
+              // popover is up and carries the `anchored` mark, so its open state holds the
+              // pill's hover-only run (L7). A page without an installable manifest gets the
+              // "Create shortcut" frame dialog instead, which hangs from nothing. The tier
+              // folds it after Translate and Reader View and before the shield
+              // (`pillChipTiers.ts`); folded or unpinned, the app menu's "Install <app>…" row
+              // runs the same command. A pinnable control, it carries the pinned button's
+              // right-click menu marks (context-menus-112; W8-1's `toolbarMenuMarks` – Unpin,
+              // Customise Toolbar…) as Reader View and Translate do.
               <PillChip
                 label={`Install ${installName}`}
                 title={`Install ${installName}`}
                 popup="dialog"
                 expanded={installOpen}
+                anchored
                 data-install-chip=""
                 {...toolbarMenuMarks('install', formFactor)}
                 className={cn(
                   'zen-pill-chip flex h-5 shrink-0 items-center justify-center gap-1 rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   installLabelUp ? 'px-1' : 'w-5',
-                  // The anchor keeps its pressed fill while its dialog is up (§9.20).
+                  // The anchor keeps its pressed fill while its popover is up (§9.20).
                   installOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
                 )}
                 onActivate={() => {

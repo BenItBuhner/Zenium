@@ -102,20 +102,22 @@ import kotlin.math.roundToInt
  *  the glide's first frame, the glide, and whether the frame outlived the exits or left under
  *  them – see [leaveNumbers].
  *
- * THE SPACE SWITCH in the open overview (MOT-05, v2 §11.4 / §11.6: a tap on a strip chip blends
- * the window's theme over 240 ms while a still of the grid that left fades over 120 ms and the
- * next Space's grid comes up in a slot of its own and slides in over 250 ms from the side the
- * Space stands on in the strip, its indicator gliding on the snappy spring), the `space-switch`
+ * THE SPACE SWITCH in the open overview (MOT-05, v2 §11.4 / §11.6: a Space picked from the
+ * Spaces sheet the title opens – the cleanup spec §1 – blends the window's theme over 240 ms
+ * while a still of the grid that left fades over 120 ms and the next Space's grid comes up in a
+ * slot of its own and slides in over 250 ms from the side the Space stands on in the spaces'
+ * order), the `space-switch`
  * group, on thirty tabs in each of two Spaces – the seeded Space with the `-30` set's extra
  * tabs, and a second Space made off the record ([SWITCH_SPACE_NAME], under a warm gradient
  * against the seeded cool one, so the blend has somewhere to go) with [SWITCH_TABS] tabs created
  * unloaded – see [spaceSwitchScenes]:
  *
- *  - `space-switch-30-forward`: the tap on the second Space's chip; the incoming grid mounts
- *    fresh under #480's window (its in-view cards built in the swap's commit, the rest in idle
- *    time during the slide), the still fades, the slide runs from the trailing edge, the theme
- *    blends, the indicator glides – one scene of [SWITCH_SETTLE_MS] after the tap.
- *  - `space-switch-30-back`: the seeded Space's chip; the mirror, from the leading edge.
+ *  - `space-switch-30-forward`: the tap on the second Space's row in the Spaces sheet (opened
+ *    off the record from the title); the sheet leaves, the incoming grid mounts fresh under
+ *    #480's window (its in-view cards built in the swap's commit, the rest in idle time during
+ *    the slide), the still fades, the slide runs from the trailing edge, the theme blends – one
+ *    scene of [SWITCH_SETTLE_MS] after the tap.
+ *  - `space-switch-30-back`: the seeded Space's row; the mirror, from the leading edge.
  *
  *  The swap's commit is where a long task would be made (the incoming grid's render with its
  *  window's cards, the still's clone of the outgoing grid, the FLIP set's baseline read of the
@@ -343,10 +345,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             settle()
             if (openOverview()) {
                 shot("space-switch-rest")
-                tapChip(switchSpaceId, "space-switch (recorded)")
+                pickSpace(switchSpaceId, "space-switch (recorded)")
                 SystemClock.sleep(SWITCH_SETTLE_MS)
                 shot("space-switched")
-                tapChip(MAIN_SPACE, "space-switch (recorded, back)")
+                pickSpace(MAIN_SPACE, "space-switch (recorded, back)")
                 SystemClock.sleep(SWITCH_SETTLE_MS)
                 shot("space-switched-back")
                 closeOverview()
@@ -407,11 +409,12 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * which holds the thirty by now; `space.create` switches the window to the new Space, so the
      * seeded one is activated again before the overview opens (off the record, by the fling). Then:
      *
-     *  - `space-switch-30-forward`: a tap on the new Space's chip in the strip, and
-     *    [SWITCH_SETTLE_MS] for the blend, the still's fade, the slide, the indicator's spring and
-     *    the incoming grid's idle fill of its cards beyond the window – at the emulator's frame rate.
-     *  - `space-switch-30-back`: a tap on the seeded Space's chip (read again: the strip may have
-     *    scrolled), the same window.
+     *  - `space-switch-30-forward`: a tap on the new Space's row in the Spaces sheet (the sheet
+     *    opened off the record from the title, [openSpacesSheet]), and [SWITCH_SETTLE_MS] for the
+     *    sheet's leaving, the blend, the still's fade, the slide and the incoming grid's idle fill
+     *    of its cards beyond the window – at the emulator's frame rate.
+     *  - `space-switch-30-back`: a tap on the seeded Space's row (the sheet opened again), the
+     *    same window.
      *
      * Each scene is sampled by function, for the swap's commit. The active Space is read before and
      * after each tap (a tap the system drops switches nothing, and the scene's name would then say
@@ -453,24 +456,33 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             finding("space-switch: the overview did not open; the switch scenes are skipped")
             return
         }
-        val mainChip = chipRect(MAIN_SPACE)
-        val homeChip = chipRect(homeId)
-        finding("space-switch-30: ${cardsInGrid()} cards in the grid; ${switchState()}; the chips at $mainChip (seeded) and $homeChip ($SWITCH_SPACE_NAME)")
-        if (mainChip == null || homeChip == null) {
-            finding("space-switch: a chip is missing from the strip; the switch scenes are skipped")
+        // The switch is the Spaces sheet's pick (the cleanup spec §1: the title is the space
+        // switcher): the sheet is opened off the record, and the scene is the row's tap – the
+        // sheet's leaving and the grid's slide, which is what the user sees of a switch.
+        finding("space-switch-30: ${cardsInGrid()} cards in the grid; ${switchState()}")
+        val homeRow = openSpacesSheet("space-switch-30-forward")?.let { spaceRowRect(homeId) }
+        if (homeRow == null) {
+            finding("space-switch: no row for $homeId ($SWITCH_SPACE_NAME) in the Spaces sheet; the switch scenes are skipped")
+            back()
             closeOverview()
             return
         }
         scene("space-switch-30-forward", JankBudget.Kind.OPEN, profile = true) {
-            Finger().tap(homeChip.exactCenterX(), homeChip.exactCenterY())
+            Finger().tap(homeRow.exactCenterX(), homeRow.exactCenterY())
             SystemClock.sleep(SWITCH_SETTLE_MS)
         }
         val afterForward = activeSpaceId()
         finding("space-switch-30-forward: active Space $afterForward (${if (afterForward == homeId) "switched" else "NOT SWITCHED – the tap did not take"}); ${cardsInGrid()} cards in the grid; ${switchState()}")
         SystemClock.sleep(SWITCH_REST_MS)
-        val backChip = chipRect(MAIN_SPACE) ?: mainChip
+        val backRow = openSpacesSheet("space-switch-30-back")?.let { spaceRowRect(MAIN_SPACE) }
+        if (backRow == null) {
+            finding("space-switch-30-back: no row for $MAIN_SPACE in the Spaces sheet; the back scene is skipped")
+            back()
+            closeOverview()
+            return
+        }
         scene("space-switch-30-back", JankBudget.Kind.OPEN, profile = true) {
-            Finger().tap(backChip.exactCenterX(), backChip.exactCenterY())
+            Finger().tap(backRow.exactCenterX(), backRow.exactCenterY())
             SystemClock.sleep(SWITCH_SETTLE_MS)
         }
         val afterBack = activeSpaceId()
@@ -479,29 +491,48 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         closeOverview()
     }
 
-    /** A tap on the Space `spaceId`'s chip in the strip, off the record; a finding when there is none. */
-    private fun tapChip(spaceId: String, name: String) {
-        val chip = chipRect(spaceId)
-        if (chip == null) {
-            finding("$name: no chip for $spaceId in the strip; nothing tapped")
+    /**
+     * The Space `spaceId` picked from the Spaces sheet, off the record (the title's tap, then the
+     * row's); a finding when the sheet or the row is missing, the sheet put away if it came up.
+     */
+    private fun pickSpace(spaceId: String, name: String) {
+        val row = openSpacesSheet(name)?.let { spaceRowRect(spaceId) }
+        if (row == null) {
+            finding("$name: no row for $spaceId in the Spaces sheet; nothing picked")
+            back()
             return
         }
-        Finger().tap(chip.exactCenterX(), chip.exactCenterY())
+        Finger().tap(row.exactCenterX(), row.exactCenterY())
     }
 
     /**
-     * The on-screen box of the Space `spaceId`'s chip in the overview's strip, null when there is
-     * none. The chip is found by its `data-space-id`; a strip without the attribute (a build before
-     * the Space switch's motion, the baseline of its ruling-5 comparison) has its chips as the
-     * strip's buttons in the Spaces' order, so the Space's position in the core's `spaces` finds
-     * it there – the same scene reads either head.
+     * The Spaces sheet presented from the overview's title (`OverviewTitle`, the space switcher):
+     * the title's on-screen box after the tap, with the sheet's rows up; null – and a finding –
+     * when the title is not on screen or the sheet does not come up in time.
      */
-    private fun chipRect(spaceId: String): android.graphics.Rect? {
-        val byId = domRect(".zen-overview .zen-overview-strip [data-space-id=${JSONObject.quote(spaceId)}]")
-        if (byId != null) return byId
+    private fun openSpacesSheet(name: String): android.graphics.Rect? {
+        val title = domRect(".zen-overview $OVERVIEW_TITLE_SELECTOR")
+        if (title == null) {
+            finding("$name: the overview's title is not on screen; the Spaces sheet was not opened")
+            return null
+        }
+        Finger().tap(title.exactCenterX(), title.exactCenterY())
+        if (!awaitDom(SPACE_ROW, 4_000)) {
+            finding("$name: the Spaces sheet did not come up from the title's tap")
+            return null
+        }
+        SystemClock.sleep(SPACES_SHEET_REST_MS)
+        return title
+    }
+
+    /**
+     * The on-screen box of the Space `spaceId`'s row in the Spaces sheet, null when there is none:
+     * the rows stand in the core's `spaces` order, so the Space's position there finds its row.
+     */
+    private fun spaceRowRect(spaceId: String): android.graphics.Rect? {
         val spaces = coreState().optJSONArray("spaces") ?: return null
         val position = (0 until spaces.length()).firstOrNull { spaces.optJSONObject(it)?.optString("id") == spaceId } ?: return null
-        return domRect(".zen-overview .zen-overview-strip > button:nth-of-type(${position + 1})")
+        return domRect("$SPACE_ROW:nth-of-type(${position + 1})")
     }
 
     private fun activeSpaceId(): String = coreState().optString("activeSpaceId")
@@ -516,19 +547,19 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
 
     /**
      * The Space slot at rest, as the DOM has it: `60 cells, 0 placeholders, the slot at rest, 0
-     * still(s) up, indicator at 12 px, --zen-bg 246 241 236` – the cells and the placeholders
-     * left in the grid (a placeholder at rest is a card the idle fill never built), the slot's
-     * running animations (the slide, when it is still going), the stills over it, the indicator's
-     * left edge (the chip it rests on) and the surface's blended colour.
+     * still(s) up, the title "Home, 30 tabs", --zen-bg 246 241 236` – the cells and the
+     * placeholders left in the grid (a placeholder at rest is a card the idle fill never built),
+     * the slot's running animations (the slide, when it is still going), the stills over it, the
+     * title's name (the Space it stands on) and the surface's blended colour.
      */
     private fun switchState(): String = jsString(
         "(function(){var s=document.querySelector('.zen-overview-space');if(!s)return 'no Space slot';" +
             "var cells=s.querySelectorAll('[data-cell]').length,ph=s.querySelectorAll('.zen-overview-card-placeholder').length;" +
             "var groups=[].map.call(s.querySelectorAll('.zen-group'),function(g){return g.querySelectorAll('[data-tab-id]').length+(g.hasAttribute('data-dissolving')?' dissolving':'')});" +
             "var anims=s.getAnimations().map(function(a){return a.id+':'+a.playState}).join(' ');" +
-            "var stills=document.querySelectorAll('[data-testid=\"pane-still\"]').length;var ind=document.querySelector('.zen-overview-strip-indicator');" +
-            "return cells+' cells, '+ph+' placeholders, '+groups.length+' group cell(s)'+(groups.length?' holding '+groups.join(', '):'')+', '+(anims?'slot animations '+anims:'the slot at rest')+', '+stills+' still(s) up, indicator at '+" +
-            "(ind?Math.round(ind.getBoundingClientRect().left)+' px':'none')+', --zen-bg '+getComputedStyle(document.documentElement).getPropertyValue('--zen-bg').trim()})()"
+            "var stills=document.querySelectorAll('[data-testid=\"pane-still\"]').length;var title=document.querySelector('.zen-overview $OVERVIEW_TITLE_SELECTOR');" +
+            "return cells+' cells, '+ph+' placeholders, '+groups.length+' group cell(s)'+(groups.length?' holding '+groups.join(', '):'')+', '+(anims?'slot animations '+anims:'the slot at rest')+', '+stills+' still(s) up, the title '+" +
+            "(title?JSON.stringify(title.getAttribute('aria-label')||title.textContent):'none')+', --zen-bg '+getComputedStyle(document.documentElement).getPropertyValue('--zen-bg').trim()})()"
     )
 
     // --- the group fold ----------------------------------------------------------------------------
@@ -858,15 +889,16 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
                 closeOverview()
                 return
             }
-            // The search, off the record: the magnifier, the field with the focus, the keyboard up,
-            // and a rest for the window's insets to land (the grid re-lays out under the keyboard).
-            val toggle = domRect(SEARCH_TOGGLE)
-            if (toggle == null) {
-                finding("overview-group-leave-search: no search magnifier in the header; the leave scenes are skipped")
+            // The search, off the record: the Search Tabs row of the overview's menu (the bar's ⋯
+            // while the overview stands; tab overview cleanup spec §4 – the header carries no
+            // magnifier), the field pinned under the header with the focus, the keyboard up, and
+            // a rest for the window's insets to land (the grid re-lays out under the keyboard).
+            if (!openOverviewMenuRow(SEARCH_ROW)) {
+                finding("overview-group-leave-search: no '$SEARCH_ROW' row in the overview's menu (${overviewMenuRows()}); the leave scenes are skipped")
+                back()
                 closeOverview()
                 return
             }
-            Finger().tap(toggle.exactCenterX(), toggle.exactCenterY())
             val fieldUp = awaitDom(SEARCH_INPUT, 4_000)
             val imeUp = awaitIme(true, 8_000)
             SystemClock.sleep(SEARCH_REST_MS)
@@ -1514,7 +1546,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     /**
      * The on-screen box of the first element `selector` matches (`getBoundingClientRect` in
      * device px); the chrome fills the window, so the DOM's origin is the screen's – checked once
-     * against the accessibility tree's box of the overview's Spaces button, like OverviewMotionDemo.
+     * against the accessibility tree's box of the overview's title, like OverviewMotionDemo.
      */
     private fun domRect(selector: String): android.graphics.Rect? {
         val text = jsString(
@@ -1540,11 +1572,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private fun calibrate() {
         if (calibrated) return
         val text = jsString(
-            "(function(){var e=document.querySelector('.zen-overview [aria-label=\"Spaces\"]');if(!e)return '';var r=e.getBoundingClientRect();" +
+            "(function(){var e=document.querySelector('.zen-overview $OVERVIEW_TITLE_SELECTOR');if(!e)return '';var r=e.getBoundingClientRect();" +
                 "return JSON.stringify({x:(r.left+r.right)/2*window.devicePixelRatio,y:(r.top+r.bottom)/2*window.devicePixelRatio})})()"
         )
         if (text.isEmpty()) return
-        val fromTree = findByLabel("Spaces") ?: return
+        val fromTree = overviewTitle() ?: return
         val o = JSONObject(text)
         val dx = fromTree.exactCenterX() - o.getDouble("x").toFloat()
         val dy = fromTree.exactCenterY() - o.getDouble("y").toFloat()
@@ -1553,7 +1585,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             originX = dx
             originY = dy
         }
-        finding("coordinates: the DOM's origin is ${originX.roundToInt()}, ${originY.roundToInt()} px into the screen (Spaces button: tree $fromTree, DOM centre ${o.getDouble("x").roundToInt()}, ${o.getDouble("y").roundToInt()})")
+        finding("coordinates: the DOM's origin is ${originX.roundToInt()}, ${originY.roundToInt()} px into the screen (the overview's title: tree $fromTree, DOM centre ${o.getDouble("x").roundToInt()}, ${o.getDouble("y").roundToInt()})")
     }
 
     /** A JS expression's string result ("" when the chrome never answered or returned nothing). */
@@ -1962,13 +1994,18 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "{\"type\":\"gradient\",\"colors\":[{\"c\":[255,122,89],\"x\":0.3,\"y\":0.3,\"isPrimary\":true},{\"c\":[255,200,87],\"x\":0.7,\"y\":0.7}]," +
                 "\"opacity\":0.6,\"texture\":0,\"algorithm\":\"floating\",\"monochrome\":false,\"rotation\":135}"
         /**
-         * The switch scene's window after the chip's tap: the slide (250 ms), the blend (240), the
-         * still's fade (120), the indicator's spring (~300) and the incoming grid's idle fill of the
-         * cards beyond its window – one step a frame, which the emulator's frame rate stretches.
+         * The switch scene's window after the row's tap: the Spaces sheet's leaving (its spring),
+         * the slide (250 ms), the blend (240), the still's fade (120) and the incoming grid's idle
+         * fill of the cards beyond its window – one step a frame, which the emulator's frame rate
+         * stretches.
          */
         private const val SWITCH_SETTLE_MS = 2_500L
         /** A rest between the two switches, so the back's tap begins a scene of its own. */
         private const val SWITCH_REST_MS = 1_500L
+        /** The Spaces sheet's rows, in the core's `spaces` order (`SpacesSheet`; New Space… last is no row of a Space). */
+        private const val SPACE_ROW = ".zen-sheet [data-testid=\"spaces-sheet-space\"]"
+        /** The Spaces sheet at rest after its arrival, before a row is tapped off the record or in a scene. */
+        private const val SPACES_SHEET_REST_MS = 1_200L
         /** The seeded group the fold scenes fold and unfold (`folder_docs`: the two Docs tabs, at the head of the grid). */
         private const val GROUP_NAME = "Docs"
         /** The group the leave scenes make off the record and see out; second in the grid, after Docs. */
@@ -2008,7 +2045,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         /** After the search opens off the record: the keyboard's own animation and the window's insets, the grid re-laid under them. */
         private const val SEARCH_REST_MS = 1_500L
         /** The tab search (TAB-21): the header's magnifier, the field's input, and its X (`Clear search` with a query, `Close search` without). */
-        private const val SEARCH_TOGGLE = "[data-testid=\"overview-search-toggle\"]"
+        /** The overview menu's row that pins the search field under the header (tab overview cleanup spec §4). */
+        private const val SEARCH_ROW = "Search Tabs"
         private const val SEARCH_INPUT = "#overview-search"
         private const val SEARCH_CLEAR = "[data-testid=\"overview-search-clear\"]"
         /**

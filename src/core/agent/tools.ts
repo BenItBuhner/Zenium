@@ -1684,7 +1684,7 @@ const browserHandleDialog: AgentTool = {
     name: 'browser_handle_dialog',
     title: 'Answer a page dialog',
     description:
-      'Answer the dialog a page opened on one of your tabs (alert, confirm, prompt or "Leave site?"): the page is blocked until it is answered, so a call that runs into one returns with it, and page tools refuse the tab until then. accept: true presses OK (default), false Cancel; promptText is what a prompt receives. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Returns a snapshot of the page afterwards.',
+      'Answer the dialog a page opened on one of your tabs (alert, confirm or prompt): the page is blocked until it is answered, so a call that runs into one returns with it, and page tools refuse the tab until then. accept: true presses OK (default), false Cancel; promptText is what a prompt receives. These dialogs never reach the user; unanswered ones are dismissed after two minutes. Returns a snapshot of the page afterwards.',
     inputSchema: schema(
       {
         tabId: TAB_ID,
@@ -1749,7 +1749,7 @@ const browserPrompts: AgentTool = {
     name: 'browser_prompts',
     title: 'List waiting prompts',
     description:
-      'List what your tabs wait for you to answer instead of showing the user: file choosers, downloads asking where to save, sign-ins (HTTP authentication), client certificates, permission requests (camera, microphone, location, notifications, clipboard…), screen sharing, Bluetooth/USB/serial/HID device pickers, links to other apps – and page dialogs (alert, confirm, prompt, "Leave site?"). Each comes with its details, the actions it takes and the default it gets when you leave it: answer with browser_respond_prompt (browser_file_upload for files, browser_handle_dialog for page dialogs). Never use OS automation for these: they are never on screen.',
+      'List what your tabs wait for you to answer instead of showing the user: file choosers, downloads asking where to save, sign-ins (HTTP authentication), client certificates, permission requests (camera, microphone, location, notifications, clipboard…), screen sharing, Bluetooth/USB/serial/HID device pickers, links to other apps – and page dialogs (alert, confirm, prompt). Each comes with its details, the actions it takes and the default it gets when you leave it: answer with browser_respond_prompt (browser_file_upload for files, browser_handle_dialog for page dialogs). Never use OS automation for these: they are never on screen.',
     inputSchema: schema({ tabId: TAB_ID }),
     annotations: { readOnlyHint: true, openWorldHint: false }
   },
@@ -1835,7 +1835,7 @@ const browserRespondPrompt: AgentTool = {
     const prompt = promptToAnswer(ctx, args)
     if (!prompt)
       return textError(
-        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, "Leave site?") is answered with browser_handle_dialog.`
+        `No prompt waits on ${pick(args, 'tabId') !== undefined ? `tab ${targetTab(ctx, args).id}` : 'your tabs'}. A page dialog (alert, confirm, prompt) is answered with browser_handle_dialog.`
       )
     const action = need(args, 'action', `one of ${Object.keys(prompt.actions).join(', ')}`)
     const answer: AgentPromptAnswer = { ...args, action }
@@ -2698,7 +2698,7 @@ export function agentInstructions(
     '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
     `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
     `- Never close, move or navigate what you did not create. Another named agent's groups are its own until it ends its session, even while it is away – they cannot be adopted or forced. A group whose agent ended its session without closing it is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} only if you are continuing that work.`,
-    `${agentDialogs ? '- Page dialogs (alert, confirm, prompt, "Leave site?") on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
+    `${agentDialogs ? '- Page dialogs (alert, confirm, prompt) on your tabs are yours to answer and never reach the user: a call that opens one returns with it, and browser_handle_dialog answers it. ' : '- Page dialogs on your tabs are answered by this browser, not by you. '}A "Leave site?" never reaches you: when a page of yours objects to leaving, your tab leaves without a question. A call that does not finish within its deadline returns an error instead of hanging; your session is unaffected – take a snapshot and carry on.`,
     ...(promptKinds.length ? [nativePromptsLine(promptKinds)] : []),
     '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
     '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',

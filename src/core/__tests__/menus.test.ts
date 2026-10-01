@@ -2453,8 +2453,8 @@ describe('the app menu', () => {
 
   it('offers the install item only to a window whose chrome has an install surface up', () => {
     // A desktop host that writes launchers: the engine can install, but the item is a way into
-    // the chrome's install dialog, so until the chrome registers one (`ui.surface`, as the
-    // desktop's InstallDialogLayer does on mount) the menu offers no way into a prompt nothing
+    // the chrome's install surface, so until the chrome registers one (`ui.surface`, as the
+    // desktop's InstallPopoverLayer does on mount) the menu offers no way into a prompt nothing
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
@@ -2504,6 +2504,54 @@ describe('the app menu', () => {
     expect(menu.indexOf('More Tools > Open in Notes')).toBe(menu.indexOf('More Tools') + 1)
     expect(menu).not.toContain('Open in Notes')
     expect(menu).not.toContain('Save and Share > Create Shortcut…')
+  })
+
+  it('hides Open in <app> for an app whose shortcut opens a tab (`openAsWindow` false) – More Tools and the phone’s flat row alike – and keeps it for a window-mode record and one without the key', () => {
+    // The record carries the shortcut's mode as `webapp.pin` did: `false` for a shortcut made
+    // with "Open as window" off, `true` with it on, no key on a record from before the box
+    // (which opens a window, as it always did). A tab-mode launcher opens a tab like this one,
+    // so the menu offers no row for it, as Chrome offers none (#761's second seam); hidden, not
+    // renamed.
+    const notes = (mode: { openAsWindow?: boolean }): Record<string, string> => ({
+      'webapps.json': JSON.stringify({
+        version: 1,
+        pinned: [
+          {
+            id: 'notes',
+            name: 'Notes',
+            startUrl: 'https://notes.example/',
+            scope: 'https://notes.example/',
+            pinnedAt: 1,
+            icon: null,
+            bounds: null,
+            ...mode
+          }
+        ],
+        engagement: {}
+      })
+    })
+    const menuOf = (options: HarnessOptions, mode: { openAsWindow?: boolean }): string[] => {
+      const phone = options.formFactor === 'phone'
+      const h = harness(
+        { ...(phone ? ANDROID : DESKTOP), pinShortcuts: true },
+        { ...options, shortcuts: true, files: notes(mode) }
+      )
+      h.browser.tabs.createTab({ url: 'https://notes.example/today', active: true }, h.win)
+      h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+      return appMenu(h)
+    }
+    const layouts: HarnessOptions[] = [{}, { formFactor: 'tablet' }, { formFactor: 'phone' }]
+    for (const layout of layouts) {
+      expect(
+        menuOf(layout, { openAsWindow: false }).filter((l) => /Open (in )?Notes/.test(l))
+      ).toEqual([])
+    }
+    for (const mode of [{ openAsWindow: true }, {}]) {
+      expect(menuOf({}, mode)).toContain('More Tools > Open in Notes')
+      expect(menuOf({ formFactor: 'tablet' }, mode)).toContain('More Tools > Open in Notes')
+      // The phone's row is flat, and reads "Open <app>" (the launcher's words).
+      expect(menuOf({ formFactor: 'phone' }, mode)).toContain('Open Notes')
+    }
   })
 
   describe("a web app's standalone window", () => {

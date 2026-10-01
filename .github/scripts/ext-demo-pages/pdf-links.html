@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF links fixture</title>
+    <link rel="stylesheet" href="probe-page.css" />
+  </head>
+  <body>
+    <main>
+      <h1>PDF links</h1>
+      <p>
+        Three links, two of them to a PDF. A PDF-editing extension that decorates links whose path
+        ends in <code>.pdf</code> puts its button after the first two and leaves the third alone.
+        The page is served under the runner's <code>nip.io</code> name: such an extension offers no
+        button on a loopback, private-range or single-label host, where its upload API could not
+        fetch the file.
+      </p>
+      <ul>
+        <li><a id="pdf-a" href="/sample.pdf">A sample PDF</a></li>
+        <li><a id="pdf-b" href="/sample.pdf?v=2">The same PDF, a second link</a></li>
+        <li><a id="html-a" href="/page-a.html">A page that is not a PDF</a></li>
+      </ul>
+    </main>
+  </body>
+</html>

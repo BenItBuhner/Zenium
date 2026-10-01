@@ -17,9 +17,12 @@ import { BLANK_URL } from '@shared/url'
  * the gesture stage: a new band waits, a standing one stays) – how it fills the band's seam: the
  * page's offset to the core per frame (`layout.pageOffset`), the seat for the layout reporter at
  * the lesser of the seat and the destination on a departure and at the height at the rest
- * (`lib/pageBand.ts`), and a cut – no travel – when the frame's page changes; and what the tabs
- * tell the model (a tab closing, a document changing). Its default-browser tenant: the state
- * stands while the OS names another browser.
+ * (`lib/pageBand.ts`), unseated at a drag's first frame below it (no departure announced – the
+ * page keeps covering the frame under it, as Android's host keeps its layer; W8-M2b), and a cut
+ * – no travel – when the frame's page changes; and what the tabs
+ * tell the model (a tab closing, a document changing). Its tenants: the default-browser state
+ * stands while the OS names another browser; the crash-restore state while the session holds the
+ * last run's pages for an answer.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -38,7 +41,18 @@ const { framesPending } = await import('@renderer/lib/motion/clock')
 const { bandStore, chooseBand, dismissBandByKey, resetBands, showBand } =
   await import('@renderer/lib/band')
 type BandDismissReason = import('@renderer/lib/band').BandDismissReason
-const { bandSeat, resetPageBand } = await import('@renderer/lib/pageBand')
+const {
+  bandOffset,
+  bandSeat,
+  bandSeatStore,
+  layoutBand,
+  moveChromePage,
+  movePage,
+  resetChromePageBand,
+  resetPageBand,
+  seatBand,
+  seatChromePage
+} = await import('@renderer/lib/pageBand')
 const { uiStore } = await import('@renderer/lib/ui')
 
 const FRAME_MS = 16
@@ -94,7 +108,7 @@ interface Scene {
   tabs?: Record<string, Tab>
 }
 
-/** A desktop window on a page tab; the default-browser tenant quiet unless a scene asks for it. */
+/** A desktop window on a page tab; the state tenants quiet unless a scene asks for one. */
 function state({
   front = 'page',
   fullscreen = false,
@@ -105,6 +119,7 @@ function state({
   return {
     platform: 'linux',
     version: '0.3.77',
+    crashRestore: null,
     tabs,
     spaces: [
       {
@@ -187,6 +202,56 @@ const offsets = (): number[] =>
     .filter(([c]) => c === 'layout.pageOffset')
     .map(([, a]) => (a as { offset: number }).offset)
 
+/**
+ * The seats written from here on, in order – each one a layout of the page under the band
+ * (the layout reporter lays out on the seat store's every change).
+ */
+function seats(): { written: number[]; off: () => void } {
+  const written: number[] = []
+  const off = bandSeatStore.subscribe(() => written.push(bandSeat()))
+  return { written, off }
+}
+
+const MOUSE = 7
+const HOLD = { x: 200, y: 30 }
+
+/**
+ * A mouse on the band, as `useSwipeDismiss` hears it: `down` takes hold where the band is,
+ * `move(dy)` is the pointer `dy` px (negative up) from there, `up` lets go. happy-dom has no
+ * pointer capture, so the band's take and release of it are stubbed not to throw.
+ */
+function mouse(): { down: () => void; move: (dy: number) => void; up: (dy: number) => void } {
+  const captured = new Set<number>()
+  const at = (type: string, dy: number): void => {
+    const el = band()!
+    el.setPointerCapture = (id: number) => {
+      captured.add(id)
+    }
+    el.releasePointerCapture = (id: number) => {
+      captured.delete(id)
+    }
+    el.hasPointerCapture = (id: number) => captured.has(id)
+    act(() => {
+      el.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: MOUSE,
+          pointerType: 'mouse',
+          button: 0,
+          clientX: HOLD.x,
+          clientY: HOLD.y + dy
+        })
+      )
+    })
+  }
+  return {
+    down: () => at('pointerdown', 0),
+    move: (dy) => at('pointermove', dy),
+    up: (dy) => at('pointerup', dy)
+  }
+}
+
 const offline = (tabId: string | null = null): number =>
   showBand({
     key: 'connectivity',
@@ -214,6 +279,7 @@ beforeEach(() => {
   run.mockClear()
   resetBands()
   resetPageBand()
+  resetChromePageBand()
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
@@ -225,6 +291,7 @@ afterEach(() => {
   mount?.remove()
   resetBands()
   resetPageBand()
+  resetChromePageBand()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -318,6 +385,18 @@ describe('PageBandHost – what the frame shows (motion spec §3.2, §10)', () =
     offer('secret')
     render(state({ front: 'secret' }))
     expect(model()).toMatchObject({ front: 'secret', ok: true, offers: false })
+    expect(standing()).toBe('connectivity')
+    expect(band()!.querySelector('.zen-band-title')!.textContent).toBe('You are offline')
+  })
+
+  it('the new tab page takes a state and withholds an offer, which waits for a page (item 8)', () => {
+    offer('ntp')
+    render(state({ front: 'ntp' }))
+    expect(standing()).toBeNull()
+    expect(band()).toBeNull()
+    act(() => {
+      offline()
+    })
     expect(standing()).toBe('connectivity')
     expect(band()!.querySelector('.zen-band-title')!.textContent).toBe('You are offline')
   })
@@ -487,6 +566,185 @@ describe('PageBandHost – the seam to the page (motion spec §3.4, §6)', () =>
   })
 })
 
+describe('PageBandHost – a drag on the seated band (motion spec §3.4; W8-M2b)', () => {
+  const H = BAND_HEIGHT_TWO_LINE
+
+  it("a drag's first frame below the seat unseats the band – seat 0, the offset the frame's, the report { seat: 0, offset } – one relayout at the drag's start and none per frame after; the page the chrome draws rides full-frame, translated by the offset, never a bare strip under it", () => {
+    offline()
+    renderWithLayer(state({ front: 'settings' }))
+    settle()
+    const el = layer()
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    expect(el.style.top).toBe(`${H}px`)
+    expect(el.style.transform).toBe('')
+    run.mockClear()
+    const { written, off } = seats()
+    const m = mouse()
+    // Taking hold moves nothing: the pointer has not left the slop circle.
+    m.down()
+    expect(written).toEqual([])
+    expect(offsets()).toEqual([])
+    // The first frame below the seat, no departure announced: the band is unseated before the
+    // page is moved – the seat 0, the offset the frame's own – and the layout reporter's word
+    // is the same pair. The layer's box is the whole frame again, translated by the offset: the
+    // page covers the frame under it to its bottom.
+    m.move(-20)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 20)
+    expect(offsets()).toEqual([H - 20])
+    expect(layoutBand()).toEqual({ seat: 0, offset: H - 20 })
+    expect(written).toEqual([0])
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${H - 20}px)`)
+    // The frames after it move the page alone: no seat written, no layout.
+    m.move(-30)
+    m.move(-35)
+    expect(offsets()).toEqual([H - 20, H - 30, H - 35])
+    expect(layoutBand()).toEqual({ seat: 0, offset: H - 35 })
+    expect(written).toEqual([0])
+    expect(el.style.transform).toBe(`translateY(${H - 35}px)`)
+    off()
+  })
+
+  it('a travel is as it was: the departure seats the lesser of the seat and the destination, its frames – below the seat too – write no seat, the rest seats the height; one layout per travel', () => {
+    offline()
+    render(state())
+    settle()
+    const { written, off } = seats()
+    // 76 → 56, the two-line state giving way to a one-line one: the departure seats 56 – the
+    // one layout – and the frames down to it (a travel's, whatever their place against the
+    // seat) leave it; the rest holds it.
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    act(() => {
+      bandStore.set((s) => ({ entries: s.entries.filter((e) => e.key !== 'connectivity') }))
+    })
+    render(state())
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE])
+    while (framesPending() > 0) {
+      frames.tick()
+      expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    }
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE])
+    // 56 → 76: the seat stays the lesser through the travel, the rest seats 76.
+    act(() => {
+      offline()
+    })
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    frames.tick(3)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBeGreaterThan(BAND_HEIGHT_ONE_LINE)
+    settle()
+    expect(bandSeat()).toBe(H)
+    expect(bandOffset()).toBe(H)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE, H])
+    // The leave: 0 at the departure, the frames home, 0 at the rest – nothing written twice.
+    act(() => {
+      resetBands()
+    })
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE, H, 0])
+    settle()
+    expect(band()).toBeNull()
+    expect(layoutBand()).toBeUndefined()
+    expect(written).toEqual([BAND_HEIGHT_ONE_LINE, H, 0])
+    off()
+  })
+
+  it('let go short of half, the band springs back: the return is a travel whose departure keeps the drag’s 0, and the rest re-seats at the height; let go past half, it leaves: the departure keeps 0, the rest at 0 is home', () => {
+    offline()
+    render(state())
+    settle()
+    const { written, off } = seats()
+    const m = mouse()
+    m.down()
+    m.move(-20)
+    expect(bandSeat()).toBe(0)
+    // 56 of 76 is short of half: a return toward 76 – the departure's lesser is the 0 the drag
+    // left, so the page rides down unseated and is laid out under the band once, at the rest.
+    m.up(-20)
+    expect(standing()).toBe('connectivity')
+    expect(bandSeat()).toBe(0)
+    expect(written).toEqual([0])
+    frames.tick(2)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBeGreaterThan(H - 20)
+    settle()
+    expect(bandSeat()).toBe(H)
+    expect(bandOffset()).toBe(H)
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    expect(written).toEqual([0, H])
+    // Past half: the release dismisses – the leave's departure keeps the 0 the drag left, the
+    // frames bring the page home and the band is gone at the rest, nothing laid out twice.
+    run.mockClear()
+    m.down()
+    m.move(-50)
+    expect(bandSeat()).toBe(0)
+    expect(offsets()).toEqual([H - 50])
+    expect(written).toEqual([0, H, 0])
+    m.up(-50)
+    expect(standing()).toBeNull()
+    expect(band()).not.toBeNull()
+    settle()
+    expect(band()).toBeNull()
+    expect(bandOffset()).toBe(0)
+    expect(bandSeat()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    expect(written).toEqual([0, H, 0])
+    off()
+  })
+
+  it('a drag frame at the seat – the band pulled down past its rest, where the page can go no lower than the height – or above it – a taller tenant arriving under the pointer – leaves the seat; the first frame below it unseats', () => {
+    const id = showBand({ key: 'k1', form: 'state', icon: Globe, title: 'One line' })
+    render(state())
+    settle()
+    expect(chooseBand(bandStore.get())!.id).toBe(id)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: BAND_HEIGHT_ONE_LINE })
+    run.mockClear()
+    const { written, off } = seats()
+    const m = mouse()
+    m.down()
+    // Down: the page is already at the band's height, so the frame is at the seat – nothing is
+    // unseated, nothing moves, nothing is laid out.
+    m.move(20)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(offsets()).toEqual([])
+    expect(written).toEqual([])
+    // The two-line state arrives under the pointer: the band's height is 76 now (the content
+    // swaps; the travel waits for the release), and the next frame down puts the page at 76 –
+    // above the seat of 56. Nothing bared: the page is laid out under 56 and stands 20 below
+    // that; the seat is left where it is.
+    act(() => {
+      offline()
+    })
+    m.move(30)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(H)
+    expect(offsets()).toEqual([H])
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_ONE_LINE, offset: H })
+    expect(written).toEqual([])
+    // Up, but still above the seat (66 of 76): the seat is left. Under it (46): the drag's
+    // unseat, as on any band.
+    m.move(-10)
+    expect(bandSeat()).toBe(BAND_HEIGHT_ONE_LINE)
+    expect(bandOffset()).toBe(H - 10)
+    expect(written).toEqual([])
+    m.move(-30)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(H - 30)
+    expect(written).toEqual([0])
+    m.up(-30)
+    settle()
+    expect(standing()).toBe('connectivity')
+    expect(layoutBand()).toEqual({ seat: H, offset: H })
+    expect(written).toEqual([0, H])
+    off()
+  })
+})
+
 describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, §10)', () => {
   it('a chrome-drawn page is moved through the page seam: its layer is translated per frame by the very offset the core hears, laid out under the seat at the rest – offset − seat, as the views’ bounds move – and comes home the same way on a leave; at home it is a plain box', () => {
     offline()
@@ -566,6 +824,85 @@ describe('PageBandHost – the layer a chrome page rides on (motion spec §3.4, 
     settle()
     expect(offsets().at(-1)).toBe(BAND_HEIGHT_TWO_LINE)
     expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+  })
+
+  it("the layer's source: mounted with source=\"chrome-page\" (Android, `ContentArea`) it rides on the chrome page's pair alone – seated by `seatChromePage`, translated by `moveChromePage` against that seat – deaf to the desktop's pair, and the layout report hears nothing of it; the default rides on the page's pair, deaf to the chrome page's", () => {
+    act(() => {
+      root!.render(
+        <PageBandLayer source="chrome-page">
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      )
+    })
+    const el = layer()
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+    // The travel: the frames translate the layer at seat 0 (Android's host writes them per
+    // frame, no React in the way); the desktop's pair and the report stay silent.
+    act(() => {
+      moveChromePage(24)
+    })
+    expect(el.style.transform).toBe('translateY(24px)')
+    expect(el.style.top).toBe('')
+    act(() => {
+      moveChromePage(BAND_HEIGHT_ONE_LINE)
+    })
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_ONE_LINE}px)`)
+    expect(bandSeat()).toBe(0)
+    expect(bandOffset()).toBe(0)
+    expect(layoutBand()).toBeUndefined()
+    // The rest: seated – the box inset by the band's height, no transform (offset − seat = 0).
+    act(() => {
+      seatChromePage(BAND_HEIGHT_ONE_LINE)
+    })
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe('')
+    expect(layoutBand()).toBeUndefined()
+    expect(offsets()).toEqual([])
+    // The desktop's pair written beside it moves this layer not at all.
+    act(() => {
+      seatBand(BAND_HEIGHT_TWO_LINE)
+      movePage(BAND_HEIGHT_TWO_LINE)
+    })
+    expect(el.style.top).toBe(`${BAND_HEIGHT_ONE_LINE}px`)
+    expect(el.style.transform).toBe('')
+    // The leave: unseated at the departure (the box full-frame, translated by the offset – the
+    // same place), the frames home, a plain box at the rest.
+    act(() => {
+      seatChromePage(0)
+    })
+    expect(el.style.top).toBe('')
+    expect(el.style.transform).toBe(`translateY(${BAND_HEIGHT_ONE_LINE}px)`)
+    act(() => {
+      moveChromePage(0)
+    })
+    expect(el.style.transform).toBe('')
+    expect(el.style.top).toBe('')
+    // The default source – the desktop's layer – is deaf to the chrome page's pair.
+    act(() => root!.render(null))
+    resetPageBand()
+    resetChromePageBand()
+    act(() => {
+      root!.render(
+        <PageBandLayer>
+          <div data-testid="chrome-page" />
+        </PageBandLayer>
+      )
+    })
+    const desktop = layer()
+    act(() => {
+      moveChromePage(40)
+      seatChromePage(40)
+    })
+    expect(desktop.style.transform).toBe('')
+    expect(desktop.style.top).toBe('')
+    act(() => {
+      seatBand(BAND_HEIGHT_TWO_LINE)
+      movePage(30)
+    })
+    expect(desktop.style.top).toBe(`${BAND_HEIGHT_TWO_LINE}px`)
+    expect(desktop.style.transform).toBe(`translateY(${30 - BAND_HEIGHT_TWO_LINE}px)`)
+    expect(layoutBand()).toEqual({ seat: BAND_HEIGHT_TWO_LINE, offset: 30 })
   })
 })
 
@@ -655,5 +992,42 @@ describe('PageBandHost – the default-browser tenant', () => {
     settle()
     expect(band()).toBeNull()
     expect(remembered()).toHaveLength(1)
+  })
+})
+
+describe('PageBandHost – the crash-restore tenant', () => {
+  it('stands the two-line state while the session holds the last run’s pages, before the default-browser state (the newest state shows), and ends it with the answer', () => {
+    const held = { ...state(), crashRestore: { tabCount: 2, windowCount: 1 } } as UIState
+    render(held)
+    expect(chooseBand(bandStore.get())!.key).toBe('crash-restore')
+    expect(band()!.dataset.key).toBe('crash-restore')
+    expect(band()!.querySelector('.zen-band-title')!.textContent).toBe('Restore 2 pages?')
+    expect(band()!.querySelector('.zen-band-detail')!.textContent).toBe(
+      'Zenium did not shut down correctly.'
+    )
+    expect(band()!.querySelector('.zen-band-button')!.textContent).toBe('Restore')
+    expect(band()!.querySelector('.zen-band-close')!.getAttribute('aria-label')).toBe('Dismiss')
+    settle()
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
+    // Restore answers the core; the offer clears with the answer and the band is gone at the rest.
+    act(() => band()!.querySelector<HTMLButtonElement>('.zen-band-button')!.click())
+    expect(run).toHaveBeenCalledWith('session.crashRestore', { restore: true })
+    render({ ...held, crashRestore: null } as UIState)
+    expect(chooseBand(bandStore.get())).toBeNull()
+    settle()
+    expect(band()).toBeNull()
+    expect(bandSeat()).toBe(0)
+  })
+
+  it('stands on the new tab page too – where a window that lost its pages opens (item 8)', () => {
+    const held = {
+      ...state({ front: 'ntp' }),
+      crashRestore: { tabCount: 1, windowCount: 1 }
+    } as UIState
+    render(held)
+    expect(chooseBand(bandStore.get())!.key).toBe('crash-restore')
+    expect(band()!.querySelector('.zen-band-title')!.textContent).toBe('Restore 1 page?')
+    settle()
+    expect(bandSeat()).toBe(BAND_HEIGHT_TWO_LINE)
   })
 })

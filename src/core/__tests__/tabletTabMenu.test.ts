@@ -187,19 +187,46 @@ describe("TABLET-05: the tablet's tab menu carries Chrome's strip rows", () => {
     expect(before).not.toContain(after[at + 1])
   })
 
-  it("adds the tab to a group – Zenium's folder – from Move Tab: a new folder while the space has none, the space's folders once it has", () => {
+  it("adds the tab to a group – Zenium's folder – from Move Tab: a new group while the space has none, the space's groups once it has", () => {
     const h = tablet()
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
-    expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Folder')
-    deepItem(h.shown(), 'Add Tab to New Folder').click?.()
+    expect(labels(h.shown())).toContain('Move Tab > Add Tab to New Group')
+    deepItem(h.shown(), 'Add Tab to New Group').click?.()
     const folder = Object.values(h.browser.state.model.folders)[0]
     expect(folder).toBeDefined()
     expect(h.browser.tabs.tab(h.tabId)?.folderId).toBe(folder!.id)
     h.browser.menus.showTabContextMenu(h.tabId, h.win)
     const menu = labels(h.shown())
-    expect(menu).toContain('Move Tab > Move to Folder')
-    expect(menu).toContain('Move Tab > Remove from Folder')
-    expect(menu).not.toContain('Move Tab > Add Tab to New Folder')
+    expect(menu).toContain('Move Tab > Move to Group')
+    expect(deepItem(h.shown(), 'New Group…').click).toBeTypeOf('function')
+    expect(menu).toContain('Move Tab > Remove from Group')
+    expect(menu).not.toContain('Move Tab > Add Tab to New Group')
+  })
+
+  it('TABLET-22: the four folder rows say Group on the phone and the tablet – Chrome for Android speaks of groups, never folders – and Folder on the desktop, byte for byte', () => {
+    const rows = (h: ReturnType<typeof pageHarness>): string[] => {
+      h.browser.menus.showTabContextMenu(h.tabId, h.win)
+      return labels(h.shown()).filter((l) => /Folder|Group/.test(l))
+    }
+    for (const layout of ['phone', 'tablet'] as const) {
+      const h = pageHarness(ANDROID, { formFactor: layout })
+      // Before the space has a group: the one row. After: the move's submenu and the removal.
+      expect(rows(h)).toEqual(['Move Tab > Add Tab to New Group'])
+      deepItem(h.shown(), 'Add Tab to New Group').click?.()
+      expect(rows(h)).toEqual(
+        expect.arrayContaining(['Move Tab > Move to Group', 'Move Tab > Remove from Group'])
+      )
+      expect(deepItem(h.shown(), 'New Group…').click).toBeTypeOf('function')
+      expect(JSON.stringify(h.shown())).not.toContain('Folder')
+    }
+    const desktop = pageHarness(DESKTOP)
+    expect(rows(desktop)).toEqual(['Move Tab > Add Tab to New Folder'])
+    deepItem(desktop.shown(), 'Add Tab to New Folder').click?.()
+    expect(rows(desktop)).toEqual(
+      expect.arrayContaining(['Move Tab > Move to Folder', 'Move Tab > Remove from Folder'])
+    )
+    expect(deepItem(desktop.shown(), 'New Folder…').click).toBeTypeOf('function')
+    expect(JSON.stringify(desktop.shown())).not.toContain('Group')
   })
 
   it("keeps Chrome's window moves out where the host has no windows (capabilities.windows), and in on a host that has", () => {

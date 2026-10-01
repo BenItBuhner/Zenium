@@ -44,7 +44,6 @@ import { PdfViewerBar } from '../pdf/PdfViewerBar'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
 import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
-import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { EmptyPane } from './EmptyPane'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
@@ -176,14 +175,20 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
   const foreign = isForeignTab(state, tab?.id)
-  // The "Restore pages?" strip sits above the page, inside the frame, so the layout reporter's
-  // viewport (and the tab view under it) shrinks by its height. "Make Zenium your default
-  // browser" stood beside it as a strip (`DefaultBrowserBanner.tsx`) until W8-M2 retired it to
-  // the page-edge band (`PageBandHost`, motion spec §3.4): the one prompt about the page at the
-  // frame's top edge, in the page's surface, the page travelling down to make room.
-  const crashRestore = !phone ? state.crashRestore : null
   // The page-edge band's host is the desktop's: Android lays its band over the WebView itself.
+  // "Make Zenium your default browser" and "Restore pages?" stood above the page as strips
+  // inside the frame (`DefaultBrowserBanner.tsx`, `CrashRestoreBanner.tsx`), the layout
+  // reporter's viewport shrinking by their height, until W8-M2 and W8-M3 retired them to the
+  // band (`PageBandHost`, motion spec §3.4): the one prompt about the page at the frame's top
+  // edge, in the page's surface, the page travelling down to make room.
   const pageBand = !phone && state.platform !== 'android'
+  // The layer a page the chrome draws itself rides on under the band (`PageBandLayer`, §3.4,
+  // §10): on the desktop with the band's host, on the page's seat and offset; on Android too,
+  // where the band's host (`lib/band/androidHost.ts`) writes the chrome page's own pair for
+  // such a page in place of the WebView's translation – a chrome page and the phone's new tab
+  // page have no view under them for the pull channel to move (the Design Lead's (B) on #735's
+  // question (8)), and that pair is the layer's alone, never the layout report's.
+  const chromePageBand = pageBand || state.platform === 'android'
   // The phone draws a new tab page in the frame where the blank page would be (the desktop
   // keeps Zen's bare frame). Its view is never placed there – see `useLayoutReporter`.
   const newTabPage = phone && tab !== null && tab.url === BLANK_URL && !foreign
@@ -305,17 +310,6 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
         // nothing focusable is left behind; A11Y-01: TalkBack's order is the visual order).
         inert={phone && ui.overlay !== 'none' ? true : undefined}
       >
-        {crashRestore && (
-          // Under a desktop overlay panel the strip keeps its height (the viewport under it does
-          // not jump) but is not painted or reachable: the panel's 12 px margin showed the
-          // strip's top edge and its accent button above every overlay (services' #92 pass).
-          <div
-            className="zen-frame-strips contents"
-            data-under-overlay={ui.overlay !== 'none' || undefined}
-          >
-            <CrashRestoreBanner offer={crashRestore} />
-          </div>
-        )}
         {showTranslateBar && <TranslateBar state={state} tab={translateBar} />}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
@@ -330,22 +324,32 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
               pageTab &&
               // A chrome page has no view for the core to move under the band: where the band
               // is hosted it rides on the band's seat and offset as the views do (§3.4, §10).
-              (pageBand ? (
-                <PageBandLayer>
+              (chromePageBand ? (
+                <PageBandLayer source={pageBand ? 'page' : 'chrome-page'}>
                   <InternalPageHost state={state} tab={tab} hidden={staged} />
                 </PageBandLayer>
               ) : (
                 <InternalPageHost state={state} tab={tab} hidden={staged} />
               ))}
-            {newTabPage && (
+            {newTabPage &&
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
-              // just not painted, so the page is there the moment they leave.
-              <NewTabPage
-                state={state}
-                tab={tab}
-                hidden={(ui.urlbar.open && !morphHolds) || (staged && !growing)}
-              />
-            )}
+              // just not painted, so the page is there the moment they leave. Drawn by the chrome
+              // over `zen://blank`, it rides on the band's layer as a chrome page does (Android).
+              (chromePageBand ? (
+                <PageBandLayer source={pageBand ? 'page' : 'chrome-page'}>
+                  <NewTabPage
+                    state={state}
+                    tab={tab}
+                    hidden={(ui.urlbar.open && !morphHolds) || (staged && !growing)}
+                  />
+                </PageBandLayer>
+              ) : (
+                <NewTabPage
+                  state={state}
+                  tab={tab}
+                  hidden={(ui.urlbar.open && !morphHolds) || (staged && !growing)}
+                />
+              ))}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />
             )}

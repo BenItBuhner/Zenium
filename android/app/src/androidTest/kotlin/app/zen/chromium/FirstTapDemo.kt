@@ -62,8 +62,8 @@ class FirstTapDemo : DemoHarness("firsttap-demo-state.json", "firsttap", "firstt
 
     override fun demo() {
         // 1. The literal sequences: open, tap the moment the grid shows.
-        trial("button, tap as the grid appears") { openByButton(); waitFor("Spaces", 8_000); 0 }
-        trial("pill swipe, tap as the grid appears") { openByPill(); waitFor("Spaces", 8_000); 0 }
+        trial("button, tap as the grid appears") { openByButton(); awaitOverview(8_000); 0 }
+        trial("pill swipe, tap as the grid appears") { openByPill(); awaitOverview(8_000); 0 }
         // 2. The grid on screen and still settling: pull it a third of the way towards closed with
         //    the pill, stop, let go – it springs back open – and tap right away.
         trial("re-settle after a stopped release, tap at 150 ms") { openByButton(); waitForOverview(); pullAndStop(); 150 }
@@ -86,11 +86,11 @@ class FirstTapDemo : DemoHarness("firsttap-demo-state.json", "firsttap", "firstt
         if (delay > 0) SystemClock.sleep(delay)
         val t0 = SystemClock.uptimeMillis()
         Finger().tap(target.exactCenterX(), target.exactCenterY())
-        val firstWorked = waitGone("Spaces", 4_000)
+        val firstWorked = waitGone(OVERVIEW_LABEL, 4_000)
         var secondWorked = false
         if (!firstWorked) {
             Finger().tap(target.exactCenterX(), target.exactCenterY())
-            secondWorked = waitGone("Spaces", 4_000)
+            secondWorked = waitGone(OVERVIEW_LABEL, 4_000)
         }
         Log.i(
             tag,
@@ -118,7 +118,7 @@ class FirstTapDemo : DemoHarness("firsttap-demo-state.json", "firsttap", "firstt
 
     /** The overview on screen and at rest (the emulator needs a while for both). */
     private fun waitForOverview() {
-        waitFor("Spaces", 8_000) ?: error("the overview never showed")
+        awaitOverview(8_000) ?: error("the overview never showed")
         SystemClock.sleep(3_000)
     }
 
@@ -152,7 +152,7 @@ class FirstTapDemo : DemoHarness("firsttap-demo-state.json", "firsttap", "firstt
     }
 
     private fun closeOverviewIfOpen() {
-        if (findByLabel("Spaces") == null) return
+        if (findByLabel(OVERVIEW_LABEL) == null) return
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         SystemClock.sleep(2_500)
     }

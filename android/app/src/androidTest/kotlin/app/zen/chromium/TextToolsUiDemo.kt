@@ -275,7 +275,7 @@ class TextToolsUiDemo : PageControlsDemo("pagecontrols-demo-state.json", "servic
         f.settleIn(0f, -NUDGE)
         f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
         f.up()
-        if (waitFor("Spaces", 8_000) == null) Log.w(tag, "the overview never showed")
+        if (awaitOverview(8_000) == null) Log.w(tag, "the overview never showed")
         SystemClock.sleep(3_500)
     }
 

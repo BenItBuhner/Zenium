@@ -339,25 +339,29 @@ const name = (code: string): string => catalogueLanguageName(code) ?? languageNa
  * control panel draws its controls, so the article's translation is one row here rather than a
  * bar of its own, never a menulist-plus-action pair): Listen's sibling at the panel's head, a
  * 44 action row with the translate glyph. A press opens the target picker – the languages the
- * models reach as the chassis's menulist picker, a sheet of radio rows under a finger (opened
+ * models reach as the chassis's menulist picker, a sheet of radio rows on a phone (opened
  * expanded and scrolled to the checked row when they exceed its peek, §9.13) and the popover
- * flush under the row on a mouse – with the remembered target checked and in view: the last
- * one picked here, else the translation's own, else the first preferred language a model
- * reaches (`readerTranslateTarget`; the article's own language, as the page translate detected
- * it, is never proposed). The pick translates: the core is asked to translate the reader
- * article in place into it (`translate.reader`), and the row is §9.30's busy row while the
- * core works – full opacity, the spinner trailing, its second line the progress (the language
- * being told, the model arriving with its bytes, the blocks done of the article's), a press
- * doing nothing. A failure keeps the row pressable with the reason as its second line in the
- * danger ink (§9.33: the ink on the line that reports it); the press opens the picker again,
- * the failed target checked, so the pick is the retry. Translated, the row becomes "Show
+ * flush under the row on a tablet and on a mouse (§9.36 as the lead amended it on #750: an
+ * anchored panel that fits is the desktop popover with 44 rows, the tablet's back gesture
+ * closing the list alone as it closed the sheet) – with the remembered target checked and in
+ * view: the last one picked here, else the translation's own, else the first preferred language
+ * a model reaches (`readerTranslateTarget`; the article's own language, as the page translate
+ * detected it, is never proposed). The pick translates: the core is asked to translate the
+ * reader article in place into it (`translate.reader`), and the row is §9.30's busy row while
+ * the core works – full opacity, the spinner trailing, its second line the progress (the
+ * language being told, the model arriving with its bytes, the blocks done of the article's), a
+ * press doing nothing. A failure keeps the row pressable with the reason as its second line in
+ * the danger ink (§9.33: the ink on the line that reports it); the press opens the picker
+ * again, the failed target checked, so the pick is the retry. Translated, the row becomes "Show
  * original", a switch row (§10.4, no glyph: a setting row) whose on state shows the article as
  * written with the translation kept (`translate.readerShowOriginal`), "Translated into
  * <language>" as its description. The panel's picture of the page follows each turn of the
  * translation, so the article is seen as it now reads.
  */
 export function TranslateRow({ tabId, translate, translation }: TranslateRowProps): JSX.Element {
-  const viewport = useViewport()
+  // The picker's host is the form factor's (§9.36 as the lead amended it on #750; `V2Menulist`
+  // draws the same split): the sheet on a phone, the anchored popover on a tablet and a mouse.
+  const phone = useViewport().formFactor === 'phone'
   const [chosen, setChosen] = useState<string | null>(null)
   // The picker is open from this anchor (the row's box; the phone's sheet needs none, but
   // takes the same mark).
@@ -399,13 +403,13 @@ export function TranslateRow({ tabId, translate, translation }: TranslateRowProp
         leading={<Languages className={GLYPH} aria-hidden />}
         busy={working}
         disabled={target === null}
-        aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
+        aria-haspopup={phone ? 'dialog' : 'listbox'}
         aria-expanded={anchor !== null}
         onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
         data-reader-pref="translate"
       />
       {anchor &&
-        (viewport.coarse ? (
+        (phone ? (
           <V2MenulistSheet
             label={TARGET_LABEL}
             value={target ?? ''}
@@ -422,6 +426,7 @@ export function TranslateRow({ tabId, translate, translation }: TranslateRowProp
             onPick={pick}
             onClose={() => setAnchor(null)}
             overPage
+            surface="menulist"
           />
         ))}
     </>

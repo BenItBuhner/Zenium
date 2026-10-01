@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtRequestEvent, ExtResponseEvent } from '../extensionRuntime'
+import { RequestLedger, requestUrlKey } from '../extensionRequestLedger'
 import type { RequestObservation } from '../requestObserver'
 import {
   backgroundUp,
@@ -452,6 +453,175 @@ describe('the response stage of a relayed media request (ext.response → webReq
     })
   })
 
+  it("a document's server redirect as WebView lets the app see it (compat round 26, R26-1): the navigation hook's `redirected` notice – the target's intercept never comes – is told as onBeforeRedirect of the tab's open main-frame request at the hop's `from` and as the target's onBeforeRequest under the hop's id; the two spellings pair by canonical URL; an intercept of the target after all is adopted, not a second request; no hop without the response stage, nothing without listeners", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    await sniffer(h, 'bg1')
+    const page = (path: string): string => `https://shop.example${path}`
+    const document = (over: Partial<ExtRequestEvent>): ExtRequestEvent =>
+      requestEvent({ type: 'main_frame', mainFrame: true, initiator: null, ...over })
+    const names = (): string[] =>
+      h.kt
+        .to('bg1')
+        .filter((m) => m.t === 'event' && m.ns === 'webRequest')
+        .map((m) => String(m.name))
+    // The navigation's own request came through the intercept; the server answered 3xx and
+    // WebView followed it, telling the app through the hook alone (Chromium's
+    // InterceptedRequest::ShouldNotInterceptRequest: no shouldInterceptRequest once redirected).
+    h.runtime.onRequest(document({ requestId: '40', url: page('/redirect?to=/page-a.html') }))
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/redirect?to=/page-a.html'),
+      to: page('/page-a.html?redirectpath=1')
+    })
+    const redirected = heard(h, 'bg1', 'onBeforeRedirect')
+    expect(redirected).toHaveLength(1)
+    expect(redirected[0]).toMatchObject({
+      requestId: '40',
+      url: page('/redirect?to=/page-a.html'),
+      method: 'GET',
+      type: 'main_frame',
+      frameId: 0,
+      parentFrameId: -1,
+      frameType: 'outermost_frame',
+      documentLifecycle: 'active',
+      statusCode: 302,
+      statusLine: 'HTTP/1.1 302 Found',
+      redirectUrl: page('/page-a.html?redirectpath=1'),
+      fromCache: false
+    })
+    expect(redirected[0].responseHeaders).toBeUndefined()
+    // The target's request goes out, and Chrome reports it under the chain's id: told here from
+    // the same notice, GET, a main frame of the same tab.
+    const before = heard(h, 'bg1', 'onBeforeRequest')
+    expect(before).toHaveLength(2)
+    expect(before[1]).toMatchObject({
+      requestId: '40',
+      url: page('/page-a.html?redirectpath=1'),
+      method: 'GET',
+      type: 'main_frame',
+      frameType: 'outermost_frame',
+      tabId: before[0].tabId
+    })
+    expect(names()).toEqual(['onBeforeRequest', 'onBeforeRedirect', 'onBeforeRequest'])
+    // A second hop of the chain pairs with the target's note: one id across the chain.
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/page-a.html?redirectpath=1'),
+      to: page('/page-b.html')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')[1]).toMatchObject({
+      requestId: '40',
+      url: page('/page-a.html?redirectpath=1'),
+      redirectUrl: page('/page-b.html')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRequest')[2]).toMatchObject({
+      requestId: '40',
+      url: page('/page-b.html')
+    })
+    // The hook's `from` is the address as the app sent the tab to it (`loadUrl`'s string: a
+    // bare host, a fragment, the case it was typed in); the intercept's is WebView's spelling of
+    // the same request. They pair by canonical form, and the event carries the request's own.
+    h.runtime.onRequest(document({ requestId: '41', url: 'https://news.example/' }))
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: 'HTTPS://News.Example#top',
+      to: 'https://news.example/front'
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')[2]).toMatchObject({
+      requestId: '41',
+      url: 'https://news.example/',
+      redirectUrl: 'https://news.example/front'
+    })
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      requestId: '41',
+      url: 'https://news.example/front'
+    })
+    // An intercept of the target after all (an engine that does offer it) is the same request:
+    // adopted by the runtime's note – no second onBeforeRequest, no second hop – and its block
+    // is still told.
+    const count = names().length
+    h.runtime.onRequest(
+      document({
+        requestId: '42',
+        url: 'https://news.example/front',
+        redirectedFrom: 'https://news.example/'
+      })
+    )
+    expect(names()).toHaveLength(count)
+    h.runtime.onRequest(document({ requestId: '43', url: page('/blocked-from') }))
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/blocked-from'),
+      to: page('/blocked-to')
+    })
+    h.runtime.onRequest(
+      document({
+        requestId: '44',
+        url: page('/blocked-to'),
+        redirectedFrom: page('/blocked-from'),
+        action: 'block'
+      })
+    )
+    expect(names().slice(count)).toEqual([
+      'onBeforeRequest',
+      'onBeforeRedirect',
+      'onBeforeRequest',
+      'onErrorOccurred'
+    ])
+    expect(heard(h, 'bg1', 'onErrorOccurred').at(-1)).toMatchObject({
+      requestId: '43',
+      url: page('/blocked-to'),
+      error: 'net::ERR_BLOCKED_BY_CLIENT'
+    })
+    // A hop whose `from` is not the tab's latest open main-frame request (a newer navigation in
+    // flight) makes no onBeforeRedirect; the target is still a request that goes out, told as
+    // its own.
+    h.runtime.onRequest(document({ requestId: '45', url: page('/first') }))
+    h.runtime.onRequest(document({ requestId: '46', url: page('/second') }))
+    const hops = heard(h, 'bg1', 'onBeforeRedirect').length
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/first'),
+      to: page('/first-landed')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(hops)
+    const own = heard(h, 'bg1', 'onBeforeRequest').at(-1)
+    expect(own).toMatchObject({ url: page('/first-landed'), type: 'main_frame' })
+    expect(['40', '41', '43', '45', '46']).not.toContain(own?.requestId)
+    // A hop from the hook of another tab never pairs with this tab's request.
+    h.tabs.t2 = { ...h.tabs.t1, id: 't2' }
+    h.runtime.onRequest(document({ requestId: '47', url: page('/t1-only') }))
+    h.runtime.onViewEvent('t2', 'redirected', {
+      from: page('/t1-only'),
+      to: page('/t2-landed')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(hops)
+    // Without a response-stage listener there is no hop (the switch is the gate, as for the
+    // engine's stamp), but the target's request stage is still told.
+    for (const [index, event] of [
+      'onHeadersReceived',
+      'onResponseStarted',
+      'onBeforeRedirect',
+      'onCompleted'
+    ].entries())
+      await call(h, 'bg1', 'webRequest', 'removeListener', [event, index + 2])
+    h.runtime.onRequest(document({ requestId: '48', url: page('/late') }))
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/late'),
+      to: page('/late-landed')
+    })
+    expect(heard(h, 'bg1', 'onBeforeRedirect')).toHaveLength(hops)
+    expect(heard(h, 'bg1', 'onBeforeRequest').at(-1)).toMatchObject({
+      url: page('/late-landed'),
+      type: 'main_frame'
+    })
+    // Without any webRequest listener nothing is told at all.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onBeforeRequest', 1])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onErrorOccurred', 6])
+    const all = names().length
+    h.runtime.onViewEvent('t1', 'redirected', {
+      from: page('/late-landed'),
+      to: page('/later')
+    })
+    expect(names()).toHaveLength(all)
+  })
+
   it("a 3xx without a Location (a 304) is one the relay closed too: onHeadersReceived, onResponseStarted and onCompleted at once, as the relay's observation of it ended", async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
@@ -698,5 +868,64 @@ describe("the page script's observer of a fetch / XHR (ext-observation → webRe
       observation({ url: first, finalUrl: final, at: 'complete' }) as never
     )
     expect(heard(h, 'bg1', 'onCompleted')[0].requestId).not.toBe('51')
+  })
+})
+
+describe("the ledger's word for the trace of a redirect pair that found no match (compat round 26, R26-1)", () => {
+  it("names the tab's latest main-frame request still remembered, a subresource after it not counting; null for a tab without one", () => {
+    const ledger = new RequestLedger()
+    expect(ledger.latestMainFrameUrl('t1')).toBeNull()
+    ledger.noted('t1', '1', 'https://a.test/first', 'GET', 'main_frame', undefined, 1_000)
+    ledger.noted('t1', '2', 'https://a.test/second', 'GET', 'main_frame', undefined, 1_100)
+    ledger.noted('t1', '3', 'https://a.test/clip.mp4', 'GET', 'media', 'https://a.test', 1_200)
+    expect(ledger.latestMainFrameUrl('t1')).toBe('https://a.test/second')
+    expect(ledger.latestMainFrameUrl('t2')).toBeNull()
+    expect(ledger.latestMainFrameUrl(null)).toBeNull()
+    // The pairing itself stays exact: the latest main-frame URL alone pairs.
+    expect(ledger.openMainFrame('t1', 'https://a.test/first', 1_300)).toBeNull()
+    expect(ledger.openMainFrame('t1', 'https://a.test/second', 1_300)?.requestId).toBe('2')
+  })
+
+  it("pairs the hook's spelling of a URL with WebView's by canonical form (a bare host's slash, the case of scheme and host, a fragment dropped, percent-encoding), a string that does not parse by itself; the query's order and the path's case stay", () => {
+    expect(requestUrlKey('HTTPS://Shop.Example#top')).toBe('https://shop.example/')
+    expect(requestUrlKey('https://shop.example/a b?q=1#x')).toBe('https://shop.example/a%20b?q=1')
+    expect(requestUrlKey('https://shop.example/?b=2&a=1')).toBe('https://shop.example/?b=2&a=1')
+    expect(requestUrlKey('https://shop.example/Path')).toBe('https://shop.example/Path')
+    expect(requestUrlKey('not a url')).toBe('not a url')
+    const ledger = new RequestLedger()
+    ledger.noted('t1', '1', 'https://shop.example/', 'GET', 'main_frame', undefined, 1_000)
+    expect(ledger.openMainFrame('t1', 'HTTPS://Shop.Example#top', 1_100)?.requestId).toBe('1')
+    expect(ledger.openMainFrame('t1', 'https://shop.example/other', 1_100)).toBeNull()
+    // The hop's mark on a target is keyed the same way: the target's note under the other
+    // spelling continues under the chain's id.
+    ledger.redirected('t1', '1', 'https://shop.example/Landing#frag', 1_100)
+    expect(
+      ledger.noted('t1', '2', 'https://shop.example/Landing', 'GET', 'main_frame', undefined, 1_200)
+    ).toBe('1')
+  })
+
+  it("adopts an intercept's decision for the tab's latest main-frame note the runtime made itself (the redirect target WebView never offered), re-keying the note to the decision's own id for the response reports; no adoption of a note that is not synthesized, not the latest, or another URL", () => {
+    const ledger = new RequestLedger()
+    ledger.noted('t1', '1', 'https://a.test/from', 'GET', 'main_frame', undefined, 1_000)
+    ledger.redirected('t1', '1', 'https://a.test/to', 1_050)
+    const minted = ledger.mint()
+    expect(
+      ledger.noted('t1', minted, 'https://a.test/to', 'GET', 'main_frame', undefined, 1_100, true)
+    ).toBe('1')
+    expect(ledger.chainIdOf(minted)).toBe('1')
+    // Another URL, or a note that is not the latest main frame: nothing adopted.
+    expect(ledger.adopt('t1', '7', 'https://a.test/elsewhere', 1_200)).toBeNull()
+    expect(ledger.adopt('t2', '7', 'https://a.test/to', 1_200)).toBeNull()
+    const adopted = ledger.adopt('t1', '7', 'https://a.test/to#x', 1_200)
+    expect(adopted?.requestId).toBe('1')
+    expect(adopted?.ownId).toBe('7')
+    expect(adopted?.synthesized).toBeUndefined()
+    expect(ledger.chainIdOf('7')).toBe('1')
+    expect(ledger.chainIdOf(minted)).toBe(minted)
+    // Adopted once: the note is the intercept's now, no second taker.
+    expect(ledger.adopt('t1', '8', 'https://a.test/to', 1_300)).toBeNull()
+    // A note the intercept made is never adopted.
+    ledger.noted('t1', '9', 'https://a.test/plain', 'GET', 'main_frame', undefined, 1_400)
+    expect(ledger.adopt('t1', '10', 'https://a.test/plain', 1_500)).toBeNull()
   })
 })

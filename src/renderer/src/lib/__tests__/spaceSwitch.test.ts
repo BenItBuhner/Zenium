@@ -4,7 +4,6 @@ import {
   SPACE_FADE_MS,
   SPACE_SLIDE_MS,
   SPACE_SLIDE_PX,
-  indicatorFrame,
   planSpaceSwitch,
   slideSign,
   switchDirection
@@ -14,7 +13,7 @@ import { REDUCED_FADE_MS } from '../motion/fade'
 const ORDER = ['work', 'home', 'reading']
 
 describe('the space switch direction', () => {
-  it('reads the strip order: later is forward, earlier is back', () => {
+  it("reads the spaces' order: later is forward, earlier is back", () => {
     expect(switchDirection(ORDER, 'work', 'reading')).toBe('forward')
     expect(switchDirection(ORDER, 'home', 'reading')).toBe('forward')
     expect(switchDirection(ORDER, 'reading', 'work')).toBe('back')
@@ -60,7 +59,6 @@ describe('the space switch plan', () => {
     expect(plan.outgoing.duration).toBe(SPACE_FADE_MS)
     expect(plan.outgoing.duration).toBe(120)
     expect(plan.blend).toBe(true)
-    expect(plan.indicatorGlides).toBe(true)
   })
 
   it('is solid by the slide first half, so the tail draws the cards at their landing', () => {
@@ -85,10 +83,9 @@ describe('the space switch plan', () => {
     expect(plan.incoming.duration).toBe(REDUCED_FADE_MS)
     expect(plan.incoming.keyframes.every((k) => k.transform === undefined)).toBe(true)
     expect(plan.blend).toBe(true)
-    expect(plan.indicatorGlides).toBe(true)
   })
 
-  it('under reduced motion nothing travels: a 120 ms fade, the indicator a jump, the blend kept (§11.3; §11.6 as amended)', () => {
+  it('under reduced motion nothing travels: a 120 ms fade, the blend kept (§11.3; §11.6 as amended)', () => {
     for (const direction of ['forward', 'back', 'none'] as const) {
       const plan = planSpaceSwitch(direction, { reduced: true, rtl: direction === 'back' })
       expect(plan.slide).toBe(0)
@@ -98,32 +95,11 @@ describe('the space switch plan', () => {
       // A colour blend is a fade in colour and moves no pixel; a whole window cutting from one
       // Space's colour to another's is a flash (#497's design gate).
       expect(plan.blend).toBe(true)
-      expect(plan.indicatorGlides).toBe(false)
     }
   })
 
   it('mirrors the side under a right-to-left layout', () => {
     expect(planSpaceSwitch('forward', { reduced: false, rtl: true }).slide).toBe(-SPACE_SLIDE_PX)
     expect(planSpaceSwitch('back', { reduced: false, rtl: true }).slide).toBe(SPACE_SLIDE_PX)
-  })
-})
-
-describe('the strip indicator frame', () => {
-  const from = { left: 12, width: 80 }
-  const to = { left: 140, width: 120 }
-
-  it('stands on the old chip at 0 and rests on the new one at 1', () => {
-    expect(indicatorFrame(from, to, 0)).toEqual({ dx: -128, scale: 80 / 120 })
-    expect(indicatorFrame(from, to, 1)).toEqual({ dx: 0, scale: 1 })
-  })
-
-  it('moves linearly in the progress (the spring shapes the time)', () => {
-    const half = indicatorFrame(from, to, 0.5)
-    expect(half.dx).toBeCloseTo(-64)
-    expect(half.scale).toBeCloseTo(1 + (80 / 120 - 1) / 2)
-  })
-
-  it('does not divide by a chip of no width', () => {
-    expect(indicatorFrame(from, { left: 0, width: 0 }, 0).scale).toBe(1)
   })
 })

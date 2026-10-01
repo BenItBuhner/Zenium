@@ -26,9 +26,11 @@ import kotlin.math.roundToInt
  * chrome's DOM or the core's state, never off the chrome's word alone:
  *
  *  1. the overview opens with the search closed: no field, no keyboard, no field focused; the
- *     segment is Tabs | Groups (| Private where the WebView has multi-profile), no Recent;
- *  2. the header's magnifier opens the §9.12 field pinned under the header, focused, the
- *     keyboard up with it (the tap is the user's ask; nothing else ever focuses it);
+ *     header is the title alone and no segment row stands (the tab overview cleanup spec's §1;
+ *     no Recent anywhere);
+ *  2. the overview's menu's Search Tabs – the BAR's ⋯ while the overview stands (the cleanup
+ *     spec's §4, its §9 ruling) – opens the §9.12 field pinned under the header, focused, the
+ *     keyboard up with it (the row is the user's ask; nothing else ever focuses it);
  *  3. typing narrows the pane's cards by TITLE ("wiki": Damping, Tea, Coffee stay; the
  *     Research group's card stays, narrowed to Damping), the dropped cards departing in place
  *     (counted as they mount) and the survivors gliding (traced: `search-filter-overview`), the
@@ -70,7 +72,7 @@ import kotlin.math.roundToInt
  * 19. the search's Recently closed row restores Coffee and the overview leaves on it.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
- * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
+ * accessibility bounds of the overview's title), because the WebView's accessibility
  * tree trails the software-rendered emulator by seconds; typing is injected key by key
  * ([keys]). Findings go to `tab-search-recent-findings.txt` next to the stills (one PASS or
  * FAIL per claim, ALL CHECKS PASSED at the end); the run fails on any FAIL. Profile
@@ -139,20 +141,19 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     private fun openedClosed() {
         finding("\n1. The overview opens with the search closed")
         expect("no field under the header", !inDom(FIELD))
-        expect("the magnifier stands in the header, collapsed: ${headerLabels()}", headerLabels() == listOf("Search tabs", "Spaces", "More"))
+        expect("the header is the title alone – no magnifier, no Spaces, no More (the cleanup spec's §1): ${headerLabels()}", headerLabels().size == 1 && TITLE_LABEL.matches(headerLabels()[0]))
         // The Tabs button that was touched may hold the focus; what matters is that no field does.
         expect("no field has the focus and the keyboard is down (active element: '${activeElement()}')", activeElement() != "INPUT" && !imeShown())
-        // The header's three segments at most (§9.34): Tabs | Groups | Private, the Private one drawing
-        // only where the WebView has multi-profile (`capabilities.privateTabs`; the Google APIs image's
-        // has not). No Recent segment on either: the recently closed and the other devices' tabs are
-        // History's groups.
+        // No segment row (§1): the private session is a view the menu switches to, the groups are
+        // cards in the grid. No Recent anywhere: the recently closed and the other devices' tabs
+        // are History's groups.
         val segments = segmentLabels()
-        expect("the segment is Tabs | Groups (| Private), no Recent: $segments", segments == listOf("Tabs", "Groups") || segments == listOf("Tabs", "Groups", "Private"))
+        expect("no segment row stands in the overview: $segments", segments.isEmpty())
     }
 
-    /** 2. The magnifier opens the field, focused, the keyboard with it. */
+    /** 2. The menu's Search Tabs opens the field, focused, the keyboard with it. */
     private fun searchOpensFromTheHeader() {
-        finding("\n2. The magnifier opens the field")
+        finding("\n2. The menu's Search Tabs opens the field")
         openSearch()
         val field = domRect(FIELD)
         val header = domRect(".zen-overview > header")
@@ -161,7 +162,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("the field is the phone field: ${input?.height()?.let { (it / density).roundToInt() }} dp tall (40)", input != null && abs(input.height() / density - 40f) <= 2f)
         expect("the input has the focus", awaitUntil(3_000) { activeElement() == "INPUT" })
         expect("the keyboard came up with it", awaitIme(true, 8_000))
-        expect("the magnifier reads expanded, controlling the field", jsString("(function(){var b=document.querySelector('$TOGGLE');return b&&b.getAttribute('aria-expanded')==='true'&&b.getAttribute('aria-controls')==='overview-search'?'yes':''})()") == "yes")
+        expect("the header row stays the title's while the field stands under it: ${headerLabels()}", headerLabels().size == 1 && TITLE_LABEL.matches(headerLabels()[0]))
         expect("the X reads Close search while the field is empty", jsString(clearLabelJs()) == "Close search")
         expect("the placeholder is the omnibox's: '${placeholder()}'", placeholder() == "Title or address")
         still("search-open")
@@ -253,7 +254,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("the next back closes the field", awaitUntil(4_000) { !inDom(FIELD) })
         expect("the overview stays up", overviewOpen() || inDom(".zen-overview"))
         expect("the keyboard is down", awaitIme(false, 8_000))
-        expect("the magnifier reads collapsed again", jsString("(function(){var b=document.querySelector('$TOGGLE');return b&&b.getAttribute('aria-expanded')==='false'?'yes':''})()") == "yes")
+        expect("the header row is the title's alone again: ${headerLabels()}", headerLabels().size == 1 && TITLE_LABEL.matches(headerLabels()[0]))
         still("search-closed")
     }
 
@@ -534,12 +535,26 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
 
     // --- moves -----------------------------------------------------------------------------------
 
-    /** Touch the header's magnifier until the field is there. */
+    /**
+     * The overview's menu's Search Tabs row (the bar's ⋯, [openOverviewMenuRow]) until the field
+     * is there – two tries, the menu put away between them when it stayed.
+     */
     private fun openSearch() {
         if (inDom(FIELD)) return
-        val opened = touchUntil("the header's magnifier", { domRect(TOGGLE) }, { inDom(FIELD) }, waitMs = SHEET_WAIT)
-        if (!opened) error("the search field never came from the magnifier")
-        SystemClock.sleep(600)
+        for (attempt in 1..2) {
+            val touched = openOverviewMenuRow(SEARCH_ROW)
+            if (touched && awaitUntil(SHEET_WAIT) { inDom(FIELD) }) {
+                SystemClock.sleep(600)
+                return
+            }
+            finding("  (attempt $attempt: the Search Tabs row ${if (touched) "was touched but brought no field" else "could not be touched; the menu's rows: ${overviewMenuRows()}"})")
+            if (overviewMenuRows().isNotEmpty()) {
+                back()
+                awaitUntil(SHEET_WAIT) { overviewMenuRows().isEmpty() }
+            }
+            SystemClock.sleep(600)
+        }
+        error("the search field never came from the menu's Search Tabs")
     }
 
     /** The app menu's History row (real touches, [openMenuItem]) until the History page is up. */
@@ -799,7 +814,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     private fun headerTitle(): String = textOf(".zen-overview > header .zen-title")
 
     private fun segmentLabels(): List<String> =
-        jsList("Array.prototype.map.call(document.querySelectorAll('.zen-v2-segment [role=\"tab\"]'),function(b){return b.textContent.trim()})")
+        jsList("Array.prototype.map.call(document.querySelectorAll('.zen-overview [role=\"tab\"]'),function(b){return b.textContent.trim()})")
 
     /** Every regular card's box by its tab id (the essentials are not cards). */
     private fun cardBoxes(): Map<String, Rect> {
@@ -956,14 +971,14 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         SystemClock.sleep(500)
     }
 
-    /** Check the DOM's coordinates against the accessibility tree once (the Spaces button never moves). */
+    /** Check the DOM's coordinates against the accessibility tree once (the overview's title never moves). */
     private fun calibrate() {
         if (calibrated) return
-        val fromDom = domRect("[aria-label=\"Spaces\"]") ?: return
-        val fromTree = waitFor("Spaces", 4_000) ?: return
+        val fromDom = domRect(OVERVIEW_TITLE_SELECTOR) ?: return
+        val fromTree = awaitOverviewTitle(4_000) ?: return
         val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
         val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
-        finding("coordinates: Spaces button at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
+        finding("coordinates: the overview's title at $fromDom from the DOM, $fromTree from the accessibility tree (offset ${dx.roundToInt()}, ${dy.roundToInt()})")
         if (abs(dx) <= MAX_OFFSET && abs(dy) <= MAX_OFFSET) {
             originX = dx
             originY = dy
@@ -1068,7 +1083,10 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         private const val RECT_JS = "var r=e.getBoundingClientRect();" +
             "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})"
 
-        private const val TOGGLE = "[data-testid=\"overview-search-toggle\"]"
+        /** The overview's menu's row that opens the search (the cleanup spec's §4; `shared/overviewMenu.ts`). */
+        private const val SEARCH_ROW = "Search Tabs"
+        /** The title's accessible name: the space's name and its count, "Work, 7 tabs" (`overviewTitleLabel`). */
+        private val TITLE_LABEL = Regex("^.+, \\d+ tabs?$")
         private const val FIELD = "[data-testid=\"overview-search\"]"
         private const val INPUT = "#overview-search"
         private const val CLEAR = "[data-testid=\"overview-search-clear\"]"

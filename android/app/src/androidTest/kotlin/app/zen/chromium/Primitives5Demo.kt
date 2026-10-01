@@ -292,8 +292,7 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
         still("45-strip-chip")
 
         openOverview()
-        pickPane("tabs")
-        check("Research's card is on the Tabs pane", awaitDom(CARD_HEADER, SHEET_WAIT), "header ${domRect(CARD_HEADER)}")
+        check("Research's card is in the grid, in its place (tab overview cleanup spec §2)", awaitDom(CARD_HEADER, SHEET_WAIT), "header ${domRect(CARD_HEADER)}")
         val card = glyph("$CARD_HEADER .zen-group-row-glyph")
         check("the card's header carries the same dot in the same blue", glyphIsDot(card, blueRgb()), describeGlyph(card))
         val count = jsObject("$COUNT_JS(${JSONObject.quote("$CARD_HEADER .zen-group-row-count")})")
@@ -311,20 +310,21 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
         SystemClock.sleep(600)
         still("45-46-group-card")
 
-        pickPane("groups")
+        // The Groups pane is gone (cleanup spec §2, §9): the saved group stands in the same grid
+        // as a card in the folded group's dress, the saved ring in its glyph slot, at the grid's
+        // end before the New Tab card.
         check(
-            "the Groups pane lists Research under Open and ${TRIP_NAME} under Saved",
-            awaitDom("$OPEN_SECTION .zen-phone-row", SHEET_WAIT) && awaitDom("$SAVED_SECTION .zen-phone-row", SHEET_WAIT) &&
-                textsOf("$OPEN_SECTION .zen-list-title") == listOf("Research") && textsOf("$SAVED_SECTION .zen-list-title") == listOf(TRIP_NAME),
-            "open ${textsOf("$OPEN_SECTION .zen-list-title")}, saved ${textsOf("$SAVED_SECTION .zen-list-title")}"
+            "$TRIP_NAME stands as a saved group card at the grid's end, before the New Tab card (cleanup spec §2, TAB-16)",
+            awaitDom(SAVED_CARD, SHEET_WAIT) && textsOf("$SAVED_CARD .zen-group-header > span.truncate") == listOf(TRIP_NAME) && savedCardBeforeNewTab(),
+            "saved ${textsOf("$SAVED_CARD .zen-group-header > span.truncate")}, cells ${cellKeys()}"
         )
-        val open = glyph("$OPEN_SECTION .zen-group-row-glyph")
-        check("the open group's row carries the filled dot in blue", glyphIsDot(open, blueRgb()), describeGlyph(open))
-        val saved = glyph("$SAVED_SECTION .zen-group-row-glyph")
-        check("the saved group's row carries the same 10 glyph as a 2 ring in its green, the fill clear (trip $trip)", glyphIsRing(saved, greenRgb()), describeGlyph(saved))
-        check("each heading's count is the aside: one open, one saved", textsOf(GROUPS_ASIDE) == listOf("1", "1"), "asides ${textsOf(GROUPS_ASIDE)}")
+        check("the Groups pane and its segment are gone", !inDom(GROUPS_PANE) && !inDom("$OVERVIEW [role=\"tab\"]"), "pane ${inDom(GROUPS_PANE)}, tabs ${inDom("$OVERVIEW [role=\"tab\"]")}")
+        val saved = glyph("$SAVED_CARD .zen-group-row-glyph")
+        check("the saved card's header carries the same 10 glyph as a 2 ring in its green, the fill clear (trip $trip)", glyphIsRing(saved, greenRgb()), describeGlyph(saved))
+        val savedCount = jsObject("$COUNT_JS(${JSONObject.quote("$SAVED_CARD .zen-group-row-count")})")
+        check("its count is the aside too: the two pages it keeps, at 13 tabular", savedCount.optString("text") == "2" && near(savedCount.optDouble("size"), 13.0, 0.5) && savedCount.optString("numeric").contains("tabular-nums"), "text '${savedCount.optString("text")}', size ${savedCount.optString("size")}, numeric '${savedCount.optString("numeric")}'")
         SystemClock.sleep(600)
-        still("45-groups-pane-open-saved")
+        still("45-saved-group-card")
         closeOverview()
         activateTab(HOME)
         SystemClock.sleep(600)
@@ -781,7 +781,7 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
             }
             if (overviewOpen()) {
                 SystemClock.sleep(2_000)
-                calibrate("[aria-label=\"Spaces\"]", "Spaces")
+                overviewTitleLabel()?.let { calibrate(OVERVIEW_TITLE_SELECTOR, it) }
                 return
             }
         }
@@ -803,16 +803,15 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
     private fun overviewOpen(): Boolean =
         jsString("(function(){var e=document.querySelector('$OVERVIEW');return e?e.style.transform:''})()") == "scale(1)"
 
-    private fun selectedPane(): String = attrOf("[data-testid^=\"overview-pane-\"][aria-selected=\"true\"]", "data-pane")
+    /** The grid's cells in their order (`data-cell`): the tabs', the groups' (`group:<id>`, `saved:<id>`), the New Tab card's last. */
+    private fun cellKeys(): List<String> = jsArray("Array.prototype.map.call(document.querySelectorAll('$OVERVIEW .zen-overview-grid [data-cell]'),function(c){return c.getAttribute('data-cell')})").strings()
 
-    private fun paneIs(pane: String): Boolean = selectedPane() == pane
-
-    /** A touch on the segment's `pane` button until the pane is the one picked. */
-    private fun pickPane(pane: String) {
-        if (paneIs(pane)) return
-        val picked = touchUntil("the $pane segment", { domRect("[data-testid=\"overview-pane-$pane\"]") }, { paneIs(pane) }, waitMs = SHEET_WAIT)
-        if (!picked) error("the $pane pane never came up")
-        SystemClock.sleep(600)
+    /** The saved group's card stands before the New Tab card, with no tab card after it (cleanup spec §2). */
+    private fun savedCardBeforeNewTab(): Boolean {
+        val keys = cellKeys()
+        val saved = keys.indexOfFirst { it.startsWith("saved:") }
+        val newTab = keys.indexOf("new-tab")
+        return saved >= 0 && newTab > saved && keys.subList(saved + 1, newTab).all { it.startsWith("saved:") }
     }
 
     // --- reads -----------------------------------------------------------------------------------
@@ -842,10 +841,10 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
         private const val NTP_FIELD = ".zen-ntp-field"
         private const val NTP_FAVICON = ".zen-ntp-field [data-testid=\"engine-field-favicon\"]"
         private const val OVERVIEW = ".zen-overview"
+        /** The Groups pane of before the tab overview cleanup spec (§2, §9) – pinned gone. */
         private const val GROUPS_PANE = "[data-testid=\"overview-groups\"]"
-        private const val OPEN_SECTION = "[data-testid=\"overview-groups-open\"]"
-        private const val SAVED_SECTION = "[data-testid=\"overview-groups-saved\"]"
-        private const val GROUPS_ASIDE = "$GROUPS_PANE .zen-overview-groups-aside"
+        /** The saved group's card in the grid (`SavedGroupCard`, the cell `saved:<id>`). */
+        private const val SAVED_CARD = ".zen-overview-grid .zen-group-saved[data-saved]"
         private const val CARD_HEADER = ".zen-overview-grid [data-cell=\"group:$FOLDER\"] > .zen-group-header"
         private const val STRIP_GLYPH = ".zen-group-strip .zen-group-chip-show .zen-group-row-glyph"
         private const val COVER = "[data-testid=\"private-lock-cover\"]"

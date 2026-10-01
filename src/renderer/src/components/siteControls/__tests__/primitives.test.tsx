@@ -522,6 +522,54 @@ describe('DesktopPopover focus', () => {
     expect(document.activeElement).toBe(opener)
     opener.remove()
   })
+
+  it('with focus="primary" arms the primary button – the prompt the user opened, Enter completing its act (§5.7) – and the first control when there is none', () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    render(
+      <DesktopPopover
+        anchor={anchor}
+        labelledBy="t"
+        focus="primary"
+        onDismiss={() => undefined}
+        onClosed={() => undefined}
+      >
+        {() => (
+          <>
+            <h2 id="t">Install Example?</h2>
+            <button type="button">Cancel</button>
+            <button type="button" data-primary="">
+              Install
+            </button>
+          </>
+        )}
+      </DesktopPopover>
+    )
+    expect(document.activeElement?.textContent).toBe('Install')
+    act(() => root!.unmount())
+    expect(document.activeElement).toBe(opener)
+    mount?.remove()
+
+    render(
+      <DesktopPopover
+        anchor={anchor}
+        labelledBy="t"
+        focus="primary"
+        onDismiss={() => undefined}
+        onClosed={() => undefined}
+      >
+        {() => (
+          <>
+            <h2 id="t">Site information</h2>
+            <button type="button">Cookies</button>
+          </>
+        )}
+      </DesktopPopover>
+    )
+    expect(document.activeElement?.textContent).toBe('Cookies')
+    opener.remove()
+  })
 })
 
 describe('DesktopPopover light dismiss', () => {

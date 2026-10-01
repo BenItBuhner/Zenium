@@ -62,6 +62,38 @@ describe('launchCommand / desktopExecLine', () => {
     })
   })
 
+  it('hands the bare URL instead of --app= for a shortcut that opens a tab ("Open as window" off), packaged and in development alike; asked for a window it is --app= as ever', () => {
+    const url = 'https://app.example/start?x=1'
+    const packaged = { execPath: '/opt/Zenium/zenium', isPackaged: true, appPath: '/opt/x' }
+    expect(launchCommand(url, packaged, false)).toEqual({
+      program: '/opt/Zenium/zenium',
+      args: [url]
+    })
+    expect(
+      launchCommand(url, { ...packaged, appImage: '/home/u/Apps/zenium.AppImage' }, false)
+    ).toEqual({ program: '/home/u/Apps/zenium.AppImage', args: [url] })
+    expect(
+      launchCommand(
+        url,
+        {
+          execPath: '/repo/node_modules/electron/dist/electron',
+          isPackaged: false,
+          appPath: '/repo'
+        },
+        false
+      )
+    ).toEqual({ program: '/repo/node_modules/electron/dist/electron', args: ['/repo', url] })
+    expect(launchCommand(url, packaged, true)).toEqual(launchCommand(url, packaged))
+    // The Exec line and the bundle script carry the bare URL the same way they carry --app=.
+    expect(desktopExecLine({ program: '/opt/zenium', args: [url] })).toBe(`"/opt/zenium" "${url}"`)
+    expect(
+      macLauncherScript(
+        { program: '/Applications/Zenium.app/Contents/MacOS/Zenium', args: [url] },
+        '/Applications/Zenium.app'
+      )
+    ).toBe(`#!/bin/sh\nexec open -n -a '/Applications/Zenium.app' --args '${url}'\n`)
+  })
+
   it('quotes and escapes the Exec line the way the desktop entry specification wants', () => {
     const line = desktopExecLine({
       program: '/opt/Zen ium/zenium',

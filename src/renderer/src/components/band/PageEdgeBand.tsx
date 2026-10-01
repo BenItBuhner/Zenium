@@ -40,7 +40,8 @@ const sceneOf = (s: { scene: string | null }): string | null => s.scene
  * The page-edge band (motion spec §3): one prompt about the page, between the content frame's
  * top edge and the page's top edge, in the frame's own surface. `[glyph] Title · detail [Action]
  * [×]` – the glyph in the status ink for a state, the accent for an offer; one action at most;
- * the × refuses. The page travels down to make room (`BandMotion` on the one animation clock,
+ * the × refuses, named "Dismiss" on every band (the Design Lead's ruling on #740). The page
+ * travels down to make room (`BandMotion` on the one animation clock,
  * through the host's seam) and the content fades in over the last 120 ms; a swipe up takes the
  * page with the finger 1:1; Escape with focus in the band dismisses it; `role="status"` reads the
  * title once. A new tenant on an open band cross-fades its content 120 ms at the current height
@@ -51,7 +52,8 @@ const sceneOf = (s: { scene: string | null }): string | null => s.scene
  * leaving the front, a page's fullscreen – is a cut, not a travel. A band goes with its page at
  * once and stands again at once when the page comes back; the page of the next tab never
  * travels for the last tab's prompt, and a prompt the page never showed travels in as on any
- * page.
+ * page. The root names its tenant (`data-key`) for the drives that look for one band in
+ * particular; nothing of the chrome reads it.
  */
 export function PageEdgeBand({ host }: Props): JSX.Element | null {
   const entry = bandStore.use(chooseBand)
@@ -169,6 +171,7 @@ export function PageEdgeBand({ host }: Props): JSX.Element | null {
       className="zen-band"
       role="status"
       data-surface="page"
+      data-key={showing.key}
       data-form={showing.form}
       data-tone={showing.form === 'state' ? showing.tone : undefined}
       data-detail={showing.detail ? '' : undefined}

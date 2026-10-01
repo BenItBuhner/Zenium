@@ -1,6 +1,6 @@
-import type { DefaultBrowserRequestSource, Platform, UIState } from '@shared/types'
+import type { DefaultBrowserRequestSource, UIState } from '@shared/types'
 import { cmd, run } from './api'
-import { pushToast, uiStore } from './ui'
+import { pushToast } from './ui'
 
 /** Version as `major.minor`: the granularity at which the default-browser strip returns. */
 export function featureVersion(version: string): string {
@@ -47,40 +47,27 @@ export function dismissDefaultBrowserBanner(state: Pick<UIState, 'version'>): vo
   run('settings.update', { defaultBrowserPromptDismissed: state.version })
 }
 
-/** The prompt's title: sentence case, as every prompt's (v2 §9.1). */
+/** The band's title: sentence case, as every prompt's (v2 §9.1). */
 export const DEFAULT_BROWSER_PROMPT_TITLE = 'Make Zenium your default browser'
 
 /**
- * What happens on this OS once the user says yes, in one sentence (the prompt's description,
- * §9.23) – what `main/platform/defaultBrowser.ts` does: Windows opens Settings → Default apps
- * on Zenium's page for the user to finish there; macOS puts up LaunchServices' own question;
- * Linux registers the desktop entry with `xdg-settings` and asks nothing.
+ * The band's words once Windows has the hand-off (motion spec §3.4): since Windows 8 only the
+ * user can pick a default, in the Settings page the request opened (`main/platform/
+ * defaultBrowser.ts`), so the band stands as the instruction until the role is confirmed.
  */
-export function describeDefaultBrowserRequest(platform: Platform): string {
-  switch (platform) {
-    case 'win32':
-      return 'Windows will open Default apps, where you can choose Zenium.'
-    case 'darwin':
-      return 'macOS will ask you to confirm.'
-    default:
-      return 'Zenium will register itself with your desktop.'
-  }
-}
+export const DEFAULT_BROWSER_WINDOWS_TITLE = 'Press Set default in Windows Settings'
 
 /**
- * "Set as default" on the band: the prompt goes up first and says what the OS will do; its own
- * "Set as default" runs the request (`requestDefaultBrowser`) and takes the band down.
+ * "Set as default" from the band, or the Settings row's button: the core asks the OS and
+ * re-reads the role; the status row and the band follow the state on their own. Resolves with
+ * the role as the core read it – true, false, or null while the user has not decided within the
+ * host's poll window (the core reads the role again on the next return to the foreground).
+ * `false` is a refusal on the spot (nothing registered, the system tool failed), the one case
+ * the user needs a word about.
  */
-export function askDefaultBrowser(source: DefaultBrowserRequestSource): void {
-  uiStore.set({ defaultBrowserAsk: source })
-}
-
-/**
- * "Set as default" from the prompt, or the Settings row's button: the core asks the OS and
- * re-reads the role; the status row repaints on its own. `false` is a refusal on the spot
- * (nothing registered, the system tool failed), the one case the user needs a word about.
- */
-export async function requestDefaultBrowser(source: DefaultBrowserRequestSource): Promise<void> {
+export async function requestDefaultBrowser(
+  source: DefaultBrowserRequestSource
+): Promise<boolean | null> {
   const result = await cmd('defaultBrowser.request', { source }).catch(() => false)
   if (result === false) {
     pushToast(
@@ -88,4 +75,5 @@ export async function requestDefaultBrowser(source: DefaultBrowserRequestSource)
       'error'
     )
   }
+  return result
 }

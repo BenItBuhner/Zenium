@@ -237,8 +237,10 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         check("the overview opens on the Private pane from a private tab", awaitPane("private"), "pane '${pane()}'")
         SystemClock.sleep(1_000)
         still("overview-private-pane")
-        val toTabs = touchUntil("the Tabs segment", { domRect(SEGMENT_TABS) }, { pane() == "tabs" }, waitMs = 4_000)
-        check("a touch on Tabs shows the regular pane", toTabs, "pane '${pane()}'")
+        // The views switch through the toolbar's ⋯ (the tab overview cleanup spec's §4, §7: the
+        // overview's menu, "Tabs (N)" from the private view), not a segment row – there is none.
+        val toTabs = openAppMenu() && touchUntil("the menu's Tabs (N) row", { menuRow("Tabs (") }, { pane() == "tabs" }, waitMs = 4_000)
+        check("a touch on the menu's Tabs (N) row shows the regular view", toTabs, "pane '${pane()}'")
         SystemClock.sleep(800)
         val toHome = touchUntil("Home's card", { domRect(card(HOME)) }, { activeTabId() == HOME }, waitMs = 8_000)
         check("a touch on Home's card brings the regular tab to the front", toHome && awaitJs("$OVERVIEW_PHASE==='closed'", true, 8_000), "active ${activeTabId()}, overview ${jsText(OVERVIEW_PHASE)}")
@@ -267,8 +269,8 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         section("5. The ledger's card on the Private pane: the private pose again")
         if (!openOverview()) return
         check("the overview opens on the Tabs pane from a regular tab", awaitPane("tabs"), "pane '${pane()}'")
-        val toPrivate = touchUntil("the Private segment", { domRect(SEGMENT_PRIVATE) }, { pane() == "private" }, waitMs = 4_000)
-        check("a touch on Private shows the private pane", toPrivate, "pane '${pane()}'")
+        val toPrivate = openAppMenu() && touchUntil("the menu's Private Tabs (N) row", { menuRow("Private Tabs (") }, { pane() == "private" }, waitMs = 4_000)
+        check("a touch on the menu's Private Tabs (N) row shows the private view", toPrivate, "pane '${pane()}'")
         SystemClock.sleep(800)
         val id = ledgerId ?: return
         val toLedger = touchUntil("the ledger's card", { domRect(card(id)) }, { activeTabId() == id }, waitMs = 8_000)
@@ -917,8 +919,6 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         private const val FRAME_COVER = "[data-testid=\"private-lock-cover\"]:not([data-variant])"
         private const val VEIL = "$SIDEBAR [data-testid=\"private-lock-cover\"][data-variant=\"veil\"]"
         private const val UNLOCK = "$FRAME_COVER [data-testid=\"private-lock-unlock\"]"
-        private const val SEGMENT_TABS = "[data-testid=\"overview-pane-tabs\"]"
-        private const val SEGMENT_PRIVATE = "[data-testid=\"overview-pane-private\"]"
 
         /** Reads off the chrome's stores (`lib/store.ts` registers them on `window.__zenStores`). */
         private const val OVERVIEW_PHASE = "window.__zenStores.stage.get().overview.phase"
