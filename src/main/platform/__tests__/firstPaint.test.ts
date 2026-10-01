@@ -12,7 +12,9 @@ import {
   PAINT_STATE_SCRIPT,
   paintGatedCommand,
   paintSettled,
-  paintState
+  paintState,
+  SHOWN_PAINTED_SCRIPT,
+  shownPainted
 } from '../firstPaint'
 
 /**
@@ -318,6 +320,99 @@ describe('frameDrawn', () => {
     const nullFrame = new FakePage()
     Object.defineProperty(nullFrame, 'mainFrame', { value: null })
     await expect(frameDrawn(nullFrame.asWebContents())).rejects.toThrow(
+      'The page has no main frame'
+    )
+  })
+})
+
+/**
+ * The shown page's word (`TabView.shownPainted`, W8-P0): a page shown on the activate commit
+ * under the page it replaces says when a frame of the document it is to show is on screen –
+ * the double-rAF word AND the document's first paint entry, asked of the committed document
+ * now, or of the one a woken tab's load commits next.
+ */
+describe('shownPainted', () => {
+  it('asks a committed document at once, through the main frame with no gesture, for both words', async () => {
+    const page = new FakePage()
+    page.mainFrame.executeJavaScript = (code, userGesture) => {
+      expect(userGesture).toBe(false)
+      page.probes.push(code)
+      return Promise.resolve(80.2)
+    }
+    await expect(shownPainted(page.asWebContents())).resolves.toBe(80.2)
+    expect(page.probes).toEqual([SHOWN_PAINTED_SCRIPT])
+    // The script waits on the frames and on a paint entry, both; an answer that is no number
+    // is NaN, not a throw.
+    expect(SHOWN_PAINTED_SCRIPT).toContain('requestAnimationFrame')
+    expect(SHOWN_PAINTED_SCRIPT).toContain("getEntriesByType('paint')")
+    expect(SHOWN_PAINTED_SCRIPT).toContain("type: 'paint', buffered: true")
+    page.mainFrame.executeJavaScript = () => Promise.resolve('soon')
+    await expect(shownPainted(page.asWebContents())).resolves.toBeNaN()
+  })
+
+  it('a page without a committed document (a woken tab) is asked once its document commits', async () => {
+    const page = new FakePage()
+    page.url = ''
+    page.mainFrame.executeJavaScript = (code) => {
+      page.probes.push(code)
+      return Promise.resolve(12.5)
+    }
+    const word = shownPainted(page.asWebContents())
+    await Promise.resolve()
+    // Nothing asked of the initial empty document.
+    expect(page.probes).toEqual([])
+    page.navigate('https://example.test/woken')
+    await expect(word).resolves.toBe(12.5)
+    expect(page.probes).toEqual([SHOWN_PAINTED_SCRIPT])
+    // The commit's listeners are gone with the ask: a later navigation asks nothing more.
+    page.navigate('https://example.test/later')
+    expect(page.probes).toHaveLength(1)
+    expect(page.listenerCount('did-navigate')).toBe(0)
+    expect(page.listenerCount('destroyed')).toBe(0)
+  })
+
+  it('about:blank is no committed document either: the ask waits for the real one', async () => {
+    const page = new FakePage()
+    page.url = 'about:blank'
+    page.mainFrame.executeJavaScript = (code) => {
+      page.probes.push(code)
+      return Promise.resolve(3)
+    }
+    const word = shownPainted(page.asWebContents())
+    await Promise.resolve()
+    expect(page.probes).toEqual([])
+    page.navigate()
+    await expect(word).resolves.toBe(3)
+  })
+
+  it('contents destroyed while waiting for the commit reject as gone; contents already gone are refused before any ask', async () => {
+    const page = new FakePage()
+    page.url = ''
+    const word = shownPainted(page.asWebContents())
+    page.destroyed = true
+    page.emit('destroyed')
+    await expect(word).rejects.toThrow('The page is gone')
+    expect(page.probes).toEqual([])
+    expect(page.listenerCount('did-navigate')).toBe(0)
+    const gone = new FakePage()
+    gone.destroyed = true
+    await expect(shownPainted(gone.asWebContents())).rejects.toThrow('The page is gone')
+    expect(gone.probes).toEqual([])
+  })
+
+  it('a frame that throws from the ask rejects the word; nothing escapes', async () => {
+    const page = new FakePage()
+    page.mainFrame.executeJavaScript = () => {
+      throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+    }
+    let word: Promise<number> | undefined
+    expect(() => {
+      word = shownPainted(page.asWebContents())
+    }).not.toThrow()
+    await expect(word).rejects.toThrow('Render frame was disposed')
+    const nullFrame = new FakePage()
+    Object.defineProperty(nullFrame, 'mainFrame', { value: null })
+    await expect(shownPainted(nullFrame.asWebContents())).rejects.toThrow(
       'The page has no main frame'
     )
   })

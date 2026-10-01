@@ -1009,6 +1009,22 @@ export interface TabView {
    */
   frameDrawn?(): Promise<number>
   /**
+   * The page's word that the document it is to show has a frame on screen (W8-P0, the same
+   * §11 rule as `frameDrawn`'s, for a page shown on the activate commit – a tab switched to or
+   * woken – under the page it replaces): for a committed document, `frameDrawn`'s double
+   * `requestAnimationFrame` AND its first `paint` entry – a page loaded in the background never
+   * had its first paint, and under paint holding the engine runs its animation frames while it
+   * still defers the commits, so the frames alone would answer before anything is on screen;
+   * for a page still on its way (a woken tab, its document not committed yet) the same, asked of
+   * the document that commits next. Never resolves for a document that draws no frame; the asker
+   * holds the failure ceiling (`COVER_REPORT_CEILING_MS`) and takes a rejection (the page gone)
+   * as no word. The word of a host that shows on the commit (`TabViewHost.showsOnCommit`):
+   * the activated page shown at the frame's last reported rect, the page left in front standing
+   * over it until the word or the ceiling (`ZenWindow.showOnCommit`); a host without the flag
+   * shows the page with the layout report, as before.
+   */
+  shownPainted?(): Promise<number>
+  /**
    * The message strips: chrome messages (toasts, banners) draw over these strips of the view's
    * edges. Hosts whose pages are layered above the chrome clip the page out of the strips –
    * animating the clip so it moves with the message – and hand touches inside them to the
@@ -1222,6 +1238,15 @@ export type { ContentRules } from '../shared/contentRules'
 export interface TabViewHost {
   /** Create the live page for `tab`, attached to `host`'s window. */
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView
+  /**
+   * True when the core may show a tab switched to or woken on the activate commit, at the
+   * frame's last reported rect, under the page it replaces until that page's word that it has
+   * painted (`TabView.shownPainted`) or the ceiling (`ZenWindow.showOnCommit`, W8-P0): the
+   * host's views give the word, and its stand-in protocol bears a page shown ahead of the
+   * layout report. Left out (or false), every page is shown by the report, as before – the
+   * Android chassis, whose chrome sequences its own cover against the host's frames.
+   */
+  readonly showsOnCommit?: boolean
   /**
    * Create a second live page for `tab` – the reader's cover (`TabManager.cover`; the glossary
    * of the tree's four "covers" stands there): the `zen://reader` document drawn over the tab's

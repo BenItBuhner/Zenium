@@ -24,7 +24,7 @@ import {
   setDebuggerRecycler
 } from '../pageDebugger'
 import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
-import { FRAME_DRAWN_SCRIPT, PAINT_STATE_SCRIPT } from '../firstPaint'
+import { FRAME_DRAWN_SCRIPT, PAINT_STATE_SCRIPT, SHOWN_PAINTED_SCRIPT } from '../firstPaint'
 import { IMAGE_THUMBNAIL_WORLD_ID, PRIVATE_WORLD_CHANNELS } from '../../../shared/privateWorld'
 import { DevtoolsQuitHoldNotice } from '../devtoolsQuitHoldNotice'
 import type { QuitHoldPanel } from '../../../shared/quitHoldPanel'
@@ -602,6 +602,38 @@ describe('ElectronTabViewHost', () => {
     // A page that is gone refuses the ask outright.
     wc.close()
     await expect(view.frameDrawn()).rejects.toThrow('The page is gone')
+  })
+
+  it('shows on the commit (W8-P0): the host says so, and a page gives the shown word – frames and first paint – of its committed document, or of the one a woken tab commits next', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    // The desktop's views bear the stand-in: the core may show a switched or woken tab on the
+    // activate commit under the page it replaces (`ZenWindow.showOnCommit`).
+    expect(host.showsOnCommit).toBe(true)
+    const tab = { id: 'tab_1', containerId: 'default', url: 'https://a.example/' } as Tab
+    const view = host.createView(tab, noEvents, detachedWindow) as ElectronTabView
+    const wc = view.webContents as unknown as EventEmitter & {
+      url: string
+      mainFrame: { scripts: string[] }
+      scripts: string[]
+      close(): void
+    }
+    // A woken tab: its load just issued, the main frame still the initial empty document. The
+    // word waits for the commit, then asks the committed document – in the main frame, with the
+    // shown-painted script (the double rAF and the document's first paint entry).
+    const woken = view.shownPainted()
+    await Promise.resolve()
+    expect(wc.mainFrame.scripts).toEqual([])
+    wc.url = 'https://a.example/'
+    wc.emit('did-navigate', {}, 'https://a.example/')
+    await expect(woken).resolves.toBe(1)
+    expect(wc.mainFrame.scripts).toEqual([SHOWN_PAINTED_SCRIPT])
+    expect(wc.scripts).toEqual([])
+    // A committed document is asked at once.
+    await expect(view.shownPainted()).resolves.toBe(1)
+    expect(wc.mainFrame.scripts).toEqual([SHOWN_PAINTED_SCRIPT, SHOWN_PAINTED_SCRIPT])
+    // A page that is gone refuses the ask outright: the asker takes it as no word.
+    wc.close()
+    await expect(view.shownPainted()).rejects.toThrow('The page is gone')
   })
 
   it('sends Cut, Copy and Paste to the page’s focused frame as asked (the app menu’s Find and Edit ▸ rows, W8-1), and drops them once the page is gone', () => {
