@@ -228,7 +228,9 @@ Checks on `a04907dc2`: `npm run typecheck` pass; `npm run lint` 0 errors (pre-ex
 PR files); `npx vitest run src/android/__tests__/agentPrompts.test.ts src/android/__tests__/views.test.ts
 src/android/__tests__/platformAgentPrompts.test.ts` 37 passed; `cd android && ./gradlew :app:testDebugUnitTest
 -PskipWeb --no-daemon` BUILD SUCCESSFUL, `AgentPromptsTest` tests=14 failures=0 (SDK ad hoc under `/tmp/android-sdk`,
-no `local.properties`). CI run [36847606927](https://github.com/BenItBuhner/Zenium/actions/runs/36847606927) on
-`a04907dc2`; the commit adding this section touches only this report.
+no `local.properties`); full `npm test` 1153 files / 16259 tests passed, full `testDebugUnitTest` 0 failures.
+CI: run [36847972983](https://github.com/BenItBuhner/Zenium/actions/runs/36847972983) on `6aa54bddf` (this section's
+first commit, code as in `a04907dc2`, whose own run 36847606927 was superseded by that push) – all six jobs pass. The
+commit correcting this paragraph touches only this report.
 
 service.ts moved: **no** (old `2d72fb071f80` → new `2d72fb071f80`).
