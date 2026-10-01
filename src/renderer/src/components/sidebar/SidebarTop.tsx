@@ -354,7 +354,13 @@ export function NavRow({
     pinnedAppFor(tab.url, state.webApps ?? []) === null
   const installUp = installable && installPinned
   const installName = manifest ? launcherName(manifest, 'desktop') : ''
-  const installOpen = uiStore.use((s) => s.install !== null && s.install.tabId === tab?.id)
+  // The chip's popover is up for this tab: the prompt the user asked for, or the core's offer
+  // (`lib/installOffer.ts`), which hangs from the same chip.
+  const installOpen = uiStore.use(
+    (s) =>
+      (s.install !== null && s.install.tabId === tab?.id) ||
+      (s.installOffer !== null && s.installOffer.banner.tabId === tab?.id)
+  )
   // The Share chip (W8-6): Chrome's desktop omnibox has no share page action now (its sharing
   // hub is the app menu's), so the chip is the house's – a hover-only utility beside Copy URL,
   // never a resident chip – on a page of the web where the chrome has a share sheet to show

@@ -3,11 +3,17 @@ import { useEffect, useRef, useState } from 'react'
 import type { Rect, UIState, WebAppInstallPrompt } from '@shared/types'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { cmd, run } from '@renderer/lib/api'
-import { takeOfferedInstall } from '@renderer/lib/installOffer'
+import { closeInstallOffer } from '@renderer/lib/installOffer'
 import { POPOVER_WIDTH, toRect } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { barOf } from '@renderer/lib/surfaces'
-import { closeInstallSheet, installPopoverUp, uiStore } from '@renderer/lib/ui'
+import {
+  claimBannerSurface,
+  closeInstallSheet,
+  installPromptIsPopover,
+  uiStore,
+  type InstallOffer
+} from '@renderer/lib/ui'
 import { AppIcon } from '../phone/InstallSheet'
 import { BusyButton, DesktopPopover, Footer, TitleBlock } from '../siteControls/primitives'
 import { V2Button } from '../v2/controls'
@@ -34,24 +40,64 @@ function chipRects(): { anchor: Rect | null; bar: Rect | null } {
 /**
  * The install surface of a host with windows (MW-22; the Design Lead's ruling on W8-M3's item
  * 3): registered with the core through `ui.surface`, so `webapp.openInstall` – the pill's Install
- * chip, the app menu's "Install <app>…", the core's own offer – knows a surface is mounted to
- * take the prompt, and never on a one-window host, whose surface is the phone sheet
- * (`InstallLayer`). A page with an installable manifest gets Chrome's form, the popover under the
- * chip (`installPopoverUp`, the reading the content's dim shares: no scrim under a popover); a
- * page without one keeps the "Create shortcut" dialog (`ShortcutDialog.tsx`) until the Lead
- * rules on it.
+ * chip, the app menu's "Install <app>…" – knows a surface is mounted to take the prompt, and
+ * never on a one-window host, whose surface is the phone sheet (`InstallLayer`). It is the
+ * desktop's surface for the core's install banner too (`claimBannerSurface`: the word that the
+ * card is drawn goes while it is mounted, `lib/installOffer.ts`), the banner's form being the
+ * same popover, opened of its own accord. A page with an installable manifest gets Chrome's
+ * form, the popover under the chip (`installPopoverUp`, the reading the content's dim shares:
+ * no scrim under a popover); a page without one keeps the "Create shortcut" dialog
+ * (`ShortcutDialog.tsx`) until the Lead rules on it. The prompt comes first: an offer up gives
+ * way to it (`openInstallSheet`).
  */
 export function InstallPopoverLayer({ state }: { state: UIState }): JSX.Element | null {
   const desktop = state.capabilities.windows === true
   useChromeSurface('install', desktop)
+  useEffect(() => (desktop ? claimBannerSurface() : undefined), [desktop])
   const prompt = uiStore.use((s) => s.install)
-  if (!desktop || !prompt) return null
-  return installPopoverUp({ install: prompt }) ? (
-    <InstallPopover key={prompt.tabId} prompt={prompt} state={state} />
-  ) : (
-    <ShortcutDialog key={prompt.tabId} prompt={prompt} state={state} />
-  )
+  const offer = uiStore.use((s) => s.installOffer)
+  if (!desktop) return null
+  if (prompt) {
+    return installPromptIsPopover(prompt) ? (
+      <InstallPopover
+        key={`prompt:${prompt.tabId}`}
+        subject={{ kind: 'prompt', prompt }}
+        state={state}
+      />
+    ) : (
+      <ShortcutDialog key={prompt.tabId} prompt={prompt} state={state} />
+    )
+  }
+  if (offer) {
+    return (
+      <InstallPopover
+        key={`offer:${offer.banner.tabId}`}
+        subject={{ kind: 'offer', offer }}
+        state={state}
+      />
+    )
+  }
+  return null
 }
+
+/**
+ * What the popover is up for: the prompt the user asked for (the chip, the app menu, the page's
+ * own `prompt()`), or the core's offer (`lib/installOffer.ts`).
+ */
+type Subject =
+  { kind: 'prompt'; prompt: WebAppInstallPrompt } | { kind: 'offer'; offer: InstallOffer }
+
+/** The identity the popover shows for either subject: the app's name, its origin and its tile. */
+function cardOf(
+  subject: Subject
+): Pick<WebAppInstallPrompt, 'tabId' | 'title' | 'origin' | 'icon' | 'tint'> {
+  if (subject.kind === 'prompt') return subject.prompt
+  const { tabId, name, origin, icon, tint } = subject.offer.banner
+  return { tabId, title: name, origin, icon, tint }
+}
+
+/** How the popover went by the user's hand: Cancel, a light dismissal (the tab leaving too), Install. */
+type Ending = 'cancel' | 'dismiss' | 'install'
 
 /**
  * Chrome's install prompt in Chrome's form: a 320 popover (§9.20) hung from the pill's Install
@@ -59,29 +105,30 @@ export function InstallPopoverLayer({ state }: { state: UIState }): JSX.Element 
  * (the app's name from its manifest, as the chip's own name is), the app's identity row (§9.23:
  * the tile beside the name and the origin) and the §9.11 footer, hugging and right-aligned,
  * Cancel then the one primary, Install. No scrim: the popover is light-dismissed (§9.20) – a
- * press outside it, a scroll away, Escape – and every dismissal, Cancel included, reports a
- * cancelled install to the core and folds the popover back into the chip (the pop reversed, as
- * a prompt beside its chip leaves); the chip stays, to open it again. Install runs the install
- * path of old – `webapp.pin` with the app's name – busy while the core has the host write the
- * launcher and leaving on the spring once the request has settled (the core toasts "Installed
- * <name>", or the failure).
+ * press outside it, a scroll away, Escape – and every dismissal, Cancel included, folds the
+ * popover back into the chip (the pop reversed, as a prompt beside its chip leaves); the chip
+ * stays, to open it again. Install runs the install path of old – `webapp.pin` with the app's
+ * name – busy while the core has the host write the launcher and leaving on the spring once the
+ * request has settled (the core toasts "Installed <name>", or the failure).
+ *
+ * What the core hears is the subject's. For the user's prompt every dismissal, Cancel included,
+ * is a cancelled install (`webapp.cancelInstall`). For the core's offer the popover is the
+ * banner's card, and it answers as the phone's does: Cancel is the card's swipe
+ * (`webapp.dismissBanner` 'swipe' – the refusal, whose cooldown is the longer one); a light
+ * dismissal, Escape, the tab leaving, and the popover's leave after Install are the clock
+ * running out ('timeout' – the stamp stands, nothing refused); the core's own take-down
+ * (`retired`, `webapp.bannerHide`) sends nothing back.
  *
  * The keyboard (§9.22): a popover the user opened – the chip, the app menu – takes the first
  * control, and Escape hands the keyboard back to the chip it hung from; the popover the core's
- * offer opened of its own accord (`lib/installOffer.ts`) takes no focus, as a prompt raised
- * beside a chip does while the user is reading the page (§9.6), and leaves the keyboard where it
- * was when it goes. The popover belongs to the tab it was asked for and goes with it, cancelling
- * an install not yet taken.
+ * offer opened of its own accord takes no focus, as a prompt raised beside a chip does while the
+ * user is reading the page (§9.6), and leaves the keyboard where it was when it goes. The
+ * popover belongs to the tab it was asked for and goes with it, cancelling an install not yet
+ * taken.
  */
-function InstallPopover({
-  prompt,
-  state
-}: {
-  prompt: WebAppInstallPrompt
-  state: UIState
-}): JSX.Element {
-  // Asked once, as the popover mounts: the prompt is the offer's, or the user's.
-  const [offered] = useState(() => takeOfferedInstall(prompt.tabId))
+function InstallPopover({ subject, state }: { subject: Subject; state: UIState }): JSX.Element {
+  const offered = subject.kind === 'offer'
+  const { tabId, title, origin, icon, tint } = cardOf(subject)
   const [rects, setRects] = useState(chipRects)
   // The popover follows the pill through a window resize rather than leaving (`follow`): the
   // chip is still there to hang from.
@@ -93,38 +140,50 @@ function InstallPopover({
   }, [])
   const [busy, setBusy] = useState(false)
   const [closing, setClosing] = useState(false)
-  const [cancelled, setCancelled] = useState(false)
+  const [folded, setFolded] = useState(false)
   const accepted = useRef(false)
   // The popover leaves once, whichever of a dismissal, a button or its tab going says so.
   const left = useRef(false)
+  // The core took the offer's banner back (`lib/installOffer.ts` `retireInstallOffer`): the
+  // popover leaves on the spring with nothing to report, and no ending of the user's after it.
+  const retired = uiStore.use(
+    (s) => offered && s.installOffer?.banner.tabId === tabId && s.installOffer.retired
+  )
 
-  const leave = (cancel: boolean): void => {
-    if (left.current) return
-    left.current = true
-    if (cancel) {
-      run('webapp.cancelInstall', { tabId: prompt.tabId })
-      setCancelled(true)
+  const report = (ending: Ending): void => {
+    if (!offered) {
+      if (ending !== 'install') run('webapp.cancelInstall', { tabId })
+      return
     }
+    run('webapp.dismissBanner', { tabId, reason: ending === 'cancel' ? 'swipe' : 'timeout' })
+  }
+  const leave = (ending: Ending): void => {
+    if (left.current || retired) return
+    left.current = true
+    report(ending)
+    // A dismissal folds back into the chip; Install leaves on the spring.
+    if (ending !== 'install') setFolded(true)
     setClosing(true)
   }
-  const cancel = (): void => leave(true)
+  const cancel = (): void => leave('cancel')
+  const dismiss = (): void => leave('dismiss')
   const install = async (): Promise<void> => {
     if (accepted.current) return
     accepted.current = true
     setBusy(true)
     // Resolves once the request reached the launcher or could not be made (the core toasts the
     // failure); either way the popover is done.
-    await cmd('webapp.pin', { tabId: prompt.tabId, title: prompt.title }).catch(() => undefined)
-    leave(false)
+    await cmd('webapp.pin', { tabId, title }).catch(() => undefined)
+    leave('install')
   }
 
-  // The tab the prompt was asked for is no longer this window's active one: closed, switched
+  // The tab the popover was asked for is no longer this window's active one: closed, switched
   // away from, or – after Install – moved into the app's own window. An install not yet taken
   // is cancelled with it.
   const tab = activeTab(state)
-  const gone = !tab || tab.id !== prompt.tabId
+  const gone = !tab || tab.id !== tabId
   useEffect(() => {
-    if (gone) leave(!accepted.current)
+    if (gone) leave(accepted.current ? 'install' : 'dismiss')
     // eslint-disable-next-line react-hooks/exhaustive-deps -- on the tab's change only
   }, [gone])
 
@@ -134,12 +193,14 @@ function InstallPopover({
       bar={rects.bar}
       width={POPOVER_WIDTH.list}
       labelledBy={TITLE_ID}
-      closing={closing}
-      collapse={rects.anchor !== null && cancelled}
+      closing={closing || retired}
+      collapse={rects.anchor !== null && folded}
       // Escape on a popover the user opened leaves the keyboard on the chip (`usePopover`'s
       // return); the offer's popover took none, so there is nothing to hand back.
-      onClosed={(byKey) => closeInstallSheet(prompt.tabId, { keepFocus: byKey && !offered })}
-      onDismiss={cancel}
+      onClosed={(byKey) =>
+        offered ? closeInstallOffer(tabId) : closeInstallSheet(tabId, { keepFocus: byKey })
+      }
+      onDismiss={dismiss}
       focus={offered ? 'none' : 'first'}
       follow
       anchorElement={chip}
@@ -148,12 +209,12 @@ function InstallPopover({
     >
       {() => (
         <>
-          <TitleBlock id={TITLE_ID} title={`Install ${prompt.title}?`} />
+          <TitleBlock id={TITLE_ID} title={`Install ${title}?`} />
           <div className="zen-install-app px-4">
-            <AppIcon icon={prompt.icon} name={prompt.title} tint={prompt.tint} size={48} />
+            <AppIcon icon={icon} name={title} tint={tint} size={48} />
             <div className="min-w-0 flex-1">
-              <div className="zen-install-name truncate">{prompt.title}</div>
-              <div className="zen-install-detail truncate">{prompt.origin}</div>
+              <div className="zen-install-name truncate">{title}</div>
+              <div className="zen-install-detail truncate">{origin}</div>
             </div>
           </div>
           <Footer count={2} hairline={false}>

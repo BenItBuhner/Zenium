@@ -52,6 +52,7 @@ afterEach(() => {
     snapshot: null,
     snapshotTabId: null,
     install: null,
+    installOffer: null,
     mediaSheet: null,
     importDialog: null,
     overlaySection: null
@@ -126,6 +127,23 @@ describe('the install sheet', () => {
     uiStore.set({ install: { ...INSTALL_PROMPT, info } })
     expect(installPopoverUp(idle())).toBe(false)
     expect(panelAloneOverContent(idle())).toBe(false)
+  })
+
+  it('the core’s offer is the same popover (lib/installOffer.ts): over the page’s picture, undimmed, holding the keys; the prompt takes its place', async () => {
+    const banner = { tabId: 't1', name: 'Sketch', origin: 'sketch.example', icon: null, tint: null }
+    uiStore.set({ installOffer: { banner, retired: false } })
+    expect(installPopoverUp(idle())).toBe(true)
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(true)
+    expect(chromeNeedsKeyboard()).toBe(true)
+    // Retired by the core, it is still up while it leaves: the page stays under its picture.
+    uiStore.set({ installOffer: { banner, retired: true } })
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(true)
+    // The user's prompt for the tab – the chip, the app menu – stands alone: the offer goes.
+    await openInstallSheet({ ...INSTALL_PROMPT, surface: 'desktop', info: null })
+    expect(idle().installOffer).toBeNull()
+    expect(idle().install?.surface).toBe('desktop')
   })
 })
 

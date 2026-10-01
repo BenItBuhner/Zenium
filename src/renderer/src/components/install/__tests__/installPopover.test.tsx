@@ -12,9 +12,9 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { cmd, run } from '@renderer/lib/api'
-import { autoOpenInstall, resetInstallOffers } from '@renderer/lib/installOffer'
+import { autoOpenInstall, resetInstallOffers, retireInstallOffer } from '@renderer/lib/installOffer'
 import { FrameDialogHost, closeAllPopovers } from '@renderer/lib/portals'
-import { uiStore } from '@renderer/lib/ui'
+import { bannerSurfaceMounted, uiStore } from '@renderer/lib/ui'
 import { InstallPopoverLayer } from '../InstallPopover'
 
 /*
@@ -23,12 +23,19 @@ import { InstallPopoverLayer } from '../InstallPopover'
  * `ui.surface` there and never on a one-window host – is the 320 popover hung from the pill's
  * Install chip for a page with an installable manifest: "Install <name>?" over the app's
  * identity row, Cancel then Install, no scrim. Opened by the user it takes the first control and
- * Escape hands the keyboard back to the chip; opened by the core's offer (`lib/installOffer.ts`)
- * it takes no focus. Install goes busy while `webapp.pin` is out and the popover leaves once it
- * has settled; Cancel, Escape and a press outside report a cancelled install and fold the
- * popover back into the chip; the popover goes with its tab, cancelling an install not yet
- * taken. A page without an installable manifest keeps the "Create shortcut" frame dialog
- * (install/ShortcutDialog.tsx): a name field armed with the page's title, "Create".
+ * Escape hands the keyboard back to the chip; Install goes busy while `webapp.pin` is out and
+ * the popover leaves once it has settled; Cancel, Escape and a press outside report a cancelled
+ * install and fold the popover back into the chip; the popover goes with its tab, cancelling an
+ * install not yet taken. A page without an installable manifest keeps the "Create shortcut"
+ * frame dialog (install/ShortcutDialog.tsx): a name field armed with the page's title, "Create".
+ *
+ * The same popover is the desktop's card for the core's install banner (`lib/installOffer.ts`;
+ * Services' seed #42, the cooldown through the core): the layer claims the banner surface while
+ * mounted, the popover opens on `webapp.banner` of its own accord – taking no focus – and the
+ * core hears the card drawn in the same tick (`webapp.bannerShown`); its Cancel is the card's
+ * swipe, a light dismissal or the tab leaving its clock running out (`webapp.dismissBanner`),
+ * Install the install path of old, and the core's own take-down sends nothing back. The prompt
+ * the user asks for sends no such word.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -75,10 +82,11 @@ const PAGE_PROMPT: WebAppInstallPrompt = {
   info: null
 }
 
+/** The core's banner for the app (`webapp.banner`): the launcher's name, the page's origin. */
 const OFFER: WebAppBanner = {
   tabId: 't1',
   name: 'Example App',
-  origin: 'https://app.example',
+  origin: 'app.example',
   icon: null,
   tint: null
 }
@@ -189,6 +197,17 @@ async function settle(): Promise<void> {
   })
 }
 
+/** The offer's capture came back and its popover painted. */
+async function opened(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
+const calls = (): unknown[][] => vi.mocked(run).mock.calls.map((c) => [...c])
+const cancelButton = (el: HTMLElement): HTMLButtonElement =>
+  Array.from(el.querySelectorAll('button')).find((b) => b.textContent === 'Cancel')!
+
 /**
  * The popover's leave, drawn: the collapse ends on its transition (dispatched here, as no
  * compositor runs) and the spring on its frames, each under `act` so React draws the removal.
@@ -209,7 +228,7 @@ async function leave(): Promise<void> {
 }
 
 beforeEach(() => {
-  uiStore.set({ install: null })
+  uiStore.set({ install: null, snapshot: null, snapshotTabId: null })
   resetInstallOffers()
   placeChip()
 })
@@ -224,7 +243,7 @@ afterEach(async () => {
   chip = null
   document.getElementById('zen-chrome-layer')?.remove()
   closeAllPopovers()
-  uiStore.set({ install: null })
+  uiStore.set({ install: null, snapshot: null, snapshotTabId: null })
   resetInstallOffers()
   vi.mocked(run).mockClear()
   vi.mocked(cmd).mockClear()
@@ -289,30 +308,11 @@ describe('the install popover', () => {
     expect(primary.textContent).toBe('Install')
     expect(primary.hasAttribute('data-primary')).toBe(true)
     expect(dialog.querySelectorAll('[data-primary]')).toHaveLength(1)
-    // Opened by the user (the chip, the app menu): the keyboard lands on the first control.
+    // Opened by the user (the chip, the app menu): the keyboard lands on the first control, and
+    // no word of a drawn card goes to the core – the prompt is the user's, not the banner's.
     expect(dialog.hasAttribute('data-offered')).toBe(false)
     expect(document.activeElement).toBe(dialog.querySelector('button'))
-  })
-
-  it('opened by the core’s offer it is marked as such and takes no focus (§9.6)', async () => {
-    // The offer: the core's `webapp.banner` opens the chip's popover through `webapp.openInstall`
-    // once per site, and the prompt that comes back is the offer's.
-    autoOpenInstall(OFFER)
-    expect(run).toHaveBeenCalledWith('webapp.openInstall', { tabId: 't1' })
-    uiStore.set({ install: APP_PROMPT })
-    render(layer(stateWith('t1')))
-    await settle()
-    const dialog = popover()!
-    expect(dialog.hasAttribute('data-offered')).toBe(true)
-    expect(dialog.contains(document.activeElement)).toBe(false)
-    expect(document.activeElement).not.toBe(dialog)
-    // The marker is spent: the next prompt for the tab is the user's.
-    act(() => uiStore.set({ install: null }))
-    await leave()
-    uiStore.set({ install: APP_PROMPT })
-    rerender(layer(stateWith('t1')))
-    await settle()
-    expect(popover()!.hasAttribute('data-offered')).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('webapp.bannerShown', expect.anything())
   })
 
   it('"Install" pins through the core with the app’s name, busy meanwhile, and the popover leaves once it settled', async () => {
@@ -407,6 +407,177 @@ describe('the install popover', () => {
     await leave()
     expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
     expect(uiStore.get().install).toBeNull()
+  })
+})
+
+describe('the popover as the core’s install banner (seed #42: the cooldown through the core)', () => {
+  it('claims the banner surface while mounted on a host with windows, and releases it on unmount', () => {
+    expect(bannerSurfaceMounted()).toBe(false)
+    render(layer(stateWith('t1')))
+    expect(bannerSurfaceMounted()).toBe(true)
+    act(() => root!.unmount())
+    root = null
+    expect(bannerSurfaceMounted()).toBe(false)
+    // A one-window host's surface is the phone's layer, which claims for itself.
+    render(layer(stateWith('t1', false)))
+    expect(bannerSurfaceMounted()).toBe(false)
+  })
+
+  it('opens on the core’s banner of its own accord, telling the core the card is drawn in the same tick, marked the offer’s and taking no focus (§9.6)', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    // The word goes with the banner's tick, not the popover's paint.
+    expect(calls()).toContainEqual(['webapp.bannerShown', { tabId: 't1' }])
+    expect(popover()).toBeNull()
+    await opened()
+    const dialog = popover()!
+    expect(dialog).not.toBeNull()
+    expect(dialog.hasAttribute('data-offered')).toBe(true)
+    expect(dialog.querySelector('#zen-install-title')!.textContent).toBe('Install Example App?')
+    expect(dialog.querySelector('.zen-install-name')!.textContent).toBe('Example App')
+    expect(dialog.querySelector('.zen-install-detail')!.textContent).toBe('app.example')
+    expect(buttons(dialog)).toEqual(['Cancel', 'Install'])
+    expect(dialog.contains(document.activeElement)).toBe(false)
+    expect(document.activeElement).not.toBe(dialog)
+    // Over the page's picture, with the chrome holding the keys (the same as the prompt).
+    expect(uiStore.get().snapshotTabId).toBe('t1')
+    expect(calls()).toContainEqual(['focus.chrome', undefined])
+    // Not the user's install: nothing opened through `webapp.openInstall`.
+    expect(run).not.toHaveBeenCalledWith('webapp.openInstall', expect.anything())
+    expect(uiStore.get().install).toBeNull()
+  })
+
+  it('a second banner for the same tab while the popover is up changes nothing', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    const dialog = popover()!
+    vi.mocked(run).mockClear()
+    act(() => autoOpenInstall({ ...OFFER, name: 'Example App (again)' }))
+    await opened()
+    expect(popover()).toBe(dialog)
+    expect(dialog.querySelector('#zen-install-title')!.textContent).toBe('Install Example App?')
+    // The new banner's grace is answered all the same, as the phone's replaced card answers.
+    expect(calls()).toEqual([['webapp.bannerShown', { tabId: 't1' }]])
+  })
+
+  it('Cancel is the banner’s swipe: the core hears the refusal, and the popover folds back into the chip', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    const dialog = popover()!
+    vi.mocked(run).mockClear()
+    click(cancelButton(dialog))
+    expect(calls()).toEqual([['webapp.dismissBanner', { tabId: 't1', reason: 'swipe' }]])
+    expect(dialog.hasAttribute('data-collapsing')).toBe(true)
+    await leave()
+    expect(uiStore.get().installOffer).toBeNull()
+    // The page comes back, with the keyboard.
+    expect(uiStore.get().snapshotTabId).toBeNull()
+    expect(calls()).toContainEqual(['focus.content', undefined])
+    expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+  })
+
+  it('Escape and a press outside are the banner’s clock running out: no refusal, the stamp stands', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    vi.mocked(run).mockClear()
+    escape()
+    expect(calls()).toEqual([['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }]])
+    await leave()
+    expect(uiStore.get().installOffer).toBeNull()
+    // The popover took no focus, so Escape hands nothing to the chip: the page gets the keys.
+    expect(document.activeElement).not.toBe(chip)
+    expect(calls()).toContainEqual(['focus.content', undefined])
+
+    vi.mocked(run).mockClear()
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    expect(popover()).not.toBeNull()
+    vi.mocked(run).mockClear()
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    const { down, click: tap } = press(outside)
+    expect(calls()).toEqual([['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }]])
+    expect(down.defaultPrevented).toBe(true)
+    expect(tap.defaultPrevented).toBe(true)
+    await leave()
+    expect(uiStore.get().installOffer).toBeNull()
+    outside.remove()
+  })
+
+  it('"Install" runs the install path of old – `webapp.pin` with the app’s name – and the popover leaves with no refusal once it settled', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    vi.mocked(run).mockClear()
+    vi.mocked(cmd).mockClear()
+    // The pin is out until the launcher answers (the capture before it has come back already).
+    let settlePin: (() => void) | null = null
+    vi.mocked(cmd).mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          settlePin = () => resolve(null)
+        }) as never
+    )
+    const primary = popover()!.querySelector<HTMLButtonElement>('[data-accept]')!
+    click(primary)
+    expect(cmd).toHaveBeenCalledWith('webapp.pin', { tabId: 't1', title: 'Example App' })
+    expect(primary.getAttribute('aria-busy')).toBe('true')
+    click(primary)
+    expect(cmd).toHaveBeenCalledTimes(1)
+    expect(calls()).toEqual([])
+    settlePin!()
+    await settle()
+    // Gone on the spring, not the collapse; the core hears the card went, nothing refused.
+    expect(popover()?.hasAttribute('data-collapsing')).not.toBe(true)
+    expect(calls()).toContainEqual(['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }])
+    await leave()
+    expect(uiStore.get().installOffer).toBeNull()
+    expect(run).not.toHaveBeenCalledWith('webapp.dismissBanner', { tabId: 't1', reason: 'swipe' })
+    expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+  })
+
+  it('goes with its tab, as the clock running out: another tab active is no refusal', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    vi.mocked(run).mockClear()
+    rerender(layer(stateWith('t2')))
+    expect(calls()).toEqual([['webapp.dismissBanner', { tabId: 't1', reason: 'timeout' }]])
+    await leave()
+    expect(uiStore.get().installOffer).toBeNull()
+  })
+
+  it('the core’s own take-down (`webapp.bannerHide`) sends it away with no report', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    vi.mocked(run).mockClear()
+    act(() => retireInstallOffer('t1'))
+    await settle()
+    expect(popover()?.hasAttribute('data-collapsing')).not.toBe(true)
+    await leave()
+    expect(uiStore.get().installOffer).toBeNull()
+    expect(run).not.toHaveBeenCalledWith('webapp.dismissBanner', expect.anything())
+    expect(run).not.toHaveBeenCalledWith('webapp.cancelInstall', expect.anything())
+    expect(calls()).toContainEqual(['focus.content', undefined])
+  })
+
+  it('gives way to the prompt the user asks for: the chip’s own open shows the user’s popover, which takes the first control', async () => {
+    render(layer(stateWith('t1')))
+    act(() => autoOpenInstall(OFFER))
+    await opened()
+    expect(popover()!.hasAttribute('data-offered')).toBe(true)
+    // The core took the banner back as the install opened, and sent the prompt.
+    act(() => retireInstallOffer('t1'))
+    act(() => uiStore.set({ install: APP_PROMPT, installOffer: null }))
+    await settle()
+    const dialog = popover()!
+    expect(dialog.hasAttribute('data-offered')).toBe(false)
+    expect(document.activeElement).toBe(dialog.querySelector('button'))
+    expect(uiStore.get().installOffer).toBeNull()
   })
 })
 
