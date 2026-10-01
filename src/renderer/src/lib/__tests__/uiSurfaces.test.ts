@@ -106,7 +106,8 @@ describe('the install sheet', () => {
           purpose: ['any']
         }
       ],
-      screenshots: []
+      screenshots: [],
+      shareTarget: null
     }
     // An installable manifest on a host with windows: Chrome's form, the popover under the chip.
     uiStore.set({ install: { ...INSTALL_PROMPT, surface: 'desktop', info } })
