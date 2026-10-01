@@ -88,11 +88,11 @@ class AgentPromptsTest {
             assertEquals(listOf("hello.txt", "x_y.bin"), written.map(File::getName))
             assertEquals("hello", written[0].readText())
             assertEquals(listOf<Byte>(1, 2, 3), written[1].readBytes().toList())
-            assertEquals(written[0].parentFile, written[1].parentFile)
-            assertEquals(root, written[0].parentFile.parentFile)
+            val old = written[0].parentFile!!
+            assertEquals(old, written[1].parentFile)
+            assertEquals(root, old.parentFile)
 
             // A folder written long ago goes at the next start; a fresh one stays.
-            val old = written[0].parentFile
             old.setLastModified(1_000L)
             val fresh = File(root, "u-fresh").apply { mkdirs(); setLastModified(AgentUploads.KEEP_MS * 10) }
             assertEquals(1, AgentUploads.sweep(root, now = AgentUploads.KEEP_MS * 10))
