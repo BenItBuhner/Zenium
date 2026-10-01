@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { hintBubbleEdge, hintBubbleStore } from '@renderer/lib/iph'
-import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
+import { claimBannerSurface, claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
 import { HintBubbleCard } from './HintBubbleCard'
 import { ScreenshotCard } from './ScreenshotCard'
@@ -74,6 +74,9 @@ export function MessageLayer({ toastSeat = null }: Props = {}): JSX.Element | nu
     [bindStack]
   )
   useEffect(() => claimMessageCards(), [])
+  // The one surface that draws `banners`: a banner shown while this stands is drawn with the
+  // next frame (`bannerSurfaceMounted`, the install prompt's word to the core).
+  useEffect(() => claimBannerSurface(), [])
 
   const live = banners.filter((b) => !b.leaving)
   const { y, height: stackHeight } = bannerSlots(banners.map((b) => heights[b.id] ?? 0))

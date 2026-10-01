@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { WebAppService } from '../webapp'
+import { BANNER_SHOWN_GRACE_MS, WebAppService } from '../webapp'
 import type { Browser } from '../browser'
 import type { PageHostMessage, ShortcutRequest, StoreIO } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
-import { MIN_VISIT_GAP_MS } from '../../shared/webApp'
+import { BANNER_TIMEOUT_MS, MIN_VISIT_GAP_MS, type EngagementRecord } from '../../shared/webApp'
 import type { AppBadge } from '../../shared/appBadge'
 
 const DOCUMENT_URL = 'https://app.example/'
@@ -37,6 +37,8 @@ interface Harness {
   createdTabs: Array<{ url: string }>
   navigations: Array<{ tabId: string; url: string }>
   now: { value: number }
+  /** The store's files by name (`webapps.json` holds the engagement records). */
+  files: Map<string, string>
 }
 
 function harness(
@@ -171,7 +173,8 @@ function harness(
     closedTabs,
     createdTabs,
     navigations,
-    now
+    now,
+    files
   }
 }
 
@@ -193,6 +196,19 @@ function revisit(h: Harness): void {
 
 const bannerEvents = (h: Harness): unknown[] =>
   h.events.filter((e) => e.name === 'webapp.banner').map((e) => e.payload)
+const bannerHides = (h: Harness): unknown[] =>
+  h.events.filter((e) => e.name === 'webapp.bannerHide').map((e) => e.payload)
+
+/** The app's engagement record as the store holds it (`flushSync` writes the pending save). */
+function engagement(h: Harness): EngagementRecord {
+  h.service.flushSync()
+  const doc = JSON.parse(h.files.get('webapps.json') ?? '{}') as {
+    engagement?: Record<string, EngagementRecord>
+  }
+  const record = doc.engagement?.[MANIFEST_ID]
+  if (!record) throw new Error('no engagement record for the app')
+  return record
+}
 
 describe('WebAppService', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -467,6 +483,89 @@ describe('WebAppService', () => {
     h.service.launch(MANIFEST_ID, h.win)
     expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
     expect(h.service.installed().map((a) => [a.id, a.windows])).toEqual([[MANIFEST_ID, 0]])
+  })
+
+  it('raises no ambient banner on the desktop, whose chrome draws none: the visit counts and the cooldown stays unspent (#740, seed #42)', () => {
+    const h = harness({ desktop: true })
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(5000)
+    expect(bannerEvents(h)).toEqual([])
+    expect(bannerHides(h)).toEqual([])
+    // The page still hears it is installable; the engagement counts without a prompt.
+    expect(h.pageMessages).toContainEqual({ type: 'webapp', action: 'installable' })
+    expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+    // A later visit counts too, so a drawn desktop promotion finds the engagement there.
+    revisit(h)
+    vi.advanceTimersByTime(5000)
+    expect(bannerEvents(h)).toEqual([])
+    expect(engagement(h)).toMatchObject({ visits: 3, promptedAt: null })
+  })
+
+  it('stamps the cooldown on the chrome’s word that the card is drawn, not on the emit; the timeout path then runs as before', () => {
+    const h = harness()
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+    // Emitted, not yet shown as far as the core knows: nothing stamped.
+    expect(engagement(h).promptedAt).toBeNull()
+    h.service.bannerShown(h.tab.id)
+    const stampedAt = h.now.value
+    expect(engagement(h).promptedAt).toBe(stampedAt)
+    // The grace running out after the word takes nothing back; a second word stamps nothing more.
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS + 100)
+    expect(bannerHides(h)).toEqual([])
+    h.now.value += 5000
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBe(stampedAt)
+    // The banner's own clock runs out: the core takes it down, no dismissal is recorded...
+    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
+    expect(bannerHides(h)).toEqual([{ tabId: 't1' }])
+    expect(engagement(h).dismissedAt).toBeNull()
+    // ...and the stamp keeps the prompt away for the rest of the day.
+    postManifest(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+  })
+
+  it('counts a prompt no chrome drew as undrawn when the grace runs out: no stamp, the banner withdrawn, the record still counting', () => {
+    const h = harness()
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1200)
+    expect(bannerEvents(h)).toHaveLength(1)
+    vi.advanceTimersByTime(BANNER_SHOWN_GRACE_MS - 1)
+    expect(bannerHides(h)).toEqual([])
+    vi.advanceTimersByTime(1)
+    // The chrome hears the take-down, so a surface mounting late never shows the card.
+    expect(bannerHides(h)).toEqual([{ tabId: 't1' }])
+    expect(engagement(h)).toMatchObject({ visits: 2, promptedAt: null, dismissedAt: null })
+    // A late word, or a dismissal report for a card the core has let go of, changes nothing.
+    h.service.bannerShown(h.tab.id)
+    h.service.dismissBanner(h.tab.id, 'swipe')
+    expect(engagement(h)).toMatchObject({ promptedAt: null, dismissedAt: null })
+    // The banner's clock went down with it: no second take-down at the timeout.
+    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
+    expect(bannerHides(h)).toHaveLength(1)
+    // The engagement record kept counting: the next visit offers the prompt again.
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(2)
+    expect(engagement(h).visits).toBe(3)
+  })
+
+  it('a tab closing inside the grace leaves no timer and no stamp behind', () => {
+    const h = harness()
+    postManifest(h)
+    revisit(h)
+    vi.advanceTimersByTime(1500)
+    expect(bannerEvents(h)).toHaveLength(1)
+    h.service.onTabRemoved(h.tab.id)
+    vi.advanceTimersByTime(BANNER_TIMEOUT_MS)
+    expect(bannerHides(h)).toEqual([])
+    h.service.bannerShown(h.tab.id)
+    expect(engagement(h).promptedAt).toBeNull()
   })
 
   it('swiping the banner away starts the cooldown; a timeout does not', () => {
